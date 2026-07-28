@@ -1,0 +1,41 @@
+# haiku-smoke — the cheapest real-claude smoke test (a few cents).
+#
+# Two nodes, one artifact edge:
+#   write     — writes a 3-line haiku to haiku.txt (acceptEdits, may edit files)
+#   critique  — reads the written file via the artifact handoff, plan mode (read-only)
+#
+# Proves, end to end: subscription auth works with the API key scrubbed,
+# a sequential edge with artifact handoff, JSON capture (two session_ids +
+# costs), the RunLedger table, and that fleetops observes both sessions.
+#
+# Run it manually (never in CI):
+#   mkdir -p /tmp/omg-smoke
+#   oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
+name: haiku-smoke
+version: "0.1"
+inputs: [dir]
+concurrency: 1
+nodes:
+  - id: write
+    type: claude-run
+    cwd: "{{ inputs.dir }}"
+    prompt: |
+      Write a 3-line haiku about directed graphs to a file named haiku.txt
+      in the current directory. Then reply with exactly the word DONE.
+    allowed_tools: [Read, Write, "Bash(cat *)"]
+    permission_mode: acceptEdits
+    handoff: artifact
+    success_check: { exit_zero: true, result_matches: "DONE" }
+
+  - id: critique
+    type: claude-run
+    depends_on: [write]
+    cwd: "{{ inputs.dir }}"
+    prompt: |
+      A haiku was written in this directory (the writer reported: {{ artifacts.write | inline }}).
+      Read haiku.txt and give a one-paragraph critique of its imagery.
+      Do not modify any files.
+    allowed_tools: [Read]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }

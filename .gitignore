@@ -1,0 +1,11 @@
+# Build output
+/bin/
+
+# Per-run artifacts written by the engine (node .out files, run dirs)
+/.oh-my-graph/
+
+# macOS
+.DS_Store
+
+# stray root binary
+/oh-my-graph
