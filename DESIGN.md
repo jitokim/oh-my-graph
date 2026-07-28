@@ -14,7 +14,7 @@ Agent SDK + API key). Personal/local, bring-your-own-login (ToS-compliant, like
 claude-squad); NOT a redistributed hosted product.
 
 ## Language — Go (committed)
-Go 1.22+. This tool *is* a subprocess scheduler: `errgroup` + buffered-channel
+Go 1.25+. This tool *is* a subprocess scheduler: `errgroup` + buffered-channel
 semaphore for the concurrency cap; `context` cancellation propagates to
 `exec.CommandContext` and kills in-flight children on halt-on-fail (awkward in
 Python). Single static binary (`go install`), pairs 1:1 with fleetops idioms.
@@ -52,7 +52,7 @@ Node schema:
   cwd: "{{ inputs.repo }}"
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
   permission_mode: dontAsk
-  budget_usd: 0.50            # v0.1: record + post-hoc halt of SUBSEQUENT nodes (no mid-node kill)
+  budget_usd: 0.50            # v0.1: parsed onto the node and recorded in RunLedger; NOT enforced (no cap yet)
   handoff: artifact           # artifact(default) | session
   success_check: { exit_zero: true, result_matches: "PASS" }
   retry: { max: 1, on: [nonzero_exit] }   # optional
@@ -104,9 +104,12 @@ retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never res
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
     execs under context, parses JSON. The ONLY object touching os/exec.
-  - `FakeRunner` (tests): scripted `map[nodeID]NodeOutcome` — entire scheduler
-    (topo, fan-out, fan-in, retry, halt, cost sum) unit-testable with ZERO real spawns.
-    This is the testability keystone.
+  - `FakeRunner` (tests): scripted `map[key]NodeOutcome` keyed by the
+    invocation (`NodeInvocation` has no id field; the key defaults to
+    `spec.Prompt`, and tests set each node's prompt equal to its id so the
+    "keyed by node id" shorthand reads true) — entire scheduler (topo,
+    fan-out, fan-in, retry, halt, cost sum) unit-testable with ZERO real
+    spawns. This is the testability keystone.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume session.
 - **GateController** — pause/approve/reject for gate nodes (v1.1 stub in v0.1).
 - **RunLedger** — record session_id/cost/verdict/timing; end-of-run table + total cost.
@@ -130,14 +133,14 @@ reserved); retries beyond flat max:1; parallel-group sugar / any DSL; TUI/dashbo
 
 ## Repo layout
 ```
-cmd/oh-my-graph/main.go        CLI: parse, load, inject ClaudeCLIRunner, run, print ledger
+cmd/oh-my-graph/{main,flags}.go      CLI: parse flags, load, inject ClaudeCLIRunner, run, print ledger
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation
-internal/schedule/scheduler.go + _test        ready-set engine (drives FakeRunner — keystone)
-internal/runner/{runner,claude,fake}.go + claude_test  interface + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
+internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
+internal/runner/{runner,claude,fake}.go + claude_test, envelope_test  interface + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick
 internal/gate/gate.go                          v1.1 stub interface
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/0001-subprocess-not-sdk.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
@@ -162,8 +165,9 @@ opt-in per node with a loud warning, never a default.
 
 ## Open questions (decided defaults; refine in impl)
 1. artifact interpolation: substitute file PATH by default, `| inline` filter for content.
-2. budget: v0.1 records cost + post-hoc halts SUBSEQUENT nodes (claude reports cost
-   only after finish); mid-node kill = v1.1.
+2. budget: `budget_usd` is parsed onto the node and the RunLedger records each
+   node's actual cost, but v0.1 does NOT enforce any budget — there is no cost
+   cap yet. Enforcement (post-hoc halt and mid-node kill) is deferred to v1.1.
 3. parallel nodes sharing one cwd can race edits → v0.1 parallel nodes should be
    read-only (plan) reviews (the captain's fan-out case); parallel edits want
    worktrees (deferred).

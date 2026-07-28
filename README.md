@@ -121,7 +121,10 @@ Called out honestly — these are **not** implemented yet:
   "not yet implemented".
 - retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
 - TUI / dashboard — that is [fleetops](https://github.com/jitokim/fleetops)'s job.
-- mid-node budget kill (v0.1 records cost and halts *subsequent* nodes only).
+- budget enforcement of any kind: `budget_usd` is parsed onto the node and the
+  RunLedger records each node's actual cost, but v0.1 does not enforce a cap —
+  neither a post-hoc halt of subsequent nodes nor a mid-node kill. Both are
+  deferred to v1.1.
 - worktree auto-creation for parallel edits (parallel v0.1 nodes should be
   read-only reviews).
 
