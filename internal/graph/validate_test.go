@@ -135,6 +135,21 @@ nodes:
 	}
 }
 
+func TestParse_SessionHandoffRootRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-root
+nodes:
+  - { id: a, prompt: a, handoff: session }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" {
+		t.Fatalf("error named node %q, want a", vErr.NodeID)
+	}
+	if !strings.Contains(vErr.Reason, "session") {
+		t.Fatalf("reason should explain the session/root conflict: %q", vErr.Reason)
+	}
+}
+
 func TestParse_InvalidYAML(t *testing.T) {
 	_, err := Parse([]byte("name: [unterminated"))
 	if err == nil {

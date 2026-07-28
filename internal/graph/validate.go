@@ -38,7 +38,8 @@ var (
 //  2. every type/handoff is a known value;
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
-//  5. a session-handoff node has at most one parent (can't merge sessions).
+//  5. a session-handoff node has exactly one parent — the session it resumes
+//     (a root has no session to resume; more than one can't be merged).
 func (g *Graph) Validate() error {
 	if err := g.validateNodesUnique(); err != nil {
 		return err
@@ -150,11 +151,11 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 
 func (g *Graph) validateHandoffConstraints() error {
 	for _, n := range g.Nodes {
-		if n.Handoff == HandoffSession && len(n.DependsOn) > 1 {
+		if n.Handoff == HandoffSession && len(n.DependsOn) != 1 {
 			return &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf(
-					"handoff: session with %d parents — a session can resume at most one parent; use handoff: artifact for fan-in",
+					"handoff: session with %d parents — a session-handoff node must resume exactly one parent's session; use handoff: artifact for a root node or for fan-in",
 					len(n.DependsOn),
 				),
 			}
