@@ -61,6 +61,14 @@ oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-
 - `--concurrency N` overrides the graph's ready-set width (ceiling 10).
 - `--continue-on-fail` prunes only a failed node's subtree instead of halting.
 
+## Use it from Claude Code (plugin)
+
+The CLI above is the product. If you'd rather stay inside a Claude Code
+session than drop to a shell, [`plugin/`](plugin/) is a thin Claude Code
+plugin that adds a `/graph` slash command — it shells out to the same
+`oh-my-graph` binary, no logic is reimplemented. See
+[plugin/README.md](plugin/README.md) for install and usage.
+
 ## The graph model
 
 A graph is YAML: a `name`, optional `inputs` and `concurrency`, and a list of
