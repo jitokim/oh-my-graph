@@ -35,3 +35,6 @@ smoke: build ## Manually run the haiku smoke graph against real claude.
 
 clean: ## Remove build artifacts.
 	rm -rf bin
+
+local: fmt-check vet build test ## Local end-to-end checks before a PR (build + test + vet).
+	@echo "make local: all local checks passed"
