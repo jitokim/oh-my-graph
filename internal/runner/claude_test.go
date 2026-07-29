@@ -21,6 +21,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		Prompt:          testPrompt,
 		Cwd:             "/tmp/omg",
 		PermissionMode:  "acceptEdits",
+		BudgetUSD:       0.50,
 		AllowedTools:    []string{"Read", "Bash(make *)"},
 		DisallowedTools: []string{"WebFetch", "WebSearch"},
 		ResumeSession:   "sess-123",
@@ -31,6 +32,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		"-p", testPrompt,
 		"--output-format", "json",
 		"--permission-mode", "acceptEdits",
+		"--max-budget-usd", "0.5",
 		"--allowedTools", "Read,Bash(make *)",
 		"--disallowedTools", "WebFetch,WebSearch",
 		"--resume", "sess-123",
@@ -54,7 +56,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	})
 
 	joined := strings.Join(cmd.Args, " ")
-	for _, flag := range []string{"--allowedTools", "--disallowedTools", "--resume"} {
+	for _, flag := range []string{"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume"} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
 		}
@@ -95,6 +97,64 @@ func TestBuildCmd_DisallowedToolsOnlyWhenImposed(t *testing.T) {
 	})
 	if strings.Contains(strings.Join(handWritten.Args, " "), "--disallowedTools") {
 		t.Errorf("hand-written graph argv must not carry a deny list, got: %q", handWritten.Args)
+	}
+}
+
+// TestBuildCmd_MaxBudgetOnlyWhenPositive pins the mid-run cost kill: a node with
+// a positive budget_usd renders --max-budget-usd (so claude aborts the run once
+// its own spend crosses it), and a node with no budget — or a non-positive one —
+// renders NO such flag, leaving budget-less graphs on exactly the argv they had
+// before this guard existed. The value is a plain decimal, never scientific
+// notation, so even a tiny budget is a token claude parses.
+func TestBuildCmd_MaxBudgetOnlyWhenPositive(t *testing.T) {
+	r := NewClaudeCLIRunner()
+
+	budgeted := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		BudgetUSD:      0.000001,
+	})
+	if !strings.Contains(strings.Join(budgeted.Args, " "), "--max-budget-usd 0.000001") {
+		t.Errorf("budgeted node argv missing plain-decimal --max-budget-usd: %q", budgeted.Args)
+	}
+
+	for _, budget := range []float64{0, -1} {
+		cmd := r.buildCmd(context.Background(), NodeInvocation{
+			Prompt:         testPrompt,
+			PermissionMode: "dontAsk",
+			BudgetUSD:      budget,
+		})
+		if strings.Contains(strings.Join(cmd.Args, " "), "--max-budget-usd") {
+			t.Errorf("budget %v must render no flag, got: %q", budget, cmd.Args)
+		}
+	}
+}
+
+// TestParseEnvelope_BudgetExhausted proves the runner recognizes claude's own
+// --max-budget-usd abort: the subtype error_max_budget_usd (with no result and a
+// cost at/over budget) sets BudgetExhausted, and an ordinary success envelope
+// does not. This is the empirically-observed shape from claude 2.1.220, not an
+// assumption — the Scheduler depends on this flag to classify the failure.
+func TestParseEnvelope_BudgetExhausted(t *testing.T) {
+	killed := `{"session_id":"s1","total_cost_usd":0.4776,"subtype":"error_max_budget_usd","is_error":true,"errors":["Reached maximum budget ($0.001)"]}`
+	outcome, err := parseEnvelope([]byte(killed))
+	if err != nil {
+		t.Fatalf("a budget-abort envelope is still valid JSON and must parse: %v", err)
+	}
+	if !outcome.BudgetExhausted {
+		t.Errorf("subtype error_max_budget_usd must set BudgetExhausted; got %+v", outcome)
+	}
+	if outcome.TotalCostUSD != 0.4776 {
+		t.Errorf("cost = %v, want 0.4776 (the already-spent amount)", outcome.TotalCostUSD)
+	}
+
+	ok := `{"session_id":"s2","result":"hi","total_cost_usd":0.03,"subtype":"success"}`
+	normal, err := parseEnvelope([]byte(ok))
+	if err != nil {
+		t.Fatalf("parse success envelope: %v", err)
+	}
+	if normal.BudgetExhausted {
+		t.Errorf("a success envelope must not set BudgetExhausted; got %+v", normal)
 	}
 }
 

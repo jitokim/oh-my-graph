@@ -56,13 +56,19 @@ testable without spawning claude.
   between CLI versions. The single `NodeRunner` seam localizes that risk.
 - No structured streaming of intermediate tokens; the engine consumes the final
   JSON envelope per node.
-- Cost is only known *after* a node finishes (claude reports it at the end).
-  This bounds what budget enforcement can ever be under this decision:
-  `budget_usd` is enforced post-hoc — an over-budget node fails and, by default,
-  halts the run before its dependents spend anything — but the overspend itself
-  cannot be prevented, and a mid-node cost kill is not implementable without
-  changing the envelope contract this ADR chose (streaming cost via
-  `--output-format stream-json` rather than one JSON envelope at exit).
+- Cost is reported by claude in the final JSON envelope, so the *engine* learns a
+  node's total only after it finishes. `budget_usd` is therefore checked post-hoc
+  — an over-budget node fails and, by default, halts the run before its
+  dependents spend anything. A mid-node kill, however, does **not** require
+  abandoning this one-envelope contract: the `claude --max-budget-usd` flag makes
+  the CLI abort a node's own run the moment its spend crosses the budget, and it
+  still prints one parseable JSON envelope at exit (verified on claude 2.1.220 —
+  `subtype: error_max_budget_usd`, non-zero exit). oh-my-graph wires `budget_usd`
+  into that flag as a real per-node (per-`claude -p`-invocation) mid-run kill on
+  top of the post-hoc check. What *would* still need streaming cost
+  (`--output-format stream-json`) is finer-grained, sub-call accounting —
+  catching the single in-flight call that overshoots before the abort lands —
+  which stays out of scope for this ADR's envelope contract.
 
 ## Alternatives considered
 

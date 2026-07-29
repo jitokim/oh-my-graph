@@ -334,13 +334,19 @@ on top of it. Omit `budget_usd` (or set it to 0) and nothing is enforced.
     budget_usd: 0.50
 ```
 
-The node's output is persisted *before* the budget verdict, so an over-budget
-node still leaves its `.out` artifact on disk to inspect. Budget failures are
-**not** retried unless you explicitly ask (`retry: { on: [budget_exceeded] }`) —
-retrying an over-budget node spends that money again, so it is never implicit.
-Passing nodes show their remaining headroom in the ledger's `DETAIL` column.
+`budget_usd` is enforced two ways. **Live:** it is passed to the node as `claude
+--max-budget-usd`, so claude aborts the run itself the moment its own spend
+crosses the budget — a real mid-run kill, per node. **Post-hoc backstop:** that
+abort can only stop the *next* call (one in-flight turn can still overshoot), so
+the final cost is re-checked at exit and an over-budget node fails the run. A
+post-hoc-overspent node's output is persisted *before* the verdict, so it still
+leaves its `.out` artifact to inspect; a live-killed node was interrupted before
+a result existed, so it leaves none. Budget failures are **not** retried unless
+you explicitly ask (`retry: { on: [budget_exceeded] }`) — retrying an
+over-budget node spends that money again, so it is never implicit. Passing nodes
+show their remaining headroom in the ledger's `DETAIL` column.
 
-This is a post-hoc cap, not a live one — see
+What remains is sub-call and cross-node accounting — see
 [Known limitations](#known-limitations).
 
 ## Known limitations
@@ -351,13 +357,15 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   regexes over the node's own claimed result text — there's no independent
   verification against external state.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
-- **`budget_usd` is enforced only *after* a node finishes.** A node that
-  overspends its budget now fails and halts the run, so its dependents never
-  start — but the overspend itself is never prevented, because `claude` reports
-  `total_cost_usd` only in the JSON envelope it prints as it exits. There is
-  still no mid-node kill: a single runaway node can spend arbitrarily past its
-  budget before oh-my-graph ever sees the number. The only mid-run bound is the
-  per-node wall-clock timeout (~20m), which is not a cost bound.
+- **`budget_usd` is enforced per node, but not sub-call or across nodes.**
+  A positive budget is passed to claude as `--max-budget-usd`, so claude aborts a
+  node the moment its own spend crosses the budget (a real mid-run kill), and the
+  final cost is re-checked post-hoc as a backstop — a runaway node no longer
+  spends unbounded to the wall-clock timeout. Two gaps remain: claude accounts
+  *between* API calls, so the one in-flight call past the threshold can still
+  overshoot before the abort lands; and each node's cap is independent — there is
+  no whole-graph budget. Closing the first needs incremental cost
+  (`--output-format stream-json`), a `NodeRunner`-contract change.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
 - **`gate` (human pause/approve) is not implemented.** The node type is
   schema-reserved and rejected at execution time; no `oh-my-graph resume` yet.
@@ -374,13 +382,14 @@ Called out honestly — these are **not** implemented yet:
   "not yet implemented".
 - retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
 - TUI / dashboard — that is [fleetops](https://github.com/jitokim/fleetops)'s job.
-- **mid-node budget kill.** Post-hoc budget enforcement *is* implemented (an
-  over-budget node fails and halts the run), but cancelling a node while it is
-  still burning money is not: that needs the runner to stream incremental cost
-  (`--output-format stream-json`) instead of reading one envelope at exit, which
-  changes the `NodeRunner` contract and is deferred to its own change. A
-  wall-clock timeout derived from `budget_usd` was deliberately rejected — the
-  $/minute rate would be invented, so it would look like a cap without being one.
+- **sub-call / cross-node budget accounting.** Per-node budget is now enforced
+  live (`--max-budget-usd` aborts a node mid-run) *and* post-hoc, so a runaway
+  node no longer spends unbounded to the wall-clock timeout. Still deferred:
+  catching the single in-flight call that overshoots before the abort lands
+  (needs streaming cost via `--output-format stream-json`, a `NodeRunner`
+  contract change) and any whole-graph budget across nodes. A wall-clock timeout
+  derived from `budget_usd` was deliberately rejected — the $/minute rate would
+  be invented, so it would look like a cap without being one.
 - worktree auto-creation for parallel edits (parallel v0.1 nodes should be
   read-only reviews).
 

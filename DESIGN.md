@@ -76,7 +76,7 @@ Node schema:
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
   permission_mode: dontAsk
   agent: code-reviewer        # optional (v1.1): run as this Claude Code subagent — see "Node-as-subagent"
-  budget_usd: 0.50            # post-hoc cap: node FAILS if its actual cost exceeds this (see Execution engine)
+  budget_usd: 0.50            # per-node cost cap: claude aborts mid-run (--max-budget-usd) + post-hoc FAIL (see Execution engine)
   handoff: artifact           # artifact(default) | session
   success_check:              # see "Success checks" — verify is the only evidence-grounded predicate
     exit_zero: true
@@ -113,8 +113,8 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never resume a failed one).
 
-budget_usd (post-hoc): a node that passes its success_check is then judged
-against its declared `budget_usd`. Actual cost strictly greater than the budget
+budget_usd (post-hoc verdict — the backstop layer): a node that passes its
+success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
 → `NodeBudgetError` (node id + budgeted + actual), which flows through the exact
 same path as a failed success_check: ledger row FAIL with the overspend in
 `Detail`, retry only if opted in, halt-on-fail by default. A non-positive
@@ -125,19 +125,38 @@ verdict, never handoff semantics. Its retry cause token is `budget_exceeded`,
 deliberately distinct from `nonzero_exit` so a pre-existing retry policy can
 never re-spend an already-blown budget by accident.
 
-This enforcement is **post-hoc only, and that is a hard limit of the runner
-contract, not an oversight**: `claude --output-format json` reports
-`total_cost_usd` once, in the envelope it prints as it exits, so the engine
-first learns a node's cost after the money is spent. What the verdict buys is
-everything downstream — dependents never start and, by default, the run halts.
-A true mid-node cost kill would require the runner to stream incremental cost
-(`--output-format stream-json` + parsing cost events + cancelling the node
-context mid-run), which changes the `NodeRunner` output contract from "one
-envelope" to "a stream" and belongs in its own ADR. Deriving a wall-clock
-timeout from `budget_usd` via an assumed $/minute rate was considered and
-rejected: the conversion rate would be fabricated, so it would look like
-enforcement while enforcing nothing. The only real mid-node bound today remains
-the per-node `context.WithTimeout` (~20m default), which is wall-clock, not cost.
+The verdict above is the **post-hoc backstop layer**. On top of it there is now
+a **native mid-run kill**: a positive `budget_usd` is passed to the node's
+subprocess as `claude --max-budget-usd`, and the CLI aborts the run itself the
+moment its own running spend crosses the budget. Verified against claude 2.1.220
+(free — a couple of trivial `-p` probes, no metered call): the abort exits
+non-zero yet still prints a parseable `--output-format json` envelope whose
+`subtype` is `error_max_budget_usd`; the runner maps that to
+`NodeOutcome.BudgetExhausted`, and the scheduler raises the same
+`*NodeBudgetError` the post-hoc check raises, so a native kill fails as
+`budget_exceeded` — not the generic `nonzero_exit` its exit code alone would
+imply — keeping the retry contract intact (a bare `nonzero_exit` policy never
+re-spends a budget-killed node). The bound is **per `claude -p` invocation**,
+which is exactly one oh-my-graph node: a resumed session does *not* re-count its
+parent's spend (verified empirically), so it fits a per-node budget even under
+`handoff: session`. A natively-killed node persists **no** artifact — the run
+was interrupted before a result existed — whereas a post-hoc overspend completed
+and keeps its output; the two failure shapes are deliberately distinct.
+
+Both layers are kept because they cover different overshoots. `--max-budget-usd`
+stops the *next* API call once cumulative spend crosses the budget, but cannot
+un-spend a call already in flight, so a single expensive turn can still land
+over budget — the post-hoc verdict is what catches that at exit. What remains
+outside both layers: the overshoot of that one in-flight call (the CLI accounts
+*between* calls, not sub-call), and any cross-node or whole-graph budget — each
+node's cap is independent. Finer-grained, sub-call cost observation would still
+need `--output-format stream-json` + incremental parsing, an ADR-level change to
+the one-envelope `NodeRunner` contract; that alone stays deferred — mid-node
+kill itself no longer does. Deriving a wall-clock timeout from `budget_usd` via
+an assumed $/minute rate was still considered and rejected: the conversion rate
+would be fabricated, so it would look like enforcement while enforcing nothing.
+The per-node `context.WithTimeout` (~20m default) remains as a wall-clock bound
+orthogonal to cost.
 
 ## Success checks — evidence-grounded verification (v1.1)
 `success_check` is a conjunction of predicates, cheapest first, evaluated only
@@ -544,8 +563,9 @@ persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
 any DSL; TUI/dashboard (fleetops's job); worktree auto-creation; coordinator
 auto-mapping of `agent:` by role (see "Node-as-subagent" — deferred on a design
-constraint, not on effort); mid-node budget kill (post-hoc budget halt IS
-enforced — see "Execution engine").
+constraint, not on effort); sub-call / cross-node budget accounting (per-node
+mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
+— see "Execution engine").
 
 ## v1.1 scope
 IN: evidence-grounded `success_check.verify` (#7); `gate` execution +
@@ -600,18 +620,25 @@ in "Auto mode" above.
 
 ## Open questions (decided defaults; refine in impl)
 1. artifact interpolation: substitute file PATH by default, `| inline` filter for content.
-2. budget: **post-hoc halt is implemented and enforced** — a node whose actual
-   cost exceeds its `budget_usd` fails exactly like a failed success_check
+2. budget: **enforced at two layers.** Post-hoc — a node whose actual cost
+   exceeds its `budget_usd` fails exactly like a failed success_check
    (`NodeBudgetError`, ledger FAIL carrying budgeted-vs-actual, halt-on-fail by
-   default), so its dependents never start. The RunLedger also carries the
-   declared budget alongside actual cost, making the delta derivable per node
-   (`Record.BudgetDeltaUSD`). **Mid-node kill remains deferred and is NOT
-   enforced**: the runner learns `total_cost_usd` only from the JSON envelope
-   printed at exit, so nothing can observe a runaway node's spend while it runs.
-   Closing that needs a runner-level capability (streaming cost via
-   `--output-format stream-json`, then cancelling the node context mid-run) —
-   see "Execution engine" for why a budget-derived wall-clock timeout was
-   rejected as fake enforcement.
+   default), so its dependents never start; the RunLedger carries the declared
+   budget alongside actual cost, making the delta derivable per node
+   (`Record.BudgetDeltaUSD`). **Mid-node kill is now real too**, not deferred: a
+   positive `budget_usd` is passed to the subprocess as `claude
+   --max-budget-usd`, and the CLI aborts the node the moment its own spend
+   crosses the budget (verified on claude 2.1.220 — a parseable JSON envelope
+   with `subtype: error_max_budget_usd`, mapped to `BudgetExhausted` and raised
+   as the same `budget_exceeded` `*NodeBudgetError`). The kill is **per `claude
+   -p` invocation = one node** (a resumed session does not re-count its parent's
+   spend), so it bounds a runaway node without a fabricated $/minute heuristic.
+   Still deferred: sub-call cost observation (the one in-flight call past the
+   threshold can overshoot, which the post-hoc layer backstops) and any
+   cross-node/whole-graph budget — those would need `--output-format
+   stream-json` incremental parsing, an ADR-level change to the one-envelope
+   `NodeRunner` contract. See "Execution engine" for the full two-layer detail
+   and why a budget-derived wall-clock timeout was rejected as fake enforcement.
 3. parallel nodes sharing one cwd can race edits → v0.1 parallel nodes should be
    read-only (plan) reviews (the captain's fan-out case); parallel edits want
    worktrees (deferred).
