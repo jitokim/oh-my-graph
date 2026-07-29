@@ -12,16 +12,13 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/childenv"
 )
 
-// Shell invocation defaults. The command is run through `sh -c` so a graph can
-// write an ordinary command line (pipes, &&, quoting) instead of an argv array.
-// defaultTimeout mirrors the graph loader's default for success_check.verify and
-// exists only so a hand-built Request with no timeout still gets a bound: a
-// verification with no deadline could wedge a node until its 20m runner timeout.
-const (
-	defaultShell   = "sh"
-	shellFlag      = "-c"
-	defaultTimeout = 2 * time.Minute
-)
+// Shell invocation defaults. The interpreter itself (defaultShell/shellFlag) is
+// per-OS — see shell_unix.go and shell_windows.go — because `sh` is not on PATH
+// on native Windows. defaultTimeout mirrors the graph loader's default for
+// success_check.verify and exists only so a hand-built Request with no timeout
+// still gets a bound: a verification with no deadline could wedge a node until
+// its 20m runner timeout.
+const defaultTimeout = 2 * time.Minute
 
 // maxOutputBytes bounds what a verification hands back. A verification command
 // is often a test suite, and its full output is neither useful in the ledger nor
@@ -96,8 +93,8 @@ func withEnviron(environ func() []string) ShellOption {
 	return func(v *ShellVerifier) { v.environ = environ }
 }
 
-// NewShellVerifier builds the production Verifier: `sh -c <command>`, scrubbing
-// the real process environment.
+// NewShellVerifier builds the production Verifier: `<shell> <flag> <command>`
+// with the interpreter for this OS, scrubbing the real process environment.
 func NewShellVerifier(opts ...ShellOption) *ShellVerifier {
 	v := &ShellVerifier{
 		shell:   defaultShell,
@@ -124,9 +121,9 @@ func (v *ShellVerifier) buildCmd(ctx context.Context, req Request) *exec.Cmd {
 	cmd.Dir = req.Cwd
 	cmd.Env = childenv.Scrub(v.environ())
 
-	// The direct child is `sh`, but the work is in its descendants — the test
-	// suite, the build, the `sleep`. exec's own cancellation kills only the
-	// shell, so a cancelled or timed-out verification would leave that work
+	// The direct child is the interpreter, but the work is in its descendants —
+	// the test suite, the build, the `sleep`. exec's own cancellation kills only
+	// the shell, so a cancelled or timed-out verification would leave that work
 	// running (and, since the descendants inherit the output pipe, would leave
 	// Wait blocked on the pipe until they finished on their own — the run
 	// outliving the context that bounded it). Give the child its own process
