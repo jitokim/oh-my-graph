@@ -10,7 +10,12 @@ reviews:
   # high-confidence blockers. chill was too quiet — clean-looking PRs got a
   # bare "no actionable comments" even when there was worth flagging.
   profile: "assertive"
-  request_changes_workflow: false
+  # Config half of a merge gate: CodeRabbit submits a formal "Request changes"
+  # review on actionable findings and only approves once the PR is clean. This
+  # becomes actual enforcement only when main gets a branch-protection rule
+  # requiring CodeRabbit's approving review (GitHub Pro on a private repo, or a
+  # public repo).
+  request_changes_workflow: true
   high_level_summary: true
   poem: false
   review_status: true
