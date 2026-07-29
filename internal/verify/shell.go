@@ -33,6 +33,14 @@ const maxOutputBytes = 4096
 // tail as the whole story.
 const truncationMarker = "…(earlier output truncated)…\n"
 
+// waitDelay bounds how long Wait will keep waiting after the child was killed.
+// Killing the process group normally ends everything at once, so this is the
+// last resort for the one case it cannot cover: a descendant that escaped the
+// group (it set its own) still holds the inherited output pipe open, and Wait
+// blocks on the pipe rather than on the process. A cancelled verification must
+// return promptly even then.
+const waitDelay = 2 * time.Second
+
 // TimeoutError is a verification command that was still running when its own
 // timeout expired. It is deliberately distinct from a non-zero exit: the command
 // never reached a verdict, and reporting it as "failed the check" would claim
@@ -102,11 +110,11 @@ func NewShellVerifier(opts ...ShellOption) *ShellVerifier {
 	return v
 }
 
-// buildCmd assembles the exact *exec.Cmd for a request: argv, cwd, and the
-// scrubbed child environment. It is the unit under test — shell_test.go calls it
-// directly to assert both the argv AND that ANTHROPIC_API_KEY /
-// ANTHROPIC_AUTH_TOKEN are absent from cmd.Env. Nothing here spawns; Verify
-// wires it to the OS.
+// buildCmd assembles the exact *exec.Cmd for a request: argv, cwd, the scrubbed
+// child environment, and the cancellation behaviour. It is the unit under test —
+// shell_test.go calls it directly to assert both the argv AND that
+// ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are absent from cmd.Env. Nothing here
+// spawns; Verify wires it to the OS.
 //
 // The env scrub is not an optional nicety for verification: `verify: { command:
 // "claude -p ..." }` is a legal thing to write, and an unscrubbed child would
@@ -115,6 +123,17 @@ func (v *ShellVerifier) buildCmd(ctx context.Context, req Request) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, v.shell, shellFlag, req.Command)
 	cmd.Dir = req.Cwd
 	cmd.Env = childenv.Scrub(v.environ())
+
+	// The direct child is `sh`, but the work is in its descendants — the test
+	// suite, the build, the `sleep`. exec's own cancellation kills only the
+	// shell, so a cancelled or timed-out verification would leave that work
+	// running (and, since the descendants inherit the output pipe, would leave
+	// Wait blocked on the pipe until they finished on their own — the run
+	// outliving the context that bounded it). Give the child its own process
+	// group and cancel by killing the group.
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = waitDelay
 	return cmd
 }
 
