@@ -620,6 +620,15 @@ Scheduler as any other graph.
   Written atomically after every node. The Scheduler talks to a `Recorder`
   interface and defaults to a no-op, so nothing about persistence leaks into the
   engine's tests.
+- **RunFeed** — owns `events.jsonl`: the append-only, schema-versioned stream of
+  node lifecycle events (run_started/node_started/node_passed/node_failed/
+  node_retried/run_finished), one JSON line per transition, fsynced per line.
+  Emitted from the same scheduler hook points as the progress line and the
+  snapshot, via an `EventSink` interface defaulting to a no-op — the third
+  destination next to `Recorder`, same seam pattern. This is the stable
+  consumer contract fleetops tails (oh-my-graph executes, never renders); the
+  full contract, including how it versions alongside `state.json`, is
+  docs/RUN-FEED.md.
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
@@ -668,6 +677,7 @@ internal/coordinator/coordinator.go + _test    auto mode: goal → planner call 
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
 internal/gate/gate.go + _test                  v1.1: Decision + PauseController/RecordedController
 internal/runstate/runstate.go + _test          v1.1: state.json snapshot — atomic write, schema version, resume load
+internal/runfeed/runfeed.go + _test            events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..4}-*.md

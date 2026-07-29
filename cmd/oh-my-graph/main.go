@@ -34,6 +34,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -210,6 +211,16 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
 
+	// The consumer event stream (docs/RUN-FEED.md) lives next to state.json.
+	// Failing to open it is fatal up front — unlike a mid-run emit failure,
+	// which the Scheduler downgrades to a progress warning — because a run
+	// that never had a stream at all is silently invisible to fleetops.
+	feed, err := runfeed.NewStreamWriter(filepath.Join(runDirFor(runID), runfeed.FileName), runID)
+	if err != nil {
+		return fmt.Errorf("prepare run event stream: %w", err)
+	}
+	defer feed.Close()
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: flags.continueOnFail,
@@ -217,6 +228,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		Verifier:       verify.NewShellVerifier(),
 		ToolPolicies:   toolPolicies,
 		Recorder:       recorder,
+		EventSink:      feed,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
