@@ -8,6 +8,7 @@
 //	oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+//	oh-my-graph runs list
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
 // gate and is resumable (ADR 0003) — a pause is not a failure.
@@ -70,7 +71,8 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]`)
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+       oh-my-graph runs list`)
 	}
 	switch args[0] {
 	case "run":
@@ -79,11 +81,13 @@ func run(args []string) error {
 		return runAuto(args[1:])
 	case "resume":
 		return runResume(args[1:])
+	case "runs":
+		return runRuns(args[1:])
 	case "version":
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, resume, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, or version)", args[0])
 	}
 }
 
@@ -363,10 +367,16 @@ func warnBypassPermissions(g *graph.Graph) {
 	}
 }
 
+// runsRoot is the on-disk home of every run directory — what `runs list`
+// enumerates.
+func runsRoot() string {
+	return filepath.Join(".oh-my-graph", "runs")
+}
+
 // runDirFor is the on-disk home of one run's artifacts and (for auto runs) its
 // generated graph spec.
 func runDirFor(runID string) string {
-	return filepath.Join(".oh-my-graph", "runs", runID)
+	return filepath.Join(runsRoot(), runID)
 }
 
 // newRunID is a filesystem-safe, sortable run id: a UTC timestamp to the
