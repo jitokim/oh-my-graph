@@ -20,6 +20,13 @@ type NodeInvocation struct {
 	PermissionMode string
 	ResumeSession  string
 	AllowedTools   []string
+	// Agent, when non-empty, is the name of a Claude Code subagent (as defined
+	// in ~/.claude/agents or <cwd>/.claude/agents) this node should run as.
+	// ClaudeCLIRunner passes it through as `--agent <name>`, which `claude -p`
+	// resolves against the user's own subagent definitions — the node then
+	// inherits that subagent's system prompt, tools, and model. Empty means
+	// "plain claude -p", the v0.1 behaviour.
+	Agent string
 }
 
 // NodeOutcome is the parsed result of one node run: the claude session id (for

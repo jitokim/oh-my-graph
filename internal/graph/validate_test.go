@@ -231,3 +231,40 @@ nodes:
 		t.Fatalf("single-parent session handoff should be valid: %v", err)
 	}
 }
+
+// TestParse_AgentFieldParses proves a node's `agent:` name round-trips onto
+// Node.Agent, and that a node omitting it defaults to empty (plain claude -p).
+func TestParse_AgentFieldParses(t *testing.T) {
+	g, err := Parse([]byte(`
+name: with-agent
+nodes:
+  - { id: review, prompt: review, agent: code-reviewer }
+  - { id: plain, prompt: plain }
+`))
+	if err != nil {
+		t.Fatalf("node with agent field should parse: %v", err)
+	}
+	review, _ := g.NodeByID("review")
+	if review.Agent != "code-reviewer" {
+		t.Errorf("review.Agent = %q, want code-reviewer", review.Agent)
+	}
+	plain, _ := g.NodeByID("plain")
+	if plain.Agent != "" {
+		t.Errorf("plain.Agent = %q, want empty", plain.Agent)
+	}
+}
+
+// TestParse_BlankAgentRejected proves a whitespace-only agent name — a
+// near-certain YAML typo — is rejected at load time rather than silently
+// falling back to plain claude.
+func TestParse_BlankAgentRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: blank-agent
+nodes:
+  - { id: a, prompt: a, agent: "   " }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" || !strings.Contains(vErr.Reason, "agent") {
+		t.Fatalf("expected agent error on node a: %+v", vErr)
+	}
+}

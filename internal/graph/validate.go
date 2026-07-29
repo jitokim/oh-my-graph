@@ -40,6 +40,7 @@ var (
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
 //     (a root has no session to resume; more than one can't be merged).
+//  6. an explicit agent name, if any, is not blank/whitespace-only.
 func (g *Graph) Validate() error {
 	if err := g.validateNodesUnique(); err != nil {
 		return err
@@ -53,7 +54,10 @@ func (g *Graph) Validate() error {
 	if err := g.validateAcyclic(); err != nil {
 		return err
 	}
-	return g.validateHandoffConstraints()
+	if err := g.validateHandoffConstraints(); err != nil {
+		return err
+	}
+	return g.validateAgentNames()
 }
 
 func (g *Graph) validateNodesUnique() error {
@@ -147,6 +151,21 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 	}
 	colour[id] = colourBlack
 	return "", false
+}
+
+// validateAgentNames rejects an agent name that is present but whitespace-only
+// — a near-certain YAML typo (e.g. `agent: " "`). Anything else is accepted:
+// v0.1 does not check the name against the user's actual ~/.claude/agents or
+// <cwd>/.claude/agents, since that set is per-machine and per-repo, not a
+// property of the graph file itself. An unresolvable agent name is a runtime
+// concern (claude falls back to plain claude -p), not a load-time error.
+func (g *Graph) validateAgentNames() error {
+	for _, n := range g.Nodes {
+		if n.Agent != "" && strings.TrimSpace(n.Agent) == "" {
+			return &GraphValidationError{NodeID: n.ID, Reason: "agent is blank/whitespace-only"}
+		}
+	}
+	return nil
 }
 
 func (g *Graph) validateHandoffConstraints() error {

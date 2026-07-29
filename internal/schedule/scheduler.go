@@ -237,6 +237,7 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 		PermissionMode: permissionMode,
 		ResumeSession:  resume,
 		AllowedTools:   node.AllowedTools,
+		Agent:          node.Agent,
 	}, nil
 }
 

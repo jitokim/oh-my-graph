@@ -110,16 +110,20 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // buildArgs is the argv (excluding the binary) for a node:
 //
 //	-p <prompt> --output-format json --permission-mode <mode>
-//	  --allowedTools "<comma,joined>" [--resume <session_id>]
+//	  [--agent <name>] --allowedTools "<comma,joined>" [--resume <session_id>]
 //
 // Never --bare (disables OAuth) and never --no-session-persistence (fleetops
-// observes the transcripts). --allowedTools is added only when tools are
+// observes the transcripts). --agent is added only when the node names a
+// subagent (see NodeInvocation.Agent); --allowedTools only when tools are
 // configured; --resume only when resuming a session-parent.
 func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
 		"--output-format", "json",
 		"--permission-mode", spec.PermissionMode,
+	}
+	if spec.Agent != "" {
+		args = append(args, "--agent", spec.Agent)
 	}
 	if len(spec.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(spec.AllowedTools, ","))

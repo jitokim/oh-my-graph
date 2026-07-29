@@ -23,6 +23,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		PermissionMode: "acceptEdits",
 		AllowedTools:   []string{"Read", "Bash(make *)"},
 		ResumeSession:  "sess-123",
+		Agent:          "code-reviewer",
 	})
 
 	want := []string{
@@ -30,6 +31,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		"-p", testPrompt,
 		"--output-format", "json",
 		"--permission-mode", "acceptEdits",
+		"--agent", "code-reviewer",
 		"--allowedTools", "Read,Bash(make *)",
 		"--resume", "sess-123",
 	}
@@ -57,6 +59,42 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	}
 	if strings.Contains(joined, "--resume") {
 		t.Errorf("expected no --resume flag, got argv: %q", cmd.Args)
+	}
+	if strings.Contains(joined, "--agent") {
+		t.Errorf("expected no --agent flag, got argv: %q", cmd.Args)
+	}
+}
+
+// TestBuildCmd_AgentFlag proves a node naming a subagent gets `--agent <name>`
+// in its argv — the mechanism that runs the node AS the user's own Claude Code
+// subagent (its system prompt, tools, model), sourced from ~/.claude/agents or
+// <cwd>/.claude/agents.
+func TestBuildCmd_AgentFlag(t *testing.T) {
+	r := NewClaudeCLIRunner()
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Agent:          "code-reviewer",
+	})
+
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "--agent code-reviewer") {
+		t.Errorf("expected --agent code-reviewer in argv, got: %q", cmd.Args)
+	}
+}
+
+// TestBuildCmd_NoAgentOmitsFlag proves the default (empty Agent) never emits
+// --agent — plain `claude -p`, the v0.1 behaviour, is unchanged.
+func TestBuildCmd_NoAgentOmitsFlag(t *testing.T) {
+	r := NewClaudeCLIRunner()
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+	})
+
+	joined := strings.Join(cmd.Args, " ")
+	if strings.Contains(joined, "--agent") {
+		t.Errorf("expected no --agent flag when Agent is empty, got argv: %q", cmd.Args)
 	}
 }
 

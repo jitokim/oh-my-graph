@@ -312,6 +312,39 @@ nodes:
 	}
 }
 
+// --- node.agent threads through to the runner -------------------------------
+
+// TestScheduler_NodeAgentReachesInvocation proves a node's `agent:` YAML field
+// survives buildInvocation and arrives at the NodeRunner as
+// NodeInvocation.Agent — the plumbing that lets a node run as the user's own
+// Claude Code subagent (e.g. `agent: code-reviewer`) via ClaudeCLIRunner's
+// `--agent <name>`.
+func TestScheduler_NodeAgentReachesInvocation(t *testing.T) {
+	g := mustGraph(t, `
+name: agent-node
+nodes:
+  - { id: review, prompt: review, agent: code-reviewer }
+  - { id: plain, prompt: plain }
+`)
+	rec := &recordingRunner{
+		outcomes: map[string]runner.NodeOutcome{
+			"review": {Result: "PASS", ExitCode: 0, SessionID: "s-r"},
+			"plain":  {Result: "PASS", ExitCode: 0, SessionID: "s-p"},
+		},
+	}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got, want := rec.agentFor("review"), "code-reviewer"; got != want {
+		t.Fatalf("agent for %q node = %q, want %q", "review", got, want)
+	}
+	if got := rec.agentFor("plain"); got != "" {
+		t.Fatalf("agent for node with no agent: field = %q, want empty", got)
+	}
+}
+
 // --- gate execution is rejected in v0.1 -------------------------------------
 
 // TestScheduler_GateNodeRejected proves a graph that parses with a gate node
@@ -404,6 +437,12 @@ func (r *recordingRunner) promptFor(key string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.invoked[key].Prompt
+}
+
+func (r *recordingRunner) agentFor(key string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.invoked[key].Agent
 }
 
 // --- helpers ----------------------------------------------------------------

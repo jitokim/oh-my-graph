@@ -52,6 +52,7 @@ Node schema:
   cwd: "{{ inputs.repo }}"
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
   permission_mode: dontAsk
+  agent: code-reviewer        # optional, v0.2: run as this Claude Code subagent — see "Node-as-subagent" below
   budget_usd: 0.50            # v0.1: parsed onto the node and recorded in RunLedger; NOT enforced (no cap yet)
   handoff: artifact           # artifact(default) | session
   success_check: { exit_zero: true, result_matches: "PASS" }
@@ -70,6 +71,20 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   single session-parent (same cwd/git scope). Use for tight sequential
   continuation (dev→e2e). Validation: a node may resume AT MOST ONE session parent
   (can't merge two sessions); multi-parent fan-in MUST use artifact.
+
+## Node-as-subagent (`agent:`, v0.2 skeleton)
+A node may set `agent: <name>` (e.g. `agent: code-reviewer`) to run as the
+user's OWN Claude Code subagent instead of plain `claude -p`. The mechanism is
+one flag: `NodeInvocation.Agent` flows into `--agent <name>` on the `claude -p`
+argv, which `claude` resolves against the user's existing `~/.claude/agents`
+and `<cwd>/.claude/agents` definitions — the node then inherits that
+subagent's system prompt, tools, and model, no oh-my-graph-side agent registry
+needed. v0.1 does not validate the name exists (per-machine/per-repo, not a
+property of the graph file); an unresolvable name is a runtime fallback to
+plain claude, not a load-time error. **Follow-up (v0.3, not built here):** a
+coordinator step that scans the user's `~/.claude/agents` + `.claude/agents`
+and auto-assigns `agent:` per planned node by role, so hand-authoring this
+field becomes optional.
 
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:

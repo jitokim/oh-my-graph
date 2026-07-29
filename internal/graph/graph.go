@@ -76,6 +76,15 @@ type Node struct {
 	Handoff        string       `yaml:"handoff"`
 	SuccessCheck   SuccessCheck `yaml:"success_check"`
 	Retry          *Retry       `yaml:"retry"`
+	// Agent, when set, is the name of a Claude Code subagent this node runs
+	// as — passed through to `claude -p --agent <name>`, which resolves it
+	// against the user's own ~/.claude/agents or <cwd>/.claude/agents
+	// definitions. Any non-empty string is accepted at load time (v0.1 does
+	// not validate that the named agent exists — a missing one is a runtime
+	// fallback to plain claude, not a load-time error). Empty means "plain
+	// claude -p", the v0.1 default. See DESIGN.md for the coordinator
+	// auto-mapping this enables (v0.3, not yet built).
+	Agent string `yaml:"agent"`
 }
 
 // Graph is the validated DAG: its metadata plus the nodes and a by-id index
