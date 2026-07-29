@@ -174,14 +174,53 @@ func (g *Graph) NodeByID(id string) (Node, bool) {
 
 // Roots returns the ids of every node with no dependencies — the scheduler's
 // initial ready set. Never nil: an empty graph yields an empty slice.
+//
+// Roots is the "nothing has completed yet" case of ReadyGiven, so it is defined
+// in terms of it: there is one place that decides what "ready" means, and a
+// fresh run and a resumed run cannot drift apart on that definition.
 func (g *Graph) Roots() []string {
-	roots := make([]string, 0)
+	return g.ReadyGiven(nil)
+}
+
+// ReadyGiven returns the ids of every not-yet-completed node whose dependencies
+// are all present in done — the set that becomes runnable once the nodes in done
+// have finished. It is the topology question both a fresh run and a resume ask:
+//
+//   - Roots() is ReadyGiven(nil): with nothing completed, only nodes that have no
+//     dependencies at all are ready.
+//   - On resume, done is the set of node ids the earlier leg(s) already completed
+//     successfully, and ReadyGiven(done) is exactly the nodes whose parents are
+//     all satisfied but which have not themselves run yet — the ready set to seed
+//     the second leg with, recomputed rather than persisted so it can never go
+//     stale against the graph (see DESIGN.md, "What the snapshot must hold").
+//
+// A node already in done is never returned (it must not re-run), and the result
+// preserves the graph's declared node order so the ready set is deterministic.
+// Never nil: no ready node yields an empty slice. A nil or empty done map is
+// treated as "nothing completed".
+func (g *Graph) ReadyGiven(done map[string]bool) []string {
+	ready := make([]string, 0)
 	for _, n := range g.Nodes {
-		if len(n.DependsOn) == 0 {
-			roots = append(roots, n.ID)
+		if done[n.ID] {
+			continue
+		}
+		if dependenciesSatisfied(n.DependsOn, done) {
+			ready = append(ready, n.ID)
 		}
 	}
-	return roots
+	return ready
+}
+
+// dependenciesSatisfied reports whether every parent id is present in done. An
+// empty parent list is vacuously satisfied — which is what makes a root ready
+// under an empty done map, and thus Roots() a special case of ReadyGiven.
+func dependenciesSatisfied(parents []string, done map[string]bool) bool {
+	for _, parent := range parents {
+		if !done[parent] {
+			return false
+		}
+	}
+	return true
 }
 
 // DependentsOf returns the ids of every node that lists id in its DependsOn —

@@ -1,0 +1,312 @@
+// Package runstate owns state.json: the resumable snapshot of a run, written
+// atomically to .oh-my-graph/runs/<run-id>/state.json after every node so that a
+// gate pause, a Ctrl-C, or a crash can all be continued by a later
+// `oh-my-graph resume` (see DESIGN.md, "Gate nodes and resume", and ADR 0003).
+//
+// The snapshot is a versioned on-disk *contract*, not a live domain object, and
+// that shapes every type here:
+//
+//   - It carries a Schema version. An incompatible snapshot is refused loudly by
+//     Load rather than misread, so a format change is a visible failure, never a
+//     silent corruption.
+//   - Its field types are owned by this package, not imported from the runtime
+//     packages they mirror (ledger.Verdict, the future gate.Decision and
+//     runner.ToolPolicy). A persistence format must not change meaning because a
+//     runtime type was renamed or re-shaped without anyone bumping Schema; owning
+//     the types keeps Schema the single gate on the format. The small enums
+//     (Verdict, GateDecision) and the tool-policy struct are therefore declared
+//     locally, with string values chosen to match their runtime counterparts so
+//     the resume path's conversion is trivial and obvious.
+//   - The one exception is the graph itself, held opaquely as json.RawMessage.
+//     The Node schema is large and still growing (verify, budget, tool ceiling),
+//     and re-declaring it here would be a maintenance trap: add a field to
+//     graph.Node, forget runstate, lose it on resume. Storing the normalized
+//     graph as re-parseable JSON means new Node fields flow through untouched and
+//     the resume path reconstructs a *graph.Graph via graph.Parse(snap.Graph) —
+//     reusing the real parser, validator, and by-id index rather than a shadow
+//     copy of them. runstate never interprets those bytes.
+//
+// runstate imports only the standard library on purpose: it is the serialization
+// boundary of the engine and depends on none of the packages whose data it
+// persists, so nothing about persistence leaks into their tests.
+package runstate
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// Schema is the current state.json format version. Bump it whenever a change to
+// the types below alters the on-disk bytes in a way an older reader could
+// misinterpret; Load refuses any snapshot whose Schema does not equal this.
+const Schema = 1
+
+// Verdict is a node's terminal judgement as persisted in the snapshot. The
+// string values match ledger.Verdict so the resume path can carry a record
+// forward into a fresh ledger without a lookup table; it is redeclared here
+// rather than imported so the on-disk format is owned by this package alone.
+type Verdict string
+
+const (
+	// VerdictPass marks a node that completed and passed its success check. Only
+	// passing nodes count as "completed" for resume topology: their outputs exist
+	// on disk, so their dependents may proceed (see Snapshot.CompletedNodes).
+	VerdictPass Verdict = "PASS"
+	// VerdictFail marks a node that ran but failed a check, its budget, or the
+	// runner. It is persisted for honest cost/verdict carry-forward, but a failed
+	// node does not unblock its dependents, so it is not a completed node.
+	VerdictFail Verdict = "FAIL"
+)
+
+// GateDecision is a gate's recorded outcome. The values mirror the future
+// gate.Decision constants (approve / reject / pause) and are redeclared here for
+// the same reason as Verdict: the snapshot is the source of truth for what a
+// resumed run replays, and must not depend on a runtime type that this
+// scaffolding slice does not yet define.
+type GateDecision string
+
+const (
+	// GateApprove: the gate was approved, so its dependents may run on resume.
+	GateApprove GateDecision = "approve"
+	// GateReject: the gate was rejected, so its subtree is pruned on resume.
+	GateReject GateDecision = "reject"
+	// GatePause: the gate paused the run and is awaiting a human decision. This is
+	// the value a fresh run records for the gate it stops at.
+	GatePause GateDecision = "pause"
+)
+
+// NodeToolPolicy is the per-node execution ceiling for an auto-planned run,
+// persisted so a resumed leg re-imposes the same isolation the first leg did.
+// Resuming a planned graph without it would silently drop the Layer-1/2 guard
+// that keeps an unreviewed plan inside its bounds (see DESIGN.md, "The tool
+// ceiling"). The fields mirror the future runner.ToolPolicy one-for-one; the
+// type is local because runner.ToolPolicy does not exist in this slice and, more
+// durably, because the snapshot format should not be defined by a runtime type.
+// A hand-written `run` records no tool policies at all (its nodes run under the
+// user's own reviewed settings), so this appears only in Snapshot.ToolPolicies
+// for auto runs.
+type NodeToolPolicy struct {
+	// AllowedTools renders as --allowedTools: the scoped grant under default-deny.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// DisallowedTools renders as --disallowedTools: the residual subtractive deny.
+	DisallowedTools []string `json:"disallowed_tools,omitempty"`
+	// Tools renders as --tools, narrowing the built-in tool set. A nil slice means
+	// the flag was omitted.
+	Tools []string `json:"tools,omitempty"`
+	// SettingSources renders as --setting-sources. A nil pointer means the flag was
+	// omitted; a pointer to "" means "load none of the user's settings files",
+	// which is the load-bearing Layer-1 isolation. A pointer (not a bare string) so
+	// "omitted" and "explicitly empty" stay distinguishable across a round-trip.
+	SettingSources *string `json:"setting_sources,omitempty"`
+	// StrictMCPConfig renders as --strict-mcp-config, bounding MCP servers.
+	StrictMCPConfig bool `json:"strict_mcp_config,omitempty"`
+}
+
+// NodeRecord is one completed node's entry in the snapshot: exactly the fields a
+// resume needs that are not derivable from the graph. Its map key in
+// Snapshot.Nodes is the node id, so the id is not repeated inside the record.
+//
+// The field set is deliberately DESIGN.md's enumerated list — verdict, session
+// id, cost, duration, artifact path — and no more. The richer per-node shape
+// (budget delta, failure detail) that #8 and #7 add to ledger.Record is left for
+// the follow-up PR that lands the full gate/resume wiring, at which point Schema
+// bumps; pinning the schema to a moving target now would buy a migration on day
+// one (see DESIGN.md, "Implementation sequencing", #9).
+type NodeRecord struct {
+	// Verdict is the node's terminal judgement. Only VerdictPass nodes are treated
+	// as completed for resume topology.
+	Verdict Verdict `json:"verdict"`
+	// SessionID is the claude session id the node ran under. This is the one datum
+	// resume cannot recompute: without it a handoff: session child cannot --resume
+	// its parent on the second leg, because the id lived only in Handoff.sessions
+	// in memory on the first leg. Handoff.Seed reads it back out of here.
+	SessionID string `json:"session_id"`
+	// CostUSD is the node's reported spend, carried forward so the resumed leg's
+	// total does not understate what the run has already cost across processes.
+	CostUSD float64 `json:"cost_usd"`
+	// Duration is the node's wall-clock run time. It serializes as an integer
+	// nanosecond count (time.Duration's underlying type), so it round-trips
+	// losslessly even though it is not human-readable in the file.
+	Duration time.Duration `json:"duration"`
+	// ArtifactPath is the on-disk path of the node's persisted .result — the same
+	// file {{ artifacts.<id> }} targets. The .out files are not copied into the
+	// snapshot; the snapshot only remembers where they are, and Handoff.Seed
+	// rehydrates the path so a resumed dependent still resolves it.
+	ArtifactPath string `json:"artifact_path"`
+}
+
+// GateState records the run's progress through its gates: what has been decided
+// and where, if anywhere, the run is currently parked.
+type GateState struct {
+	// PausedAt is the id of the gate the run is paused at, or "" when the snapshot
+	// was written at a point that is not a gate pause (after an ordinary node, or
+	// on a completed run). resume reports this gate when a bare `resume` gives it
+	// no --approve/--reject to apply.
+	PausedAt string `json:"paused_at,omitempty"`
+	// Decisions is every gate decision made so far, keyed by gate node id. The
+	// resume path's RecordedController replays these; a gate absent from the map is
+	// still undecided. nil when no gate has been decided yet.
+	Decisions map[string]GateDecision `json:"decisions,omitempty"`
+}
+
+// Snapshot is the whole resumable state of a run — everything a second
+// `oh-my-graph` process needs to continue where the first left off, and nothing
+// that can be recomputed from it. In particular it does NOT hold in-degree counts
+// or the ready set: both are derived from graph × completed nodes and are
+// recomputed on resume via graph.ReadyGiven, so persisting them would create a
+// second source of truth that could go stale (DESIGN.md, "What the snapshot must
+// hold"; ADR 0003, "deliberately does not hold").
+type Snapshot struct {
+	// Schema is the format version. Write stamps it to the current Schema constant,
+	// so a caller need not set it; Load refuses a snapshot whose value differs.
+	Schema int `json:"schema"`
+	// RunID is the run this snapshot belongs to (the <run-id> in its path). Held in
+	// the file too so a snapshot is self-identifying if copied out of its directory.
+	RunID string `json:"run_id"`
+
+	// GraphSourcePath is where the graph was originally loaded from — the .yaml for
+	// a hand-written `run`, or the generated graph.json for an auto run. It is
+	// informational: resume reconstructs the graph from Graph below, NOT by
+	// re-reading this path, because the artifacts already on disk were produced by
+	// the graph as it was, not as the file may since have been edited.
+	GraphSourcePath string `json:"graph_source_path,omitempty"`
+	// GraphSHA256 is the hex SHA-256 of the original source bytes. It exists so a
+	// resume can warn out loud when GraphSourcePath has changed on disk since the
+	// snapshot was taken, rather than silently ignoring the edit (ADR 0003).
+	GraphSHA256 string `json:"graph_sha256,omitempty"`
+	// Graph is the normalized DAG as re-parseable JSON (a YAML subset). runstate
+	// stores it opaquely and never interprets it; the resume path reconstructs a
+	// *graph.Graph with graph.Parse(snap.Graph). Held as bytes rather than a typed
+	// field so that adding a field to graph.Node never forces a change here.
+	Graph json.RawMessage `json:"graph"`
+
+	// Inputs is the run's --input bindings. Persisted because resume rejects
+	// --input on the command line: changing an input mid-run would make the prompts
+	// that produced the already-persisted artifacts inconsistent with the run.
+	Inputs map[string]string `json:"inputs,omitempty"`
+	// ContinueOnFail is the --continue-on-fail flag as the run was launched with it.
+	// It changes what a node failure means (prune a subtree vs. halt), so a resume
+	// must honor the same choice the first leg ran under, not a fresh default.
+	ContinueOnFail bool `json:"continue_on_fail,omitempty"`
+	// ToolPolicies is the per-node execution ceiling for an auto run, keyed by node
+	// id. nil for a hand-written `run`, whose nodes run under the user's own
+	// settings. Resuming an auto run without it would drop the whole planned-node
+	// guard (see NodeToolPolicy).
+	ToolPolicies map[string]NodeToolPolicy `json:"tool_policies,omitempty"`
+
+	// Nodes is the per-node completion record, keyed by node id. Every node that
+	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
+	// derives the resume-topology "done" set from it.
+	Nodes map[string]NodeRecord `json:"nodes,omitempty"`
+	// Gate is the run's gate progress: decisions so far and the gate it is paused
+	// at, if any.
+	Gate GateState `json:"gate"`
+}
+
+// CompletedNodes returns the set of node ids that have completed successfully —
+// the ones whose dependents may proceed — in the shape graph.ReadyGiven expects.
+// A node counts as completed only when its record's verdict is VerdictPass: a
+// failed node ran but did not unblock anything downstream, so it must not seed
+// the next leg's ready set. Never nil.
+func (s Snapshot) CompletedNodes() map[string]bool {
+	done := make(map[string]bool, len(s.Nodes))
+	for id, rec := range s.Nodes {
+		if rec.Verdict == VerdictPass {
+			done[id] = true
+		}
+	}
+	return done
+}
+
+// SchemaMismatchError is returned by Load when a snapshot's Schema does not match
+// the running binary's Schema constant. It names the path and both versions so
+// the CLI can tell the user exactly why an old run cannot be resumed by a newer
+// (or older) build, instead of failing on a confusing downstream decode error.
+type SchemaMismatchError struct {
+	Path  string
+	Found int
+	Want  int
+}
+
+func (e *SchemaMismatchError) Error() string {
+	return fmt.Sprintf(
+		"snapshot %q has schema version %d, but this build understands version %d; "+
+			"it was written by an incompatible version of oh-my-graph and cannot be resumed",
+		e.Path, e.Found, e.Want,
+	)
+}
+
+// Write persists s to path atomically: it marshals first, writes the bytes to a
+// temp file in the destination directory, fsyncs and closes it, then renames it
+// over path. A rename within one directory is atomic on POSIX, so a reader of
+// path always sees either the previous good snapshot or the complete new one,
+// never a half-written file — which is what makes a snapshot safe to overwrite
+// after every node, and what makes an interrupted write non-destructive.
+//
+// Marshaling happens before anything on disk is touched, so a snapshot that
+// cannot be encoded (e.g. a Graph holding invalid JSON) fails without disturbing
+// an existing good file at path. Write stamps s.Schema to the current Schema
+// constant, so the caller cannot accidentally persist a wrong version.
+func Write(path string, s Snapshot) error {
+	s.Schema = Schema
+
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode snapshot: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create run dir %q: %w", dir, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp snapshot in %q: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup of the temp file on any failure before the rename; after
+	// a successful rename there is nothing left to remove.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp snapshot %q: %w", tmpName, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp snapshot %q: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp snapshot %q: %w", tmpName, err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("commit snapshot to %q: %w", path, err)
+	}
+	return nil
+}
+
+// Load reads and decodes the snapshot at path. It refuses a snapshot whose Schema
+// does not match this build's Schema constant with a *SchemaMismatchError, so an
+// incompatible format is a clear, named failure rather than a misread. A missing
+// file or malformed JSON is returned wrapped, never as a zero Snapshot with a nil
+// error.
+func Load(path string) (Snapshot, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read snapshot %q: %w", path, err)
+	}
+
+	var s Snapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return Snapshot{}, fmt.Errorf("decode snapshot %q: %w", path, err)
+	}
+	if s.Schema != Schema {
+		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema}
+	}
+	return s, nil
+}
