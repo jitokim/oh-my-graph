@@ -1,8 +1,10 @@
 package schedule
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -26,8 +28,13 @@ func mustGraph(t *testing.T, yaml string) *graph.Graph {
 }
 
 // newHarness wires a scheduler run against a runner with a temp run directory.
+// It defaults ProgressWriter to io.Discard so tests stay quiet and
+// deterministic; pass opts.ProgressWriter explicitly to inspect the live feed.
 func newHarness(t *testing.T, nodeRunner runner.NodeRunner, opts Options) (*Scheduler, *handoff.Handoff, *ledger.RunLedger) {
 	t.Helper()
+	if opts.ProgressWriter == nil {
+		opts.ProgressWriter = io.Discard
+	}
 	h := handoff.New(t.TempDir(), nil)
 	led := ledger.New("test")
 	return NewScheduler(nodeRunner, opts), h, led
@@ -333,6 +340,41 @@ nodes:
 	}
 	if !strings.Contains(err.Error(), "approve") {
 		t.Fatalf("halt error should name the gate node: %v", err)
+	}
+}
+
+// --- live progress feed ------------------------------------------------------
+
+// TestScheduler_ProgressWriter_EmitsPassAndFailLines proves the scheduler
+// writes one live line per terminal node event to the injected ProgressWriter,
+// so a long-running graph doesn't leave the terminal looking dead before the
+// final ledger table prints. The failing node is asserted first.
+func TestScheduler_ProgressWriter_EmitsPassAndFailLines(t *testing.T) {
+	g := mustGraph(t, `
+name: progress
+nodes:
+  - { id: bad, prompt: bad, success_check: { exit_zero: true } }
+  - { id: good, prompt: good }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"bad":  {Result: "x", ExitCode: 1},
+		"good": pass("s-good", 0.05),
+	})
+	var buf bytes.Buffer
+	s, h, led := newHarness(t, fake, Options{ContinueOnFail: true, ProgressWriter: &buf})
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+
+	feed := buf.String()
+	if !strings.Contains(feed, "✗ bad  FAILED:") {
+		t.Errorf("progress feed missing the failing node's FAILED line: %q", feed)
+	}
+	if !strings.Contains(feed, "✓ good  PASS") {
+		t.Errorf("progress feed missing the passing node's PASS line: %q", feed)
 	}
 }
 
