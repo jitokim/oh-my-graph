@@ -106,6 +106,36 @@ func TestPlan_MakesExactlyOneReadOnlyCallCarryingGoalAndInputs(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptRequiresBranchAssertionInCheckNodes pins the planner guidance
+// that closes a real PASS-on-wrong-branch bug: a planned write node ran
+// 'git checkout -b X', switched back to the default branch, and committed
+// there — and the check node still PASSed, because nothing ever asserted which
+// branch HEAD was on. A planned node may not use success_check.verify
+// (TestPlan_RejectsNodeThatSetsVerify), so the assertion has to live in the
+// check node's own prompt gated by result_matches, and the planner prompt is
+// the seam that demands it. This is guidance to an untrusted producer, not
+// enforcement — but dropping it silently reintroduces the bug, so its
+// load-bearing pieces are pinned here.
+func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "fix the bug and commit on a new branch", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the command that proves which branch HEAD is actually on
+		"git rev-parse --abbrev-ref HEAD",
+		// the assertion that the commit did not land on the default branch
+		"default branch",
+		// the gate that turns a failed assertion into a failed node
+		`"success_check": {"result_matches": "PASS"}`,
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost the branch-assertion guidance: missing %q", want)
+		}
+	}
+}
+
 func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 	reply := "Here is the graph:\n```json\n" + validSpec + "\n```\nGood luck!"
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})
