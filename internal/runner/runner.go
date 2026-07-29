@@ -30,6 +30,15 @@ type NodeInvocation struct {
 	ResumeSession   string
 	AllowedTools    []string
 	DisallowedTools []string
+	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none.
+	// A positive value is passed to claude as --max-budget-usd, which makes the
+	// CLI abort THIS invocation the moment its own running spend crosses the
+	// budget — a real mid-run cost kill, on top of (not replacing) the
+	// scheduler's post-hoc ledger check. The bound is per `claude -p` process,
+	// so it maps onto oh-my-graph's per-node budget even for a session-resume
+	// node (a resumed run does not re-count the parent session's spend). A
+	// non-positive value adds no flag and leaves the argv unchanged.
+	BudgetUSD float64
 }
 
 // NodeOutcome is the parsed result of one node run: the claude session id (for
@@ -40,6 +49,13 @@ type NodeOutcome struct {
 	Result       string
 	TotalCostUSD float64
 	ExitCode     int
+	// BudgetExhausted is true when claude aborted the run because its own
+	// --max-budget-usd cap was reached (envelope subtype error_max_budget_usd).
+	// It is a budget failure, not the generic non-zero exit its ExitCode would
+	// otherwise be read as: the Scheduler turns it into a *NodeBudgetError so it
+	// shares the post-hoc check's budget_exceeded retry token and ledger
+	// language instead of being retried by a plain nonzero_exit policy.
+	BudgetExhausted bool
 }
 
 // NodeRunner runs one node to completion and returns its outcome. A non-nil

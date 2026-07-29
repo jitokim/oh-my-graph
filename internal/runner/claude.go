@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -110,12 +111,15 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // buildArgs is the argv (excluding the binary) for a node:
 //
 //	-p <prompt> --output-format json --permission-mode <mode>
+//	  [--max-budget-usd <amount>]
 //	  --allowedTools "<comma,joined>" --disallowedTools "<comma,joined>"
 //	  [--resume <session_id>]
 //
 // Never --bare (disables OAuth) and never --no-session-persistence (fleetops
 // observes the transcripts). Each optional flag is added only when its field is
-// set: --allowedTools when tools are configured, --disallowedTools when a
+// set: --max-budget-usd when a positive budget_usd is declared (claude then
+// kills the run itself once its own spend crosses it — see NodeInvocation.
+// BudgetUSD), --allowedTools when tools are configured, --disallowedTools when a
 // caller imposed an execution ceiling (auto mode does; hand-written graphs
 // leave it empty and their argv is unchanged), --resume when resuming a
 // session-parent.
@@ -124,6 +128,12 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 		"-p", spec.Prompt,
 		"--output-format", "json",
 		"--permission-mode", spec.PermissionMode,
+	}
+	if spec.BudgetUSD > 0 {
+		// 'f' with -1 precision renders the minimal round-tripping decimal
+		// (0.5 -> "0.5", 0.001 -> "0.001") and never scientific notation, which
+		// a very small budget would otherwise produce.
+		args = append(args, "--max-budget-usd", strconv.FormatFloat(spec.BudgetUSD, 'f', -1, 64))
 	}
 	if len(spec.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(spec.AllowedTools, ","))
@@ -161,12 +171,22 @@ func isScrubbed(kv string) bool {
 	return false
 }
 
+// budgetExhaustedSubtype is the envelope subtype claude prints when its
+// --max-budget-usd cap aborts a run mid-flight (observed on claude 2.1.220:
+// exit code 1, a full JSON envelope with this subtype, total_cost_usd at or
+// above the budget, and no result). parseEnvelope maps it to
+// NodeOutcome.BudgetExhausted so the Scheduler can name it a budget failure
+// rather than a generic non-zero exit.
+const budgetExhaustedSubtype = "error_max_budget_usd"
+
 // claudeEnvelope is the JSON oh-my-graph reads from `claude --output-format
-// json`: the session id, the final result text, and the reported cost.
+// json`: the session id, the final result text, the reported cost, and the
+// terminal subtype (used only to detect a --max-budget-usd abort).
 type claudeEnvelope struct {
 	SessionID    string  `json:"session_id"`
 	Result       string  `json:"result"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
+	Subtype      string  `json:"subtype"`
 }
 
 // Run executes one node under a per-node timeout, then parses its JSON envelope.
@@ -225,8 +245,9 @@ func parseEnvelope(stdout []byte) (NodeOutcome, error) {
 		}
 	}
 	return NodeOutcome{
-		SessionID:    env.SessionID,
-		Result:       env.Result,
-		TotalCostUSD: env.TotalCostUSD,
+		SessionID:       env.SessionID,
+		Result:          env.Result,
+		TotalCostUSD:    env.TotalCostUSD,
+		BudgetExhausted: env.Subtype == budgetExhaustedSubtype,
 	}, nil
 }

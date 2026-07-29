@@ -217,8 +217,18 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			return s.recordFail(led, node, "", 0, time.Since(start), runErr)
 		}
 
-		verdictErr := evaluateSuccessCheck(node, outcome)
-		if verdictErr == nil {
+		var verdictErr error
+		if outcome.BudgetExhausted {
+			// claude's own --max-budget-usd killed this node the moment its
+			// running spend crossed budget_usd — a real mid-run cost kill. It
+			// is a budget failure, so it takes the exact same *NodeBudgetError
+			// path (and budget_exceeded retry token) as the post-hoc check
+			// below, not the generic nonzero_exit its exit code would produce.
+			// There is nothing to persist: the run was interrupted before a
+			// result existed (unlike a post-hoc overspend, which completed and
+			// keeps its artifact).
+			verdictErr = &NodeBudgetError{NodeID: node.ID, BudgetUSD: node.BudgetUSD, ActualUSD: outcome.TotalCostUSD}
+		} else if verdictErr = evaluateSuccessCheck(node, outcome); verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
 				return s.recordFail(led, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
 			}
@@ -300,6 +310,7 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 		ResumeSession:   resume,
 		AllowedTools:    node.AllowedTools,
 		DisallowedTools: s.disallowedTools[node.ID],
+		BudgetUSD:       node.BudgetUSD,
 	}, nil
 }
 

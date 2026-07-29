@@ -403,6 +403,92 @@ nodes:
 	}
 }
 
+// --- budget_usd enforcement (native mid-run kill via --max-budget-usd) -------
+
+// budgetKilled is a scripted outcome shaped like claude's own --max-budget-usd
+// abort: a non-zero exit, the cost already spent, and BudgetExhausted set (which
+// the real runner derives from the error_max_budget_usd envelope subtype). There
+// is no result — the run was cut off before producing one.
+func budgetKilled(sessionID string, spent float64) runner.NodeOutcome {
+	return runner.NodeOutcome{SessionID: sessionID, Result: "", TotalCostUSD: spent, ExitCode: 1, BudgetExhausted: true}
+}
+
+// TestScheduler_NativeBudgetKillHaltsAsBudgetFailure proves a node that claude
+// itself aborted for crossing --max-budget-usd fails as a *NodeBudgetError — not
+// as the generic exit_zero failure its non-zero exit code would otherwise be —
+// so the run halts naming it, the ledger row explains the overspend, its
+// dependent never starts, and (unlike a post-hoc overspend) no artifact is left
+// behind, because the run was interrupted before a result existed.
+func TestScheduler_NativeBudgetKillHaltsAsBudgetFailure(t *testing.T) {
+	g := mustGraph(t, `
+name: native-kill
+nodes:
+  - { id: spendy, prompt: spendy, budget_usd: 0.10 }
+  - { id: child, prompt: child, depends_on: [spendy] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": budgetKilled("s-spendy", 0.48),
+		"child":  pass("s-child", 0.01),
+	})
+	runDir := t.TempDir()
+	h := handoff.New(runDir, nil)
+	led := ledger.New("test")
+	s := NewScheduler(fake, Options{ProgressWriter: io.Discard})
+
+	err := s.Run(context.Background(), g, h, led)
+
+	var halt *HaltError
+	if !errors.As(err, &halt) || halt.NodeID != "spendy" {
+		t.Fatalf("expected *HaltError naming spendy, got %T: %v", err, err)
+	}
+	var budgetErr *NodeBudgetError
+	if !errors.As(err, &budgetErr) {
+		t.Fatalf("a native budget kill must surface as *NodeBudgetError, got %T: %v", err, err)
+	}
+	if budgetErr.BudgetUSD != 0.10 || budgetErr.ActualUSD != 0.48 {
+		t.Errorf("budget error = %+v, want budgeted 0.10 / actual 0.48", budgetErr)
+	}
+	if indexOf(fake.Calls(), "child") != -1 {
+		t.Errorf("dependent of a budget-killed node must never run; calls=%v", fake.Calls())
+	}
+
+	rec := findRecord(led, "spendy")
+	if rec.Verdict != ledger.VerdictFail || !strings.Contains(rec.Detail, "exceeded budget_usd") {
+		t.Errorf("record = %+v, want FAIL naming the overspend", rec)
+	}
+	if _, statErr := os.Stat(filepath.Join(runDir, "spendy.out")); !os.IsNotExist(statErr) {
+		t.Errorf("an interrupted budget-killed node has no result to persist; stat err = %v", statErr)
+	}
+}
+
+// TestScheduler_NativeBudgetKillIgnoresNonzeroExitRetryPolicy is the retry-token
+// guard for the native path: even though the kill exits non-zero, a pre-existing
+// `retry: { on: [nonzero_exit] }` policy must NOT re-run it — retrying a
+// budget-killed node spends the money again. It shares the post-hoc check's
+// budget_exceeded token, so only an explicit opt-in retries it.
+func TestScheduler_NativeBudgetKillIgnoresNonzeroExitRetryPolicy(t *testing.T) {
+	g := mustGraph(t, `
+name: native-kill-no-retry
+nodes:
+  - id: spendy
+    prompt: spendy
+    budget_usd: 0.10
+    retry: { max: 2, on: [nonzero_exit, result_mismatch] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": budgetKilled("s-spendy", 0.48),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the budget-killed node to fail the run")
+	}
+	if got := fake.InvocationCount("spendy"); got != 1 {
+		t.Fatalf("spendy invoked %d times, want 1 — a native budget kill must not "+
+			"be retried under a nonzero_exit policy", got)
+	}
+}
+
 // TestScheduler_BudgetBoundaries proves the enforcement edges: under budget and
 // exactly at budget both pass, and a node that declares no budget_usd is never
 // enforced no matter what it costs.
