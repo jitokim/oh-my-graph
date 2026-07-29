@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,20 +179,20 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 
 // runNode executes one node under the run policy and records exactly one ledger
 // row for it. It returns nil on success, or the failure (a gate refusal, an
-// interpolation error, a runner error, or a *NodeCheckError) after retries are
-// exhausted.
+// interpolation error, a runner error, a *NodeCheckError, or a *NodeBudgetError)
+// after retries are exhausted.
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger) error {
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 
 	if node.Type == graph.TypeGate {
 		err := s.gate.Evaluate(ctx, node)
-		return s.recordFail(led, node.ID, "", 0, time.Since(start), err)
+		return s.recordFail(led, node, "", 0, time.Since(start), err)
 	}
 
 	invocation, err := s.buildInvocation(node, h)
 	if err != nil {
-		return s.recordFail(led, node.ID, "", 0, time.Since(start), err)
+		return s.recordFail(led, node, "", 0, time.Since(start), err)
 	}
 
 	attempts := 1
@@ -213,23 +214,30 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				s.logProgress("↻ %s  retry\n", node.ID)
 				continue
 			}
-			return s.recordFail(led, node.ID, "", 0, time.Since(start), runErr)
+			return s.recordFail(led, node, "", 0, time.Since(start), runErr)
 		}
 
-		checkErr := evaluateSuccessCheck(node, outcome)
-		if checkErr == nil {
+		verdictErr := evaluateSuccessCheck(node, outcome)
+		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
-				return s.recordFail(led, node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
+				return s.recordFail(led, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
 			}
-			return s.recordPass(led, node.ID, outcome, time.Since(start), attempt)
+			// Budget is judged only after the output has been persisted, so a
+			// node that did useful work before blowing its budget still leaves
+			// its artifact on disk for dependents and for inspection. Handoff
+			// semantics are untouched here — only the pass/fail verdict is.
+			verdictErr = evaluateBudget(node, outcome)
+			if verdictErr == nil {
+				return s.recordPass(led, node, outcome, time.Since(start), attempt)
+			}
 		}
 
-		lastErr = checkErr
-		if s.shouldRetry(node, attempt, attempts, causeFromCheck(checkErr)) {
+		lastErr = verdictErr
+		if s.shouldRetry(node, attempt, attempts, causeFromCheck(verdictErr)) {
 			s.logProgress("↻ %s  retry\n", node.ID)
 			continue
 		}
-		return s.recordFail(led, node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), checkErr)
+		return s.recordFail(led, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), verdictErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -239,17 +247,17 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 // recordFail writes the node's live "✗ FAILED" progress line and its ledger
 // row, then returns cause so callers can `return s.recordFail(...)` directly.
-func (s *Scheduler) recordFail(led *ledger.RunLedger, nodeID, sessionID string, cost float64, duration time.Duration, cause error) error {
-	s.logProgress("✗ %s  FAILED: %s\n", nodeID, cause.Error())
-	led.Record(failRecord(nodeID, sessionID, cost, duration, cause))
+func (s *Scheduler) recordFail(led *ledger.RunLedger, node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) error {
+	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
+	led.Record(failRecord(node, sessionID, cost, duration, cause))
 	return cause
 }
 
 // recordPass writes the node's live "✓ PASS" progress line and its ledger row,
 // then returns nil so callers can `return s.recordPass(...)` directly.
-func (s *Scheduler) recordPass(led *ledger.RunLedger, nodeID string, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
-	s.logProgress("✓ %s  %s  $%.4f  %s\n", nodeID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
-	led.Record(passRecord(nodeID, outcome, duration, attempt))
+func (s *Scheduler) recordPass(led *ledger.RunLedger, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
+	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
+	led.Record(passRecord(node, outcome, duration, attempt))
 	return nil
 }
 
@@ -357,6 +365,25 @@ func evaluateSuccessCheck(node graph.Node, outcome runner.NodeOutcome) error {
 	return nil
 }
 
+// evaluateBudget applies a node's budget_usd to the cost it actually reported,
+// returning nil when the node stayed within budget (or declared none) and a
+// *NodeBudgetError when it overspent. "Exceeds" is strictly greater than, so a
+// node landing exactly on its budget passes; no tolerance is invented on top.
+// A non-positive budget_usd means "no budget declared" and is never enforced.
+//
+// This check is necessarily post-hoc — see NodeBudgetError for why a mid-run
+// cost kill is not implementable against the current runner contract.
+func evaluateBudget(node graph.Node, outcome runner.NodeOutcome) error {
+	if node.BudgetUSD <= 0 || outcome.TotalCostUSD <= node.BudgetUSD {
+		return nil
+	}
+	return &NodeBudgetError{
+		NodeID:    node.ID,
+		BudgetUSD: node.BudgetUSD,
+		ActualUSD: outcome.TotalCostUSD,
+	}
+}
+
 // causeFromRunError maps a runner error to a retry cause token. An unparseable
 // output is "output_error"; anything else (spawn failure, context) is
 // "run_error". Non-zero exits never reach here — the runner returns those inside
@@ -369,10 +396,19 @@ func causeFromRunError(err error) string {
 	return "run_error"
 }
 
-// causeFromCheck maps a failed success_check to a retry cause token: a failed
-// exit_zero predicate is "nonzero_exit"; a failed result_matches is
-// "result_mismatch".
+// causeFromCheck maps a failed verdict to a retry cause token: a blown
+// budget_usd is "budget_exceeded"; a failed result_matches is "result_mismatch";
+// a failed exit_zero predicate is "nonzero_exit".
+//
+// budget_exceeded is deliberately its own token rather than folding into the
+// "nonzero_exit" fallback: retrying a node that has already overspent spends
+// that money again, so it must be an explicit, informed opt-in
+// (retry: { on: [budget_exceeded] }) that no pre-existing graph can trip into.
 func causeFromCheck(err error) string {
+	var budgetErr *NodeBudgetError
+	if asErr(err, &budgetErr) {
+		return "budget_exceeded"
+	}
 	var checkErr *NodeCheckError
 	if asErr(err, &checkErr) && checkErr.Predicate == "result_matches" {
 		return "result_mismatch"
@@ -382,29 +418,41 @@ func causeFromCheck(err error) string {
 
 // passRecord / failRecord build the single ledger row for a node's terminal
 // result, keeping the record shape in one place.
-func passRecord(nodeID string, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
-	detail := ""
-	if attempt > 0 {
-		detail = fmt.Sprintf("passed after %d retr%s", attempt, plural(attempt))
-	}
-	return ledger.Record{
-		NodeID:    nodeID,
+func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
+	rec := ledger.Record{
+		NodeID:    node.ID,
 		SessionID: outcome.SessionID,
 		CostUSD:   outcome.TotalCostUSD,
+		BudgetUSD: node.BudgetUSD,
 		Verdict:   ledger.VerdictPass,
 		Duration:  duration,
-		Detail:    detail,
 	}
+
+	var notes []string
+	if attempt > 0 {
+		notes = append(notes, fmt.Sprintf("passed after %d retr%s", attempt, plural(attempt)))
+	}
+	// A passing node is by definition within budget, so the delta is <= 0 here;
+	// reporting the headroom is what makes "ran at 99% of budget" visible in the
+	// table instead of only showing up once a node has already blown it.
+	if delta, declared := rec.BudgetDeltaUSD(); declared {
+		notes = append(notes, fmt.Sprintf("under budget by $%.4f", -delta))
+	}
+	rec.Detail = strings.Join(notes, "; ")
+	return rec
 }
 
-func failRecord(nodeID, sessionID string, cost float64, duration time.Duration, cause error) ledger.Record {
+func failRecord(node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) ledger.Record {
 	return ledger.Record{
-		NodeID:    nodeID,
+		NodeID:    node.ID,
 		SessionID: sessionID,
 		CostUSD:   cost,
+		BudgetUSD: node.BudgetUSD,
 		Verdict:   ledger.VerdictFail,
 		Duration:  duration,
-		Detail:    cause.Error(),
+		// A *NodeBudgetError already spells out budgeted-vs-actual and the
+		// overage, so the failing path needs no separate budget note.
+		Detail: cause.Error(),
 	}
 }
 

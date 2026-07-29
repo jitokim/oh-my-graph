@@ -37,8 +37,19 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
 - **Success checks and retry.** `success_check` (`exit_zero`,
   `result_matches` regex) gates whether a node counts as passed. `retry`
   re-runs a failed node up to a flat `max`, always in a fresh session.
+- **Post-hoc `budget_usd` enforcement.** A node whose actual cost exceeds its
+  declared `budget_usd` now fails exactly like a failed `success_check`
+  (`NodeBudgetError`, ledger `FAIL` carrying budgeted-vs-actual, halt-on-fail by
+  default) so its dependents never start. Output is persisted before the budget
+  verdict, so an over-budget node keeps its artifact. Its retry cause token is
+  `budget_exceeded`, distinct from `nonzero_exit` so an existing retry policy
+  cannot re-spend a blown budget by accident. Enforcement is post-hoc only —
+  see "Deferred" for why a mid-node kill isn't possible yet.
 - **`RunLedger`.** End-of-run table (session id, cost, verdict, duration per
-  node) plus the total cost across the run.
+  node) plus the total cost across the run. Each record also carries the node's
+  declared `budget_usd`, so the budget-vs-actual delta is derivable per node
+  (`Record.BudgetDeltaUSD`); passing nodes report their remaining headroom in
+  the `DETAIL` column.
 - **CLI:** `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]`.
 - **Auto mode.** `oh-my-graph auto "<goal>" [--input k=v ...]` plans a graph
   from a plain-language goal instead of hand-written YAML: a coordinator makes
@@ -61,5 +72,10 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   execution rejected with a clear "not yet implemented").
 - Retry policies beyond a flat `max`; any graph DSL beyond `depends_on`.
 - A TUI/dashboard — that's [fleetops](https://github.com/jitokim/fleetops)'s job.
-- Mid-node budget kill (v0.1 records cost and halts only *subsequent* nodes).
+- Mid-node budget kill. `budget_usd` is enforced post-hoc (an over-budget node
+  fails and halts the run, so *subsequent* nodes never spend), but a node cannot
+  be cancelled while it is still overspending — `claude` reports
+  `total_cost_usd` only in the envelope it prints at exit. Doing it honestly
+  needs streaming cost from the runner; a budget-derived wall-clock timeout was
+  rejected as fake enforcement.
 - Worktree auto-creation for parallel edits.

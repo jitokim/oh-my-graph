@@ -40,7 +40,7 @@ nodes:
       failing step if any.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
-    budget_usd: 0.50  # recorded in the RunLedger only — v0.1 does not enforce a cap
+    budget_usd: 0.50  # post-hoc cap: this node FAILS (and halts the run) if it costs more
     handoff: session
     success_check: { exit_zero: true, result_matches: "PASS" }
     retry: { max: 1, on: [nonzero_exit] }

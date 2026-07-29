@@ -26,11 +26,25 @@ type Record struct {
 	NodeID    string
 	SessionID string
 	CostUSD   float64
+	// BudgetUSD is the budget_usd the node declared, or 0 when it declared none.
+	// Recorded next to CostUSD so the budget-vs-actual delta is derivable from a
+	// Record alone, without consulting the graph it came from.
+	BudgetUSD float64
 	Verdict   Verdict
 	Duration  time.Duration
-	// Detail is a short human note — the failing predicate, the retry count, or
-	// empty on a clean pass.
+	// Detail is a short human note — the failing predicate, the retry count, the
+	// budget delta, or empty on a clean pass with no budget declared.
 	Detail string
+}
+
+// BudgetDeltaUSD reports how far the node's actual cost landed from its declared
+// budget (positive = over, negative = under) and whether there was a budget to
+// compare against at all. A node with no budget_usd has no delta to report.
+func (r Record) BudgetDeltaUSD() (delta float64, declared bool) {
+	if r.BudgetUSD <= 0 {
+		return 0, false
+	}
+	return r.CostUSD - r.BudgetUSD, true
 }
 
 // RunLedger accumulates records across concurrently-running nodes and renders

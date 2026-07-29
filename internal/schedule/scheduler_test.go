@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -316,6 +318,249 @@ nodes:
 	readerPrompt := rec.promptFor("reader")
 	if !strings.Contains(readerPrompt, "writer.out") {
 		t.Fatalf("reader prompt was not interpolated with the artifact path: %q", readerPrompt)
+	}
+}
+
+// --- budget_usd enforcement (post-hoc) --------------------------------------
+
+// TestScheduler_BudgetExceededHaltsRun proves a node whose actual cost exceeds
+// its declared budget_usd fails exactly like a failed success_check: the run
+// halts with a *HaltError naming it, the ledger row is FAIL, and its dependent
+// never starts. This is the post-hoc guarantee — the overspend already happened,
+// what enforcement buys is that nothing downstream spends on top of it.
+func TestScheduler_BudgetExceededHaltsRun(t *testing.T) {
+	g := mustGraph(t, `
+name: over-budget
+nodes:
+  - { id: spendy, prompt: spendy, budget_usd: 0.10 }
+  - { id: child, prompt: child, depends_on: [spendy] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": pass("s-spendy", 0.25),
+		"child":  pass("s-child", 0.01),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	err := s.Run(context.Background(), g, h, led)
+
+	var halt *HaltError
+	if !errors.As(err, &halt) {
+		t.Fatalf("expected *HaltError, got %T: %v", err, err)
+	}
+	if halt.NodeID != "spendy" {
+		t.Fatalf("halt named node %q, want spendy", halt.NodeID)
+	}
+	var budgetErr *NodeBudgetError
+	if !errors.As(err, &budgetErr) {
+		t.Fatalf("expected halt to wrap *NodeBudgetError, got %T: %v", err, err)
+	}
+	if budgetErr.BudgetUSD != 0.10 || budgetErr.ActualUSD != 0.25 {
+		t.Errorf("budget error = %+v, want budgeted 0.10 / actual 0.25", budgetErr)
+	}
+	if indexOf(fake.Calls(), "child") != -1 {
+		t.Errorf("dependent of an over-budget node must never run; calls=%v", fake.Calls())
+	}
+
+	rec := findRecord(led, "spendy")
+	if rec.Verdict != ledger.VerdictFail {
+		t.Errorf("spendy verdict = %s, want FAIL", rec.Verdict)
+	}
+	if rec.BudgetUSD != 0.10 {
+		t.Errorf("record BudgetUSD = %v, want 0.10", rec.BudgetUSD)
+	}
+	if !strings.Contains(rec.Detail, "exceeded budget_usd") {
+		t.Errorf("detail should explain the overspend, got %q", rec.Detail)
+	}
+}
+
+// TestScheduler_BudgetExceededStillPersistsArtifact proves a node that produced a
+// real result before blowing its budget still leaves that artifact on disk. The
+// budget verdict changes pass/fail only — it does not retract handoff output.
+func TestScheduler_BudgetExceededStillPersistsArtifact(t *testing.T) {
+	g := mustGraph(t, `
+name: over-budget-artifact
+nodes:
+  - { id: spendy, prompt: spendy, budget_usd: 0.10 }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": {Result: "useful-work-done", ExitCode: 0, SessionID: "s-spendy", TotalCostUSD: 0.25},
+	})
+	runDir := t.TempDir()
+	h := handoff.New(runDir, nil)
+	led := ledger.New("test")
+	s := NewScheduler(fake, Options{ProgressWriter: io.Discard})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the over-budget node to fail the run")
+	}
+
+	got, err := os.ReadFile(filepath.Join(runDir, "spendy.out"))
+	if err != nil {
+		t.Fatalf("artifact should survive a budget failure: %v", err)
+	}
+	if string(got) != "useful-work-done" {
+		t.Fatalf("artifact content = %q, want the node's result", got)
+	}
+}
+
+// TestScheduler_BudgetBoundaries proves the enforcement edges: under budget and
+// exactly at budget both pass, and a node that declares no budget_usd is never
+// enforced no matter what it costs.
+func TestScheduler_BudgetBoundaries(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		cost    float64
+		wantErr bool
+	}{
+		{name: "under budget passes", yaml: "budget_usd: 0.50", cost: 0.20},
+		{name: "exactly at budget passes", yaml: "budget_usd: 0.50", cost: 0.50},
+		{name: "over budget fails", yaml: "budget_usd: 0.50", cost: 0.5001, wantErr: true},
+		{name: "no budget declared is never enforced", yaml: "", cost: 99.0},
+		{name: "zero budget means undeclared", yaml: "budget_usd: 0", cost: 99.0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := mustGraph(t, "name: boundary\nnodes:\n  - { id: solo, prompt: solo, "+tc.yaml+" }\n")
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				"solo": pass("s-solo", tc.cost),
+			})
+			s, h, led := newHarness(t, fake, Options{})
+
+			err := s.Run(context.Background(), g, h, led)
+			if tc.wantErr && err == nil {
+				t.Fatalf("cost %v vs %q: expected failure, got nil", tc.cost, tc.yaml)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("cost %v vs %q: expected pass, got %v", tc.cost, tc.yaml, err)
+			}
+
+			wantVerdict := ledger.VerdictPass
+			if tc.wantErr {
+				wantVerdict = ledger.VerdictFail
+			}
+			if rec := findRecord(led, "solo"); rec.Verdict != wantVerdict {
+				t.Errorf("verdict = %s, want %s", rec.Verdict, wantVerdict)
+			}
+		})
+	}
+}
+
+// TestScheduler_BudgetExceededIgnoresNonzeroExitRetryPolicy is the regression
+// guard for the retry-cause split: a budget failure must NOT be swept up by a
+// pre-existing `retry: { on: [nonzero_exit] }` policy. Retrying an over-budget
+// node spends the money a second time, so it has to be an explicit opt-in.
+func TestScheduler_BudgetExceededIgnoresNonzeroExitRetryPolicy(t *testing.T) {
+	g := mustGraph(t, `
+name: no-accidental-retry
+nodes:
+  - id: spendy
+    prompt: spendy
+    budget_usd: 0.10
+    retry: { max: 2, on: [nonzero_exit, result_mismatch] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": pass("s-spendy", 0.25),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the over-budget node to fail the run")
+	}
+	if got := fake.InvocationCount("spendy"); got != 1 {
+		t.Fatalf("spendy invoked %d times, want 1 — a budget failure must not "+
+			"be retried under a nonzero_exit policy", got)
+	}
+}
+
+// TestScheduler_BudgetExceededRetriesOnlyWhenOptedIn proves the flip side: a
+// graph that explicitly lists budget_exceeded in retry.on does get re-run, and
+// still fails once the attempts are exhausted.
+func TestScheduler_BudgetExceededRetriesOnlyWhenOptedIn(t *testing.T) {
+	g := mustGraph(t, `
+name: opted-in-retry
+nodes:
+  - id: spendy
+    prompt: spendy
+    budget_usd: 0.10
+    retry: { max: 1, on: [budget_exceeded] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy": pass("s-spendy", 0.25),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected failure after the retry was also over budget")
+	}
+	if got := fake.InvocationCount("spendy"); got != 2 {
+		t.Fatalf("spendy invoked %d times, want 2 (initial + 1 opted-in retry)", got)
+	}
+}
+
+// TestScheduler_BudgetExceededPrunesSubtreeOnContinueOnFail proves the budget
+// verdict flows through the --continue-on-fail path the same way a
+// success_check failure does: the subtree is pruned, independent branches run.
+func TestScheduler_BudgetExceededPrunesSubtreeOnContinueOnFail(t *testing.T) {
+	g := mustGraph(t, `
+name: over-budget-continue
+nodes:
+  - { id: spendy, prompt: spendy, budget_usd: 0.10 }
+  - { id: child, prompt: child, depends_on: [spendy] }
+  - { id: independent, prompt: independent }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"spendy":      pass("s-spendy", 0.25),
+		"child":       pass("s-child", 0),
+		"independent": pass("s-ind", 0),
+	})
+	s, h, led := newHarness(t, fake, Options{ContinueOnFail: true})
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+	if !equalStrings(runFailed.FailedNodes, []string{"spendy"}) {
+		t.Fatalf("failed nodes = %v, want [spendy]", runFailed.FailedNodes)
+	}
+	if indexOf(fake.Calls(), "child") != -1 {
+		t.Errorf("pruned child should never run; calls=%v", fake.Calls())
+	}
+	if rec := findRecord(led, "independent"); rec.Verdict != ledger.VerdictPass {
+		t.Errorf("independent verdict = %s, want PASS", rec.Verdict)
+	}
+}
+
+// TestScheduler_WithinBudgetRecordsHeadroom proves a passing node with a declared
+// budget carries the budget and its headroom into the ledger, so "ran at 99% of
+// budget" is visible before it ever becomes a failure.
+func TestScheduler_WithinBudgetRecordsHeadroom(t *testing.T) {
+	g := mustGraph(t, `
+name: headroom
+nodes:
+  - { id: thrifty, prompt: thrifty, budget_usd: 0.50 }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"thrifty": pass("s-thrifty", 0.20),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	rec := findRecord(led, "thrifty")
+	if rec.BudgetUSD != 0.50 {
+		t.Errorf("record BudgetUSD = %v, want 0.50", rec.BudgetUSD)
+	}
+	delta, declared := rec.BudgetDeltaUSD()
+	if !declared || delta > -0.29 || delta < -0.31 {
+		t.Errorf("delta = %v (declared=%v), want ~-0.30", delta, declared)
+	}
+	if !strings.Contains(rec.Detail, "under budget by") {
+		t.Errorf("detail should report headroom, got %q", rec.Detail)
 	}
 }
 
