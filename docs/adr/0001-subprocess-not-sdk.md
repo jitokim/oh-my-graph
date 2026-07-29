@@ -57,9 +57,12 @@ testable without spawning claude.
 - No structured streaming of intermediate tokens; the engine consumes the final
   JSON envelope per node.
 - Cost is only known *after* a node finishes (claude reports it at the end).
-  `budget_usd` is parsed onto the node and the RunLedger records each node's
-  actual cost, but v0.1 does not enforce any budget — there is no cost cap
-  yet. Enforcement (post-hoc halt and mid-node kill) is deferred to v1.1.
+  This bounds what budget enforcement can ever be under this decision:
+  `budget_usd` is enforced post-hoc — an over-budget node fails and, by default,
+  halts the run before its dependents spend anything — but the overspend itself
+  cannot be prevented, and a mid-node cost kill is not implementable without
+  changing the envelope contract this ADR chose (streaming cost via
+  `--output-format stream-json` rather than one JSON envelope at exit).
 
 ## Alternatives considered
 

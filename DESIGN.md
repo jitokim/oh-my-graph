@@ -63,7 +63,7 @@ Node schema:
   cwd: "{{ inputs.repo }}"
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
   permission_mode: dontAsk
-  budget_usd: 0.50            # v0.1: parsed onto the node and recorded in RunLedger; NOT enforced (no cap yet)
+  budget_usd: 0.50            # post-hoc cap: node FAILS if its actual cost exceeds this (see Execution engine)
   handoff: artifact           # artifact(default) | session
   success_check: { exit_zero: true, result_matches: "PASS" }
   retry: { max: 1, on: [nonzero_exit] }   # optional
@@ -98,6 +98,32 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
 success_check: `exit_zero` AND `result_matches` (regex over .result) if specified;
 empty ⇒ exit_zero only. Failed check → `NodeCheckError` (node id + predicate).
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never resume a failed one).
+
+budget_usd (post-hoc): a node that passes its success_check is then judged
+against its declared `budget_usd`. Actual cost strictly greater than the budget
+→ `NodeBudgetError` (node id + budgeted + actual), which flows through the exact
+same path as a failed success_check: ledger row FAIL with the overspend in
+`Detail`, retry only if opted in, halt-on-fail by default. A non-positive
+`budget_usd` means "no budget declared" and is never enforced. The budget is
+judged *after* `Handoff.PersistOutput`, so a node that did useful work before
+blowing its budget still leaves its artifact on disk — the budget changes the
+verdict, never handoff semantics. Its retry cause token is `budget_exceeded`,
+deliberately distinct from `nonzero_exit` so a pre-existing retry policy can
+never re-spend an already-blown budget by accident.
+
+This enforcement is **post-hoc only, and that is a hard limit of the runner
+contract, not an oversight**: `claude --output-format json` reports
+`total_cost_usd` once, in the envelope it prints as it exits, so the engine
+first learns a node's cost after the money is spent. What the verdict buys is
+everything downstream — dependents never start and, by default, the run halts.
+A true mid-node cost kill would require the runner to stream incremental cost
+(`--output-format stream-json` + parsing cost events + cancelling the node
+context mid-run), which changes the `NodeRunner` output contract from "one
+envelope" to "a stream" and belongs in its own ADR. Deriving a wall-clock
+timeout from `budget_usd` via an assumed $/minute rate was considered and
+rejected: the conversion rate would be fabricated, so it would look like
+enforcement while enforcing nothing. The only real mid-node bound today remains
+the per-node `context.WithTimeout` (~20m default), which is wall-clock, not cost.
 
 ## Auto mode — planned graphs, no hand-written YAML
 `oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
@@ -181,8 +207,10 @@ Scheduler as any other graph.
 - **RunLedger** — record session_id/cost/verdict/timing; end-of-run table + total cost.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
-success_check → pass: Handoff.PersistOutput + RunLedger.Record + enqueue dependents;
-fail: retry or Record(FAIL) + cancel if halt. Scheduler never knows if a real claude ran.
+success_check → Handoff.PersistOutput → budget_usd check → pass: RunLedger.Record
++ enqueue dependents; fail (check OR budget): retry or Record(FAIL) + cancel if
+halt. Output is persisted before the budget verdict so an over-budget node's
+artifact survives. Scheduler never knows if a real claude ran.
 
 ## MVP scope (v0.1) — smallest thing that runs a real multi-node graph
 IN: YAML loader + DAG/cycle validation; {{inputs}}/{{artifacts}} interpolation;
@@ -196,7 +224,8 @@ persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): gate/human-pause + `oh-my-graph resume` (v1.1, schema
 reserved); retries beyond flat max:1; parallel-group sugar / any DSL; TUI/dashboard
-(fleetops's job); --continue-on-fail; mid-node budget kill; worktree auto-creation.
+(fleetops's job); --continue-on-fail; mid-node budget kill (post-hoc budget halt
+IS enforced — see "Execution engine"); worktree auto-creation.
 
 ## Repo layout
 ```
@@ -241,9 +270,18 @@ unreviewed plan. Both, plus the known Bash-granularity gap, are described in
 
 ## Open questions (decided defaults; refine in impl)
 1. artifact interpolation: substitute file PATH by default, `| inline` filter for content.
-2. budget: `budget_usd` is parsed onto the node and the RunLedger records each
-   node's actual cost, but v0.1 does NOT enforce any budget — there is no cost
-   cap yet. Enforcement (post-hoc halt and mid-node kill) is deferred to v1.1.
+2. budget: **post-hoc halt is implemented and enforced** — a node whose actual
+   cost exceeds its `budget_usd` fails exactly like a failed success_check
+   (`NodeBudgetError`, ledger FAIL carrying budgeted-vs-actual, halt-on-fail by
+   default), so its dependents never start. The RunLedger also carries the
+   declared budget alongside actual cost, making the delta derivable per node
+   (`Record.BudgetDeltaUSD`). **Mid-node kill remains deferred and is NOT
+   enforced**: the runner learns `total_cost_usd` only from the JSON envelope
+   printed at exit, so nothing can observe a runaway node's spend while it runs.
+   Closing that needs a runner-level capability (streaming cost via
+   `--output-format stream-json`, then cancelling the node context mid-run) —
+   see "Execution engine" for why a budget-derived wall-clock timeout was
+   rejected as fake enforcement.
 3. parallel nodes sharing one cwd can race edits → v0.1 parallel nodes should be
    read-only (plan) reviews (the captain's fan-out case); parallel edits want
    worktrees (deferred).

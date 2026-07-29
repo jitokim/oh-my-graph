@@ -316,7 +316,32 @@ nodes:
 `success_check` gates a node: `exit_zero` requires a clean exit, and
 `result_matches` is a regex over the node's result text. An empty check means
 "exit zero is enough". `retry` re-runs a failed node up to `max` times when the
-failure cause is listed in `on` — always in a fresh session.
+failure cause is listed in `on` — always in a fresh session. Retry causes:
+`nonzero_exit`, `result_mismatch`, `output_error`, `run_error`,
+`budget_exceeded`.
+
+### Budgets
+
+`budget_usd` caps what a node may cost. Once the node finishes, its actual cost
+is compared against the budget; spending more than it declared fails the node
+exactly like a failed `success_check` — the ledger row reads `FAIL` with the
+budgeted-vs-actual overage, and by default the run halts so no dependent spends
+on top of it. Omit `budget_usd` (or set it to 0) and nothing is enforced.
+
+```yaml
+  - id: e2e
+    prompt: Run the suite and report PASS or FAIL.
+    budget_usd: 0.50
+```
+
+The node's output is persisted *before* the budget verdict, so an over-budget
+node still leaves its `.out` artifact on disk to inspect. Budget failures are
+**not** retried unless you explicitly ask (`retry: { on: [budget_exceeded] }`) —
+retrying an over-budget node spends that money again, so it is never implicit.
+Passing nodes show their remaining headroom in the ledger's `DETAIL` column.
+
+This is a post-hoc cap, not a live one — see
+[Known limitations](#known-limitations).
 
 ## Known limitations
 
@@ -326,8 +351,13 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   regexes over the node's own claimed result text — there's no independent
   verification against external state.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
-- **`budget_usd` is recorded, not enforced.** The ledger tracks each node's
-  actual cost, but nothing halts a run or kills a node that exceeds it.
+- **`budget_usd` is enforced only *after* a node finishes.** A node that
+  overspends its budget now fails and halts the run, so its dependents never
+  start — but the overspend itself is never prevented, because `claude` reports
+  `total_cost_usd` only in the JSON envelope it prints as it exits. There is
+  still no mid-node kill: a single runaway node can spend arbitrarily past its
+  budget before oh-my-graph ever sees the number. The only mid-run bound is the
+  per-node wall-clock timeout (~20m), which is not a cost bound.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
 - **`gate` (human pause/approve) is not implemented.** The node type is
   schema-reserved and rejected at execution time; no `oh-my-graph resume` yet.
@@ -344,10 +374,13 @@ Called out honestly — these are **not** implemented yet:
   "not yet implemented".
 - retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
 - TUI / dashboard — that is [fleetops](https://github.com/jitokim/fleetops)'s job.
-- budget enforcement of any kind: `budget_usd` is parsed onto the node and the
-  RunLedger records each node's actual cost, but v0.1 does not enforce a cap —
-  neither a post-hoc halt of subsequent nodes nor a mid-node kill. Both are
-  deferred to v1.1.
+- **mid-node budget kill.** Post-hoc budget enforcement *is* implemented (an
+  over-budget node fails and halts the run), but cancelling a node while it is
+  still burning money is not: that needs the runner to stream incremental cost
+  (`--output-format stream-json`) instead of reading one envelope at exit, which
+  changes the `NodeRunner` contract and is deferred to its own change. A
+  wall-clock timeout derived from `budget_usd` was deliberately rejected — the
+  $/minute rate would be invented, so it would look like a cap without being one.
 - worktree auto-creation for parallel edits (parallel v0.1 nodes should be
   read-only reviews).
 
