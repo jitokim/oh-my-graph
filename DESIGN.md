@@ -94,7 +94,7 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
-  `.oh-my-graph/runs/<run-id>/<node-id>.out`; dependents read via
+  `~/.oh-my-graph/runs/<run-id>/<node-id>.out`; dependents read via
   `{{ artifacts.<id> }}` (substitute file path by default; `| inline` filter to
   inline content). Robust, inspectable, parallel-safe, one clean session per node.
   Use for fan-in / reviews (many→one conclusions).
@@ -393,7 +393,7 @@ resuming"; which controller answers is chosen once, at the CLI boundary, from
 the invocation. Adding a future `--auto-approve` policy or an interactive TTY
 controller is another implementation, not a scheduler change.
 
-**What the snapshot must hold** — `.oh-my-graph/runs/<run-id>/state.json`,
+**What the snapshot must hold** — `~/.oh-my-graph/runs/<run-id>/state.json`,
 written temp-file + `rename` (atomic), with a `schema` version so an
 incompatible snapshot is refused rather than misread:
 
@@ -574,7 +574,7 @@ turns that rule into a build failure. Current dispositions:
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
 not restricted by either. The generated spec is
-saved to `.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
+saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
 Scheduler as any other graph.
 

@@ -1,5 +1,5 @@
 // Package runstate owns state.json: the resumable snapshot of a run, written
-// atomically to .oh-my-graph/runs/<run-id>/state.json after every node so that a
+// atomically to ~/.oh-my-graph/runs/<run-id>/state.json after every node so that a
 // gate pause, a Ctrl-C, or a crash can all be continued by a later
 // `oh-my-graph resume` (see DESIGN.md, "Gate nodes and resume", and ADR 0003).
 //

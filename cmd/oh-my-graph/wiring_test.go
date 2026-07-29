@@ -67,9 +67,9 @@ func TestExecutePlan_CarriesTheCeilingIntoEveryNode(t *testing.T) {
 	rec := &capturingRunner{}
 	plan := coordinator.Plan{Graph: g, ToolPolicies: ceiling}
 
-	// executeGraph resolves its run directory relative to the process cwd, so
-	// run from a temp dir instead of littering the repo with artifacts.
-	t.Chdir(t.TempDir())
+	// executeGraph writes its run directory under $OMG_HOME, so isolate it
+	// instead of littering the real home with artifacts.
+	isolateRunHome(t)
 	err := executePlan(context.Background(), "test-run", plan, rec, commonRunFlags{inputs: inputFlag{}}, "graph.json")
 	if err != nil {
 		t.Fatalf("executePlan returned error: %v", err)
@@ -98,7 +98,7 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	g := mustParse(t, `{"name":"handwritten","nodes":[{"id":"only","prompt":"only","allowed_tools":["Read"]}]}`)
 	rec := &capturingRunner{}
 
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"))
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
@@ -134,7 +134,7 @@ func TestExecutePlan_TotalIncludesPlanningCost(t *testing.T) {
 	})
 	plan := coordinator.Plan{Graph: g, CostUSD: 0.6069}
 
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	out := captureStdout(t, func() {
 		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}, "graph.json"); err != nil {
 			t.Fatalf("executePlan returned error: %v", err)

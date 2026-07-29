@@ -1,5 +1,5 @@
 // Package runfeed owns events.jsonl: the append-only stream of node lifecycle
-// events written to .oh-my-graph/runs/<run-id>/events.jsonl as a run executes,
+// events written to ~/.oh-my-graph/runs/<run-id>/events.jsonl as a run executes,
 // so an external consumer (fleetops) can tail live progress and reconstruct a
 // run's history without parsing the human progress feed or polling state.json.
 //
@@ -37,7 +37,7 @@ import (
 const Schema = 1
 
 // FileName is the event stream's file name inside a run directory, next to
-// state.json — .oh-my-graph/runs/<run-id>/events.jsonl.
+// state.json — ~/.oh-my-graph/runs/<run-id>/events.jsonl.
 const FileName = "events.jsonl"
 
 // EventType names one node/run lifecycle transition. The set is closed per

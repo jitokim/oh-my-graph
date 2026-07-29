@@ -141,7 +141,7 @@ func TestRunShow_ArgumentErrors(t *testing.T) {
 // actually hits: `oh-my-graph show <bad-id>` dispatches through run()'s
 // switch and exits non-zero.
 func TestMainExitCode_ShowUnknownRunIsNonZero(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	if code := mainExitCode([]string{"show", "nope"}); code != 1 {
 		t.Errorf("show of an unknown run must exit 1, got %d", code)
 	}

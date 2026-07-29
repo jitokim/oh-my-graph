@@ -80,7 +80,7 @@ func TestChatLoop_GraphTurnRoutesGoalThroughCoordinatorAndScheduler(t *testing.T
 		"do the planned work": {SessionID: "s-work", Result: "PASS", ExitCode: 0},
 	})
 
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	// The scheduler's ledger prints straight to os.Stdout; capture it so the
 	// test output stays clean — the assertions below read the fake and the disk.
 	captureStdout(t, func() {
@@ -94,11 +94,11 @@ func TestChatLoop_GraphTurnRoutesGoalThroughCoordinatorAndScheduler(t *testing.T
 		t.Errorf("planned node invoked %d times, want 1 — the goal never reached the scheduler", got)
 	}
 
-	specs, err := filepath.Glob(filepath.Join(".oh-my-graph", "runs", "*", "graph.json"))
+	specs, err := filepath.Glob(filepath.Join(runsRoot(), "*", "graph.json"))
 	if err != nil || len(specs) != 1 {
 		t.Errorf("saved spec files = %v (err %v), want exactly one graph.json", specs, err)
 	}
-	feeds, err := filepath.Glob(filepath.Join(".oh-my-graph", "runs", "*", "events.jsonl"))
+	feeds, err := filepath.Glob(filepath.Join(runsRoot(), "*", "events.jsonl"))
 	if err != nil || len(feeds) != 1 {
 		t.Errorf("event streams = %v (err %v), want exactly one events.jsonl — the chat path lost the run feed", feeds, err)
 	}

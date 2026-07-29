@@ -383,10 +383,27 @@ func warnBypassPermissions(g *graph.Graph) {
 	}
 }
 
+// omgHome resolves the tool's per-user home directory — the single base every
+// run artifact lives under, regardless of which directory oh-my-graph was
+// invoked from. An OMG_HOME environment override wins (tests point it at a
+// temp dir); otherwise it is ~/.oh-my-graph. If the user's home directory
+// cannot be resolved, fall back to a cwd-relative .oh-my-graph so the tool
+// still works in home-less environments (minimal containers).
+func omgHome() string {
+	if dir := os.Getenv("OMG_HOME"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".oh-my-graph"
+	}
+	return filepath.Join(home, ".oh-my-graph")
+}
+
 // runsRoot is the on-disk home of every run directory — what `runs list`
 // enumerates.
 func runsRoot() string {
-	return filepath.Join(".oh-my-graph", "runs")
+	return filepath.Join(omgHome(), "runs")
 }
 
 // runDirFor is the on-disk home of one run's artifacts and (for auto runs) its

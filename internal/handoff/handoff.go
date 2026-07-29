@@ -4,7 +4,7 @@
 //
 //   - interpolate {{ inputs.<name> }} and {{ artifacts.<id> }} into a node's
 //     prompt and cwd before it runs;
-//   - persist each node's .result to .oh-my-graph/runs/<run-id>/<node-id>.out
+//   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
 //     so dependents can read it (the artifact-default handoff);
 //   - resolve which claude session a session-handoff node resumes.
 //

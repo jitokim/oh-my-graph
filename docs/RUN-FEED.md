@@ -5,12 +5,15 @@ oh-my-graph **executes**; it does not render. Everything an external consumer
 a run lives in that run's directory:
 
 ```
-.oh-my-graph/runs/<run-id>/
+~/.oh-my-graph/runs/<run-id>/
   state.json     versioned atomic SNAPSHOT  — whole-run state, overwritten after every node
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
   <node-id>.out  per-node artifacts (handoff: artifact)
   graph.json     the planned spec (auto runs only)
 ```
+
+Run directories live under the user's home regardless of where oh-my-graph
+was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
 
 `state.json` and `events.jsonl` together are a **stable consumer API**. The
 files answer complementary questions:
