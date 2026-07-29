@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -214,5 +215,73 @@ func TestPlan_RejectsBypassPermissions(t *testing.T) {
 	planErr := planExpectingError(t, fake, "lint the repo")
 	if !strings.Contains(planErr.Reason, graph.PermissionBypass) {
 		t.Errorf("reason %q does not name %s", planErr.Reason, graph.PermissionBypass)
+	}
+}
+
+// TestPlan_RejectsNodeWithToolOutsideAllowlist pins the security fix: an
+// untrusted planner reply requesting a tool outside plannedToolAllowlist must
+// fail Plan with a *PlanError naming both the offending node and the tool —
+// the plan must never reach the caller (and therefore never execute) with an
+// unenforced allowed_tools entry.
+func TestPlan_RejectsNodeWithToolOutsideAllowlist(t *testing.T) {
+	tests := []struct {
+		name string
+		tool string
+	}{
+		{"wildcard bash", "Bash(*)"},
+		{"destructive bash pattern not in allowlist", "Bash(rm -rf *)"},
+		{"curl-pipe-to-shell pattern not in allowlist", "Bash(curl * | sh)"},
+		{"bare Bash with no scope", "Bash"},
+		{"unrestricted WebFetch", "WebFetch"},
+		{"unrestricted WebSearch", "WebSearch"},
+		{"tool not in allowlist at all", "NotebookEdit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := fmt.Sprintf(`{"name":"bad","nodes":[{"id":"evil","prompt":"do it","allowed_tools":[%q]}]}`, tt.tool)
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+			planErr := planExpectingError(t, fake, "lint the repo")
+			if !strings.Contains(planErr.Reason, "evil") {
+				t.Errorf("reason %q does not name the offending node", planErr.Reason)
+			}
+			if !strings.Contains(planErr.Reason, tt.tool) {
+				t.Errorf("reason %q does not name the offending tool %q", planErr.Reason, tt.tool)
+			}
+		})
+	}
+}
+
+// TestPlan_RejectsNodeWithEmptyAllowedTools pins that omitting allowed_tools
+// is rejected, not silently passed through: the runner only appends
+// --allowedTools when the list is non-empty, so an empty list would run
+// under the CLI's own default tool set — a trivial way to sidestep the
+// allowlist by simply not naming any tools.
+func TestPlan_RejectsNodeWithEmptyAllowedTools(t *testing.T) {
+	noTools := `{"name":"bad","nodes":[{"id":"a","prompt":"do it"}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: noTools})
+
+	planErr := planExpectingError(t, fake, "lint the repo")
+	if !strings.Contains(planErr.Reason, "allowed_tools") {
+		t.Errorf("reason %q does not mention allowed_tools", planErr.Reason)
+	}
+}
+
+// TestPlan_AcceptsOnlyAllowlistedTools is the positive counterpart: a planned
+// graph that stays entirely within plannedToolAllowlist (covering both plain
+// tool names and the scoped Bash patterns) must validate and come back as a
+// usable Plan.
+func TestPlan_AcceptsOnlyAllowlistedTools(t *testing.T) {
+	spec := `{"name":"ok","nodes":[` +
+		`{"id":"scan","prompt":"scan","allowed_tools":["Read","Glob","Grep"]},` +
+		`{"id":"fix","depends_on":["scan"],"prompt":"fix","allowed_tools":["Edit","Write","Bash(git *)","Bash(go *)","Bash(make *)","Bash(ls *)","Bash(cat *)","Bash(grep *)","Bash(gh pr *)"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Graph.Nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(plan.Graph.Nodes))
 	}
 }

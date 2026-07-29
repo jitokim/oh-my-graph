@@ -96,12 +96,21 @@ env scrub, read-only `plan` permission mode, never the Agent SDK), asking
 claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
 prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
 loaded through the existing parser, normalization, and DAG validation — an
-invalid plan fails before anything runs. Auto-specific guard: a planned node
-may NOT request `permission_mode: bypassPermissions` (hand-written YAML may opt
-in per node because the user reviewed it; an unreviewed plan may not). The
-generated spec is saved to `.oh-my-graph/runs/<run-id>/graph.json` — being
-valid YAML it can be hand-edited and re-run with `oh-my-graph run` — then
-executed by the same Scheduler as any other graph.
+invalid plan fails before anything runs. Auto-specific guards, enforced in
+`coordinator.validatePlannedNodes` (not just requested in the planner prompt):
+a planned node may NOT request `permission_mode: bypassPermissions`
+(hand-written YAML may opt in per node because the user reviewed it; an
+unreviewed plan may not), and every planned node's `allowed_tools` must be a
+non-empty list drawn only from `coordinator.plannedToolAllowlist` (Read, Glob,
+Grep, Edit, Write, and a small set of scoped `Bash(<prefix> *)` patterns) —
+anything else (bare `Bash`, `Bash(*)`, an un-scoped `Bash(rm -rf *)`,
+unrestricted `WebFetch`/`WebSearch`, an empty list) fails `Plan` with a
+`*PlanError` naming the node and the offending tool. This allowlist applies
+ONLY to coordinator-planned graphs; hand-written YAML (`oh-my-graph run`) is
+human-authored/reviewed and is not restricted by it. The generated spec is
+saved to `.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
+hand-edited and re-run with `oh-my-graph run` — then executed by the same
+Scheduler as any other graph.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
@@ -180,7 +189,11 @@ authenticating others via subscription OAuth (that violates ToS). Never ships
 credentials, never proxies auth, never runs as a shared service. Scrubs
 ANTHROPIC_API_KEY/AUTH_TOKEN from every child (unit-tested). Never --bare, never
 Agent SDK. Least privilege per node (allowed_tools + permission_mode); bypassPermissions
-opt-in per node with a loud warning, never a default.
+opt-in per node with a loud warning, never a default. For auto-planned graphs
+(untrusted LLM output run unattended under `dontAsk`), least privilege is not
+just a prompt convention: `coordinator.validatePlannedNodes` enforces a fixed
+tool allowlist and rejects any planned node whose `allowed_tools` is empty or
+names a tool outside it — see "Auto mode" above.
 
 ## Open questions (decided defaults; refine in impl)
 1. artifact interpolation: substitute file PATH by default, `| inline` filter for content.
