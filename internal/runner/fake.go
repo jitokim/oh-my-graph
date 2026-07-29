@@ -12,9 +12,10 @@ import (
 // context cancellation so halt-on-fail tests can prove in-flight siblings are
 // cut off.
 //
-// The Scheduler passes the node id as NodeInvocation is opaque to it; FakeRunner
-// therefore keys on a caller-supplied key derived from the invocation. Tests set
-// KeyFn to map an invocation to its node id (default: the Prompt string).
+// The Scheduler passes no node id — NodeInvocation is opaque to it — so
+// FakeRunner keys on a caller-supplied key derived from the invocation
+// itself. Tests set KeyFn to map an invocation to its node id (default: the
+// Prompt string).
 type FakeRunner struct {
 	// outcomes maps a node key to the outcome Run should return for it.
 	outcomes map[string]NodeOutcome

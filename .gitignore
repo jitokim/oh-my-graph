@@ -9,3 +9,6 @@
 
 # stray root binary
 /oh-my-graph
+
+# Personal working memory (symlinked to a private repo) — never tracked
+/.notes/

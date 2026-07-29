@@ -56,9 +56,10 @@ testable without spawning claude.
   between CLI versions. The single `NodeRunner` seam localizes that risk.
 - No structured streaming of intermediate tokens; the engine consumes the final
   JSON envelope per node.
-- Cost is only known *after* a node finishes (claude reports it at the end), so
-  budget enforcement in v0.1 is post-hoc — it halts *subsequent* nodes rather
-  than killing a running one mid-flight.
+- Cost is only known *after* a node finishes (claude reports it at the end).
+  `budget_usd` is parsed onto the node and the RunLedger records each node's
+  actual cost, but v0.1 does not enforce any budget — there is no cost cap
+  yet. Enforcement (post-hoc halt and mid-node kill) is deferred to v1.1.
 
 ## Alternatives considered
 
