@@ -1,4 +1,21 @@
-# oh-my-graph
+<p align="center">
+  <img src="assets/icon-round.png" alt="oh-my-graph logo" width="128" />
+</p>
+
+<h1 align="center">oh-my-graph</h1>
+
+<p align="center"><em>Describe the goal — it runs the graph, on your Claude subscription.</em></p>
+
+<p align="center">
+  <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+  <a href="go.mod"><img src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.25" /></a>
+  <img src="https://img.shields.io/badge/runs%20on-Claude%20subscription-ff8a65?logo=anthropic&amp;logoColor=white" alt="Runs on your Claude subscription" />
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
+</p>
 
 > A graph-native multi-agent orchestrator whose node runtime is your own
 > logged-in `claude` CLI — not the Anthropic API.
@@ -90,7 +107,7 @@ output and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|runs|version> ...
+oh-my-graph <run|auto|chat|resume|runs|show|version> ...
 ```
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
@@ -98,15 +115,28 @@ oh-my-graph <run|auto|runs|version> ...
 - **`auto "<goal>"`** — you describe a goal in plain language; a coordinator
   plans the DAG for you, then the same engine executes the generated graph.
   The zero-config default.
+- **`chat`** — an interactive REPL (prototype). Each line you type is *routed*:
+  a conversational turn is answered directly; a task-shaped turn is planned
+  into a graph and run — `auto`, but ambient. Type `exit` (or Ctrl-D) to leave.
+- **`resume <run-id> (--approve <gate-id> | --reject <gate-id>)`** — resume a
+  run that paused at a human-approval gate node, approving or rejecting it.
 - **`runs list`** — list past runs from `.oh-my-graph/runs/`, newest first:
   graph name, node count, cost, and overall verdict per run, plus a total.
   Read-only.
+- **`show <run-id>`** — print one run's detail: the per-node ledger (session,
+  cost, verdict, duration) and the total. Read-only.
 - **`version`** — print the tool version.
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
 10), and `--continue-on-fail`. Both print a live per-node feed as the graph
 executes, then a cost ledger — see the examples below for exactly what that
 looks like.
+
+Every run persists to `.oh-my-graph/runs/<run-id>/`: a versioned snapshot
+(`state.json`) and an append-only event stream (`events.jsonl`), which
+`runs list` / `show` read back and a consumer like fleetops can tail. That
+directory layout is a documented, stable contract — see
+[docs/RUN-FEED.md](docs/RUN-FEED.md).
 
 Walk through them in order:
 
@@ -117,6 +147,8 @@ Walk through them in order:
    oh-my-graph to develop oh-my-graph.
 4. [Observe with fleetops](#4-observe-with-fleetops) — watch nodes run in a
    sister tool.
+5. [Ambient chat](#5-ambient-chat-prototype) — talk; each turn routes to a
+   reply or a graph (prototype).
 
 ## Examples
 
@@ -282,6 +314,25 @@ starts.
 Run fleetops in a second terminal tab while any of the examples above is
 running, and you'll see each node appear in fleetops' fleet list as
 oh-my-graph delegates to it — live, for free, with zero integration code.
+
+### 5. Ambient chat (prototype)
+
+`chat` turns the whole tool into an interactive front end: you talk, and each
+turn is *routed* — a conversational turn is answered inline, a task-shaped turn
+is planned into a graph and run, exactly like `auto`.
+
+```
+$ oh-my-graph chat
+> what is the capital of France? answer in one word
+Paris
+> exit
+```
+
+Ask it to *do* something ("add a --version flag and open a draft PR") instead
+of asking a question, and that turn is planned into a graph and executed with
+the same live `▶ / ✓ / ✗` feed and cost ledger as `auto`. This is an early
+prototype of the direction where oh-my-graph is the host and plain language is
+the input — type `exit` or Ctrl-D to leave.
 
 ## Use it from Claude Code (plugin)
 
