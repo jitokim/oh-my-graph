@@ -426,3 +426,74 @@ func TestSuccessCheck_IsZeroAccountsForVerify(t *testing.T) {
 		})
 	}
 }
+
+// TestParse_AgentFieldRoundTrips proves a node's `agent:` name lands on
+// Node.Agent and that a node omitting it defaults to empty — plain `claude -p`,
+// the behaviour every existing graph relies on.
+func TestParse_AgentFieldRoundTrips(t *testing.T) {
+	g, err := Parse([]byte(`
+name: with-agent
+nodes:
+  - { id: review, prompt: review, agent: code-reviewer }
+  - { id: plain, prompt: plain }
+`))
+	if err != nil {
+		t.Fatalf("node with agent field should parse: %v", err)
+	}
+	review, _ := g.NodeByID("review")
+	if review.Agent != "code-reviewer" {
+		t.Errorf("review.Agent = %q, want code-reviewer", review.Agent)
+	}
+	plain, _ := g.NodeByID("plain")
+	if plain.Agent != "" {
+		t.Errorf("plain.Agent = %q, want empty", plain.Agent)
+	}
+}
+
+// TestParse_BlankAgentRejected proves a whitespace-only agent name — a
+// near-certain YAML typo — fails at LOAD time naming the node, rather than
+// reaching the argv as `--agent " "` and failing the node mid-run with a CLI
+// error that names no graph at all.
+func TestParse_BlankAgentRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: blank-agent
+nodes:
+  - { id: a, prompt: a, agent: "   " }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" || !strings.Contains(vErr.Reason, "agent") {
+		t.Fatalf("expected agent error on node a: %+v", vErr)
+	}
+}
+
+// TestParse_PaddedAgentRejected is the other half of the whitespace rule. A
+// padded name is not "close enough": it reaches the argv verbatim as
+// `--agent " code-reviewer "`, which claude cannot resolve, so the node dies
+// mid-run with a CLI error naming no graph at all — the exact failure a
+// load-time check exists to move earlier.
+func TestParse_PaddedAgentRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: padded-agent
+nodes:
+  - { id: a, prompt: a, agent: "  code-reviewer  " }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" || !strings.Contains(vErr.Reason, "agent") {
+		t.Fatalf("expected agent error on node a: %+v", vErr)
+	}
+}
+
+// TestParse_UnknownAgentNameAccepted pins the deliberate NON-check: whether a
+// name resolves depends on the user's ~/.claude/agents and the checkout's
+// .claude/agents, which are properties of the machine, not of the graph file.
+// Rejecting an unknown name at load would make a graph that is valid on one
+// machine invalid on another.
+func TestParse_UnknownAgentNameAccepted(t *testing.T) {
+	if _, err := Parse([]byte(`
+name: unknown-agent
+nodes:
+  - { id: a, prompt: a, agent: some-agent-this-machine-may-not-have }
+`)); err != nil {
+		t.Fatalf("an unresolvable agent name is a runtime concern, not a load error: %v", err)
+	}
+}

@@ -82,9 +82,14 @@ const (
 // persisted so a resumed leg re-imposes the same isolation the first leg did.
 // Resuming a planned graph without it would silently drop the Layer-1/2 guard
 // that keeps an unreviewed plan inside its bounds (see DESIGN.md, "The tool
-// ceiling"). The fields mirror the future runner.ToolPolicy one-for-one; the
-// type is local because runner.ToolPolicy does not exist in this slice and, more
-// durably, because the snapshot format should not be defined by a runtime type.
+// ceiling"). The fields mirror runner.ToolPolicy one-for-one; the type is local
+// because the snapshot format is a persisted contract and should not be defined
+// by a runtime type that is free to change. That independence is deliberate,
+// but it is also how the two drift: a sixth ceiling layer added to
+// runner.ToolPolicy and not here would leave a resumed planned node running one
+// layer weaker than the leg that started it, silently. TestNodeToolPolicy-
+// MirrorsRunnerToolPolicy compares the two shapes by reflection and fails when
+// they diverge, so the copy stays a decision rather than an oversight.
 // A hand-written `run` records no tool policies at all (its nodes run under the
 // user's own reviewed settings), so this appears only in Snapshot.ToolPolicies
 // for auto runs.

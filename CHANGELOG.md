@@ -84,7 +84,33 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   JSON reply with the existing graph parser and validator, saves the spec to
   `.oh-my-graph/runs/<run-id>/graph.json` (re-runnable with `oh-my-graph run`),
   and executes it on the same scheduler. A planned node can never request
-  `permission_mode: bypassPermissions`.
+  `permission_mode: bypassPermissions`, set `cwd`, set `agent`, declare a
+  `success_check.verify` command, or name a tool outside a fixed allowlist.
+- **Layered tool ceiling for auto-planned nodes** (`runner.ToolPolicy`). Each
+  planned node runs under settings-source isolation (`--setting-sources ""`),
+  its declared allow rules, tool-set narrowing (`--tools`), `--strict-mcp-config`
+  and a residual `--disallowedTools` backstop — carried as one value object per
+  node so a caller cannot apply three quarters of a ceiling. Isolation is the
+  load-bearing layer: it stops a standing `Bash(*)` in the user's own
+  `settings.json` from out-matching a planned node's narrower `Bash(git *)`.
+  Verified against a real `claude` 2.1.220 (an out-of-scope shell command runs
+  without isolation and is denied with it), so the previously-documented
+  scoped-Bash gap is **closed for planned nodes**. MCP closure remains
+  unverified and is disclosed as such. Hand-written graphs get none of this and
+  keep the user's settings, hooks and MCP servers.
+- **`agent:` on a node** (hand-written graphs only) → `claude -p --agent <name>`,
+  running that node as one of the user's own Claude Code subagents. An
+  unresolvable name **fails the node** rather than falling back to plain claude,
+  and the failure now carries the CLI's stderr, which lists the available
+  agents.
+- **Reflection-driven planned-node field dispositions.** A table-driven test
+  over `reflect.VisibleFields` of `graph.Node` and `graph.SuccessCheck` fails
+  the build if any field is added to the node schema without an explicit
+  auto-mode disposition (allowed / constrained / rejected), and every
+  non-allowed field is probed to prove its refusal actually fires and names
+  that field. Adding a field without deciding what auto mode does with it is
+  now a red test, not a review oversight — it caught `success_check.verify`
+  on its first run against a schema it had not been written for.
 - **Claude Code plugin surface.** A thin `plugin/` wrapper — a `/graph` slash
   command and a description-routed `run-graph` skill — that shells out to the
   `oh-my-graph` binary and reports back the run ledger. It reimplements no
@@ -106,3 +132,9 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   needs streaming cost from the runner; a budget-derived wall-clock timeout was
   rejected as fake enforcement.
 - Worktree auto-creation for parallel edits.
+- Coordinator auto-mapping of `agent:` by role. Deferred on a design
+  constraint, not on effort: a planned node may not carry `agent:` at all, and
+  settings-source isolation disables agent discovery, so the two are mutually
+  exclusive as built. An implicit scan of `~/.claude/agents` is rejected
+  permanently — it would make an `auto` run depend on files the user forgot
+  they had.

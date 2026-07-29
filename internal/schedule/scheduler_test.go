@@ -787,11 +787,11 @@ func (r *recordingRunner) invocationFor(key string) runner.NodeInvocation {
 
 // --- execution ceiling ------------------------------------------------------
 
-// TestScheduler_ForwardsPerNodeDisallowedTools proves the Scheduler routes each
-// node's own deny list into its invocation. The ceiling is per node, so a
-// mis-keyed lookup would silently hand one node another node's (weaker) list —
-// this pins that each node gets exactly its own.
-func TestScheduler_ForwardsPerNodeDisallowedTools(t *testing.T) {
+// TestScheduler_ForwardsPerNodeToolPolicy proves the Scheduler routes each
+// node's own policy into its invocation. The ceiling is per node, so a
+// mis-keyed lookup would silently hand one node another node's (weaker) policy
+// — this pins that each node gets exactly its own, whole.
+func TestScheduler_ForwardsPerNodeToolPolicy(t *testing.T) {
 	// Fan-out, not a chain: the auto-mode shape runs siblings concurrently, so
 	// this also puts two goroutines on the same ceiling map under -race.
 	g := mustGraph(t, `
@@ -804,28 +804,40 @@ nodes:
 	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
 		"root": pass("s-root", 0), "scan": pass("s-scan", 0), "edit": pass("s-edit", 0),
 	}}
-	s, h, led := newHarness(t, rec, Options{DisallowedTools: map[string][]string{
-		"root": {"Bash"},
-		"scan": {"Bash", "Write"},
-		"edit": {"Bash", "WebFetch"},
+	none := ""
+	s, h, led := newHarness(t, rec, Options{ToolPolicies: map[string]runner.ToolPolicy{
+		"root": {AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash"}},
+		"scan": {AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash", "Write"}, SettingSources: &none, StrictMCPConfig: true, Tools: []string{"Read"}},
+		"edit": {AllowedTools: []string{"Edit"}, DisallowedTools: []string{"Bash", "WebFetch"}},
 	}})
 
 	if err := s.Run(context.Background(), g, h, led); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if got := rec.invocationFor("scan").DisallowedTools; !equalStrings(got, []string{"Bash", "Write"}) {
+	if got := rec.invocationFor("scan").Policy.DisallowedTools; !equalStrings(got, []string{"Bash", "Write"}) {
 		t.Errorf("scan denied %v, want [Bash Write]", got)
 	}
-	if got := rec.invocationFor("edit").DisallowedTools; !equalStrings(got, []string{"Bash", "WebFetch"}) {
+	if got := rec.invocationFor("edit").Policy.DisallowedTools; !equalStrings(got, []string{"Bash", "WebFetch"}) {
 		t.Errorf("edit denied %v, want [Bash WebFetch]", got)
+	}
+	// The whole policy travels, not just the deny list: dropping a layer in
+	// transit is exactly the failure ToolPolicy exists to prevent.
+	scan := rec.invocationFor("scan").Policy
+	if scan.SettingSources == nil || *scan.SettingSources != "" {
+		t.Errorf("scan lost its isolation layer: SettingSources = %v", scan.SettingSources)
+	}
+	if !scan.StrictMCPConfig || !equalStrings(scan.Tools, []string{"Read"}) {
+		t.Errorf("scan lost a ceiling layer in transit: %+v", scan)
 	}
 }
 
 // TestScheduler_HandWrittenGraphGetsNoCeiling is the regression guard for the
 // `run` path: a hand-written graph is the user's own reviewed artifact and must
-// keep running under the user's own tool permissions. Options.DisallowedTools
-// is nil there, and that nil must reach the runner untouched so no
-// --disallowedTools flag is ever built for it.
+// keep running under the user's own settings, hooks, MCP servers and tool
+// permissions. Options.ToolPolicies is nil there, and the node must fall back
+// to a policy carrying its OWN allowed_tools and no ceiling layer at all — so
+// no --setting-sources, --tools, --strict-mcp-config or --disallowedTools is
+// ever built for it.
 func TestScheduler_HandWrittenGraphGetsNoCeiling(t *testing.T) {
 	g := mustGraph(t, `
 name: handwritten
@@ -838,14 +850,118 @@ nodes:
 	if err := s.Run(context.Background(), g, h, led); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	invocation := rec.invocationFor("only")
-	if len(invocation.DisallowedTools) != 0 {
-		t.Errorf("hand-written node got a deny list %v, want none", invocation.DisallowedTools)
+	policy := rec.invocationFor("only").Policy
+	if len(policy.DisallowedTools) != 0 {
+		t.Errorf("hand-written node got a deny list %v, want none", policy.DisallowedTools)
+	}
+	if policy.SettingSources != nil {
+		t.Errorf("hand-written node got settings isolation %q; its own settings are the intended policy", *policy.SettingSources)
+	}
+	if policy.Tools != nil {
+		t.Errorf("hand-written node got tool narrowing %v, want none", policy.Tools)
+	}
+	if policy.StrictMCPConfig {
+		t.Error("hand-written node lost its MCP servers, which the `run` path must never do")
 	}
 	// The declared tools must still be forwarded — the guard subtracts nothing
 	// from the `run` path.
-	if !equalStrings(invocation.AllowedTools, []string{"Read", "Bash(make *)"}) {
-		t.Errorf("allowed tools = %v, want the node's own list", invocation.AllowedTools)
+	if !equalStrings(policy.AllowedTools, []string{"Read", "Bash(make *)"}) {
+		t.Errorf("allowed tools = %v, want the node's own list", policy.AllowedTools)
+	}
+}
+
+// TestScheduler_MissingPolicyUnderAnImposedCeilingFailsClosed pins the
+// direction this fails in. When a ceiling IS imposed (a non-nil policy map) but
+// some node has no entry, the tempting behaviour — fall back to the node's own
+// declaration — is precisely the outcome the ceiling exists to prevent: one
+// unreviewed planned node running with the user's full standing grants while
+// every sibling is capped, silently, in a run that then reports success.
+//
+// Unreachable through coordinator.Plan today, which builds an entry per node.
+// It becomes reachable the moment a policy map is rebuilt from somewhere else —
+// a resumed run rehydrating from a snapshot, say — which is exactly when nobody
+// is looking.
+func TestScheduler_MissingPolicyUnderAnImposedCeilingFailsClosed(t *testing.T) {
+	g := mustGraph(t, `
+name: planned
+nodes:
+  - { id: capped, prompt: capped, allowed_tools: [Read] }
+  - { id: forgotten, prompt: forgotten, allowed_tools: [Read, "Bash(git *)"] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"capped": pass("s-capped", 0), "forgotten": pass("s-forgotten", 0),
+	}}
+	// A non-nil map that covers only one of the two nodes.
+	s, h, led := newHarness(t, rec, Options{ToolPolicies: map[string]runner.ToolPolicy{
+		"capped": {AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash"}},
+	}})
+
+	err := s.Run(context.Background(), g, h, led)
+	if err == nil {
+		t.Fatal("a node with no policy under an imposed ceiling must fail the run, not run uncapped")
+	}
+	var missing *MissingToolPolicyError
+	if !errors.As(err, &missing) {
+		t.Fatalf("err = %v, want *MissingToolPolicyError", err)
+	}
+	if missing.NodeID != "forgotten" {
+		t.Errorf("error names node %q, want forgotten", missing.NodeID)
+	}
+	// The uncapped node must never have reached the runner.
+	if rec.invocationFor("forgotten").Prompt != "" {
+		t.Error("the node with no ceiling was executed anyway")
+	}
+}
+
+// TestScheduler_ImposedPolicyIsNotMergedWithTheNodeDeclaration pins the rule
+// that an imposed policy is COMPLETE. If the scheduler helpfully merged the
+// node's own allowed_tools over the policy it was handed, a coordinator bug
+// that forgot layer 2 would be invisible here and would reappear as a node
+// running with tools the ceiling never granted. The imposed policy wins
+// wholesale — including when it deliberately grants less than the node asked.
+func TestScheduler_ImposedPolicyIsNotMergedWithTheNodeDeclaration(t *testing.T) {
+	g := mustGraph(t, `
+name: planned
+nodes:
+  - { id: only, prompt: only, allowed_tools: [Read, Edit, Write] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"only": pass("s-only", 0)}}
+	s, h, led := newHarness(t, rec, Options{ToolPolicies: map[string]runner.ToolPolicy{
+		"only": {AllowedTools: []string{"Read"}},
+	}})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("only").Policy.AllowedTools; !equalStrings(got, []string{"Read"}) {
+		t.Errorf("imposed policy was merged with the node's declaration: allowed = %v, want [Read]", got)
+	}
+}
+
+// TestScheduler_NodeAgentReachesInvocation proves a node's `agent:` YAML field
+// survives buildInvocation and arrives at the NodeRunner as
+// NodeInvocation.Agent — the plumbing that lets a hand-written node run as the
+// user's own Claude Code subagent via ClaudeCLIRunner's `--agent <name>`.
+func TestScheduler_NodeAgentReachesInvocation(t *testing.T) {
+	g := mustGraph(t, `
+name: agent-node
+nodes:
+  - { id: review, prompt: review, agent: code-reviewer }
+  - { id: plain, prompt: plain }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"review": pass("s-r", 0), "plain": pass("s-p", 0),
+	}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("review").Agent; got != "code-reviewer" {
+		t.Errorf("agent for review node = %q, want code-reviewer", got)
+	}
+	if got := rec.invocationFor("plain").Agent; got != "" {
+		t.Errorf("agent for node with no agent: field = %q, want empty", got)
 	}
 }
 

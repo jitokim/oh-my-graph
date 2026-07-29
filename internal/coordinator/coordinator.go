@@ -39,30 +39,25 @@ const maxOutputInError = 500
 // "Bash(curl * | sh)", unrestricted WebFetch/WebSearch and anything else not
 // spelled out below never survive planning.
 //
-// This is a DECLARATION bound, not an execution bound, and the distinction is
-// the whole reason deniableTools exists below: the allowlist is rendered onto
-// the argv as --allowedTools, which per `claude --help` is a list of tools to
-// allow and is unioned with whatever the user's own ~/.claude/settings.json
-// already grants. It can never subtract. deniableTools is what actually caps
-// execution.
+// This is a DECLARATION bound — layer 0 of the ceiling. What a declaration is
+// worth at run time is decided by toolPolicyFor below, which turns it into a
+// layered runner.ToolPolicy.
 //
 // Hand-written YAML graphs (the `run` path, internal/graph.Load) are
 // human-authored and reviewed before they run, so neither this allowlist nor
-// the deny list applies to them — only to graphs coordinator.Plan produced.
+// any ceiling layer applies to them — only to graphs coordinator.Plan produced.
 var plannedToolAllowlist = []string{
 	"Read", "Glob", "Grep", "Edit", "Write",
 	"Bash(git *)", "Bash(go *)", "Bash(make *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(gh pr *)",
 }
 
-// deniableTools is auto mode's actual execution ceiling: the consequential
-// tool NAMES a planned node is denied unless it declared them. It closes the
-// hole plannedToolAllowlist cannot, because --allowedTools only ever adds.
-// A power user running with standing grants like `Bash(*)`, `Write(*)`,
-// `WebFetch(*)` or `Agent(*)` in their own settings.json otherwise hands every
-// one of those tools to an unattended, unreviewed planned node no matter how
-// narrow its allowed_tools was. --disallowedTools is the one flag that
-// subtracts and beats a prior allow, so the ceiling has to be spelled as
-// denies.
+// deniableTools is layer 5 of the ceiling — the residual deny list: the
+// consequential tool NAMES a planned node is denied unless it declared them.
+// It was the whole ceiling before layer 1 existed and is deliberately RETAINED
+// now that it isn't, because the layers are independent mechanisms: if an
+// assumption about settings-source isolation, tool narrowing or strict MCP
+// turns out to be wrong on some future CLI build, the ceiling degrades to this
+// list rather than to nothing.
 //
 // The entries are bare tool NAMES, not scoped patterns, because that is the
 // granularity a deny actually enforces. Measured against a real CLI (claude
@@ -84,26 +79,10 @@ var plannedToolAllowlist = []string{
 // reach the network on their own once shell, write and fetch are gone, and
 // denying them would make plans brittle for no safety gain.
 //
-// KNOWN GAPS — this list is an ENUMERATION over an open set, so it is a
-// meaningful reduction, not a sandbox:
-//
-//  1. A node that legitimately declares any scoped Bash pattern (e.g.
-//     "Bash(git *)") keeps the entire Bash tool, because a deny cannot express
-//     "all Bash except these prefixes". For that node the scoped pattern is a
-//     declaration only, and a standing `Bash(*)` grant still exposes arbitrary
-//     shell — including writes, which makes the Write/Edit denies moot there.
-//  2. Tools outside this list are NOT covered: notably `mcp__<server>__<tool>`
-//     for any MCP server the user has configured (unenumerable by name here),
-//     and skill/slash-command surfaces.
-//  3. Nothing here reaches settings *hooks*, which are not tool calls. A node
-//     that can write (see gap 1) can still drop a `.claude/settings.local.json`
-//     in the invocation directory for a later node or a future run to load;
-//     rejecting `cwd` bounds where that can happen, it does not prevent it.
-//
-// The CLI also ships `--tools` (replace the built-in set outright) and
-// `--strict-mcp-config`, which are structurally better primitives than an
-// enumerated deny list and would close gaps 1 and 2. Adopting them changes what
-// every node can do and is a product decision deferred out of this fix.
+// On its own this list is an ENUMERATION over an open set, and its one
+// structural hole is that a node declaring any scoped Bash pattern keeps the
+// ENTIRE Bash tool — a deny cannot express "all Bash except these prefixes".
+// That hole is what layer 1 closes; see toolPolicyFor.
 var deniableTools = []string{
 	"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent",
 }
@@ -151,18 +130,20 @@ func truncate(s string, n int) string {
 // about including the planning step — and the execution ceiling every planned
 // node must run under.
 //
-// DisallowedTools travels WITH the plan rather than being left for the caller
-// to remember, because it is not optional decoration: it is the only part of
-// the tool guard that binds at runtime. A caller that executes Plan.Graph must
-// hand DisallowedTools to the Scheduler, or the graph runs with the user's own
+// ToolPolicies travels WITH the plan rather than being left for the caller to
+// remember, because it is not optional decoration: it is the part of the tool
+// guard that binds at runtime. A caller that executes Plan.Graph must hand
+// ToolPolicies to the Scheduler, or the graph runs with the user's own
 // (possibly wide-open) standing grants.
 type Plan struct {
 	Graph   *graph.Graph
 	Spec    []byte
 	CostUSD float64
-	// DisallowedTools maps each planned node's id to the tools its subprocess
-	// must be denied. Never nil for a successful plan.
-	DisallowedTools map[string][]string
+	// ToolPolicies maps each planned node's id to the COMPLETE tool policy its
+	// subprocess must run under — including that node's own --allowedTools, so
+	// the scheduler never has to merge two half-policies. Never nil for a
+	// successful plan, and it has an entry for every node in Graph.
+	ToolPolicies map[string]runner.ToolPolicy
 }
 
 // Coordinator plans graphs. Construct it with New (constructor injection — no
@@ -191,10 +172,18 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 	// tools, and runs read-only — but "read-only permission mode" is not a tool
 	// ceiling, and without a deny list it would inherit the user's full standing
 	// grants. A node declaring nothing denies everything deniable.
+	//
+	// It deliberately gets the deny list ONLY, not toolPolicyFor's full ceiling.
+	// The layered policy is scoped to planned NODES — the untrusted artifact the
+	// planner produces — while the planner call itself is oh-my-graph's own
+	// prompt, and isolating it would also drop the user's CLAUDE.md from the one
+	// call whose job is to understand this repository. Widening the ceiling here
+	// is a product decision about plan quality, not a safety fix, so it is not
+	// made silently as part of one.
 	outcome, err := c.runner.Run(ctx, runner.NodeInvocation{
-		Prompt:          plannerPrompt(goal, inputKeys),
-		PermissionMode:  plannerPermissionMode,
-		DisallowedTools: disallowedToolsFor(graph.Node{}),
+		Prompt:         plannerPrompt(goal, inputKeys),
+		PermissionMode: plannerPermissionMode,
+		Policy:         runner.ToolPolicy{DisallowedTools: disallowedToolsFor(graph.Node{})},
 	})
 	if err != nil {
 		return Plan{}, fmt.Errorf("planner run: %w", err)
@@ -222,29 +211,103 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 		return Plan{}, err
 	}
 	return Plan{
-		Graph:           g,
-		Spec:            []byte(spec),
-		CostUSD:         outcome.TotalCostUSD,
-		DisallowedTools: disallowedToolsByNode(g),
+		Graph:        g,
+		Spec:         []byte(spec),
+		CostUSD:      outcome.TotalCostUSD,
+		ToolPolicies: toolPoliciesByNode(g),
 	}, nil
 }
 
-// disallowedToolsByNode derives the run's execution ceiling: one deny list per
-// planned node. It runs after validation, so every node here already declared
-// a non-empty allowed_tools drawn from plannedToolAllowlist.
-func disallowedToolsByNode(g *graph.Graph) map[string][]string {
-	byNode := make(map[string][]string, len(g.Nodes))
+// toolPoliciesByNode derives the run's execution ceiling: one complete policy
+// per planned node. It runs after validation, so every node here already
+// declared a non-empty allowed_tools drawn from plannedToolAllowlist.
+func toolPoliciesByNode(g *graph.Graph) map[string]runner.ToolPolicy {
+	byNode := make(map[string]runner.ToolPolicy, len(g.Nodes))
 	for _, node := range g.Nodes {
-		byNode[node.ID] = disallowedToolsFor(node)
+		byNode[node.ID] = toolPolicyFor(node)
 	}
 	return byNode
 }
 
-// disallowedToolsFor is the per-node ceiling: every deniable tool the node did
-// not declare. Scope is dropped when comparing, so a node declaring
-// "Bash(git *)" counts as having declared Bash and is not denied it — see
-// deniableTools for why that is the best a deny list can do, and what it
-// leaves open.
+// toolPolicyFor is one planned node's execution ceiling — the layered policy
+// DESIGN.md specifies, assembled in one place so no layer can be forgotten at
+// a call site:
+//
+//	1 isolation  --setting-sources ""   the user's standing grants, and hooks
+//	2 grant      --allowedTools         what this node declared, now binding
+//	3 narrowing  --tools <bare names>   what the model can even attempt
+//	4 MCP        --strict-mcp-config    mcp__<server>__<tool>
+//	5 residual   --disallowedTools      anything the layers above got wrong
+//
+// Layer 1 is the load-bearing one. Permission rules are matched from every
+// loaded source, so a standing `Bash(*)` in the user's ~/.claude/settings.json
+// was matching before this node's own narrower `Bash(git *)` ever mattered —
+// which is why layer 2 used to be a declaration rather than a limit. Loading
+// none of the user/project/local settings leaves this argv as the only
+// allow-rule source, and under permission-mode dontAsk an unmatched call
+// resolves to ask and an unanswerable ask becomes a DENY. Measured end-to-end
+// on claude 2.1.220 (DESIGN.md, E1): with the user's settings granting
+// `Bash(*)` and this node declaring `Bash(git *)`, an out-of-scope `touch` ran
+// without isolation and was denied with it, while `git init` kept working.
+//
+// Layer 1 also closes the settings-hook gap for free: writing a
+// `.claude/settings.local.json` into the invocation directory achieves nothing
+// when no node of this run — or of any later auto run — loads local settings.
+//
+// The cost, which belongs in the README and not in a surprise: a planned node
+// also loses the user's CLAUDE.md, hooks and MCP servers. Planned nodes are
+// more isolated and less capable than they were. That is the intended
+// direction.
+func toolPolicyFor(node graph.Node) runner.ToolPolicy {
+	return runner.ToolPolicy{
+		AllowedTools:    node.AllowedTools,
+		Tools:           narrowedToolsFor(node),
+		SettingSources:  isolatedSettingSources(),
+		StrictMCPConfig: true,
+		DisallowedTools: disallowedToolsFor(node),
+	}
+}
+
+// isolatedSettingSources is layer 1's value: load NONE of the user/project/
+// local settings files. A fresh pointer per call so no caller can mutate a
+// shared one into meaning something else.
+//
+// Enterprise policy settings and --settings flag settings are unioned on top
+// and cannot be dropped by this flag, so it can never be used to step around a
+// corporate policy.
+func isolatedSettingSources() *string {
+	none := ""
+	return &none
+}
+
+// narrowedToolsFor is layer 3: the bare tool names this node declared, which
+// become the ENTIRE built-in tool set available to it. --tools replaces that
+// set rather than adding to it — measured on claude 2.1.220 (DESIGN.md, E4), a
+// tool left out of --tools is absent even when --allowedTools names it — so
+// this must list every tool the node needs and nothing more.
+//
+// Scope is dropped ("Bash(git *)" -> "Bash") because --tools takes tool names;
+// the scoped pattern still binds, as layer 2's --allowedTools rule. Order
+// follows the declaration and duplicates collapse, so a node declaring two
+// Bash patterns yields one "Bash" and the argv stays deterministic.
+func narrowedToolsFor(node graph.Node) []string {
+	tools := make([]string, 0, len(node.AllowedTools))
+	seen := make(map[string]bool, len(node.AllowedTools))
+	for _, rule := range node.AllowedTools {
+		name := toolName(rule)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		tools = append(tools, name)
+	}
+	return tools
+}
+
+// disallowedToolsFor is layer 5: every deniable tool the node did not declare.
+// Scope is dropped when comparing, so a node declaring "Bash(git *)" counts as
+// having declared Bash and is not denied it — the best a deny list can do on
+// its own, which is why it is now the residual layer rather than the ceiling.
 func disallowedToolsFor(node graph.Node) []string {
 	declared := make(map[string]bool, len(node.AllowedTools))
 	for _, tool := range node.AllowedTools {
@@ -285,12 +348,17 @@ func toolName(rule string) string {
 //     simply by leaving the field off;
 //   - no planned node may set cwd (validatePlannedNodeCwd);
 //   - no planned node may set success_check.verify
-//     (validatePlannedNodeVerify).
+//     (validatePlannedNodeVerify);
+//   - no planned node may set agent (validatePlannedNodeAgent).
 //
-// The general rule behind the list, because this class of hole recurs every
-// time the schema grows: every field on graph.Node must have an explicit
-// disposition here — allowed, constrained, or rejected. Adding a field to Node
-// without adding a case is a defect, not a nit.
+// EVERY FIELD ON graph.Node MUST HAVE AN EXPLICIT DISPOSITION HERE — allowed,
+// constrained, or rejected. This class of hole recurs every time the schema
+// grows (`verify:` was one, `agent:` was the next), so adding a field to Node
+// without adding a case here is a review-blocking defect, not a nit.
+// TestPlannedNodeFieldDispositionsAreComplete walks graph.Node and
+// graph.SuccessCheck by reflection and fails on any field with no recorded
+// disposition, which turns that rule from a convention a reviewer has to
+// remember into a red test.
 func validatePlannedNodes(g *graph.Graph, reply string) error {
 	if len(g.Nodes) == 0 {
 		return &PlanError{Reason: "planner produced a graph with no nodes", Output: reply}
@@ -311,6 +379,9 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 			return err
 		}
 		if err := validatePlannedNodeVerify(node); err != nil {
+			return err
+		}
+		if err := validatePlannedNodeAgent(node); err != nil {
 			return err
 		}
 		if err := validatePlannedNodeTools(node); err != nil {
@@ -370,6 +441,33 @@ func validatePlannedNodeVerify(node graph.Node) error {
 			"planned node %q set success_check.verify (command %q); auto mode never runs a shell command from an unreviewed plan — exit_zero and result_matches are available instead",
 			node.ID, node.SuccessCheck.Verify.Command,
 		),
+	}
+}
+
+// validatePlannedNodeAgent rejects a planned node that names a subagent.
+// `agent:` routes around layers 0-3 in one word: it makes an unreviewed plan
+// the thing that chooses which of the user's own subagents — and so which
+// system prompt, which tool grant and which model — runs the node. Whatever
+// bound the plan's declared allowed_tools were supposed to be, the resolved
+// subagent's frontmatter is a second, unreviewed source of the same answers,
+// and oh-my-graph does not parse it or reconcile it (see DESIGN.md, E6: the
+// CLI's precedence between the two is measured in one direction only).
+//
+// Rejection rather than reconciliation, and rejection rather than silently
+// clearing the field, because a plan that asked to run as someone's
+// code-reviewer and instead ran as plain claude would be a different plan than
+// the one that was validated.
+//
+// The field is also mutually exclusive with layer 1 in practice: a node under
+// `--setting-sources ""` cannot resolve the user's ~/.claude/agents at all
+// (DESIGN.md, E2), so an accepted `agent:` on a planned node would not even
+// start. Two independent reasons, one rule.
+func validatePlannedNodeAgent(node graph.Node) error {
+	if node.Agent == "" {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf("planned node %q requested agent %q; auto mode never runs a planned node as one of your subagents", node.ID, node.Agent),
 	}
 }
 
@@ -464,6 +562,7 @@ Rules:
   there is no other Bash pattern available, so a node needing a different
   shell command cannot be planned; break it into steps that fit the list
   above instead.
-- Do not set permission_mode, budget_usd, type, or cwd on any node. Every node
-  runs in the directory oh-my-graph was invoked from.
+- Do not set permission_mode, budget_usd, type, cwd, or agent on any node.
+  Every node runs in the directory oh-my-graph was invoked from, as plain
+  claude — never as one of the user's subagents.
 `

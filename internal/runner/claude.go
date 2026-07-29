@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jitokim/oh-my-graph/internal/childenv"
 )
@@ -22,6 +23,11 @@ const (
 	defaultTimeout = 20 * time.Minute
 )
 
+// maxStderrInError caps how much of a failed child's stderr an error message
+// carries — enough to show the CLI's own complaint without flooding the
+// terminal with a long transcript.
+const maxStderrInError = 500
+
 // NodeOutputError marks a run whose subprocess produced output oh-my-graph could
 // not turn into a NodeOutcome — non-JSON, a truncated envelope, or a spawn that
 // never yielded a result. Never a silent zero outcome: an unreadable run is a
@@ -29,14 +35,43 @@ const (
 type NodeOutputError struct {
 	Reason string
 	Output string
+	// Stderr is the tail of what the child wrote to stderr, present only when
+	// the child exited NON-ZERO (that is the one case exec.ExitError hands it
+	// to us; a clean exit with unusable stdout carries no diagnosis). It turns
+	// "claude produced no output" from a dead end into something actionable:
+	// the CLI reports its own startup refusals there and exits before printing
+	// an envelope. An unresolvable `agent:` is the case this was added for —
+	// claude writes "--agent 'x' not found. Available agents: ..." to stderr,
+	// exits 1, and prints nothing at all on stdout.
+	Stderr string
 	Err    error
 }
 
+// Error is deliberately ONE LINE. It is rendered into the scheduler's live
+// progress feed and into the ledger's fixed-width DETAIL column, both of which
+// a multi-line string would corrupt — so the captured stderr is flattened
+// rather than block-quoted.
 func (e *NodeOutputError) Error() string {
+	msg := fmt.Sprintf("node output error: %s", e.Reason)
 	if e.Err != nil {
-		return fmt.Sprintf("node output error: %s: %v", e.Reason, e.Err)
+		msg += fmt.Sprintf(": %v", e.Err)
 	}
-	return fmt.Sprintf("node output error: %s", e.Reason)
+	if e.Stderr != "" {
+		msg += fmt.Sprintf(" (claude stderr: %s)", flattenLines(e.Stderr))
+	}
+	return msg
+}
+
+// flattenLines collapses a multi-line string onto one line, joining non-empty
+// lines with " / " so nothing is lost and no caller's layout is broken.
+func flattenLines(s string) string {
+	fields := make([]string, 0, 4)
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			fields = append(fields, trimmed)
+		}
+	}
+	return strings.Join(fields, " / ")
 }
 
 func (e *NodeOutputError) Unwrap() error { return e.Err }
@@ -108,18 +143,22 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // buildArgs is the argv (excluding the binary) for a node:
 //
 //	-p <prompt> --output-format json --permission-mode <mode>
-//	  [--max-budget-usd <amount>]
-//	  --allowedTools "<comma,joined>" --disallowedTools "<comma,joined>"
+//	  [--max-budget-usd <amount>] [--setting-sources <sources>] [--agent <name>]
+//	  [--allowedTools "<comma,joined>"] [--tools "<comma,joined>"]
+//	  [--strict-mcp-config] [--disallowedTools "<comma,joined>"]
 //	  [--resume <session_id>]
 //
-// Never --bare (disables OAuth) and never --no-session-persistence (fleetops
-// observes the transcripts). Each optional flag is added only when its field is
-// set: --max-budget-usd when a positive budget_usd is declared (claude then
-// kills the run itself once its own spend crosses it — see NodeInvocation.
-// BudgetUSD), --allowedTools when tools are configured, --disallowedTools when a
-// caller imposed an execution ceiling (auto mode does; hand-written graphs
-// leave it empty and their argv is unchanged), --resume when resuming a
-// session-parent.
+// The order above is the order emitted — keep the two in step, since
+// TestBuildCmd_Argv pins the exact argv. Never --bare (disables OAuth) and
+// never --no-session-persistence (fleetops observes the transcripts).
+//
+// Every bracketed flag is added only when its field is set, so a hand-written
+// graph — whose ToolPolicy carries only AllowedTools — produces exactly the
+// argv it always did. --max-budget-usd appears when a positive budget_usd is
+// declared (claude then kills the run itself once its own spend crosses it —
+// see NodeInvocation.BudgetUSD). The five ceiling flags are rendered in
+// ToolPolicy's own layer order (isolate, grant, narrow, bound MCP, subtract) so
+// a printed argv reads as the policy it enforces.
 func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
@@ -132,11 +171,24 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 		// a very small budget would otherwise produce.
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(spec.BudgetUSD, 'f', -1, 64))
 	}
-	if len(spec.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(spec.AllowedTools, ","))
+	policy := spec.Policy
+	if policy.SettingSources != nil {
+		args = append(args, "--setting-sources", *policy.SettingSources)
 	}
-	if len(spec.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(spec.DisallowedTools, ","))
+	if spec.Agent != "" {
+		args = append(args, "--agent", spec.Agent)
+	}
+	if len(policy.AllowedTools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(policy.AllowedTools, ","))
+	}
+	if policy.Tools != nil {
+		args = append(args, "--tools", strings.Join(policy.Tools, ","))
+	}
+	if policy.StrictMCPConfig {
+		args = append(args, "--strict-mcp-config")
+	}
+	if len(policy.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(policy.DisallowedTools, ","))
 	}
 	if spec.ResumeSession != "" {
 		args = append(args, "--resume", spec.ResumeSession)
@@ -151,6 +203,23 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 // NodeOutcome.BudgetExhausted so the Scheduler can name it a budget failure
 // rather than a generic non-zero exit.
 const budgetExhaustedSubtype = "error_max_budget_usd"
+
+// tailOf returns the LAST n bytes of b, trimmed, marking the cut. The tail
+// rather than the head because the CLI prints startup warnings first and its
+// actual complaint last, so a head-truncated stderr can drop the only line
+// worth reading. The cut is advanced to the next rune boundary so a truncated
+// non-ASCII message does not open with a replacement character.
+func tailOf(b []byte, n int) string {
+	trimmed := strings.TrimSpace(string(b))
+	if len(trimmed) <= n {
+		return trimmed
+	}
+	tail := trimmed[len(trimmed)-n:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return "…(truncated) " + tail
+}
 
 // claudeEnvelope is the JSON oh-my-graph reads from `claude --output-format
 // json`: the session id, the final result text, the reported cost, and the
@@ -177,6 +246,7 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 	stdout, runErr := cmd.Output()
 
 	exitCode := 0
+	var stderr []byte
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
@@ -188,12 +258,16 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 			}
 			return NodeOutcome{}, fmt.Errorf("claude run: spawn failed: %w", runErr)
 		}
-		// The process ran and exited non-zero. claude still printed its envelope
-		// on stdout, so fall through and parse it, carrying the exit code.
+		// The process ran and exited non-zero. claude usually still printed its
+		// envelope on stdout, so fall through and parse it, carrying the exit
+		// code — and keep stderr, which is the only explanation available when
+		// it printed no envelope at all (cmd.Output captures it here because
+		// cmd.Stderr is nil).
 		exitCode = exitErr.ExitCode()
+		stderr = exitErr.Stderr
 	}
 
-	outcome, err := parseEnvelope(stdout)
+	outcome, err := parseEnvelope(stdout, stderr)
 	if err != nil {
 		return NodeOutcome{}, err
 	}
@@ -202,18 +276,24 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 }
 
 // parseEnvelope decodes the claude JSON envelope into a NodeOutcome, returning
-// *NodeOutputError on anything that is not a valid envelope. ExitCode is left
-// zero here — Run stamps it from the actual process state.
-func parseEnvelope(stdout []byte) (NodeOutcome, error) {
+// *NodeOutputError on anything that is not a valid envelope. stderr is carried
+// into that error (never into a success) so a child that refused to start at
+// all explains itself instead of surfacing as a bare "no output". ExitCode is
+// left zero here — Run stamps it from the actual process state.
+func parseEnvelope(stdout, stderr []byte) (NodeOutcome, error) {
 	trimmed := strings.TrimSpace(string(stdout))
 	if trimmed == "" {
-		return NodeOutcome{}, &NodeOutputError{Reason: "claude produced no output"}
+		return NodeOutcome{}, &NodeOutputError{
+			Reason: "claude produced no output",
+			Stderr: tailOf(stderr, maxStderrInError),
+		}
 	}
 	var env claudeEnvelope
 	if err := json.Unmarshal([]byte(trimmed), &env); err != nil {
 		return NodeOutcome{}, &NodeOutputError{
 			Reason: "claude output was not a JSON envelope",
 			Output: trimmed,
+			Stderr: tailOf(stderr, maxStderrInError),
 			Err:    err,
 		}
 	}

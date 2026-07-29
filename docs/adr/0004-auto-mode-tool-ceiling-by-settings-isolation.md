@@ -1,6 +1,7 @@
 # ADR 0004 — Auto mode's tool ceiling is settings-source isolation, and planned-node fields are deny-by-default
 
-- Status: Accepted
+- Status: Accepted — the ceiling (§1) and the field-disposition rule (§2) are
+  implemented and empirically confirmed; see "Measurement outcome" below
 - Date: 2026-07-29
 - Issues: [#11](https://github.com/jitokim/oh-my-graph/issues/11),
   [PR #6](https://github.com/jitokim/oh-my-graph/pull/6)
@@ -108,6 +109,55 @@ that bounds a resolved subagent's tools, and (c) the mapping source being an
 explicit opt-in such as `--agent-map review=code-reviewer`. The implicit scan is
 rejected permanently: it would make an `auto` run's behaviour depend on files the
 user forgot they had.
+
+## Measurement outcome (added at implementation, claude 2.1.220)
+
+The decision above was taken from reading the shipped binary. Before shipping,
+the six open questions were put to a real CLI on a machine whose settings grant
+`Bash(*)`. Full detail in DESIGN.md, "Empirical verification of the tool
+ceiling"; what it changed here:
+
+- **E3, the gate on the whole ADR — PASSED.** `--setting-sources ""` does not
+  affect subscription OAuth. With both billing-switching variables absent from
+  the environment, an isolated `claude -p` returned a normal envelope
+  (`provider: "firstParty"`); with no API key to fall back to, it can only have
+  resolved OAuth. Had this failed, the decision would have been abandoned and
+  the deny-list-only ceiling kept.
+- **E1 — CONFIRMED.** The headline claim holds end to end: identical node
+  declaration, out-of-scope shell command allowed without Layer 1 and denied
+  with it, in-scope `git` still working. Evidence was the filesystem and the
+  envelope's `permission_denials`, not the model's narration.
+- **E4 — CONFIRMED, with a correction to §1's wording.** `--tools` REPLACES the
+  built-in set; a tool omitted from it is unavailable even when `--allowedTools`
+  names it. Layer 3 is therefore an intersection with Layer 2, not an additive
+  narrowing, and must enumerate every tool the node needs. It does.
+- **E2 — ANSWERED, and it reinforces §4.** `--setting-sources ""` also disables
+  discovery of `~/.claude/agents`, so Layer 1 and `agent:` are mutually
+  exclusive. Auto-mapping of `agent:` was already impossible because a planned
+  node may not carry the field; this is a second, independent reason.
+- **E6 — MEASURED IN A CONFIGURATION THIS TOOL NEVER EMITS, so §3's non-claim
+  STANDS and got stronger.** A subagent's frontmatter `tools:` did not widen
+  past `--tools` — but `--tools` is emitted only by auto mode, which rejects
+  `agent:`, so the result does not cover the hand-written path where `agent:` is
+  legal. There is no measured tool bound for the real case, and the docs now say
+  so plainly rather than citing E6 as partial reassurance.
+- **E5 — NOT MEASURED.** No MCP server was available to test Layer 4 against.
+  `--strict-mcp-config` ships because it is free, and SECURITY.md/README say
+  explicitly that MCP closure is unverified rather than implying coverage.
+- **E7 (new, not in the original list) — CONFIRMED.** `--setting-sources ""`
+  drops the project CLAUDE.md, measured with a codeword file. Added because a
+  design decision leans on it: the planner call is deliberately NOT isolated so
+  that it keeps the user's CLAUDE.md, and that would have been an unverified
+  premise. Hooks follow from V1 (they live in the settings files that are not
+  loaded) rather than being an independent claim.
+
+One thing the design did not anticipate, found while finishing PR #6: the claim
+that an unresolvable `--agent` falls back to plain claude is **false**. The CLI
+exits 1 having written nothing to stdout and its complaint to stderr. The
+implementation keeps the failure (a node silently running as generic claude
+instead of the reviewer the graph named is a different node) and surfaces the
+CLI's stderr in `runner.NodeOutputError`, since that message lists the agents
+that do exist. See DESIGN.md, "Node-as-subagent".
 
 ## Consequences
 

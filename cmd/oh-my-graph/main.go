@@ -89,10 +89,11 @@ func runGraph(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// nil deny list: a hand-written graph is the user's own reviewed artifact,
-	// so its nodes run under the user's own tool permissions, unchanged. 0
-	// planning cost: `run` has no planning step, so its total shows no planning
-	// line and is exactly the per-node sum.
+	// nil tool policies: a hand-written graph is the user's own reviewed
+	// artifact, so its nodes run under the user's own settings, hooks, MCP
+	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
+	// planning step, so its total shows no planning line and is exactly the
+	// per-node sum.
 	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil, 0)
 }
 
@@ -132,15 +133,15 @@ func runAuto(args []string) error {
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
 // execution ceiling cannot be separated at the call site: a caller that had to
-// pass plan.Graph and plan.DisallowedTools as two arguments could pass the
-// graph with a nil ceiling and every planned node would silently run under the
+// pass plan.Graph and plan.ToolPolicies as two arguments could pass the graph
+// with a nil ceiling and every planned node would silently run under the
 // user's own standing tool grants — the exact hole auto mode must close, and a
 // failure no test of the coordinator or the scheduler alone would catch.
 // Taking the whole Plan makes that mismatch unrepresentable. It also forwards
 // plan.CostUSD as the run's planning cost, so the end-of-run TOTAL COST
 // includes the planning call rather than undercounting it.
 func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.DisallowedTools, plan.CostUSD)
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
@@ -149,22 +150,22 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // ClaudeCLIRunner the caller passed (a node's claude subprocess) and a
 // ShellVerifier (a node's success_check.verify command). A planned graph can
 // never declare a verification — the coordinator rejects the field — so for
-// `auto` the verifier is wired but never reached. disallowedTools is the
-// per-node execution ceiling: auto passes the coordinator's, `run` passes nil.
+// `auto` the verifier is wired but never reached. toolPolicies is the per-node
+// execution ceiling: auto passes the coordinator's, `run` passes nil.
 // planningCostUSD is the coordinator's one planning-call cost, folded into the
 // ledger's total so an auto run's end-of-run TOTAL COST is honest about the
 // planning step; `run` passes 0 (no planning step), so it shows no planning
 // line and its total is unchanged.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, disallowedTools map[string][]string, planningCostUSD float64) error {
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)
 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
-		Concurrency:     flags.concurrency,
-		ContinueOnFail:  flags.continueOnFail,
-		Verifier:        verify.NewShellVerifier(),
-		DisallowedTools: disallowedTools,
+		Concurrency:    flags.concurrency,
+		ContinueOnFail: flags.continueOnFail,
+		Verifier:       verify.NewShellVerifier(),
+		ToolPolicies:   toolPolicies,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
@@ -199,11 +200,12 @@ func saveGeneratedSpec(runDir string, spec []byte) (string, error) {
 // and the planning cost before execution. The full prompts live in the saved
 // spec file, which is named here so the user can review it.
 //
-// The per-node tool list is what the plan DECLARED, which is not the same as
-// what the node can do — a node declaring any scoped Bash pattern retains the
-// whole Bash tool (see coordinator.deniableTools). This is the screen someone
-// reads before letting an unattended run start, so it must not imply a tighter
-// sandbox than exists: noteBashScope prints that caveat when it applies.
+// This is the screen someone reads before letting an unattended run start, so
+// it must describe the ceiling as it actually is — neither tighter (it used to
+// have to disclaim that a declared Bash scope was not enforced) nor looser
+// (planned nodes now run without the user's own settings, which is a real
+// behaviour change and not something to be discovered later). noteCeiling
+// prints both halves.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	g := plan.Graph
 	fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
@@ -217,32 +219,22 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		}
 		fmt.Fprintln(w, line)
 	}
-	noteBashScope(w, g)
+	noteCeiling(w)
 	fmt.Fprintln(w)
 }
 
-// noteBashScope warns that scoped Bash patterns are a declaration, not a limit.
-// A deny list can remove the Bash tool entirely but cannot narrow it to a set of
-// command prefixes, so any node declaring Bash keeps all of it if the user's own
-// settings grant it. Silent when no node declares Bash — those nodes really are
-// denied the tool.
-func noteBashScope(w io.Writer, g *graph.Graph) {
-	var scoped []string
-	for _, node := range g.Nodes {
-		for _, tool := range node.AllowedTools {
-			if strings.HasPrefix(tool, "Bash") {
-				scoped = append(scoped, node.ID)
-				break
-			}
-		}
-	}
-	if len(scoped) == 0 {
-		return
-	}
-	fmt.Fprintf(w,
-		"  NOTE: %s declare a scoped Bash pattern. That scope is what the plan asked for, not an enforced\n"+
-			"        limit — these nodes keep the whole Bash tool if your settings.json grants it.\n",
-		strings.Join(scoped, ", "),
+// noteCeiling states what running this plan actually does to the machine. It
+// prints for every planned run rather than only when some node declares Bash,
+// because the isolation half applies to all of them: a planned node loads none
+// of your settings, so it also gets none of your CLAUDE.md, hooks or MCP
+// servers. Nodes are more isolated and less capable here than in a
+// hand-written graph, and that is worth one line up front rather than a
+// puzzling failure ten minutes in.
+func noteCeiling(w io.Writer) {
+	fmt.Fprint(w,
+		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
+			"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n"+
+			"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n",
 	)
 }
 

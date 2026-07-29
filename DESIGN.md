@@ -24,10 +24,15 @@ stdlib `flag` (cobra optional/later).
 ## Node runtime mechanics (ground truth — use exactly)
 A node = one subprocess:
 ```
-claude -p "<rendered prompt>" --output-format json \
-  --permission-mode <mode> --allowedTools "<comma,joined>" \
+claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
+  [ --setting-sources "" ] [ --agent <name> ] \
+  --allowedTools "<comma,joined>" \
+  [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ]
 ```
+The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
+are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
+only `AllowedTools`, so its argv is the first two lines and `--resume`.
 run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
 - **Subscription auth crux:** start from `os.Environ()` and **DELETE
   `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`** from the child env (they
@@ -97,6 +102,53 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   single session-parent (same cwd/git scope). Use for tight sequential
   continuation (dev→e2e). Validation: a node may resume AT MOST ONE session parent
   (can't merge two sessions); multi-parent fan-in MUST use artifact.
+
+## Node-as-subagent (`agent:`, v1.1 — hand-written graphs only)
+A node may set `agent: <name>` to run as one of the user's OWN Claude Code
+subagents rather than as plain `claude -p`: the review node runs as *your*
+`code-reviewer`, with its system prompt, its tools and its model. The mechanism
+is one flag — `NodeInvocation.Agent` becomes `--agent <name>`, which `claude`
+resolves against the existing `~/.claude/agents` and `<cwd>/.claude/agents`.
+There is no oh-my-graph-side agent registry, and there must never be one: the
+user's definitions are the single source of truth.
+
+**Load-time validation rejects only a blank/whitespace-only name.** Whether a
+name resolves depends on the machine and the checkout, not on the graph file, so
+a graph valid on one machine would otherwise be invalid on another.
+
+**An unresolvable name is a node FAILURE, not a fallback.** An earlier draft of
+this section claimed a missing agent degrades to plain claude. That was measured
+and is false: `claude -p --agent <unknown>` writes
+`--agent 'x' not found. Available agents: …` to **stderr**, exits **1**, and
+prints **nothing at all on stdout** — so there is no envelope, and the node fails
+as a `*NodeOutputError`. The design keeps that failure rather than implementing
+the fallback, for two reasons. Detecting it would mean string-matching a CLI
+error message, which is version-coupled in exactly the way ADR 0001 warns about;
+and a node the graph asked to run as your reviewer, silently running as generic
+claude instead, is a *different node* producing a plausible-looking review. A
+loud failure is the smaller harm. What the runner does add is the CLI's own
+stderr to the error (`NodeOutputError.Stderr`), because that message names every
+agent that IS available — turning a dead end into a fix.
+
+**Mutually exclusive with the auto-mode tool ceiling's Layer 1.**
+`--setting-sources ""` also disables discovery of the user's agent definitions
+(E6's neighbour, E2), so the two cannot be combined. Planned nodes reject
+`agent:` outright, so nothing collides today — but Layer 1 can never be extended
+to hand-written graphs without dropping `agent:` with it.
+
+**oh-my-graph makes NO claim about tool reconciliation, and has no measurement
+to lean on here.** It does not parse the subagent's frontmatter, and it does not
+reconcile that subagent's own `tools:` with the node's `allowed_tools`. E6 found
+that a subagent's tools do not widen past `--tools` — but `--tools` is emitted
+only by auto mode, which rejects `agent:`, so that result says nothing about the
+hand-written path where `agent:` is legal. For a hand-written graph this is a
+usability question, and both files are the user's own artifacts. For a planned
+graph it would be a safety question, and the answer there is rejection.
+
+**Coordinator auto-mapping is deferred on a design constraint, not on effort.**
+See ADR 0004 §4: an implicit scan of `~/.claude/agents` would make an `auto`
+run's behaviour depend on files the user forgot they had, and a planned node may
+not carry the field at all.
 
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
@@ -443,24 +495,33 @@ Layer 1 is the load-bearing change. Rules from `~/.claude/settings.json` are why
 leaving our argv as the only allow-rule source; enterprise policy settings are
 still loaded and still cannot be escaped. Combined with `dontAsk` — under which
 an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** —
-`Bash(git *)` finally means *git and nothing else*, and the honest gap "a node
-declaring a scoped `Bash(...)` keeps the whole `Bash` tool" is closed.
+`Bash(git *)` means *git and nothing else*. **Measured, not inferred** (E1): the
+identical node declaration ran an out-of-scope `touch` without Layer 1 and had
+it denied with Layer 1, while in-scope `git` kept working. The gap "a node
+declaring a scoped `Bash(...)` keeps the whole `Bash` tool" is closed for
+planned nodes.
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,
 because no node in this run (or any later `auto` run) loads local settings.
 
+Layer 3 is a genuine *replacement* of the built-in tool set, not an addition to
+it (E4): a tool omitted from `--tools` does not exist for the node, and naming
+it in `--allowedTools` does not bring it back. So the two compose as an
+intersection — `--tools` decides what exists, `--allowedTools` what is
+permitted — and Layer 3 must list every tool the node needs.
+
 Layers 3 and 5 are deliberate redundancy, not belt-and-braces theatre: they are
 independent mechanisms, so a wrong assumption about any one layer degrades to
-today's behaviour rather than to nothing. Keeping `--disallowedTools` is why
-this change is safe to ship before every question in "Empirical verification
-required" is answered.
+the previous behaviour rather than to nothing.
 
-Remaining honest gaps: skill/slash-command surfaces are still not enumerable;
-and dropping user settings also drops the user's CLAUDE.md, hooks and MCP
-servers for planned nodes — a behaviour change that makes planned nodes *more
-isolated and less capable* than they are today, which is the intended direction
-but must be stated in the README rather than discovered.
+Remaining honest gaps, unchanged by this work: skill/slash-command surfaces are
+still not enumerable; **Layer 4 is unverified** (E5 — `--strict-mcp-config`
+ships because it is free, not because MCP closure was observed); and dropping
+user settings also drops the user's CLAUDE.md, hooks and MCP servers for planned
+nodes — a behaviour change that makes planned nodes *more isolated and less
+capable* than they were, which is the intended direction but must be stated in
+the README rather than discovered.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
@@ -648,12 +709,14 @@ in "Auto mode" above.
 Seam patterns to mirror: fleetops `internal/control/spawncmd.go` (package-var fn seam),
 `internal/control/control.go` (`runBounded`/`exec.CommandContext` bounded exec).
 
-## Empirical verification required before implementing the tool ceiling
+## Empirical verification of the tool ceiling
 `--help` prose is not ground truth. PR #5 already found the CLI's real deny/allow
 precedence did not match what `--help` implied, so the layered ceiling above
-separates what has been *read out of the shipped CLI* from what still needs a
-real invocation. Verified against the claude 2.1.220 binary's own code (free, no
-API call):
+separates what has been *read out of the shipped CLI* from what took a real
+invocation to settle. Every claim below is one or the other; nothing here rests
+on documentation.
+
+### Read out of the binary (free, no API call), claude 2.1.220
 
 - **V1.** `--setting-sources` parses `user`/`project`/`local`; `""` yields the
   empty list; anything else is a hard error. `flagSettings` (`--settings`) and
@@ -668,35 +731,86 @@ API call):
   `--allowedTools` rules to be *ignored entirely*. On such a machine the ceiling
   is the managed policy, not ours. Worth a line in SECURITY.md.
 
-Still unmeasured — each needs one real `claude` invocation (a `make smoke`-style
-manual step, never CI), and the implementer must run them **before** relying on
-the behaviour, not after:
+### Measured, 2026-07-29, claude 2.1.220
 
-- **E1 (blocks Layer 1+2).** With a settings.json granting `Bash(*)`:
-  `claude -p '<prompt>' --permission-mode dontAsk --setting-sources "" --allowedTools "Bash(git *)"`
-  must allow `git status` and **deny** an out-of-scope command. Expected from V1+V2;
-  confirm before deleting a word of the honest-gap disclosure in README/SECURITY.
-- **E2 (blocks combining #11 with `agent:`).** Does `--setting-sources ""` also
-  disable discovery of `~/.claude/agents`? If yes, Layer 1 and `agent:` are
-  mutually exclusive and DESIGN must say so. (Planned nodes reject `agent:`
-  anyway, so this only bites if Layer 1 is ever extended to hand-written graphs.)
-- **E3 (load-bearing invariant).** `--setting-sources ""` must NOT affect
-  subscription OAuth. Credentials do not live in settings files, so this should
-  hold — but it is the project's #1 guarantee and gets its own smoke assertion.
-- **E4.** `--tools` exhaustiveness: does omitting `Read` remove `Read`? Does
-  `--tools ""` disable everything? Does it compose with `--allowedTools`, or
-  replace it? Layer 3 is written as additive; if `--tools` turns out to be
-  exclusive-of-allow, Layer 3 ships disabled and Layers 1+2 carry the ceiling.
-- **E5.** Do project `.mcp.json` servers survive `--setting-sources ""`? If yes
-  (likely — it is not a settings file), Layer 4's `--strict-mcp-config` is
-  required, not optional.
-- **E6.** `--agent` precedence: does a subagent's frontmatter `tools:` union
-  with, override, or lose to `--allowedTools`/`--tools`? Until measured,
-  DESIGN.md states no reconciliation rule — that is the honest position, and it
-  is why coordinator auto-mapping of `agent:` is deferred rather than designed.
+Run as one-off manual invocations against a real machine whose
+`~/.claude/settings.json` grants `Bash(*)`, `Write(*)`, `WebFetch(*)` — the
+exact power-user configuration the ceiling exists for. Evidence is the
+filesystem and the envelope's own `permission_denials` array, not the model's
+narration of what it was allowed to do. These are NOT part of `make test`; the
+automated suite stays spawn-free.
 
-Until E1 lands, README/SECURITY.md keep their current wording about the Bash
-gap. Do not narrow a published security claim ahead of the measurement.
+- **E1 — CONFIRMED. Layers 1+2 are a real ceiling.** Same node declaration
+  (`--allowedTools "Bash(git *)"`, `--permission-mode dontAsk`), one variable:
+  - *without* `--setting-sources ""`: `touch <path>` **ran** (file created,
+    `permission_denials: []`). This is the documented gap, reproduced.
+  - *with* `--setting-sources ""`: the same command was **denied**
+    (`permission_denials: [{tool_name: "Bash", …}]`, no file on disk).
+  - *with* `--setting-sources ""`, in-scope `git init <path>`: **allowed**.
+
+  So the scoped pattern binds — `Bash(git *)` means git and nothing else —
+  rather than being a declaration. This is what licenses narrowing the Bash-gap
+  wording in README/SECURITY.md **for planned nodes only**.
+- **E2 — ANSWERED: yes, mutually exclusive.** `--setting-sources ""` also
+  disables discovery of the user's agent definitions. `--agent code-reviewer`
+  under isolation fails at startup with *"not found. Available agents: claude,
+  Explore, general-purpose, Plan, statusline-setup"* — only built-ins survive.
+  Layer 1 and `agent:` therefore cannot be combined. This costs nothing today
+  (planned nodes reject `agent:`, hand-written graphs get no Layer 1) but it is
+  a hard constraint on ever extending Layer 1 to hand-written graphs, and a
+  second, independent reason coordinator auto-mapping of `agent:` is impossible
+  rather than merely unbuilt.
+- **E3 — CONFIRMED SAFE. `--setting-sources ""` does NOT affect subscription
+  OAuth.** With `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` absent from the
+  environment, `claude -p '…' --output-format json --permission-mode plan
+  --setting-sources ""` returned a normal envelope (`is_error: false`, a
+  `result`, `provider: "firstParty"`). Since no API key existed to fall back to,
+  a successful call can only have resolved OAuth. Credentials are not settings,
+  and dropping settings does not touch them. Independently, the run confirmed
+  the flag was in effect: the `model` pin from the user's settings.json was not
+  applied. **The project's #1 invariant is intact.**
+- **E4 — CONFIRMED: `--tools` REPLACES, and `--allowedTools` cannot resurrect an
+  omitted tool.** `--tools "Glob" --allowedTools "Read"`, asked to read a file:
+  the model reported having no read tool and made zero tool calls
+  (`num_turns: 1`, `permission_denials: []` — it never got as far as a
+  permission decision). Layer 3 is therefore a genuine narrowing and must list
+  every tool the node needs; it is not additive with Layer 2. The two axes
+  compose as an intersection: `--tools` decides what exists, `--allowedTools`
+  decides what is permitted.
+- **E5 — NOT MEASURED.** No project `.mcp.json` was available to test whether
+  MCP servers survive `--setting-sources ""`. `--strict-mcp-config` ships as
+  Layer 4 regardless, since oh-my-graph never passes `--mcp-config` and the flag
+  is therefore free; but **no claim is made** that MCP is closed, and
+  SECURITY.md says so rather than implying coverage that was not observed.
+- **E6 — MEASURED ONLY IN A CONFIGURATION THIS TOOL NEVER EMITS.** With
+  `--agent code-reviewer` (frontmatter `tools: Read, Grep, Glob, Bash`) plus
+  `--tools "Read"`, the node could not run a shell command: zero tool calls, no
+  permission denial. So a resolved subagent's frontmatter does not widen past
+  `--tools`.
+
+  **That result does not transfer to any path oh-my-graph actually produces**,
+  and saying otherwise would be the overclaim this section exists to prevent.
+  `--tools` is emitted only by auto mode, and auto mode rejects `agent:`; the
+  one path where `agent:` is legal — hand-written graphs — never passes
+  `--tools` at all. So for the real `agent:` case there is **no measured tool
+  bound**, and the precise composition between a subagent's `tools:` and a
+  node's `allowed_tools` is unknown. oh-my-graph states **no reconciliation
+  rule**, and coordinator auto-mapping stays deferred.
+- **E7 — CONFIRMED: `--setting-sources ""` drops the project CLAUDE.md.** In a
+  directory whose `CLAUDE.md` defined a codeword, a plain `claude -p` returned
+  the codeword and the same call with `--setting-sources ""` returned
+  "NOCODEWORD". This was measured rather than assumed because a design decision
+  rests on it (the planner call is deliberately NOT isolated, so it keeps the
+  user's CLAUDE.md — see `coordinator.Plan`) and because it is the concrete cost
+  the README promises to disclose. Settings *hooks* were not separately
+  measured: they are defined inside the settings files that V1 established are
+  not loaded, so "no settings, no hooks" follows from V1 rather than being an
+  independent claim.
+
+Two corrections these measurements force on text written before them: the
+Bash-gap disclosure is now false **for planned nodes** and must be narrowed
+rather than repeated, and the claim that an unresolvable `--agent` "falls back
+to plain claude" was wrong — see "Node-as-subagent".
 
 ## Implementation sequencing (v1.1, four PRs, shared hot files)
 `internal/schedule/scheduler.go`, `internal/graph/graph.go`,

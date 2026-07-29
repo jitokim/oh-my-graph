@@ -49,20 +49,23 @@ func mustParse(t *testing.T, spec string) *graph.Graph {
 
 // TestExecutePlan_CarriesTheCeilingIntoEveryNode covers the hop that makes auto
 // mode's tool ceiling real: the planned graph reaching the scheduler together
-// with its deny list. The coordinator building a ceiling and the scheduler
+// with its policies. The coordinator building a ceiling and the scheduler
 // forwarding one are each tested in their own package, but neither notices if
 // this hop drops it — the suite would stay green while every planned node
-// silently ran under the user's own standing grants. This pins the hop.
+// silently ran under the user's own standing grants. This pins the hop, and it
+// checks the ISOLATION layer specifically, because that is the one whose
+// absence looks like nothing at all in an argv.
 func TestExecutePlan_CarriesTheCeilingIntoEveryNode(t *testing.T) {
 	g := mustParse(t, `{"name":"planned","nodes":[
 		{"id":"scan","prompt":"scan","allowed_tools":["Read"]},
 		{"id":"edit","prompt":"edit","depends_on":["scan"],"allowed_tools":["Edit"]}]}`)
-	ceiling := map[string][]string{
-		"scan": {"Bash", "Write"},
-		"edit": {"Bash", "WebFetch"},
+	none := ""
+	ceiling := map[string]runner.ToolPolicy{
+		"scan": {AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash", "Write"}, Tools: []string{"Read"}, SettingSources: &none, StrictMCPConfig: true},
+		"edit": {AllowedTools: []string{"Edit"}, DisallowedTools: []string{"Bash", "WebFetch"}, Tools: []string{"Edit"}, SettingSources: &none, StrictMCPConfig: true},
 	}
 	rec := &capturingRunner{}
-	plan := coordinator.Plan{Graph: g, DisallowedTools: ceiling}
+	plan := coordinator.Plan{Graph: g, ToolPolicies: ceiling}
 
 	// executeGraph resolves its run directory relative to the process cwd, so
 	// run from a temp dir instead of littering the repo with artifacts.
@@ -73,17 +76,24 @@ func TestExecutePlan_CarriesTheCeilingIntoEveryNode(t *testing.T) {
 	}
 
 	for _, node := range []string{"scan", "edit"} {
-		got := rec.invocationFor(node).DisallowedTools
-		if strings.Join(got, ",") != strings.Join(ceiling[node], ",") {
-			t.Errorf("node %q ran with deny list %v, want %v", node, got, ceiling[node])
+		policy := rec.invocationFor(node).Policy
+		want := ceiling[node]
+		if strings.Join(policy.DisallowedTools, ",") != strings.Join(want.DisallowedTools, ",") {
+			t.Errorf("node %q ran with deny list %v, want %v", node, policy.DisallowedTools, want.DisallowedTools)
+		}
+		if policy.SettingSources == nil || *policy.SettingSources != "" {
+			t.Errorf("node %q lost settings isolation on the way to the runner", node)
+		}
+		if !policy.StrictMCPConfig || len(policy.Tools) == 0 {
+			t.Errorf("node %q lost a ceiling layer on the way to the runner: %+v", node, policy)
 		}
 	}
 }
 
 // TestExecuteGraph_HandWrittenPathImposesNoCeiling is the other half: the `run`
 // subcommand passes nil, and that must reach the runner as "no ceiling" so a
-// hand-written graph keeps running under the user's own permissions exactly as
-// it did before this guard existed.
+// hand-written graph keeps running under the user's own settings, hooks and MCP
+// servers exactly as it did before this guard existed.
 func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	g := mustParse(t, `{"name":"handwritten","nodes":[{"id":"only","prompt":"only","allowed_tools":["Read"]}]}`)
 	rec := &capturingRunner{}
@@ -93,8 +103,15 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}
-	if got := rec.invocationFor("only").DisallowedTools; len(got) != 0 {
-		t.Errorf("hand-written node ran with deny list %v, want none", got)
+	policy := rec.invocationFor("only").Policy
+	if len(policy.DisallowedTools) != 0 {
+		t.Errorf("hand-written node ran with deny list %v, want none", policy.DisallowedTools)
+	}
+	if policy.SettingSources != nil {
+		t.Errorf("the `run` path must never disable the user's own settings, got %q", *policy.SettingSources)
+	}
+	if policy.StrictMCPConfig || policy.Tools != nil {
+		t.Errorf("the `run` path must impose no narrowing, got %+v", policy)
 	}
 }
 
@@ -163,34 +180,27 @@ func captureStdout(t *testing.T, fn func()) string {
 	return out
 }
 
-// TestPrintPlan_FlagsScopedBashAsUnenforced pins the honesty of the pre-run
-// summary. A scoped pattern like Bash(git *) is what the plan asked for, not a
-// limit the node actually runs under — this is the screen a user reads before
-// letting an unattended run start, so it must not imply a tighter sandbox than
-// exists.
-func TestPrintPlan_FlagsScopedBashAsUnenforced(t *testing.T) {
+// TestNoteCeiling_StatesIsolationAndItsCost pins the honesty of the pre-run
+// summary in BOTH directions, because it has now been wrong in one of them.
+// It used to disclaim that a declared Bash scope was not enforced; measurement
+// (DESIGN.md, E1) made that disclaimer false, and an out-of-date warning is
+// how users learn to ignore warnings. The replacement has to keep stating the
+// cost of the thing that made it true — planned nodes no longer see the user's
+// CLAUDE.md, hooks or MCP servers.
+func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 	var out strings.Builder
-	noteBashScope(&out, mustParse(t, `{"name":"p","nodes":[
-		{"id":"build","prompt":"build","allowed_tools":["Bash(go *)"]},
-		{"id":"read","prompt":"read","allowed_tools":["Read"]}]}`))
-
+	noteCeiling(&out)
 	got := out.String()
-	if !strings.Contains(got, "build") {
-		t.Errorf("note does not name the Bash-declaring node: %q", got)
-	}
-	if strings.Contains(got, "read") {
-		t.Errorf("note wrongly names a node that really is denied Bash: %q", got)
-	}
-}
 
-// TestPrintPlan_SilentWhenNoNodeDeclaresBash keeps the caveat truthful in the
-// other direction: when every node is denied Bash outright, there is nothing to
-// warn about and a standing warning would just teach users to ignore it.
-func TestPrintPlan_SilentWhenNoNodeDeclaresBash(t *testing.T) {
-	var out strings.Builder
-	noteBashScope(&out, mustParse(t, `{"name":"p","nodes":[{"id":"read","prompt":"read","allowed_tools":["Read"]}]}`))
-
-	if out.String() != "" {
-		t.Errorf("expected no note, got %q", out.String())
+	for _, want := range []string{"settings", "enforced", "hooks", "MCP"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("pre-run note does not mention %q, so a user cannot know what running this plan does:\n%s", want, got)
+		}
+	}
+	// The retired claim must not come back: it is measurably false for planned
+	// nodes now, and re-asserting it would understate the ceiling rather than
+	// overstate it — still a lie, just a conservative one.
+	if strings.Contains(got, "not an enforced") {
+		t.Errorf("pre-run note still claims declared scopes are unenforced:\n%s", got)
 	}
 }

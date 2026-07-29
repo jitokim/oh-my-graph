@@ -65,6 +65,24 @@ func (e *RunFailedError) Error() string {
 	return fmt.Sprintf("run completed with failed node(s): %s", strings.Join(e.FailedNodes, ", "))
 }
 
+// MissingToolPolicyError means a caller imposed a tool ceiling (a non-nil
+// Options.ToolPolicies) that has no entry for this node.
+//
+// This is a node failure rather than a fall back to "no ceiling" on purpose.
+// The fallback would produce exactly the outcome the ceiling exists to prevent
+// — one unreviewed planned node running with the user's full standing grants
+// while every other node in the same run is capped — and it would do it
+// silently, in the path nobody looks at because the run succeeded. Reaching
+// this error means the policy map and the graph disagree, which is a bug in
+// whoever built them; it should say so.
+type MissingToolPolicyError struct {
+	NodeID string
+}
+
+func (e *MissingToolPolicyError) Error() string {
+	return fmt.Sprintf("node %q has no tool policy, but this run imposes one: refusing to run it without its execution ceiling", e.NodeID)
+}
+
 // asErr is errors.As with the argument order flipped for readability at the call
 // site (asErr(err, &target)). It keeps the classification helpers terse.
 func asErr(err error, target any) bool {
