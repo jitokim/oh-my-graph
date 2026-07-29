@@ -443,6 +443,38 @@ show their remaining headroom in the ledger's `DETAIL` column.
 What remains is sub-call and cross-node accounting — see
 [Known limitations](#known-limitations).
 
+## Platform support
+
+| platform | status |
+|---|---|
+| **macOS, Linux** | fully supported |
+| **WSL** | fully supported — a WSL build *is* a Linux build |
+| **native Windows** | compiles and runs, but degraded and untested |
+
+macOS and Linux are the supported targets, and CI builds and tests on Linux.
+WSL needs no special handling: it is `GOOS=linux`, so it takes the identical
+code path — provided the `claude` CLI and `sh` live inside the distro, since
+every path and every spawn is WSL-side.
+
+Native Windows compiles and a cancelled node still kills its child, but it is
+best-effort. Three things to know before relying on it:
+
+- **`verify` runs through `sh -c` everywhere.** The interpreter is a compile-time
+  constant with no per-OS branch — there is no `cmd /c` fallback — so
+  `success_check.verify` on native Windows needs an `sh` on `PATH` (Git Bash,
+  MSYS) or it fails as "failed to run". `go test ./...` needs one for the same
+  reason; no test skips on OS.
+- **No tree-kill.** Cancelling or timing out a verification signals the whole
+  process group on unix (`internal/verify/procgroup_unix.go`); the Windows
+  build (`procgroup_windows.go`) keeps stock `os/exec` behaviour and kills only
+  the direct child, so descendants can outlive the run that spawned them.
+- **The env scrub is case-sensitive.** Windows treats environment variable names
+  as case-insensitive, but [the scrub](#bring-your-own-login) matches keys
+  exactly — a lowercase `anthropic_api_key` would survive it and reach the
+  child. The guarantee holds as written only where names are case-sensitive.
+
+On Windows, prefer WSL.
+
 ## Known limitations
 
 Honest gaps in v0.1, each tracked as an issue rather than left as prose:
