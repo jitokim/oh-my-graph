@@ -9,31 +9,42 @@ a Claude Code session than switch to a shell.
 ## What's in here
 
 - `commands/graph.md` — the `/graph` slash command. This is the primary
-  surface: you deliberately trigger it, e.g. `/graph run graphs/dev-review-pr.yaml --input repo=.`
+  surface: you deliberately trigger it, either to run an existing graph, e.g.
+  `/graph run graphs/dev-review-pr.yaml --input repo=.`, or to auto-plan one
+  from a goal, e.g. `/graph auto "add a Platform support section to the README"`.
 - `skills/run-graph/SKILL.md` — an optional, description-routed skill so
   Claude can also reach for `oh-my-graph` on a natural-language request
   ("run this graph for me") without you typing the slash command.
 
-Both are scoped to `allowed-tools: Bash(oh-my-graph run *)`, so any
-`oh-my-graph run ...` invocation runs without a per-use permission prompt, but
-nothing outside that command prefix is granted.
+The command is scoped to `allowed-tools: Bash(oh-my-graph run *), Bash(oh-my-graph auto *)`,
+so any `oh-my-graph run ...` or `oh-my-graph auto ...` invocation runs without a
+per-use permission prompt, but nothing outside those command prefixes is granted.
 
 ## `/graph` invocation UX
+
+> **Namespacing:** when the plugin is installed via a marketplace, Claude Code
+> namespaces its commands by plugin name, so the command is `/oh-my-graph:graph`,
+> not a bare `/graph` (type `/oh-my-graph:` and let autocomplete fill it in). A
+> bare `/graph` only works if some other source provides that exact name. The
+> examples below use the short form for readability.
 
 What you type in a Claude Code session:
 
 ```
 /graph run graphs/dev-review-pr.yaml --input repo=.
+/graph auto "add a Platform support section to the README"
 ```
 
 What Claude runs via Bash (verbatim, `$ARGUMENTS` substituted):
 
 ```sh
 oh-my-graph run graphs/dev-review-pr.yaml --input repo=.
+oh-my-graph auto "add a Platform support section to the README"
 ```
 
 Claude then reports the run ledger (session id, cost, verdict, duration per
-node, plus total cost) back to you in the session.
+node, plus total cost) back to you in the session. For `auto`, it also shows
+the planned graph before the ledger.
 
 ## Prerequisite: `oh-my-graph` on `$PATH`
 
