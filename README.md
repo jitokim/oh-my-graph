@@ -168,7 +168,7 @@ exact node names):
 ```
 Planning a graph for goal "lint this repo and summarize the findings"...
 Planned graph "lint-and-summarize" (2 nodes, planning cost $0.0021, saved to .oh-my-graph/runs/20260729-101600/graph.json):
-  - lint [tools: Bash(golangci-lint *), Bash(go vet *)]
+  - lint [tools: Bash(go *), Read]
   - summarize (after lint) [tools: Read]
 
 Running graph "lint-and-summarize" (run 20260729-101600)
@@ -186,8 +186,26 @@ TOTAL COST: $0.0106
 The generated spec is saved to `.oh-my-graph/runs/<run-id>/graph.json` —
 since JSON is valid YAML, you can hand-edit it and re-run it directly with
 `oh-my-graph run`. A planned node can never opt into `permission_mode:
-bypassPermissions` (the coordinator rejects that before anything runs);
-hand-written YAML remains the path for that and any other precise control.
+bypassPermissions`, never set its own `cwd`, and may only name tools from a
+fixed allowlist (the coordinator rejects all three before anything runs).
+Because `--allowedTools` only *adds* to the permissions your own
+`~/.claude/settings.json` already grants, auto mode additionally passes each
+planned node an explicit `--disallowedTools` ceiling covering a fixed list of
+consequential built-in tools it did not declare (`Bash`, `Edit`, `Write`,
+`MultiEdit`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Task`/`Agent`) — so a
+standing `Bash(*)` or `Write(*)` grant in your settings does not silently widen
+an unattended plan.
+
+That is a real reduction, not a sandbox, and the limits are worth knowing before
+you leave a run unattended: a node that legitimately needs a scoped pattern like
+`Bash(git *)` keeps the **whole** `Bash` tool (a deny list cannot say "all Bash
+except these prefixes"); `mcp__*` tools from your configured MCP servers are not
+covered; and settings *hooks* are not tool calls, so a write-capable node can
+still leave a `.claude/settings.local.json` behind. Re-running a saved
+`graph.json` through `oh-my-graph run` drops the ceiling entirely — that path
+assumes you reviewed the file. See [SECURITY.md](SECURITY.md). Hand-written YAML
+is unaffected by all of this: it is your own reviewed artifact and remains the
+path for precise control.
 
 **Custom YAML vs. auto, in one line:** reach for `graphs/*.yaml` when you know
 exactly which tools each node should have and how they should hand off to

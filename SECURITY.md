@@ -36,10 +36,39 @@ line is.
 
 - Each node declares its own `allowed_tools` and `permission_mode`. Grant only
   what a node needs.
+- **`allowed_tools` is a declaration, not a sandbox.** It is passed to the CLI as
+  `--allowedTools`, which is *unioned* with the permissions your own
+  `~/.claude/settings.json` already grants — it can never shrink them. If your
+  settings carry a standing grant like `Bash(*)` or `Write(*)`, a node has it
+  regardless of what the graph declares. For hand-written graphs this is by
+  design: the graph is your own reviewed artifact and your settings are the
+  intended policy.
 - `permission_mode: bypassPermissions` is **opt-in per node** and prints a loud
   warning at load time. It is never a graph default. Parallel nodes that share a
   working directory should stay read-only (`permission_mode: plan`) to avoid
   racing edits.
+
+## Auto-planned graphs (`oh-my-graph auto`)
+
+A planned graph is untrusted LLM output executed unattended, so it gets bounds a
+hand-written graph does not. Beyond the plan-time rejections (no
+`bypassPermissions`, no `cwd`, no tool outside a fixed allowlist), auto mode
+passes each node an explicit `--disallowedTools` ceiling — a deny beats a prior
+allow, so it is the only part that binds at runtime.
+
+Stated honestly, this is a reduction and not a sandbox. Known gaps, also
+recorded in DESIGN.md and in `coordinator.deniableTools`:
+
+- a node declaring any scoped `Bash(...)` pattern keeps the **whole** `Bash`
+  tool, because a deny cannot express "all Bash except these prefixes";
+- the deny list enumerates built-in tool names, so `mcp__<server>__<tool>` for
+  any MCP server you have configured is **not** covered;
+- settings *hooks* are not tool calls and no deny reaches them, so a
+  write-capable node can still drop a `.claude/settings.local.json` in the
+  invocation directory for a later node or future run to load.
+
+Treat `auto` as you would any unattended agent: run it in a directory you are
+willing to have modified, not with a broad standing grant you rely on elsewhere.
 
 ## Reporting
 

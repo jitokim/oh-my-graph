@@ -29,25 +29,83 @@ const plannerPermissionMode = "plan"
 const maxOutputInError = 500
 
 // plannedToolAllowlist is the fixed, coordinator-owned safety allowlist for
-// tools a coordinator-planned node may request. A planned graph comes from
+// tools a coordinator-planned node may DECLARE. A planned graph comes from
 // untrusted LLM output and runs unattended under permission_mode dontAsk (see
-// schedule.defaultPermissionMode) — nothing prompts a human before a tool
-// call fires. The planner prompt (below) asks the model to pick least-
-// privilege tools from exactly this list, but that is only a request to an
-// untrusted producer; validatePlannedNodes is what actually enforces it by
-// rejecting any planned node naming a tool outside this set. This is
-// explicit-allow/deny-everything-else: it does not try to parse or sanitize
-// a Bash command string, it only accepts the exact patterns listed here, so
-// "Bash", "Bash(*)", "Bash(rm -rf *)", "Bash(curl * | sh)", unrestricted
-// WebFetch/WebSearch, and anything else not spelled out below simply never
-// matches.
+// schedule.defaultPermissionMode) — nothing prompts a human before a tool call
+// fires. The planner prompt (below) asks the model to pick least-privilege
+// tools from exactly this list, but that is only a request to an untrusted
+// producer; validatePlannedNodeTools is what enforces it, rejecting any planned
+// node naming a tool outside this set. So "Bash", "Bash(*)", "Bash(rm -rf *)",
+// "Bash(curl * | sh)", unrestricted WebFetch/WebSearch and anything else not
+// spelled out below never survive planning.
+//
+// This is a DECLARATION bound, not an execution bound, and the distinction is
+// the whole reason deniableTools exists below: the allowlist is rendered onto
+// the argv as --allowedTools, which per `claude --help` is a list of tools to
+// allow and is unioned with whatever the user's own ~/.claude/settings.json
+// already grants. It can never subtract. deniableTools is what actually caps
+// execution.
 //
 // Hand-written YAML graphs (the `run` path, internal/graph.Load) are
-// human-authored and reviewed before they run, so this allowlist does NOT
-// apply to them — only to graphs coordinator.Plan produced.
+// human-authored and reviewed before they run, so neither this allowlist nor
+// the deny list applies to them — only to graphs coordinator.Plan produced.
 var plannedToolAllowlist = []string{
 	"Read", "Glob", "Grep", "Edit", "Write",
 	"Bash(git *)", "Bash(go *)", "Bash(make *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(gh pr *)",
+}
+
+// deniableTools is auto mode's actual execution ceiling: the consequential
+// tool NAMES a planned node is denied unless it declared them. It closes the
+// hole plannedToolAllowlist cannot, because --allowedTools only ever adds.
+// A power user running with standing grants like `Bash(*)`, `Write(*)`,
+// `WebFetch(*)` or `Agent(*)` in their own settings.json otherwise hands every
+// one of those tools to an unattended, unreviewed planned node no matter how
+// narrow its allowed_tools was. --disallowedTools is the one flag that
+// subtracts and beats a prior allow, so the ceiling has to be spelled as
+// denies.
+//
+// The entries are bare tool NAMES, not scoped patterns, because that is the
+// granularity a deny actually enforces. Measured against a real CLI (claude
+// 2.1.220, `claude -p`, permission-mode dontAsk, settings.json granting
+// `Bash(*)`):
+//
+//   - a bare-name deny ("Bash") removes the tool outright — it beats both the
+//     user's standing settings grant and this process's own --allowedTools;
+//   - a wildcard deny ("Bash(*)") is a NO-OP. The specifier is matched as a
+//     command pattern, so it only matches a command literally beginning with
+//     "*". Denying `Bash(*)` closes nothing, which is exactly why it is absent
+//     here despite looking like the obvious thing to write;
+//   - denying a name the CLI does not have (verified with a junk name) is
+//     accepted and the run still succeeds — so listing both Task and Agent,
+//     the two spellings the subagent-spawning tool has had across versions,
+//     costs nothing.
+//
+// Read/Glob/Grep are deliberately NOT deniable: they cannot mutate state or
+// reach the network on their own once shell, write and fetch are gone, and
+// denying them would make plans brittle for no safety gain.
+//
+// KNOWN GAPS — this list is an ENUMERATION over an open set, so it is a
+// meaningful reduction, not a sandbox:
+//
+//  1. A node that legitimately declares any scoped Bash pattern (e.g.
+//     "Bash(git *)") keeps the entire Bash tool, because a deny cannot express
+//     "all Bash except these prefixes". For that node the scoped pattern is a
+//     declaration only, and a standing `Bash(*)` grant still exposes arbitrary
+//     shell — including writes, which makes the Write/Edit denies moot there.
+//  2. Tools outside this list are NOT covered: notably `mcp__<server>__<tool>`
+//     for any MCP server the user has configured (unenumerable by name here),
+//     and skill/slash-command surfaces.
+//  3. Nothing here reaches settings *hooks*, which are not tool calls. A node
+//     that can write (see gap 1) can still drop a `.claude/settings.local.json`
+//     in the invocation directory for a later node or a future run to load;
+//     rejecting `cwd` bounds where that can happen, it does not prevent it.
+//
+// The CLI also ships `--tools` (replace the built-in set outright) and
+// `--strict-mcp-config`, which are structurally better primitives than an
+// enumerated deny list and would close gaps 1 and 2. Adopting them changes what
+// every node can do and is a product decision deferred out of this fix.
+var deniableTools = []string{
+	"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent",
 }
 
 // plannedToolAllowlistSet is plannedToolAllowlist as a lookup set, built once
@@ -88,13 +146,23 @@ func truncate(s string, n int) string {
 }
 
 // Plan is the coordinator's product: the validated graph, the raw JSON spec it
-// was parsed from (so the caller can persist and re-run it), and what the
-// planner call cost — the caller reports it so an auto run's total spend is
-// honest about including the planning step.
+// was parsed from (so the caller can persist and re-run it), what the planner
+// call cost — the caller reports it so an auto run's total spend is honest
+// about including the planning step — and the execution ceiling every planned
+// node must run under.
+//
+// DisallowedTools travels WITH the plan rather than being left for the caller
+// to remember, because it is not optional decoration: it is the only part of
+// the tool guard that binds at runtime. A caller that executes Plan.Graph must
+// hand DisallowedTools to the Scheduler, or the graph runs with the user's own
+// (possibly wide-open) standing grants.
 type Plan struct {
 	Graph   *graph.Graph
 	Spec    []byte
 	CostUSD float64
+	// DisallowedTools maps each planned node's id to the tools its subprocess
+	// must be denied. Never nil for a successful plan.
+	DisallowedTools map[string][]string
 }
 
 // Coordinator plans graphs. Construct it with New (constructor injection — no
@@ -118,9 +186,15 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 		return Plan{}, &PlanError{Reason: "goal is empty"}
 	}
 
+	// The planner decides the whole graph, so it must not be the least
+	// constrained call in an auto run. It only emits a JSON object, declares no
+	// tools, and runs read-only — but "read-only permission mode" is not a tool
+	// ceiling, and without a deny list it would inherit the user's full standing
+	// grants. A node declaring nothing denies everything deniable.
 	outcome, err := c.runner.Run(ctx, runner.NodeInvocation{
-		Prompt:         plannerPrompt(goal, inputKeys),
-		PermissionMode: plannerPermissionMode,
+		Prompt:          plannerPrompt(goal, inputKeys),
+		PermissionMode:  plannerPermissionMode,
+		DisallowedTools: disallowedToolsFor(graph.Node{}),
 	})
 	if err != nil {
 		return Plan{}, fmt.Errorf("planner run: %w", err)
@@ -147,7 +221,49 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 	if err := validatePlannedNodes(g, outcome.Result); err != nil {
 		return Plan{}, err
 	}
-	return Plan{Graph: g, Spec: []byte(spec), CostUSD: outcome.TotalCostUSD}, nil
+	return Plan{
+		Graph:           g,
+		Spec:            []byte(spec),
+		CostUSD:         outcome.TotalCostUSD,
+		DisallowedTools: disallowedToolsByNode(g),
+	}, nil
+}
+
+// disallowedToolsByNode derives the run's execution ceiling: one deny list per
+// planned node. It runs after validation, so every node here already declared
+// a non-empty allowed_tools drawn from plannedToolAllowlist.
+func disallowedToolsByNode(g *graph.Graph) map[string][]string {
+	byNode := make(map[string][]string, len(g.Nodes))
+	for _, node := range g.Nodes {
+		byNode[node.ID] = disallowedToolsFor(node)
+	}
+	return byNode
+}
+
+// disallowedToolsFor is the per-node ceiling: every deniable tool the node did
+// not declare. Scope is dropped when comparing, so a node declaring
+// "Bash(git *)" counts as having declared Bash and is not denied it — see
+// deniableTools for why that is the best a deny list can do, and what it
+// leaves open.
+func disallowedToolsFor(node graph.Node) []string {
+	declared := make(map[string]bool, len(node.AllowedTools))
+	for _, tool := range node.AllowedTools {
+		declared[toolName(tool)] = true
+	}
+	denied := make([]string, 0, len(deniableTools))
+	for _, tool := range deniableTools {
+		if !declared[tool] {
+			denied = append(denied, tool)
+		}
+	}
+	return denied
+}
+
+// toolName strips a permission rule's scope: "Bash(git *)" → "Bash", "Read" →
+// "Read".
+func toolName(rule string) string {
+	name, _, _ := strings.Cut(rule, "(")
+	return name
 }
 
 // validatePlannedNodes enforces what auto mode refuses beyond the structural
@@ -166,7 +282,8 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 //     is non-empty (internal/runner.ClaudeCLIRunner.buildArgs), so an empty
 //     list would run under the CLI's own default tool set instead of this
 //     allowlist — that gap would make the allowlist opt-in for an attacker
-//     simply by leaving the field off.
+//     simply by leaving the field off;
+//   - no planned node may set cwd (validatePlannedNodeCwd).
 func validatePlannedNodes(g *graph.Graph, reply string) error {
 	if len(g.Nodes) == 0 {
 		return &PlanError{Reason: "planner produced a graph with no nodes", Output: reply}
@@ -183,11 +300,44 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 				Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
 			}
 		}
+		if err := validatePlannedNodeCwd(node); err != nil {
+			return err
+		}
 		if err := validatePlannedNodeTools(node); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validatePlannedNodeCwd rejects a planned node that redirects its working
+// directory. cwd is a plain graph field, and the planner's reply is JSON parsed
+// through the same graph.Parse as hand-written YAML, so nothing else stops a
+// plan from naming an arbitrary path that flows straight into cmd.Dir. An
+// auto-planned node always runs where the user invoked oh-my-graph; the planner
+// prompt never offers cwd as a field, so any value here is out of band.
+//
+// What this bounds, precisely: WHERE an unreviewed plan can act — it keeps a
+// planned node from reaching into an unrelated directory (a sibling checkout, a
+// path under $HOME) that the user never put in scope. It does NOT make a
+// write-capable node safe: such a node can still write inside the invocation
+// directory, including a `.claude/settings.local.json` that a later node in
+// this run, or a future run started there, would load. That gap is real and is
+// listed with the others on deniableTools; do not read this check as closing
+// it.
+//
+// Any non-empty value is rejected, including whitespace-only. A blank cwd is
+// not equivalent to unset: it is passed through interpolation unchanged and
+// reaches exec as a non-empty cmd.Dir, which fails the spawn with "chdir: no
+// such file or directory". Accepting it would let a plan validate and then halt
+// the run on its first node.
+func validatePlannedNodeCwd(node graph.Node) error {
+	if node.Cwd == "" {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf("planned node %q set cwd %q; auto mode always runs planned nodes in the invocation's working directory", node.ID, node.Cwd),
+	}
 }
 
 // validatePlannedNodeTools rejects a planned node whose allowed_tools is
@@ -281,5 +431,6 @@ Rules:
   there is no other Bash pattern available, so a node needing a different
   shell command cannot be planned; break it into steps that fit the list
   above instead.
-- Do not set permission_mode, budget_usd, or type on any node.
+- Do not set permission_mode, budget_usd, type, or cwd on any node. Every node
+  runs in the directory oh-my-graph was invoked from.
 `

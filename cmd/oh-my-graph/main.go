@@ -88,7 +88,9 @@ func runGraph(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags)
+	// nil deny list: a hand-written graph is the user's own reviewed artifact,
+	// so its nodes run under the user's own tool permissions, unchanged.
+	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -122,19 +124,32 @@ func runAuto(args []string) error {
 	}
 	printPlan(os.Stdout, plan, specPath)
 
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags.commonRunFlags)
+	return executePlan(ctx, runID, plan, nodeRunner, flags.commonRunFlags)
+}
+
+// executePlan runs a coordinator Plan. It exists so the planned graph and its
+// execution ceiling cannot be separated at the call site: a caller that had to
+// pass plan.Graph and plan.DisallowedTools as two arguments could pass the
+// graph with a nil ceiling and every planned node would silently run under the
+// user's own standing tool grants — the exact hole auto mode must close, and a
+// failure no test of the coordinator or the scheduler alone would catch.
+// Taking the whole Plan makes that mismatch unrepresentable.
+func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.DisallowedTools)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
-// `run` and `auto`.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
+// `run` and `auto`. disallowedTools is the per-node execution ceiling: auto
+// passes the coordinator's, `run` passes nil.
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, disallowedTools map[string][]string) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
-		Concurrency:    flags.concurrency,
-		ContinueOnFail: flags.continueOnFail,
+		Concurrency:     flags.concurrency,
+		ContinueOnFail:  flags.continueOnFail,
+		DisallowedTools: disallowedTools,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
@@ -168,6 +183,12 @@ func saveGeneratedSpec(runDir string, spec []byte) (string, error) {
 // printPlan shows the planned topology (node ids, edges, each node's tools)
 // and the planning cost before execution. The full prompts live in the saved
 // spec file, which is named here so the user can review it.
+//
+// The per-node tool list is what the plan DECLARED, which is not the same as
+// what the node can do — a node declaring any scoped Bash pattern retains the
+// whole Bash tool (see coordinator.deniableTools). This is the screen someone
+// reads before letting an unattended run start, so it must not imply a tighter
+// sandbox than exists: noteBashScope prints that caveat when it applies.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	g := plan.Graph
 	fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
@@ -181,7 +202,33 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		}
 		fmt.Fprintln(w, line)
 	}
+	noteBashScope(w, g)
 	fmt.Fprintln(w)
+}
+
+// noteBashScope warns that scoped Bash patterns are a declaration, not a limit.
+// A deny list can remove the Bash tool entirely but cannot narrow it to a set of
+// command prefixes, so any node declaring Bash keeps all of it if the user's own
+// settings grant it. Silent when no node declares Bash — those nodes really are
+// denied the tool.
+func noteBashScope(w io.Writer, g *graph.Graph) {
+	var scoped []string
+	for _, node := range g.Nodes {
+		for _, tool := range node.AllowedTools {
+			if strings.HasPrefix(tool, "Bash") {
+				scoped = append(scoped, node.ID)
+				break
+			}
+		}
+	}
+	if len(scoped) == 0 {
+		return
+	}
+	fmt.Fprintf(w,
+		"  NOTE: %s declare a scoped Bash pattern. That scope is what the plan asked for, not an enforced\n"+
+			"        limit — these nodes keep the whole Bash tool if your settings.json grants it.\n",
+		strings.Join(scoped, ", "),
+	)
 }
 
 // inputKeys lists the bound --input names — what the planner is allowed to

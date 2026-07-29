@@ -50,6 +50,15 @@ type Options struct {
 	// the terminal looking dead. Defaults to os.Stderr; pass io.Discard to
 	// silence it (tests do this).
 	ProgressWriter io.Writer
+	// DisallowedTools is a per-node execution ceiling keyed by node id: the
+	// tools that node's subprocess must be denied outright (the runner renders
+	// them as --disallowedTools, which subtracts from the user's own settings
+	// rather than adding to them). Auto mode supplies it from coordinator.Plan
+	// because a planned graph is unreviewed LLM output; hand-written graphs
+	// pass nil, so their nodes get no --disallowedTools flag at all and behave
+	// exactly as before. The Scheduler only forwards it — the policy of what
+	// belongs in it is the coordinator's.
+	DisallowedTools map[string][]string
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -60,6 +69,10 @@ type Scheduler struct {
 	concurrency    int
 	gate           gate.GateController
 	progress       io.Writer
+	// disallowedTools is the per-node deny list keyed by node id (nil for
+	// hand-written graphs). Reading a missing key yields nil, which the runner
+	// renders as "no --disallowedTools flag".
+	disallowedTools map[string][]string
 	// progressMu serializes writes to progress: parallel nodes emit events from
 	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
 	// concurrent use without one.
@@ -78,11 +91,12 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		progressWriter = os.Stderr
 	}
 	return &Scheduler{
-		runner:         nodeRunner,
-		continueOnFail: opts.ContinueOnFail,
-		concurrency:    opts.Concurrency,
-		gate:           gateController,
-		progress:       progressWriter,
+		runner:          nodeRunner,
+		continueOnFail:  opts.ContinueOnFail,
+		concurrency:     opts.Concurrency,
+		gate:            gateController,
+		progress:        progressWriter,
+		disallowedTools: opts.DisallowedTools,
 	}
 }
 
@@ -249,8 +263,9 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 }
 
 // buildInvocation renders a node into a runner.NodeInvocation: interpolate its
-// prompt and cwd, resolve the session it resumes (if any), and default the
-// permission mode.
+// prompt and cwd, resolve the session it resumes (if any), default the
+// permission mode, and attach the node's execution ceiling (empty unless the
+// caller imposed one).
 func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
 	prompt, err := h.Interpolate(node.Prompt)
 	if err != nil {
@@ -271,11 +286,12 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 	}
 
 	return runner.NodeInvocation{
-		Prompt:         prompt,
-		Cwd:            cwd,
-		PermissionMode: permissionMode,
-		ResumeSession:  resume,
-		AllowedTools:   node.AllowedTools,
+		Prompt:          prompt,
+		Cwd:             cwd,
+		PermissionMode:  permissionMode,
+		ResumeSession:   resume,
+		AllowedTools:    node.AllowedTools,
+		DisallowedTools: s.disallowedTools[node.ID],
 	}, nil
 }
 

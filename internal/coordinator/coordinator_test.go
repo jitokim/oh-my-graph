@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -235,6 +236,16 @@ func TestPlan_RejectsNodeWithToolOutsideAllowlist(t *testing.T) {
 		{"unrestricted WebFetch", "WebFetch"},
 		{"unrestricted WebSearch", "WebSearch"},
 		{"tool not in allowlist at all", "NotebookEdit"},
+		// The allowlist is matched by exact string equality, which is what lets
+		// the deny-list derivation (toolName) stay naive: it only ever sees the
+		// canonical spellings. These rows pin that no near-miss slips past into
+		// it — a case-variant or oddly-spaced tool would produce a "declared"
+		// key that matches no deniable name.
+		{"lowercase tool name", "bash"},
+		{"lowercase scoped bash", "bash(git *)"},
+		{"space before the scope", "Bash (git *)"},
+		{"leading whitespace", " Bash(git *)"},
+		{"trailing whitespace", "Bash(git *) "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -264,6 +275,180 @@ func TestPlan_RejectsNodeWithEmptyAllowedTools(t *testing.T) {
 	planErr := planExpectingError(t, fake, "lint the repo")
 	if !strings.Contains(planErr.Reason, "allowed_tools") {
 		t.Errorf("reason %q does not mention allowed_tools", planErr.Reason)
+	}
+}
+
+// TestPlan_RejectsNodeThatSetsCwd pins that a planned node may not redirect its
+// working directory. cwd is a plain graph field and the planner reply is JSON
+// parsed by the same graph.Parse as hand-written YAML, so without this check an
+// arbitrary path flows straight into cmd.Dir — and a planned node with a Write
+// grant could relocate its sandbox and leave files (e.g. a
+// .claude/settings.local.json) that a later node in this run, or a future run
+// started there, would inherit.
+func TestPlan_RejectsNodeThatSetsCwd(t *testing.T) {
+	for _, cwd := range []string{"/tmp/elsewhere", "../..", "~/.claude"} {
+		t.Run(cwd, func(t *testing.T) {
+			spec := fmt.Sprintf(
+				`{"name":"bad","nodes":[{"id":"relocate","prompt":"write a file","allowed_tools":["Write"],"cwd":%q}]}`, cwd)
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+			planErr := planExpectingError(t, fake, "lint the repo")
+			if !strings.Contains(planErr.Reason, "relocate") {
+				t.Errorf("reason %q does not name the offending node", planErr.Reason)
+			}
+			if !strings.Contains(planErr.Reason, "cwd") {
+				t.Errorf("reason %q does not name cwd as the problem", planErr.Reason)
+			}
+		})
+	}
+}
+
+// TestPlan_RejectsWhitespaceOnlyCwd pins that "blank" is not "unset". A
+// whitespace-only cwd survives interpolation unchanged and reaches exec as a
+// non-empty cmd.Dir, which fails the spawn with "chdir: no such file or
+// directory" — so accepting it would let a plan validate and then halt the run
+// on its first node. Only the empty string means "run where you were invoked".
+func TestPlan_RejectsWhitespaceOnlyCwd(t *testing.T) {
+	spec := `{"name":"bad","nodes":[{"id":"a","prompt":"scan","allowed_tools":["Read"],"cwd":"   "}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	planErr := planExpectingError(t, fake, "lint the repo")
+	if !strings.Contains(planErr.Reason, "cwd") {
+		t.Errorf("reason %q does not name cwd as the problem", planErr.Reason)
+	}
+}
+
+// TestPlan_UnsetCwdIsAccepted is the positive boundary: an omitted cwd is the
+// normal case and must not cost a paid planner call for nothing.
+func TestPlan_UnsetCwdIsAccepted(t *testing.T) {
+	spec := `{"name":"ok","nodes":[{"id":"a","prompt":"scan","allowed_tools":["Read"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err != nil {
+		t.Fatalf("unset cwd should be accepted, got: %v", err)
+	}
+}
+
+// TestPlan_MaximalDeclarationStillHasACeiling protects the deny list against a
+// silent future regression. The ceiling is "deniable tools minus declared
+// ones", and an EMPTY ceiling renders no --disallowedTools flag at all —
+// straight back to the user's standing grants. Declaring the entire allowlist
+// is the worst case (declared only grows with the allowlist), so if that still
+// leaves a non-empty ceiling, every smaller declaration does too. If someone
+// later widens plannedToolAllowlist to cover every deniable tool, this fails
+// instead of quietly disabling the guard.
+func TestPlan_MaximalDeclarationStillHasACeiling(t *testing.T) {
+	quoted := make([]string, 0, len(plannedToolAllowlist))
+	for _, tool := range plannedToolAllowlist {
+		quoted = append(quoted, fmt.Sprintf("%q", tool))
+	}
+	spec := fmt.Sprintf(`{"name":"ok","nodes":[{"id":"greedy","prompt":"do","allowed_tools":[%s]}]}`,
+		strings.Join(quoted, ","))
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.DisallowedTools["greedy"]) == 0 {
+		t.Fatal("a node declaring the whole allowlist has an empty ceiling, so no --disallowedTools flag is emitted")
+	}
+}
+
+// TestPlan_PlannerCallCarriesACeiling pins that the planner — the call that
+// decides the entire graph — is not the least constrained invocation in an auto
+// run. It declares no tools, so it must be denied every deniable one.
+func TestPlan_PlannerCallCarriesACeiling(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(captured.DisallowedTools) != len(deniableTools) {
+		t.Errorf("planner denied %v, want every deniable tool %v", captured.DisallowedTools, deniableTools)
+	}
+}
+
+// TestPlan_DeniesEveryConsequentialToolANodeDidNotDeclare is the execution half
+// of the tool guard. plannedToolAllowlist only bounds what a plan may DECLARE:
+// --allowedTools is additive to the user's own settings.json, so a user with a
+// standing Bash(*)/Write(*)/WebFetch(*) grant would otherwise hand all of it to
+// an unattended planned node. Plan therefore returns a per-node deny list — the
+// part that actually binds — and it must cover every deniable tool the node did
+// not declare.
+func TestPlan_DeniesEveryConsequentialToolANodeDidNotDeclare(t *testing.T) {
+	spec := `{"name":"ok","nodes":[` +
+		`{"id":"scan","prompt":"scan","allowed_tools":["Read","Grep"]},` +
+		`{"id":"edit","depends_on":["scan"],"prompt":"edit","allowed_tools":["Edit","Bash(git *)"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// A read-only node declared no write/exec/network tool, so it is denied
+	// every one of them — including Bash, which is what stops a "summarize"
+	// node from shelling out on a machine whose settings.json allows Bash(*).
+	assertDenied(t, plan, "scan", []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"})
+
+	// The editing node declared Edit and a scoped Bash pattern, so those two
+	// tool names survive (scope is dropped when comparing: "Bash(git *)"
+	// counts as having declared Bash) and everything else is still denied.
+	assertDenied(t, plan, "edit", []string{"Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"})
+}
+
+// TestPlan_DenyListUsesBareToolNamesNotWildcards pins the measured CLI
+// behaviour the deny list is built on: a bare-name deny ("Bash") removes the
+// tool outright and beats any prior allow, while a wildcard deny ("Bash(*)") is
+// a no-op because the specifier is matched as a command pattern. Emitting
+// "Bash(*)" would look protective and enforce nothing, so the list must never
+// contain a scoped form.
+func TestPlan_DenyListUsesBareToolNamesNotWildcards(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for nodeID, denied := range plan.DisallowedTools {
+		for _, tool := range denied {
+			if strings.ContainsAny(tool, "(*)") {
+				t.Errorf("node %q denies %q; a scoped/wildcard deny does not enforce anything", nodeID, tool)
+			}
+		}
+	}
+}
+
+// TestPlan_EveryPlannedNodeGetsACeiling proves no planned node can slip through
+// without a deny list — a missing entry means that node silently runs under the
+// user's own standing grants.
+func TestPlan_EveryPlannedNodeGetsACeiling(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.DisallowedTools) != len(plan.Graph.Nodes) {
+		t.Fatalf("got %d deny lists for %d nodes", len(plan.DisallowedTools), len(plan.Graph.Nodes))
+	}
+	for _, node := range plan.Graph.Nodes {
+		if len(plan.DisallowedTools[node.ID]) == 0 {
+			t.Errorf("node %q has no execution ceiling", node.ID)
+		}
+	}
+}
+
+// assertDenied checks a node's deny list is exactly want, order-insensitively.
+func assertDenied(t *testing.T, plan Plan, nodeID string, want []string) {
+	t.Helper()
+	got := append([]string(nil), plan.DisallowedTools[nodeID]...)
+	sort.Strings(got)
+	sorted := append([]string(nil), want...)
+	sort.Strings(sorted)
+	if strings.Join(got, ",") != strings.Join(sorted, ",") {
+		t.Errorf("node %q denied %v, want %v", nodeID, got, sorted)
 	}
 }
 

@@ -14,12 +14,22 @@ import "context"
 // NodeInvocation is everything the runner needs to launch one node. It is a
 // rendered spec: Prompt and Cwd are already interpolated by the Handoff, and
 // ResumeSession is empty unless this node is resuming a session-parent.
+//
+// AllowedTools and DisallowedTools are NOT symmetric, and the difference is
+// load-bearing. --allowedTools only ADDS to whatever the user's own
+// ~/.claude/settings.json already grants, so it bounds what a node is asked to
+// use, not what it can do. --disallowedTools SUBTRACTS, and wins over any
+// prior grant, so DisallowedTools is the only field here that is an actual
+// execution ceiling. It is empty for hand-written graphs (human-reviewed, the
+// user's own settings are the intended policy) and set per node by auto mode,
+// whose graphs are unreviewed LLM output.
 type NodeInvocation struct {
-	Prompt         string
-	Cwd            string
-	PermissionMode string
-	ResumeSession  string
-	AllowedTools   []string
+	Prompt          string
+	Cwd             string
+	PermissionMode  string
+	ResumeSession   string
+	AllowedTools    []string
+	DisallowedTools []string
 }
 
 // NodeOutcome is the parsed result of one node run: the claude session id (for
