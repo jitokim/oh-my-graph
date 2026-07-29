@@ -1,0 +1,84 @@
+# self-dev — dogfood graph for developing oh-my-graph with oh-my-graph.
+#
+#   dev ──▶ e2e ──▶ review-security ─┐
+#               └─▶ review-style ────┴─▶ pr
+#
+# Takes an explicit `task` (unlike dev-review-pr.yaml, which assumes the branch
+# already carries the task context). Opens a DRAFT PR so nothing lands unreviewed.
+#
+# Run (from a fresh feature branch):
+#   git checkout -b feat/my-thing
+#   oh-my-graph run graphs/self-dev.yaml --input repo="$PWD" --input task="what to build"
+name: self-dev
+version: "0.1"
+inputs: [repo, task]
+concurrency: 4
+nodes:
+  - id: dev
+    type: claude-run
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      You are on a feature branch of the oh-my-graph Go repo. Implement this task,
+      keeping the diff focused and matching the existing style (DESIGN.md is the spec;
+      the NodeRunner seam is the only os/exec touch point; English-only):
+        {{ inputs.task }}
+      Add or update tests. Commit on the current branch with a clear message.
+      Reply with a one-line summary of what you changed.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: e2e
+    type: claude-run
+    depends_on: [dev]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Resume the work you just did. Run `make local` (build + test + vet) and
+      report exactly PASS if it all succeeds, or FAIL with the failing step.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+    permission_mode: dontAsk
+    handoff: session
+    success_check: { exit_zero: true, result_matches: "PASS" }
+    retry: { max: 1, on: [nonzero_exit] }
+
+  - id: review-security
+    type: claude-run
+    depends_on: [e2e]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Review the current branch's diff vs main for security issues (unsafe shell,
+      secrets, unsafe exec, injection). e2e said: {{ artifacts.e2e | inline }}.
+      Reply with a short bulleted list, or "no security issues found".
+    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: review-style
+    type: claude-run
+    depends_on: [e2e]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Review the current branch's diff vs main for style, naming, simplicity, and
+      adherence to DESIGN.md's invariants (NodeRunner seam, env scrub, no Agent SDK).
+      Reply with a short bulleted list, or "no style issues found".
+    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: pr
+    type: claude-run
+    depends_on: [review-security, review-style]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Push the current branch and open a DRAFT pull request with `gh pr create --draft`.
+      Put both reviews in the PR body:
+        Security review: {{ artifacts.review-security | inline }}
+        Style review:    {{ artifacts.review-style | inline }}
+      Reply with the PR URL.
+    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
