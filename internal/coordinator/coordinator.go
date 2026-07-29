@@ -565,4 +565,12 @@ Rules:
 - Do not set permission_mode, budget_usd, type, cwd, or agent on any node.
   Every node runs in the directory oh-my-graph was invoked from, as plain
   claude — never as one of the user's subagents.
+- If the goal involves creating a branch or committing on one, the final
+  check node MUST verify which branch HEAD is on: its prompt runs
+  'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
+  output equals the intended feature branch AND is not the repository's
+  default branch (e.g. main or master), and replies PASS only when both
+  hold, FAIL otherwise. Give that node
+  "success_check": {"result_matches": "PASS"} so a commit that landed on
+  the wrong branch fails the run instead of passing silently.
 `
