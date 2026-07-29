@@ -27,6 +27,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/verify"
@@ -90,6 +91,26 @@ func (noopRecorder) RecordNode(string, runstate.NodeRecord) error           { re
 func (noopRecorder) RecordGateDecision(string, runstate.GateDecision) error { return nil }
 func (noopRecorder) RecordPause(string) error                               { return nil }
 
+// EventSink receives one structured runfeed.Event per lifecycle transition —
+// the third destination fed from the same hook points as the ProgressWriter
+// (the human line) and the Recorder (the resumable snapshot), so the three can
+// never disagree about what happened. The concrete implementation is
+// runfeed.StreamWriter (events.jsonl — the consumer contract, docs/RUN-FEED.md),
+// matched structurally so the Scheduler never imports it, exactly like
+// Recorder and runstate.SnapshotRecorder. An Emit error is non-fatal: the
+// event stream exists for an external consumer, and a consumer's feed must
+// never fail the run it is watching — it is warned about on the progress feed
+// instead (see emitEvent).
+type EventSink interface {
+	Emit(e runfeed.Event) error
+}
+
+// noopEventSink is the EventSink default: a caller that doesn't care about the
+// consumer feed (scheduler tests) just doesn't emit one.
+type noopEventSink struct{}
+
+func (noopEventSink) Emit(runfeed.Event) error { return nil }
+
 // Options configures a Scheduler at construction. Zero values are the safe
 // defaults: use the graph's own concurrency, halt on the first failure.
 type Options struct {
@@ -104,6 +125,9 @@ type Options struct {
 	Gate gate.GateController
 	// Recorder persists the resumable snapshot. Defaults to a no-op.
 	Recorder Recorder
+	// EventSink receives one structured event per lifecycle transition — the
+	// events.jsonl consumer feed (docs/RUN-FEED.md). Defaults to a no-op.
+	EventSink EventSink
 	// ProgressWriter receives one line per node lifecycle event (start, pass,
 	// fail, retry) as the run executes, so a long-running graph doesn't leave
 	// the terminal looking dead. Defaults to os.Stderr; pass io.Discard to
@@ -176,6 +200,7 @@ type Scheduler struct {
 	verifier       verify.Verifier
 	progress       io.Writer
 	recorder       Recorder
+	events         EventSink
 	// toolPolicies is the per-node tool ceiling keyed by node id (nil for
 	// hand-written graphs). A missing key means "no ceiling was imposed" — see
 	// buildInvocation.
@@ -211,6 +236,10 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	if recorder == nil {
 		recorder = noopRecorder{}
 	}
+	eventSink := opts.EventSink
+	if eventSink == nil {
+		eventSink = noopEventSink{}
+	}
 	return &Scheduler{
 		runner:         nodeRunner,
 		continueOnFail: opts.ContinueOnFail,
@@ -219,6 +248,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		verifier:       verifier,
 		progress:       progressWriter,
 		recorder:       recorder,
+		events:         eventSink,
 		toolPolicies:   opts.ToolPolicies,
 		completedNodes: opts.CompletedNodes,
 		settledNodes:   opts.SettledNodes,
@@ -232,7 +262,21 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 // gate: some subtrees were pruned but independent branches finished) or a
 // *PausedError (a gate decision paused the run — see the pause handling
 // below, ADR 0003).
+//
+// Run also brackets the leg on the event stream: run_started before any node
+// launches, run_finished (with the leg's outcome) after everything has
+// settled — the run-level halves of the same per-transition feed the node
+// helpers emit (see EventSink). Bracketing here rather than at the CLI keeps
+// every lifecycle emission behind one seam.
 func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
+	s.emitEvent(runfeed.Event{Type: runfeed.EventRunStarted})
+	err := s.execute(ctx, g, h, led)
+	s.emitEvent(runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runOutcome(err)})
+	return err
+}
+
+// execute is Run's body — everything between the run_started/run_finished pair.
+func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
 	grp, ctx := errgroup.WithContext(ctx)
 
@@ -405,6 +449,7 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger) error {
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
+	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID})
 
 	if node.Type == graph.TypeGate {
 		return s.evaluateGate(ctx, node, h, led, start)
@@ -412,7 +457,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 	invocation, err := s.buildInvocation(node, h)
 	if err != nil {
-		return s.recordFail(led, h, node, "", 0, time.Since(start), err)
+		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
 	}
 
 	attempts := 1
@@ -431,10 +476,10 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if runErr != nil {
 			lastErr = runErr
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
-				s.logProgress("↻ %s  retry\n", node.ID)
+				s.recordRetry(node, attempt+1)
 				continue
 			}
-			return s.recordFail(led, h, node, "", 0, time.Since(start), runErr)
+			return s.recordFail(led, h, node, "", 0, time.Since(start), attempt, runErr)
 		}
 
 		var verdictErr error
@@ -459,7 +504,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		}
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
-				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
+				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
 			// node that did useful work before blowing its budget still leaves
@@ -473,10 +518,10 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 		lastErr = verdictErr
 		if s.shouldRetry(node, attempt, attempts, causeFromCheck(verdictErr)) {
-			s.logProgress("↻ %s  retry\n", node.ID)
+			s.recordRetry(node, attempt+1)
 			continue
 		}
-		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), verdictErr)
+		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, verdictErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -498,7 +543,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
 	decision, err := s.gate.Evaluate(ctx, node)
 	if err != nil {
-		return s.recordFail(led, h, node, "", 0, time.Since(start), fmt.Errorf("gate %q: %w", node.ID, err))
+		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
 	}
 
 	switch decision {
@@ -506,35 +551,39 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 		return s.recordGateApprove(led, h, node, time.Since(start))
 	case gate.DecisionReject:
 		s.recordGateDecision(node, runstate.GateReject)
-		return s.recordFail(led, h, node, "", 0, time.Since(start), &rejectSignal{NodeID: node.ID})
+		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, &rejectSignal{NodeID: node.ID})
 	case gate.DecisionPause:
 		s.logProgress("⏸ %s  gate paused\n", node.ID)
 		return &pauseSignal{NodeID: node.ID}
 	default:
-		return s.recordFail(led, h, node, "", 0, time.Since(start),
+		return s.recordFail(led, h, node, "", 0, time.Since(start), 0,
 			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision))
 	}
 }
 
 // recordFail writes the node's live "✗ FAILED" progress line, its ledger row,
-// and the same record into the resumable snapshot, then returns cause so
-// callers can `return s.recordFail(...)` directly.
-func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) error {
+// the same record into the resumable snapshot, and the matching node_failed
+// event, then returns cause so callers can `return s.recordFail(...)` directly.
+// attempt is the 0-based index of the terminal attempt — i.e. how many retries
+// preceded it (0 for a path that never retries, such as a gate).
+func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, sessionID string, cost float64, duration time.Duration, attempt int, cause error) error {
 	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
 	rec := failRecord(node, sessionID, cost, duration, cause)
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
+	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt))
 	return cause
 }
 
 // recordPass writes the node's live "✓ PASS" progress line, its ledger row,
-// and the same record into the resumable snapshot, then returns nil so
-// callers can `return s.recordPass(...)` directly.
+// the same record into the resumable snapshot, and the matching node_passed
+// event, then returns nil so callers can `return s.recordPass(...)` directly.
 func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
 	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
 	rec := passRecord(node, outcome, duration, attempt)
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt))
 	return nil
 }
 
@@ -542,14 +591,23 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 // ledger PASS row — zero cost/session, since a gate spawns no subprocess —
 // then records the same into the snapshot so the gate counts as completed
 // (CompletedNodes) and its dependents may proceed, this leg or after a later
-// resume.
+// resume. The gate's terminal event is a node_passed like any other node's.
 func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
 	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
 	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
 	s.recordGateDecision(node, runstate.GateApprove)
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0))
 	return nil
+}
+
+// recordRetry writes the node's live "↻ retry" progress line and the matching
+// node_retried event. retryNumber is 1-based: the first retry after the
+// initial attempt is 1.
+func (s *Scheduler) recordRetry(node graph.Node, retryNumber int) {
+	s.logProgress("↻ %s  retry\n", node.ID)
+	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeRetried, NodeID: node.ID, Retries: retryNumber})
 }
 
 // recordSnapshot converts rec into a runstate.NodeRecord — filling in
@@ -594,6 +652,53 @@ func toNodeRecord(rec ledger.Record, artifactPath string) runstate.NodeRecord {
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
 	}
+}
+
+// terminalEvent derives a node's terminal runfeed.Event from the ledger.Record
+// the Scheduler already built for the same transition — one accounting
+// computation, three destinations (ledger, snapshot, event stream) — so the
+// stream can never carry a different cost/verdict/detail than the other two.
+// retries is the number of retries that preceded the terminal attempt.
+func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries int) runfeed.Event {
+	return runfeed.Event{
+		Type:      eventType,
+		NodeID:    rec.NodeID,
+		Verdict:   string(rec.Verdict),
+		CostUSD:   rec.CostUSD,
+		SessionID: rec.SessionID,
+		Retries:   retries,
+		Detail:    rec.Detail,
+	}
+}
+
+// emitEvent hands one event to the injected EventSink. A write failure is
+// non-fatal — the stream exists for an external consumer, and a consumer's
+// feed must never fail the run it is watching — but it is surfaced on the
+// progress feed rather than silently swallowed, exactly like a snapshot write
+// failure: a dropped event leaves a tailing consumer's picture of the run
+// incomplete, which the operator should know.
+func (s *Scheduler) emitEvent(e runfeed.Event) {
+	if err := s.events.Emit(e); err != nil {
+		subject := e.NodeID
+		if subject == "" {
+			subject = string(e.Type)
+		}
+		s.logProgress("⚠ %s  event stream write failed: %v\n", subject, err)
+	}
+}
+
+// runOutcome maps Run's return into the run_finished outcome token: nil is
+// passed, a *PausedError is paused (a pause is not a failure — ADR 0003), and
+// anything else (halt, pruned failures, a failed pause persist) is failed.
+func runOutcome(err error) string {
+	if err == nil {
+		return runfeed.OutcomePassed
+	}
+	var paused *PausedError
+	if errors.As(err, &paused) {
+		return runfeed.OutcomePaused
+	}
+	return runfeed.OutcomeFailed
 }
 
 // logProgress writes one progress line, serialized by progressMu: parallel

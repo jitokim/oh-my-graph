@@ -12,6 +12,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -109,6 +110,16 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 		Gate: runstate.GateState{Decisions: decisions},
 	})
 
+	// Reopened in append mode, so the resumed leg continues the same
+	// events.jsonl the first leg started — the stream records the whole run's
+	// history across legs, each bracketed by its own run_started/run_finished
+	// (docs/RUN-FEED.md).
+	feed, err := runfeed.NewStreamWriter(filepath.Join(runDir, runfeed.FileName), runID)
+	if err != nil {
+		return fmt.Errorf("prepare run event stream: %w", err)
+	}
+	defer feed.Close()
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -116,6 +127,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 		Verifier:       verify.NewShellVerifier(),
 		ToolPolicies:   toRunnerToolPolicies(snap.ToolPolicies),
 		Recorder:       recorder,
+		EventSink:      feed,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).

@@ -72,6 +72,7 @@ internal/runner/       NodeRunner interface, ClaudeCLIRunner, FakeRunner
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
 internal/childenv/     the shared child-env scrub policy (used by both spawners)
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
+internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)
 internal/gate/         v1.1 stub for the (not-yet-implemented) gate node type
 graphs/                shipped example graphs (haiku-smoke, dev-review-pr)
