@@ -12,9 +12,9 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
-// plannerKey collapses every invocation onto one FakeRunner key: the
-// coordinator makes exactly one planner call, so the scripted outcome map has
-// a single entry regardless of the generated prompt text.
+// plannerKey collapses every invocation onto one FakeRunner key: a coordinator
+// method (Plan or Route) makes exactly one call, so the scripted outcome map
+// has a single entry regardless of the generated prompt text.
 const plannerKey = "planner"
 
 // validSpec is a well-formed planner reply: two nodes, one artifact edge, the
@@ -23,8 +23,9 @@ const validSpec = `{"name":"lint-and-fix","version":"1","nodes":[` +
 	`{"id":"scan","prompt":"scan {{ inputs.repo }}","allowed_tools":["Read"]},` +
 	`{"id":"fix","depends_on":["scan"],"prompt":"fix using {{ artifacts.scan }}","allowed_tools":["Edit"],"handoff":"session"}]}`
 
-// newPlannerFake scripts the single planner call and captures the invocation
-// the coordinator built, so tests can assert on the prompt and permissions.
+// newPlannerFake scripts the single coordinator call (Plan's planner call or
+// Route's router call) and captures the invocation the coordinator built, so
+// tests can assert on the prompt and permissions.
 func newPlannerFake(outcome runner.NodeOutcome) (*runner.FakeRunner, *runner.NodeInvocation) {
 	captured := &runner.NodeInvocation{}
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{plannerKey: outcome})

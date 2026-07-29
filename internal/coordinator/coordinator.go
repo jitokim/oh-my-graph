@@ -1,5 +1,6 @@
 // Package coordinator turns a plain-language goal into a validated Graph by
 // asking claude itself to plan the DAG — the engine behind `oh-my-graph auto`.
+// It also classifies chat turns (Route, router.go) for the `chat` prototype.
 //
 // It makes exactly ONE planner call through the same NodeRunner seam every
 // node uses (ClaudeCLIRunner in production: env-scrubbed, subscription-auth,
@@ -20,12 +21,14 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
-// plannerPermissionMode is the permission mode of the planner call. The
-// planner only writes a JSON reply, so it runs read-only.
+// plannerPermissionMode is the permission mode of every coordinator-owned
+// call (the planner, the chat router). They only write a JSON reply, so they
+// run read-only.
 const plannerPermissionMode = "plan"
 
-// maxOutputInError caps how much of the raw planner reply an error message
-// carries — enough to diagnose a bad plan without flooding the terminal.
+// maxOutputInError caps how much of a coordinator call's raw reply an error
+// message carries — enough to diagnose a bad reply without flooding the
+// terminal.
 const maxOutputInError = 500
 
 // plannedToolAllowlist is the fixed, coordinator-owned safety allowlist for
@@ -146,8 +149,9 @@ type Plan struct {
 	ToolPolicies map[string]runner.ToolPolicy
 }
 
-// Coordinator plans graphs. Construct it with New (constructor injection — no
-// globals); production injects ClaudeCLIRunner, tests inject FakeRunner.
+// Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
+// it with New (constructor injection — no globals); production injects
+// ClaudeCLIRunner, tests inject FakeRunner.
 type Coordinator struct {
 	runner runner.NodeRunner
 }
@@ -155,6 +159,19 @@ type Coordinator struct {
 // New builds a Coordinator bound to a NodeRunner.
 func New(nodeRunner runner.NodeRunner) *Coordinator {
 	return &Coordinator{runner: nodeRunner}
+}
+
+// coordinatorInvocation is the shared stance of every coordinator-owned call
+// (the planner, the chat router): read-only permission mode, no tools granted,
+// and the full deny list of a node that declared nothing. A helper rather than
+// a convention so a future coordinator call cannot forget the deny list and
+// silently inherit the user's standing grants.
+func coordinatorInvocation(prompt string) runner.NodeInvocation {
+	return runner.NodeInvocation{
+		Prompt:         prompt,
+		PermissionMode: plannerPermissionMode,
+		Policy:         runner.ToolPolicy{DisallowedTools: disallowedToolsFor(graph.Node{})},
+	}
 }
 
 // Plan asks the planner to design a graph for goal, then loads its JSON reply
@@ -180,11 +197,7 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 	// call whose job is to understand this repository. Widening the ceiling here
 	// is a product decision about plan quality, not a safety fix, so it is not
 	// made silently as part of one.
-	outcome, err := c.runner.Run(ctx, runner.NodeInvocation{
-		Prompt:         plannerPrompt(goal, inputKeys),
-		PermissionMode: plannerPermissionMode,
-		Policy:         runner.ToolPolicy{DisallowedTools: disallowedToolsFor(graph.Node{})},
-	})
+	outcome, err := c.runner.Run(ctx, coordinatorInvocation(plannerPrompt(goal, inputKeys)))
 	if err != nil {
 		return Plan{}, fmt.Errorf("planner run: %w", err)
 	}
@@ -491,9 +504,10 @@ func validatePlannedNodeTools(node graph.Node) error {
 	return nil
 }
 
-// extractJSON isolates the JSON object from the planner's reply, tolerating a
-// markdown code fence or stray prose around it: everything outside the first
-// '{' and the last '}' is discarded. Returns "" when no object is present.
+// extractJSON isolates the JSON object from a coordinator call's reply (the
+// planner's or the router's), tolerating a markdown code fence or stray prose
+// around it: everything outside the first '{' and the last '}' is discarded.
+// Returns "" when no object is present.
 func extractJSON(result string) string {
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
