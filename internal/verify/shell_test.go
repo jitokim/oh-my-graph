@@ -52,8 +52,9 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 }
 
 // TestBuildCmd_RunsThroughShellInRequestedCwd pins the invocation shape: the
-// command is handed to `sh -c` as ONE argument, so a graph can write an ordinary
-// command line (pipes, &&, quoting) instead of an argv array.
+// command is handed to the interpreter as ONE argument, so a graph can write an
+// ordinary command line (pipes, &&, quoting) instead of an argv array. WHICH
+// interpreter is per-OS and is pinned by shell_unix_test.go / shell_windows_test.go.
 func TestBuildCmd_RunsThroughShellInRequestedCwd(t *testing.T) {
 	v := NewShellVerifier()
 	cmd := v.buildCmd(context.Background(), Request{
@@ -61,15 +62,7 @@ func TestBuildCmd_RunsThroughShellInRequestedCwd(t *testing.T) {
 		Cwd:     "/tmp/omg",
 	})
 
-	want := []string{"sh", "-c", "go test ./... && echo ok"}
-	if len(cmd.Args) != len(want) {
-		t.Fatalf("argv = %q, want %q", cmd.Args, want)
-	}
-	for i := range want {
-		if cmd.Args[i] != want[i] {
-			t.Fatalf("argv = %q, want %q", cmd.Args, want)
-		}
-	}
+	assertArgv(t, cmd.Args, []string{defaultShell, shellFlag, "go test ./... && echo ok"})
 	if cmd.Dir != "/tmp/omg" {
 		t.Errorf("cwd = %q, want /tmp/omg", cmd.Dir)
 	}
@@ -258,6 +251,19 @@ func TestRefusingVerifier_FailsLoudly(t *testing.T) {
 	var notConfigured *NotConfiguredError
 	if !errors.As(err, &notConfigured) || notConfigured.Command != echoCommand {
 		t.Errorf("refusal should name the command it declined to run, got %v", err)
+	}
+}
+
+// assertArgv compares a built command's argv against the expected one.
+func assertArgv(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("argv = %q, want %q", got, want)
+		}
 	}
 }
 
