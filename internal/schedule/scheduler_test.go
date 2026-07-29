@@ -1,8 +1,10 @@
 package schedule
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -26,8 +28,13 @@ func mustGraph(t *testing.T, yaml string) *graph.Graph {
 }
 
 // newHarness wires a scheduler run against a runner with a temp run directory.
+// It defaults ProgressWriter to io.Discard so tests stay quiet and
+// deterministic; pass opts.ProgressWriter explicitly to inspect the live feed.
 func newHarness(t *testing.T, nodeRunner runner.NodeRunner, opts Options) (*Scheduler, *handoff.Handoff, *ledger.RunLedger) {
 	t.Helper()
+	if opts.ProgressWriter == nil {
+		opts.ProgressWriter = io.Discard
+	}
 	h := handoff.New(t.TempDir(), nil)
 	led := ledger.New("test")
 	return NewScheduler(nodeRunner, opts), h, led
@@ -336,6 +343,41 @@ nodes:
 	}
 }
 
+// --- live progress feed ------------------------------------------------------
+
+// TestScheduler_ProgressWriter_EmitsPassAndFailLines proves the scheduler
+// writes one live line per terminal node event to the injected ProgressWriter,
+// so a long-running graph doesn't leave the terminal looking dead before the
+// final ledger table prints. The failing node is asserted first.
+func TestScheduler_ProgressWriter_EmitsPassAndFailLines(t *testing.T) {
+	g := mustGraph(t, `
+name: progress
+nodes:
+  - { id: bad, prompt: bad, success_check: { exit_zero: true } }
+  - { id: good, prompt: good }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"bad":  {Result: "x", ExitCode: 1},
+		"good": pass("s-good", 0.05),
+	})
+	var buf bytes.Buffer
+	s, h, led := newHarness(t, fake, Options{ContinueOnFail: true, ProgressWriter: &buf})
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+
+	feed := buf.String()
+	if !strings.Contains(feed, "✗ bad  FAILED:") {
+		t.Errorf("progress feed missing the failing node's FAILED line: %q", feed)
+	}
+	if !strings.Contains(feed, "✓ good  PASS") {
+		t.Errorf("progress feed missing the passing node's PASS line: %q", feed)
+	}
+}
+
 // --- test doubles -----------------------------------------------------------
 
 // sequenceRunner returns a scripted sequence of outcomes, one per call — used to
@@ -404,6 +446,76 @@ func (r *recordingRunner) promptFor(key string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.invoked[key].Prompt
+}
+
+func (r *recordingRunner) invocationFor(key string) runner.NodeInvocation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.invoked[key]
+}
+
+// --- execution ceiling ------------------------------------------------------
+
+// TestScheduler_ForwardsPerNodeDisallowedTools proves the Scheduler routes each
+// node's own deny list into its invocation. The ceiling is per node, so a
+// mis-keyed lookup would silently hand one node another node's (weaker) list —
+// this pins that each node gets exactly its own.
+func TestScheduler_ForwardsPerNodeDisallowedTools(t *testing.T) {
+	// Fan-out, not a chain: the auto-mode shape runs siblings concurrently, so
+	// this also puts two goroutines on the same ceiling map under -race.
+	g := mustGraph(t, `
+name: planned
+nodes:
+  - { id: root, prompt: root, allowed_tools: [Read] }
+  - { id: scan, prompt: scan, depends_on: [root], allowed_tools: [Read] }
+  - { id: edit, prompt: edit, depends_on: [root], allowed_tools: [Edit] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"root": pass("s-root", 0), "scan": pass("s-scan", 0), "edit": pass("s-edit", 0),
+	}}
+	s, h, led := newHarness(t, rec, Options{DisallowedTools: map[string][]string{
+		"root": {"Bash"},
+		"scan": {"Bash", "Write"},
+		"edit": {"Bash", "WebFetch"},
+	}})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("scan").DisallowedTools; !equalStrings(got, []string{"Bash", "Write"}) {
+		t.Errorf("scan denied %v, want [Bash Write]", got)
+	}
+	if got := rec.invocationFor("edit").DisallowedTools; !equalStrings(got, []string{"Bash", "WebFetch"}) {
+		t.Errorf("edit denied %v, want [Bash WebFetch]", got)
+	}
+}
+
+// TestScheduler_HandWrittenGraphGetsNoCeiling is the regression guard for the
+// `run` path: a hand-written graph is the user's own reviewed artifact and must
+// keep running under the user's own tool permissions. Options.DisallowedTools
+// is nil there, and that nil must reach the runner untouched so no
+// --disallowedTools flag is ever built for it.
+func TestScheduler_HandWrittenGraphGetsNoCeiling(t *testing.T) {
+	g := mustGraph(t, `
+name: handwritten
+nodes:
+  - { id: only, prompt: only, allowed_tools: [Read, "Bash(make *)"] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"only": pass("s-only", 0)}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	invocation := rec.invocationFor("only")
+	if len(invocation.DisallowedTools) != 0 {
+		t.Errorf("hand-written node got a deny list %v, want none", invocation.DisallowedTools)
+	}
+	// The declared tools must still be forwarded — the guard subtracts nothing
+	// from the `run` path.
+	if !equalStrings(invocation.AllowedTools, []string{"Read", "Bash(make *)"}) {
+		t.Errorf("allowed tools = %v, want the node's own list", invocation.AllowedTools)
+	}
 }
 
 // --- helpers ----------------------------------------------------------------

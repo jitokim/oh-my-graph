@@ -37,6 +37,13 @@ const (
 	HandoffSession  = "session"
 )
 
+// PermissionBypass is the permission mode that lets a node act without
+// prompting. It is never a default: the CLI warns loudly when a hand-written
+// graph opts in, and auto mode refuses planned nodes that request it. One
+// exported constant so the warning and the refusal can never disagree on the
+// spelling.
+const PermissionBypass = "bypassPermissions"
+
 // SuccessCheck is the predicate a node's outcome must satisfy to count as a
 // success. An empty check (both fields zero) means "exit code zero is enough".
 type SuccessCheck struct {

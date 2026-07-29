@@ -10,6 +10,8 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"sort"
 	"sync"
@@ -43,6 +45,20 @@ type Options struct {
 	ContinueOnFail bool
 	// Gate resolves gate nodes. Defaults to the v0.1 refuse-everything stub.
 	Gate gate.GateController
+	// ProgressWriter receives one line per node lifecycle event (start, pass,
+	// fail, retry) as the run executes, so a long-running graph doesn't leave
+	// the terminal looking dead. Defaults to os.Stderr; pass io.Discard to
+	// silence it (tests do this).
+	ProgressWriter io.Writer
+	// DisallowedTools is a per-node execution ceiling keyed by node id: the
+	// tools that node's subprocess must be denied outright (the runner renders
+	// them as --disallowedTools, which subtracts from the user's own settings
+	// rather than adding to them). Auto mode supplies it from coordinator.Plan
+	// because a planned graph is unreviewed LLM output; hand-written graphs
+	// pass nil, so their nodes get no --disallowedTools flag at all and behave
+	// exactly as before. The Scheduler only forwards it — the policy of what
+	// belongs in it is the coordinator's.
+	DisallowedTools map[string][]string
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -52,6 +68,15 @@ type Scheduler struct {
 	continueOnFail bool
 	concurrency    int
 	gate           gate.GateController
+	progress       io.Writer
+	// disallowedTools is the per-node deny list keyed by node id (nil for
+	// hand-written graphs). Reading a missing key yields nil, which the runner
+	// renders as "no --disallowedTools flag".
+	disallowedTools map[string][]string
+	// progressMu serializes writes to progress: parallel nodes emit events from
+	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
+	// concurrent use without one.
+	progressMu sync.Mutex
 }
 
 // NewScheduler builds a Scheduler bound to a NodeRunner. The runner is the seam:
@@ -61,11 +86,17 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	if gateController == nil {
 		gateController = gate.NewStubController()
 	}
+	progressWriter := opts.ProgressWriter
+	if progressWriter == nil {
+		progressWriter = os.Stderr
+	}
 	return &Scheduler{
-		runner:         nodeRunner,
-		continueOnFail: opts.ContinueOnFail,
-		concurrency:    opts.Concurrency,
-		gate:           gateController,
+		runner:          nodeRunner,
+		continueOnFail:  opts.ContinueOnFail,
+		concurrency:     opts.Concurrency,
+		gate:            gateController,
+		progress:        progressWriter,
+		disallowedTools: opts.DisallowedTools,
 	}
 }
 
@@ -151,17 +182,16 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 // exhausted.
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger) error {
 	start := time.Now()
+	s.logProgress("▶ %s  running…\n", node.ID)
 
 	if node.Type == graph.TypeGate {
 		err := s.gate.Evaluate(ctx, node)
-		led.Record(failRecord(node.ID, "", 0, time.Since(start), err))
-		return err
+		return s.recordFail(led, node.ID, "", 0, time.Since(start), err)
 	}
 
 	invocation, err := s.buildInvocation(node, h)
 	if err != nil {
-		led.Record(failRecord(node.ID, "", 0, time.Since(start), err))
-		return err
+		return s.recordFail(led, node.ID, "", 0, time.Since(start), err)
 	}
 
 	attempts := 1
@@ -180,28 +210,26 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if runErr != nil {
 			lastErr = runErr
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
+				s.logProgress("↻ %s  retry\n", node.ID)
 				continue
 			}
-			led.Record(failRecord(node.ID, "", 0, time.Since(start), runErr))
-			return runErr
+			return s.recordFail(led, node.ID, "", 0, time.Since(start), runErr)
 		}
 
 		checkErr := evaluateSuccessCheck(node, outcome)
 		if checkErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
-				led.Record(failRecord(node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr))
-				return persistErr
+				return s.recordFail(led, node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
 			}
-			led.Record(passRecord(node.ID, outcome, time.Since(start), attempt))
-			return nil
+			return s.recordPass(led, node.ID, outcome, time.Since(start), attempt)
 		}
 
 		lastErr = checkErr
 		if s.shouldRetry(node, attempt, attempts, causeFromCheck(checkErr)) {
+			s.logProgress("↻ %s  retry\n", node.ID)
 			continue
 		}
-		led.Record(failRecord(node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), checkErr))
-		return checkErr
+		return s.recordFail(led, node.ID, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), checkErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -209,9 +237,35 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	return lastErr
 }
 
+// recordFail writes the node's live "✗ FAILED" progress line and its ledger
+// row, then returns cause so callers can `return s.recordFail(...)` directly.
+func (s *Scheduler) recordFail(led *ledger.RunLedger, nodeID, sessionID string, cost float64, duration time.Duration, cause error) error {
+	s.logProgress("✗ %s  FAILED: %s\n", nodeID, cause.Error())
+	led.Record(failRecord(nodeID, sessionID, cost, duration, cause))
+	return cause
+}
+
+// recordPass writes the node's live "✓ PASS" progress line and its ledger row,
+// then returns nil so callers can `return s.recordPass(...)` directly.
+func (s *Scheduler) recordPass(led *ledger.RunLedger, nodeID string, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
+	s.logProgress("✓ %s  %s  $%.4f  %s\n", nodeID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
+	led.Record(passRecord(nodeID, outcome, duration, attempt))
+	return nil
+}
+
+// logProgress writes one progress line, serialized by progressMu: parallel
+// nodes call this from separate goroutines, and the injected io.Writer (e.g. a
+// *bytes.Buffer in tests) is not safe for concurrent writes on its own.
+func (s *Scheduler) logProgress(format string, args ...any) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	fmt.Fprintf(s.progress, format, args...)
+}
+
 // buildInvocation renders a node into a runner.NodeInvocation: interpolate its
-// prompt and cwd, resolve the session it resumes (if any), and default the
-// permission mode.
+// prompt and cwd, resolve the session it resumes (if any), default the
+// permission mode, and attach the node's execution ceiling (empty unless the
+// caller imposed one).
 func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
 	prompt, err := h.Interpolate(node.Prompt)
 	if err != nil {
@@ -232,11 +286,12 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 	}
 
 	return runner.NodeInvocation{
-		Prompt:         prompt,
-		Cwd:            cwd,
-		PermissionMode: permissionMode,
-		ResumeSession:  resume,
-		AllowedTools:   node.AllowedTools,
+		Prompt:          prompt,
+		Cwd:             cwd,
+		PermissionMode:  permissionMode,
+		ResumeSession:   resume,
+		AllowedTools:    node.AllowedTools,
+		DisallowedTools: s.disallowedTools[node.ID],
 	}, nil
 }
 

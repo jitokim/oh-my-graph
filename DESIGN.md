@@ -25,7 +25,8 @@ stdlib `flag` (cobra optional/later).
 A node = one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json \
-  --permission-mode <mode> --allowedTools "<comma,joined>" [ --resume <session_id> ]
+  --permission-mode <mode> --allowedTools "<comma,joined>" \
+  [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ]
 ```
 run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
 - **Subscription auth crux:** start from `os.Environ()` and **DELETE
@@ -35,6 +36,16 @@ run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost
 - Per-node `context.WithTimeout` (default ~20m) so a wedged child can't hang the graph.
 - Non-JSON/parse failure = node failure (`NodeOutputError`), never a silent zero result.
 - permission modes: `dontAsk` (default unattended) / `acceptEdits` / `plan` (read-only).
+- **`--allowedTools` adds, `--disallowedTools` subtracts.** `--allowedTools` is
+  unioned with the user's own `~/.claude/settings.json` grants — it can never
+  shrink them, so it bounds what a node is *asked* to use, not what it *can* do.
+  Of the two flags oh-my-graph passes, only `--disallowedTools` beats a prior
+  allow, and only at bare-tool-name granularity (`Bash`); a scoped deny like
+  `Bash(*)` matches a command literally starting with `*` and enforces nothing.
+  Measured on claude 2.1.220. (That CLI also has `--tools`, which replaces the
+  built-in set outright — a stronger primitive, deliberately not adopted yet;
+  see "Auto mode".) `--disallowedTools` is emitted ONLY when a caller imposes a
+  ceiling (auto mode does); hand-written graphs never carry the flag.
   `bypassPermissions` opt-in per node only, loud warning at load, never a graph default.
 
 ## Graph model — YAML (committed)
@@ -88,6 +99,59 @@ success_check: `exit_zero` AND `result_matches` (regex over .result) if specifie
 empty ⇒ exit_zero only. Failed check → `NodeCheckError` (node id + predicate).
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never resume a failed one).
 
+## Auto mode — planned graphs, no hand-written YAML
+`oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
+YAML stays the precise-control path. A **Coordinator** makes exactly ONE
+planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
+env scrub, read-only `plan` permission mode, never the Agent SDK), asking
+claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
+prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
+loaded through the existing parser, normalization, and DAG validation — an
+invalid plan fails before anything runs. Auto-specific guards, enforced in
+`coordinator.validatePlannedNodes` (not just requested in the planner prompt):
+a planned node may NOT request `permission_mode: bypassPermissions`
+(hand-written YAML may opt in per node because the user reviewed it; an
+unreviewed plan may not); a planned node may NOT set `cwd` (it always runs in
+the invocation's working directory, so an unreviewed plan cannot reach into an
+unrelated checkout or a path under `$HOME`; this bounds *where* it can act and
+does not by itself make a write-capable node safe); and every planned node's
+`allowed_tools` must be a non-empty list drawn only from
+`coordinator.plannedToolAllowlist` (Read, Glob, Grep, Edit, Write, and a small
+set of scoped `Bash(<prefix> *)` patterns) — anything else (bare `Bash`,
+`Bash(*)`, an un-scoped `Bash(rm -rf *)`, unrestricted `WebFetch`/`WebSearch`,
+an empty list) fails `Plan` with a `*PlanError` naming the node and the
+offending tool.
+
+The allowlist bounds what a plan may **declare**; it cannot bound execution,
+because it is rendered as `--allowedTools`, which only adds to the user's own
+settings grants (see "Node runtime mechanics"). The execution bound is a second,
+separate mechanism: `Plan.DisallowedTools` carries a per-node deny list —
+every tool in `coordinator.deniableTools` (`Bash`, `Edit`, `Write`, `MultiEdit`,
+`NotebookEdit`, `WebFetch`, `WebSearch`, `Task`, `Agent`) whose bare name the
+node did not declare — which the caller hands to `schedule.Options.DisallowedTools`
+and the runner renders as `--disallowedTools`. The planner call itself declares
+no tools and therefore carries the full deny list. That is what stops a user's
+standing `Bash(*)`/`Write(*)`/`WebFetch(*)` grant from leaking into an
+unattended, unreviewed plan.
+
+**Known gaps** — the deny list is an enumeration over an open set, so this is a
+reduction, not a sandbox: (1) a node declaring any scoped `Bash(...)` pattern
+keeps the whole `Bash` tool, since a deny cannot say "all Bash except these
+prefixes"; (2) `mcp__<server>__<tool>` and skill surfaces are not enumerable
+here and are not covered; (3) settings *hooks* are not tool calls, so a
+write-capable node can still drop a `.claude/settings.local.json` in the
+invocation directory. The CLI's `--tools` (replace the built-in set) and
+`--strict-mcp-config` are structurally better primitives that would close (1)
+and (2); adopting them changes what every node can do and is deferred as a
+product decision, not a bug fix.
+
+Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
+(`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
+not restricted by either. The generated spec is
+saved to `.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
+hand-edited and re-run with `oh-my-graph run` — then executed by the same
+Scheduler as any other graph.
+
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
 - **Node** — value object (id, type, prompt, cwd, tools, permission, budget, success_check, handoff, depends_on).
@@ -99,7 +163,7 @@ retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never res
   type NodeRunner interface {
       Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error)
   }
-  type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession string; AllowedTools []string }
+  type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession string; AllowedTools, DisallowedTools []string }
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
@@ -111,6 +175,8 @@ retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never res
     fan-out, fan-in, retry, halt, cost sum) unit-testable with ZERO real
     spawns. This is the testability keystone.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume session.
+- **Coordinator** — auto mode: one planner NodeRunner call → JSON graph spec →
+  existing Parse/Validate (+ bypassPermissions refusal). Never runs the graph itself.
 - **GateController** — pause/approve/reject for gate nodes (v1.1 stub in v0.1).
 - **RunLedger** — record session_id/cost/verdict/timing; end-of-run table + total cost.
 
@@ -124,7 +190,8 @@ concurrent ready-set scheduler + cap + halt-on-fail; ClaudeCLIRunner (exact argv
 ENV SCRUB, timeout, JSON parse); FakeRunner + full scheduler unit tests (no real
 claude in CI); artifact handoff (default) + session handoff (simple one→one);
 success_check (exit_zero + result_matches); RunLedger table + total cost;
-CLI `oh-my-graph run <graph.yaml> --input k=v`; nodes run in real cwds with session
+CLI `oh-my-graph run <graph.yaml> --input k=v` and `oh-my-graph auto "<goal>"`
+(planned graphs — see Auto mode); nodes run in real cwds with session
 persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): gate/human-pause + `oh-my-graph resume` (v1.1, schema
@@ -137,6 +204,7 @@ cmd/oh-my-graph/{main,flags}.go      CLI: parse flags, load, inject ClaudeCLIRun
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + claude_test, envelope_test  interface + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
+internal/coordinator/coordinator.go + _test    auto mode: goal → planner call (NodeRunner seam) → validated graph
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick
 internal/gate/gate.go                          v1.1 stub interface
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
@@ -161,7 +229,15 @@ authenticating others via subscription OAuth (that violates ToS). Never ships
 credentials, never proxies auth, never runs as a shared service. Scrubs
 ANTHROPIC_API_KEY/AUTH_TOKEN from every child (unit-tested). Never --bare, never
 Agent SDK. Least privilege per node (allowed_tools + permission_mode); bypassPermissions
-opt-in per node with a loud warning, never a default.
+opt-in per node with a loud warning, never a default. For auto-planned graphs
+(untrusted LLM output run unattended under `dontAsk`), least privilege is not
+just a prompt convention and not just a declaration check:
+`coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
+is empty or names a tool outside the fixed allowlist, or that sets `cwd`; and
+`Plan.DisallowedTools` imposes a per-node `--disallowedTools` ceiling at
+execution time so the user's own standing tool grants cannot widen an
+unreviewed plan. Both, plus the known Bash-granularity gap, are described in
+"Auto mode" above.
 
 ## Open questions (decided defaults; refine in impl)
 1. artifact interpolation: substitute file PATH by default, `| inline` filter for content.

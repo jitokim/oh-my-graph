@@ -18,11 +18,12 @@ const (
 func TestBuildCmd_Argv(t *testing.T) {
 	r := NewClaudeCLIRunner(WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
-		Prompt:         testPrompt,
-		Cwd:            "/tmp/omg",
-		PermissionMode: "acceptEdits",
-		AllowedTools:   []string{"Read", "Bash(make *)"},
-		ResumeSession:  "sess-123",
+		Prompt:          testPrompt,
+		Cwd:             "/tmp/omg",
+		PermissionMode:  "acceptEdits",
+		AllowedTools:    []string{"Read", "Bash(make *)"},
+		DisallowedTools: []string{"WebFetch", "WebSearch"},
+		ResumeSession:   "sess-123",
 	})
 
 	want := []string{
@@ -31,6 +32,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		"--output-format", "json",
 		"--permission-mode", "acceptEdits",
 		"--allowedTools", "Read,Bash(make *)",
+		"--disallowedTools", "WebFetch,WebSearch",
 		"--resume", "sess-123",
 	}
 	if got := cmd.Args; !equalArgs(got, want) {
@@ -41,8 +43,8 @@ func TestBuildCmd_Argv(t *testing.T) {
 	}
 }
 
-// TestBuildCmd_OmitsOptionalFlags proves --allowedTools and --resume are absent
-// when no tools and no resume session are configured (a fan-in node with a clean
+// TestBuildCmd_OmitsOptionalFlags proves --allowedTools, --disallowedTools and
+// --resume are absent when none are configured (a fan-in node with a clean
 // session and no tool grants).
 func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	r := NewClaudeCLIRunner()
@@ -52,11 +54,47 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	})
 
 	joined := strings.Join(cmd.Args, " ")
-	if strings.Contains(joined, "--allowedTools") {
-		t.Errorf("expected no --allowedTools flag, got argv: %q", cmd.Args)
+	for _, flag := range []string{"--allowedTools", "--disallowedTools", "--resume"} {
+		if strings.Contains(joined, flag) {
+			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
+		}
 	}
-	if strings.Contains(joined, "--resume") {
-		t.Errorf("expected no --resume flag, got argv: %q", cmd.Args)
+}
+
+// TestBuildCmd_DisallowedToolsOnlyWhenImposed is the argv half of the auto-mode
+// tool-ceiling fix. --allowedTools cannot bound execution (the CLI unions it
+// with the user's own settings.json grants), so the ceiling is carried by
+// --disallowedTools, which subtracts. This pins both halves of that contract:
+//
+//   - a coordinator-built invocation (a deny list is set) renders the flag, so
+//     an unattended planned node actually loses those tools even when the
+//     user's global settings grant them;
+//   - a hand-written-YAML invocation (no deny list — internal/schedule passes
+//     nil for the `run` path) renders NO such flag, leaving those graphs on
+//     exactly the argv they had before this guard existed.
+func TestBuildCmd_DisallowedToolsOnlyWhenImposed(t *testing.T) {
+	r := NewClaudeCLIRunner()
+	// A node planned by the coordinator declaring only Read: everything
+	// consequential it did not declare is denied by name.
+	planned := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:          testPrompt,
+		PermissionMode:  "dontAsk",
+		AllowedTools:    []string{"Read"},
+		DisallowedTools: []string{"Bash", "Edit", "Write", "WebFetch"},
+	})
+	joined := strings.Join(planned.Args, " ")
+	if !strings.Contains(joined, "--disallowedTools Bash,Edit,Write,WebFetch") {
+		t.Errorf("planned node argv missing the comma-joined deny list: %q", planned.Args)
+	}
+
+	// The same node shape as a hand-written graph: same tools, no ceiling.
+	handWritten := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		AllowedTools:   []string{"Read"},
+	})
+	if strings.Contains(strings.Join(handWritten.Args, " "), "--disallowedTools") {
+		t.Errorf("hand-written graph argv must not carry a deny list, got: %q", handWritten.Args)
 	}
 }
 

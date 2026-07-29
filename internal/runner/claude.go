@@ -110,11 +110,15 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // buildArgs is the argv (excluding the binary) for a node:
 //
 //	-p <prompt> --output-format json --permission-mode <mode>
-//	  --allowedTools "<comma,joined>" [--resume <session_id>]
+//	  --allowedTools "<comma,joined>" --disallowedTools "<comma,joined>"
+//	  [--resume <session_id>]
 //
 // Never --bare (disables OAuth) and never --no-session-persistence (fleetops
-// observes the transcripts). --allowedTools is added only when tools are
-// configured; --resume only when resuming a session-parent.
+// observes the transcripts). Each optional flag is added only when its field is
+// set: --allowedTools when tools are configured, --disallowedTools when a
+// caller imposed an execution ceiling (auto mode does; hand-written graphs
+// leave it empty and their argv is unchanged), --resume when resuming a
+// session-parent.
 func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
@@ -123,6 +127,9 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	}
 	if len(spec.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(spec.AllowedTools, ","))
+	}
+	if len(spec.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(spec.DisallowedTools, ","))
 	}
 	if spec.ResumeSession != "" {
 		args = append(args, "--resume", spec.ResumeSession)

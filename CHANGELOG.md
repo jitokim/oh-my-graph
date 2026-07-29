@@ -40,6 +40,13 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
 - **`RunLedger`.** End-of-run table (session id, cost, verdict, duration per
   node) plus the total cost across the run.
 - **CLI:** `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]`.
+- **Auto mode.** `oh-my-graph auto "<goal>" [--input k=v ...]` plans a graph
+  from a plain-language goal instead of hand-written YAML: a coordinator makes
+  one planner call through the same env-scrubbed `NodeRunner` seam, loads the
+  JSON reply with the existing graph parser and validator, saves the spec to
+  `.oh-my-graph/runs/<run-id>/graph.json` (re-runnable with `oh-my-graph run`),
+  and executes it on the same scheduler. A planned node can never request
+  `permission_mode: bypassPermissions`.
 - **Claude Code plugin surface.** A thin `plugin/` wrapper — a `/graph` slash
   command and a description-routed `run-graph` skill — that shells out to the
   `oh-my-graph` binary and reports back the run ledger. It reimplements no
