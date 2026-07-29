@@ -9,6 +9,7 @@
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
 //	oh-my-graph runs list
+//	oh-my-graph show <run-id>
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
 // gate and is resumable (ADR 0003) — a pause is not a failure.
@@ -72,7 +73,8 @@ func run(args []string) error {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
-       oh-my-graph runs list`)
+       oh-my-graph runs list
+       oh-my-graph show <run-id>`)
 	}
 	switch args[0] {
 	case "run":
@@ -83,11 +85,13 @@ func run(args []string) error {
 		return runResume(args[1:])
 	case "runs":
 		return runRuns(args[1:])
+	case "show":
+		return runShow(args[1:])
 	case "version":
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, show, or version)", args[0])
 	}
 }
 
