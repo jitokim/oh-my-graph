@@ -170,6 +170,9 @@ Planning a graph for goal "lint this repo and summarize the findings"...
 Planned graph "lint-and-summarize" (2 nodes, planning cost $0.0021, saved to .oh-my-graph/runs/20260729-101600/graph.json):
   - lint [tools: Bash(go *), Read]
   - summarize (after lint) [tools: Read]
+  Planned nodes run isolated: none of your user/project/local settings load, so a declared
+  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
+  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
 
 Running graph "lint-and-summarize" (run 20260729-101600)
 
@@ -188,26 +191,42 @@ since JSON is valid YAML, you can hand-edit it and re-run it directly with
 `oh-my-graph run`. A planned node can never opt into `permission_mode:
 bypassPermissions`, never set its own `cwd`, never declare a
 `success_check.verify` command (that is shell run by the engine, outside every
-guard below), and may only name tools from a fixed allowlist — the coordinator
-rejects all four before anything runs.
-Because `--allowedTools` only *adds* to the permissions your own
-`~/.claude/settings.json` already grants, auto mode additionally passes each
-planned node an explicit `--disallowedTools` ceiling covering a fixed list of
-consequential built-in tools it did not declare (`Bash`, `Edit`, `Write`,
-`MultiEdit`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Task`/`Agent`) — so a
-standing `Bash(*)` or `Write(*)` grant in your settings does not silently widen
-an unattended plan.
+guard below), never run as one of your subagents (`agent:`), and may only name
+tools from a fixed allowlist — the coordinator rejects all of those before
+anything runs.
 
-That is a real reduction, not a sandbox, and the limits are worth knowing before
-you leave a run unattended: a node that legitimately needs a scoped pattern like
-`Bash(git *)` keeps the **whole** `Bash` tool (a deny list cannot say "all Bash
-except these prefixes"); `mcp__*` tools from your configured MCP servers are not
-covered; and settings *hooks* are not tool calls, so a write-capable node can
-still leave a `.claude/settings.local.json` behind. Re-running a saved
-`graph.json` through `oh-my-graph run` drops the ceiling entirely — that path
-assumes you reviewed the file. See [SECURITY.md](SECURITY.md). Hand-written YAML
-is unaffected by all of this: it is your own reviewed artifact and remains the
-path for precise control.
+Declaring a narrow tool list is not the same as being held to it, so each
+planned node also runs under a layered execution ceiling. The load-bearing part
+is `--setting-sources ""`: your own `~/.claude/settings.json` is loaded as
+another source of permission *rules*, so a standing `Bash(*)` there used to
+match before a planned node's narrower `Bash(git *)` ever mattered. Loading none
+of your settings leaves oh-my-graph's own argv as the only allow-rule source,
+and under `dontAsk` anything unmatched is denied. On top of that, `--tools`
+narrows the node's tool set to what it declared, `--strict-mcp-config` bounds
+MCP, and the previous `--disallowedTools` list is kept as a backstop.
+
+**Measured against a real `claude` 2.1.220, not read off `--help`:** with a
+settings.json granting `Bash(*)` and a node declaring `Bash(git *)`, an
+out-of-scope shell command ran without the isolation flag and was denied with
+it, while in-scope `git` kept working. The gap this README used to disclose — a
+node declaring a scoped `Bash(...)` pattern keeping the *whole* `Bash` tool — is
+**closed for auto-planned nodes.**
+
+Two things that come with it, both real:
+
+- **Planned nodes are now more isolated and less capable.** They no longer see
+  your CLAUDE.md, your hooks, or your configured MCP servers. If an `auto` run
+  of yours depended on an MCP server, it will stop working.
+- **It is still not a sandbox.** MCP closure is unverified (the flag is passed
+  because it is free, not because it was measured); skill and slash-command
+  surfaces remain unenumerable; and the whole thing is coupled to one CLI
+  version's behaviour.
+
+Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
+entirely — that path assumes you reviewed the file. See
+[SECURITY.md](SECURITY.md). Hand-written YAML is unaffected by all of this: it
+is your own reviewed artifact, it keeps your settings and hooks and MCP servers,
+and it remains the path for precise control.
 
 **Custom YAML vs. auto, in one line:** reach for `graphs/*.yaml` when you know
 exactly which tools each node should have and how they should hand off to
@@ -303,6 +322,37 @@ nodes:
     permission_mode: plan     # read-only
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
+
+### Running a node as your own subagent (`agent:`)
+
+Add `agent: <name>` to a node and it runs as one of your existing Claude Code
+subagents instead of plain `claude -p` — the review node runs as *your*
+`code-reviewer`, with its system prompt, its tools and its model:
+
+```yaml
+  - id: review
+    depends_on: [e2e]
+    permission_mode: plan
+    agent: code-reviewer      # must exist in ~/.claude/agents or .claude/agents
+    prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
+```
+
+The name is resolved by `claude` itself against `~/.claude/agents` and
+`<cwd>/.claude/agents`, so there is nothing to register with oh-my-graph and no
+copy of your agent definitions to keep in sync.
+
+Two things to know:
+
+- **A name that doesn't resolve fails the node.** It does *not* quietly fall
+  back to plain claude — a review node silently running as generic claude would
+  produce a plausible-looking review that isn't the one you asked for. The
+  failure carries `claude`'s own message, which lists the agents you *do* have.
+- **oh-my-graph doesn't reconcile tools, and hasn't measured what does.** If the
+  subagent's own `tools:` and the node's `allowed_tools` disagree, the CLI
+  decides, and this project makes no claim about how — assume the subagent's
+  grant wins. Both files are yours, so this is a usability question; it's why
+  `agent:` is rejected on auto-planned nodes, where it would be a safety
+  question instead.
 
 ### Handoff — how a node receives its parent's work
 
@@ -419,6 +469,19 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
 - **`gate` (human pause/approve) is not implemented.** The node type is
   schema-reserved and rejected at execution time; no `oh-my-graph resume` yet.
   ([#9](https://github.com/jitokim/oh-my-graph/issues/9))
+- **Auto mode's tool ceiling is a reduction, not a sandbox — and parts of it are
+  unverified.** The isolation and scoped-Bash layers were measured against a
+  real `claude` 2.1.220 and hold (see [SECURITY.md](SECURITY.md)). MCP closure
+  was **not** measured: `--strict-mcp-config` is passed because it costs
+  nothing, not because it was observed to work. Skill and slash-command surfaces
+  are not enumerable by any of these mechanisms, and the whole ceiling is
+  coupled to one CLI version's behaviour.
+  ([#11](https://github.com/jitokim/oh-my-graph/issues/11))
+- **`agent:` tool reconciliation is undefined and unmeasured.** When a node
+  names a subagent, oh-my-graph does not reconcile that subagent's own `tools:`
+  with the node's `allowed_tools` — the CLI decides, and this project makes no
+  claim about how. If the subagent grants tools the node did not, assume it
+  gets them.
 
 See [Deferred](#deferred-not-in-v01) below for the full out-of-scope list.
 
@@ -441,6 +504,14 @@ Called out honestly — these are **not** implemented yet:
   be invented, so it would look like a cap without being one.
 - worktree auto-creation for parallel edits (parallel v0.1 nodes should be
   read-only reviews).
+- **coordinator auto-mapping of `agent:` by role.** Having `auto` scan your
+  `~/.claude/agents` and assign a reviewer node your `code-reviewer` sounds like
+  the natural next step; it is deferred on a design constraint, not on effort.
+  A planned node may not carry `agent:` at all (it would route around the tool
+  ceiling), and settings-source isolation disables agent discovery anyway, so
+  the two features are mutually exclusive as built. An implicit scan is also
+  rejected permanently: it would make an `auto` run's behaviour depend on files
+  you forgot you had. See `docs/adr/0004-*.md` §4.
 
 ## Prior art
 

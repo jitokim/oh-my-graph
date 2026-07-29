@@ -161,6 +161,23 @@ type Node struct {
 	Handoff        string       `yaml:"handoff"`
 	SuccessCheck   SuccessCheck `yaml:"success_check"`
 	Retry          *Retry       `yaml:"retry"`
+	// Agent, when set, names a Claude Code subagent this node runs as —
+	// rendered as `claude -p --agent <name>`, which resolves it against the
+	// user's OWN ~/.claude/agents or <cwd>/.claude/agents definitions, so the
+	// node inherits that subagent's system prompt, tools and model. Empty
+	// means plain `claude -p`.
+	//
+	// Load-time validation only rejects a blank/whitespace-only name: whether
+	// a name resolves depends on the machine and the checkout, not on the
+	// graph file, so it is not a property this validator can decide. An
+	// unresolvable name is a node FAILURE at run time, never a silent fallback
+	// to plain claude — see runner.NodeInvocation.Agent.
+	//
+	// Hand-written graphs only: coordinator.validatePlannedNodes rejects it on
+	// a planned node, which would otherwise let an unreviewed plan pick which
+	// of the user's subagents (and so which system prompt, tool grant and
+	// model) runs the node.
+	Agent string `yaml:"agent"`
 }
 
 // Graph is the validated DAG: its metadata plus the nodes and a by-id index

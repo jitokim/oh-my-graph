@@ -95,8 +95,8 @@ func TestPlan_MakesExactlyOneReadOnlyCallCarryingGoalAndInputs(t *testing.T) {
 	if captured.PermissionMode != "plan" {
 		t.Errorf("planner permission mode = %q, want plan", captured.PermissionMode)
 	}
-	if captured.ResumeSession != "" || len(captured.AllowedTools) != 0 {
-		t.Errorf("planner must start fresh with no tools: resume=%q tools=%v", captured.ResumeSession, captured.AllowedTools)
+	if captured.ResumeSession != "" || len(captured.Policy.AllowedTools) != 0 {
+		t.Errorf("planner must start fresh with no tools: resume=%q tools=%v", captured.ResumeSession, captured.Policy.AllowedTools)
 	}
 	if !strings.Contains(captured.Prompt, "lint the repo") {
 		t.Error("planner prompt does not contain the goal")
@@ -392,7 +392,7 @@ func TestPlan_MaximalDeclarationStillHasACeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(plan.DisallowedTools["greedy"]) == 0 {
+	if len(plan.ToolPolicies["greedy"].DisallowedTools) == 0 {
 		t.Fatal("a node declaring the whole allowlist has an empty ceiling, so no --disallowedTools flag is emitted")
 	}
 }
@@ -406,8 +406,8 @@ func TestPlan_PlannerCallCarriesACeiling(t *testing.T) {
 	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(captured.DisallowedTools) != len(deniableTools) {
-		t.Errorf("planner denied %v, want every deniable tool %v", captured.DisallowedTools, deniableTools)
+	if len(captured.Policy.DisallowedTools) != len(deniableTools) {
+		t.Errorf("planner denied %v, want every deniable tool %v", captured.Policy.DisallowedTools, deniableTools)
 	}
 }
 
@@ -453,8 +453,8 @@ func TestPlan_DenyListUsesBareToolNamesNotWildcards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for nodeID, denied := range plan.DisallowedTools {
-		for _, tool := range denied {
+	for nodeID, policy := range plan.ToolPolicies {
+		for _, tool := range policy.DisallowedTools {
 			if strings.ContainsAny(tool, "(*)") {
 				t.Errorf("node %q denies %q; a scoped/wildcard deny does not enforce anything", nodeID, tool)
 			}
@@ -472,11 +472,11 @@ func TestPlan_EveryPlannedNodeGetsACeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(plan.DisallowedTools) != len(plan.Graph.Nodes) {
-		t.Fatalf("got %d deny lists for %d nodes", len(plan.DisallowedTools), len(plan.Graph.Nodes))
+	if len(plan.ToolPolicies) != len(plan.Graph.Nodes) {
+		t.Fatalf("got %d policies for %d nodes", len(plan.ToolPolicies), len(plan.Graph.Nodes))
 	}
 	for _, node := range plan.Graph.Nodes {
-		if len(plan.DisallowedTools[node.ID]) == 0 {
+		if len(plan.ToolPolicies[node.ID].DisallowedTools) == 0 {
 			t.Errorf("node %q has no execution ceiling", node.ID)
 		}
 	}
@@ -485,7 +485,7 @@ func TestPlan_EveryPlannedNodeGetsACeiling(t *testing.T) {
 // assertDenied checks a node's deny list is exactly want, order-insensitively.
 func assertDenied(t *testing.T, plan Plan, nodeID string, want []string) {
 	t.Helper()
-	got := append([]string(nil), plan.DisallowedTools[nodeID]...)
+	got := append([]string(nil), plan.ToolPolicies[nodeID].DisallowedTools...)
 	sort.Strings(got)
 	sorted := append([]string(nil), want...)
 	sort.Strings(sorted)
@@ -510,5 +510,151 @@ func TestPlan_AcceptsOnlyAllowlistedTools(t *testing.T) {
 	}
 	if len(plan.Graph.Nodes) != 2 {
 		t.Fatalf("got %d nodes, want 2", len(plan.Graph.Nodes))
+	}
+}
+
+// runnerOutcome is the one-line planner reply fixture used by the
+// field-disposition probes.
+func runnerOutcome(spec string) runner.NodeOutcome {
+	return runner.NodeOutcome{Result: spec}
+}
+
+// TestPlan_EveryPlannedNodeGetsEveryCeilingLayer is the test that would have to
+// fail before a planned node could run wider than intended. The layers are
+// independent mechanisms and each closes something the others do not, so a
+// policy missing any one of them is a partial ceiling that still LOOKS applied
+// — exactly what carrying them in one value object is meant to prevent.
+// Asserted per layer, per node, rather than as one "policy is non-empty" check.
+func TestPlan_EveryPlannedNodeGetsEveryCeilingLayer(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, node := range plan.Graph.Nodes {
+		policy, ok := plan.ToolPolicies[node.ID]
+		if !ok {
+			t.Fatalf("node %q has no tool policy, so it would run under the user's own standing grants", node.ID)
+		}
+		// Layer 1 — the load-bearing one. Without it the user's settings.json
+		// is loaded as a competing allow-rule source and a standing Bash(*)
+		// there re-opens the scoped-Bash gap.
+		if policy.SettingSources == nil {
+			t.Errorf("node %q loads the user's settings: layer 1 (isolation) missing", node.ID)
+		} else if *policy.SettingSources != "" {
+			t.Errorf("node %q has SettingSources %q, want the empty string (load none)", node.ID, *policy.SettingSources)
+		}
+		if len(policy.AllowedTools) == 0 {
+			t.Errorf("node %q has no allow rules: layer 2 (grant) missing", node.ID)
+		}
+		if len(policy.Tools) == 0 {
+			t.Errorf("node %q has no tool narrowing: layer 3 missing", node.ID)
+		}
+		if !policy.StrictMCPConfig {
+			t.Errorf("node %q can reach the user's MCP servers: layer 4 missing", node.ID)
+		}
+		// Layer 5 is retained on purpose, so a wrong assumption in layers 1-4
+		// degrades to the previous behaviour rather than to nothing.
+		if len(policy.DisallowedTools) == 0 {
+			t.Errorf("node %q has no residual deny list: layer 5 missing", node.ID)
+		}
+	}
+}
+
+// TestPlan_PlannerCallIsNotIsolated pins a deliberate NON-application of the
+// ceiling. The planner call is oh-my-graph's own prompt, not the untrusted
+// artifact it produces, and it is the one call whose job is to understand the
+// repository it was invoked in — so it keeps the user's settings, and with them
+// the user's CLAUDE.md (measured: isolation drops project CLAUDE.md, DESIGN.md
+// E7). Without this test a well-meaning "isolate everything" change would
+// silently degrade every generated plan while the suite stayed green, and the
+// symptom — worse plans — is the kind nobody traces back to a flag.
+func TestPlan_PlannerCallIsNotIsolated(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if captured.Policy.SettingSources != nil {
+		t.Errorf("planner call was isolated (SettingSources=%q); it deliberately keeps the user's settings and CLAUDE.md", *captured.Policy.SettingSources)
+	}
+	// It is still not the least-constrained call in the run: the deny list is
+	// what it does get, and TestPlan_PlannerCallCarriesACeiling pins that.
+	if len(captured.Policy.DisallowedTools) == 0 {
+		t.Error("planner call carries no ceiling at all")
+	}
+}
+
+// TestPlan_PolicyCarriesTheNodesOwnAllowedTools pins the contract the Scheduler
+// relies on: an imposed policy is COMPLETE, so the scheduler forwards it
+// verbatim and never merges the node's declaration back in. If the coordinator
+// forgot to copy allowed_tools here, that node would run with NO allow rules
+// under a ceiling that loads no settings — every tool call denied. A mystery
+// failure rather than a safety hole, but a broken run either way.
+func TestPlan_PolicyCarriesTheNodesOwnAllowedTools(t *testing.T) {
+	spec := `{"name":"ok","nodes":[{"id":"edit","prompt":"edit","allowed_tools":["Edit","Bash(git *)"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	node, _ := plan.Graph.NodeByID("edit")
+	got := plan.ToolPolicies["edit"].AllowedTools
+	if strings.Join(got, ",") != strings.Join(node.AllowedTools, ",") {
+		t.Errorf("policy allow rules = %v, want the node's own declaration %v", got, node.AllowedTools)
+	}
+}
+
+// TestPlan_NarrowedToolsAreBareNamesDedupedInOrder pins layer 3's shape.
+// --tools takes tool NAMES and replaces the built-in set outright, so a scoped
+// pattern there would narrow to nothing useful; and a node declaring several
+// Bash patterns must yield ONE "Bash", or the argv stops being deterministic
+// between runs of the same saved plan.
+func TestPlan_NarrowedToolsAreBareNamesDedupedInOrder(t *testing.T) {
+	spec := `{"name":"ok","nodes":[{"id":"build","prompt":"build","allowed_tools":["Read","Bash(go *)","Bash(make *)","Grep"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "build the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := plan.ToolPolicies["build"].Tools
+	if strings.Join(got, ",") != "Read,Bash,Grep" {
+		t.Errorf("narrowed tools = %v, want [Read Bash Grep]", got)
+	}
+	for _, tool := range got {
+		if strings.ContainsAny(tool, "(*)") {
+			t.Errorf("--tools got the scoped form %q; it takes bare tool names", tool)
+		}
+	}
+}
+
+// TestPlan_ScopedBashNodeKeepsTheToolAndGainsTheScope is the regression guard
+// for the gap this whole change exists to close, expressed at the layer that
+// closes it. A node declaring Bash(git *) KEEPS the Bash tool — layers 3 and 5
+// cannot take away what it declared — so the scope is a real limit only
+// because layer 1 stopped the user's own Bash(*) from matching first. Grant
+// and isolation together are the ceiling; either alone is the old hole.
+func TestPlan_ScopedBashNodeKeepsTheToolAndGainsTheScope(t *testing.T) {
+	spec := `{"name":"ok","nodes":[{"id":"vcs","prompt":"commit","allowed_tools":["Bash(git *)"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: spec})
+
+	plan, err := New(fake).Plan(context.Background(), "commit the work", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	policy := plan.ToolPolicies["vcs"]
+	if strings.Join(policy.AllowedTools, ",") != "Bash(git *)" {
+		t.Errorf("allow rules = %v, want the scoped pattern to be the only grant", policy.AllowedTools)
+	}
+	if policy.SettingSources == nil || *policy.SettingSources != "" {
+		t.Fatal("a scoped Bash pattern only binds while the user's own settings are unloaded; layer 1 is missing")
+	}
+	for _, denied := range policy.DisallowedTools {
+		if denied == "Bash" {
+			t.Error("a node declaring Bash(git *) must keep the Bash tool; the scope is enforced by layers 1+2, not by denying the tool")
+		}
 	}
 }

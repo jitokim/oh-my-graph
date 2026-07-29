@@ -71,15 +71,19 @@ type Options struct {
 	// loudly instead of quietly spawning a real process. A graph whose nodes
 	// declare no verify never touches it.
 	Verifier verify.Verifier
-	// DisallowedTools is a per-node execution ceiling keyed by node id: the
-	// tools that node's subprocess must be denied outright (the runner renders
-	// them as --disallowedTools, which subtracts from the user's own settings
-	// rather than adding to them). Auto mode supplies it from coordinator.Plan
-	// because a planned graph is unreviewed LLM output; hand-written graphs
-	// pass nil, so their nodes get no --disallowedTools flag at all and behave
-	// exactly as before. The Scheduler only forwards it — the policy of what
-	// belongs in it is the coordinator's.
-	DisallowedTools map[string][]string
+	// ToolPolicies is the per-node tool ceiling keyed by node id. A node with
+	// an entry runs under that COMPLETE policy — the entry is the whole story
+	// for that node, not extra restrictions merged onto its declaration, so
+	// there is no place for a half-applied ceiling to hide.
+	//
+	// A nil map means "no ceiling was imposed": every node then runs under its
+	// own allowed_tools alone. That is the hand-written `run` path, whose argv
+	// is exactly what it always was. A NON-nil map is auto mode's, and it must
+	// carry an entry for every node — a partial map fails the missing node
+	// loudly rather than running it uncapped (see policyFor). The Scheduler
+	// only forwards policies; deciding what belongs in one is the
+	// coordinator's job.
+	ToolPolicies map[string]runner.ToolPolicy
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -91,10 +95,10 @@ type Scheduler struct {
 	gate           gate.GateController
 	verifier       verify.Verifier
 	progress       io.Writer
-	// disallowedTools is the per-node deny list keyed by node id (nil for
-	// hand-written graphs). Reading a missing key yields nil, which the runner
-	// renders as "no --disallowedTools flag".
-	disallowedTools map[string][]string
+	// toolPolicies is the per-node tool ceiling keyed by node id (nil for
+	// hand-written graphs). A missing key means "no ceiling was imposed" — see
+	// buildInvocation.
+	toolPolicies map[string]runner.ToolPolicy
 	// progressMu serializes writes to progress: parallel nodes emit events from
 	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
 	// concurrent use without one.
@@ -117,13 +121,13 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		progressWriter = os.Stderr
 	}
 	return &Scheduler{
-		runner:          nodeRunner,
-		continueOnFail:  opts.ContinueOnFail,
-		concurrency:     opts.Concurrency,
-		gate:            gateController,
-		verifier:        verifier,
-		progress:        progressWriter,
-		disallowedTools: opts.DisallowedTools,
+		runner:         nodeRunner,
+		continueOnFail: opts.ContinueOnFail,
+		concurrency:    opts.Concurrency,
+		gate:           gateController,
+		verifier:       verifier,
+		progress:       progressWriter,
+		toolPolicies:   opts.ToolPolicies,
 	}
 }
 
@@ -322,8 +326,7 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 
 // buildInvocation renders a node into a runner.NodeInvocation: interpolate its
 // prompt and cwd, resolve the session it resumes (if any), default the
-// permission mode, and attach the node's execution ceiling (empty unless the
-// caller imposed one).
+// permission mode, and attach the node's tool policy.
 func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
 	prompt, err := h.Interpolate(node.Prompt)
 	if err != nil {
@@ -343,15 +346,47 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 		permissionMode = defaultPermissionMode
 	}
 
+	policy, err := s.policyFor(node)
+	if err != nil {
+		return runner.NodeInvocation{}, err
+	}
+
 	return runner.NodeInvocation{
-		Prompt:          prompt,
-		Cwd:             cwd,
-		PermissionMode:  permissionMode,
-		ResumeSession:   resume,
-		AllowedTools:    node.AllowedTools,
-		DisallowedTools: s.disallowedTools[node.ID],
-		BudgetUSD:       node.BudgetUSD,
+		Prompt:         prompt,
+		Cwd:            cwd,
+		PermissionMode: permissionMode,
+		ResumeSession:  resume,
+		Agent:          node.Agent,
+		BudgetUSD:      node.BudgetUSD,
+		Policy:         policy,
 	}, nil
+}
+
+// policyFor returns the node's complete tool policy.
+//
+// A nil policy map means no ceiling was imposed at all — the hand-written `run`
+// path — so the node runs under its own declaration and nothing else. A
+// non-nil map is auto mode's, and it owns the whole policy for that node,
+// including its --allowedTools.
+//
+// Deliberately NOT a merge of the two. Merging would mean a policy could be
+// half-supplied and still look applied, which is the exact failure this type
+// exists to make unrepresentable: the coordinator builds AllowedTools into the
+// policy it hands over, and a coordinator test asserts it did.
+//
+// A non-nil map MISSING this node is an error rather than a fallback, because
+// the fallback would be the one outcome the ceiling exists to prevent: an
+// unreviewed planned node running uncapped, silently, while every other node in
+// the run is capped. Failing the node names the bug; falling back hides it.
+func (s *Scheduler) policyFor(node graph.Node) (runner.ToolPolicy, error) {
+	if s.toolPolicies == nil {
+		return runner.ToolPolicy{AllowedTools: node.AllowedTools}, nil
+	}
+	policy, imposed := s.toolPolicies[node.ID]
+	if !imposed {
+		return runner.ToolPolicy{}, &MissingToolPolicyError{NodeID: node.ID}
+	}
+	return policy, nil
 }
 
 // verifyEvidence runs the node's success_check.verify — the only predicate that

@@ -102,6 +102,26 @@ without an explicit, discussed design change should not be merged:
   so every node shows up as an ordinary session in `~/.claude/projects` —
   that's the free integration with [fleetops](https://github.com/jitokim/fleetops).
   Don't add a flag or option that turns it off by default.
+- **Every field on `graph.Node` has an explicit auto-mode disposition.** A
+  planner reply is untrusted input, so `coordinator.validatePlannedNodes` must
+  allow, constrain, or reject every field a plan can set — this class of hole
+  recurs each time the schema grows. It is enforced, not just requested:
+  `internal/coordinator/field_dispositions_test.go` walks `graph.Node` by
+  reflection and fails on any field with no recorded disposition. **If you add
+  a field to `Node`, that test will fail until you decide what auto mode does
+  with it.** Recording it as `rejected` also requires a probe proving the
+  rejection actually fires.
+- **The auto-mode tool ceiling is auto mode's alone.** Hand-written graphs
+  (`oh-my-graph run`) must keep running under the user's own settings, hooks
+  and MCP servers — they are the user's reviewed artifact, and that path exists
+  for precise control. Don't extend `--setting-sources ""`, `--tools`,
+  `--strict-mcp-config` or `--disallowedTools` to it.
+- **Don't narrow a published security claim ahead of a measurement.** The
+  scoped-`Bash` wording in README/SECURITY.md was only softened after a real
+  `claude` invocation demonstrated the behaviour (DESIGN.md, "Empirical
+  verification of the tool ceiling"). `--help` prose has already been wrong
+  once. If you can't measure it, say it's unverified — an honest partial
+  mechanism beats an overclaimed complete one.
 
 ## Scope
 

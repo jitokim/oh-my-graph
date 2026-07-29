@@ -43,7 +43,8 @@ var (
 //  5. a session-handoff node has exactly one parent — the session it resumes
 //     (a root has no session to resume; more than one can't be merged);
 //  6. every success_check.verify is runnable: a command, a parseable timeout
-//     within the ceiling, a compilable output_matches regex.
+//     within the ceiling, a compilable output_matches regex;
+//  7. an agent name, when present, carries no surrounding whitespace.
 func (g *Graph) Validate() error {
 	if err := g.validateNodesUnique(); err != nil {
 		return err
@@ -60,7 +61,34 @@ func (g *Graph) Validate() error {
 	if err := g.validateHandoffConstraints(); err != nil {
 		return err
 	}
-	return g.validateSuccessChecks()
+	if err := g.validateSuccessChecks(); err != nil {
+		return err
+	}
+	return g.validateAgentNames()
+}
+
+// validateAgentNames rejects an agent name carrying surrounding whitespace —
+// both the whitespace-only `agent: " "` and the padded `agent: " reviewer "`.
+// Either would reach the argv verbatim and fail the node at run time with a CLI
+// error naming no graph at all, which is exactly the failure a load-time check
+// exists to move earlier. One rule covers both, since TrimSpace collapses the
+// blank case to "".
+//
+// A name that merely does not exist is NOT rejected: which names resolve
+// depends on the user's ~/.claude/agents and the checkout's .claude/agents, so
+// it is a property of the machine, not of the graph file this validator is
+// reading. Rejecting it would make a graph valid on one machine invalid on
+// another.
+func (g *Graph) validateAgentNames() error {
+	for _, n := range g.Nodes {
+		if n.Agent != "" && strings.TrimSpace(n.Agent) != n.Agent {
+			return &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("agent %q has surrounding whitespace", n.Agent),
+			}
+		}
+	}
+	return nil
 }
 
 func (g *Graph) validateNodesUnique() error {

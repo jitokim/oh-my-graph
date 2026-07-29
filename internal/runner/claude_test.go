@@ -11,20 +11,40 @@ const (
 	testPrompt = "write a haiku about graphs"
 )
 
-// TestBuildCmd_Argv asserts the exact claude argv oh-my-graph builds, including
-// the ordering of flags and the omission of optional flags when unset. This is
-// the contract every real run depends on — if the argv drifts, the whole tool
-// silently invokes claude wrong.
+// noSettings is the layer-1 value under test: a pointer to the empty string,
+// meaning "load none of the user/project/local settings files".
+func noSettings() *string {
+	none := ""
+	return &none
+}
+
+// TestBuildCmd_Argv asserts the exact claude argv oh-my-graph builds for a
+// planned node carrying every ceiling layer plus a budget, including flag
+// ORDER. This is the contract every real run depends on — if the argv drifts,
+// the whole tool silently invokes claude wrong.
+//
+// It deliberately does NOT set Agent. `--agent` and `--setting-sources ""` are
+// mutually exclusive in reality (isolation disables agent discovery, so the
+// combination fails at CLI startup — DESIGN.md, E2) and unreachable in this
+// codebase (auto mode rejects `agent:`; hand-written graphs get no isolation).
+// Pinning them together in the canonical argv test would enshrine a
+// configuration that can never occur. `--agent`'s own position is pinned by
+// TestBuildCmd_AgentArgv against the shape that does occur.
 func TestBuildCmd_Argv(t *testing.T) {
 	r := NewClaudeCLIRunner(WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
-		Prompt:          testPrompt,
-		Cwd:             "/tmp/omg",
-		PermissionMode:  "acceptEdits",
-		BudgetUSD:       0.50,
-		AllowedTools:    []string{"Read", "Bash(make *)"},
-		DisallowedTools: []string{"WebFetch", "WebSearch"},
-		ResumeSession:   "sess-123",
+		Prompt:         testPrompt,
+		Cwd:            "/tmp/omg",
+		PermissionMode: "acceptEdits",
+		ResumeSession:  "sess-123",
+		BudgetUSD:      0.50,
+		Policy: ToolPolicy{
+			AllowedTools:    []string{"Read", "Bash(make *)"},
+			Tools:           []string{"Read", "Bash"},
+			SettingSources:  noSettings(),
+			StrictMCPConfig: true,
+			DisallowedTools: []string{"WebFetch", "WebSearch"},
+		},
 	})
 
 	want := []string{
@@ -33,7 +53,10 @@ func TestBuildCmd_Argv(t *testing.T) {
 		"--output-format", "json",
 		"--permission-mode", "acceptEdits",
 		"--max-budget-usd", "0.5",
+		"--setting-sources", "",
 		"--allowedTools", "Read,Bash(make *)",
+		"--tools", "Read,Bash",
+		"--strict-mcp-config",
 		"--disallowedTools", "WebFetch,WebSearch",
 		"--resume", "sess-123",
 	}
@@ -45,9 +68,34 @@ func TestBuildCmd_Argv(t *testing.T) {
 	}
 }
 
-// TestBuildCmd_OmitsOptionalFlags proves --allowedTools, --disallowedTools and
-// --resume are absent when none are configured (a fan-in node with a clean
-// session and no tool grants).
+// TestBuildCmd_AgentArgv pins the full argv of the shape `agent:` actually
+// occurs in: a hand-written node, which carries its own allow rules and no
+// ceiling layer at all.
+func TestBuildCmd_AgentArgv(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "plan",
+		Agent:          "code-reviewer",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
+	})
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "plan",
+		"--agent", "code-reviewer",
+		"--allowedTools", "Read",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// TestBuildCmd_OmitsOptionalFlags proves every optional flag is absent when
+// nothing configured it — a fan-in node with a clean session, no tool grants
+// and no imposed ceiling.
 func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	r := NewClaudeCLIRunner()
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
@@ -56,47 +104,146 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	})
 
 	joined := strings.Join(cmd.Args, " ")
-	for _, flag := range []string{"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume"} {
+	for _, flag := range []string{
+		"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume",
+		"--setting-sources", "--tools", "--strict-mcp-config", "--agent",
+	} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
 		}
 	}
 }
 
-// TestBuildCmd_DisallowedToolsOnlyWhenImposed is the argv half of the auto-mode
-// tool-ceiling fix. --allowedTools cannot bound execution (the CLI unions it
-// with the user's own settings.json grants), so the ceiling is carried by
-// --disallowedTools, which subtracts. This pins both halves of that contract:
-//
-//   - a coordinator-built invocation (a deny list is set) renders the flag, so
-//     an unattended planned node actually loses those tools even when the
-//     user's global settings grant them;
-//   - a hand-written-YAML invocation (no deny list — internal/schedule passes
-//     nil for the `run` path) renders NO such flag, leaving those graphs on
-//     exactly the argv they had before this guard existed.
-func TestBuildCmd_DisallowedToolsOnlyWhenImposed(t *testing.T) {
-	r := NewClaudeCLIRunner()
-	// A node planned by the coordinator declaring only Read: everything
-	// consequential it did not declare is denied by name.
-	planned := r.buildCmd(context.Background(), NodeInvocation{
-		Prompt:          testPrompt,
-		PermissionMode:  "dontAsk",
-		AllowedTools:    []string{"Read"},
-		DisallowedTools: []string{"Bash", "Edit", "Write", "WebFetch"},
-	})
-	joined := strings.Join(planned.Args, " ")
-	if !strings.Contains(joined, "--disallowedTools Bash,Edit,Write,WebFetch") {
-		t.Errorf("planned node argv missing the comma-joined deny list: %q", planned.Args)
-	}
-
-	// The same node shape as a hand-written graph: same tools, no ceiling.
-	handWritten := r.buildCmd(context.Background(), NodeInvocation{
+// TestBuildCmd_HandWrittenGraphArgvIsUnchanged pins the promise that the whole
+// ceiling is auto mode's alone. internal/schedule builds a hand-written
+// graph's policy from the node's own allowed_tools and nothing else, so its
+// argv must be EXACTLY what it was before the ceiling existed — no isolation,
+// no narrowing, no MCP bound, no deny list. A regression here would silently
+// disable a user's own settings, hooks and MCP servers in the path whose whole
+// purpose is precise user control.
+func TestBuildCmd_HandWrittenGraphArgvIsUnchanged(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
-		AllowedTools:   []string{"Read"},
+		Policy:         ToolPolicy{AllowedTools: []string{"Read", "Bash(git *)"}},
 	})
-	if strings.Contains(strings.Join(handWritten.Args, " "), "--disallowedTools") {
-		t.Errorf("hand-written graph argv must not carry a deny list, got: %q", handWritten.Args)
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--allowedTools", "Read,Bash(git *)",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("hand-written graph argv must be unchanged:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// TestBuildCmd_SettingSourcesEmptyIsRenderedNotOmitted is the load-bearing
+// failure case of the whole ceiling. Layer 1's value IS the empty string, so
+// the natural Go reflex — treating "" as unset and skipping the flag — would
+// leave the argv looking clean while silently reloading the user's standing
+// Bash(*) grant and reopening the exact gap this change closes. The distinction
+// is carried by *string precisely so it cannot collapse: nil omits, &"" emits.
+func TestBuildCmd_SettingSourcesEmptyIsRenderedNotOmitted(t *testing.T) {
+	r := NewClaudeCLIRunner()
+
+	isolated := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy:         ToolPolicy{SettingSources: noSettings()},
+	})
+	if !hasFlagValue(isolated.Args, "--setting-sources", "") {
+		t.Errorf(`--setting-sources "" must be rendered as a flag with an empty value, got: %q`, isolated.Args)
+	}
+
+	notSpecified := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy:         ToolPolicy{},
+	})
+	if strings.Contains(strings.Join(notSpecified.Args, " "), "--setting-sources") {
+		t.Errorf("a nil SettingSources must omit the flag entirely, got: %q", notSpecified.Args)
+	}
+}
+
+// TestBuildCmd_ToolsNilOmitsEmptyDisables pins the other nil-vs-empty
+// distinction. --tools "" is documented by the CLI as "disable all tools",
+// which is the opposite of "use the default set" — so a non-nil empty slice
+// must render the flag, and only nil may omit it.
+func TestBuildCmd_ToolsNilOmitsEmptyDisables(t *testing.T) {
+	r := NewClaudeCLIRunner()
+
+	omitted := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt, PermissionMode: "dontAsk",
+		Policy: ToolPolicy{Tools: nil},
+	})
+	if strings.Contains(strings.Join(omitted.Args, " "), "--tools") {
+		t.Errorf("a nil Tools must omit --tools, got: %q", omitted.Args)
+	}
+
+	disabled := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt, PermissionMode: "dontAsk",
+		Policy: ToolPolicy{Tools: []string{}},
+	})
+	if !hasFlagValue(disabled.Args, "--tools", "") {
+		t.Errorf(`an empty non-nil Tools must render --tools "", got: %q`, disabled.Args)
+	}
+}
+
+// TestBuildCmd_PlannedNodeCeilingRendersEveryLayer is the argv half of auto
+// mode's ceiling: a policy built by coordinator.toolPolicyFor must reach the
+// argv with all five layers intact. Layers 3 and 5 are deliberate redundancy —
+// dropping either silently would still look like a working ceiling in every
+// other test, so they are asserted individually rather than as one blob.
+func TestBuildCmd_PlannedNodeCeilingRendersEveryLayer(t *testing.T) {
+	r := NewClaudeCLIRunner()
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy: ToolPolicy{
+			AllowedTools:    []string{"Read", "Bash(git *)"},
+			Tools:           []string{"Read", "Bash"},
+			SettingSources:  noSettings(),
+			StrictMCPConfig: true,
+			DisallowedTools: []string{"Edit", "Write", "WebFetch"},
+		},
+	})
+
+	joined := strings.Join(cmd.Args, " ")
+	for layer, want := range map[string]string{
+		"1 isolation": "--setting-sources",
+		"2 grant":     "--allowedTools Read,Bash(git *)",
+		"3 narrowing": "--tools Read,Bash",
+		"4 MCP":       "--strict-mcp-config",
+		"5 residual":  "--disallowedTools Edit,Write,WebFetch",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("layer %s missing from planned argv (want %q): %q", layer, want, cmd.Args)
+		}
+	}
+}
+
+// TestBuildCmd_AgentOnlyWhenNamed proves `agent:` reaches the argv as
+// --agent <name> and that the default (no agent) leaves plain `claude -p`
+// exactly as it was.
+func TestBuildCmd_AgentOnlyWhenNamed(t *testing.T) {
+	r := NewClaudeCLIRunner()
+
+	named := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt, PermissionMode: "dontAsk", Agent: "code-reviewer",
+	})
+	if !hasFlagValue(named.Args, "--agent", "code-reviewer") {
+		t.Errorf("expected --agent code-reviewer in argv, got: %q", named.Args)
+	}
+
+	plain := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt, PermissionMode: "dontAsk",
+	})
+	if strings.Contains(strings.Join(plain.Args, " "), "--agent") {
+		t.Errorf("expected no --agent flag when Agent is empty, got argv: %q", plain.Args)
 	}
 }
 
@@ -137,7 +284,7 @@ func TestBuildCmd_MaxBudgetOnlyWhenPositive(t *testing.T) {
 // assumption — the Scheduler depends on this flag to classify the failure.
 func TestParseEnvelope_BudgetExhausted(t *testing.T) {
 	killed := `{"session_id":"s1","total_cost_usd":0.4776,"subtype":"error_max_budget_usd","is_error":true,"errors":["Reached maximum budget ($0.001)"]}`
-	outcome, err := parseEnvelope([]byte(killed))
+	outcome, err := parseEnvelope([]byte(killed), nil)
 	if err != nil {
 		t.Fatalf("a budget-abort envelope is still valid JSON and must parse: %v", err)
 	}
@@ -149,7 +296,7 @@ func TestParseEnvelope_BudgetExhausted(t *testing.T) {
 	}
 
 	ok := `{"session_id":"s2","result":"hi","total_cost_usd":0.03,"subtype":"success"}`
-	normal, err := parseEnvelope([]byte(ok))
+	normal, err := parseEnvelope([]byte(ok), nil)
 	if err != nil {
 		t.Fatalf("parse success envelope: %v", err)
 	}
@@ -213,6 +360,19 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	if !containsEnv(cmd.Env, "PATH=/usr/bin") || !containsEnv(cmd.Env, "HOME=/home/dev") {
 		t.Errorf("scrub removed benign env vars; child env = %q", cmd.Env)
 	}
+}
+
+// hasFlagValue reports whether args contains flag immediately followed by
+// value. Needed because the values under test include the EMPTY string, which
+// a naive strings.Contains over a space-joined argv cannot distinguish from
+// the flag being present with the next flag as its value.
+func hasFlagValue(args []string, flag, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func equalArgs(a, b []string) bool {
