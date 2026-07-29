@@ -61,6 +61,22 @@ oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-
 - `--concurrency N` overrides the graph's ready-set width (ceiling 10).
 - `--continue-on-fail` prunes only a failed node's subtree instead of halting.
 
+### Zero-config: auto mode
+
+Don't want to write YAML? Give `auto` a goal and it plans the graph for you —
+one claude call (through the same subscription-auth, env-scrubbed runner) turns
+the goal into a graph spec, which is validated and executed by the same engine:
+
+```sh
+oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+```
+
+The plan is printed before it runs, and the generated spec is saved to
+`.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
+hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
+`permission_mode: bypassPermissions`; custom YAML remains the path for precise
+control.
+
 ## Use it from Claude Code (plugin)
 
 The CLI above is the product. If you'd rather stay inside a Claude Code

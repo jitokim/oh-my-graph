@@ -88,6 +88,21 @@ success_check: `exit_zero` AND `result_matches` (regex over .result) if specifie
 empty ⇒ exit_zero only. Failed check → `NodeCheckError` (node id + predicate).
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never resume a failed one).
 
+## Auto mode — planned graphs, no hand-written YAML
+`oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
+YAML stays the precise-control path. A **Coordinator** makes exactly ONE
+planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
+env scrub, read-only `plan` permission mode, never the Agent SDK), asking
+claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
+prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
+loaded through the existing parser, normalization, and DAG validation — an
+invalid plan fails before anything runs. Auto-specific guard: a planned node
+may NOT request `permission_mode: bypassPermissions` (hand-written YAML may opt
+in per node because the user reviewed it; an unreviewed plan may not). The
+generated spec is saved to `.oh-my-graph/runs/<run-id>/graph.json` — being
+valid YAML it can be hand-edited and re-run with `oh-my-graph run` — then
+executed by the same Scheduler as any other graph.
+
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
 - **Node** — value object (id, type, prompt, cwd, tools, permission, budget, success_check, handoff, depends_on).
@@ -111,6 +126,8 @@ retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never res
     fan-out, fan-in, retry, halt, cost sum) unit-testable with ZERO real
     spawns. This is the testability keystone.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume session.
+- **Coordinator** — auto mode: one planner NodeRunner call → JSON graph spec →
+  existing Parse/Validate (+ bypassPermissions refusal). Never runs the graph itself.
 - **GateController** — pause/approve/reject for gate nodes (v1.1 stub in v0.1).
 - **RunLedger** — record session_id/cost/verdict/timing; end-of-run table + total cost.
 
@@ -124,7 +141,8 @@ concurrent ready-set scheduler + cap + halt-on-fail; ClaudeCLIRunner (exact argv
 ENV SCRUB, timeout, JSON parse); FakeRunner + full scheduler unit tests (no real
 claude in CI); artifact handoff (default) + session handoff (simple one→one);
 success_check (exit_zero + result_matches); RunLedger table + total cost;
-CLI `oh-my-graph run <graph.yaml> --input k=v`; nodes run in real cwds with session
+CLI `oh-my-graph run <graph.yaml> --input k=v` and `oh-my-graph auto "<goal>"`
+(planned graphs — see Auto mode); nodes run in real cwds with session
 persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): gate/human-pause + `oh-my-graph resume` (v1.1, schema
@@ -137,6 +155,7 @@ cmd/oh-my-graph/{main,flags}.go      CLI: parse flags, load, inject ClaudeCLIRun
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + claude_test, envelope_test  interface + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
+internal/coordinator/coordinator.go + _test    auto mode: goal → planner call (NodeRunner seam) → validated graph
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick
 internal/gate/gate.go                          v1.1 stub interface
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
