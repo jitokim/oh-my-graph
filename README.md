@@ -449,7 +449,7 @@ What remains is sub-call and cross-node accounting — see
 |---|---|
 | **macOS, Linux** | fully supported |
 | **WSL** | fully supported — a WSL build *is* a Linux build |
-| **native Windows** | compiles and runs, but degraded and untested |
+| **native Windows** | compiles and runs, best-effort — no Windows CI |
 
 macOS and Linux are the supported targets, and CI builds and tests on Linux.
 WSL needs no special handling: it is `GOOS=linux`, so it takes the identical
@@ -459,11 +459,14 @@ every path and every spawn is WSL-side.
 Native Windows compiles and a cancelled node still kills its child, but it is
 best-effort. Three things to know before relying on it:
 
-- **`verify` runs through `sh -c` everywhere.** The interpreter is a compile-time
-  constant with no per-OS branch — there is no `cmd /c` fallback — so
-  `success_check.verify` on native Windows needs an `sh` on `PATH` (Git Bash,
-  MSYS) or it fails as "failed to run". `go test ./...` needs one for the same
-  reason; no test skips on OS.
+- **`verify` uses each OS's own interpreter.** Build tags select it at compile
+  time: `sh -c` on unix (`internal/verify/shell_unix.go`), `cmd /c` on native
+  Windows (`shell_windows.go`), each pinned by a build-tagged unit test. What
+  still differs is shell *syntax* — `/c` and `-c` share the "run this command
+  line and exit" contract, but a `success_check.verify` command written for `sh`
+  will not necessarily run unchanged under `cmd`. That portability is the
+  graph's to state, not the engine's. CI builds and tests on Linux only; the
+  Windows path has never been exercised end-to-end.
 - **No tree-kill.** Cancelling or timing out a verification signals the whole
   process group on unix (`internal/verify/procgroup_unix.go`); the Windows
   build (`procgroup_windows.go`) keeps stock `os/exec` behaviour and kills only
