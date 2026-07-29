@@ -6,7 +6,10 @@
 language: "en-US"
 
 reviews:
-  profile: "chill"
+  # assertive: surface nitpicks, edge cases, and style issues, not just
+  # high-confidence blockers. chill was too quiet — clean-looking PRs got a
+  # bare "no actionable comments" even when there was worth flagging.
+  profile: "assertive"
   request_changes_workflow: false
   high_level_summary: true
   poem: false
@@ -15,17 +18,58 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    # Review every push to an open PR, not just the first one.
+    auto_incremental_review: true
     base_branches:
       - "main"
+  # Docs are load-bearing here (DESIGN.md is the spec, ADRs record decisions),
+  # so markdown IS reviewed. Only exclude generated/vendored noise.
   path_filters:
-    - "!**/*.md"
     - "!**/testdata/**"
     - "!**/*.lock"
+    - "!bin/**"
   path_instructions:
     - path: "**/*.go"
       instructions: >
-        Review for idiomatic Go, error handling, and test coverage.
-        Flag missing tests for exported functions and unhandled errors.
+        Review for idiomatic Go, error handling, and test coverage. Flag
+        missing tests for exported functions and any unhandled or swallowed
+        errors. This project's core invariant is the NodeRunner seam:
+        internal/noderunner (ClaudeCLIRunner) must be the ONLY os/exec touch
+        point — flag any new os/exec, exec.Command, or direct process spawning
+        elsewhere. Child processes must run on the user's subscription auth:
+        flag anything that could leak ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+        into a child environment, and flag any use of the Agent SDK or a
+        `--bare` claude invocation. For auto-planned graphs, the tool-safety
+        allowlist gates untrusted LLM output — flag permission_mode:
+        bypassPermissions or unbounded allowed_tools in generated nodes.
+    - path: "**/*_test.go"
+      instructions: >
+        Tests must use FakeRunner, never a real claude subprocess, so CI stays
+        hermetic and free. Flag tests that shell out to `claude` or depend on
+        network/auth. Prefer failure-first cases (invalid input, nonzero exit,
+        early return) alongside the happy path.
+    - path: "**/*.md"
+      instructions: >
+        Flag claims that the code contradicts (stale invariants, wrong flags,
+        renamed symbols, deferred features described as shipped). Keep the docs
+        English-only. DESIGN.md is the spec — flag drift between it and the
+        implementation.
+    - path: "**/*.{sh,yaml,yml}"
+      instructions: >
+        Flag unsafe shell (unquoted expansions, injection via interpolated
+        inputs) and, in graph YAML, over-broad allowed_tools or
+        permission_mode values that weaken the tool-safety gate.
+
+  # Static analysis raises review quality well beyond the LLM pass alone.
+  tools:
+    golangci-lint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
 
 chat:
   auto_reply: true
