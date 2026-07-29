@@ -10,6 +10,7 @@
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
+//	oh-my-graph chat
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
 // gate and is resumable (ADR 0003) — a pause is not a failure.
@@ -74,7 +75,8 @@ func run(args []string) error {
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
        oh-my-graph runs list
-       oh-my-graph show <run-id>`)
+       oh-my-graph show <run-id>
+       oh-my-graph chat`)
 	}
 	switch args[0] {
 	case "run":
@@ -87,11 +89,13 @@ func run(args []string) error {
 		return runRuns(args[1:])
 	case "show":
 		return runShow(args[1:])
+	case "chat":
+		return runChat(args[1:])
 	case "version":
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, show, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, show, chat, or version)", args[0])
 	}
 }
 
@@ -160,9 +164,17 @@ func runAuto(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
+	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal)
+}
 
-	fmt.Fprintf(os.Stdout, "Planning a graph for goal %q...\n", flags.goal)
-	plan, err := coordinator.New(nodeRunner).Plan(ctx, flags.goal, inputKeys(flags.inputs))
+// planAndExecute is one goal's full auto sequence — plan, save the spec, print
+// the topology, execute. It is shared verbatim by `auto` and a chat graph turn
+// so the sequence that must stay identical between them has exactly one home:
+// a graph started from chat is indistinguishable on disk (saved spec,
+// state.json, events.jsonl) from one started at the shell.
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string) error {
+	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
+	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
 		return err
 	}
@@ -172,9 +184,9 @@ func runAuto(args []string) error {
 	if err != nil {
 		return err
 	}
-	printPlan(os.Stdout, plan, specPath)
+	printPlan(out, plan, specPath)
 
-	return executePlan(ctx, runID, plan, nodeRunner, flags.commonRunFlags, specPath)
+	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath)
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
