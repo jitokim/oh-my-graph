@@ -12,6 +12,7 @@ package graph
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -44,20 +45,97 @@ const (
 // spelling.
 const PermissionBypass = "bypassPermissions"
 
-// SuccessCheck is the predicate a node's outcome must satisfy to count as a
-// success. An empty check (both fields zero) means "exit code zero is enough".
+// Verification timeout policy for success_check.verify. The default keeps an
+// undeclared verification from wedging a node for the runner's full 20 minutes;
+// the ceiling is refused at load time, because a verification runs on the
+// critical path of the node that declares it and a graph asking for an
+// hour-long check is asking for a stalled run it will discover much later.
+const (
+	defaultVerifyTimeout = 2 * time.Minute
+	maxVerifyTimeout     = 10 * time.Minute
+)
+
+// Verification is the evidence-grounded predicate: a command the ENGINE runs
+// itself, judged on its own exit code and output rather than on anything the
+// node said about its own work. It is the only success_check predicate that
+// observes state outside the model's narration.
+//
+// The engine runs Command through `sh -c` (see internal/verify), so it is
+// arbitrary shell — the same standing as allowed_tools in a hand-written graph
+// the user reviewed. Auto-planned graphs may not declare it at all.
+type Verification struct {
+	// Command is the shell command line to run. Required. It is interpolated
+	// like a prompt, so {{ inputs.x }} / {{ artifacts.y }} resolve.
+	Command string `yaml:"command"`
+	// Cwd is where the command runs. Empty means "the node's own cwd", so the
+	// common case needs no repetition. Interpolated.
+	Cwd string `yaml:"cwd"`
+	// Timeout is a Go duration string bounding this one command. Empty is
+	// normalized to defaultVerifyTimeout; Validate parses it at LOAD time and
+	// refuses anything unparseable, non-positive, or over maxVerifyTimeout, so
+	// no run ever discovers a malformed duration halfway through.
+	Timeout string `yaml:"timeout"`
+	// ExpectExit is the exit code that counts as verified. A *int, not an int,
+	// so an explicitly declared 0 is distinguishable from "not declared" — nil
+	// means the default, which is also 0.
+	ExpectExit *int `yaml:"expect_exit"`
+	// OutputMatches, when non-empty, is a regular expression that must match
+	// somewhere in the command's combined stdout+stderr. Compiled at load time
+	// by Validate, so a bad regex is a load error, not a mid-run surprise.
+	OutputMatches string `yaml:"output_matches"`
+
+	// timeout is Timeout parsed once, at load, by Validate. Unexported so the
+	// parsed form cannot drift from the declared string: callers ask via
+	// TimeoutDuration.
+	timeout time.Duration
+}
+
+// TimeoutDuration returns the parsed Timeout. A Verification that reached the
+// Scheduler came from Load/Parse, so this is the value Validate already proved
+// parseable and within the ceiling. It falls back to the default for a
+// hand-built Verification that never went through validation, so the engine
+// cannot end up running an unbounded command.
+func (v Verification) TimeoutDuration() time.Duration {
+	if v.timeout <= 0 {
+		return defaultVerifyTimeout
+	}
+	return v.timeout
+}
+
+// ExpectedExitCode is the exit code this verification counts as success —
+// what expect_exit declared, or 0.
+func (v Verification) ExpectedExitCode() int {
+	if v.ExpectExit == nil {
+		return 0
+	}
+	return *v.ExpectExit
+}
+
+// SuccessCheck is the conjunction of predicates a node's outcome must satisfy to
+// count as a success — ALL configured predicates must pass. An empty check (no
+// field set) means "exit code zero is enough".
+//
+// The predicates are not equals. exit_zero and verify judge facts the engine
+// observed; result_matches judges what the node SAID about itself and is a cheap
+// secondary filter, never evidence on its own.
 type SuccessCheck struct {
 	// ExitZero requires the subprocess to have exited 0.
 	ExitZero bool `yaml:"exit_zero"`
 	// ResultMatches, when non-empty, is a regular expression that must match
 	// somewhere in the node's .result text. Empty means "no result predicate".
+	// Self-reported: a node passes it by emitting the right words.
 	ResultMatches string `yaml:"result_matches"`
+	// Verify, when non-nil, is a command the engine runs and judges itself.
+	// A pointer so "absent" and "declared but zero-valued" stay distinguishable.
+	Verify *Verification `yaml:"verify"`
 }
 
 // IsZero reports whether no predicate was configured at all — the caller then
-// falls back to the exit-zero-only default.
+// falls back to the exit-zero-only default. Every field must be tested here: a
+// check carrying only a verify would otherwise be read as "empty" and the
+// evidence command would never run.
 func (c SuccessCheck) IsZero() bool {
-	return !c.ExitZero && c.ResultMatches == ""
+	return !c.ExitZero && c.ResultMatches == "" && c.Verify == nil
 }
 
 // Retry is a node's flat re-run policy: up to Max additional attempts when the
@@ -148,8 +226,9 @@ func Parse(data []byte) (*Graph, error) {
 }
 
 // normalizeNodes fills in the terse-YAML defaults so the rest of the engine
-// never sees an empty Type or Handoff: a node with no explicit type is a
-// claude-run, and a node with no explicit handoff hands off by artifact.
+// never sees an empty Type, Handoff or verification timeout: a node with no
+// explicit type is a claude-run, a node with no explicit handoff hands off by
+// artifact, and a verification with no declared timeout gets the default.
 func normalizeNodes(nodes []Node) []Node {
 	out := make([]Node, len(nodes))
 	for i, n := range nodes {
@@ -158,6 +237,9 @@ func normalizeNodes(nodes []Node) []Node {
 		}
 		if n.Handoff == "" {
 			n.Handoff = HandoffArtifact
+		}
+		if verification := n.SuccessCheck.Verify; verification != nil && verification.Timeout == "" {
+			verification.Timeout = defaultVerifyTimeout.String()
 		}
 		out[i] = n
 	}

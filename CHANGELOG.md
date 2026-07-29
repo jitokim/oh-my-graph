@@ -37,6 +37,33 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
 - **Success checks and retry.** `success_check` (`exit_zero`,
   `result_matches` regex) gates whether a node counts as passed. `retry`
   re-runs a failed node up to a flat `max`, always in a fresh session.
+- **Evidence-grounded `success_check.verify`.** A node can now be judged on
+  something other than its own narration: `verify` declares a command
+  (`command`, optional `cwd`, `timeout`, `expect_exit`, `output_matches`) that
+  **oh-my-graph itself** runs through `sh -c` and judges by exit code and
+  output. It composes by AND after `exit_zero`/`result_matches`, and runs after
+  them but *before* the node's output is persisted — so a crashed node is never
+  verified against the wreckage and an unverified node leaves no artifact.
+  `command`/`cwd` interpolate like a prompt; a missing command, an unparseable
+  or over-10m `timeout`, and an uncompilable `output_matches` are rejected at
+  load time naming the node. A verification that times out or cannot spawn
+  fails the node — never a silent pass. New retry cause token: `verify_failed`.
+  `result_matches` is retained and unchanged, but is now documented as a
+  secondary, self-reported signal. Auto-planned nodes may not declare `verify`
+  (it is shell run outside every coordinator guard). ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
+- **A second, deliberate exec seam.** `internal/verify` adds a `Verifier`
+  interface with `ShellVerifier` (production), `RefusingVerifier` (the
+  scheduler's default, so a forgotten injection fails loudly instead of
+  spawning) and `FakeVerifier` (tests). The project invariant is restated, not
+  weakened: exactly two objects may spawn a process —
+  `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its own
+  injected interface, and the whole engine still runs its tests with zero real
+  spawns. See `docs/adr/0002-verification-is-a-second-exec-seam.md`.
+- **Shared child-environment scrub (`internal/childenv`).** The
+  `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` deletion moved out of
+  `internal/runner` into a leaf package used by both spawners, because
+  `verify: { command: "claude -p ..." }` is legal and would otherwise have run
+  on metered API billing. Behaviour for claude nodes is unchanged.
 - **Post-hoc `budget_usd` enforcement.** A node whose actual cost exceeds its
   declared `budget_usd` now fails exactly like a failed `success_check`
   (`NodeBudgetError`, ledger `FAIL` carrying budgeted-vs-actual, halt-on-fail by

@@ -182,6 +182,12 @@ func TestBuildCmd_NeverBareOrNoSessionPersistence(t *testing.T) {
 // The parent env is injected via a fake environ so the assertion does not depend
 // on the developer's real shell, and a benign variable is included to prove the
 // scrub is surgical (it removes only the two auth keys, not the whole env).
+//
+// This is the runner's CALL SITE of the shared policy: the rule itself (which
+// keys, matched how) lives in internal/childenv and is tested there, and
+// verify.ShellVerifier — the only other spawner — has the mirror image of this
+// test. Both must keep passing, or one kind of child process is billed
+// differently from the other.
 func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	parentEnv := []string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
@@ -206,27 +212,6 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	// Surgical: the benign variables must survive.
 	if !containsEnv(cmd.Env, "PATH=/usr/bin") || !containsEnv(cmd.Env, "HOME=/home/dev") {
 		t.Errorf("scrub removed benign env vars; child env = %q", cmd.Env)
-	}
-}
-
-// TestScrubEnv_KeyMatchOnly proves the scrub matches on the env KEY, not on a
-// substring — a variable whose VALUE happens to contain the key name is kept.
-func TestScrubEnv_KeyMatchOnly(t *testing.T) {
-	in := []string{
-		"ANTHROPIC_API_KEY=secret",
-		"MY_NOTE=ANTHROPIC_API_KEY is scrubbed elsewhere",
-		"ANTHROPIC_AUTH_TOKEN_BACKUP=keep-me",
-	}
-	out := scrubEnv(in)
-
-	if containsEnv(out, "ANTHROPIC_API_KEY=secret") {
-		t.Error("exact-key ANTHROPIC_API_KEY was not scrubbed")
-	}
-	if !containsEnv(out, "MY_NOTE=ANTHROPIC_API_KEY is scrubbed elsewhere") {
-		t.Error("value-substring match wrongly scrubbed MY_NOTE")
-	}
-	if !containsEnv(out, "ANTHROPIC_AUTH_TOKEN_BACKUP=keep-me") {
-		t.Error("prefix-only key ANTHROPIC_AUTH_TOKEN_BACKUP was wrongly scrubbed")
 	}
 }
 

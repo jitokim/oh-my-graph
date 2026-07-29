@@ -28,6 +28,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
+	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
 func main() {
@@ -144,12 +145,16 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
-// `run` and `auto`. disallowedTools is the per-node execution ceiling: auto
-// passes the coordinator's, `run` passes nil. planningCostUSD is the
-// coordinator's one planning-call cost, folded into the ledger's total so an
-// auto run's end-of-run TOTAL COST is honest about the planning step; `run`
-// passes 0 (no planning step), so it shows no planning line and its total is
-// unchanged.
+// `run` and `auto`. This is where the two exec seams are injected: the
+// ClaudeCLIRunner the caller passed (a node's claude subprocess) and a
+// ShellVerifier (a node's success_check.verify command). A planned graph can
+// never declare a verification — the coordinator rejects the field — so for
+// `auto` the verifier is wired but never reached. disallowedTools is the
+// per-node execution ceiling: auto passes the coordinator's, `run` passes nil.
+// planningCostUSD is the coordinator's one planning-call cost, folded into the
+// ledger's total so an auto run's end-of-run TOTAL COST is honest about the
+// planning step; `run` passes 0 (no planning step), so it shows no planning
+// line and its total is unchanged.
 func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, disallowedTools map[string][]string, planningCostUSD float64) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
@@ -158,6 +163,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:     flags.concurrency,
 		ContinueOnFail:  flags.continueOnFail,
+		Verifier:        verify.NewShellVerifier(),
 		DisallowedTools: disallowedTools,
 	})
 

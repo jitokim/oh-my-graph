@@ -52,9 +52,15 @@ line is.
 
 A planned graph is untrusted LLM output executed unattended, so it gets bounds a
 hand-written graph does not. Beyond the plan-time rejections (no
-`bypassPermissions`, no `cwd`, no tool outside a fixed allowlist), auto mode
-passes each node an explicit `--disallowedTools` ceiling — a deny beats a prior
-allow, so it is the only part that binds at runtime.
+`bypassPermissions`, no `cwd`, no `success_check.verify`, no tool outside a
+fixed allowlist), auto mode passes each node an explicit `--disallowedTools`
+ceiling — a deny beats a prior allow, so it is the only part that binds at
+runtime.
+
+`success_check.verify` is refused outright rather than constrained: it is a
+shell command the *engine* runs, not a tool call, so no permission mode, tool
+allowlist, deny list or `cwd` restriction applies to it. It is available to
+hand-written graphs, which are your own reviewed artifact, and to nothing else.
 
 Stated honestly, this is a reduction and not a sandbox. Known gaps, also
 recorded in DESIGN.md and in `coordinator.deniableTools`:

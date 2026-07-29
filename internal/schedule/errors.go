@@ -7,8 +7,11 @@ import (
 )
 
 // NodeCheckError is a node that ran but failed its success_check. It names the
-// node and the predicate (exit_zero / result_matches) that did not hold, so the
-// ledger and the halt message can be precise about why.
+// node and the predicate (exit_zero / result_matches / verify) that did not
+// hold, so the ledger and the halt message can be precise about why. For a
+// failed verification the Detail carries the command, its exit code and a
+// truncated tail of its output — the difference between "the evidence check
+// failed" and knowing what the evidence actually said.
 type NodeCheckError struct {
 	NodeID    string
 	Predicate string
