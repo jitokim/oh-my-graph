@@ -6,7 +6,9 @@
 #
 # Proves, end to end: subscription auth works with the API key scrubbed,
 # a sequential edge with artifact handoff, JSON capture (two session_ids +
-# costs), the RunLedger table, and that fleetops observes both sessions.
+# costs), the RunLedger table, that fleetops observes both sessions, and that
+# success_check.verify really runs a command and judges it (the `write` node
+# passes only if haiku.txt actually exists — saying DONE is not enough).
 #
 # Run it manually (never in CI):
 #   mkdir -p /tmp/omg-smoke
@@ -25,7 +27,12 @@ nodes:
     allowed_tools: [Read, Write, "Bash(cat *)"]
     permission_mode: acceptEdits
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "DONE" }
+    success_check:
+      exit_zero: true
+      result_matches: "DONE"        # what the node SAID
+      # …and what the engine SAW. The file either exists in the node's cwd or it
+      # does not; no wording in the reply can satisfy this one.
+      verify: { command: "test -f haiku.txt", timeout: 10s }
 
   - id: critique
     type: claude-run

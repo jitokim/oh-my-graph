@@ -186,8 +186,10 @@ TOTAL COST: $0.0106
 The generated spec is saved to `.oh-my-graph/runs/<run-id>/graph.json` —
 since JSON is valid YAML, you can hand-edit it and re-run it directly with
 `oh-my-graph run`. A planned node can never opt into `permission_mode:
-bypassPermissions`, never set its own `cwd`, and may only name tools from a
-fixed allowlist (the coordinator rejects all three before anything runs).
+bypassPermissions`, never set its own `cwd`, never declare a
+`success_check.verify` command (that is shell run by the engine, outside every
+guard below), and may only name tools from a fixed allowlist — the coordinator
+rejects all four before anything runs.
 Because `--allowedTools` only *adds* to the permissions your own
 `~/.claude/settings.json` already grants, auto mode additionally passes each
 planned node an explicit `--disallowedTools` ceiling covering a fixed list of
@@ -290,8 +292,11 @@ nodes:
     depends_on: [dev]
     handoff: session          # resume dev's session (tight sequential continuation)
     prompt: Run make local and report PASS or FAIL.
-    success_check: { exit_zero: true, result_matches: "PASS" }
-    retry: { max: 1, on: [nonzero_exit] }
+    success_check:
+      exit_zero: true
+      result_matches: "PASS"          # what the node said
+      verify: { command: "make local" }  # what the engine saw
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
   - id: review
     depends_on: [e2e]
@@ -313,11 +318,50 @@ nodes:
 
 ### Success checks and retry
 
-`success_check` gates a node: `exit_zero` requires a clean exit, and
-`result_matches` is a regex over the node's result text. An empty check means
-"exit zero is enough". `retry` re-runs a failed node up to `max` times when the
-failure cause is listed in `on` — always in a fresh session. Retry causes:
-`nonzero_exit`, `result_mismatch`, `output_error`, `run_error`,
+`success_check` gates a node. It is a conjunction — **every** predicate you
+configure must pass — and an empty check means "exit zero is enough".
+
+| predicate | judges | trusts the node? |
+|---|---|---|
+| `exit_zero` | the subprocess exit code | no |
+| `result_matches` | a regex over the node's own result text | **yes — self-report** |
+| `verify` | a command **oh-my-graph** runs, by its own exit code and output | no |
+
+`result_matches` is a cheap, useful filter, but a node passes it by *saying*
+"PASS" — that is narration, not evidence. `verify` is the predicate that looks
+at the world instead: oh-my-graph runs the command itself (through `sh -c`, in
+the node's working directory unless told otherwise) and judges the result, so
+a node whose success is externally observable can be made to prove it.
+
+```yaml
+  - id: e2e
+    prompt: Run the suite and report PASS or FAIL.
+    success_check:
+      exit_zero: true
+      result_matches: "PASS"                  # optional, secondary
+      verify:
+        command: "go test ./... -run TestFoo" # required
+        cwd: "{{ inputs.repo }}"              # optional; default = the node's own cwd
+        timeout: 2m                           # optional; Go duration, default 2m, max 10m
+        expect_exit: 0                        # optional; default 0
+        output_matches: "^ok\\s+github"       # optional; regex over stdout+stderr
+```
+
+The verification runs **after** the cheap predicates and **before** the node's
+output is persisted, so a node that crashed never has a command run against the
+wreckage, and a node that failed verification leaves no artifact for its
+dependents. `command` and `cwd` interpolate `{{ inputs.* }}` /
+`{{ artifacts.* }}` like a prompt. A missing command, an unparseable or
+over-ceiling `timeout`, and an uncompilable `output_matches` are all rejected
+when the graph loads, naming the node — never mid-run. A verification that
+times out or cannot be started **fails** the node; it is never a silent pass.
+
+Auto-planned graphs (`oh-my-graph auto`) may not declare `verify` at all — it is
+arbitrary shell that would run outside every guard the coordinator imposes.
+
+`retry` re-runs a failed node up to `max` times when the failure cause is listed
+in `on` — always in a fresh session. Retry causes: `nonzero_exit`,
+`result_mismatch`, `verify_failed`, `output_error`, `run_error`,
 `budget_exceeded`.
 
 ### Budgets
@@ -353,9 +397,14 @@ What remains is sub-call and cross-node accounting — see
 
 Honest gaps in v0.1, each tracked as an issue rather than left as prose:
 
-- **`success_check` is self-report, not evidence-grounded.** `result_matches`
-  regexes over the node's own claimed result text — there's no independent
-  verification against external state.
+- **A `success_check` without `verify` is still self-report.** `success_check.verify`
+  closes this for graphs that opt in: the engine runs a command of your choosing
+  and judges its exit code and output, independent of anything the node claims.
+  But it is opt-in per node — a check that configures only `exit_zero` and
+  `result_matches` is exactly as self-reported as it was before, because
+  `result_matches` regexes over the node's own claimed result text. Nothing
+  forces a node to carry evidence, and for nodes whose work is not externally
+  observable (a review, a summary) there is nothing to verify against.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
 - **`budget_usd` is enforced per node, but not sub-call or across nodes.**
   A positive budget is passed to claude as `--max-budget-usd`, so claude aborts a
@@ -402,9 +451,10 @@ Called out honestly — these are **not** implemented yet:
 - **[OMK](https://github.com/dmae97/omk)** — the closest sibling. Runs coding
   agents (including Claude Code) in scoped DAG lanes, and verifies node
   success against external evidence rather than the node's own self-report.
-  oh-my-graph has **not** closed that gap yet — `success_check` is still
-  self-report regex matching over the node's result text
-  ([#7](https://github.com/jitokim/oh-my-graph/issues/7)).
+  oh-my-graph now has an evidence predicate of its own — `success_check.verify`
+  runs a command the engine judges — but it is opt-in per node rather than
+  intrinsic to the model, so a graph that doesn't declare one is still passing
+  nodes on their own word ([#7](https://github.com/jitokim/oh-my-graph/issues/7)).
 - **[open-multi-agent](https://github.com/open-multi-agent/open-multi-agent)**
   — the opposite axis: a coordinator plans the task DAG at runtime from a goal
   description, instead of a human-authored graph. Static, declared graphs

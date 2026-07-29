@@ -19,16 +19,22 @@ let them drift apart.
 
 ## Load-bearing invariants — do not weaken these
 
-- **Subscription-auth env scrub.** Every node subprocess's child environment
-  must have `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted
-  (`internal/runner/claude.go`, `scrubEnv`). This is what keeps the tool on
-  subscription billing instead of silently falling back to metered API
-  billing. It is unit-tested (`internal/runner/claude_test.go`) — don't touch
-  env construction without keeping that test meaningful.
-- **The `NodeRunner` seam.** `ClaudeCLIRunner` is the only object allowed to
-  import `os/exec`. Everything else (scheduler, CLI, handoff, ledger) depends
-  on the `NodeRunner` interface only, so the whole engine is testable via the
-  scripted `FakeRunner` with zero real spawns.
+- **Subscription-auth env scrub.** Every child process's environment must have
+  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted, via the shared
+  `internal/childenv.Scrub` — used by BOTH spawners (a claude node and a
+  `success_check.verify` command). This is what keeps the tool on subscription
+  billing instead of silently falling back to metered API billing. It is
+  unit-tested in `internal/childenv/childenv_test.go` and at each call site
+  (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`) — don't
+  touch env construction without keeping those tests meaningful.
+- **The two exec seams.** Exactly two objects may import `os/exec`:
+  `runner.ClaudeCLIRunner` (a node's claude subprocess) and
+  `verify.ShellVerifier` (a node's evidence command) — see
+  `docs/adr/0002-verification-is-a-second-exec-seam.md`. Everything else
+  (scheduler, CLI, handoff, ledger, coordinator) depends on the `NodeRunner`
+  and `Verifier` interfaces only, so the whole engine is testable via the
+  scripted `FakeRunner`/`FakeVerifier` with zero real spawns. A third spawner
+  needs its own ADR.
 - **Artifact handoff is the default.** `handoff: artifact` persists a node's
   result to `.oh-my-graph/runs/<run-id>/<node-id>.out`; `handoff: session`
   (resuming `--resume <session_id>`) is opt-in and only valid with exactly one
@@ -63,6 +69,8 @@ cmd/oh-my-graph/       CLI entrypoint and flag parsing
 internal/graph/        Graph/Node value objects, YAML load, DAG validation
 internal/schedule/     ready-set scheduler (the engine's core)
 internal/runner/       NodeRunner interface, ClaudeCLIRunner, FakeRunner
+internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
+internal/childenv/     the shared child-env scrub policy (used by both spawners)
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)
 internal/gate/         v1.1 stub for the (not-yet-implemented) gate node type

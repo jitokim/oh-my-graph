@@ -2,7 +2,9 @@ package graph
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // GraphValidationError names the offending node and the invariant it broke. It
@@ -39,7 +41,9 @@ var (
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
-//     (a root has no session to resume; more than one can't be merged).
+//     (a root has no session to resume; more than one can't be merged);
+//  6. every success_check.verify is runnable: a command, a parseable timeout
+//     within the ceiling, a compilable output_matches regex.
 func (g *Graph) Validate() error {
 	if err := g.validateNodesUnique(); err != nil {
 		return err
@@ -53,7 +57,10 @@ func (g *Graph) Validate() error {
 	if err := g.validateAcyclic(); err != nil {
 		return err
 	}
-	return g.validateHandoffConstraints()
+	if err := g.validateHandoffConstraints(); err != nil {
+		return err
+	}
+	return g.validateSuccessChecks()
 }
 
 func (g *Graph) validateNodesUnique() error {
@@ -147,6 +154,73 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 	}
 	colour[id] = colourBlack
 	return "", false
+}
+
+// validateSuccessChecks proves every declared verification can actually be run
+// before a single node starts. Everything it checks is knowable from the file
+// alone, so discovering it mid-run — after paying for the nodes that ran first —
+// would be a pure waste of the user's money and time.
+//
+// It is also where the timeout string becomes a time.Duration: judging it
+// against the ceiling requires parsing it, and throwing that result away would
+// mean parsing the same string again on the critical path of every attempt.
+// Verify is a pointer, so the parsed value reaches the copy of the Node held in
+// byID and the one the Scheduler reads.
+func (g *Graph) validateSuccessChecks() error {
+	for _, n := range g.Nodes {
+		verification := n.SuccessCheck.Verify
+		if verification == nil {
+			continue
+		}
+		timeout, err := validateVerification(n.ID, verification)
+		if err != nil {
+			return err
+		}
+		verification.timeout = timeout
+	}
+	return nil
+}
+
+// validateVerification checks one node's verify block and returns its parsed
+// timeout. Every failure names the node, so a graph with twenty nodes says which
+// one is wrong.
+func validateVerification(nodeID string, v *Verification) (time.Duration, error) {
+	if strings.TrimSpace(v.Command) == "" {
+		return 0, &GraphValidationError{
+			NodeID: nodeID,
+			Reason: "success_check.verify needs a command — an evidence check with nothing to run would pass every time",
+		}
+	}
+
+	timeout, err := time.ParseDuration(v.Timeout)
+	if err != nil {
+		return 0, &GraphValidationError{
+			NodeID: nodeID,
+			Reason: fmt.Sprintf("success_check.verify has an invalid timeout %q (want a Go duration like 30s, 2m): %v", v.Timeout, err),
+		}
+	}
+	if timeout <= 0 {
+		return 0, &GraphValidationError{
+			NodeID: nodeID,
+			Reason: fmt.Sprintf("success_check.verify timeout %q must be positive", v.Timeout),
+		}
+	}
+	if timeout > maxVerifyTimeout {
+		return 0, &GraphValidationError{
+			NodeID: nodeID,
+			Reason: fmt.Sprintf("success_check.verify timeout %s exceeds the %s ceiling — a verification runs on the node's critical path; split the work into its own node instead", timeout, maxVerifyTimeout),
+		}
+	}
+
+	if v.OutputMatches != "" {
+		if _, err := regexp.Compile(v.OutputMatches); err != nil {
+			return 0, &GraphValidationError{
+				NodeID: nodeID,
+				Reason: fmt.Sprintf("success_check.verify has an invalid output_matches regex %q: %v", v.OutputMatches, err),
+			}
+		}
+	}
+	return timeout, nil
 }
 
 func (g *Graph) validateHandoffConstraints() error {

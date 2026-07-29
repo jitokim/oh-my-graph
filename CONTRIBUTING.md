@@ -45,25 +45,38 @@ PR that wires it into a workflow.
 - New architectural decisions (not just implementation detail) belong in
   `docs/adr/`, following the style of `docs/adr/0001-subprocess-not-sdk.md`.
 
-## The `NodeRunner` seam — the one rule that matters most
+## The exec seams — the one rule that matters most
 
-`internal/runner.ClaudeCLIRunner` is **the only object in this codebase that
-may import `os/exec`**. Every other package — the scheduler, the CLI, handoff,
-ledger — depends only on the `NodeRunner` interface
-(`internal/runner/runner.go`):
+**Exactly two objects in this codebase may spawn a process**, each behind its
+own injected interface:
+
+| object | runs | interface |
+|---|---|---|
+| `internal/runner.ClaudeCLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
+| `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 
 ```go
 type NodeRunner interface {
 	Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error)
 }
+
+type Verifier interface {
+	Verify(ctx context.Context, req Request) (Result, error)
+}
 ```
 
-If your change needs to run a subprocess, extend `ClaudeCLIRunner`, not a new
-call site elsewhere. This is what keeps the entire scheduler testable via
-`FakeRunner` with zero real spawns. A PR that adds `os/exec` (or any other way
-of shelling out) outside `internal/runner/claude.go` should be treated as a
-design regression, not a normal review comment — raise it in DESIGN.md /an ADR
-first if you think the seam needs to move.
+Every other package — the scheduler, the CLI, handoff, ledger, coordinator —
+depends only on those interfaces. That is what keeps the entire engine testable
+via `FakeRunner` and `FakeVerifier` with zero real spawns, and it keeps the
+subscription-auth env scrub (`internal/childenv`) to exactly one call site per
+spawner.
+
+If your change needs to run a subprocess, it belongs behind one of the two
+existing seams. A PR that adds `os/exec` (or any other way of shelling out)
+outside `internal/runner/claude.go` and `internal/verify/shell.go` should be
+treated as a design regression, not a normal review comment — a **third**
+spawner needs an ADR first, the way the second one got
+[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md).
 
 ## Invariants a contribution must preserve
 
@@ -71,12 +84,15 @@ These are the load-bearing guarantees the whole project exists to make (see
 [SECURITY.md](SECURITY.md) for the full stance). A PR that weakens any of them
 without an explicit, discussed design change should not be merged:
 
-- **Subscription-auth env scrub.** Every node subprocess's child environment
-  has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted
-  (`internal/runner/claude.go`'s `scrubEnv`). Those variables silently switch
-  `claude` to metered API billing. This is asserted by
-  `internal/runner/claude_test.go` — if you touch env construction, make sure
-  that test (or an equivalent) still proves the scrub.
+- **Subscription-auth env scrub.** Every child process oh-my-graph spawns —
+  a claude node AND a `success_check.verify` command — has
+  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted from its environment
+  by the shared `internal/childenv.Scrub`. Those variables silently switch
+  `claude` to metered API billing, and `verify: { command: "claude -p ..." }`
+  is a legal thing to write, so both spawners must apply it. It is asserted in
+  `internal/childenv/childenv_test.go` (the policy) and at each call site
+  (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`) — if you
+  touch env construction, make sure those tests still prove the scrub.
 - **Never the Agent SDK.** The node runtime is exclusively the `claude` CLI
   subprocess (`claude -p ... --output-format json`). Don't introduce an
   Anthropic API/Agent SDK dependency as an alternate or default runtime path.

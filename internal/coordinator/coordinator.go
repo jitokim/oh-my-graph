@@ -283,7 +283,14 @@ func toolName(rule string) string {
 //     list would run under the CLI's own default tool set instead of this
 //     allowlist — that gap would make the allowlist opt-in for an attacker
 //     simply by leaving the field off;
-//   - no planned node may set cwd (validatePlannedNodeCwd).
+//   - no planned node may set cwd (validatePlannedNodeCwd);
+//   - no planned node may set success_check.verify
+//     (validatePlannedNodeVerify).
+//
+// The general rule behind the list, because this class of hole recurs every
+// time the schema grows: every field on graph.Node must have an explicit
+// disposition here — allowed, constrained, or rejected. Adding a field to Node
+// without adding a case is a defect, not a nit.
 func validatePlannedNodes(g *graph.Graph, reply string) error {
 	if len(g.Nodes) == 0 {
 		return &PlanError{Reason: "planner produced a graph with no nodes", Output: reply}
@@ -301,6 +308,9 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 			}
 		}
 		if err := validatePlannedNodeCwd(node); err != nil {
+			return err
+		}
+		if err := validatePlannedNodeVerify(node); err != nil {
 			return err
 		}
 		if err := validatePlannedNodeTools(node); err != nil {
@@ -337,6 +347,29 @@ func validatePlannedNodeCwd(node graph.Node) error {
 	}
 	return &PlanError{
 		Reason: fmt.Sprintf("planned node %q set cwd %q; auto mode always runs planned nodes in the invocation's working directory", node.ID, node.Cwd),
+	}
+}
+
+// validatePlannedNodeVerify rejects a planned node that declares an evidence
+// command. success_check.verify is arbitrary shell run by the ENGINE, not by
+// claude: it is not a tool call, so it passes outside every guard this package
+// builds — no permission mode, no allowed_tools, no deny list, and not even the
+// cwd restriction, since a verification can name its own working directory. A
+// plan that may write `verify: { command: "curl … | sh" }` has a hole straight
+// through the rest of this file.
+//
+// Only the field itself is refused, not the whole check: exit_zero and
+// result_matches are inert predicates over an outcome the engine already holds,
+// so a planned node may still use them.
+func validatePlannedNodeVerify(node graph.Node) error {
+	if node.SuccessCheck.Verify == nil {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf(
+			"planned node %q set success_check.verify (command %q); auto mode never runs a shell command from an unreviewed plan — exit_zero and result_matches are available instead",
+			node.ID, node.SuccessCheck.Verify.Command,
+		),
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jitokim/oh-my-graph/internal/childenv"
 )
 
 // defaultBinary is the claude executable name; defaultTimeout bounds a single
@@ -19,13 +21,6 @@ const (
 	defaultBinary  = "claude"
 	defaultTimeout = 20 * time.Minute
 )
-
-// scrubbedEnvVars are the environment variables that silently switch the claude
-// CLI from your logged-in subscription (OAuth) to metered API-key billing. They
-// are DELETED from every child process env. This is the load-bearing
-// subscription-auth guarantee of the whole project — asserted by a unit test on
-// the built command (see claude_test.go).
-var scrubbedEnvVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 
 // NodeOutputError marks a run whose subprocess produced output oh-my-graph could
 // not turn into a NodeOutcome — non-JSON, a truncated envelope, or a spawn that
@@ -47,9 +42,11 @@ func (e *NodeOutputError) Error() string {
 func (e *NodeOutputError) Unwrap() error { return e.Err }
 
 // ClaudeCLIRunner runs a node as a real `claude -p ...` subprocess on the user's
-// logged-in subscription. It is the ONLY object in oh-my-graph that imports
-// os/exec; everything upstream depends on the NodeRunner interface, so the exec
-// surface is a single, testable point.
+// logged-in subscription. It is one of exactly TWO objects in oh-my-graph that
+// may import os/exec (the other is verify.ShellVerifier, which runs a
+// success_check.verify command — see docs/adr/0002); everything upstream
+// depends on the NodeRunner interface, so the claude-exec surface stays a
+// single, testable point.
 type ClaudeCLIRunner struct {
 	// binary is the claude executable name (a field, not a hardcoded literal, so
 	// a test can point it at a stub without ever running real claude).
@@ -104,7 +101,7 @@ func NewClaudeCLIRunner(opts ...ClaudeCLIOption) *ClaudeCLIRunner {
 func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.binary, r.buildArgs(spec)...)
 	cmd.Dir = spec.Cwd
-	cmd.Env = scrubEnv(r.environ())
+	cmd.Env = childenv.Scrub(r.environ())
 	return cmd
 }
 
@@ -145,30 +142,6 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 		args = append(args, "--resume", spec.ResumeSession)
 	}
 	return args
-}
-
-// scrubEnv returns parent with every scrubbedEnvVar removed — the subscription-
-// auth guarantee. Matching is on the KEY (the text before '='), so a value that
-// happens to contain the name is untouched.
-func scrubEnv(parent []string) []string {
-	out := make([]string, 0, len(parent))
-	for _, kv := range parent {
-		if isScrubbed(kv) {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
-func isScrubbed(kv string) bool {
-	key, _, _ := strings.Cut(kv, "=")
-	for _, scrubbed := range scrubbedEnvVars {
-		if key == scrubbed {
-			return true
-		}
-	}
-	return false
 }
 
 // budgetExhaustedSubtype is the envelope subtype claude prints when its
