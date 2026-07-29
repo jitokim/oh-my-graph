@@ -90,7 +90,7 @@ output and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|version> ...
+oh-my-graph <run|auto|runs|version> ...
 ```
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
@@ -98,6 +98,9 @@ oh-my-graph <run|auto|version> ...
 - **`auto "<goal>"`** — you describe a goal in plain language; a coordinator
   plans the DAG for you, then the same engine executes the generated graph.
   The zero-config default.
+- **`runs list`** — list past runs from `.oh-my-graph/runs/`, newest first:
+  graph name, node count, cost, and overall verdict per run, plus a total.
+  Read-only.
 - **`version`** — print the tool version.
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
