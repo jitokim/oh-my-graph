@@ -66,23 +66,23 @@ const (
 type Verification struct {
 	// Command is the shell command line to run. Required. It is interpolated
 	// like a prompt, so {{ inputs.x }} / {{ artifacts.y }} resolve.
-	Command string `yaml:"command"`
+	Command string `yaml:"command" json:"command,omitempty"`
 	// Cwd is where the command runs. Empty means "the node's own cwd", so the
 	// common case needs no repetition. Interpolated.
-	Cwd string `yaml:"cwd"`
+	Cwd string `yaml:"cwd" json:"cwd,omitempty"`
 	// Timeout is a Go duration string bounding this one command. Empty is
 	// normalized to defaultVerifyTimeout; Validate parses it at LOAD time and
 	// refuses anything unparseable, non-positive, or over maxVerifyTimeout, so
 	// no run ever discovers a malformed duration halfway through.
-	Timeout string `yaml:"timeout"`
+	Timeout string `yaml:"timeout" json:"timeout,omitempty"`
 	// ExpectExit is the exit code that counts as verified. A *int, not an int,
 	// so an explicitly declared 0 is distinguishable from "not declared" — nil
 	// means the default, which is also 0.
-	ExpectExit *int `yaml:"expect_exit"`
+	ExpectExit *int `yaml:"expect_exit" json:"expect_exit,omitempty"`
 	// OutputMatches, when non-empty, is a regular expression that must match
 	// somewhere in the command's combined stdout+stderr. Compiled at load time
 	// by Validate, so a bad regex is a load error, not a mid-run surprise.
-	OutputMatches string `yaml:"output_matches"`
+	OutputMatches string `yaml:"output_matches" json:"output_matches,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate. Unexported so the
 	// parsed form cannot drift from the declared string: callers ask via
@@ -120,14 +120,14 @@ func (v Verification) ExpectedExitCode() int {
 // secondary filter, never evidence on its own.
 type SuccessCheck struct {
 	// ExitZero requires the subprocess to have exited 0.
-	ExitZero bool `yaml:"exit_zero"`
+	ExitZero bool `yaml:"exit_zero" json:"exit_zero,omitempty"`
 	// ResultMatches, when non-empty, is a regular expression that must match
 	// somewhere in the node's .result text. Empty means "no result predicate".
 	// Self-reported: a node passes it by emitting the right words.
-	ResultMatches string `yaml:"result_matches"`
+	ResultMatches string `yaml:"result_matches" json:"result_matches,omitempty"`
 	// Verify, when non-nil, is a command the engine runs and judges itself.
 	// A pointer so "absent" and "declared but zero-valued" stay distinguishable.
-	Verify *Verification `yaml:"verify"`
+	Verify *Verification `yaml:"verify" json:"verify,omitempty"`
 }
 
 // IsZero reports whether no predicate was configured at all — the caller then
@@ -142,25 +142,38 @@ func (c SuccessCheck) IsZero() bool {
 // failure cause is listed in On. A retried attempt always starts a fresh claude
 // session (never resumes a failed one).
 type Retry struct {
-	Max int      `yaml:"max"`
-	On  []string `yaml:"on"`
+	Max int      `yaml:"max" json:"max,omitempty"`
+	On  []string `yaml:"on" json:"on,omitempty"`
 }
 
 // Node is an immutable value object describing one unit of work in the graph.
 // It is pure data — it never runs anything; the Scheduler drives it and the
 // NodeRunner executes it.
+//
+// Every field also carries a `json` tag mirroring its `yaml` tag (same key,
+// same casing). YAML decoding never uses these — Parse always goes through
+// yaml.Unmarshal — but internal/runstate's resumable snapshot stores the
+// normalized graph as re-parseable JSON (Snapshot.Graph), produced by
+// json.Marshal(*Graph) at the CLI boundary for a hand-written `run` (auto
+// mode already has JSON from the planner and reuses it as-is). Because a
+// JSON object is valid YAML, graph.Parse reads that JSON back through the
+// exact same decoder, and it only round-trips correctly because the encode
+// and decode sides agree on every key name. A field added to Node without a
+// matching json tag would still compile and still pass Validate — and would
+// then silently vanish from every resumed run, which is why the tag pair is
+// part of the field, not an afterthought (see TestNode_JSONRoundTripsThroughParse).
 type Node struct {
-	ID             string       `yaml:"id"`
-	Type           string       `yaml:"type"`
-	DependsOn      []string     `yaml:"depends_on"`
-	Prompt         string       `yaml:"prompt"`
-	Cwd            string       `yaml:"cwd"`
-	AllowedTools   []string     `yaml:"allowed_tools"`
-	PermissionMode string       `yaml:"permission_mode"`
-	BudgetUSD      float64      `yaml:"budget_usd"`
-	Handoff        string       `yaml:"handoff"`
-	SuccessCheck   SuccessCheck `yaml:"success_check"`
-	Retry          *Retry       `yaml:"retry"`
+	ID             string       `yaml:"id" json:"id,omitempty"`
+	Type           string       `yaml:"type" json:"type,omitempty"`
+	DependsOn      []string     `yaml:"depends_on" json:"depends_on,omitempty"`
+	Prompt         string       `yaml:"prompt" json:"prompt,omitempty"`
+	Cwd            string       `yaml:"cwd" json:"cwd,omitempty"`
+	AllowedTools   []string     `yaml:"allowed_tools" json:"allowed_tools,omitempty"`
+	PermissionMode string       `yaml:"permission_mode" json:"permission_mode,omitempty"`
+	BudgetUSD      float64      `yaml:"budget_usd" json:"budget_usd,omitempty"`
+	Handoff        string       `yaml:"handoff" json:"handoff,omitempty"`
+	SuccessCheck   SuccessCheck `yaml:"success_check" json:"success_check,omitempty"`
+	Retry          *Retry       `yaml:"retry" json:"retry,omitempty"`
 	// Agent, when set, names a Claude Code subagent this node runs as —
 	// rendered as `claude -p --agent <name>`, which resolves it against the
 	// user's OWN ~/.claude/agents or <cwd>/.claude/agents definitions, so the
@@ -177,17 +190,23 @@ type Node struct {
 	// a planned node, which would otherwise let an unreviewed plan pick which
 	// of the user's subagents (and so which system prompt, tool grant and
 	// model) runs the node.
-	Agent string `yaml:"agent"`
+	Agent string `yaml:"agent" json:"agent,omitempty"`
 }
 
 // Graph is the validated DAG: its metadata plus the nodes and a by-id index
 // built once at load time so every lookup is O(1).
+//
+// The yaml tags here are vestigial — Parse decodes through rawGraph, never
+// through Graph directly — but the json tags are load-bearing for the same
+// reason as Node's: json.Marshal(*Graph) is how a hand-written `run` snapshots
+// its graph for `oh-my-graph resume` (see Node's doc comment), and the tags
+// must name the same keys rawGraph's yaml tags expect on the way back in.
 type Graph struct {
-	Name        string `yaml:"name"`
-	Version     string `yaml:"version"`
-	Inputs      []string
-	Concurrency int    `yaml:"concurrency"`
-	Nodes       []Node `yaml:"nodes"`
+	Name        string   `yaml:"name" json:"name,omitempty"`
+	Version     string   `yaml:"version" json:"version,omitempty"`
+	Inputs      []string `json:"inputs,omitempty"`
+	Concurrency int      `yaml:"concurrency" json:"concurrency,omitempty"`
+	Nodes       []Node   `yaml:"nodes" json:"nodes,omitempty"`
 
 	// byID indexes Nodes by their ID. Unexported: callers ask via NodeByID so
 	// the index can never drift from Nodes.

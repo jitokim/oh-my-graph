@@ -90,3 +90,37 @@ func TestInputFlag_RejectsMalformedPair(t *testing.T) {
 		t.Fatal("expected an error for a pair without '='")
 	}
 }
+
+func TestResumeFlags_ParsesRunIDAndGateFlags(t *testing.T) {
+	f := newResumeFlags()
+	if err := f.parse([]string{"run-1", "--approve", "gate-a", "--concurrency", "2"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.runID != "run-1" {
+		t.Errorf("runID = %q, want run-1", f.runID)
+	}
+	if f.approveGate != "gate-a" {
+		t.Errorf("approveGate = %q, want gate-a", f.approveGate)
+	}
+	if f.concurrency != 2 {
+		t.Errorf("concurrency = %d, want 2", f.concurrency)
+	}
+}
+
+func TestResumeFlags_MissingRunID(t *testing.T) {
+	if err := newResumeFlags().parse(nil); err == nil {
+		t.Fatal("expected an error when no run id is given")
+	}
+}
+
+// TestResumeFlags_RejectsInput proves resume has no --input flag at all, so
+// `--input k=v` fails at argv parsing rather than being silently accepted and
+// ignored — DESIGN.md, "--input on resume is rejected": inputs come from the
+// snapshot, and changing one mid-run would make the already-persisted
+// artifacts inconsistent with the prompts that produced them.
+func TestResumeFlags_RejectsInput(t *testing.T) {
+	err := newResumeFlags().parse([]string{"run-1", "--input", "repo=/work/app"})
+	if err == nil {
+		t.Fatal("expected an error for --input on resume")
+	}
+}

@@ -65,6 +65,41 @@ func (e *RunFailedError) Error() string {
 	return fmt.Sprintf("run completed with failed node(s): %s", strings.Join(e.FailedNodes, ", "))
 }
 
+// PausedError is Run's result when a gate decision paused the run: in-flight
+// siblings were drained (not cancelled) and the snapshot was persisted, so
+// `oh-my-graph resume <run-id> (--approve|--reject) <gate-id>` can continue
+// it. cmd/oh-my-graph maps this to exit code 2 — a pause is not a failure and
+// must never be reported or logged as one (ADR 0003).
+type PausedError struct {
+	GateID string
+}
+
+func (e *PausedError) Error() string {
+	return fmt.Sprintf(
+		"run paused at gate %q; resume with `oh-my-graph resume <run-id> --approve %s` or `--reject %s`",
+		e.GateID, e.GateID, e.GateID,
+	)
+}
+
+// pauseSignal is runNode's internal signal that a gate node's decision was
+// DecisionPause. It is not a node failure: Run's launch loop recognizes it via
+// errors.As before it can reach the continue-on-fail or halt-on-fail paths, so
+// it never crosses the Run boundary — a caller only ever sees *PausedError,
+// returned once for the whole run after in-flight siblings have drained.
+type pauseSignal struct{ NodeID string }
+
+func (e *pauseSignal) Error() string { return fmt.Sprintf("node %q: gate paused", e.NodeID) }
+
+// rejectSignal is runNode's internal signal that a gate node's decision was
+// DecisionReject. Like pauseSignal, Run's launch loop intercepts it before the
+// normal failure paths: a reject always prunes its own subtree regardless of
+// --continue-on-fail (DESIGN.md, "--reject <gate-id> prunes the gate's
+// subtree ... It is not a crash"), so it is folded into the same
+// *RunFailedError a continue-on-fail prune would produce, never a *HaltError.
+type rejectSignal struct{ NodeID string }
+
+func (e *rejectSignal) Error() string { return fmt.Sprintf("node %q: gate rejected", e.NodeID) }
+
 // MissingToolPolicyError means a caller imposed a tool ceiling (a non-nil
 // Options.ToolPolicies) that has no entry for this node.
 //

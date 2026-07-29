@@ -37,14 +37,17 @@ func sampleSnapshot() Snapshot {
 				Verdict:      VerdictPass,
 				SessionID:    "sess-dev",
 				CostUSD:      0.12,
+				BudgetUSD:    0.50,
 				Duration:     1500 * time.Millisecond,
 				ArtifactPath: ".oh-my-graph/runs/run-123/dev.out",
+				Detail:       "under budget by $0.3800",
 			},
 			"e2e": {
 				Verdict:   VerdictFail,
 				SessionID: "sess-e2e",
 				CostUSD:   0.03,
 				Duration:  500 * time.Millisecond,
+				Detail:    `node "e2e" failed success_check exit_zero: exit code 1`,
 			},
 		},
 		Gate: GateState{
@@ -130,6 +133,36 @@ func TestCompletedNodes_OnlyPassingNodes(t *testing.T) {
 	}
 	if done == nil {
 		t.Fatal("CompletedNodes must never be nil")
+	}
+}
+
+// TestSettledNodes_PassAndFail proves SettledNodes' whole reason to exist: it
+// includes a FAIL alongside a PASS, unlike CompletedNodes — the set resume
+// uses to stop a failed node itself from relaunching, without letting that
+// failure satisfy its dependents (see Scheduler.Options.SettledNodes).
+func TestSettledNodes_PassAndFail(t *testing.T) {
+	settled := sampleSnapshot().SettledNodes()
+	if !settled["dev"] {
+		t.Fatal("a PASS node must count as settled")
+	}
+	if !settled["e2e"] {
+		t.Fatal("a FAIL node must count as settled — it must not be launched again")
+	}
+	if settled == nil {
+		t.Fatal("SettledNodes must never be nil")
+	}
+}
+
+// TestSettledNodes_EmptySnapshot proves SettledNodes degrades cleanly (an
+// empty, non-nil map) for a snapshot with no node records yet, the same shape
+// CompletedNodes already guarantees.
+func TestSettledNodes_EmptySnapshot(t *testing.T) {
+	settled := Snapshot{}.SettledNodes()
+	if settled == nil {
+		t.Fatal("SettledNodes must never be nil, even for an empty snapshot")
+	}
+	if len(settled) != 0 {
+		t.Fatalf("expected no settled nodes, got %v", settled)
 	}
 }
 

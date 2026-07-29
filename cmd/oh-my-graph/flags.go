@@ -84,3 +84,42 @@ func (f *autoFlags) parse(args []string) error {
 	}
 	return nil
 }
+
+// resumeFlags holds the parsed `resume` subcommand options. Deliberately does
+// NOT register --input: DESIGN.md requires resume to reject it (inputs come
+// from the snapshot, and changing one mid-run would make the already-persisted
+// artifacts inconsistent with the prompts that produced them), and the
+// simplest way to reject a flag is to never define it — flag.Parse fails on
+// its own with "flag provided but not defined: -input".
+type resumeFlags struct {
+	runID       string
+	approveGate string
+	rejectGate  string
+	concurrency int
+
+	set *flag.FlagSet
+}
+
+// newResumeFlags builds a resumeFlags with its FlagSet configured. The run id
+// is a positional argument, mirroring `run`'s graph path and `auto`'s goal.
+func newResumeFlags() *resumeFlags {
+	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
+	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
+	f.set.StringVar(&f.rejectGate, "reject", "", "reject the named gate, pruning its subtree")
+	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
+	return f
+}
+
+// parse reads args in the order `<run-id> [flags...]`. The run id is
+// required and must come first. Whether --approve/--reject were actually
+// supplied is deliberately NOT enforced here: a bare `resume <run-id>` is
+// only an error once the snapshot is loaded and the pending gate is known, so
+// that the error can name it (see resumeDecision) — DESIGN.md, "A bare
+// `resume <run-id>` on a paused run is an error naming the pending gate."
+func (f *resumeFlags) parse(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> (--approve|--reject) <gate-id>)")
+	}
+	f.runID = args[0]
+	return f.set.Parse(args[1:])
+}

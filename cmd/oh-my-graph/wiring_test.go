@@ -70,7 +70,7 @@ func TestExecutePlan_CarriesTheCeilingIntoEveryNode(t *testing.T) {
 	// executeGraph resolves its run directory relative to the process cwd, so
 	// run from a temp dir instead of littering the repo with artifacts.
 	t.Chdir(t.TempDir())
-	err := executePlan(context.Background(), "test-run", plan, rec, commonRunFlags{inputs: inputFlag{}})
+	err := executePlan(context.Background(), "test-run", plan, rec, commonRunFlags{inputs: inputFlag{}}, "graph.json")
 	if err != nil {
 		t.Fatalf("executePlan returned error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	rec := &capturingRunner{}
 
 	t.Chdir(t.TempDir())
-	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0)
+	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"))
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestExecutePlan_TotalIncludesPlanningCost(t *testing.T) {
 
 	t.Chdir(t.TempDir())
 	out := captureStdout(t, func() {
-		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}); err != nil {
+		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}, "graph.json"); err != nil {
 			t.Fatalf("executePlan returned error: %v", err)
 		}
 	})

@@ -354,6 +354,20 @@ by design, persists everything a second leg needs, and exits.
 `--continue-on-fail` does not apply to gates: a pause always stops the whole
 run, because approving "part of" a paused run later is not a coherent operation.
 
+**Pause vs. a real failure draining alongside it, under default halt-on-fail:**
+draining (step 2) means an in-flight sibling can still fail for real — not a
+gate `pause`/`reject`, an ordinary node error — after another node has already
+paused the run. Under the default (`--continue-on-fail` off), that real
+failure takes precedence: it becomes a `*schedule.HaltError`, which cancels the
+shared context and is what `grp.Wait()` returns, so `Run` returns it directly
+and never reaches the pause bookkeeping below — the already-recorded pause is
+discarded, no snapshot pause is written, and the CLI reports exit code 1, not
+2. This is intended, not a race to fix: halt-on-fail's contract — a real node
+failure stops the whole run — does not become conditional on whether some
+other branch happened to pause first. `--continue-on-fail` avoids the
+conflict entirely, since a real failure under it prunes a subtree instead of
+halting, so it never competes with a pause for how `Run` returns.
+
 **GateController — the decision source is data, not a DI swap:**
 ```go
 type Decision string
@@ -405,11 +419,19 @@ create a second source of truth that can go stale. `resume` recomputes them:
 (and `Roots()` becomes `ReadyGiven(nil)`), while the scheduler seeds each node's
 in-degree as `len(DependsOn) − (parents already completed)`.
 
-Snapshot writes happen after **every** node, not just at gates, so a Ctrl-C'd or
-crashed run is resumable too. A snapshot write failure mid-run is non-fatal (the
-ledger is the run's authority) and warned on the progress feed; a snapshot write
-failure **at a gate pause is fatal**, because a pause whose state was not
-persisted is an unrecoverable stop, and reporting it as a clean pause would lie.
+Snapshot writes happen after **every** node, not just at gates, so the file on
+disk always reflects everything finished so far, including a Ctrl-C'd or
+crashed run's progress. Resuming that file is future work, though: `resume`
+(v1.1) only continues a run whose snapshot actually recorded a gate pause
+(`Gate.PausedAt != ""`) and refuses anything else — a Ctrl-C'd or crashed run
+included — with "run is not paused" (see `executeResume`'s guard). A snapshot
+write failure mid-run is non-fatal, but its cost is not merely a gap in the
+printed ledger: the dropped write means that node is absent from the persisted
+state, so a later resume would not know it ran and would re-execute it — a
+real cost, not a cosmetic one — which is why it is warned on the progress feed
+rather than silently swallowed; a snapshot write failure **at a gate pause is
+fatal**, because a pause whose state was not persisted is an unrecoverable
+stop, and reporting it as a clean pause would lie.
 
 **CLI contract:**
 ```

@@ -58,11 +58,17 @@ Both are derived from `graph × completed` and are recomputed on resume via
 `Graph.ReadyGiven(done)`; persisting them would create a second source of truth
 that can go stale against the first.
 
-Snapshots are written after **every** node, not only at gates, so an interrupted
-or crashed run is resumable too. A snapshot write failure mid-run is non-fatal
-(the ledger is the run's authority) and is warned on the progress feed; a
-snapshot write failure **at a gate pause is fatal**, because reporting a clean
-pause whose state was not persisted would be a lie.
+Snapshots are written after **every** node, not only at gates, so the file
+always reflects an interrupted or crashed run's progress too. Resuming that
+file is out of scope for v1.1, though: `resume` only continues a run whose
+snapshot actually recorded a gate pause, and refuses anything else (an
+interrupted or crashed run's snapshot included) — see DESIGN.md, "Gate nodes
+and resume". A snapshot write failure mid-run is non-fatal, but not cosmetic:
+a dropped write leaves that node absent from the persisted state, so a later
+resume would not know it ran and would re-execute it, a real cost. It is
+warned on the progress feed for that reason; a snapshot write failure **at a
+gate pause is fatal**, because reporting a clean pause whose state was not
+persisted would be a lie.
 
 ## Consequences
 
