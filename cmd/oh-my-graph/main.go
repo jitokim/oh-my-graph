@@ -41,8 +41,11 @@ func run(args []string) error {
 	switch args[0] {
 	case "run":
 		return runGraph(args[1:])
+	case "version":
+		printVersion(os.Stdout)
+		return nil
 	default:
-		return fmt.Errorf("unknown command %q (only `run` is supported in v0.1)", args[0])
+		return fmt.Errorf("unknown command %q (only `run` and `version` are supported in v0.1)", args[0])
 	}
 }
 
