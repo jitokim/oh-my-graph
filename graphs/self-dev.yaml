@@ -22,7 +22,12 @@ nodes:
       keeping the diff focused and matching the existing style (DESIGN.md is the spec;
       the NodeRunner seam is the only os/exec touch point; English-only):
         {{ inputs.task }}
-      Add or update tests. Commit on the current branch with a clear message.
+      Add or update tests. Commit on the current branch with a clear message —
+      stage ONLY the files you created or modified for this task, by explicit
+      path (`git add <path> ...`). Never `git add -A`, `git add .`, or
+      `git add -u`: the working tree may hold untracked files that are not part
+      of this task (assets someone dropped in, scratch output), and sweeping
+      them into your commit is a bug.
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
     permission_mode: dontAsk
