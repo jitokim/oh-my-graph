@@ -42,7 +42,18 @@ import (
 // Schema is the current state.json format version. Bump it whenever a change to
 // the types below alters the on-disk bytes in a way an older reader could
 // misinterpret; Load refuses any snapshot whose Schema does not equal this.
-const Schema = 1
+//
+// Schema 2 (this version) adds NodeRecord.BudgetUSD and NodeRecord.Detail —
+// the gate/resume wiring PR that NodeRecord's original doc comment deferred
+// them to. `resume` reconstructs a full ledger.Record per completed node so
+// the resumed leg's end-of-run table and TOTAL COST are honest about the
+// whole run, not just the leg that produced them; ledger.Record needs a
+// budget (to compute BudgetDeltaUSD) and a detail string (the failing
+// predicate, the retry count, or the budget headroom) that schema 1 had no
+// field for. A schema-1 snapshot is refused by Load rather than silently
+// read with these two fields zeroed, because a resumed leg's ledger would
+// then understate a carried-forward node's budget without saying so.
+const Schema = 2
 
 // Verdict is a node's terminal judgement as persisted in the snapshot. The
 // string values match ledger.Verdict so the resume path can carry a record
@@ -110,16 +121,11 @@ type NodeToolPolicy struct {
 	StrictMCPConfig bool `json:"strict_mcp_config,omitempty"`
 }
 
-// NodeRecord is one completed node's entry in the snapshot: exactly the fields a
-// resume needs that are not derivable from the graph. Its map key in
-// Snapshot.Nodes is the node id, so the id is not repeated inside the record.
-//
-// The field set is deliberately DESIGN.md's enumerated list — verdict, session
-// id, cost, duration, artifact path — and no more. The richer per-node shape
-// (budget delta, failure detail) that #8 and #7 add to ledger.Record is left for
-// the follow-up PR that lands the full gate/resume wiring, at which point Schema
-// bumps; pinning the schema to a moving target now would buy a migration on day
-// one (see DESIGN.md, "Implementation sequencing", #9).
+// NodeRecord is one completed node's entry in the snapshot: exactly the fields
+// a resume needs that are not derivable from the graph, plus (as of schema 2)
+// what `resume` needs to reconstruct a faithful ledger.Record for a node
+// carried forward from an earlier leg. Its map key in Snapshot.Nodes is the
+// node id, so the id is not repeated inside the record.
 type NodeRecord struct {
 	// Verdict is the node's terminal judgement. Only VerdictPass nodes are treated
 	// as completed for resume topology.
@@ -132,6 +138,11 @@ type NodeRecord struct {
 	// CostUSD is the node's reported spend, carried forward so the resumed leg's
 	// total does not understate what the run has already cost across processes.
 	CostUSD float64 `json:"cost_usd"`
+	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none
+	// (schema 2). Mirrors ledger.Record.BudgetUSD so `resume` can rebuild a
+	// Record that reports the same budget-vs-actual delta the original leg's
+	// ledger did, instead of a carried-forward row silently losing it.
+	BudgetUSD float64 `json:"budget_usd,omitempty"`
 	// Duration is the node's wall-clock run time. It serializes as an integer
 	// nanosecond count (time.Duration's underlying type), so it round-trips
 	// losslessly even though it is not human-readable in the file.
@@ -141,6 +152,11 @@ type NodeRecord struct {
 	// snapshot; the snapshot only remembers where they are, and Handoff.Seed
 	// rehydrates the path so a resumed dependent still resolves it.
 	ArtifactPath string `json:"artifact_path"`
+	// Detail is the node's ledger.Record.Detail carried forward verbatim
+	// (schema 2): the failing predicate, the retry count, or the budget
+	// headroom note. Without it a resumed leg's end-of-run table would show a
+	// blank DETAIL column for every node from an earlier leg.
+	Detail string `json:"detail,omitempty"`
 }
 
 // GateState records the run's progress through its gates: what has been decided
@@ -204,7 +220,8 @@ type Snapshot struct {
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
-	// derives the resume-topology "done" set from it.
+	// derives the pass-only "unblocks dependents" set from it, and SettledNodes
+	// derives the pass-or-fail "must never relaunch" set from the same map.
 	Nodes map[string]NodeRecord `json:"nodes,omitempty"`
 	// Gate is the run's gate progress: decisions so far and the gate it is paused
 	// at, if any.
@@ -216,6 +233,15 @@ type Snapshot struct {
 // A node counts as completed only when its record's verdict is VerdictPass: a
 // failed node ran but did not unblock anything downstream, so it must not seed
 // the next leg's ready set. Never nil.
+//
+// This is the pass-only view: it answers "whose dependents may proceed", not
+// "what must never run again" — a FAIL node is deliberately absent, because a
+// failed node's own completion must not satisfy its dependents' dependency
+// (that is what keeps a --continue-on-fail subtree pruned across a resume).
+// Scheduler.Options.CompletedNodes and graph.ReadyGiven's `done` parameter both
+// want exactly this pass-only meaning. A caller that instead needs "every node
+// that must not be relaunched" — resume's own ready-set seeding — wants
+// SettledNodes, not this.
 func (s Snapshot) CompletedNodes() map[string]bool {
 	done := make(map[string]bool, len(s.Nodes))
 	for id, rec := range s.Nodes {
@@ -224,6 +250,28 @@ func (s Snapshot) CompletedNodes() map[string]bool {
 		}
 	}
 	return done
+}
+
+// SettledNodes returns every node id that reached ANY terminal verdict in an
+// earlier leg — VerdictPass or VerdictFail — the set that must never be
+// launched again on resume, regardless of whether it unblocked its
+// dependents. Without this, a node that FAILED under --continue-on-fail is
+// absent from CompletedNodes (by design — see its doc comment), so
+// graph.ReadyGiven would see it as neither done nor blocked and hand it back
+// to resume as ready, re-running (and re-paying for) a failure that
+// --continue-on-fail already decided was final for this run. Scheduler
+// callers pass this as Options.SettledNodes purely to gate re-launch; it must
+// NOT be used anywhere a "did this satisfy its dependents" answer is wanted,
+// or a failed node's pruned subtree would wrongly un-prune (use
+// CompletedNodes for that). Never nil.
+func (s Snapshot) SettledNodes() map[string]bool {
+	settled := make(map[string]bool, len(s.Nodes))
+	for id, rec := range s.Nodes {
+		if rec.Verdict == VerdictPass || rec.Verdict == VerdictFail {
+			settled[id] = true
+		}
+	}
+	return settled
 }
 
 // SchemaMismatchError is returned by Load when a snapshot's Schema does not match

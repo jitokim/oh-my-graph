@@ -10,11 +10,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // mustGraph parses YAML into a validated graph or fails the test. Test graphs
@@ -650,12 +653,12 @@ nodes:
 	}
 }
 
-// --- gate execution is rejected in v0.1 -------------------------------------
+// --- gate pause is the default (ADR 0003) ------------------------------------
 
-// TestScheduler_GateNodeRejected proves a graph that parses with a gate node
-// still refuses to EXECUTE it in v0.1, halting with the not-implemented error
-// rather than silently running past the approval.
-func TestScheduler_GateNodeRejected(t *testing.T) {
+// TestScheduler_GatePausesByDefault proves a graph reaching a gate node stops
+// the run with a *PausedError naming it, rather than the v0.1 halt-on-refusal
+// behaviour: pausing is not a failure.
+func TestScheduler_GatePausesByDefault(t *testing.T) {
 	g := mustGraph(t, `
 name: with-gate
 nodes:
@@ -666,11 +669,418 @@ nodes:
 	s, h, led := newHarness(t, fake, Options{})
 
 	err := s.Run(context.Background(), g, h, led)
-	if err == nil {
-		t.Fatal("expected the gate node to halt the run")
+	var paused *PausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected *PausedError, got %T: %v", err, err)
+	}
+	if paused.GateID != "approve" {
+		t.Fatalf("paused gate = %q, want approve", paused.GateID)
 	}
 	if !strings.Contains(err.Error(), "approve") {
-		t.Fatalf("halt error should name the gate node: %v", err)
+		t.Fatalf("pause error should name the gate node: %v", err)
+	}
+}
+
+// TestScheduler_PauseStopsNewLaunchesAndRecordsSnapshot proves a paused gate's
+// dependents never launch, and that Run() calls Recorder.RecordPause naming
+// the gate exactly once the drain has finished.
+func TestScheduler_PauseStopsNewLaunchesAndRecordsSnapshot(t *testing.T) {
+	g := mustGraph(t, `
+name: pause-stop
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"a": pass("s-a", 0), "ship": pass("s-ship", 0),
+	}}
+	fr := newFakeRecorder()
+	s, h, led := newHarness(t, rec, Options{Recorder: fr})
+
+	err := s.Run(context.Background(), g, h, led)
+	var paused *PausedError
+	if !errors.As(err, &paused) || paused.GateID != "approve" {
+		t.Fatalf("expected *PausedError naming approve, got %T: %v", err, err)
+	}
+	if rec.invocationFor("ship").Prompt != "" {
+		t.Error("a gate's dependent must never launch while the run is paused")
+	}
+	if !fr.pausedGates["approve"] {
+		t.Error("Recorder.RecordPause was not called for the paused gate")
+	}
+}
+
+// TestScheduler_PauseDrainsInFlightSiblingsInsteadOfCancelling is the direct
+// proof of ADR 0003's core claim: a pause does NOT cancel the shared context
+// the way halt-on-fail does. An independent sibling that is genuinely in
+// flight while the gate elsewhere decides to pause still runs to completion
+// and is recorded as a real PASS — not interrupted with a context error the
+// way TestScheduler_HaltOnFailCancelsSiblings proves a halt DOES interrupt
+// one.
+func TestScheduler_PauseDrainsInFlightSiblingsInsteadOfCancelling(t *testing.T) {
+	g := mustGraph(t, `
+name: pause-drain
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+  - { id: slow, prompt: slow }
+`)
+	r := &pauseDrainRunner{started: make(chan struct{}), release: make(chan struct{})}
+	s, h, led := newHarness(t, r, Options{})
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(context.Background(), g, h, led) }()
+
+	select {
+	case <-r.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the independent sibling never started")
+	}
+	// The sibling is now genuinely in flight while the gate independently
+	// pauses the run (it has no dependency relationship with the gate at
+	// all). Release it and prove it still completes normally.
+	close(r.release)
+
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after the sibling was released")
+	}
+
+	var paused *PausedError
+	if !errors.As(runErr, &paused) {
+		t.Fatalf("expected *PausedError, got %T: %v", runErr, runErr)
+	}
+	if paused.GateID != "approve" {
+		t.Fatalf("paused at gate %q, want approve", paused.GateID)
+	}
+
+	slowRec := findRecord(led, "slow")
+	if slowRec.Verdict != ledger.VerdictPass {
+		t.Fatalf("the drained sibling must complete as a real PASS, got verdict %q (detail %q)", slowRec.Verdict, slowRec.Detail)
+	}
+	if slowRec.SessionID != "s-slow" {
+		t.Fatalf("the drained sibling's real outcome was not recorded: %+v", slowRec)
+	}
+}
+
+// TestScheduler_RecordPauseFailureIsFatal proves a pause snapshot write
+// failure is NOT reported as a clean *PausedError: an unpersisted pause is an
+// unrecoverable stop (DESIGN.md).
+func TestScheduler_RecordPauseFailureIsFatal(t *testing.T) {
+	g := mustGraph(t, `
+name: pause-fatal
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0)})
+	fr := newFakeRecorder()
+	fr.failRecordPause = errors.New("disk full")
+	s, h, led := newHarness(t, fake, Options{Recorder: fr})
+
+	err := s.Run(context.Background(), g, h, led)
+	var paused *PausedError
+	if errors.As(err, &paused) {
+		t.Fatal("a pause whose snapshot write failed must not be reported as a clean *PausedError")
+	}
+	if err == nil {
+		t.Fatal("expected an error when the pause snapshot write fails")
+	}
+}
+
+// --- gate approve / reject via a resumed leg's RecordedController ----------
+
+// TestScheduler_GateApprovedRunsDependents proves an approved gate (as a
+// resumed leg's RecordedController would answer) records a PASS and lets its
+// dependents run — the same shape resume's scheduler.Run sees.
+func TestScheduler_GateApprovedRunsDependents(t *testing.T) {
+	g := mustGraph(t, `
+name: gate-approve
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"a": pass("s-a", 0), "ship": pass("s-ship", 0),
+	}}
+	controller := gate.NewRecordedController(map[string]gate.Decision{"approve": gate.DecisionApprove})
+	fr := newFakeRecorder()
+	s, h, led := newHarness(t, rec, Options{Gate: controller, Recorder: fr})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if rec.invocationFor("ship").Prompt == "" {
+		t.Error("an approved gate's dependent must run")
+	}
+	gateRec := findRecord(led, "approve")
+	if gateRec.Verdict != ledger.VerdictPass {
+		t.Errorf("approved gate verdict = %s, want PASS", gateRec.Verdict)
+	}
+	if fr.gateDecisions["approve"] != runstate.GateApprove {
+		t.Errorf("recorder gate decision = %q, want approve", fr.gateDecisions["approve"])
+	}
+}
+
+// TestScheduler_GateRejectedPrunesSubtreeRegardlessOfContinueOnFail proves a
+// rejected gate always prunes its own subtree — never a *HaltError, even with
+// --continue-on-fail explicitly off — while an independent branch still
+// finishes (DESIGN.md, "It is not a crash").
+func TestScheduler_GateRejectedPrunesSubtreeRegardlessOfContinueOnFail(t *testing.T) {
+	g := mustGraph(t, `
+name: gate-reject
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+  - { id: independent, prompt: independent }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a": pass("s-a", 0), "ship": pass("s-ship", 0), "independent": pass("s-ind", 0),
+	})
+	controller := gate.NewRecordedController(map[string]gate.Decision{"approve": gate.DecisionReject})
+	s, h, led := newHarness(t, fake, Options{Gate: controller, ContinueOnFail: false})
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError (never a halt), got %T: %v", err, err)
+	}
+	if !equalStrings(runFailed.FailedNodes, []string{"approve"}) {
+		t.Fatalf("failed nodes = %v, want [approve]", runFailed.FailedNodes)
+	}
+	if indexOf(fake.Calls(), "ship") != -1 {
+		t.Error("a rejected gate's dependent must never run")
+	}
+	if indexOf(fake.Calls(), "independent") == -1 {
+		t.Error("an independent branch must still finish after a gate rejection")
+	}
+	gateRec := findRecord(led, "approve")
+	if gateRec.Verdict != ledger.VerdictFail {
+		t.Errorf("rejected gate verdict = %s, want FAIL", gateRec.Verdict)
+	}
+}
+
+// TestScheduler_RecordedControllerPausesAtNextUndecidedGate proves the
+// "multiple gates -> multiple resumes" shape end to end at the scheduler
+// level: a RecordedController that only knows about gate1 lets the run
+// proceed past it and pause again at gate2.
+func TestScheduler_RecordedControllerPausesAtNextUndecidedGate(t *testing.T) {
+	g := mustGraph(t, `
+name: multi-gate
+nodes:
+  - { id: a, prompt: a }
+  - { id: gate1, type: gate, depends_on: [a] }
+  - { id: b, prompt: b, depends_on: [gate1] }
+  - { id: gate2, type: gate, depends_on: [b] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0), "b": pass("s-b", 0)})
+	controller := gate.NewRecordedController(map[string]gate.Decision{"gate1": gate.DecisionApprove})
+	s, h, led := newHarness(t, fake, Options{Gate: controller})
+
+	err := s.Run(context.Background(), g, h, led)
+	var paused *PausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected *PausedError, got %T: %v", err, err)
+	}
+	if paused.GateID != "gate2" {
+		t.Fatalf("paused at %q, want gate2 (gate1 was already approved)", paused.GateID)
+	}
+	if indexOf(fake.Calls(), "b") == -1 {
+		t.Error("b should have run after gate1 was approved")
+	}
+}
+
+// --- snapshot recording happens after every node, not only at gates --------
+
+// TestScheduler_RecorderRecordsEveryNodeWithArtifactPath proves RecordNode is
+// called for an ordinary (non-gate) node too, carrying the same
+// verdict/session/cost the ledger got plus the artifact path Handoff
+// persisted — the datum a resumed leg's Handoff.Seed needs.
+func TestScheduler_RecorderRecordsEveryNodeWithArtifactPath(t *testing.T) {
+	g := mustGraph(t, `
+name: snapshot
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b, depends_on: [a] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a": pass("s-a", 0.10), "b": pass("s-b", 0.05),
+	})
+	fr := newFakeRecorder()
+	s, h, led := newHarness(t, fake, Options{Recorder: fr})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	recA, ok := fr.recordFor("a")
+	if !ok {
+		t.Fatal("Recorder never saw node a")
+	}
+	if recA.Verdict != runstate.VerdictPass || recA.SessionID != "s-a" || recA.CostUSD != 0.10 {
+		t.Fatalf("node a snapshot record = %+v, want Pass/s-a/0.10", recA)
+	}
+	if recA.ArtifactPath == "" {
+		t.Fatal("a passing node's snapshot record must carry its artifact path")
+	}
+}
+
+// TestScheduler_RecorderWriteFailureMidRunIsNonFatal proves a snapshot write
+// failure on an ordinary node's completion does not fail the run — the ledger
+// remains the run's authority mid-run — but is warned on the progress feed.
+func TestScheduler_RecorderWriteFailureMidRunIsNonFatal(t *testing.T) {
+	g := mustGraph(t, `
+name: snapshot-fail
+nodes:
+  - { id: a, prompt: a }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0)})
+	fr := newFakeRecorder()
+	fr.failRecordNode = errors.New("disk full")
+	var buf bytes.Buffer
+	s, h, led := newHarness(t, fake, Options{Recorder: fr, ProgressWriter: &buf})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("a snapshot write failure mid-run must not fail the run: %v", err)
+	}
+	if rec := findRecord(led, "a"); rec.Verdict != ledger.VerdictPass {
+		t.Fatalf("ledger verdict = %s, want PASS even though the snapshot write failed", rec.Verdict)
+	}
+	if !strings.Contains(buf.String(), "snapshot write failed") {
+		t.Errorf("the snapshot write failure must be warned on the progress feed: %q", buf.String())
+	}
+}
+
+// --- resume seeds from CompletedNodes, not Roots ----------------------------
+
+// TestScheduler_ResumeSeedsFromCompletedNodesNotRoots proves the mechanism
+// DESIGN.md assigns to resume: Options.CompletedNodes seeds the initial ready
+// set from graph.ReadyGiven(completed) rather than graph.Roots(), so a node
+// an earlier leg already finished is never re-run (and re-paid for) — only
+// its not-yet-run dependent launches.
+func TestScheduler_ResumeSeedsFromCompletedNodesNotRoots(t *testing.T) {
+	g := mustGraph(t, `
+name: resume-seed
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b, depends_on: [a] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"b": pass("s-b", 0)}}
+	s, h, led := newHarness(t, rec, Options{CompletedNodes: map[string]bool{"a": true}})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if rec.invocationFor("a").Prompt != "" {
+		t.Error("a node already marked completed must not be re-run on resume")
+	}
+	if rec.invocationFor("b").Prompt == "" {
+		t.Error("b should run: its only parent is already completed")
+	}
+}
+
+// TestScheduler_ResumeSeedsInDegreeAgainstCompletedParents proves a fan-in
+// node whose parents are a mix of "completed in an earlier leg" and "not yet
+// completed" waits correctly: it must not launch until the still-pending
+// parent finishes THIS leg, even though its other parent will never run
+// again.
+func TestScheduler_ResumeSeedsInDegreeAgainstCompletedParents(t *testing.T) {
+	g := mustGraph(t, `
+name: resume-fanin
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b }
+  - { id: join, prompt: join, depends_on: [a, b] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"b": pass("s-b", 0), "join": pass("s-join", 0),
+	}}
+	s, h, led := newHarness(t, rec, Options{CompletedNodes: map[string]bool{"a": true}})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if rec.invocationFor("a").Prompt != "" {
+		t.Error("a must not be re-run")
+	}
+	if rec.invocationFor("join").Prompt == "" {
+		t.Error("join should run once its remaining parent (b) completes this leg")
+	}
+}
+
+// --- resume never relaunches a settled-failed node --------------------------
+
+// TestScheduler_ResumeSkipsSettledFailedNode proves the fix for the
+// re-run-and-double-record bug: a node that FAILED under --continue-on-fail
+// on an earlier leg is absent from CompletedNodes by design (see
+// runstate.Snapshot.CompletedNodes), so graph.ReadyGiven(completedNodes) would
+// hand it right back as ready — its own dependencies were satisfied for it to
+// have run at all. Options.SettledNodes is what stops it from actually
+// launching a second time.
+func TestScheduler_ResumeSkipsSettledFailedNode(t *testing.T) {
+	g := mustGraph(t, `
+name: resume-settled-fail
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b, depends_on: [a] }
+`)
+	rec := &recordingRunner{}
+	s, h, led := newHarness(t, rec, Options{
+		ContinueOnFail: true,
+		// "a" failed on an earlier leg: CompletedNodes (pass-only) does not
+		// include it, only SettledNodes does.
+		CompletedNodes: map[string]bool{},
+		SettledNodes:   map[string]bool{"a": true},
+	})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if rec.invocationFor("a").Prompt != "" {
+		t.Error("a settled-failed node must never be launched again on resume")
+	}
+	if rec.invocationFor("b").Prompt != "" {
+		t.Error("b must stay blocked: a never completed this leg, only failed, so b's dependency is still unsatisfied")
+	}
+}
+
+// TestScheduler_ResumeSettledFailedNodeSubtreeStaysPrunedAcrossFanIn proves
+// SettledNodes only gates the failed node's OWN relaunch — it must not also
+// leak into ReadyGiven's dependency-satisfaction question, or a fan-in node
+// with one settled-failed parent and one still-pending parent would wrongly
+// read as unblocked the moment the pending parent finishes. join here must
+// stay pruned forever, exactly as it would within a single leg.
+func TestScheduler_ResumeSettledFailedNodeSubtreeStaysPrunedAcrossFanIn(t *testing.T) {
+	g := mustGraph(t, `
+name: resume-settled-fail-fanin
+nodes:
+  - { id: a, prompt: a }
+  - { id: other, prompt: other }
+  - { id: join, prompt: join, depends_on: [a, other] }
+`)
+	rec := &recordingRunner{}
+	s, h, led := newHarness(t, rec, Options{
+		ContinueOnFail: true,
+		CompletedNodes: map[string]bool{},
+		SettledNodes:   map[string]bool{"a": true},
+	})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if rec.invocationFor("a").Prompt != "" {
+		t.Error("a settled-failed node must never re-run")
+	}
+	if rec.invocationFor("other").Prompt == "" {
+		t.Error("other (a's independent sibling, not yet run in any leg) should still launch")
+	}
+	if rec.invocationFor("join").Prompt != "" {
+		t.Error("join must stay blocked: one of its parents (a) only failed, it never completed")
 	}
 }
 
@@ -750,6 +1160,29 @@ func (r *haltRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runne
 	}
 }
 
+// pauseDrainRunner blocks the "slow" node on release, closing started the
+// moment it begins — the counterpart to haltRunner's blockKey, but released
+// explicitly by the test instead of by ctx cancellation, because a pause
+// deliberately never cancels ctx (that's the entire point being proved).
+type pauseDrainRunner struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func (r *pauseDrainRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	if spec.Prompt == "slow" {
+		r.startOnce.Do(func() { close(r.started) })
+		select {
+		case <-r.release:
+			return runner.NodeOutcome{Result: "PASS", ExitCode: 0, SessionID: "s-slow", TotalCostUSD: 0.02}, nil
+		case <-ctx.Done():
+			return runner.NodeOutcome{}, ctx.Err()
+		}
+	}
+	return runner.NodeOutcome{Result: "PASS", ExitCode: 0, SessionID: "s-" + spec.Prompt}, nil
+}
+
 // recordingRunner returns scripted outcomes keyed by the first token of the
 // prompt and records every invocation so a test can inspect the interpolated
 // prompt a node actually received.
@@ -783,6 +1216,56 @@ func (r *recordingRunner) invocationFor(key string) runner.NodeInvocation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.invoked[key]
+}
+
+// fakeRecorder is the scripted schedule.Recorder tests inject to observe the
+// snapshot-facing calls the Scheduler makes without touching a filesystem —
+// the same role FakeRunner plays for NodeRunner and FakeVerifier for Verifier.
+// Its two failXxx fields let a test script a write failure to prove the
+// fatal/non-fatal split between RecordPause and the other two methods.
+type fakeRecorder struct {
+	mu              sync.Mutex
+	nodes           map[string]runstate.NodeRecord
+	gateDecisions   map[string]runstate.GateDecision
+	pausedGates     map[string]bool
+	failRecordNode  error
+	failRecordPause error
+}
+
+func newFakeRecorder() *fakeRecorder {
+	return &fakeRecorder{
+		nodes:         make(map[string]runstate.NodeRecord),
+		gateDecisions: make(map[string]runstate.GateDecision),
+		pausedGates:   make(map[string]bool),
+	}
+}
+
+func (f *fakeRecorder) RecordNode(nodeID string, rec runstate.NodeRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nodes[nodeID] = rec
+	return f.failRecordNode
+}
+
+func (f *fakeRecorder) RecordGateDecision(gateNodeID string, decision runstate.GateDecision) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gateDecisions[gateNodeID] = decision
+	return nil
+}
+
+func (f *fakeRecorder) RecordPause(gateNodeID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pausedGates[gateNodeID] = true
+	return f.failRecordPause
+}
+
+func (f *fakeRecorder) recordFor(nodeID string) (runstate.NodeRecord, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.nodes[nodeID]
+	return rec, ok
 }
 
 // --- execution ceiling ------------------------------------------------------

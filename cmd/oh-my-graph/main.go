@@ -7,12 +7,19 @@
 //
 //	oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+//
+// Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
+// gate and is resumable (ADR 0003) — a pause is not a failure.
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,38 +30,59 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
-		os.Exit(1)
+	os.Exit(mainExitCode(os.Args[1:]))
+}
+
+// mainExitCode runs the CLI and returns the process exit code: 0 (every node
+// passed), 1 (the run failed — printed to stderr), or 2 (the run paused at a
+// gate and is resumable — the resume hint was already printed to stdout by
+// executeGraph/runResume, so this path prints nothing further). Separated
+// from main so the exit path lives in exactly one place and the mapping
+// itself is testable without calling os.Exit.
+func mainExitCode(args []string) int {
+	err := run(args)
+	if err == nil {
+		return 0
 	}
+	var paused *schedule.PausedError
+	if errors.As(err, &paused) {
+		return 2
+	}
+	fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
+	return 1
 }
 
 // run parses argv and dispatches to the subcommand. It returns an error rather
-// than exiting so the exit path lives in exactly one place (main).
+// than exiting so the exit path lives in exactly one place (mainExitCode).
 func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]`)
+       oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]`)
 	}
 	switch args[0] {
 	case "run":
 		return runGraph(args[1:])
 	case "auto":
 		return runAuto(args[1:])
+	case "resume":
+		return runResume(args[1:])
 	case "version":
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, resume, or version)", args[0])
 	}
 }
 
@@ -80,7 +108,16 @@ func runGraph(args []string) error {
 		return err
 	}
 
-	g, err := graph.Load(flags.graphPath)
+	// Read the raw bytes ourselves (rather than graph.Load, which discards
+	// them after parsing) so executeGraph can snapshot both the graph's
+	// original source path and the SHA-256 of its original bytes — the datum
+	// `resume` uses to warn when the YAML has changed on disk since the run
+	// paused (DESIGN.md, "GraphSHA256").
+	raw, err := os.ReadFile(flags.graphPath)
+	if err != nil {
+		return fmt.Errorf("read graph file %q: %w", flags.graphPath, err)
+	}
+	g, err := graph.Parse(raw)
 	if err != nil {
 		return err
 	}
@@ -94,7 +131,7 @@ func runGraph(args []string) error {
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
-	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil, 0)
+	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil, 0, flags.graphPath, raw)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -128,7 +165,7 @@ func runAuto(args []string) error {
 	}
 	printPlan(os.Stdout, plan, specPath)
 
-	return executePlan(ctx, runID, plan, nodeRunner, flags.commonRunFlags)
+	return executePlan(ctx, runID, plan, nodeRunner, flags.commonRunFlags, specPath)
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
@@ -139,9 +176,13 @@ func runAuto(args []string) error {
 // failure no test of the coordinator or the scheduler alone would catch.
 // Taking the whole Plan makes that mismatch unrepresentable. It also forwards
 // plan.CostUSD as the run's planning cost, so the end-of-run TOTAL COST
-// includes the planning call rather than undercounting it.
-func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD)
+// includes the planning call rather than undercounting it. specPath is where
+// the planner's JSON spec was saved (runAuto's graph.json) — plan.Spec is
+// already the re-parseable JSON the resumable snapshot needs, so it is reused
+// as-is rather than re-marshaling plan.Graph the way a hand-written `run` has
+// to (see buildRecorder).
+func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string) error {
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
@@ -155,17 +196,27 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // planningCostUSD is the coordinator's one planning-call cost, folded into the
 // ledger's total so an auto run's end-of-run TOTAL COST is honest about the
 // planning step; `run` passes 0 (no planning step), so it shows no planning
-// line and its total is unchanged.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64) error {
+// line and its total is unchanged. graphSourcePath and rawSource are the
+// snapshot's GraphSourcePath/GraphSHA256 material — the .yaml file (and its
+// bytes) for `run`, the saved graph.json (and the planner's JSON bytes) for
+// `auto`.
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)
 
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, flags, toolPolicies)
+	if err != nil {
+		return fmt.Errorf("prepare run snapshot: %w", err)
+	}
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: flags.continueOnFail,
+		Gate:           gate.NewPauseController(),
 		Verifier:       verify.NewShellVerifier(),
 		ToolPolicies:   toolPolicies,
+		Recorder:       recorder,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
@@ -173,8 +224,46 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
+	printPauseHint(os.Stdout, runID, runErr)
 
 	return runErr
+}
+
+// newRunRecorder builds the SnapshotRecorder a fresh `run`/`auto` invocation
+// hands the Scheduler, seeded with everything fixed for the whole run: the
+// run id, where the graph came from, its normalized form as re-parseable
+// JSON, the run's inputs/flags, and the auto-mode tool ceiling (nil for a
+// hand-written graph, preserved as nil — see toNodeToolPolicies). Nodes and
+// Gate start empty: nothing has run yet.
+//
+// rawSource decides whether the snapshot's Graph needs re-encoding: auto
+// mode's rawSource is already the planner's JSON reply, so it is valid,
+// re-parseable JSON as-is and is reused directly; a hand-written graph's
+// rawSource is YAML text, which is not embeddable as-is inside the JSON
+// snapshot document (runstate.Write would fail marshaling it), so it is
+// re-encoded via json.Marshal(g) — safe because graph.Node/Graph's json tags
+// mirror their yaml tags exactly (see internal/graph, Node's doc comment).
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy) (*runstate.SnapshotRecorder, error) {
+	graphJSON := rawSource
+	if !json.Valid(rawSource) {
+		marshaled, err := json.Marshal(g)
+		if err != nil {
+			return nil, fmt.Errorf("encode graph for snapshot: %w", err)
+		}
+		graphJSON = marshaled
+	}
+
+	statePath := filepath.Join(runDirFor(runID), "state.json")
+	base := runstate.Snapshot{
+		RunID:           runID,
+		GraphSourcePath: graphSourcePath,
+		GraphSHA256:     sha256Hex(rawSource),
+		Graph:           graphJSON,
+		Inputs:          map[string]string(flags.inputs),
+		ContinueOnFail:  flags.continueOnFail,
+		ToolPolicies:    toNodeToolPolicies(toolPolicies),
+	}
+	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
 
 // saveGeneratedSpec persists the planner's JSON spec into the run directory so
@@ -272,4 +361,51 @@ func runDirFor(runID string) string {
 // second. One run directory per invocation keeps a run's artifacts inspectable.
 func newRunID() string {
 	return time.Now().UTC().Format("20060102-150405")
+}
+
+// sha256Hex is the hex SHA-256 of data — Snapshot.GraphSHA256's exact format,
+// so `resume` can compare it against a freshly-hashed file without any
+// encoding back-and-forth.
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// toNodeToolPolicies converts a run's runner.ToolPolicy map (the Scheduler's
+// shape) into the snapshot's runstate.NodeToolPolicy map — the CLI boundary
+// DESIGN.md assigns this conversion to, so neither package depends on the
+// other's type. A nil map (the `run` path: no ceiling imposed) stays nil,
+// never an empty non-nil map, because Scheduler.policyFor and the resumed
+// leg's rebuilt Options.ToolPolicies both branch on nilness to mean "no
+// ceiling at all" — collapsing that distinction here would silently start
+// imposing an empty ceiling on a hand-written graph's resume.
+func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runstate.NodeToolPolicy {
+	if policies == nil {
+		return nil
+	}
+	out := make(map[string]runstate.NodeToolPolicy, len(policies))
+	for id, p := range policies {
+		out[id] = runstate.NodeToolPolicy{
+			AllowedTools:    p.AllowedTools,
+			DisallowedTools: p.DisallowedTools,
+			Tools:           p.Tools,
+			SettingSources:  p.SettingSources,
+			StrictMCPConfig: p.StrictMCPConfig,
+		}
+	}
+	return out
+}
+
+// printPauseHint prints the exact resume commands when runErr is a
+// *schedule.PausedError — the "print the exact resume command" step of the
+// gate lifecycle (DESIGN.md, "Gate nodes and resume") — and is a silent no-op
+// for any other outcome (success or failure), so it is safe to call
+// unconditionally after every run.
+func printPauseHint(w io.Writer, runID string, runErr error) {
+	var paused *schedule.PausedError
+	if !errors.As(runErr, &paused) {
+		return
+	}
+	fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
+		paused.GateID, runID, paused.GateID, runID, paused.GateID)
 }

@@ -205,6 +205,19 @@ func (h *Handoff) ResumeSessionFor(node graph.Node) (string, error) {
 	return session, nil
 }
 
+// ArtifactPath returns the on-disk path recorded for a completed node's
+// output — the same path {{ artifacts.<id> }} resolves to — and whether one
+// exists. Exposed (read-only; the map itself stays private) for the run-state
+// recorder, which persists it into the snapshot so a later resume's
+// Handoff.Seed can rehydrate it without recomputing anything from the node id
+// (see runstate.NodeRecord.ArtifactPath).
+func (h *Handoff) ArtifactPath(nodeID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	path, ok := h.artifactPaths[nodeID]
+	return path, ok
+}
+
 // artifactPath is the on-disk location of a node's persisted result. Node ids
 // are validated (no path separators expected), but the base is cleaned so a
 // stray separator can never escape the run directory.

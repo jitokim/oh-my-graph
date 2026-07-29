@@ -11,6 +11,7 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
@@ -48,6 +50,46 @@ const predicateVerify = "verify"
 // short enough not to swamp the end-of-run table.
 const maxDetailOutputRunes = 240
 
+// Recorder persists the run's resumable snapshot (internal/runstate) as the
+// run progresses. The Scheduler talks to this narrow interface and never
+// imports runstate's concrete SnapshotRecorder itself, so a scheduler test can
+// inject a fake with zero filesystem I/O — exactly the seam gate.GateController
+// and verify.Verifier already are (DESIGN.md, "The Scheduler talks to a
+// Recorder interface and defaults to a no-op, so nothing about persistence
+// leaks into the engine's tests").
+type Recorder interface {
+	// RecordNode is called once a node reaches a terminal verdict — pass, fail,
+	// gate-approved, or gate-rejected — so the snapshot stays current after
+	// EVERY node, not only at a gate pause (DESIGN.md, "Snapshot writes happen
+	// after every node"). A non-nil error here is non-fatal to this leg (the
+	// ledger still renders this run's own summary correctly), but it is not a
+	// cosmetic gap: the node stays absent from the persisted state, so a later
+	// resume built from this file would not know it ran and would re-execute
+	// it — a real cost, not just a blank in the printed table — which is why
+	// it is surfaced on the progress feed rather than silently swallowed.
+	RecordNode(nodeID string, rec runstate.NodeRecord) error
+	// RecordGateDecision records an approve/reject/pause decision against a
+	// gate node, independent of RecordNode (see runstate.SnapshotRecorder for
+	// why a reject needs its own durable slot). Also non-fatal on error.
+	RecordGateDecision(gateNodeID string, decision runstate.GateDecision) error
+	// RecordPause is called once per Run(), after in-flight siblings have
+	// drained, when the run stops launching new work at gateNodeID. Unlike the
+	// other two methods, a failure here MUST be treated as fatal by the caller:
+	// a pause whose state was not persisted is an unrecoverable stop and must
+	// not be reported as a clean one (DESIGN.md, "a snapshot write failure at a
+	// gate pause is fatal").
+	RecordPause(gateNodeID string) error
+}
+
+// noopRecorder is the Recorder default: a scheduler test (or any caller that
+// doesn't care about resume) that never injects one just doesn't persist,
+// rather than needing a temp directory it never inspects.
+type noopRecorder struct{}
+
+func (noopRecorder) RecordNode(string, runstate.NodeRecord) error           { return nil }
+func (noopRecorder) RecordGateDecision(string, runstate.GateDecision) error { return nil }
+func (noopRecorder) RecordPause(string) error                               { return nil }
+
 // Options configures a Scheduler at construction. Zero values are the safe
 // defaults: use the graph's own concurrency, halt on the first failure.
 type Options struct {
@@ -57,8 +99,11 @@ type Options struct {
 	// ContinueOnFail prunes only a failed node's subtree instead of halting the
 	// whole run (the --continue-on-fail flag).
 	ContinueOnFail bool
-	// Gate resolves gate nodes. Defaults to the v0.1 refuse-everything stub.
+	// Gate resolves gate nodes. Defaults to gate.PauseController: a gate node
+	// pauses the run unless a caller (resume) injects a RecordedController.
 	Gate gate.GateController
+	// Recorder persists the resumable snapshot. Defaults to a no-op.
+	Recorder Recorder
 	// ProgressWriter receives one line per node lifecycle event (start, pass,
 	// fail, retry) as the run executes, so a long-running graph doesn't leave
 	// the terminal looking dead. Defaults to os.Stderr; pass io.Discard to
@@ -84,6 +129,41 @@ type Options struct {
 	// only forwards policies; deciding what belongs in one is the
 	// coordinator's job.
 	ToolPolicies map[string]runner.ToolPolicy
+	// CompletedNodes is the set of node ids an earlier leg already completed
+	// successfully — nil (the zero value) for a fresh `run`/`auto`, where
+	// nothing has completed yet. `resume` passes runstate.Snapshot.CompletedNodes()
+	// so Run seeds its initial ready set from graph.ReadyGiven(CompletedNodes)
+	// instead of graph.Roots(), and seeds each node's in-degree accounting for
+	// parents already done — the mechanism that keeps a resumed leg from
+	// re-running (and re-paying for) work the first leg already finished
+	// (DESIGN.md, "resume recomputes them: Graph.ReadyGiven(done) ...").
+	// graph.Roots() is defined as ReadyGiven(nil), so a nil CompletedNodes
+	// reproduces the exact fresh-run behaviour this field didn't change.
+	//
+	// CompletedNodes is deliberately pass-only (see runstate.Snapshot.
+	// CompletedNodes): a FAILED node must NOT count as done here, or its
+	// dependents would read as unblocked and a --continue-on-fail subtree that
+	// was pruned in an earlier leg would wrongly un-prune on resume. Use
+	// SettledNodes, not this field, to stop a failed node itself from
+	// relaunching.
+	CompletedNodes map[string]bool
+	// SettledNodes is the set of node ids that reached ANY terminal verdict —
+	// pass or fail — in an earlier leg, and so must never be launched again on
+	// resume. nil (the zero value) for a fresh `run`/`auto`.
+	//
+	// This is separate from CompletedNodes on purpose. CompletedNodes (pass
+	// only) answers "whose dependents may proceed"; SettledNodes (pass or
+	// fail) answers "what must not run again". Collapsing them into one set
+	// would break one property or the other: seeding ReadyGiven's `done` with
+	// a FAILED node would wrongly satisfy its dependents' dependency (un-
+	// pruning a --continue-on-fail subtree); seeding it with pass-only alone
+	// lets `resume` recompute a failed node as still-ready, since its own
+	// dependencies were satisfied — the bug this field fixes: a node that
+	// failed on an earlier leg would otherwise re-run (and re-add a second
+	// ledger row for) a failure --continue-on-fail already decided was final.
+	// `resume` passes runstate.Snapshot.SettledNodes(); CompletedNodes keeps
+	// deciding topology, SettledNodes only gates re-launch.
+	SettledNodes map[string]bool
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -95,10 +175,17 @@ type Scheduler struct {
 	gate           gate.GateController
 	verifier       verify.Verifier
 	progress       io.Writer
+	recorder       Recorder
 	// toolPolicies is the per-node tool ceiling keyed by node id (nil for
 	// hand-written graphs). A missing key means "no ceiling was imposed" — see
 	// buildInvocation.
 	toolPolicies map[string]runner.ToolPolicy
+	// completedNodes is the set of node ids an earlier leg already finished —
+	// see Options.CompletedNodes.
+	completedNodes map[string]bool
+	// settledNodes is the set of node ids that reached ANY terminal verdict in
+	// an earlier leg (pass or fail) — see Options.SettledNodes.
+	settledNodes map[string]bool
 	// progressMu serializes writes to progress: parallel nodes emit events from
 	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
 	// concurrent use without one.
@@ -110,7 +197,7 @@ type Scheduler struct {
 func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	gateController := opts.Gate
 	if gateController == nil {
-		gateController = gate.NewStubController()
+		gateController = gate.NewPauseController()
 	}
 	verifier := opts.Verifier
 	if verifier == nil {
@@ -120,6 +207,10 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	if progressWriter == nil {
 		progressWriter = os.Stderr
 	}
+	recorder := opts.Recorder
+	if recorder == nil {
+		recorder = noopRecorder{}
+	}
 	return &Scheduler{
 		runner:         nodeRunner,
 		continueOnFail: opts.ContinueOnFail,
@@ -127,30 +218,72 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		gate:           gateController,
 		verifier:       verifier,
 		progress:       progressWriter,
+		recorder:       recorder,
 		toolPolicies:   opts.ToolPolicies,
+		completedNodes: opts.CompletedNodes,
+		settledNodes:   opts.SettledNodes,
 	}
 }
 
 // Run executes g to completion, coordinating through h (inputs/outputs) and
 // recording into led. It returns nil only when every node passed. On failure it
 // returns a *HaltError (default: the first failure cancelled the run and killed
-// in-flight siblings) or a *RunFailedError (continue-on-fail: some subtrees were
-// pruned but independent branches finished).
+// in-flight siblings) or a *RunFailedError (continue-on-fail, or a rejected
+// gate: some subtrees were pruned but independent branches finished) or a
+// *PausedError (a gate decision paused the run — see the pause handling
+// below, ADR 0003).
 func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
 	grp, ctx := errgroup.WithContext(ctx)
 
 	var mu sync.Mutex
+	// inDegree seeds each node's remaining-parent count against s.completedNodes,
+	// not just len(DependsOn): a fresh run has none completed, so this reduces to
+	// the plain count exactly as before; a resumed leg's parents already marked
+	// complete no longer count against it, so a node whose only pending parent
+	// was finished in an earlier leg becomes ready immediately instead of waiting
+	// on a re-run of it (DESIGN.md, "the scheduler seeds each node's in-degree as
+	// len(DependsOn) - (parents already completed)").
 	inDegree := make(map[string]int, len(g.Nodes))
 	for _, n := range g.Nodes {
-		inDegree[n.ID] = len(n.DependsOn)
+		remaining := 0
+		for _, parent := range n.DependsOn {
+			if !s.completedNodes[parent] {
+				remaining++
+			}
+		}
+		inDegree[n.ID] = remaining
 	}
 
 	var failMu sync.Mutex
 	var prunedFailures []string
 
+	// pauseMu guards pausedAt: the id of the gate whose DecisionPause first
+	// stopped the run, or "" while no gate has paused it. It is the mechanism
+	// behind "stop launching new work but drain what's in flight" — unlike
+	// halt-on-fail, a pause deliberately does NOT cancel ctx (ADR 0003, "this
+	// is the one place the halt path does not cancel the context"), so an
+	// in-flight sibling runs to completion normally. What stops is new
+	// launches: every successful node checks pausedAt before enqueuing its own
+	// dependents, so the moment any gate pauses, the wavefront of new work
+	// stops advancing while whatever already started keeps running.
+	var pauseMu sync.Mutex
+	var pausedAt string
+
 	var launch func(id string)
 	launch = func(id string) {
+		if s.settledNodes[id] {
+			// This node already reached a terminal verdict (pass or fail) in
+			// an earlier leg. A PASS never reaches here at all — it is
+			// excluded from the initial ReadyGiven(completedNodes) set and
+			// its in-degree never re-zeroes it — but a FAILED node's own
+			// dependencies were satisfied for it to have run at all, so
+			// without this guard resume would hand it right back as ready
+			// and re-run (and re-pay for, and double-record in the ledger) a
+			// failure --continue-on-fail already decided was final for this
+			// run (see Options.SettledNodes).
+			return
+		}
 		node, _ := g.NodeByID(id)
 		grp.Go(func() error {
 			select {
@@ -161,6 +294,26 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 			defer func() { <-sem }()
 
 			if err := s.runNode(ctx, node, h, led); err != nil {
+				var pause *pauseSignal
+				if errors.As(err, &pause) {
+					pauseMu.Lock()
+					if pausedAt == "" {
+						pausedAt = pause.NodeID
+					}
+					pauseMu.Unlock()
+					return nil
+				}
+				var reject *rejectSignal
+				if errors.As(err, &reject) {
+					// A gate rejection always prunes its own subtree, regardless
+					// of --continue-on-fail: approving/rejecting is the gate's
+					// own decision, not a run-wide failure policy (DESIGN.md,
+					// "--reject <gate-id> ... It is not a crash").
+					failMu.Lock()
+					prunedFailures = append(prunedFailures, reject.NodeID)
+					failMu.Unlock()
+					return nil
+				}
 				if s.continueOnFail {
 					failMu.Lock()
 					prunedFailures = append(prunedFailures, id)
@@ -173,6 +326,16 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 				// propagates to every in-flight child (killing wedged claude
 				// subprocesses) and stops new nodes from starting.
 				return &HaltError{NodeID: id, Err: err}
+			}
+
+			pauseMu.Lock()
+			paused := pausedAt != ""
+			pauseMu.Unlock()
+			if paused {
+				// This node's own success still counts — it is drained, not
+				// cancelled — but a pause elsewhere already means the whole run
+				// stops, not just this branch, so its dependents must not launch.
+				return nil
 			}
 
 			// Success: every dependent loses one in-degree; any that reach zero
@@ -190,12 +353,32 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 		})
 	}
 
-	for _, root := range g.Roots() {
-		launch(root)
+	// The initial ready set is graph.ReadyGiven(s.completedNodes), not
+	// graph.Roots(): Roots() is defined as ReadyGiven(nil) (see graph.go), so a
+	// fresh run (nil s.completedNodes) launches exactly the roots as before,
+	// while a resumed leg launches whatever the completed set has newly
+	// unblocked instead of re-running finished work.
+	for _, id := range g.ReadyGiven(s.completedNodes) {
+		launch(id)
 	}
 
 	if err := grp.Wait(); err != nil {
 		return err
+	}
+
+	pauseMu.Lock()
+	gateID := pausedAt
+	pauseMu.Unlock()
+	if gateID != "" {
+		// The pause snapshot write happens here — once, after every in-flight
+		// sibling has drained — never from inside the gate's own evaluation,
+		// which runs concurrently with them. A failure here is fatal: a pause
+		// whose state was not persisted is an unrecoverable stop, and reporting
+		// it as a clean pause would lie (DESIGN.md).
+		if err := s.recorder.RecordPause(gateID); err != nil {
+			return fmt.Errorf("persist pause snapshot for gate %q: %w", gateID, err)
+		}
+		return &PausedError{GateID: gateID}
 	}
 
 	failMu.Lock()
@@ -213,21 +396,23 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 //	NodeRunner.Run → exit_zero → result_matches → Verifier.Verify →
 //	Handoff.PersistOutput → budget_usd → RunLedger.Record
 //
-// It returns nil on success, or the failure (a gate refusal, an interpolation
-// error, a runner error, a *NodeCheckError — including a failed verification —
-// or a *NodeBudgetError) after retries are exhausted.
+// It returns nil on success, or the failure (an interpolation error, a runner
+// error, a *NodeCheckError — including a failed verification — or a
+// *NodeBudgetError) after retries are exhausted. A gate node never reaches
+// this general path at all; see evaluateGate for its three outcomes,
+// including the internal *pauseSignal/*rejectSignal Run() intercepts before
+// they could be mistaken for one of these.
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger) error {
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 
 	if node.Type == graph.TypeGate {
-		err := s.gate.Evaluate(ctx, node)
-		return s.recordFail(led, node, "", 0, time.Since(start), err)
+		return s.evaluateGate(ctx, node, h, led, start)
 	}
 
 	invocation, err := s.buildInvocation(node, h)
 	if err != nil {
-		return s.recordFail(led, node, "", 0, time.Since(start), err)
+		return s.recordFail(led, h, node, "", 0, time.Since(start), err)
 	}
 
 	attempts := 1
@@ -249,7 +434,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				s.logProgress("↻ %s  retry\n", node.ID)
 				continue
 			}
-			return s.recordFail(led, node, "", 0, time.Since(start), runErr)
+			return s.recordFail(led, h, node, "", 0, time.Since(start), runErr)
 		}
 
 		var verdictErr error
@@ -274,7 +459,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		}
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
-				return s.recordFail(led, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
+				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
 			// node that did useful work before blowing its budget still leaves
@@ -282,7 +467,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// semantics are untouched here — only the pass/fail verdict is.
 			verdictErr = evaluateBudget(node, outcome)
 			if verdictErr == nil {
-				return s.recordPass(led, node, outcome, time.Since(start), attempt)
+				return s.recordPass(led, h, node, outcome, time.Since(start), attempt)
 			}
 		}
 
@@ -291,7 +476,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			s.logProgress("↻ %s  retry\n", node.ID)
 			continue
 		}
-		return s.recordFail(led, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), verdictErr)
+		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), verdictErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -299,20 +484,116 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	return lastErr
 }
 
-// recordFail writes the node's live "✗ FAILED" progress line and its ledger
-// row, then returns cause so callers can `return s.recordFail(...)` directly.
-func (s *Scheduler) recordFail(led *ledger.RunLedger, node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) error {
+// evaluateGate asks the injected GateController for node's decision and turns
+// it into exactly one of four outcomes:
+//
+//   - an evaluation error: an ordinary node failure (recordFail);
+//   - DecisionApprove: a ledger PASS with no cost/session (a gate spawns no
+//     subprocess) so its dependents may proceed;
+//   - DecisionReject: a ledger FAIL wrapping a *rejectSignal, which Run()
+//     recognizes and prunes the subtree with regardless of --continue-on-fail;
+//   - DecisionPause: a *pauseSignal, which Run() recognizes and turns into the
+//     whole-run pause — no ledger/snapshot write happens here, because that
+//     happens once at the Run level after in-flight siblings have drained.
+func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
+	decision, err := s.gate.Evaluate(ctx, node)
+	if err != nil {
+		return s.recordFail(led, h, node, "", 0, time.Since(start), fmt.Errorf("gate %q: %w", node.ID, err))
+	}
+
+	switch decision {
+	case gate.DecisionApprove:
+		return s.recordGateApprove(led, h, node, time.Since(start))
+	case gate.DecisionReject:
+		s.recordGateDecision(node, runstate.GateReject)
+		return s.recordFail(led, h, node, "", 0, time.Since(start), &rejectSignal{NodeID: node.ID})
+	case gate.DecisionPause:
+		s.logProgress("⏸ %s  gate paused\n", node.ID)
+		return &pauseSignal{NodeID: node.ID}
+	default:
+		return s.recordFail(led, h, node, "", 0, time.Since(start),
+			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision))
+	}
+}
+
+// recordFail writes the node's live "✗ FAILED" progress line, its ledger row,
+// and the same record into the resumable snapshot, then returns cause so
+// callers can `return s.recordFail(...)` directly.
+func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) error {
 	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
-	led.Record(failRecord(node, sessionID, cost, duration, cause))
+	rec := failRecord(node, sessionID, cost, duration, cause)
+	led.Record(rec)
+	s.recordSnapshot(node, rec, h)
 	return cause
 }
 
-// recordPass writes the node's live "✓ PASS" progress line and its ledger row,
-// then returns nil so callers can `return s.recordPass(...)` directly.
-func (s *Scheduler) recordPass(led *ledger.RunLedger, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
+// recordPass writes the node's live "✓ PASS" progress line, its ledger row,
+// and the same record into the resumable snapshot, then returns nil so
+// callers can `return s.recordPass(...)` directly.
+func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
 	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
-	led.Record(passRecord(node, outcome, duration, attempt))
+	rec := passRecord(node, outcome, duration, attempt)
+	led.Record(rec)
+	s.recordSnapshot(node, rec, h)
 	return nil
+}
+
+// recordGateApprove writes the gate's live "approved" progress line and its
+// ledger PASS row — zero cost/session, since a gate spawns no subprocess —
+// then records the same into the snapshot so the gate counts as completed
+// (CompletedNodes) and its dependents may proceed, this leg or after a later
+// resume.
+func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
+	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
+	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
+	led.Record(rec)
+	s.recordSnapshot(node, rec, h)
+	s.recordGateDecision(node, runstate.GateApprove)
+	return nil
+}
+
+// recordSnapshot converts rec into a runstate.NodeRecord — filling in
+// whatever artifact path h has for node.ID, if any — and hands it to the
+// injected Recorder. A write failure here is deliberately non-fatal to THIS
+// leg: the ledger still renders this run's own summary correctly either way.
+// But the failure is not cosmetic — a dropped write leaves node.ID absent
+// from the persisted state, so a later `resume` built from this file would
+// not know it ran and would re-execute it, a real cost — which is why it is
+// surfaced on the progress feed rather than silently swallowed (DESIGN.md,
+// "Gate nodes and resume").
+func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff) {
+	artifactPath, _ := h.ArtifactPath(node.ID)
+	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath)); err != nil {
+		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
+	}
+}
+
+// recordGateDecision hands a gate's approve/reject/pause decision to the
+// injected Recorder, warning (non-fatally) on the progress feed if it fails.
+func (s *Scheduler) recordGateDecision(node graph.Node, decision runstate.GateDecision) {
+	if err := s.recorder.RecordGateDecision(node.ID, decision); err != nil {
+		s.logProgress("⚠ %s  gate decision snapshot write failed: %v\n", node.ID, err)
+	}
+}
+
+// toNodeRecord derives a runstate.NodeRecord from the ledger.Record the
+// Scheduler already built for the same node, so the two never carry different
+// cost/verdict/detail for the same event — one accounting computation, two
+// destinations (the ledger for this leg's table, the snapshot for a resume).
+func toNodeRecord(rec ledger.Record, artifactPath string) runstate.NodeRecord {
+	verdict := runstate.VerdictFail
+	if rec.Verdict == ledger.VerdictPass {
+		verdict = runstate.VerdictPass
+	}
+	return runstate.NodeRecord{
+		Verdict:      verdict,
+		SessionID:    rec.SessionID,
+		CostUSD:      rec.CostUSD,
+		BudgetUSD:    rec.BudgetUSD,
+		Duration:     rec.Duration,
+		ArtifactPath: artifactPath,
+		Detail:       rec.Detail,
+	}
 }
 
 // logProgress writes one progress line, serialized by progressMu: parallel
