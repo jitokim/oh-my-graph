@@ -152,6 +152,29 @@ func (h *Handoff) PersistOutput(nodeID, result, sessionID string) error {
 	return nil
 }
 
+// Seed rehydrates one already-completed node's handoff state for a resumed run,
+// without re-running the node and without writing anything to disk. On resume the
+// earlier leg's .out artifact file is still on disk exactly where PersistOutput
+// left it, so Seed only re-populates the same in-memory maps PersistOutput would
+// have: the artifact path (so a dependent's {{ artifacts.<id> }} resolves to the
+// existing file) and the session id (so a handoff: session child can --resume the
+// parent it never watched run in this process).
+//
+// Seed is deliberately ignorant of where its arguments came from — the resume
+// path, which owns the run snapshot, feeds it the recorded path and session id,
+// exactly as the Scheduler feeds PersistOutput a fresh node's result. Handoff
+// never learns what a snapshot is; the dependency runs snapshot → Handoff, never
+// the reverse (see DESIGN.md, "Handoff ... Seed"). It does no I/O, so it cannot
+// fail and returns nothing; a caller that seeds a path to a missing file only
+// finds out if a dependent later interpolates it with the `| inline` filter,
+// which is the same InterpolationError a normal run would raise.
+func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.artifactPaths[nodeID] = artifactPath
+	h.sessions[nodeID] = sessionID
+}
+
 // ResumeSessionFor returns the claude session id a session-handoff node must
 // resume — the session of its single parent. It returns "" and nil for any node
 // that is not a session-handoff node (an artifact node resumes nothing). It is
