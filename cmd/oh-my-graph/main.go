@@ -89,8 +89,10 @@ func runGraph(args []string) error {
 	defer stop()
 
 	// nil deny list: a hand-written graph is the user's own reviewed artifact,
-	// so its nodes run under the user's own tool permissions, unchanged.
-	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil)
+	// so its nodes run under the user's own tool permissions, unchanged. 0
+	// planning cost: `run` has no planning step, so its total shows no planning
+	// line and is exactly the per-node sum.
+	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil, 0)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -133,18 +135,25 @@ func runAuto(args []string) error {
 // graph with a nil ceiling and every planned node would silently run under the
 // user's own standing tool grants — the exact hole auto mode must close, and a
 // failure no test of the coordinator or the scheduler alone would catch.
-// Taking the whole Plan makes that mismatch unrepresentable.
+// Taking the whole Plan makes that mismatch unrepresentable. It also forwards
+// plan.CostUSD as the run's planning cost, so the end-of-run TOTAL COST
+// includes the planning call rather than undercounting it.
 func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.DisallowedTools)
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.DisallowedTools, plan.CostUSD)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
 // `run` and `auto`. disallowedTools is the per-node execution ceiling: auto
-// passes the coordinator's, `run` passes nil.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, disallowedTools map[string][]string) error {
+// passes the coordinator's, `run` passes nil. planningCostUSD is the
+// coordinator's one planning-call cost, folded into the ledger's total so an
+// auto run's end-of-run TOTAL COST is honest about the planning step; `run`
+// passes 0 (no planning step), so it shows no planning line and its total is
+// unchanged.
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, disallowedTools map[string][]string, planningCostUSD float64) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
+	led.RecordPlanningCost(planningCostUSD)
 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:     flags.concurrency,

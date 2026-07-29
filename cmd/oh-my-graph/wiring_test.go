@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -86,13 +89,78 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	rec := &capturingRunner{}
 
 	t.Chdir(t.TempDir())
-	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil)
+	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0)
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}
 	if got := rec.invocationFor("only").DisallowedTools; len(got) != 0 {
 		t.Errorf("hand-written node ran with deny list %v, want none", got)
 	}
+}
+
+// TestExecutePlan_TotalIncludesPlanningCost pins the end-to-end accounting the
+// original bug (issue #15) slipped through: the coordinator computes the
+// planning cost and printPlan shows it once up front, but executeGraph's ledger
+// never received it, so the end-of-run TOTAL COST summed only the per-node
+// costs. Numbers are the exact live-run figures from the issue — planning
+// $0.6069 plus nodes $0.7977 and $0.5327 — so an honest total is $1.9373, not
+// the $1.3304 node-only sum the pre-fix code printed. This is the hop no
+// coordinator- or ledger-only test exercises; the suite would stay green while
+// every auto run undercounted its real spend.
+func TestExecutePlan_TotalIncludesPlanningCost(t *testing.T) {
+	g := mustParse(t, `{"name":"haiku","nodes":[
+		{"id":"write-haiku","prompt":"write-haiku","allowed_tools":["Read"]},
+		{"id":"critique-haiku","prompt":"critique-haiku","allowed_tools":["Read"]}]}`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"write-haiku":    {SessionID: "s-write", Result: "PASS", TotalCostUSD: 0.7977, ExitCode: 0},
+		"critique-haiku": {SessionID: "s-critique", Result: "PASS", TotalCostUSD: 0.5327, ExitCode: 0},
+	})
+	plan := coordinator.Plan{Graph: g, CostUSD: 0.6069}
+
+	t.Chdir(t.TempDir())
+	out := captureStdout(t, func() {
+		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}); err != nil {
+			t.Fatalf("executePlan returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "PLANNING COST: $0.6069") {
+		t.Errorf("auto run must show the planning cost line:\n%s", out)
+	}
+	if !strings.Contains(out, "TOTAL COST: $1.9373") {
+		t.Errorf("auto run's total must include planning cost (want $1.9373):\n%s", out)
+	}
+	if strings.Contains(out, "1.3304") {
+		t.Errorf("total still shows the node-only sum $1.3304 — planning cost was dropped:\n%s", out)
+	}
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns what was
+// written. executeGraph prints the ledger table straight to os.Stdout, so this
+// is how a wiring test reads the total the user actually sees. (Scheduler
+// progress goes to os.Stderr, so it does not pollute the capture.)
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	os.Stdout = orig
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }
 
 // TestPrintPlan_FlagsScopedBashAsUnenforced pins the honesty of the pre-run

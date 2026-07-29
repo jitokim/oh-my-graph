@@ -518,7 +518,9 @@ Scheduler as any other graph.
   Written atomically after every node. The Scheduler talks to a `Recorder`
   interface and defaults to a no-op, so nothing about persistence leaks into the
   engine's tests.
-- **RunLedger** — record session_id/cost/verdict/timing; end-of-run table + total cost.
+- **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
+  planning-call cost; end-of-run table + total cost (planning cost included, so
+  an auto run's total is honest; a hand-written `run` records no planning cost).
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
 exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →

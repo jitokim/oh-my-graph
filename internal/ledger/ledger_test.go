@@ -123,3 +123,48 @@ func TestRender_EmptyLedger(t *testing.T) {
 		t.Fatalf("empty ledger should show zero total:\n%s", out)
 	}
 }
+
+func TestTotalCost_IncludesPlanningCost(t *testing.T) {
+	l := New("auto-run")
+	l.Record(Record{NodeID: "write", CostUSD: 0.7977, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "critique", CostUSD: 0.5327, Verdict: VerdictPass})
+	l.RecordPlanningCost(0.6069)
+
+	// 0.7977 + 0.5327 + 0.6069 = 1.9373 — the planning call is part of the total.
+	if got := l.TotalCost(); got < 1.9372 || got > 1.9374 {
+		t.Fatalf("total cost = %v, want ~1.9373 (nodes + planning)", got)
+	}
+}
+
+func TestRender_ShowsPlanningLineAndFoldedTotal(t *testing.T) {
+	l := New("auto-run")
+	l.Record(Record{NodeID: "write", CostUSD: 0.7977, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "critique", CostUSD: 0.5327, Verdict: VerdictPass})
+	l.RecordPlanningCost(0.6069)
+
+	out := l.Render()
+	for _, want := range []string{"PLANNING COST: $0.6069", "TOTAL COST: $1.9373"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRender_NoPlanningLineWhenZero pins the invariant that the planning-cost
+// feature leaves the hand-written `run` path unaffected: with no planning cost
+// recorded, the summary shows no planning line and the total equals exactly the
+// per-node sum. This is the one most likely to silently regress later, so it is
+// asserted explicitly.
+func TestRender_NoPlanningLineWhenZero(t *testing.T) {
+	l := New("run-path")
+	l.Record(Record{NodeID: "a", CostUSD: 0.10, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "b", CostUSD: 0.25, Verdict: VerdictPass})
+
+	out := l.Render()
+	if strings.Contains(out, "PLANNING COST") {
+		t.Errorf("run path must not show a planning line:\n%s", out)
+	}
+	if !strings.Contains(out, "TOTAL COST: $0.3500") {
+		t.Errorf("total must equal the node-cost sum $0.3500:\n%s", out)
+	}
+}
