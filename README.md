@@ -98,7 +98,7 @@ oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 ```
 
 The plan is printed before it runs, and the generated spec is saved to
-`.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
+`~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
 hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 `permission_mode: bypassPermissions`; custom YAML remains the path for precise
 control. See [Examples](#examples) below for a full walkthrough of the plan
@@ -120,7 +120,7 @@ oh-my-graph <run|auto|chat|resume|runs|show|version> ...
   into a graph and run — `auto`, but ambient. Type `exit` (or Ctrl-D) to leave.
 - **`resume <run-id> (--approve <gate-id> | --reject <gate-id>)`** — resume a
   run that paused at a human-approval gate node, approving or rejecting it.
-- **`runs list`** — list past runs from `.oh-my-graph/runs/`, newest first:
+- **`runs list`** — list past runs from `~/.oh-my-graph/runs/`, newest first:
   graph name, node count, cost, and overall verdict per run, plus a total.
   Read-only.
 - **`show <run-id>`** — print one run's detail: the per-node ledger (session,
@@ -132,9 +132,11 @@ oh-my-graph <run|auto|chat|resume|runs|show|version> ...
 executes, then a cost ledger — see the examples below for exactly what that
 looks like.
 
-Every run persists to `.oh-my-graph/runs/<run-id>/`: a versioned snapshot
-(`state.json`) and an append-only event stream (`events.jsonl`), which
-`runs list` / `show` read back and a consumer like fleetops can tail. That
+Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
+relocate the base) — the same directory no matter where you invoke the tool
+from: a versioned snapshot (`state.json`) and an append-only event stream
+(`events.jsonl`), which `runs list` / `show` read back and a consumer like
+fleetops can tail. That
 directory layout is a documented, stable contract — see
 [docs/RUN-FEED.md](docs/RUN-FEED.md).
 
@@ -202,7 +204,7 @@ exact node names):
 
 ```
 Planning a graph for goal "lint this repo and summarize the findings"...
-Planned graph "lint-and-summarize" (2 nodes, planning cost $0.0021, saved to .oh-my-graph/runs/20260729-101600/graph.json):
+Planned graph "lint-and-summarize" (2 nodes, planning cost $0.0021, saved to ~/.oh-my-graph/runs/20260729-101600/graph.json):
   - lint [tools: Bash(go *), Read]
   - summarize (after lint) [tools: Read]
   Planned nodes run isolated: none of your user/project/local settings load, so a declared
@@ -221,7 +223,7 @@ Run 20260729-101600 — 2 node(s)
 TOTAL COST: $0.0106
 ```
 
-The generated spec is saved to `.oh-my-graph/runs/<run-id>/graph.json` —
+The generated spec is saved to `~/.oh-my-graph/runs/<run-id>/graph.json` —
 since JSON is valid YAML, you can hand-edit it and re-run it directly with
 `oh-my-graph run`. A planned node can never opt into `permission_mode:
 bypassPermissions`, never set its own `cwd`, never declare a
@@ -411,7 +413,7 @@ Two things to know:
 ### Handoff — how a node receives its parent's work
 
 - **`artifact` (default):** the engine persists every node's result to
-  `.oh-my-graph/runs/<run-id>/<node-id>.out`; dependents read it via
+  `~/.oh-my-graph/runs/<run-id>/<node-id>.out`; dependents read it via
   `{{ artifacts.<id> }}` (the file **path** by default, or the file **content**
   with the `| inline` filter). Robust, inspectable, parallel-safe — and the only
   option for a fan-in (many parents).

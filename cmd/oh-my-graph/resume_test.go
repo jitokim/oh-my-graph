@@ -17,8 +17,8 @@ import (
 // pausedGateFlowRun executes the standard a -> approve(gate) -> ship graph
 // against a fresh capturingRunner and returns once it has paused at the gate,
 // so a resume test can start from a known, on-disk snapshot. Callers must
-// t.Chdir into a temp directory first — executeGraph resolves its run
-// directory relative to the process cwd.
+// isolateRunHome first — executeGraph writes its run directory under
+// $OMG_HOME, which must never be the real home in a test.
 func pausedGateFlowRun(t *testing.T) (runID string, rec *capturingRunner) {
 	t.Helper()
 	g := mustParse(t, `{"name":"gate-flow","nodes":[
@@ -56,7 +56,7 @@ func parseResumeFlags(t *testing.T, args []string) *resumeFlags {
 // --- approve continues the run to completion ---------------------------------
 
 func TestResume_ApprovedGateContinuesToCompletion(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
@@ -71,7 +71,7 @@ func TestResume_ApprovedGateContinuesToCompletion(t *testing.T) {
 // --- reject prunes the subtree and is reported as a failure, not a crash ----
 
 func TestResume_RejectedGatePrunesSubtree(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
@@ -87,7 +87,7 @@ func TestResume_RejectedGatePrunesSubtree(t *testing.T) {
 // --- CLI contract: exactly one of --approve/--reject, gate id must match ----
 
 func TestResume_BareInvocationNamesThePendingGate(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	err := executeResume(parseResumeFlags(t, []string{runID}), rec)
@@ -103,7 +103,7 @@ func TestResume_BareInvocationNamesThePendingGate(t *testing.T) {
 }
 
 func TestResume_MismatchedGateNameIsRejected(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "some-other-gate"}), rec)
@@ -116,7 +116,7 @@ func TestResume_MismatchedGateNameIsRejected(t *testing.T) {
 }
 
 func TestResume_BothApproveAndRejectIsRejected(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve", "--reject", "approve"}), rec)
@@ -128,7 +128,7 @@ func TestResume_BothApproveAndRejectIsRejected(t *testing.T) {
 // --- resuming a run that never paused ----------------------------------------
 
 func TestResume_RunNotPausedErrors(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	g := mustParse(t, `{"name":"no-gate","nodes":[{"id":"a","prompt":"a"}]}`)
 	rec := &capturingRunner{}
 	runID := "run-complete"
@@ -145,7 +145,7 @@ func TestResume_RunNotPausedErrors(t *testing.T) {
 // --- resume.lock guards against a concurrent resume --------------------------
 
 func TestResume_LockPreventsConcurrentResume(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	lockPath := filepath.Join(runDirFor(runID), lockFileName)
@@ -166,7 +166,7 @@ func TestResume_LockPreventsConcurrentResume(t *testing.T) {
 }
 
 func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
 	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec); err != nil {
@@ -185,7 +185,7 @@ func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
 // describes: "Multiple gates => multiple resumes: a resumed run advances to
 // the next gate and pauses again."
 func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	g := mustParse(t, `{"name":"multi-gate","nodes":[
 		{"id":"a","prompt":"a"},
 		{"id":"gate1","type":"gate","depends_on":["a"]},
@@ -224,6 +224,9 @@ func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
 // what runs (the snapshot's own Graph bytes are still what executes), it just
 // tells the user their on-disk file no longer matches what was snapshotted.
 func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
+	isolateRunHome(t)
+	// The snapshot's relative GraphSourcePath still resolves against the
+	// process cwd, so this test keeps its chdir for the graph file itself.
 	dir := t.TempDir()
 	t.Chdir(dir)
 	runID, rec := pausedGateFlowRun(t)
@@ -276,8 +279,8 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 // --- exit code mapping (ADR 0003: 0 pass, 1 fail, 2 paused) ------------------
 
 func TestMainExitCode_PauseMapsToExitCode2(t *testing.T) {
+	isolateRunHome(t)
 	dir := t.TempDir()
-	t.Chdir(dir)
 	graphPath := filepath.Join(dir, "gate-only.yaml")
 	// A graph whose only node is a root gate never touches the NodeRunner, so
 	// this drives the real `run` subcommand (and its real ClaudeCLIRunner)
@@ -355,7 +358,7 @@ func (r *scriptedRunner) invocationCount(prompt string) int {
 // at all) with a sibling branch where "flaky" fails and "orphan" — flaky's
 // only dependent — must never run, on either leg.
 func TestResume_ContinueOnFail_SettledFailedNodeDoesNotRerunOrDoubleRecord(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	g := mustParse(t, `{"name":"gate-continue","nodes":[
 		{"id":"gate","type":"gate"},
 		{"id":"flaky","prompt":"flaky"},

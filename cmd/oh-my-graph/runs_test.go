@@ -13,9 +13,9 @@ import (
 )
 
 // completedRun executes a small graph to completion under a scripted
-// FakeRunner in the current (temp) directory, so `runs list` tests read
-// state.json files produced by the real recorder — never hand-built fixtures
-// that could drift from the snapshot contract.
+// FakeRunner in the isolated $OMG_HOME, so `runs list` tests read state.json
+// files produced by the real recorder — never hand-built fixtures that could
+// drift from the snapshot contract.
 func completedRun(t *testing.T, runID, spec string, outcomes map[string]runner.NodeOutcome) {
 	t.Helper()
 	g := mustParse(t, spec)
@@ -29,7 +29,7 @@ func completedRun(t *testing.T, runID, spec string, outcomes map[string]runner.N
 // --- the table: one row per run, newest first, with a total ------------------
 
 func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 
 	// Older run: two nodes, both pass, $0.30 total.
 	completedRun(t, "20250101-000000",
@@ -90,7 +90,7 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 // --- a paused run is not a PASS ----------------------------------------------
 
 func TestListRuns_PausedRunRendersAsFail(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	// A graph whose only node is a root gate pauses immediately, touching no
 	// runner at all — the run is resumable, but it did not pass.
 	g := mustParse(t, `{"name":"gated","nodes":[{"id":"approve","type":"gate"}]}`)
@@ -114,7 +114,7 @@ func TestListRuns_PausedRunRendersAsFail(t *testing.T) {
 // --- nothing to list ---------------------------------------------------------
 
 func TestListRuns_MissingRunsDirIsNotAnError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	var out, warn strings.Builder
 	if err := listRuns(&out, &warn, runsRoot()); err != nil {
 		t.Fatalf("a missing runs dir must not be an error: %v", err)
@@ -125,7 +125,7 @@ func TestListRuns_MissingRunsDirIsNotAnError(t *testing.T) {
 }
 
 func TestListRuns_EmptyRunsDirSaysNoRuns(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	if err := os.MkdirAll(runsRoot(), 0o755); err != nil {
 		t.Fatalf("create empty runs dir: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestListRuns_EmptyRunsDirSaysNoRuns(t *testing.T) {
 // --- a corrupt snapshot is skipped loudly, never hides the rest --------------
 
 func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	completedRun(t, "run-good",
 		`{"name":"good","nodes":[{"id":"a","prompt":"a"}]}`,
 		map[string]runner.NodeOutcome{
@@ -196,7 +196,7 @@ func TestRunRuns_ExtraArgumentErrors(t *testing.T) {
 }
 
 func TestMainExitCode_RunsListMapsToExitCode0(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateRunHome(t)
 	if code := mainExitCode([]string{"runs", "list"}); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
