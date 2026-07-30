@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -416,10 +417,16 @@ func runDirFor(runID string) string {
 	return filepath.Join(runsRoot(), runID)
 }
 
+// runIDSeq distinguishes run ids minted in the same instant by one process;
+// the nanosecond timestamp distinguishes concurrent processes.
+var runIDSeq atomic.Uint64
+
 // newRunID is a filesystem-safe, sortable run id: a UTC timestamp to the
-// second. One run directory per invocation keeps a run's artifacts inspectable.
+// nanosecond plus a per-process sequence number. One run directory per
+// invocation keeps a run's artifacts inspectable; second resolution alone let
+// two runs started in the same second share (and clobber) one run directory.
 func newRunID() string {
-	return time.Now().UTC().Format("20060102-150405")
+	return fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102-150405.000000000"), runIDSeq.Add(1))
 }
 
 // sha256Hex is the hex SHA-256 of data — Snapshot.GraphSHA256's exact format,
