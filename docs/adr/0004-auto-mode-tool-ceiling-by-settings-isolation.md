@@ -74,8 +74,10 @@ Layer 1 is the load-bearing change; layer 5 is why shipping it is safe before
 every empirical question is answered, because a wrong assumption in layers 1–4
 degrades to today's behaviour rather than to nothing.
 
-Hand-written graphs get **none** of layers 1–5. They are the user's own reviewed
-artifact and are *meant* to run under the user's settings, hooks and MCP servers.
+Hand-written graphs get layer 2 only — a node's declared `allowed_tools` is
+still rendered as `--allowedTools` — and **none** of layers 1, 3, 4 and 5. They
+are the user's own reviewed artifact and are *meant* to run under the user's
+settings, hooks and MCP servers.
 
 ### 2. Every `graph.Node` field has an explicit planned-node disposition
 

@@ -27,7 +27,7 @@ let them drift apart.
   unit-tested in `internal/childenv/childenv_test.go` and at each call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`) — don't
   touch env construction without keeping those tests meaningful.
-- **The two exec seams.** Exactly two objects may import `os/exec`:
+- **The two exec seams.** Exactly two objects may spawn a process:
   `runner.ClaudeCLIRunner` (a node's claude subprocess) and
   `verify.ShellVerifier` (a node's evidence command) — see
   `docs/adr/0002-verification-is-a-second-exec-seam.md`. Everything else

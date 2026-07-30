@@ -239,6 +239,24 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 		t.Fatalf("write edited graph file: %v", err)
 	}
 
+	stderr, resumeErr := captureStderr(t, func() error {
+		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+	})
+
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+	if !strings.Contains(stderr, "gate-flow.yaml") || !strings.Contains(stderr, "changed on disk") {
+		t.Errorf("expected a stderr warning about the changed graph source, got %q", stderr)
+	}
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns
+// everything it wrote, alongside fn's own error. Process-global stderr rather
+// than an injected writer because the warnings under test print to os.Stderr
+// directly.
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
 	origStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -248,11 +266,11 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 	done := make(chan string, 1)
 	go func() {
 		var buf strings.Builder
-		buf2 := make([]byte, 4096)
+		chunk := make([]byte, 4096)
 		for {
-			n, readErr := r.Read(buf2)
+			n, readErr := r.Read(chunk)
 			if n > 0 {
-				buf.Write(buf2[:n])
+				buf.Write(chunk[:n])
 			}
 			if readErr != nil {
 				break
@@ -261,18 +279,45 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 		done <- buf.String()
 	}()
 
-	resumeErr := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+	fnErr := fn()
 
 	os.Stderr = origStderr
 	_ = w.Close()
 	stderr := <-done
 	_ = r.Close()
+	return stderr, fnErr
+}
+
+// --- resumed legs re-warn for bypassPermissions ------------------------------
+
+// TestResume_WarnsOnBypassPermissions pins DESIGN.md's "loud warning, never
+// silently" promise onto the resume path: a paused run whose graph opted a
+// node into bypassPermissions must warn again when it is resumed, not only
+// when it was first loaded — the resume may happen in a different terminal
+// session, long after the original warning scrolled away.
+func TestResume_WarnsOnBypassPermissions(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"bypass-flow","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"],"permission_mode":"bypassPermissions"}]}`)
+	rec := &capturingRunner{}
+	runID := "run-bypass"
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "bypass-flow.yaml", []byte("name: bypass-flow\n"))
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected the initial run to pause, got %T: %v", err, err)
+	}
+
+	stderr, resumeErr := captureStderr(t, func() error {
+		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+	})
 
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)
 	}
-	if !strings.Contains(stderr, "gate-flow.yaml") || !strings.Contains(stderr, "changed on disk") {
-		t.Errorf("expected a stderr warning about the changed graph source, got %q", stderr)
+	if !strings.Contains(stderr, "bypassPermissions") || !strings.Contains(stderr, `"ship"`) {
+		t.Errorf("expected a stderr warning naming the bypassPermissions node, got %q", stderr)
 	}
 }
 

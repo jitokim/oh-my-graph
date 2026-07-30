@@ -28,6 +28,14 @@ const (
 // terminal with a long transcript.
 const maxStderrInError = 500
 
+// waitDelay bounds how long Wait will keep waiting after the child was killed.
+// Killing the process group normally ends everything at once, so this is the
+// last resort for the one case it cannot cover: a descendant that escaped the
+// group (it set its own) still holds the inherited stdout pipe open, and Wait
+// blocks on the pipe rather than on the process. A cancelled or timed-out node
+// must return promptly even then — that is what keeps defaultTimeout's promise.
+const waitDelay = 2 * time.Second
+
 // NodeOutputError marks a run whose subprocess produced output oh-my-graph could
 // not turn into a NodeOutcome — non-JSON, a truncated envelope, or a spawn that
 // never yielded a result. Never a silent zero outcome: an unreadable run is a
@@ -78,7 +86,7 @@ func (e *NodeOutputError) Unwrap() error { return e.Err }
 
 // ClaudeCLIRunner runs a node as a real `claude -p ...` subprocess on the user's
 // logged-in subscription. It is one of exactly TWO objects in oh-my-graph that
-// may import os/exec (the other is verify.ShellVerifier, which runs a
+// may spawn a process (the other is verify.ShellVerifier, which runs a
 // success_check.verify command — see docs/adr/0002); everything upstream
 // depends on the NodeRunner interface, so the claude-exec surface stays a
 // single, testable point.
@@ -128,15 +136,29 @@ func NewClaudeCLIRunner(opts ...ClaudeCLIOption) *ClaudeCLIRunner {
 	return r
 }
 
-// buildCmd assembles the exact *exec.Cmd for an invocation: argv, cwd, and the
-// scrubbed child environment. It is the unit under test — claude_test.go calls
-// it directly to assert both the argv AND that ANTHROPIC_API_KEY /
-// ANTHROPIC_AUTH_TOKEN are absent from cmd.Env even when the parent process has
-// them set. Nothing here spawns; Run wires it to the OS.
+// buildCmd assembles the exact *exec.Cmd for an invocation: argv, cwd, the
+// scrubbed child environment, and the cancellation behaviour. It is the unit
+// under test — claude_test.go calls it directly to assert both the argv AND
+// that ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are absent from cmd.Env even
+// when the parent process has them set. Nothing here spawns; Run wires it to
+// the OS.
 func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.binary, r.buildArgs(spec)...)
 	cmd.Dir = spec.Cwd
 	cmd.Env = childenv.Scrub(r.environ())
+
+	// The direct child is the claude CLI, but a node's work fans out into
+	// descendants — MCP servers, Bash tool subprocesses. exec's own
+	// cancellation kills only the CLI, so a cancelled or timed-out node would
+	// leave that work running (and, since the descendants inherit the stdout
+	// pipe, would leave Wait blocked on the pipe until they finished on their
+	// own — the node outliving the timeout that was supposed to bound it, the
+	// exact hang defaultTimeout exists to prevent). Give the child its own
+	// process group and cancel by killing the group, exactly as
+	// verify.ShellVerifier does on the other seam.
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = waitDelay
 	return cmd
 }
 
@@ -248,14 +270,18 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 	exitCode := 0
 	var stderr []byte
 	if runErr != nil {
+		// Order matters: a child killed on cancellation/timeout also surfaces
+		// as an *exec.ExitError, so the context must be ruled out before an
+		// exit code is read (as Verify does on the other seam) — otherwise a
+		// cancelled node would be reported as "claude produced no output"
+		// instead of as the cancellation it was. There is no envelope to
+		// salvage either way, and the context error lets the Scheduler tell a
+		// halt-cancellation from a genuine run failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return NodeOutcome{}, fmt.Errorf("claude run: %w", ctxErr)
+		}
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
-			// Context cancel/timeout or a failure to spawn at all — there is no
-			// envelope to salvage. Prefer the context error so the Scheduler can
-			// tell a halt-cancellation from a genuine run failure.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return NodeOutcome{}, fmt.Errorf("claude run: %w", ctxErr)
-			}
 			return NodeOutcome{}, fmt.Errorf("claude run: spawn failed: %w", runErr)
 		}
 		// The process ran and exited non-zero. claude usually still printed its

@@ -294,9 +294,10 @@ type Verifier interface {
 }
 ```
 
-- `ShellVerifier` (prod) is the second of the program's exactly two `os/exec`
-  seams (ADR 0002) and the only object in `internal/verify` that imports it.
-  Injected by `cmd/oh-my-graph`, never constructed by the scheduler.
+- `ShellVerifier` (prod) is the second of the program's exactly two
+  process-spawning seams (ADR 0002) and the only object in `internal/verify`
+  that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
+  the scheduler.
 - `RefusingVerifier` is the `Options.Verifier` default:
   a scheduler test that forgets to inject one gets a loud failure instead of a
   real spawn. `FakeVerifier` (scripted, keyed by command) is what tests inject,
@@ -596,7 +597,8 @@ Scheduler as any other graph.
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
-    execs under context, parses JSON. The ONLY object touching os/exec.
+    execs under context, parses JSON. One of the exactly two objects that
+    spawn a process (the other: `ShellVerifier`).
   - `FakeRunner` (tests): scripted `map[key]NodeOutcome` keyed by the
     invocation (`NodeInvocation` has no id field; the key defaults to
     `spec.Prompt`, and tests set each node's prompt equal to its id so the
@@ -605,7 +607,7 @@ Scheduler as any other graph.
     spawns. This is the testability keystone.
 - **Verifier (interface, v1.1)** — THE evidence seam, separate from NodeRunner
   because a verification command is not a claude invocation. Injected the same
-  way. `ShellVerifier` (prod, the only `os/exec` importer in its package),
+  way. `ShellVerifier` (prod, the only object in its package that spawns),
   `RefusingVerifier` (default — a forgotten injection fails loudly),
   `FakeVerifier` (tests). See "Success checks".
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
@@ -673,8 +675,8 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 cmd/oh-my-graph/{main,flags,resume,runs,show,chat,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run/resume/runs/show/chat, print ledger
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
-internal/runner/{runner,claude,fake}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
-internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the two os/exec seams (ADR 0002)
+internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
+internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the two exec seams (ADR 0002)
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (runner + verify)
 internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
