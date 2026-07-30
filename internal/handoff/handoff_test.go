@@ -96,6 +96,24 @@ func TestPersistOutput_WritesFile(t *testing.T) {
 	}
 }
 
+// TestPersistOutput_SlashInNodeIDCannotEscapeRunDir pins the sanitization to
+// the '/' form specifically: '/' is a path separator on Windows too, so an id
+// like "../escape" must land inside the run directory on every OS, not only
+// where '/' happens to equal os.PathSeparator.
+func TestPersistOutput_SlashInNodeIDCannotEscapeRunDir(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+	if err := h.PersistOutput("../escape", "BODY", "sess"); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if _, err := os.ReadFile(filepath.Join(dir, ".._escape.out")); err != nil {
+		t.Fatalf("sanitized artifact should live inside the run dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escape.out")); !os.IsNotExist(err) {
+		t.Fatalf("artifact escaped the run directory (stat err = %v)", err)
+	}
+}
+
 // --- session resolution -----------------------------------------------------
 
 func TestResumeSessionFor_ArtifactNodeReturnsEmpty(t *testing.T) {

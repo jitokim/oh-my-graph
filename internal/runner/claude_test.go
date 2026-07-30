@@ -2,8 +2,13 @@ package runner
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // prompt/tool fixtures reused across the argv assertions.
@@ -394,4 +399,50 @@ func containsEnv(env []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// --- cancellation kills the child tree (real spawn) ---------------------------
+
+// TestRun_CancelledRunKillsTheChild proves defaultTimeout's promise — a wedged
+// child can never hang the whole graph — actually holds through Run: cancelling
+// the context must kill the child's whole process tree, not just the direct
+// child, and Run must return promptly instead of blocking on a stdout pipe a
+// grandchild still holds open. It mirrors verify's
+// TestVerify_CancelledRunKillsTheChild on the other seam.
+//
+// The stub is not claude: like the verify package's tests, this spawns a free,
+// offline shell script, because kill-the-tree behaviour cannot be proven
+// without a process. Every OTHER runner test stays spawn-free via buildCmd and
+// FakeRunner.
+func TestRun_CancelledRunKillsTheChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix process-group path")
+	}
+	// The stub ignores its argv and wedges like a hung claude whose own child
+	// (here: sleep) inherits stdout. Without the process-group kill, cancel
+	// would kill only the script itself and Run would stay blocked on the pipe
+	// until sleep exited on its own.
+	stub := filepath.Join(t.TempDir(), "claude-stub")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := r.Run(ctx, NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if err == nil {
+		t.Fatal("a cancelled node must not report success")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected a context.Canceled error, got %T: %v", err, err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("node outlived its cancelled run by %s", elapsed)
+	}
 }

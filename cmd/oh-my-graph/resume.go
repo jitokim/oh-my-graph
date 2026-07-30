@@ -76,6 +76,10 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	if err != nil {
 		return fmt.Errorf("reconstruct graph for run %q: %w", runID, err)
 	}
+	// A resumed leg re-warns exactly as `run` did at load: the warning is
+	// promised to be loud and never silent (DESIGN.md), and a resume may be
+	// far from the terminal session that saw the first one.
+	warnBypassPermissions(g)
 
 	h := handoff.New(runDir, snap.Inputs)
 	for nodeID, rec := range snap.Nodes {

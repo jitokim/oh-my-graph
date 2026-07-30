@@ -84,7 +84,9 @@ out-of-scope shell command **ran** without Layer 1 and was **denied** with it,
 while in-scope `git` kept working. So the previously-disclosed gap — *"a node
 declaring any scoped `Bash(...)` pattern keeps the whole `Bash` tool"* — is
 **closed for auto-planned nodes.** It remains accurate for hand-written graphs,
-which by design get none of these layers.
+which run without layer 1's isolation: their declared `allowed_tools` is still
+rendered as `--allowedTools` (layer 2 applies to every graph), but layers 1 and
+3–5 are auto mode's alone by design.
 
 Still a reduction, not a sandbox. What is **not** covered:
 

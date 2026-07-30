@@ -219,9 +219,13 @@ func (h *Handoff) ArtifactPath(nodeID string) (string, bool) {
 }
 
 // artifactPath is the on-disk location of a node's persisted result. Node ids
-// are validated (no path separators expected), but the base is cleaned so a
-// stray separator can never escape the run directory.
+// are validated (no path separators expected), but both '/' and this OS's own
+// separator are replaced so a stray separator can never escape the run
+// directory on any platform — Windows resolves '/' as a separator too, so
+// sanitizing os.PathSeparator alone would leave a '/'-carrying id escaping
+// there.
 func (h *Handoff) artifactPath(nodeID string) string {
-	safe := strings.ReplaceAll(nodeID, string(os.PathSeparator), "_")
+	safe := strings.ReplaceAll(nodeID, "/", "_")
+	safe = strings.ReplaceAll(safe, string(os.PathSeparator), "_")
 	return filepath.Join(h.runDir, safe+".out")
 }

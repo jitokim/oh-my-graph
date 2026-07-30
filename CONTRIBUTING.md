@@ -72,11 +72,14 @@ subscription-auth env scrub (`internal/childenv`) to exactly one call site per
 spawner.
 
 If your change needs to run a subprocess, it belongs behind one of the two
-existing seams. A PR that adds `os/exec` (or any other way of shelling out)
-outside `internal/runner/claude.go` and `internal/verify/shell.go` should be
-treated as a design regression, not a normal review comment — a **third**
-spawner needs an ADR first, the way the second one got
-[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md).
+existing seams. A PR that spawns a process (via `os/exec` or any other way of
+shelling out) outside `runner.ClaudeCLIRunner` and `verify.ShellVerifier`
+should be treated as a design regression, not a normal review comment — a
+**third** spawner needs an ADR first, the way the second one got
+[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md). (The invariant
+is about *objects that spawn*, not `os/exec` imports per se: both seam
+packages also carry build-tagged process-group helpers that import `os/exec`
+solely to kill a cancelled child's tree — they never start one.)
 
 ## Invariants a contribution must preserve
 
