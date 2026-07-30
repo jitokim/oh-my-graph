@@ -2,6 +2,7 @@ package graph
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -61,69 +62,13 @@ nodes:
 		t.Fatalf("Parse(json.Marshal(*Graph)) failed: %v\nencoded: %s", err, encoded)
 	}
 
-	assertNodesEqual(t, "dev", original, roundTripped)
-	assertNodesEqual(t, "approve", original, roundTripped)
-	assertNodesEqual(t, "ship", original, roundTripped)
-
-	if roundTripped.Name != original.Name || roundTripped.Version != original.Version {
-		t.Fatalf("graph metadata did not round-trip: got name=%q version=%q, want name=%q version=%q",
-			roundTripped.Name, roundTripped.Version, original.Name, original.Version)
+	// Whole-graph deep equality, not a hand-enumerated field list: a field
+	// added to Node/Graph/SuccessCheck/Verification/Retry that fails to
+	// round-trip (missing json tag, mismatched key) turns this red without the
+	// test needing to know the field exists. Both graphs came out of Parse, so
+	// unexported derived state (byID, parsed timeouts) is comparable too.
+	if !reflect.DeepEqual(original, roundTripped) {
+		t.Fatalf("graph did not survive the JSON round-trip:\n got  %+v\n want %+v\nencoded: %s",
+			roundTripped, original, encoded)
 	}
-	if len(roundTripped.Nodes) != len(original.Nodes) {
-		t.Fatalf("node count = %d, want %d", len(roundTripped.Nodes), len(original.Nodes))
-	}
-}
-
-// assertNodesEqual compares one node by id across two graphs field by field —
-// the fields that matter for a resumed run to behave exactly like the
-// original.
-func assertNodesEqual(t *testing.T, id string, want, got *Graph) {
-	t.Helper()
-	w, ok := want.NodeByID(id)
-	if !ok {
-		t.Fatalf("test setup: node %q missing from original graph", id)
-	}
-	g, ok := got.NodeByID(id)
-	if !ok {
-		t.Fatalf("node %q did not survive the JSON round-trip", id)
-	}
-	if g.ID != w.ID || g.Type != w.Type || g.Prompt != w.Prompt || g.Cwd != w.Cwd ||
-		g.PermissionMode != w.PermissionMode || g.BudgetUSD != w.BudgetUSD ||
-		g.Handoff != w.Handoff || g.Agent != w.Agent {
-		t.Fatalf("node %q scalar fields did not round-trip:\n got  %+v\n want %+v", id, g, w)
-	}
-	if !equalStringSlices(g.DependsOn, w.DependsOn) || !equalStringSlices(g.AllowedTools, w.AllowedTools) {
-		t.Fatalf("node %q slice fields did not round-trip:\n got  %+v\n want %+v", id, g, w)
-	}
-	if (g.Retry == nil) != (w.Retry == nil) {
-		t.Fatalf("node %q retry presence did not round-trip: got %+v, want %+v", id, g.Retry, w.Retry)
-	}
-	if g.Retry != nil && (g.Retry.Max != w.Retry.Max || !equalStringSlices(g.Retry.On, w.Retry.On)) {
-		t.Fatalf("node %q retry contents did not round-trip: got %+v, want %+v", id, g.Retry, w.Retry)
-	}
-	if g.SuccessCheck.ExitZero != w.SuccessCheck.ExitZero || g.SuccessCheck.ResultMatches != w.SuccessCheck.ResultMatches {
-		t.Fatalf("node %q success_check did not round-trip: got %+v, want %+v", id, g.SuccessCheck, w.SuccessCheck)
-	}
-	if (g.SuccessCheck.Verify == nil) != (w.SuccessCheck.Verify == nil) {
-		t.Fatalf("node %q verify presence did not round-trip", id)
-	}
-	if g.SuccessCheck.Verify != nil {
-		gv, wv := g.SuccessCheck.Verify, w.SuccessCheck.Verify
-		if gv.Command != wv.Command || gv.Cwd != wv.Cwd || gv.OutputMatches != wv.OutputMatches ||
-			gv.TimeoutDuration() != wv.TimeoutDuration() || gv.ExpectedExitCode() != wv.ExpectedExitCode() {
-			t.Fatalf("node %q verify contents did not round-trip: got %+v, want %+v", id, gv, wv)
-		}
-	}
-}
-
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
