@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [v0.1.1] - 2026-07-31
+
+First patch after the public launch — run-feed observability and hardening.
+
+### Added
+
+- **`watch <run-id>`.** Tail a run's `events.jsonl` as a plain-text feed (the
+  same `▶ / ✓ / ✗` shape as the live run), following until `run_finished` or
+  interrupt. A lightweight, dependency-free way to observe a run from another
+  terminal — deliberately not a TUI.
+- **Gate events in the run feed.** `events.jsonl` now emits `gate_paused`,
+  `gate_approved`, and `gate_rejected` from the same hook points as the
+  progress feed, so a consumer (fleetops) can see gate state from the stream
+  without reading `state.json`. Event-stream schema bumped to `2`.
+
+### Fixed
+
+- **Run-id collisions.** `newRunID` now stays unique for runs minted in the
+  same second — a per-process atomic sequence plus a nanosecond timestamp — so
+  concurrent or rapid runs no longer share a run directory.
+- The snapshot JSON round-trip test now actually asserts the round-trip
+  (marshal → parse → equal); `self-dev.yaml` is covered by the shipped-graph
+  parse test; and a `!windows` build tag was aligned to `unix`.
+
 ## [v0.1.0] - 2026-07-31
 
 Initial MVP: a graph-native orchestrator that runs each DAG node as a real
