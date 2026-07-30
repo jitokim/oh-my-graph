@@ -3,12 +3,14 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -160,6 +162,126 @@ nodes:
 	}
 	if !strings.Contains(failed.Detail, "result did not match") {
 		t.Errorf("node_failed detail = %q, want the failing predicate named", failed.Detail)
+	}
+	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomeFailed {
+		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomeFailed)
+	}
+}
+
+// TestScheduler_EventStreamGatePause proves a fresh run reaching a gate emits
+// gate_paused — carrying the gate's node id — before the leg closes with
+// outcome "paused", so a stream consumer knows both that the run paused and
+// which gate a resume must decide, without reading state.json.
+func TestScheduler_EventStreamGatePause(t *testing.T) {
+	g := mustGraph(t, `
+name: gate-pause
+nodes:
+  - { id: a, prompt: a }
+  - { id: approve, type: gate, depends_on: [a] }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0.10)})
+	feed, path := newEventStream(t, "run-gate-pause")
+	s, h, led := newHarness(t, fake, Options{EventSink: feed})
+
+	var paused *PausedError
+	if err := s.Run(context.Background(), g, h, led); !errors.As(err, &paused) {
+		t.Fatalf("expected *PausedError, got %T: %v", err, err)
+	}
+
+	events := readEventStream(t, path)
+	want := []string{
+		"run_started",
+		"node_started a", "node_passed a",
+		"node_started approve", "gate_paused approve",
+		"run_finished",
+	}
+	if got := eventTypes(events); !equalStrings(got, want) {
+		t.Fatalf("event sequence = %v, want %v", got, want)
+	}
+	if pausedEvent := events[4]; pausedEvent.NodeID != "approve" {
+		t.Errorf("gate_paused node_id = %q, want %q", pausedEvent.NodeID, "approve")
+	}
+	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomePaused {
+		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomePaused)
+	}
+}
+
+// TestScheduler_EventStreamGateApprove proves a resumed leg's approve decision
+// (a RecordedController replaying --approve, exactly what `resume` injects)
+// emits gate_approved ahead of the gate's ordinary terminal node_passed, then
+// runs the dependents and closes the leg with outcome "passed".
+func TestScheduler_EventStreamGateApprove(t *testing.T) {
+	g := mustGraph(t, `
+name: gate-approve
+nodes:
+  - { id: approve, type: gate }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"ship": pass("s-ship", 0.30)})
+	feed, path := newEventStream(t, "run-gate-approve")
+	controller := gate.NewRecordedController(map[string]gate.Decision{"approve": gate.DecisionApprove})
+	s, h, led := newHarness(t, fake, Options{EventSink: feed, Gate: controller})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	events := readEventStream(t, path)
+	want := []string{
+		"run_started",
+		"node_started approve", "gate_approved approve", "node_passed approve",
+		"node_started ship", "node_passed ship",
+		"run_finished",
+	}
+	if got := eventTypes(events); !equalStrings(got, want) {
+		t.Fatalf("event sequence = %v, want %v", got, want)
+	}
+	if approved := events[2]; approved.NodeID != "approve" {
+		t.Errorf("gate_approved node_id = %q, want %q", approved.NodeID, "approve")
+	}
+	if gatePassed := events[3]; gatePassed.Verdict != runfeed.VerdictPass || gatePassed.CostUSD != 0 || gatePassed.SessionID != "" {
+		t.Errorf("gate node_passed payload = %+v, want verdict PASS with no cost/session (a gate spawns no subprocess)", gatePassed)
+	}
+	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomePassed {
+		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomePassed)
+	}
+}
+
+// TestScheduler_EventStreamGateReject proves a resumed leg's reject decision
+// emits gate_rejected ahead of the gate's terminal node_failed, never runs the
+// pruned dependent, and closes the leg with outcome "failed".
+func TestScheduler_EventStreamGateReject(t *testing.T) {
+	g := mustGraph(t, `
+name: gate-reject
+nodes:
+  - { id: approve, type: gate }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"ship": pass("s-ship", 0.30)})
+	feed, path := newEventStream(t, "run-gate-reject")
+	controller := gate.NewRecordedController(map[string]gate.Decision{"approve": gate.DecisionReject})
+	s, h, led := newHarness(t, fake, Options{EventSink: feed, Gate: controller})
+
+	var runFailed *RunFailedError
+	if err := s.Run(context.Background(), g, h, led); !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+
+	events := readEventStream(t, path)
+	want := []string{
+		"run_started",
+		"node_started approve", "gate_rejected approve", "node_failed approve",
+		"run_finished",
+	}
+	if got := eventTypes(events); !equalStrings(got, want) {
+		t.Fatalf("event sequence = %v, want %v", got, want)
+	}
+	if rejected := events[2]; rejected.NodeID != "approve" {
+		t.Errorf("gate_rejected node_id = %q, want %q", rejected.NodeID, "approve")
+	}
+	if gateFailed := events[3]; gateFailed.Verdict != runfeed.VerdictFail {
+		t.Errorf("gate node_failed verdict = %q, want %q", gateFailed.Verdict, runfeed.VerdictFail)
 	}
 	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomeFailed {
 		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomeFailed)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -214,6 +216,81 @@ func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
 	}
 	if rec.invocationFor("c").Prompt == "" {
 		t.Fatal("c should have run once gate2 was approved")
+	}
+}
+
+// --- gate events reach the run's events.jsonl across legs --------------------
+
+// readRunEvents decodes every line of the run's events.jsonl.
+func readRunEvents(t *testing.T, runID string) []runfeed.Event {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(runDirFor(runID), runfeed.FileName))
+	if err != nil {
+		t.Fatalf("read event stream: %v", err)
+	}
+	var events []runfeed.Event
+	for i, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		var e runfeed.Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("line %d is not valid JSON: %v (%q)", i, err, line)
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+// eventSeen reports whether events contains one of type eventType for nodeID.
+func eventSeen(events []runfeed.Event, eventType runfeed.EventType, nodeID string) bool {
+	for _, e := range events {
+		if e.Type == eventType && e.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+// TestResume_GateEventsAppearInStream pins the gate-event wiring end to end:
+// the first leg's pause lands a gate_paused in the run directory's
+// events.jsonl, and the resumed leg's --approve lands a gate_approved in the
+// SAME stream — both emitted by the scheduler through the EventSink
+// executeGraph/executeResume inject, never by resume-side lifecycle logic.
+func TestResume_GateEventsAppearInStream(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+
+	events := readRunEvents(t, runID)
+	if !eventSeen(events, runfeed.EventGatePaused, "approve") {
+		t.Fatalf("first leg did not emit gate_paused for the gate; events = %+v", events)
+	}
+	if eventSeen(events, runfeed.EventGateApproved, "approve") || eventSeen(events, runfeed.EventGateRejected, "approve") {
+		t.Fatal("no approve/reject decision exists yet; the first leg must not emit one")
+	}
+
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec); err != nil {
+		t.Fatalf("executeResume returned error: %v", err)
+	}
+	if !eventSeen(readRunEvents(t, runID), runfeed.EventGateApproved, "approve") {
+		t.Fatal("resumed leg did not emit gate_approved for the approved gate")
+	}
+}
+
+// TestResume_GateRejectEventAppearsInStream is the reject half of the same
+// wiring: a resumed leg replaying --reject lands a gate_rejected in the run's
+// stream alongside the gate's terminal node_failed.
+func TestResume_GateRejectEventAppearsInStream(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+
+	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
+	var runFailed *schedule.RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+	if !eventSeen(readRunEvents(t, runID), runfeed.EventGateRejected, "approve") {
+		t.Fatal("resumed leg did not emit gate_rejected for the rejected gate")
 	}
 }
 

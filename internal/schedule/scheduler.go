@@ -540,6 +540,13 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 //   - DecisionPause: a *pauseSignal, which Run() recognizes and turns into the
 //     whole-run pause — no ledger/snapshot write happens here, because that
 //     happens once at the Run level after in-flight siblings have drained.
+//
+// Each decision also emits its gate_* event (gate_approved / gate_rejected /
+// gate_paused) at the moment it is applied, from the same hook point as the
+// matching progress line, so a stream consumer sees gate state without
+// reading state.json. gate_paused is emitted per pausing gate: gates
+// evaluating concurrently may each pause, and each emits its own event, even
+// though only the first becomes the run's resumable pause point.
 func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
 	decision, err := s.gate.Evaluate(ctx, node)
 	if err != nil {
@@ -551,9 +558,11 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 		return s.recordGateApprove(led, h, node, time.Since(start))
 	case gate.DecisionReject:
 		s.recordGateDecision(node, runstate.GateReject)
+		s.emitEvent(runfeed.Event{Type: runfeed.EventGateRejected, NodeID: node.ID})
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, &rejectSignal{NodeID: node.ID})
 	case gate.DecisionPause:
 		s.logProgress("⏸ %s  gate paused\n", node.ID)
+		s.emitEvent(runfeed.Event{Type: runfeed.EventGatePaused, NodeID: node.ID})
 		return &pauseSignal{NodeID: node.ID}
 	default:
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0,
@@ -591,9 +600,11 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 // ledger PASS row — zero cost/session, since a gate spawns no subprocess —
 // then records the same into the snapshot so the gate counts as completed
 // (CompletedNodes) and its dependents may proceed, this leg or after a later
-// resume. The gate's terminal event is a node_passed like any other node's.
+// resume. The gate's terminal event is a node_passed like any other node's,
+// preceded by the gate_approved decision event.
 func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
 	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
+	s.emitEvent(runfeed.Event{Type: runfeed.EventGateApproved, NodeID: node.ID})
 	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
