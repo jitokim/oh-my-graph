@@ -107,7 +107,7 @@ output and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|chat|resume|runs|show|version> ...
+oh-my-graph <run|auto|chat|resume|runs|show|watch|version> ...
 ```
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
@@ -125,6 +125,9 @@ oh-my-graph <run|auto|chat|resume|runs|show|version> ...
   Read-only.
 - **`show <run-id>`** — print one run's detail: the per-node ledger (session,
   cost, verdict, duration) and the total. Read-only.
+- **`watch <run-id>`** — tail one run's event stream (`events.jsonl`) as plain
+  text, one formatted line per event, following new events `tail -f` style
+  until the run finishes (or Ctrl-C). Read-only; plain text, not a TUI.
 - **`version`** — print the tool version.
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
