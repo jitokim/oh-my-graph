@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [v0.1.0] - Unreleased
+## [v0.1.0] - 2026-07-31
 
 Initial MVP: a graph-native orchestrator that runs each DAG node as a real
 `claude -p` subprocess on the user's own Claude subscription.
