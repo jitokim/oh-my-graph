@@ -24,7 +24,7 @@ files answer complementary questions:
 | Answers | "where is the run *now*?" (resume reads this) | "what *happened*, in order, live?" |
 | Write discipline | temp file + fsync + rename after every node | one `write` + fsync per line |
 | Reader pattern | re-read the whole file | `tail -f` / seek to last offset |
-| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **2**) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **1**) |
+| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **2**) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **2**) |
 
 The two files version independently — a snapshot format change does not bump
 the event schema, and vice versa.
@@ -62,7 +62,7 @@ the three can never disagree about a transition. The Go source of truth is
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema` | int | Event format version. Currently **1**. |
+| `schema` | int | Event format version. Currently **2**. |
 | `ts` | string | Emission time, RFC 3339 UTC with nanosecond precision. |
 | `run_id` | string | The run this stream belongs to. |
 | `event` | string | One of the event types below. |
@@ -77,6 +77,9 @@ the three can never disagree about a transition. The Go source of truth is
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal) | A retry attempt begins after a failed one. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`) | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. |
+| `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
+| `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
+| `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
 On terminal node events, `retries` is the number of retries that preceded the
 terminal attempt (0 for a first-attempt verdict), `cost_usd` is the node's
@@ -86,6 +89,17 @@ the retry/budget note, possibly empty, on a PASS). Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
+added in schema **2**) mark the decision itself; an approved/rejected gate
+still gets its terminal `node_passed`/`node_failed` immediately after, so a
+consumer that only understands node events keeps working. `gate_paused` is
+emitted the moment the gate decides to pause — in-flight siblings drain
+*after* it, so their node events may legally appear between it and the leg's
+`run_finished` (outcome `"paused"`). If several gates evaluate concurrently,
+each pausing gate emits its own `gate_paused`; the gate the run is actually
+resumable at is the one `state.json` records in `gate.paused_at` (the first
+to pause).
 
 ### Guarantees
 
@@ -110,9 +124,14 @@ Both files follow the same rule:
   could be **misinterpreted** by an existing reader — a field renamed,
   retyped, or changed in meaning, or (for the stream) an existing event type's
   semantics changed.
-- Purely **additive** changes — a new optional field old readers ignore, or a
-  new event type — do **not** bump the schema. Consumers must therefore ignore
-  unknown fields and skip unknown event types rather than fail.
+- A new **optional field** old readers ignore does **not** bump the schema;
+  consumers must ignore unknown fields.
+- For the stream, the **event-type set is closed per schema version**: adding
+  an event type bumps `schema` (this is how stream schema 1 became 2, adding
+  the three `gate_*` events), so a consumer can detect that the stream may
+  carry transitions its version did not define. Consumers must still skip
+  unknown event types rather than fail — the bump makes the change visible,
+  not fatal.
 - oh-my-graph itself refuses to resume a `state.json` whose schema it does not
   exactly match (`runstate.Load`). Consumers of `events.jsonl` should check
   `schema` per event and surface (not silently misread) a version they do not
