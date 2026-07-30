@@ -287,8 +287,9 @@ nodes:
 }
 
 func TestParse_GateNodeParses(t *testing.T) {
-	// A gate node must PARSE and validate in v0.1 (execution is rejected
-	// elsewhere) so schema-reserved graphs load.
+	// A gate node must parse and validate like any other node; what happens
+	// at execution time is the Scheduler's concern (it dispatches the node to
+	// the injected GateController).
 	g, err := Parse([]byte(`
 name: with-gate
 nodes:

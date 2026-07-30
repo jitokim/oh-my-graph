@@ -234,7 +234,7 @@ success_check:
   exit_zero: true
   result_matches: "PASS"                 # optional, secondary
   verify:
-    command: "go test ./... -run TestFoo" # required; run via `sh -c`
+    command: "go test ./... -run TestFoo" # required; run via the platform shell (`sh -c` on unix, `cmd /c` on Windows)
     cwd: "{{ inputs.repo }}"              # optional; default = the node's own cwd
     timeout: 2m                           # optional; Go duration, default 2m, ceiling 10m
     expect_exit: 0                        # optional; default 0
@@ -294,9 +294,10 @@ type Verifier interface {
 }
 ```
 
-- `ShellVerifier` (prod) is the only object in `internal/verify` that imports
-  `os/exec`. Injected by `cmd/oh-my-graph`, never constructed by the scheduler.
-- `RefusingVerifier` is the `Options.Verifier` default, mirroring the gate stub:
+- `ShellVerifier` (prod) is the second of the program's exactly two `os/exec`
+  seams (ADR 0002) and the only object in `internal/verify` that imports it.
+  Injected by `cmd/oh-my-graph`, never constructed by the scheduler.
+- `RefusingVerifier` is the `Options.Verifier` default:
   a scheduler test that forgets to inject one gets a loud failure instead of a
   real spawn. `FakeVerifier` (scripted, keyed by command) is what tests inject,
   so the whole verify path stays spawn-free in CI.
@@ -345,7 +346,9 @@ by design, persists everything a second leg needs, and exits.
    rather than cancelling it, so sibling nodes' results are persisted and do not
    have to be re-run (and re-paid for). This is the one place the halt path does
    not cancel the context.
-3. Write the run snapshot atomically, record the gate as `PAUSED` in the ledger,
+3. Write the run snapshot atomically — the pause itself is carried by the
+   snapshot (`runstate.SnapshotRecorder.RecordPause`) and by the run feed's
+   `paused` outcome, not by a ledger row (the ledger has no `PAUSED` verdict) —
    print the exact `resume` command, and return a `*schedule.PausedError`.
 4. `cmd/oh-my-graph` maps that to **exit code 2**. `0` = every node passed,
    `1` = the run failed, `2` = the run is paused and resumable. A pause is not a
@@ -667,19 +670,19 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags}.go      CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run, print ledger
+cmd/oh-my-graph/{main,flags,resume,runs,show,chat,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run/resume/runs/show/chat, print ledger
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
-internal/verify/{verify,shell,fake}.go + _test v1.1: Verifier seam — ShellVerifier is this package's only os/exec importer
+internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the two os/exec seams (ADR 0002)
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (runner + verify)
-internal/coordinator/coordinator.go + _test    auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies
+internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
-internal/gate/gate.go + _test                  v1.1: Decision + PauseController/RecordedController
-internal/runstate/runstate.go + _test          v1.1: state.json snapshot — atomic write, schema version, resume load
+internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
+internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/runfeed.go + _test            events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..4}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
@@ -687,7 +690,7 @@ README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ## Verify MVP cheaply (real claude, cents)
 `graphs/haiku-smoke.yaml`: node `write` ("write a 3-line haiku about graphs to
 haiku.txt", acceptEdits) → node `critique` (depends_on write, reads
-{{artifacts.write}}, plan). `mkdir -p /tmp/omg-smoke && oh-my-graph run graphs/haiku-smoke.yaml`.
+{{artifacts.write}}, plan). `mkdir -p /tmp/omg-smoke && oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke`.
 Proves: subscription auth (succeeds with API key unset/scrubbed), sequential edge +
 artifact handoff, JSON capture (2 session_ids + costs), RunLedger, and fleetops sees
 both sessions (free integration). CI stays free — real-claude smoke is a manual
@@ -733,7 +736,7 @@ in "Auto mode" above.
    `NodeRunner` contract. See "Execution engine" for the full two-layer detail
    and why a budget-derived wall-clock timeout was rejected as fake enforcement.
 3. parallel nodes sharing one cwd can race edits → v0.1 parallel nodes should be
-   read-only (plan) reviews (the captain's fan-out case); parallel edits want
+   read-only (plan) reviews (the motivating fan-out case); parallel edits want
    worktrees (deferred).
 4. session-handoff + multi-parent fan-in conflict → validation rejects `handoff:
    session` on a node with 2+ session-parents; multi-parent must use artifact.

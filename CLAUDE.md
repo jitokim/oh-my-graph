@@ -36,7 +36,8 @@ let them drift apart.
   scripted `FakeRunner`/`FakeVerifier` with zero real spawns. A third spawner
   needs its own ADR.
 - **Artifact handoff is the default.** `handoff: artifact` persists a node's
-  result to `.oh-my-graph/runs/<run-id>/<node-id>.out`; `handoff: session`
+  result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` (base overridable via
+  `OMG_HOME`); `handoff: session`
   (resuming `--resume <session_id>`) is opt-in and only valid with exactly one
   session-parent.
 - **Never the Agent SDK. Never `--bare`. Never `--no-session-persistence`.**
@@ -74,7 +75,7 @@ internal/childenv/     the shared child-env scrub policy (used by both spawners)
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)
-internal/gate/         v1.1 stub for the (not-yet-implemented) gate node type
-graphs/                shipped example graphs (haiku-smoke, dev-review-pr)
+internal/gate/         gate Decision + PauseController/RecordedController (human pause/approve)
+graphs/                shipped example graphs (haiku-smoke, dev-review-pr, self-dev)
 docs/adr/              architecture decision records
 ```

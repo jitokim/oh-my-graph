@@ -30,11 +30,12 @@ The node runtime is **exclusively** a raw `claude -p` subprocess (path 2).
   billing. This scrub is the load-bearing guarantee and is unit-tested.
 - Never `--bare` (it disables OAuth). Never the Agent SDK. Never
   `--no-session-persistence` (fleetops needs the transcript).
-- The JSON envelope's `session_id`, `result`, and `total_cost_usd` are the only
-  outputs the engine reads.
+- The JSON envelope's `session_id`, `result`, `total_cost_usd`, and `subtype`
+  (to detect a `--max-budget-usd` abort) are the outputs the engine reads.
 
 All of this lives behind a single `NodeRunner` interface. `ClaudeCLIRunner` is
-the only object in the codebase that imports `os/exec`; everything upstream (the
+one of exactly two objects in the codebase that import `os/exec` (the other is
+`verify.ShellVerifier` — see ADR 0002); everything upstream (the
 scheduler) depends on the interface, and a `FakeRunner` makes the whole engine
 testable without spawning claude.
 
