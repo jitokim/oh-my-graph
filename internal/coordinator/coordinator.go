@@ -349,8 +349,9 @@ func toolName(rule string) string {
 //   - no planned graph may be empty — a nodeless plan would "succeed" while
 //     doing nothing, after paying for the planner call;
 //   - no planned node may run without a prompt;
-//   - no planned node may be a gate (v0.1 rejects gates at execution time, so
-//     a planned one only halts the run after the planning spend);
+//   - no planned node may be a gate — every gate pauses a fresh run for a
+//     human decision, so an unreviewed auto-plan could park the run awaiting
+//     an approval nobody knows to give, forever;
 //   - no planned node may relax the sandbox with bypassPermissions;
 //   - every planned node must declare a non-empty allowed_tools, and every
 //     tool it names must be in plannedToolAllowlist. Omitting allowed_tools

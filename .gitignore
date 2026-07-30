@@ -10,5 +10,5 @@
 # stray root binary
 /oh-my-graph
 
-# Personal working memory (symlinked to a private repo) — never tracked
+# Local scratch working memory — never tracked
 /.notes/

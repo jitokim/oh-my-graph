@@ -941,8 +941,10 @@ func evaluateSuccessCheck(node graph.Node, outcome runner.NodeOutcome) error {
 // node landing exactly on its budget passes; no tolerance is invented on top.
 // A non-positive budget_usd means "no budget declared" and is never enforced.
 //
-// This check is necessarily post-hoc — see NodeBudgetError for why a mid-run
-// cost kill is not implementable against the current runner contract.
+// This check is the post-hoc backstop behind claude's own --max-budget-usd
+// mid-run kill (surfaced as NodeOutcome.BudgetExhausted and handled upstream):
+// it catches the one in-flight call that can overshoot before the native
+// abort lands.
 func evaluateBudget(node graph.Node, outcome runner.NodeOutcome) error {
 	if node.BudgetUSD <= 0 || outcome.TotalCostUSD <= node.BudgetUSD {
 		return nil

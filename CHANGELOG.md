@@ -28,7 +28,7 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   node can never silently fall back to metered API billing — this is
   unit-tested against the built command. Never `--bare`, never the Agent SDK.
 - **Artifact and session handoff.** `handoff: artifact` (default) persists
-  each node's result to `.oh-my-graph/runs/<run-id>/<node-id>.out` and
+  each node's result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and
   interpolates it into dependents via `{{ artifacts.<id> }}` (path by default,
   content with the `| inline` filter) — the only option for fan-in.
   `handoff: session` resumes a single parent's claude session
@@ -82,7 +82,7 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   from a plain-language goal instead of hand-written YAML: a coordinator makes
   one planner call through the same env-scrubbed `NodeRunner` seam, loads the
   JSON reply with the existing graph parser and validator, saves the spec to
-  `.oh-my-graph/runs/<run-id>/graph.json` (re-runnable with `oh-my-graph run`),
+  `~/.oh-my-graph/runs/<run-id>/graph.json` (re-runnable with `oh-my-graph run`),
   and executes it on the same scheduler. A planned node can never request
   `permission_mode: bypassPermissions`, set `cwd`, set `agent`, declare a
   `success_check.verify` command, or name a tool outside a fixed allowlist.

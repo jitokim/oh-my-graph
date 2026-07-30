@@ -74,8 +74,8 @@ func (e *NotConfiguredError) Error() string {
 func (e *NotConfiguredError) Unwrap() error { return ErrNoVerifier }
 
 // RefusingVerifier is the Scheduler's default Verifier: it refuses every
-// request instead of running anything. It mirrors the gate stub, and it exists
-// so that forgetting to inject a real Verifier fails loudly and locally rather
+// request instead of running anything. It exists so that forgetting to inject
+// a real Verifier fails loudly and locally rather
 // than silently spawning a process from a test — which is exactly how a suite
 // that promises "zero real spawns" starts quietly breaking that promise.
 //

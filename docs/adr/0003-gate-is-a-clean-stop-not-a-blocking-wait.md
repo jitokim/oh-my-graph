@@ -35,7 +35,7 @@ seconds.
   persisted and do not have to be re-run and re-paid for. This is the one place
   the halt path deliberately does not cancel the shared context.
 - The run snapshot is written atomically (temp file + `rename`) to
-  `.oh-my-graph/runs/<run-id>/state.json`, carrying a `schema` version.
+  `~/.oh-my-graph/runs/<run-id>/state.json`, carrying a `schema` version.
 - `Scheduler.Run` returns a `*PausedError`; `cmd/oh-my-graph` maps it to **exit
   code 2**. `0` = all nodes passed, `1` = the run failed, `2` = paused and
   resumable. A pause is not a failure and must not be reported as one.

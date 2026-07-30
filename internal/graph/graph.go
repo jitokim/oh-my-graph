@@ -17,9 +17,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Node type constants. A node is a claude subprocess by default; a gate node is
-// schema-reserved for the v1.1 human-pause feature (see internal/gate) and is
-// rejected at execution time in v0.1.
+// Node type constants. A node is a claude subprocess by default; a gate node
+// pauses the run for a human decision — the Scheduler dispatches it to the
+// injected gate.GateController, and `oh-my-graph resume` continues the run
+// (see internal/gate).
 const (
 	TypeClaudeRun = "claude-run"
 	TypeGate      = "gate"
@@ -60,7 +61,8 @@ const (
 // node said about its own work. It is the only success_check predicate that
 // observes state outside the model's narration.
 //
-// The engine runs Command through `sh -c` (see internal/verify), so it is
+// The engine runs Command through the platform shell — `sh -c` on unix,
+// `cmd /c` on Windows (see internal/verify's build-tagged shells) — so it is
 // arbitrary shell — the same standing as allowed_tools in a hand-written graph
 // the user reviewed. Auto-planned graphs may not declare it at all.
 type Verification struct {

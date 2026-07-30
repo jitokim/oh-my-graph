@@ -10,7 +10,7 @@
 //     Load rather than misread, so a format change is a visible failure, never a
 //     silent corruption.
 //   - Its field types are owned by this package, not imported from the runtime
-//     packages they mirror (ledger.Verdict, the future gate.Decision and
+//     packages they mirror (ledger.Verdict, gate.Decision and
 //     runner.ToolPolicy). A persistence format must not change meaning because a
 //     runtime type was renamed or re-shaped without anyone bumping Schema; owning
 //     the types keeps Schema the single gate on the format. The small enums
@@ -72,11 +72,11 @@ const (
 	VerdictFail Verdict = "FAIL"
 )
 
-// GateDecision is a gate's recorded outcome. The values mirror the future
+// GateDecision is a gate's recorded outcome. The values mirror the
 // gate.Decision constants (approve / reject / pause) and are redeclared here for
 // the same reason as Verdict: the snapshot is the source of truth for what a
-// resumed run replays, and must not depend on a runtime type that this
-// scaffolding slice does not yet define.
+// resumed run replays, and must not depend on a runtime type that is free to
+// change shape without a Schema bump.
 type GateDecision string
 
 const (

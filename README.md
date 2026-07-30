@@ -557,8 +557,10 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   no whole-graph budget. Closing the first needs incremental cost
   (`--output-format stream-json`), a `NodeRunner`-contract change.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
-- **`gate` (human pause/approve) is not implemented.** The node type is
-  schema-reserved and rejected at execution time; no `oh-my-graph resume` yet.
+- **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
+  approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
+  cannot pre-approve one: every gate stops the run with a resumable snapshot and
+  exit code 2, and decisions are only supplied on resume.
   ([#9](https://github.com/jitokim/oh-my-graph/issues/9))
 - **Auto mode's tool ceiling is a reduction, not a sandbox — and parts of it are
   unverified.** The isolation and scoped-Bash layers were measured against a
@@ -580,9 +582,6 @@ See [Deferred](#deferred-not-in-v01) below for the full out-of-scope list.
 
 Called out honestly — these are **not** implemented yet:
 
-- **`gate` / human pause + `oh-my-graph resume`** (v1.1). The `gate` node type is
-  schema-reserved so graphs parse, but executing one is rejected with a clear
-  "not yet implemented".
 - retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
 - TUI / dashboard — that is [fleetops](https://github.com/jitokim/fleetops)'s job.
 - **sub-call / cross-node budget accounting.** Per-node budget is now enforced
@@ -630,10 +629,11 @@ Called out honestly — these are **not** implemented yet:
 ## Development
 
 ```sh
-make build   # build the binary
-make test    # go test ./... -race
-make vet     # go vet ./...
-make fmt     # gofmt -l . (fails if anything is unformatted)
+make build      # build the binary
+make test       # go test ./... -race
+make vet        # go vet ./...
+make fmt        # gofmt -w . (formats in place; always exits 0)
+make fmt-check  # fails if any file is not gofmt-clean (the CI gate)
 ```
 
 All engine logic is tested against a scripted `FakeRunner` — the test suite
