@@ -359,6 +359,15 @@ plugin that adds a `/graph` slash command — it shells out to the same
 `oh-my-graph` binary, no logic is reimplemented. See
 [plugin/README.md](plugin/README.md) for install and usage.
 
+The plugin also ships a graph-engineering **agent** as the lower-friction
+entry point: install the plugin, add
+`omg () { claude --agent oh-my-graph "$@"; }` to your shell rc, and `omg`
+opens a Claude Code session where every turn is graph-aware — no
+`/oh-my-graph:graph` prefix per turn. It inherits your normal `.claude`
+config (CLAUDE.md, skills, your other agents as delegation targets) and
+doesn't disturb any agents you already run. Details in
+[plugin/README.md](plugin/README.md#the-oh-my-graph-agent-ambient-entry-point).
+
 ## The graph model
 
 A graph is YAML: a `name`, optional `inputs` and `concurrency`, and a list of
