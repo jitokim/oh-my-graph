@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [v0.2.0] - 2026-07-31
+
+### Added
+
+- **Per-node git worktree isolation — `worktree: <name>`.** A node can now run
+  in a dedicated git worktree instead of the invocation directory, so a graph
+  never mutates your checked-out working tree (no more sweeping in your
+  untracked files, no branch surprises). Nodes that share a name share one
+  worktree — a whole `dev → e2e → review → pr` lane works in a single isolated
+  checkout — while nodes with **different** names get **different** worktrees
+  and can edit files in parallel, without the shared-tree race that otherwise
+  forces lanes to serialize. Nodes with no `worktree` field keep today's
+  behaviour (fully backward compatible). A clean worktree is removed at run
+  end; one with uncommitted changes is kept in place (with instructions) rather
+  than losing work. `worktree:` is rejected on auto-planned nodes — an
+  unreviewed plan must not spawn worktrees. Worktree provisioning is a third
+  `os/exec` seam; see [ADR-0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md).
+
 ## [v0.1.1] - 2026-07-31
 
 First patch after the public launch — run-feed observability and hardening.
