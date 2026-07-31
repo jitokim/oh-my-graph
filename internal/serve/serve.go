@@ -198,7 +198,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if _, err := os.Stat(feedPath); err == nil {
 			break
 		} else if !errors.Is(err, fs.ErrNotExist) {
-			sendSSE(w, flusher, "stream_error", fmt.Sprintf(`{"error":%q}`, err.Error()))
+			sendSSE(w, flusher, "stream_error", errorFrame(err.Error()))
 			return
 		}
 		select {
@@ -214,9 +214,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return false, nil
 		}
 		if event.Schema > runfeed.Schema {
-			sendSSE(w, flusher, "stream_error", fmt.Sprintf(
-				`{"error":"event stream schema %d is newer than this binary understands (max %d)"}`,
-				event.Schema, runfeed.Schema))
+			sendSSE(w, flusher, "stream_error", errorFrame(fmt.Sprintf(
+				"event stream schema %d is newer than this binary understands (max %d)",
+				event.Schema, runfeed.Schema)))
 			return true, nil
 		}
 		sendSSE(w, flusher, "", string(line))
@@ -225,8 +225,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The client is the only audience left, and it may already be gone;
 		// best-effort report, then close the stream.
-		sendSSE(w, flusher, "stream_error", fmt.Sprintf(`{"error":%q}`, err.Error()))
+		sendSSE(w, flusher, "stream_error", errorFrame(err.Error()))
 	}
+}
+
+// errorFrame renders a stream_error payload through the JSON encoder, so the
+// escaping is exact — fmt's %q is Go string quoting, which diverges from JSON
+// on invalid UTF-8.
+func errorFrame(msg string) string {
+	b, _ := json.Marshal(struct {
+		Error string `json:"error"`
+	}{msg})
+	return string(b)
 }
 
 // sendSSE writes one Server-Sent Event frame. An empty name is the default

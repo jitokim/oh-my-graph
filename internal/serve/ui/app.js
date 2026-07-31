@@ -156,6 +156,14 @@ function apply(event) {
     case "gate_paused":
       nodeInfo(event.node_id).state = "gate-paused";
       break;
+    case "gate_approved":
+      // A resolved gate stops rendering as paused right away, instead of
+      // waiting for a later node event to repaint the graph.
+      nodeInfo(event.node_id).state = "passed";
+      break;
+    case "gate_rejected":
+      nodeInfo(event.node_id).state = "failed";
+      break;
     case "run_finished":
       setStatus(event.outcome, event.outcome);
       break;

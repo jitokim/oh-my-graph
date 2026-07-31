@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
@@ -83,11 +84,16 @@ func TestServeRun_PrintsLoopbackURLAndStopsOnCancel(t *testing.T) {
 	// cancel — proving serveRun serves, not just prints.
 	url := "http://" + listener.Addr().String() + "/api/graph"
 	var resp *http.Response
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		resp, err = http.Get(url)
 		if err == nil {
 			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server never answered on %s: %v", url, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
