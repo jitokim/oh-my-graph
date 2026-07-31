@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- oh-my-graph serve — single-run live view. Fully self-contained: every
+     asset (including the vendored cytoscape.js, see vendor/README.md) is
+     embedded in the binary and served from 127.0.0.1; nothing is fetched
+     from the network at runtime. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>oh-my-graph — live run</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="brand">oh-my-graph</span>
+    <span id="run-id" class="run-id">resolving run…</span>
+    <span id="run-status" class="status">connecting</span>
+    <span id="run-cost" class="cost">$0.0000</span>
+  </header>
+  <main>
+    <div id="cy"></div>
+    <aside id="detail" hidden>
+      <h2 id="detail-id"></h2>
+      <dl>
+        <dt>state</dt><dd id="detail-state"></dd>
+        <dt>verdict</dt><dd id="detail-verdict"></dd>
+        <dt>session</dt><dd id="detail-session"></dd>
+        <dt>cost</dt><dd id="detail-cost"></dd>
+        <dt>detail</dt><dd id="detail-detail"></dd>
+      </dl>
+    </aside>
+  </main>
+  <footer>
+    <span class="legend"><i class="sw pending"></i>pending</span>
+    <span class="legend"><i class="sw running"></i>running</span>
+    <span class="legend"><i class="sw passed"></i>passed</span>
+    <span class="legend"><i class="sw failed"></i>failed</span>
+    <span class="legend"><i class="sw gate-paused"></i>gate-paused</span>
+    <span id="banner" class="banner"></span>
+  </footer>
+  <script src="vendor/cytoscape.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

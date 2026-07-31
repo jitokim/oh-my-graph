@@ -2,7 +2,10 @@
 
 oh-my-graph **executes**; it does not render. Everything an external consumer
 (canonically [fleetops](https://github.com/jitokim/fleetops)) needs to observe
-a run lives in that run's directory:
+a run lives in that run's directory. oh-my-graph's own read-back commands —
+`runs list`, `show`, `watch`, and the `serve` web live view — are in-repo
+consumers of the very same files under the very same rules (via
+`runfeed.InFlight`/`runfeed.Follow`), with no side channel:
 
 ```
 ~/.oh-my-graph/runs/<run-id>/

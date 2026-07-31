@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,7 +46,7 @@ type runSummary struct {
 	// snapshot does not persist an auto run's one-time planning cost, so that
 	// call is not included here (unlike the end-of-run ledger total).
 	costUSD float64
-	// verdict is verdictRunning for an in-flight run (see runInFlight), else
+	// verdict is verdictRunning for an in-flight run (see runfeed.InFlight), else
 	// PASS only when every node in the graph reached VerdictPass — a failed,
 	// paused, or interrupted run all render as FAIL.
 	verdict string
@@ -61,7 +59,7 @@ type runSummary struct {
 
 // listRuns renders one row per run directory under root, newest first, plus a
 // total across the listed runs. An in-flight run — one whose event stream's
-// last leg is still open (runInFlight) — is listed with verdict RUNNING, even
+// last leg is still open (runfeed.InFlight) — is listed with verdict RUNNING, even
 // before its first completed node has produced a state.json. listRuns is
 // read-only over the run directories: a directory whose snapshot cannot be
 // loaded (corrupt, or written by an incompatible schema) is reported as a
@@ -104,8 +102,9 @@ func listRuns(w, warnW io.Writer, root string) error {
 }
 
 // summarizeRun builds one run's row from its persisted files. It reuses the
-// real readers rather than re-parsing anything by hand: runInFlight over the
-// event stream (the runfeed.Event shape) to tell a live run from a settled
+// real readers rather than re-parsing anything by hand: runfeed.InFlight over
+// the event stream (which refuses a stream schema newer than this binary,
+// surfaced here as the WARNING+skip path) to tell a live run from a settled
 // one, runstate.Load (which refuses an incompatible schema loudly) for the
 // snapshot, and graph.Parse on the snapshot's own Graph bytes for the graph's
 // name and node count — the same reconstruction path `resume` trusts.
@@ -119,7 +118,7 @@ func listRuns(w, warnW io.Writer, root string) error {
 // strictly read-only and leaves the snapshot's "written after every node"
 // write discipline (DESIGN.md, docs/RUN-FEED.md) untouched.
 func summarizeRun(root, runID string) (runSummary, error) {
-	inFlight, err := runInFlight(filepath.Join(root, runID, runfeed.FileName))
+	inFlight, err := runfeed.InFlight(filepath.Join(root, runID, runfeed.FileName))
 	if err != nil {
 		return runSummary{}, err
 	}
@@ -163,59 +162,6 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		verdict:     verdict,
 		hasSnapshot: true,
 	}, nil
-}
-
-// runInFlight reports whether the run's event stream says it is currently
-// executing. Ground truth is the run-feed contract (docs/RUN-FEED.md): the
-// stream is a series of legs, each opened by run_started and closed by
-// run_finished, so the run is in flight exactly when its last leg is still
-// open. A gate pause closes its leg (outcome "paused"), so a paused run is
-// not in flight. A missing stream reads as no legs at all — a settled (or
-// pre-runfeed) directory, judged by its snapshot alone.
-//
-// Lines are decoded into the runfeed.Event shape the stream is written with;
-// a line that does not decode is skipped, because the contract's only
-// tolerated damage is one truncated final line. A line that DOES decode but
-// is stamped with a schema newer than this binary's runfeed.Schema is
-// surfaced as an error (the caller warns and skips the run) rather than
-// silently misread — RUN-FEED.md's compatibility rule for consumers, and the
-// same loud refusal runstate.Load gives an incompatible snapshot. Known
-// limitation, accepted
-// for v1: a crashed or killed process leaves its last leg open, so by the
-// stream alone such a run renders RUNNING until it is resumed or its
-// directory is cleaned up — there is no liveness probe here, deliberately,
-// to keep `runs list` a pure reader of the two contract files.
-func runInFlight(feedPath string) (bool, error) {
-	file, err := os.Open(feedPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("open event stream %q: %w", feedPath, err)
-	}
-	defer file.Close()
-
-	open := false
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event runfeed.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		if event.Schema > runfeed.Schema {
-			return false, fmt.Errorf("event stream %q: schema %d is newer than this binary understands (max %d)", feedPath, event.Schema, runfeed.Schema)
-		}
-		switch event.Type {
-		case runfeed.EventRunStarted:
-			open = true
-		case runfeed.EventRunFinished:
-			open = false
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("read event stream %q: %w", feedPath, err)
-	}
-	return open, nil
 }
 
 // printRuns writes the table: a header, one aligned row per run, and a footer

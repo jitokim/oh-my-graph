@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -56,55 +55,30 @@ func runWatch(args []string) error {
 // user causes by mistyping an id.
 func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, poll time.Duration) error {
 	feedPath := filepath.Join(runDir, runfeed.FileName)
-	file, err := os.Open(feedPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("unknown run %q: no event stream at %s (see the run ids under %s)", runID, feedPath, filepath.Dir(runDir))
-		}
-		return fmt.Errorf("open event stream for run %q: %w", runID, err)
-	}
-	defer file.Close()
 
-	// Emit writes each event as one whole line followed by a newline, so a
-	// complete ('\n'-terminated) line is always one whole JSON event and the
-	// only tolerable damage is a truncated final line (docs/RUN-FEED.md).
-	// Accumulate reads into pending until the newline arrives.
-	reader := bufio.NewReader(file)
+	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE
+	// endpoint streams through, so the two consumers can never drift on line
+	// framing or partial-final-line tolerance. watch keeps only its own
+	// interpretation: formatting, the malformed-line warning, and stopping at
+	// run_finished.
 	warnedSchema := false
-	var pending []byte
-	for {
-		chunk, err := reader.ReadBytes('\n')
-		pending = append(pending, chunk...)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return fmt.Errorf("read event stream %q: %w", feedPath, err)
-			}
-			// Caught up with the writer (possibly mid-line): wait for more.
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(poll):
-			}
-			continue
-		}
-
-		line := pending
-		pending = nil
-
+	err := runfeed.Follow(ctx, feedPath, poll, func(line []byte) (bool, error) {
 		var event runfeed.Event
 		if err := json.Unmarshal(line, &event); err != nil {
 			fmt.Fprintf(warnW, "WARNING: skipping malformed event line: %v\n", err)
-			continue
+			return false, nil
 		}
 		if event.Schema > runfeed.Schema && !warnedSchema {
 			warnedSchema = true
 			fmt.Fprintf(warnW, "WARNING: stream schema %d is newer than this build understands (%d); some events may render generically\n", event.Schema, runfeed.Schema)
 		}
 		fmt.Fprintln(w, formatEvent(event))
-		if event.Type == runfeed.EventRunFinished {
-			return nil
-		}
+		return event.Type == runfeed.EventRunFinished, nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("unknown run %q: no event stream at %s (see the run ids under %s)", runID, feedPath, filepath.Dir(runDir))
 	}
+	return err
 }
 
 // formatEvent renders one stream event as the single human line `watch`

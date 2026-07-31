@@ -1,0 +1,69 @@
+/* oh-my-graph serve — hand-written, no build step. Node state colors live in
+   app.js (cytoscape styles); the .sw legend swatches below must match them. */
+
+:root {
+  --pending: #8b93a7;
+  --running: #2f6fed;
+  --passed: #1e8e3e;
+  --failed: #d93025;
+  --gate-paused: #e8930c;
+  --ink: #1f2430;
+  --paper: #f7f8fa;
+  --line: #d9dde5;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body { display: flex; flex-direction: column; }
+
+header, footer {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+footer { border-bottom: 0; border-top: 1px solid var(--line); }
+
+.brand { font-weight: 700; }
+.run-id { font-family: ui-monospace, Menlo, monospace; color: #4a5165; }
+.status { text-transform: uppercase; font-size: 12px; letter-spacing: 0.04em; color: #4a5165; }
+.status.running { color: var(--running); }
+.status.passed { color: var(--passed); }
+.status.failed { color: var(--failed); }
+.status.paused { color: var(--gate-paused); }
+.cost { margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
+
+main { flex: 1; display: flex; min-height: 0; }
+#cy { flex: 1; min-width: 0; }
+
+aside {
+  width: 280px;
+  border-left: 1px solid var(--line);
+  background: #fff;
+  padding: 0.75rem 1rem;
+  overflow-y: auto;
+}
+aside h2 { margin: 0 0 0.5rem; font-size: 15px; font-family: ui-monospace, Menlo, monospace; }
+aside dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; }
+aside dt { color: #6a7183; }
+aside dd { margin: 0; font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+
+.legend { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 12px; color: #4a5165; }
+.sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.sw.pending { background: var(--pending); }
+.sw.running { background: var(--running); }
+.sw.passed { background: var(--passed); }
+.sw.failed { background: var(--failed); }
+.sw.gate-paused { background: var(--gate-paused); }
+
+.banner { margin-left: auto; color: var(--failed); font-size: 12px; }
