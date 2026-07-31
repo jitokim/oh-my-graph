@@ -523,9 +523,12 @@ decides where a human should be interrupted is not a feature, and it collides
 with the deny-by-default field policy below.
 
 ## Web live view — `oh-my-graph serve`
-`serve [<run-id>] [--port N]` is a read-only web live view of ONE run: the
-DAG rendered in the browser with nodes colored live as they run (Airflow's
-Graph View, for this tool's runs). It changes nothing about the visibility
+`serve [<run-id>] [--port N]` is a read-only web live view of ONE run: a
+chronological run feed — what each node produced, why something failed — as
+the main surface, with the DAG as a compact collapsible side map (GitHub
+Actions' log-first layout, not Airflow's graph-first one: for this tool's
+runs the substance is in the node output, not the topology). It changes
+nothing about the visibility
 stance: oh-my-graph executes and does not render *for the fleet* — serve is
 just another **consumer of the run-feed contract** (docs/RUN-FEED.md), living
 in-repo, reading `state.json` for structure and tailing `events.jsonl` for
@@ -558,7 +561,8 @@ serve is one run, live, locally.
   reports the structure unavailable until the first node completes (the UI
   polls); events stream from the start.
 - **Node results:** `/api/result?node=<id>` serves that node's handoff
-  artifact (`<run-dir>/<node-id>.out`) as text/plain for the detail panel —
+  artifact (`<run-dir>/<node-id>.out`) as text/plain for the feed's settled
+  entries —
   the id is matched against the snapshot's own node set before any
   filesystem use (unknown id → 404; known node without an artifact → 204
   "no result yet").

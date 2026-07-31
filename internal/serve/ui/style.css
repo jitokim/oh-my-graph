@@ -4,7 +4,7 @@
    and re-styles the graph on theme change. Status hexes are identical in both
    modes (validated for both surfaces) and are the one source of truth for
    every status surface: node borders read them via app.js's statusColor(),
-   legend and header chips via the .dot rules below. */
+   feed dots, legend and header chips via the .dot rules below. */
 
 :root {
   /* light */
@@ -93,9 +93,9 @@ header {
   50% { opacity: 0.55; }
 }
 
-/* State-count chips and the legend share one chip anatomy: an 8px dot wears
-   the status color; the text stays secondary ink — status is never conveyed
-   by text color. */
+/* State-count chips, the map legend and the feed entries share one dot
+   anatomy: an 8px dot wears the status color; the text stays secondary ink —
+   status is never conveyed by text color. */
 .chips { display: inline-flex; gap: 0.5rem; }
 .chip {
   display: inline-flex;
@@ -104,7 +104,7 @@ header {
   font-size: 12px;
   color: var(--ink-2);
 }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .dot.pending { background: var(--pending); }
 .dot.running { background: var(--running); }
 .dot.passed { background: var(--passed); }
@@ -127,88 +127,90 @@ header {
 }
 .theme-toggle:hover { color: var(--ink); }
 
-/* --- legend strip ---------------------------------------------------------- */
+/* --- layout ---------------------------------------------------------------- */
 
-.legend-strip {
-  display: flex;
-  gap: 1rem;
-  padding: 0.3rem 1rem;
-  background: var(--page);
-  border-bottom: 1px solid var(--hairline);
-}
+main { flex: 1; display: flex; min-height: 0; }
 
-/* --- canvas ---------------------------------------------------------------- */
+/* --- feed (the main surface) ------------------------------------------------ */
 
-main { flex: 1; display: flex; min-height: 0; position: relative; }
-
-#cy {
+#feed-col {
   flex: 1;
   min-width: 0;
-  /* Subtle dot grid, dots in the hairline color — plain CSS, no JS. */
-  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
-  background-size: 18px 18px;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 2rem;
 }
 
-.canvas-controls {
-  position: absolute;
-  right: 1rem;
-  bottom: 1rem;
+#feed {
+  list-style: none;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  z-index: 5;
+  gap: 0.55rem;
 }
-/* When the detail panel is open it sits to the right of the canvas; keep the
-   controls over the canvas itself. */
-main:has(#detail:not([hidden])) .canvas-controls { right: calc(300px + 1rem); }
-.canvas-controls button {
-  width: 30px;
-  height: 30px;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--ink-2);
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  box-shadow: 0 1px 2px var(--ring);
-  cursor: pointer;
-}
-.canvas-controls button:hover { color: var(--ink); }
 
-/* --- detail panel ---------------------------------------------------------- */
+/* A tap on a map node scrolls here and flashes the entry once. */
+.entry.flash { animation: entry-flash 1.4s ease-out; }
+@keyframes entry-flash {
+  0% { outline: 2px solid var(--accent); outline-offset: 2px; background: var(--ring); }
+  100% { outline: 2px solid transparent; outline-offset: 2px; background: transparent; }
+}
 
-aside {
-  position: relative;
-  width: 300px;
-  border-left: 1px solid var(--hairline);
-  background: var(--surface);
-  padding: 0.75rem 1rem;
-  overflow-y: auto;
-}
-aside h2 {
-  margin: 0 0 0.5rem;
-  font-size: 15px;
-  font-family: ui-monospace, Menlo, monospace;
-  padding-right: 1.5rem;
-  overflow-wrap: anywhere;
-}
-/* One status line under the id: the dot wears the status color, the text
-   stays secondary ink (status is never conveyed by text color). */
-.detail-status {
+/* A slim leg marker: a run_started seam, hairline rules on both sides. */
+.entry.marker {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  margin: 0 0 0.6rem;
+  gap: 0.6rem;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin: 0.35rem 0;
+}
+.entry.marker::before,
+.entry.marker::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--hairline);
+}
+
+/* A compact one-liner: started / retried / gate decisions. */
+.entry.line { padding: 0.1rem 0.2rem; }
+
+.entry-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 13px;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
+.entry-title { font-family: ui-monospace, Menlo, monospace; font-weight: 600; color: var(--ink); }
+.entry-elapsed {
+  margin-left: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.entry-note {
+  margin: 0.15rem 0 0 1.15rem;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
 
-/* The failure cause leads the panel, emphasized by weight and a status-color
-   bar — the text itself stays ink. */
-.detail-fail {
-  margin: 0 0 0.6rem;
+/* A rich settled entry: the node's card in the stream. Failure emphasis is
+   weight and a status-color border bar on the cause line — never red text. */
+.entry.rich {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem 0.6rem;
+}
+
+.entry-fail {
+  margin: 0.45rem 0 0;
   padding: 0.4rem 0.6rem;
   border-left: 3px solid var(--failed);
   background: var(--ring);
@@ -217,22 +219,14 @@ aside h2 {
   overflow-wrap: anywhere;
 }
 
-.detail-label {
-  margin: 0 0 0.25rem;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-/* The node's handoff artifact: the panel's body. Scrolls on its own so a
-   long result never pushes the accounting line off-panel. */
-.detail-result {
-  margin: 0 0 0.6rem;
+/* The node's handoff artifact: the entry's body. Capped at ~24 lines
+   (24 × 18px line boxes + padding) until "show more" expands it. */
+.artifact-wrap { margin: 0.45rem 0 0; }
+.artifact {
+  margin: 0;
   padding: 0.5rem 0.6rem;
-  max-height: 45vh;
-  overflow: auto;
+  max-height: 452px;
+  overflow: hidden;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -242,16 +236,26 @@ aside h2 {
   border: 1px solid var(--hairline);
   border-radius: 6px;
 }
-.detail-result.placeholder { color: var(--muted); font-style: italic; }
-
-.detail-note { margin: 0 0 0.6rem; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.artifact.expanded { max-height: none; }
+.artifact.placeholder { color: var(--muted); font-style: italic; }
+.show-more {
+  margin-top: 0.25rem;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.show-more:hover { text-decoration: underline; }
 
 /* Accounting, not headline: session ref + per-node cost on one muted line. */
-.detail-meta {
+.entry-meta {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  margin: 0;
+  margin: 0.45rem 0 0;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
   color: var(--muted);
@@ -267,22 +271,103 @@ aside h2 {
 }
 .session-ref:hover { color: var(--ink); border-color: var(--muted); }
 
-.detail-close {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  width: 24px;
-  height: 24px;
-  font: inherit;
-  font-size: 16px;
-  line-height: 1;
+/* The run's closing ledger line. */
+.entry.ledger {
+  border-top: 1px solid var(--hairline);
+  padding: 0.5rem 0.2rem 0.1rem;
+  margin-top: 0.2rem;
+}
+.entry.ledger .entry-word { font-weight: 600; color: var(--ink); }
+
+/* --- map (side panel) ------------------------------------------------------- */
+
+#map {
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+#map.collapsed { width: auto; }
+#map.collapsed .map-body { display: none; }
+
+.map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+}
+#map.collapsed .map-head { border-bottom: 0; }
+.map-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--muted);
-  background: none;
-  border: 0;
+}
+.map-toggle {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
+  padding: 0.2rem 0.4rem;
   cursor: pointer;
 }
-.detail-close:hover { color: var(--ink); background: var(--ring); }
+.map-toggle:hover { color: var(--ink); }
+
+.map-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+#cy {
+  flex: 1;
+  min-height: 0;
+  /* Subtle dot grid, dots in the hairline color — plain CSS, no JS. */
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.canvas-controls {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 2.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 5;
+}
+.canvas-controls button {
+  width: 30px;
+  height: 30px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px var(--ring);
+  cursor: pointer;
+}
+.canvas-controls button:hover { color: var(--ink); }
+
+/* The legend lives inside the map panel — it explains the map's colors. */
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  padding: 0.35rem 0.6rem;
+  border-top: 1px solid var(--hairline);
+}
 
 /* --- footer ---------------------------------------------------------------- */
 
