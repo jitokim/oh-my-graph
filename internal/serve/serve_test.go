@@ -3,6 +3,8 @@ package serve
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -303,13 +305,15 @@ func TestHandleEvents_WaitsForAStreamThatDoesNotExistYet(t *testing.T) {
 	}
 }
 
-func TestHandleEvents_RefusesASchemaNewerThanThisBinary(t *testing.T) {
-	// Hand-built on purpose: only a hand-built line can carry a schema
-	// today's StreamWriter cannot stamp. Per RUN-FEED.md the consumer must
-	// surface — not silently forward — a version it does not understand,
-	// exactly like `runs list` skips such a run with a warning.
+func TestHandleEvents_WarnsOnceOnASchemaNewerThanThisBinary(t *testing.T) {
+	// Hand-built on purpose: only hand-built lines can carry a schema
+	// today's StreamWriter cannot stamp. Per RUN-FEED.md a schema bump must
+	// be visible but NOT fatal: the handler warns once with a non-terminal
+	// stream_warning frame and keeps forwarding — the same posture `watch`
+	// takes — so a live view survives a routine bump instead of going blank.
 	dir := t.TempDir()
-	raw := `{"schema":99,"ts":"2026-08-01T00:00:00Z","run_id":"run-new","event":"run_started"}` + "\n"
+	raw := `{"schema":99,"ts":"2026-08-01T00:00:00Z","run_id":"run-new","event":"run_started"}` + "\n" +
+		`{"schema":99,"ts":"2026-08-01T00:00:01Z","run_id":"run-new","event":"node_started","node_id":"a"}` + "\n"
 	if err := os.WriteFile(filepath.Join(dir, runfeed.FileName), []byte(raw), 0o644); err != nil {
 		t.Fatalf("write raw fixture event stream: %v", err)
 	}
@@ -318,15 +322,24 @@ func TestHandleEvents_RefusesASchemaNewerThanThisBinary(t *testing.T) {
 	defer cancel()
 
 	name, data := stream.readFrame(t)
-	if name != "stream_error" {
-		t.Fatalf("frame = (%q, %q), want a stream_error refusal", name, data)
+	if name != "stream_warning" {
+		t.Fatalf("frame = (%q, %q), want a stream_warning first", name, data)
 	}
 	if !strings.Contains(data, "schema 99") {
-		t.Errorf("the refusal must name the offending schema, got %q", data)
+		t.Errorf("the warning must name the offending schema, got %q", data)
 	}
-	// The refusal is terminal: the server closes the stream rather than
-	// continuing past bytes it cannot vouch for.
-	stream.expectEOF(t)
+	// The warning is non-terminal: both events still arrive, and the warning
+	// is not repeated for the second one.
+	for _, wantEvent := range []runfeed.EventType{runfeed.EventRunStarted, runfeed.EventNodeStarted} {
+		name, data = stream.readFrame(t)
+		var event runfeed.Event
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("frame data %q is not an event line: %v", data, err)
+		}
+		if name != "" || event.Type != wantEvent {
+			t.Errorf("frame = (%q, %s), want the forwarded %s event", name, event.Type, wantEvent)
+		}
+	}
 }
 
 // --- the embedded UI ---------------------------------------------------------
@@ -354,20 +367,24 @@ func TestHandler_ServesEmbeddedUIWithVendoredCytoscape(t *testing.T) {
 		t.Errorf("index.html must not reference any remote URL:\n%s", page)
 	}
 
-	// Every vendored library must actually be served, at a size that proves
-	// it is the real library and not a stub or an error page.
-	for path, minBytes := range map[string]int{
-		"/vendor/cytoscape.min.js":   100_000,
-		"/vendor/dagre.min.js":       100_000,
-		"/vendor/cytoscape-dagre.js": 5_000,
+	// Every vendored library must be served byte-for-byte identical to the
+	// published build it was pinned from — size is not provenance for code
+	// compiled into every binary of a no-CDN tool. The expected hashes are
+	// recorded (with their fetch URLs) in ui/vendor/README.md; an upgrade
+	// updates both together.
+	for path, wantSHA256 := range map[string]string{
+		"/vendor/cytoscape.min.js":   "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
+		"/vendor/dagre.min.js":       "62eb9787ccfdbdf4148d4d99d31dbf9ee4770eafee81e637d759b52aac22cd51",
+		"/vendor/cytoscape-dagre.js": "bf70fe402991dcbff33e05a7e4a5271c78020bb75e85d1c80ab7538e4157112e",
 	} {
 		rec = httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
 		}
-		if rec.Body.Len() < minBytes {
-			t.Errorf("vendored %s is %d bytes — suspiciously small for the real library", path, rec.Body.Len())
+		sum := sha256.Sum256(rec.Body.Bytes())
+		if got := hex.EncodeToString(sum[:]); got != wantSHA256 {
+			t.Errorf("vendored %s sha256 = %s, want %s (see ui/vendor/README.md)", path, got, wantSHA256)
 		}
 	}
 }

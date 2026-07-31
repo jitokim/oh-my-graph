@@ -13,19 +13,16 @@
 
 "use strict";
 
-// Status palette — one source of truth, used identically in node borders,
-// legend chips, header chips (style.css mirrors these hexes) and the detail
-// panel. Same hexes in both themes; status is never color alone — every
-// status surface pairs the color with a text label, and "running" gets
-// motion as its primary signal.
-const COLORS = {
-  pending: "#898781",
-  running: "#fab219",
-  passed: "#0ca30c",
-  failed: "#d03b3b",
-  "gate-paused": "#ec835a",
-};
+// Status palette — style.css's custom properties (--pending, --running, …)
+// are the one source of truth; node borders read them via statusColor(), so
+// no status hex lives in this file. Same hexes in both themes; status is
+// never color alone — every status surface pairs the color with a text
+// label, and "running" gets motion as its primary signal.
 const STATES = ["pending", "running", "passed", "failed", "gate-paused"];
+
+function statusColor(state) {
+  return cssVar(`--${state}`);
+}
 
 const nodes = new Map(); // node id -> {state, verdict, sessionId, costUsd, detail, startedMs, endedMs}
 let cy = null;
@@ -93,7 +90,7 @@ function buildCyStyle() {
         // status (thin status borders are a documented Airflow UX failure).
         "background-color": cssVar("--surface"),
         "border-width": 4,
-        "border-color": COLORS.pending,
+        "border-color": statusColor("pending"),
         label: "data(label)",
         "text-wrap": "wrap",
         "text-valign": "center",
@@ -112,7 +109,7 @@ function buildCyStyle() {
     { selector: "node[?gate]", style: { shape: "round-hexagon", width: 150, height: 64 } },
     ...STATES.map((s) => ({
       selector: `node[state = "${s}"]`,
-      style: { "border-color": COLORS[s] },
+      style: { "border-color": statusColor(s) },
     })),
     {
       selector: "edge",
@@ -153,19 +150,24 @@ async function loadGraph() {
   try {
     const resp = await fetch("api/graph");
     if (!resp.ok) {
+      // Transient or not, keep trying: the SSE side self-heals (EventSource
+      // reconnects), and a page that gives up on structure after one bad
+      // response would stream events into an invisible graph forever.
       banner(`graph: ${(await resp.text()).trim()}`);
+      setTimeout(loadGraph, 2000);
       return;
     }
     payload = await resp.json();
   } catch (err) {
     banner(`graph: ${err}`);
+    setTimeout(loadGraph, 2000);
     return;
   }
   $("run-id").textContent = payload.run_id;
   if (!payload.available) {
     // Honest window: structure is unknown until the first node's terminal
     // verdict writes state.json. Keep polling; events still stream meanwhile.
-    setStatus("waiting for structure", "", false);
+    setStatus("waiting for structure", false);
     setTimeout(loadGraph, 2000);
     return;
   }
@@ -223,8 +225,15 @@ function connect() {
   const source = new EventSource("api/events");
   source.onopen = () => banner("");
   source.onmessage = (msg) => apply(JSON.parse(msg.data));
-  // The server's terminal refusal (e.g. a stream schema newer than the
-  // binary), distinct from EventSource's own connection errors.
+  // The server's non-terminal caution (e.g. a stream schema newer than the
+  // binary): show it and keep consuming — unknown event types fall through
+  // apply()'s default branch, so rendering degrades generically, per the
+  // run-feed compatibility rule.
+  source.addEventListener("stream_warning", (msg) => {
+    banner(JSON.parse(msg.data).error);
+  });
+  // The server's terminal refusal, distinct from EventSource's own
+  // connection errors.
   source.addEventListener("stream_error", (msg) => {
     source.close();
     banner(JSON.parse(msg.data).error);
@@ -233,7 +242,7 @@ function connect() {
     // Connection dropped (server stopped, laptop slept): EventSource retries
     // by itself; replay-from-zero keeps the state idempotent enough (costs
     // are recomputed from scratch below on each full replay).
-    setStatus("reconnecting", "", false);
+    setStatus("reconnecting", false);
     totalCost = 0;
   };
 }
@@ -244,7 +253,7 @@ function apply(event) {
     case "run_started":
       runStartedMs = Number.isNaN(ts) ? Date.now() : ts;
       runEndedMs = null;
-      setStatus("running", "running", true);
+      setStatus("running", true);
       break;
     case "node_started":
     case "node_retried": {
@@ -282,7 +291,7 @@ function apply(event) {
       break;
     case "run_finished":
       runEndedMs = Number.isNaN(ts) ? Date.now() : ts;
-      setStatus(event.outcome, event.outcome, false);
+      setStatus(event.outcome, false);
       break;
     default:
       // Unknown event type (same-schema addition impossible, but be safe):
@@ -377,14 +386,19 @@ function showDetail(id) {
   $("detail").hidden = false;
 }
 
-function setStatus(text, cls, live) {
+// setStatus renders the header status chip: the text names the state, and
+// `live` toggles the one styled modifier (the CSS pulse). The state word
+// deliberately gets no per-state class — text never wears a status color.
+function setStatus(text, live) {
   const el = $("run-status");
   el.textContent = text;
-  el.className = `status ${cls}${live ? " live" : ""}`;
+  el.className = `status${live ? " live" : ""}`;
 }
 
 function banner(text) {
-  $("banner").textContent = text;
+  // The banner is informational ink, not a status surface: a caution glyph
+  // carries the tone so the text itself never wears a status color.
+  $("banner").textContent = text ? `⚠ ${text}` : "";
 }
 
 // --- clock -------------------------------------------------------------------

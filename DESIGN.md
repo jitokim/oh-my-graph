@@ -530,9 +530,12 @@ stance: oh-my-graph executes and does not render *for the fleet* — serve is
 just another **consumer of the run-feed contract** (docs/RUN-FEED.md), living
 in-repo, reading `state.json` for structure and tailing `events.jsonl` for
 progress through the same readers `runs list` and `watch` use
-(`runfeed.InFlight`, `runfeed.Follow`), with the same per-event schema
-refusal. fleetops's fleet-wide role is unchanged; serve is one run, live,
-locally.
+(`runfeed.InFlight`, `runfeed.Follow`). A stream schema newer than the
+binary takes `watch`'s posture, not `runs list`'s: one non-terminal
+warning frame, then keep forwarding (a list can skip one run; a live view
+going blank would make a routine schema bump fatal, which RUN-FEED.md's
+compatibility rule forbids). fleetops's fleet-wide role is unchanged;
+serve is one run, live, locally.
 
 - **Run resolution:** an explicit id wins; otherwise the newest in-flight run
   (the leg-walking `runs list` uses for RUNNING); otherwise the newest run

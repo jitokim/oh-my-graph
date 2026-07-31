@@ -170,14 +170,17 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 // verbatim — the browser reads the run-feed contract, not a re-encoding of
 // it.
 //
-// Per RUN-FEED.md's compatibility rule this consumer checks `schema` per
-// event and refuses one newer than it understands — exactly like `runs
-// list` — by sending a terminal `stream_error` frame and closing, rather
-// than forwarding bytes it might be misrepresenting. A line that does not
-// decode at all is skipped (the contract's tolerated truncated-final-line
-// damage). The stream ends when the client disconnects; it deliberately does
-// NOT end at run_finished, because a resumed leg appends to the same file
-// and the viewer should see it.
+// Per RUN-FEED.md's compatibility rule a schema bump must be visible, not
+// fatal: on the first event stamped with a schema newer than this binary the
+// handler sends one non-terminal `stream_warning` frame and KEEPS forwarding
+// — the same warn-once-and-keep-rendering posture `watch` takes, with the UI
+// skipping event types it does not know. (`runs list` refuses instead, but a
+// list can skip one run; a live view going permanently blank on a routine
+// bump would make the bump fatal.) A line that does not decode at all is
+// skipped (the contract's tolerated truncated-final-line damage). The stream
+// ends when the client disconnects; it deliberately does NOT end at
+// run_finished, because a resumed leg appends to the same file and the
+// viewer should see it.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -209,16 +212,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	warnedSchema := false
 	err := runfeed.Follow(r.Context(), feedPath, s.poll, func(line []byte) (bool, error) {
 		var event runfeed.Event
 		if err := json.Unmarshal(line, &event); err != nil {
 			return false, nil
 		}
-		if event.Schema > runfeed.Schema {
-			sendSSE(w, flusher, "stream_error", errorFrame(fmt.Sprintf(
-				"event stream schema %d is newer than this binary understands (max %d)",
+		if event.Schema > runfeed.Schema && !warnedSchema {
+			warnedSchema = true
+			sendSSE(w, flusher, "stream_warning", errorFrame(fmt.Sprintf(
+				"event stream schema %d is newer than this binary understands (max %d); some events may render generically",
 				event.Schema, runfeed.Schema)))
-			return true, nil
 		}
 		sendSSE(w, flusher, "", string(line))
 		return false, nil
@@ -241,8 +245,9 @@ func errorFrame(msg string) string {
 }
 
 // sendSSE writes one Server-Sent Event frame. An empty name is the default
-// `message` event (the normal per-line frame); a named event (`stream_error`)
-// is the terminal refusal the UI listens for separately. data must be a
+// `message` event (the normal per-line frame); named events are the two the
+// UI listens for separately — `stream_warning` (non-terminal, e.g. a newer
+// schema) and `stream_error` (terminal). data must be a
 // single line, which every frame here is: JSON encoding never contains a raw
 // newline.
 func sendSSE(w http.ResponseWriter, flusher http.Flusher, name, data string) {

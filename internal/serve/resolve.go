@@ -31,11 +31,17 @@ import (
 // on its endpoints.
 func ResolveRun(root, explicit string) (string, error) {
 	if explicit != "" {
-		if _, err := os.Stat(filepath.Join(root, explicit)); err != nil {
+		info, err := os.Stat(filepath.Join(root, explicit))
+		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return "", fmt.Errorf("unknown run %q: no run directory under %s (see `oh-my-graph runs list`)", explicit, root)
 			}
 			return "", fmt.Errorf("stat run %q: %w", explicit, err)
+		}
+		if !info.IsDir() {
+			// Fail here with a clear message rather than confusingly at the
+			// endpoints — a run is always a directory.
+			return "", fmt.Errorf("run %q is not a run directory under %s (see `oh-my-graph runs list`)", explicit, root)
 		}
 		return explicit, nil
 	}

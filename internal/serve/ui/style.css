@@ -3,7 +3,8 @@
    values via getComputedStyle at init (cytoscape styles cannot read CSS vars)
    and re-styles the graph on theme change. Status hexes are identical in both
    modes (validated for both surfaces) and are the one source of truth for
-   node borders, legend chips, header chips and the detail panel. */
+   every status surface: node borders read them via app.js's statusColor(),
+   legend and header chips via the .dot rules below. */
 
 :root {
   /* light */
@@ -223,4 +224,6 @@ footer {
   background: var(--page);
   border-top: 1px solid var(--hairline);
 }
-.banner { color: var(--failed); font-size: 12px; }
+/* Informational ink, never a status color on text — app.js prefixes a
+   caution glyph to carry the tone. */
+.banner { color: var(--ink-2); font-size: 12px; }
