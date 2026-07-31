@@ -88,7 +88,9 @@ On terminal node events, `retries` is the number of retries that preceded the
 terminal attempt (0 for a first-attempt verdict), `cost_usd` is the node's
 reported spend, `session_id` is the claude session it ran under, and `detail`
 is the same short note the run ledger records (the failure cause on a FAIL;
-the retry/budget note, possibly empty, on a PASS). Zero/empty values are
+the retry/budget note, possibly empty, on a PASS). The producer caps `detail`
+at one shared bound (240 runes, keeping the tail), so a line stays tailable
+even when the underlying error was arbitrarily long. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).

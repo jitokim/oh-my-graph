@@ -35,8 +35,10 @@ type Record struct {
 	BudgetUSD float64
 	Verdict   Verdict
 	Duration  time.Duration
-	// Detail is a short human note — the failing predicate, the retry count, the
-	// budget delta, or empty on a clean pass with no budget declared.
+	// Detail is a short human note — the failure cause (predicate plus why),
+	// the retry count, the budget delta, or empty on a clean pass with no
+	// budget declared. Always one line, and capped by the scheduler at one
+	// shared bound (240 runes) so the table stays readable.
 	Detail string
 }
 

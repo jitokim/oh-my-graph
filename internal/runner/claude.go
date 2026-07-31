@@ -246,13 +246,32 @@ func tailOf(b []byte, n int) string {
 }
 
 // claudeEnvelope is the JSON oh-my-graph reads from `claude --output-format
-// json`: the session id, the final result text, the reported cost, and the
-// terminal subtype (used only to detect a --max-budget-usd abort).
+// json`: the session id, the final result text, the reported cost, the
+// terminal subtype (used only to detect a --max-budget-usd abort), and the
+// CLI's own error report (is_error + errors) on a failed run.
 type claudeEnvelope struct {
-	SessionID    string  `json:"session_id"`
-	Result       string  `json:"result"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Subtype      string  `json:"subtype"`
+	SessionID    string   `json:"session_id"`
+	Result       string   `json:"result"`
+	TotalCostUSD float64  `json:"total_cost_usd"`
+	Subtype      string   `json:"subtype"`
+	IsError      bool     `json:"is_error"`
+	Errors       []string `json:"errors"`
+}
+
+// failureCause condenses the envelope's own error report into one line: the
+// errors array when present (observed on claude 2.1.220's budget abort:
+// is_error true plus errors like "Reached maximum budget ($0.001)"), else the
+// result text of an is_error envelope (some failures — a subscription session
+// limit, say — arrive as an error envelope whose result carries the message).
+// A clean envelope yields "".
+func (env claudeEnvelope) failureCause() string {
+	if len(env.Errors) > 0 {
+		return flattenLines(strings.Join(env.Errors, "\n"))
+	}
+	if env.IsError {
+		return flattenLines(env.Result)
+	}
+	return ""
 }
 
 // Run executes one node under a per-node timeout, then parses its JSON envelope.
@@ -300,6 +319,13 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 		return NodeOutcome{}, err
 	}
 	outcome.ExitCode = exitCode
+	if exitCode != 0 && outcome.FailureCause == "" {
+		// The envelope itself said nothing about why. The stderr tail is the
+		// next-best diagnosis — the CLI reports its own complaints there —
+		// and carrying it is what turns a bare "exit code 1" into a cause the
+		// ledger, events.jsonl, watch and serve can name.
+		outcome.FailureCause = flattenLines(tailOf(stderr, maxStderrInError))
+	}
 	return outcome, nil
 }
 
@@ -330,5 +356,6 @@ func parseEnvelope(stdout, stderr []byte) (NodeOutcome, error) {
 		Result:          env.Result,
 		TotalCostUSD:    env.TotalCostUSD,
 		BudgetExhausted: env.Subtype == budgetExhaustedSubtype,
+		FailureCause:    env.failureCause(),
 	}, nil
 }

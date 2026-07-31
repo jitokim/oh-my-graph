@@ -401,6 +401,86 @@ func containsEnv(env []string, want string) bool {
 	return false
 }
 
+// --- failure cause capture (scripted stub binaries) ---------------------------
+
+// writeStub writes a scripted fake claude binary and returns its path — the
+// runner test pattern for behaviour that only exists across a real exit code,
+// without ever spawning real claude.
+func writeStub(t *testing.T, script string) string {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "claude-stub")
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	return stub
+}
+
+// TestRun_NonzeroExitCarriesEnvelopeErrorCause reproduces the incident this
+// exists for: a subprocess killed by a subscription session limit exits 1 with
+// an error envelope, and the failure detail used to say only "exit code 1".
+// The envelope's own error report must reach NodeOutcome.FailureCause so the
+// scheduler (and everything downstream — ledger, events.jsonl, watch, serve)
+// can name the real cause.
+func TestRun_NonzeroExitCarriesEnvelopeErrorCause(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, `#!/bin/sh
+cat <<'JSON'
+{"session_id":"s-limit","total_cost_usd":0.02,"subtype":"error_during_execution","is_error":true,"errors":["You've hit your session limit"]}
+JSON
+exit 1
+`)
+
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if err != nil {
+		t.Fatalf("a non-zero exit with a parseable envelope is an outcome, not a Run error: %v", err)
+	}
+	if outcome.ExitCode != 1 {
+		t.Errorf("exit code = %d, want 1", outcome.ExitCode)
+	}
+	if outcome.FailureCause != "You've hit your session limit" {
+		t.Errorf("FailureCause = %q, want the envelope's own error", outcome.FailureCause)
+	}
+}
+
+// TestRun_NonzeroExitFallsBackToStderrCause proves the second-best diagnosis:
+// when the envelope says nothing about why, a non-zero exit carries the stderr
+// tail as the cause — and a CLEAN exit never does, however noisy stderr was.
+func TestRun_NonzeroExitFallsBackToStderrCause(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	failing := writeStub(t, `#!/bin/sh
+echo '{"session_id":"s-1","result":"partial","total_cost_usd":0.02}'
+echo "You've hit your session limit" >&2
+exit 1
+`)
+	r := NewClaudeCLIRunner(WithBinary(failing))
+	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if err != nil {
+		t.Fatalf("unexpected Run error: %v", err)
+	}
+	if outcome.FailureCause != "You've hit your session limit" {
+		t.Errorf("FailureCause = %q, want the stderr tail", outcome.FailureCause)
+	}
+
+	clean := writeStub(t, `#!/bin/sh
+echo '{"session_id":"s-2","result":"PASS","total_cost_usd":0.01}'
+echo "warning: noisy but harmless" >&2
+exit 0
+`)
+	r = NewClaudeCLIRunner(WithBinary(clean))
+	outcome, err = r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if err != nil {
+		t.Fatalf("unexpected Run error: %v", err)
+	}
+	if outcome.FailureCause != "" {
+		t.Errorf("a clean exit must carry no FailureCause, got %q", outcome.FailureCause)
+	}
+}
+
 // --- cancellation kills the child tree (real spawn) ---------------------------
 
 // TestRun_CancelledRunKillsTheChild proves defaultTimeout's promise — a wedged
