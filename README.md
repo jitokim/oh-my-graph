@@ -107,7 +107,7 @@ output and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|version> ...
+oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
@@ -141,6 +141,14 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|version> ...
 - **`watch <run-id>`** — tail one run's event stream (`events.jsonl`) as plain
   text, one formatted line per event, following new events `tail -f` style
   until the run finishes (or Ctrl-C). Read-only; plain text, not a TUI.
+- **`serve [<run-id>]`** — a read-only web live view of one run: the DAG in
+  your browser with nodes colored live as they run (pending / running /
+  passed / failed / gate-paused), plus run cost and per-node detail on click.
+  With no run id it prefers the run currently in flight, else the newest.
+  Binds to `127.0.0.1` only (default port 8642, `--port` to change) — run
+  directories contain prompts and session ids, so the server is never
+  reachable off-host — and prints the URL to open. The page is fully
+  embedded (vendored cytoscape.js): zero runtime network dependencies.
 - **`version`** — print the tool version.
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
@@ -151,8 +159,8 @@ looks like.
 Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
 relocate the base) — the same directory no matter where you invoke the tool
 from: a versioned snapshot (`state.json`) and an append-only event stream
-(`events.jsonl`), which `runs list` / `show` read back and a consumer like
-fleetops can tail. That
+(`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
+a consumer like fleetops can tail. That
 directory layout is a documented, stable contract — see
 [docs/RUN-FEED.md](docs/RUN-FEED.md).
 

@@ -1,0 +1,384 @@
+/* oh-my-graph serve — hand-written, no build step.
+   Theme tokens live here as CSS custom properties; app.js reads the resolved
+   values via getComputedStyle at init (cytoscape styles cannot read CSS vars)
+   and re-styles the graph on theme change. Status hexes are identical in both
+   modes (validated for both surfaces) and are the one source of truth for
+   every status surface: node borders read them via app.js's statusColor(),
+   feed dots, legend and header chips via the .dot rules below. */
+
+:root {
+  /* light */
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --hairline: #e1e0d9;
+  --ring: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  /* status — same hexes both modes */
+  --pending: #898781;
+  --running: #fab219;
+  --passed: #0ca30c;
+  --failed: #d03b3b;
+  --gate-paused: #ec835a;
+}
+
+/* Dark tokens twice — once for the OS preference (only when no explicit
+   choice was made) and once for the explicit toggle choice. A CSS-only page
+   cannot share the block between an attribute selector and a media query,
+   so keep the two lists identical. */
+:root[data-theme="dark"] {
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --hairline: #2c2c2a;
+  --ring: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --hairline: #2c2c2a;
+    --ring: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--page);
+}
+
+body { display: flex; flex-direction: column; }
+
+/* --- header ---------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: var(--page);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.brand { font-weight: 600; }
+.run-id { font-family: ui-monospace, Menlo, monospace; color: var(--ink-2); font-size: 13px; }
+.spacer { flex: 1; }
+
+.status {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+.status.live { animation: chip-pulse 2s ease-in-out infinite; }
+@keyframes chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* State-count chips, the map legend and the feed entries share one dot
+   anatomy: an 8px dot wears the status color; the text stays secondary ink —
+   status is never conveyed by text color. */
+.chips { display: inline-flex; gap: 0.5rem; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.pending { background: var(--pending); }
+.dot.running { background: var(--running); }
+.dot.passed { background: var(--passed); }
+.dot.failed { background: var(--failed); }
+.dot.gate-paused { background: var(--gate-paused); }
+
+.elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
+.cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }
+
+.theme-toggle {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); }
+
+/* --- layout ---------------------------------------------------------------- */
+
+main { flex: 1; display: flex; min-height: 0; }
+
+/* --- feed (the main surface) ------------------------------------------------ */
+
+#feed-col {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+#feed {
+  list-style: none;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* A tap on a map node scrolls here and flashes the entry once. */
+.entry.flash { animation: entry-flash 1.4s ease-out; }
+@keyframes entry-flash {
+  0% { outline: 2px solid var(--accent); outline-offset: 2px; background: var(--ring); }
+  100% { outline: 2px solid transparent; outline-offset: 2px; background: transparent; }
+}
+
+/* A slim leg marker: a run_started seam, hairline rules on both sides. */
+.entry.marker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin: 0.35rem 0;
+}
+.entry.marker::before,
+.entry.marker::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--hairline);
+}
+
+/* A compact one-liner: started / retried / gate decisions. */
+.entry.line { padding: 0.1rem 0.2rem; }
+
+.entry-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.entry-title { font-family: ui-monospace, Menlo, monospace; font-weight: 600; color: var(--ink); }
+.entry-elapsed {
+  margin-left: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.entry-note {
+  margin: 0.15rem 0 0 1.15rem;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* A rich settled entry: the node's card in the stream. Failure emphasis is
+   weight and a status-color border bar on the cause line — never red text. */
+.entry.rich {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem 0.6rem;
+}
+
+.entry-fail {
+  margin: 0.45rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--failed);
+  background: var(--ring);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The node's handoff artifact: the entry's body. Capped at ~24 lines
+   (24 × 18px line boxes + padding) until "show more" expands it. */
+.artifact-wrap { margin: 0.45rem 0 0; }
+.artifact {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  max-height: 452px;
+  overflow: hidden;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+.artifact.expanded { max-height: none; }
+.artifact.placeholder { color: var(--muted); font-style: italic; }
+.show-more {
+  margin-top: 0.25rem;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.show-more:hover { text-decoration: underline; }
+
+/* Accounting, not headline: session ref + per-node cost on one muted line. */
+.entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.45rem 0 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+.session-ref {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px dashed var(--hairline);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  cursor: copy;
+}
+.session-ref:hover { color: var(--ink); border-color: var(--muted); }
+
+/* The run's closing ledger line. */
+.entry.ledger {
+  border-top: 1px solid var(--hairline);
+  padding: 0.5rem 0.2rem 0.1rem;
+  margin-top: 0.2rem;
+}
+.entry.ledger .entry-word { font-weight: 600; color: var(--ink); }
+
+/* --- map (side panel) ------------------------------------------------------- */
+
+#map {
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+#map.collapsed { width: auto; }
+#map.collapsed .map-body { display: none; }
+
+.map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+}
+#map.collapsed .map-head { border-bottom: 0; }
+.map-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.map-toggle {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+}
+.map-toggle:hover { color: var(--ink); }
+
+.map-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+#cy {
+  flex: 1;
+  min-height: 0;
+  /* Subtle dot grid, dots in the hairline color — plain CSS, no JS. */
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.canvas-controls {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 2.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 5;
+}
+.canvas-controls button {
+  width: 30px;
+  height: 30px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px var(--ring);
+  cursor: pointer;
+}
+.canvas-controls button:hover { color: var(--ink); }
+
+/* The legend lives inside the map panel — it explains the map's colors. */
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  padding: 0.35rem 0.6rem;
+  border-top: 1px solid var(--hairline);
+}
+
+/* --- footer ---------------------------------------------------------------- */
+
+footer {
+  display: flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.3rem 1rem;
+  background: var(--page);
+  border-top: 1px solid var(--hairline);
+}
+/* Informational ink, never a status color on text — app.js prefixes a
+   caution glyph to carry the tone. */
+.banner { color: var(--ink-2); font-size: 12px; }

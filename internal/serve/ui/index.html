@@ -1,0 +1,70 @@
+<!doctype html>
+<!-- oh-my-graph serve — single-run live view. Feed-first: the chronological
+     run feed (what each node produced, why something failed) is the main
+     surface, rebuilt deterministically from the SSE replay; the DAG is a
+     compact, collapsible side map. Fully self-contained: every asset
+     (including the vendored cytoscape.js, dagre and cytoscape-dagre, see
+     vendor/README.md) is embedded in the binary and served from 127.0.0.1;
+     nothing is fetched from the network at runtime. Dark-mode first with a
+     light mode; the theme toggle's explicit choice (persisted in
+     localStorage) wins over the OS preference. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>oh-my-graph — live run</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="brand">oh-my-graph</span>
+    <span id="run-id" class="run-id">resolving run…</span>
+    <span id="run-status" class="status">connecting</span>
+    <span class="spacer"></span>
+    <span id="state-chips" class="chips"></span>
+    <span id="elapsed" class="elapsed" hidden></span>
+    <span id="run-cost" class="cost">$0.0000</span>
+    <button id="theme-toggle" class="theme-toggle" type="button"
+            title="Toggle color theme" aria-label="Toggle color theme">◐</button>
+  </header>
+  <main>
+    <!-- The feed: the main surface. Chronological, top to bottom; sticks to
+         the bottom only while the reader is already there. Entries are built
+         purely from the event stream plus each settled node's /api/result
+         artifact (untrusted text, rendered via textContent only). -->
+    <section id="feed-col">
+      <ol id="feed"></ol>
+    </section>
+    <!-- The map: the DAG as a compact side panel — orientation, not the
+         story. Clicking a node scrolls the feed to its latest entry. -->
+    <aside id="map">
+      <div class="map-head">
+        <span class="map-title">map</span>
+        <button id="map-toggle" class="map-toggle" type="button"
+                title="Toggle map" aria-label="Toggle map" aria-expanded="true">▸</button>
+      </div>
+      <div class="map-body">
+        <div id="cy"></div>
+        <div class="canvas-controls">
+          <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="zoom-fit" type="button" title="Fit graph" aria-label="Fit graph">⤢</button>
+        </div>
+        <div class="map-legend">
+          <span class="chip"><i class="dot pending"></i>pending</span>
+          <span class="chip"><i class="dot running"></i>running</span>
+          <span class="chip"><i class="dot passed"></i>passed</span>
+          <span class="chip"><i class="dot failed"></i>failed</span>
+          <span class="chip"><i class="dot gate-paused"></i>⏸ gate-paused</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer>
+    <span id="banner" class="banner"></span>
+  </footer>
+  <script src="vendor/cytoscape.min.js"></script>
+  <script src="vendor/dagre.min.js"></script>
+  <script src="vendor/cytoscape-dagre.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

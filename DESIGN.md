@@ -522,6 +522,54 @@ already rejects `type: gate` and continues to: an unattended run whose planner
 decides where a human should be interrupted is not a feature, and it collides
 with the deny-by-default field policy below.
 
+## Web live view — `oh-my-graph serve`
+`serve [<run-id>] [--port N]` is a read-only web live view of ONE run: a
+chronological run feed — what each node produced, why something failed — as
+the main surface, with the DAG as a compact collapsible side map (GitHub
+Actions' log-first layout, not Airflow's graph-first one: for this tool's
+runs the substance is in the node output, not the topology). It changes
+nothing about the visibility
+stance: oh-my-graph executes and does not render *for the fleet* — serve is
+just another **consumer of the run-feed contract** (docs/RUN-FEED.md), living
+in-repo, reading `state.json` for structure and tailing `events.jsonl` for
+progress through the same readers `runs list` and `watch` use
+(`runfeed.InFlight`, `runfeed.Follow`). A stream schema newer than the
+binary takes `watch`'s posture, not `runs list`'s: one non-terminal
+warning frame, then keep forwarding (a list can skip one run; a live view
+going blank would make a routine schema bump fatal, which RUN-FEED.md's
+compatibility rule forbids). fleetops's fleet-wide role is unchanged;
+serve is one run, live, locally.
+
+- **Run resolution:** an explicit id wins; otherwise the newest in-flight run
+  (the leg-walking `runs list` uses for RUNNING); otherwise the newest run
+  directory (`serve.ResolveRun`).
+- **127.0.0.1 only** (`serve.Listen`, default port 8642): run directories
+  hold prompts, artifacts and session ids, so the server must never be
+  reachable off-host. The loopback bind IS the access control; widening it
+  would need an auth story first. Covered by a test on the bound listener
+  address, not just config.
+- **Zero runtime network dependencies:** one static page embedded with
+  `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
+  (`internal/serve/ui/vendor/README.md` records its version and MIT license).
+  No build step, no npm, no CDN.
+- **Spawns nothing.** The CLI prints the URL; it deliberately does not shell
+  out to `open`/`xdg-open`, which would be a fourth exec seam requiring its
+  own ADR (internal/invariants). Auto-open is a possible follow-up, not an
+  oversight.
+- The graph structure appears when it is known: `state.json` is written only
+  after each node's terminal verdict, so a fresh run's `/api/graph` honestly
+  reports the structure unavailable until the first node completes (the UI
+  polls); events stream from the start.
+- **Node results:** `/api/result?node=<id>` serves that node's handoff
+  artifact (`<run-dir>/<node-id>.out`) as text/plain for the feed's settled
+  entries —
+  the id is matched against the snapshot's own node set before any
+  filesystem use (unknown id → 404; known node without an artifact → 204
+  "no result yet").
+- **v1 scope is the single-run live view ONLY:** no run list page, no history
+  browsing, no auth, no config file, no WebSocket (SSE over the append-only
+  stream is the whole transport).
+
 ## Auto mode — planned graphs, no hand-written YAML
 `oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
 YAML stays the precise-control path. Planning a graph is ONE
@@ -740,7 +788,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,resume,runs,show,chat,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run/resume/runs/show/chat, print ledger
+cmd/oh-my-graph/{main,flags,resume,runs,show,watch,serve,chat,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run/resume/runs/show/watch/serve/chat, print ledger
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
@@ -752,7 +800,8 @@ internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planne
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
-internal/runfeed/runfeed.go + _test            events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md)
+internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
+internal/serve/{serve,resolve}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..5}-*.md

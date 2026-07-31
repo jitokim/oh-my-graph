@@ -1,0 +1,762 @@
+// oh-my-graph serve — single-run live view. Hand-written, no build step.
+//
+// Feed-first: the chronological run feed is the main surface — what each
+// node produced, why something failed — and the DAG is a compact,
+// collapsible side map (clicking a map node scrolls the feed to that node's
+// latest entry). Three sources, mirroring the run-feed contract
+// (docs/RUN-FEED.md):
+//   /api/graph   the DAG structure (polled until the snapshot exists — a
+//                fresh run has no state.json until its first node completes)
+//   /api/events  the event stream over SSE (replay, then follow)
+//   /api/result  one node's handoff artifact, fetched lazily for that
+//                node's settled feed entries (200 body / 204 none / 404
+//                unknown node); fetched once per settled node and shared
+//                across every entry that shows it
+// Events may arrive before the structure does; per-node state is kept in
+// `nodes` and painted onto the cytoscape map whenever either side updates.
+// The feed is derived purely from the stream, so a full EventSource replay
+// rebuilds it deterministically: on reconnect the feed state resets and the
+// replay rebuilds it exactly, the same way totalCost is recomputed.
+//
+// Theme: CSS custom properties in style.css are the token source of truth;
+// cytoscape styles cannot read CSS vars, so the resolved values are read via
+// getComputedStyle at init and the graph is re-styled on theme change.
+
+"use strict";
+
+// Status palette — style.css's custom properties (--pending, --running, …)
+// are the one source of truth; node borders read them via statusColor(), so
+// no status hex lives in this file. Same hexes in both themes; status is
+// never color alone — every status surface pairs the color with a text
+// label, and "running" gets motion as its primary signal.
+const STATES = ["pending", "running", "passed", "failed", "gate-paused"];
+
+function statusColor(state) {
+  return cssVar(`--${state}`);
+}
+
+// node id -> the per-node record nodeInfo() seeds (see its literal for the
+// full shape and the result-fetch states). `verdict` is retained from the
+// stream for completeness but currently displayed nowhere — the feed entry's
+// status word and the card border already carry the same fact.
+const nodes = new Map();
+let cy = null;
+let totalCost = 0;
+let runStartedMs = null;
+let runEndedMs = null;
+
+const $ = (id) => document.getElementById(id);
+
+function nodeInfo(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      state: "pending", verdict: "", sessionId: "", costUsd: 0, detail: "",
+      startedMs: null, endedMs: null,
+      // The node's handoff artifact, fetched lazily once the node settles:
+      // resultState is "none" | "loading" | "loaded" | "empty" | "error".
+      // resultGen guards a stale in-flight fetch against a restart that
+      // invalidated it mid-air.
+      result: "", resultState: "none", resultGen: 0,
+    });
+  }
+  return nodes.get(id);
+}
+
+// --- theme -------------------------------------------------------------------
+
+const THEME_KEY = "omg-theme";
+const osDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+// The explicit toggle choice (persisted as data-theme on <html>) wins over
+// the OS setting both ways; with no stored choice the media query decides.
+const stored = localStorage.getItem(THEME_KEY);
+if (stored === "light" || stored === "dark") {
+  document.documentElement.dataset.theme = stored;
+}
+
+function effectiveTheme() {
+  return document.documentElement.dataset.theme || (osDark.matches ? "dark" : "light");
+}
+
+$("theme-toggle").addEventListener("click", () => {
+  const next = effectiveTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(THEME_KEY, next);
+  if (cy) cy.style(buildCyStyle());
+});
+
+osDark.addEventListener("change", () => {
+  // Only an OS-driven change with no explicit choice re-themes the page.
+  if (!document.documentElement.dataset.theme && cy) cy.style(buildCyStyle());
+});
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// --- map panel (collapsible) -------------------------------------------------
+
+// The open/closed choice persists next to the theme key; with no stored
+// choice, narrow windows start collapsed — on a phone-width window the feed
+// is the page.
+const MAP_KEY = "omg-map";
+
+function mapOpen() {
+  return !$("map").classList.contains("collapsed");
+}
+
+function setMapOpen(open) {
+  $("map").classList.toggle("collapsed", !open);
+  const toggle = $("map-toggle");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.textContent = open ? "▸" : "◂";
+  if (open && cy) {
+    // The canvas was 0×0 while hidden; re-measure, then fit.
+    cy.resize();
+    cy.fit(24);
+  }
+}
+
+const storedMap = localStorage.getItem(MAP_KEY);
+setMapOpen(storedMap === null ? window.innerWidth >= 900 : storedMap === "open");
+
+$("map-toggle").addEventListener("click", () => {
+  const next = !mapOpen();
+  setMapOpen(next);
+  localStorage.setItem(MAP_KEY, next ? "open" : "closed");
+});
+
+// --- cytoscape style ---------------------------------------------------------
+
+function buildCyStyle() {
+  return [
+    {
+      selector: "node",
+      style: {
+        shape: "round-rectangle",
+        "corner-radius": 8,
+        width: 170,
+        height: 56,
+        // Fill stays the neutral card surface; the thick border carries
+        // status (thin status borders are a documented Airflow UX failure).
+        "background-color": cssVar("--surface"),
+        "border-width": 4,
+        "border-color": statusColor("pending"),
+        label: "data(label)",
+        "text-wrap": "wrap",
+        "text-valign": "center",
+        "text-halign": "center",
+        // DEVIATION from the spec's 13px/600 id line over a muted 10px state
+        // line: a cytoscape node has exactly one label with one text style,
+        // so both lines share one size/weight/color. The id still leads and
+        // the state word stays short.
+        "font-size": 12,
+        "font-weight": 600,
+        "line-height": 1.4,
+        color: cssVar("--ink"),
+      },
+    },
+    // Gates keep a distinct shape with the same border-as-status treatment.
+    { selector: "node[?gate]", style: { shape: "round-hexagon", width: 150, height: 64 } },
+    ...STATES.map((s) => ({
+      selector: `node[state = "${s}"]`,
+      style: { "border-color": statusColor(s) },
+    })),
+    {
+      selector: "edge",
+      style: {
+        width: 2,
+        "line-color": cssVar("--muted"),
+        "target-arrow-color": cssVar("--muted"),
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+      },
+    },
+    {
+      // Accent outline IN ADDITION to the status border — never shadow alone.
+      selector: "node:selected",
+      style: {
+        "outline-width": 2,
+        "outline-color": cssVar("--accent"),
+        "outline-offset": 2,
+      },
+    },
+  ];
+}
+
+function layoutOptions() {
+  // Left-to-right layered DAG via the vendored dagre extension; silent
+  // breadthfirst fallback if it failed to register.
+  let dagre = null;
+  try { dagre = cytoscape("layout", "dagre"); } catch { dagre = null; }
+  return dagre
+    ? { name: "dagre", rankDir: "LR", nodeSep: 24, rankSep: 64 }
+    : { name: "breadthfirst", directed: true, padding: 24, spacingFactor: 1.15 };
+}
+
+// --- graph structure ---------------------------------------------------------
+
+async function loadGraph() {
+  let payload;
+  try {
+    const resp = await fetch("api/graph");
+    if (!resp.ok) {
+      // Transient or not, keep trying: the SSE side self-heals (EventSource
+      // reconnects), and a page that gives up on structure after one bad
+      // response would stream events into an invisible graph forever.
+      banner(`graph: ${(await resp.text()).trim()}`);
+      setTimeout(loadGraph, 2000);
+      return;
+    }
+    payload = await resp.json();
+  } catch (err) {
+    banner(`graph: ${err}`);
+    setTimeout(loadGraph, 2000);
+    return;
+  }
+  $("run-id").textContent = payload.run_id;
+  if (!payload.available) {
+    // Honest window: structure is unknown until the first node's terminal
+    // verdict writes state.json. Keep polling; events still stream meanwhile.
+    setStatus("waiting for structure", false);
+    setTimeout(loadGraph, 2000);
+    return;
+  }
+  render(payload);
+}
+
+function render(payload) {
+  const elements = [];
+  for (const node of payload.nodes || []) {
+    elements.push({
+      data: { id: node.id, label: `${node.id}\npending`, state: "pending", gate: node.type === "gate" },
+    });
+    for (const parent of node.depends_on || []) {
+      elements.push({ data: { id: `${parent}->${node.id}`, source: parent, target: node.id } });
+    }
+  }
+  cy = cytoscape({
+    container: $("cy"),
+    elements,
+    autoungrabify: true,
+    style: buildCyStyle(),
+    layout: layoutOptions(),
+  });
+  // The map is orientation; the story lives in the feed. Tapping a node
+  // jumps the feed to that node's latest entry and flash-highlights it.
+  cy.on("tap", "node", (evt) => {
+    const entry = latestEntryByNode.get(evt.target.id());
+    if (!entry) return;
+    entry.scrollIntoView({ block: "center" });
+    entry.classList.remove("flash");
+    void entry.offsetWidth; // restart the animation on repeat taps
+    entry.classList.add("flash");
+  });
+  if (mapOpen()) cy.fit(24);
+  paint();
+}
+
+// --- canvas controls ---------------------------------------------------------
+
+function zoomBy(factor) {
+  if (!cy) return;
+  cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+}
+$("zoom-in").addEventListener("click", () => zoomBy(1.25));
+$("zoom-out").addEventListener("click", () => zoomBy(0.8));
+$("zoom-fit").addEventListener("click", () => { if (cy) cy.fit(24); });
+
+// --- event stream ------------------------------------------------------------
+
+function connect() {
+  const source = new EventSource("api/events");
+  source.onopen = () => banner("");
+  source.onmessage = (msg) => apply(JSON.parse(msg.data));
+  // The server's non-terminal caution (e.g. a stream schema newer than the
+  // binary): show it and keep consuming — unknown event types fall through
+  // apply()'s default branch, so rendering degrades generically, per the
+  // run-feed compatibility rule.
+  source.addEventListener("stream_warning", (msg) => {
+    banner(JSON.parse(msg.data).error);
+  });
+  // The server's terminal refusal, distinct from EventSource's own
+  // connection errors.
+  source.addEventListener("stream_error", (msg) => {
+    source.close();
+    banner(JSON.parse(msg.data).error);
+  });
+  source.onerror = () => {
+    // Connection dropped (server stopped, laptop slept): EventSource retries
+    // by itself, and the server replays the stream from zero. Everything
+    // derived from the stream — the feed and the cost total — resets here so
+    // the replay rebuilds it without duplicates (idempotence).
+    setStatus("reconnecting", false);
+    totalCost = 0;
+    resetFeed();
+  };
+}
+
+function apply(event) {
+  const ts = event.ts ? Date.parse(event.ts) : NaN;
+  switch (event.event) {
+    case "run_started":
+      runStartedMs = Number.isNaN(ts) ? Date.now() : ts;
+      runEndedMs = null;
+      setStatus("running", true);
+      break;
+    case "node_started":
+    case "node_retried": {
+      const info = nodeInfo(event.node_id);
+      info.state = "running";
+      // A (re)started node's previous result is stale by definition; reset
+      // here, on the state change itself, so the next settled entry
+      // refetches. The generation bump makes any fetch still in flight for
+      // the old artifact land as a no-op.
+      info.result = "";
+      info.resultState = "none";
+      info.resultGen++;
+      if (!Number.isNaN(ts)) {
+        info.startedMs = ts;
+        info.endedMs = null;
+      }
+      break;
+    }
+    case "node_passed":
+    case "node_failed": {
+      const info = nodeInfo(event.node_id);
+      info.state = event.event === "node_passed" ? "passed" : "failed";
+      info.verdict = event.verdict || "";
+      info.sessionId = event.session_id || "";
+      info.costUsd = event.cost_usd || 0;
+      info.detail = event.detail || "";
+      if (!Number.isNaN(ts)) info.endedMs = ts;
+      totalCost += event.cost_usd || 0;
+      $("run-cost").textContent = `$${totalCost.toFixed(4)}`;
+      break;
+    }
+    case "gate_paused":
+      nodeInfo(event.node_id).state = "gate-paused";
+      break;
+    case "gate_approved":
+      // A resolved gate stops rendering as paused right away, instead of
+      // waiting for a later node event to repaint the graph.
+      nodeInfo(event.node_id).state = "passed";
+      break;
+    case "gate_rejected":
+      nodeInfo(event.node_id).state = "failed";
+      break;
+    case "run_finished":
+      runEndedMs = Number.isNaN(ts) ? Date.now() : ts;
+      setStatus(event.outcome, false);
+      break;
+    default:
+      // Unknown event type (same-schema addition impossible, but be safe):
+      // skip rather than fail, per the contract.
+      break;
+  }
+  appendFeed(event, ts);
+  paint();
+  tick();
+}
+
+// --- feed --------------------------------------------------------------------
+
+// The feed column pins to the bottom only while the reader is already there:
+// the scroll listener keeps `feedAtBottom` current, and appending an entry
+// scrolls only when it was true — a reader who scrolled up is never yanked.
+const feedCol = $("feed-col");
+let feedAtBottom = true;
+
+feedCol.addEventListener("scroll", () => {
+  feedAtBottom = feedCol.scrollTop + feedCol.clientHeight >= feedCol.scrollHeight - 4;
+});
+
+// Feed-derived indexes, all reset together on reconnect:
+//   latestEntryByNode  node id -> its most recent entry (the map's tap target)
+//   resultBlocks       node id -> the artifact blocks of its settled entries
+//   liveElapsed        node id -> the ticking elapsed span of its latest
+//                      started-line (frozen to the exact span on settle)
+const latestEntryByNode = new Map();
+const resultBlocks = new Map();
+const liveElapsed = new Map();
+
+function resetFeed() {
+  $("feed").textContent = "";
+  latestEntryByNode.clear();
+  resultBlocks.clear();
+  liveElapsed.clear();
+  feedAtBottom = true;
+}
+
+function addEntry(kind, nodeId) {
+  const li = document.createElement("li");
+  li.className = `entry ${kind}`;
+  if (nodeId) latestEntryByNode.set(nodeId, li);
+  $("feed").appendChild(li);
+  if (feedAtBottom) feedCol.scrollTop = feedCol.scrollHeight;
+  return li;
+}
+
+function entryHead(li, dotState, title, word) {
+  const head = document.createElement("div");
+  head.className = "entry-head";
+  const dot = document.createElement("i");
+  dot.className = `dot ${dotState}`;
+  head.appendChild(dot);
+  if (title) {
+    const t = document.createElement("span");
+    t.className = "entry-title";
+    t.textContent = title;
+    head.appendChild(t);
+  }
+  const w = document.createElement("span");
+  w.className = "entry-word";
+  w.textContent = word;
+  head.appendChild(w);
+  li.appendChild(head);
+  return head;
+}
+
+function fmtClock(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+// appendFeed turns one stream event into one feed entry. It runs after the
+// state switch in apply(), so `nodes` already reflects the event.
+function appendFeed(event, ts) {
+  const clock = Number.isNaN(ts) ? "" : fmtClock(ts);
+  switch (event.event) {
+    case "run_started": {
+      // A slim leg marker; on a resumed run the replay carries one per leg,
+      // so a second marker IS the visible resume seam.
+      const li = addEntry("marker");
+      const label = document.createElement("span");
+      label.textContent = clock ? `run started · ${clock}` : "run started";
+      li.appendChild(label);
+      break;
+    }
+    case "node_started": {
+      const li = addEntry("line", event.node_id);
+      entryHead(li, "running", event.node_id, "started");
+      const elapsed = document.createElement("span");
+      elapsed.className = "entry-elapsed";
+      li.querySelector(".entry-head").appendChild(elapsed);
+      liveElapsed.set(event.node_id, elapsed);
+      break;
+    }
+    case "node_retried": {
+      const li = addEntry("line", event.node_id);
+      const nth = event.retries ? `retry #${event.retries}` : "retried";
+      entryHead(li, "running", event.node_id, nth);
+      if (event.detail) {
+        const note = document.createElement("p");
+        note.className = "entry-note";
+        note.textContent = event.detail;
+        li.appendChild(note);
+      }
+      const elapsed = document.createElement("span");
+      elapsed.className = "entry-elapsed";
+      li.querySelector(".entry-head").appendChild(elapsed);
+      liveElapsed.set(event.node_id, elapsed);
+      break;
+    }
+    case "node_passed":
+    case "node_failed": {
+      const info = nodeInfo(event.node_id);
+      const passed = event.event === "node_passed";
+      // Freeze the started-line's ticking elapsed at the exact final span.
+      const span = liveElapsed.get(event.node_id);
+      if (span) span.textContent = nodeDuration(info);
+      const li = addEntry("rich", event.node_id);
+      const duration = nodeDuration(info);
+      const word = passed ? "passed" : "failed";
+      entryHead(li, info.state, event.node_id, duration ? `${word} · ${duration}` : word);
+      // On failure the cause leads, emphasized — it is THE human information
+      // then; the artifact follows as supporting evidence.
+      if (!passed && info.detail) {
+        const fail = document.createElement("p");
+        fail.className = "entry-fail";
+        fail.textContent = info.detail;
+        li.appendChild(fail);
+      }
+      li.appendChild(buildArtifactBlock(event.node_id));
+      li.appendChild(buildMetaLine(info));
+      break;
+    }
+    case "gate_paused": {
+      const li = addEntry("line", event.node_id);
+      entryHead(li, "gate-paused", event.node_id, "⏸ gate paused");
+      const note = document.createElement("p");
+      note.className = "entry-note";
+      const runRef = event.run_id || "<run-id>";
+      note.textContent = `the run is paused — resume with: oh-my-graph resume ${runRef} --approve ${event.node_id} (or --reject)`;
+      li.appendChild(note);
+      break;
+    }
+    case "gate_approved": {
+      const li = addEntry("line", event.node_id);
+      entryHead(li, "passed", event.node_id, "gate approved");
+      break;
+    }
+    case "gate_rejected": {
+      const li = addEntry("line", event.node_id);
+      entryHead(li, "failed", event.node_id, "gate rejected");
+      break;
+    }
+    case "run_finished": {
+      // The run's ledger line: outcome word, total elapsed, total cost.
+      const li = addEntry("ledger");
+      const outcome = event.outcome || "finished";
+      const dotState = outcome === "passed" || outcome === "failed" ? outcome : "pending";
+      const elapsed = runStartedMs != null && runEndedMs != null
+        ? ` · ${fmtDuration(runEndedMs - runStartedMs)}` : "";
+      entryHead(li, dotState, "", `run ${outcome}${elapsed} · $${totalCost.toFixed(4)}`);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// The artifact block of a settled entry: a monospace pre capped at ~24 lines
+// with a "show more" expander when the content overflows. The artifact is
+// rendered via textContent ONLY — never innerHTML: node output is untrusted
+// text, not markup.
+function buildArtifactBlock(id) {
+  const wrap = document.createElement("div");
+  wrap.className = "artifact-wrap";
+  const pre = document.createElement("pre");
+  pre.className = "artifact";
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "show-more";
+  more.textContent = "show more";
+  more.hidden = true;
+  more.addEventListener("click", () => {
+    const expanded = pre.classList.toggle("expanded");
+    more.textContent = expanded ? "show less" : "show more";
+  });
+  wrap.appendChild(pre);
+  wrap.appendChild(more);
+  if (!resultBlocks.has(id)) resultBlocks.set(id, []);
+  resultBlocks.get(id).push({ pre, more });
+  paintResultBlock(id, { pre, more });
+  fetchResult(id);
+  return wrap;
+}
+
+// One compact accounting line: truncated session ref (click to copy) and
+// per-node cost — cross-tool reference and bookkeeping, not headlines.
+function buildMetaLine(info) {
+  const meta = document.createElement("p");
+  meta.className = "entry-meta";
+  if (info.sessionId) {
+    const full = info.sessionId;
+    const session = document.createElement("button");
+    session.type = "button";
+    session.className = "session-ref";
+    session.textContent = full.slice(0, 8);
+    session.title = `${full} — click to copy`;
+    session.addEventListener("click", () => {
+      navigator.clipboard.writeText(full).then(() => {
+        session.textContent = "copied";
+        setTimeout(() => { session.textContent = full.slice(0, 8); }, 900);
+      });
+    });
+    meta.appendChild(session);
+  }
+  if (info.costUsd) {
+    const cost = document.createElement("span");
+    cost.textContent = `$${info.costUsd.toFixed(4)}`;
+    meta.appendChild(cost);
+  }
+  return meta;
+}
+
+// fetchResult kicks off the lazy /api/result fetch the first time a node is
+// seen settled; every entry showing that node shares the one fetch. Fetch
+// INVALIDATION lives in apply()'s (re)start branch (result reset + gen
+// bump), so a response for a superseded attempt lands as a no-op.
+function fetchResult(id) {
+  const info = nodeInfo(id);
+  if (info.resultState !== "none") return;
+  info.resultState = "loading";
+  const gen = info.resultGen;
+  fetch(`api/result?node=${encodeURIComponent(id)}`)
+    .then(async (resp) => {
+      if (gen !== info.resultGen) return;
+      if (resp.status === 200) {
+        info.result = await resp.text();
+        if (gen !== info.resultGen) return;
+        info.resultState = "loaded";
+      } else if (resp.status === 204 || resp.status === 404) {
+        // 204: a settled node without an artifact (a gate, `handoff:
+        // session`). 404 should be unreachable for an id the stream gave us.
+        info.resultState = "empty";
+      } else {
+        info.resultState = "error";
+      }
+      paintResultBlocks(id);
+    })
+    .catch(() => {
+      if (gen !== info.resultGen) return;
+      info.resultState = "error";
+      paintResultBlocks(id);
+    });
+}
+
+function paintResultBlocks(id) {
+  for (const block of resultBlocks.get(id) || []) paintResultBlock(id, block);
+}
+
+function paintResultBlock(id, { pre, more }) {
+  const info = nodeInfo(id);
+  const placeholder = info.resultState !== "loaded";
+  pre.classList.toggle("placeholder", placeholder);
+  switch (info.resultState) {
+    case "loaded": pre.textContent = info.result; break;
+    case "empty": pre.textContent = "no result"; break;
+    case "error": pre.textContent = "result unavailable"; break;
+    default: pre.textContent = "loading…"; break;
+  }
+  // The expander appears only when the capped block actually overflows.
+  more.hidden = !pre.classList.contains("expanded") && pre.scrollHeight <= pre.clientHeight + 1;
+}
+
+// --- painting ----------------------------------------------------------------
+
+// nodeDuration is the node's wall-clock so far: live while it runs, frozen
+// at its span once it settles, "" when it has not started (or the stream
+// carried no usable timestamps).
+function nodeDuration(info) {
+  if (!info.startedMs) return "";
+  if (info.state === "running") return fmtDuration(Date.now() - info.startedMs);
+  if (!info.endedMs) return "";
+  return fmtDuration(info.endedMs - info.startedMs);
+}
+
+// stateWord is the card face's second line: state + TIME. Cost is
+// accounting, not the headline — it lives only in the feed's meta line (and
+// the header total).
+function stateWord(info) {
+  if (info.state === "gate-paused") return "⏸ paused";
+  const duration = nodeDuration(info);
+  return duration ? `${info.state} ${duration}` : info.state;
+}
+
+function paint() {
+  if (cy) {
+    for (const [id, info] of nodes) {
+      const el = cy.getElementById(id);
+      if (!el.length) continue;
+      el.data("state", info.state);
+      el.data("label", `${id}\n${stateWord(info)}`);
+    }
+  }
+  paintChips();
+  syncPulse();
+}
+
+function paintChips() {
+  const counts = {};
+  if (cy) {
+    cy.nodes().forEach((el) => {
+      const s = el.data("state") || "pending";
+      counts[s] = (counts[s] || 0) + 1;
+    });
+  } else {
+    for (const info of nodes.values()) counts[info.state] = (counts[info.state] || 0) + 1;
+  }
+  const chips = $("state-chips");
+  chips.textContent = "";
+  for (const s of STATES) {
+    if (!counts[s]) continue;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const dot = document.createElement("i");
+    dot.className = `dot ${s}`;
+    chip.appendChild(dot);
+    const word = s === "gate-paused" ? "⏸ gate-paused" : s;
+    chip.appendChild(document.createTextNode(`${counts[s]} ${word}`));
+    chips.appendChild(chip);
+  }
+}
+
+// Running motion: NOT cytoscape's animate() (a repeating pulse there is a
+// known footgun with class manipulation) — one interval sine-oscillates
+// border-opacity on the running nodes between ~0.45 and 1, and runs only
+// while at least one node is running.
+let pulseTimer = null;
+
+function syncPulse() {
+  if (!cy) return;
+  const anyRunning = cy.nodes('[state = "running"]').length > 0;
+  if (anyRunning && !pulseTimer) {
+    pulseTimer = setInterval(() => {
+      const t = performance.now() / 1000;
+      const opacity = 0.725 + 0.275 * Math.sin(t * Math.PI * 2 * 0.8);
+      cy.nodes('[state = "running"]').style("border-opacity", opacity);
+    }, 100);
+  } else if (!anyRunning && pulseTimer) {
+    clearInterval(pulseTimer);
+    pulseTimer = null;
+  }
+  // Nodes that just left running keep their last bypassed opacity: clear it.
+  cy.nodes('[state != "running"]').removeStyle("border-opacity");
+}
+
+// setStatus renders the header status chip: the text names the state, and
+// `live` toggles the one styled modifier (the CSS pulse). The state word
+// deliberately gets no per-state class — text never wears a status color.
+function setStatus(text, live) {
+  const el = $("run-status");
+  el.textContent = text;
+  el.className = `status${live ? " live" : ""}`;
+}
+
+function banner(text) {
+  // The banner is informational ink, not a status surface: a caution glyph
+  // carries the tone so the text itself never wears a status color.
+  $("banner").textContent = text ? `⚠ ${text}` : "";
+}
+
+// --- clock -------------------------------------------------------------------
+
+function fmtDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}h ${m}m ${s}s`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// One 1s ticker drives every live clock: the header elapsed time (from
+// run_started to now, frozen at run_finished), each running node's card time
+// line, and the ticking elapsed on each running node's started feed line.
+function tick() {
+  const el = $("elapsed");
+  if (runStartedMs == null) {
+    el.hidden = true;
+  } else {
+    el.hidden = false;
+    el.textContent = fmtDuration((runEndedMs ?? Date.now()) - runStartedMs);
+  }
+  for (const [id, span] of liveElapsed) {
+    const info = nodes.get(id);
+    if (info && info.state === "running") span.textContent = nodeDuration(info);
+  }
+  if (!cy) return;
+  for (const [id, info] of nodes) {
+    if (info.state !== "running") continue;
+    const node = cy.getElementById(id);
+    if (node.length) node.data("label", `${id}\n${stateWord(info)}`);
+  }
+}
+setInterval(tick, 1000);
+
+loadGraph();
+connect();

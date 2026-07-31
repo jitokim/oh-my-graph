@@ -12,6 +12,7 @@
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
+//	oh-my-graph serve [<run-id>] [--port N]
 //	oh-my-graph chat
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
@@ -82,6 +83,7 @@ func run(args []string) error {
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
+       oh-my-graph serve [<run-id>] [--port N]
        oh-my-graph chat`)
 	}
 	switch args[0] {
@@ -99,13 +101,15 @@ func run(args []string) error {
 		return runShow(args[1:])
 	case "watch":
 		return runWatch(args[1:])
+	case "serve":
+		return runServe(args[1:])
 	case "chat":
 		return runChat(args[1:])
 	case "version":
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, lint, resume, runs, show, watch, chat, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, lint, resume, runs, show, watch, serve, chat, or version)", args[0])
 	}
 }
 
