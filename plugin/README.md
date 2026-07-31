@@ -15,6 +15,12 @@ a Claude Code session than switch to a shell.
 - `skills/run-graph/SKILL.md` — an optional, description-routed skill so
   Claude can also reach for `oh-my-graph` on a natural-language request
   ("run this graph for me") without you typing the slash command.
+- `agents/oh-my-graph.md` — a graph-engineering **agent**. Launch a whole
+  Claude Code session as this agent with `claude --agent oh-my-graph` and
+  every turn is graph-aware — no `/oh-my-graph:graph` prefix needed. See
+  [the agent section](#the-oh-my-graph-agent-ambient-entry-point) below;
+  **prefer this over typing the slash command** when you're doing more than
+  one graph operation.
 
 The command is scoped to `allowed-tools: Bash(oh-my-graph run *), Bash(oh-my-graph auto *)`,
 so any `oh-my-graph run ...` or `oh-my-graph auto ...` invocation runs without a
@@ -95,6 +101,73 @@ this plugin with `"source": "./plugin"`. From inside a Claude Code session:
 directory name — that's what `/plugin install <plugin>@<marketplace>` expects
 after the `@`.) This is closer to how you'd actually keep the plugin enabled
 across sessions.
+
+## The oh-my-graph agent (ambient entry point)
+
+The `/oh-my-graph:graph` command is per-turn: you type it every time you want
+a graph operation. The plugin also ships an **agent**
+(`agents/oh-my-graph.md`) that makes graph engineering the session's ambient
+mode instead: launch Claude Code with it as the main agent and every turn
+already knows the `oh-my-graph` CLI (run/auto/chat/resume/runs/show/watch/
+lint, `run --dry-run`), the worktree/handoff/gate model, and the habit of
+linting and dry-running YAML before spending money on real nodes. Prefer this
+over typing `/oh-my-graph:graph` each turn.
+
+### Setup
+
+1. Install the plugin (either option in
+   [Installing the plugin](#installing-the-plugin) below).
+2. Add a one-word shell function to your shell rc (`~/.zshrc` / `~/.bashrc`):
+
+   ```sh
+   omg () { claude --agent oh-my-graph "$@"; }
+   ```
+
+   Mirroring the common `team () { claude --agent team ... }` pattern — add
+   `--dangerously-skip-permissions` inside the function if that's how you
+   run your own agents.
+3. Type `omg` in a terminal. The startup header shows `@oh-my-graph` to
+   confirm the agent is active.
+
+### What the docs confirm (verified against code.claude.com/docs)
+
+- **Plugins ship agents.** An `agents/` directory at the plugin root is a
+  first-class plugin component, exactly like `commands/` and `skills/`.
+- **`--agent` takes the bare name.** For a plugin-provided agent,
+  `claude --agent oh-my-graph` works as-is — Claude Code finds it. The
+  plugin-scoped form `claude --agent oh-my-graph:oh-my-graph`
+  (`<plugin>:<agent>`) is only needed if *another* plugin ships an agent
+  that is also named `oh-my-graph`.
+- **Your normal config still loads.** `--agent` replaces only the default
+  system prompt with the agent's prompt. `CLAUDE.md` files (user and
+  project scope) and project memory still load normally, and the session
+  can still invoke your project/user/plugin skills through the Skill tool.
+  You keep Claude Code's TUI, streaming, and permission prompts for free.
+- **Plugin-agent limits.** For security, plugin agents ignore the `hooks`,
+  `mcpServers`, and `permissionMode` frontmatter fields; this agent uses
+  none of them. Its `tools` list is scoped to graph work:
+  `Bash(oh-my-graph *)`, `Bash(git *)`, `Bash(gh *)`, file read/edit/write
+  and search, `Skill`, and `Agent`.
+
+### Already have your own agents? Nothing conflicts
+
+`--agent` selects one main agent **per session** — it is a launch-time flag,
+not a global setting. Adding this plugin therefore only *adds* an entry
+point:
+
+- Your existing agents and shell functions (e.g.
+  `team () { claude --agent team ... }`) are untouched; `team` still starts
+  a `team` session, `omg` starts an oh-my-graph session, and plain `claude`
+  still starts a default session.
+- Name collisions can't clobber your agents: plugin agents live under the
+  plugin's namespace, and if you ever *did* have your own agent named
+  `oh-my-graph` in `.claude/agents/` or `~/.claude/agents/`, your local
+  definition wins over the plugin's (project/user agents override
+  same-named plugin agents).
+- A session whose main agent is oh-my-graph can still **delegate** to your
+  other subagents: a main agent launched via `--agent` keeps the Agent
+  tool, so all your project- and user-scope subagents remain available as
+  delegation targets inside the `omg` session.
 
 ## A note on nesting: Claude running Claude
 
