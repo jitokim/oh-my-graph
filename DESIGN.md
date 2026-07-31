@@ -28,7 +28,8 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --setting-sources "" ] [ --agent <name> ] \
   --allowedTools "<comma,joined>" \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
-  [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ]
+  [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ] \
+  [ --max-budget-usd <amount> ]
 ```
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
@@ -523,9 +524,12 @@ with the deny-by-default field policy below.
 
 ## Auto mode — planned graphs, no hand-written YAML
 `oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
-YAML stays the precise-control path. A **Coordinator** makes exactly ONE
+YAML stays the precise-control path. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
-env scrub, read-only `plan` permission mode, never the Agent SDK), asking
+env scrub, read-only `plan` permission mode, never the Agent SDK) — the
+Coordinator makes exactly that one call per `auto` run. (Interactive `chat`
+reuses the same Coordinator but adds a routing call per turn before planning;
+see "Ambient chat".) The planner asks
 claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
 prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
 loaded through the existing parser, normalization, and DAG validation — an
@@ -742,6 +746,7 @@ internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRu
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the three exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
+internal/invariants/exec_seam_test.go          test-only: asserts exactly the three exec-seam files import os/exec (a fourth importer fails CI — ADR 0002/0005)
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (runner + verify)
 internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
