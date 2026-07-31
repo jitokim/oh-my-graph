@@ -536,6 +536,51 @@ nodes:
 	}
 }
 
+// TestParse_UnknownRetryCauseRejected pins the load-time guard against the
+// silent footgun: a typoed retry.on cause matches no failure the scheduler
+// ever produces, so without this check the node would just never retry. The
+// message must name the node, the bogus cause, and the valid tokens.
+func TestParse_UnknownRetryCauseRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: bad-retry-cause
+nodes:
+  - { id: a, prompt: a, retry: { max: 2, on: [nonzero-exit] } }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" {
+		t.Fatalf("error named node %q, want a", vErr.NodeID)
+	}
+	if !strings.Contains(vErr.Reason, `"nonzero-exit"`) {
+		t.Errorf("reason should name the bogus cause: %q", vErr.Reason)
+	}
+	for _, valid := range retryCauses {
+		if !strings.Contains(vErr.Reason, valid) {
+			t.Errorf("reason should list valid cause %q: %q", valid, vErr.Reason)
+		}
+	}
+}
+
+// TestParse_ValidRetryCausesAccepted is the positive boundary: every token the
+// scheduler can actually produce must pass validation, so the guard can never
+// reject a working retry policy.
+func TestParse_ValidRetryCausesAccepted(t *testing.T) {
+	g, err := Parse([]byte(`
+name: good-retry
+nodes:
+  - id: a
+    prompt: a
+    retry:
+      max: 1
+      on: [nonzero_exit, run_error, output_error, budget_exceeded, verify_failed, result_mismatch]
+`))
+	if err != nil {
+		t.Fatalf("all valid retry causes must be accepted: %v", err)
+	}
+	if n, _ := g.NodeByID("a"); n.Retry == nil || len(n.Retry.On) != len(retryCauses) {
+		t.Errorf("retry.on did not survive parsing: %+v", n)
+	}
+}
+
 // TestParse_WorktreeValidNamesAccepted is the positive boundary: names that
 // are plainly one safe path element parse clean, and the field round-trips
 // through normalization.

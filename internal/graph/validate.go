@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -57,7 +58,9 @@ func (g *Graph) Validate() error {
 //     within the ceiling, a compilable output_matches regex;
 //  7. an agent name, when present, carries no surrounding whitespace;
 //  8. a worktree name, when present, is a single safe path element, and the
-//     node declares no cwd alongside it.
+//     node declares no cwd alongside it;
+//  9. every retry.on cause is a known token — a typoed cause would match
+//     nothing and silently mean "never retry".
 //
 // Every check runs even when an earlier one failed, so a graph broken in
 // several ways reports all of them at once instead of one per attempt. That
@@ -75,6 +78,43 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateSuccessChecks()...)
 	issues = append(issues, g.validateAgentNames()...)
 	issues = append(issues, g.validateWorktrees()...)
+	issues = append(issues, g.validateRetryCauses()...)
+	return issues
+}
+
+// retryCauses is the closed set of failure-cause tokens retry.on may list, in
+// the order the error message presents them. A slice rather than a map so the
+// message is deterministic; membership is a linear scan over six entries.
+var retryCauses = []string{
+	CauseNonzeroExit,
+	CauseRunError,
+	CauseOutputError,
+	CauseBudgetExceeded,
+	CauseVerifyFailed,
+	CauseResultMismatch,
+}
+
+// validateRetryCauses rejects any retry.on entry outside the closed cause set.
+// The scheduler matches causes by string equality, so an unknown entry — a
+// typo like `nonzero-exit` — would never match a real failure and the node
+// would silently never retry: exactly the quiet mid-run surprise load-time
+// validation exists to move earlier. The message lists every valid token so
+// the fix needs no trip to the docs.
+func (g *Graph) validateRetryCauses() []error {
+	var issues []error
+	for _, n := range g.Nodes {
+		if n.Retry == nil {
+			continue
+		}
+		for _, cause := range n.Retry.On {
+			if !slices.Contains(retryCauses, cause) {
+				issues = append(issues, &GraphValidationError{
+					NodeID: n.ID,
+					Reason: fmt.Sprintf("unknown retry.on cause %q (want one of: %s)", cause, strings.Join(retryCauses, ", ")),
+				})
+			}
+		}
+	}
 	return issues
 }
 
