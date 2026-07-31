@@ -1,9 +1,12 @@
 // oh-my-graph serve — single-run live view. Hand-written, no build step.
 //
-// Two sources, mirroring the run-feed contract (docs/RUN-FEED.md):
+// Three sources, mirroring the run-feed contract (docs/RUN-FEED.md):
 //   /api/graph   the DAG structure (polled until the snapshot exists — a
 //                fresh run has no state.json until its first node completes)
 //   /api/events  the event stream over SSE (replay, then follow)
+//   /api/result  one node's handoff artifact, fetched lazily for the detail
+//                panel once that node settles (200 body / 204 none / 404
+//                unknown node)
 // Events may arrive before the structure does; per-node state is kept in
 // `nodes` and painted onto the cytoscape graph whenever either side updates.
 //
@@ -38,6 +41,9 @@ function nodeInfo(id) {
     nodes.set(id, {
       state: "pending", verdict: "", sessionId: "", costUsd: 0, detail: "",
       startedMs: null, endedMs: null,
+      // The node's handoff artifact, fetched lazily once the node settles:
+      // resultState is "none" | "loading" | "loaded" | "empty" | "error".
+      result: "", resultState: "none",
     });
   }
   return nodes.get(id);
@@ -304,10 +310,23 @@ function apply(event) {
 
 // --- painting ----------------------------------------------------------------
 
+// nodeDuration is the node's wall-clock so far: live while it runs, frozen
+// at its span once it settles, "" when it has not started (or the stream
+// carried no usable timestamps).
+function nodeDuration(info) {
+  if (!info.startedMs) return "";
+  if (info.state === "running") return fmtDuration(Date.now() - info.startedMs);
+  if (!info.endedMs) return "";
+  return fmtDuration(info.endedMs - info.startedMs);
+}
+
+// stateWord is the card face's second line: state + TIME. Cost is
+// accounting, not the headline — it lives only in the detail panel (and the
+// header total).
 function stateWord(info) {
-  if (info.state === "passed" && info.costUsd) return `passed $${info.costUsd.toFixed(2)}`;
   if (info.state === "gate-paused") return "⏸ paused";
-  return info.state;
+  const duration = nodeDuration(info);
+  return duration ? `${info.state} ${duration}` : info.state;
 }
 
 function paint() {
@@ -375,16 +394,104 @@ function syncPulse() {
 function showDetail(id) {
   const info = nodeInfo(id);
   $("detail-id").textContent = id;
-  $("detail-state").textContent = info.state === "gate-paused" ? "⏸ gate-paused" : info.state;
-  $("detail-duration").textContent = info.startedMs
-    ? fmtDuration((info.endedMs ?? Date.now()) - info.startedMs)
-    : "—";
-  $("detail-verdict").textContent = info.verdict || "—";
-  $("detail-session").textContent = info.sessionId || "—";
-  $("detail-cost").textContent = `$${info.costUsd.toFixed(4)}`;
-  $("detail-detail").textContent = info.detail || "—";
+
+  // One status line under the id: dot + state word + duration. Verdict gets
+  // no row of its own — it duplicates the state, and the card border already
+  // wears it.
+  $("detail-dot").className = `dot ${info.state}`;
+  const word = info.state === "gate-paused" ? "⏸ gate-paused" : info.state;
+  const duration = nodeDuration(info);
+  $("detail-state").textContent = duration ? `${word} · ${duration}` : word;
+
+  // `detail` only when non-empty; on failure it leads, emphasized — the
+  // failure cause is THE human information then. Otherwise it is a footnote
+  // under the result.
+  const failed = info.state === "failed";
+  const fail = $("detail-fail");
+  fail.hidden = !(failed && info.detail);
+  if (!fail.hidden) fail.textContent = info.detail;
+  const note = $("detail-note");
+  note.hidden = failed || !info.detail;
+  if (!note.hidden) note.textContent = info.detail;
+
+  renderResult(id, info);
+
+  // One compact accounting line: truncated session ref (click to copy) and
+  // per-node cost — cross-tool reference and bookkeeping, not headlines.
+  const session = $("detail-session");
+  session.hidden = !info.sessionId;
+  if (info.sessionId) {
+    session.textContent = info.sessionId.slice(0, 8);
+    session.title = `${info.sessionId} — click to copy`;
+  }
+  $("detail-cost").textContent = info.costUsd ? `$${info.costUsd.toFixed(4)}` : "";
+
   $("detail").hidden = false;
 }
+
+// renderResult paints the panel's result block from the node's fetch state,
+// kicking off the lazy /api/result fetch the first time the node is seen
+// settled (a retried node re-runs, so leaving "running" resets the fetch and
+// re-settling refetches). The artifact is rendered via textContent ONLY —
+// never innerHTML: node output is untrusted text, not markup.
+function renderResult(id, info) {
+  const pre = $("detail-result");
+  const settled = info.state === "passed" || info.state === "failed";
+  if (!settled) {
+    info.result = "";
+    info.resultState = "none";
+    setResult(pre, "no result yet", true);
+    return;
+  }
+  switch (info.resultState) {
+    case "loaded":
+      setResult(pre, info.result, false);
+      return;
+    case "empty":
+      setResult(pre, "no result", true);
+      return;
+    case "error":
+      setResult(pre, "result unavailable", true);
+      return;
+    case "loading":
+      return;
+  }
+  info.resultState = "loading";
+  setResult(pre, "loading…", true);
+  fetch(`api/result?node=${encodeURIComponent(id)}`)
+    .then(async (resp) => {
+      if (resp.status === 200) {
+        info.result = await resp.text();
+        info.resultState = "loaded";
+      } else if (resp.status === 204 || resp.status === 404) {
+        // 204: a settled node without an artifact (a gate, `handoff:
+        // session`). 404 should be unreachable for an id the graph gave us.
+        info.resultState = "empty";
+      } else {
+        info.resultState = "error";
+      }
+      if (selectedNode === id) showDetail(id);
+    })
+    .catch(() => {
+      info.resultState = "error";
+      if (selectedNode === id) showDetail(id);
+    });
+}
+
+function setResult(pre, text, placeholder) {
+  pre.textContent = text;
+  pre.classList.toggle("placeholder", placeholder);
+}
+
+$("detail-session").addEventListener("click", () => {
+  const info = selectedNode && nodes.get(selectedNode);
+  if (!info || !info.sessionId) return;
+  navigator.clipboard.writeText(info.sessionId).then(() => {
+    // Brief confirmation; the next repaint restores the truncated ref.
+    $("detail-session").textContent = "copied";
+    setTimeout(() => { if (selectedNode) showDetail(selectedNode); }, 900);
+  });
+});
 
 // setStatus renders the header status chip: the text names the state, and
 // `live` toggles the one styled modifier (the CSS pulse). The state word
@@ -413,8 +520,9 @@ function fmtDuration(ms) {
   return `${s}s`;
 }
 
-// One 1s ticker drives the header elapsed time (from run_started to now,
-// frozen at run_finished) and the live duration of a selected running node.
+// One 1s ticker drives every live clock: the header elapsed time (from
+// run_started to now, frozen at run_finished), each running node's card time
+// line, and the live duration of a selected running node.
 function tick() {
   const el = $("elapsed");
   if (runStartedMs == null) {
@@ -422,6 +530,13 @@ function tick() {
   } else {
     el.hidden = false;
     el.textContent = fmtDuration((runEndedMs ?? Date.now()) - runStartedMs);
+  }
+  if (cy) {
+    for (const [id, info] of nodes) {
+      if (info.state !== "running") continue;
+      const node = cy.getElementById(id);
+      if (node.length) node.data("label", `${id}\n${stateWord(info)}`);
+    }
   }
   if (selectedNode) {
     const info = nodes.get(selectedNode);

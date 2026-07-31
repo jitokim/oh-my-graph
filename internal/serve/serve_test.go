@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +149,90 @@ func TestHandleGraph_RefusesIncompatibleSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "schema") {
 		t.Errorf("the refusal must name the schema problem, got %q", rec.Body.String())
+	}
+}
+
+// --- /api/result -------------------------------------------------------------
+
+func TestHandleResult_ServesAKnownNodesArtifact(t *testing.T) {
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	const artifact = "the node's actual output\nline two\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.out"), []byte(artifact), 0o644); err != nil {
+		t.Fatalf("write fixture artifact: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=a", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain — the artifact is text, never markup", got)
+	}
+	if rec.Body.String() != artifact {
+		t.Errorf("body = %q, want the artifact bytes %q", rec.Body.String(), artifact)
+	}
+}
+
+func TestHandleResult_RefusesAnIdNotInTheGraph(t *testing.T) {
+	// The guard is graph-set membership, not path sanitization: an id must be
+	// vouched for by the snapshot's own node set BEFORE any filesystem use.
+	// The traversal-shaped id points at a file that REALLY exists outside the
+	// run directory — if the handler joined first and checked later, this
+	// test would read it.
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	outside := filepath.Join(dir, "..", "state.out")
+	if err := os.WriteFile(outside, []byte("secret outside the run dir"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+
+	for name, target := range map[string]string{
+		"a typo'd id":           "/api/result?node=zzz",
+		"a missing node param":  "/api/result",
+		"a traversal-shaped id": "/api/result?node=" + url.QueryEscape("../state"),
+	} {
+		rec := httptest.NewRecorder()
+		newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404 (body %q)", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestHandleResult_KnownNodeWithoutAnArtifactIsNoContent(t *testing.T) {
+	// Node b is in the graph but has no b.out yet (still pending/running, a
+	// gate, or `handoff: session`): honestly "no result yet" (204), distinct
+	// from an unknown node's 404.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=b", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (body %q)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("body = %q, want empty", rec.Body.String())
+	}
+}
+
+func TestHandleResult_NoSnapshotYetRefusesEveryId(t *testing.T) {
+	// Without state.json the run's node set is unknown, so no id can be
+	// vouched for — even one whose artifact file happens to exist.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.out"), []byte("early artifact"), 0o644); err != nil {
+		t.Fatalf("write fixture artifact: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-fresh").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=a", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body %q)", rec.Code, rec.Body.String())
 	}
 }
 

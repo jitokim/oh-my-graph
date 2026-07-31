@@ -37,18 +37,24 @@
       <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
       <button id="zoom-fit" type="button" title="Fit graph" aria-label="Fit graph">⤢</button>
     </div>
+    <!-- Detail panel: what the node DID, not a metadata dump. One status
+         line (dot + state + duration), the failure cause first when there is
+         one, the node's handoff artifact as the body, and a single compact
+         accounting line (session ref + cost) at the bottom. -->
     <aside id="detail" hidden>
       <button id="detail-close" class="detail-close" type="button"
               title="Close" aria-label="Close detail panel">×</button>
       <h2 id="detail-id"></h2>
-      <dl>
-        <dt>state</dt><dd id="detail-state"></dd>
-        <dt>duration</dt><dd id="detail-duration"></dd>
-        <dt>verdict</dt><dd id="detail-verdict"></dd>
-        <dt>session</dt><dd id="detail-session"></dd>
-        <dt>cost</dt><dd id="detail-cost"></dd>
-        <dt>detail</dt><dd id="detail-detail"></dd>
-      </dl>
+      <p class="detail-status"><i id="detail-dot" class="dot"></i><span id="detail-state"></span></p>
+      <p id="detail-fail" class="detail-fail" hidden></p>
+      <h3 class="detail-label">result</h3>
+      <pre id="detail-result" class="detail-result"></pre>
+      <p id="detail-note" class="detail-note" hidden></p>
+      <p class="detail-meta">
+        <button id="detail-session" class="session-ref" type="button" hidden
+                aria-label="Copy session id"></button>
+        <span id="detail-cost"></span>
+      </p>
     </aside>
   </main>
   <footer>

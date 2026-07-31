@@ -97,6 +97,7 @@ func New(runDir, runID string) *Server {
 //	/            the embedded static UI (index.html, app.js, style.css, vendored libraries)
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
+//	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //
 // Everything is read-only GETs over the run directory; there is no mutating
 // route to guard.
@@ -109,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/graph", s.handleGraph)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/result", s.handleResult)
 	mux.Handle("GET /", http.FileServerFS(static))
 	return mux
 }
@@ -134,25 +136,36 @@ type graphNode struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 }
 
-// handleGraph serves the run's DAG structure, reconstructed from the
-// snapshot's own Graph bytes via the same graph.Parse path `resume` and
-// `runs list` trust — never by re-reading the source YAML, which may have
-// been edited since. A snapshot that exists but cannot be read (corrupt, or
-// a schema this binary does not understand — runstate.Load's loud refusal)
-// is a 500 carrying the reason, not a silent empty graph.
-func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+// loadRunGraph reconstructs the run's graph from the snapshot's own Graph
+// bytes via the same graph.Parse path `resume` and `runs list` trust — never
+// by re-reading the source YAML, which may have been edited since. A missing
+// snapshot surfaces as fs.ErrNotExist for the caller to translate (each
+// endpoint's honest answer differs); any other failure is a load/parse error
+// worth a 500 carrying the reason.
+func (s *Server) loadRunGraph() (*graph.Graph, error) {
 	snap, err := runstate.Load(filepath.Join(s.runDir, "state.json"))
+	if err != nil {
+		return nil, err
+	}
+	g, err := graph.Parse(snap.Graph)
+	if err != nil {
+		return nil, fmt.Errorf("reconstruct graph: %w", err)
+	}
+	return g, nil
+}
+
+// handleGraph serves the run's DAG structure. A snapshot that exists but
+// cannot be read (corrupt, or a schema this binary does not understand —
+// runstate.Load's loud refusal) is a 500 carrying the reason, not a silent
+// empty graph.
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	g, err := s.loadRunGraph()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeJSON(w, graphPayload{RunID: s.runID, Available: false})
 			return
 		}
-		http.Error(w, fmt.Sprintf("load run snapshot: %v", err), http.StatusInternalServerError)
-		return
-	}
-	g, err := graph.Parse(snap.Graph)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("reconstruct graph: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("load run graph: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -161,6 +174,57 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		payload.Nodes = append(payload.Nodes, graphNode{ID: node.ID, Type: node.Type, DependsOn: node.DependsOn})
 	}
 	writeJSON(w, payload)
+}
+
+// handleResult serves one node's handoff artifact (`<run-dir>/<node-id>.out`,
+// the file artifact handoff persists) as text/plain — WHAT the node did, the
+// thing a human clicks a node for.
+//
+// SECURITY: the node id taken from the URL is matched against the run's own
+// node-id set — from the snapshot's graph, the same source /api/graph serves
+// — BEFORE any filesystem use. URL input is never sanitized-and-joined into
+// a path; an id the graph does not contain (a typo and a traversal probe
+// alike) is a 404. While no snapshot exists the node set is unknown, so no
+// id can be vouched for and every id is a 404.
+//
+// A KNOWN node whose artifact file does not exist is 204 No Content — "no
+// result yet" (still running, a gate, `handoff: session`), deliberately
+// distinct from 404's "no such node" so the UI can render each honestly.
+func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
+	g, err := s.loadRunGraph()
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, fmt.Sprintf("load run graph: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	nodeID := r.URL.Query().Get("node")
+	known := false
+	for _, node := range g.Nodes {
+		if node.ID == nodeID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(s.runDir, nodeID+".out"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, fmt.Sprintf("read node artifact: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
 }
 
 // handleEvents streams the run's events.jsonl as Server-Sent Events: every

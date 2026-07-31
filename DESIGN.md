@@ -557,6 +557,11 @@ serve is one run, live, locally.
   after each node's terminal verdict, so a fresh run's `/api/graph` honestly
   reports the structure unavailable until the first node completes (the UI
   polls); events stream from the start.
+- **Node results:** `/api/result?node=<id>` serves that node's handoff
+  artifact (`<run-dir>/<node-id>.out`) as text/plain for the detail panel —
+  the id is matched against the snapshot's own node set before any
+  filesystem use (unknown id → 404; known node without an artifact → 204
+  "no result yet").
 - **v1 scope is the single-run live view ONLY:** no run list page, no history
   browsing, no auth, no config file, no WebSocket (SSE over the append-only
   stream is the whole transport).
