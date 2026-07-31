@@ -50,14 +50,18 @@ func (e *NotConfiguredError) Error() string {
 
 func (e *NotConfiguredError) Unwrap() error { return ErrNoOpener }
 
-// RefusingOpener is the default Opener: it refuses every request instead of
-// running anything, mirroring worktree.RefusingProvider. It exists so that
-// forgetting to inject a real Opener fails loudly and locally rather than
-// silently spawning a launcher from a test — which is exactly how a suite
-// that promises "zero real spawns" starts quietly breaking that promise.
+// RefusingOpener is the injection-safety Opener, mirroring
+// worktree.RefusingProvider: any code path that must HOLD an Opener but
+// should never open one uses it, so a forgotten real injection fails loudly
+// and locally rather than silently spawning a launcher from a test — which
+// is exactly how a suite that promises "zero real spawns" starts quietly
+// breaking that promise.
 //
-// A caller that never asks to open a URL never reaches an Opener at all, so
-// this default costs existing paths nothing.
+// Note the CLI's disabled paths (non-TTY, --no-web) do not carry a
+// RefusingOpener: they pass a nil Opener, which disables the live view
+// entirely — no server, no browser, and the Opener is never consulted (see
+// cmd/oh-my-graph's webOpener). RefusingOpener guards the holds-but-must-
+// not-open case; nil is the feature-off case.
 type RefusingOpener struct{}
 
 // NewRefusingOpener returns the refuse-everything default Opener.

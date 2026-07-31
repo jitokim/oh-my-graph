@@ -58,3 +58,39 @@ func TestExecOpener_ScrubsBillingVarsFromLauncherChildren(t *testing.T) {
 		t.Error("scrub removed more than the billing variables")
 	}
 }
+
+// TestExecOpener_RefusesNonLoopbackURLs pins the seam's URL-shape contract:
+// only plain http on a loopback host may reach the launcher. On Windows the
+// argv reaches `cmd /c start`, where cmd.exe expands metacharacters before
+// argv parsing, so the safe URL shape is enforced HERE rather than assumed
+// of callers.
+func TestExecOpener_RefusesNonLoopbackURLs(t *testing.T) {
+	accept := []string{
+		"http://127.0.0.1:8642/",
+		"http://localhost:8642/",
+		"http://[::1]:8642/",
+	}
+	for _, u := range accept {
+		if err := requireLoopbackHTTP(u); err != nil {
+			t.Errorf("requireLoopbackHTTP(%q) = %v, want accept", u, err)
+		}
+	}
+	reject := []string{
+		"https://127.0.0.1:8642/",         // wrong scheme
+		"http://example.com/",             // not loopback
+		"http://127.0.0.1:8642/?q=%CD%CD", // query — cmd.exe metacharacter territory
+		"http://127.0.0.1:8642/#frag",     // fragment
+		"http://user:pw@127.0.0.1:8642/",  // userinfo
+		"http://127.0.0.2.example.com/",   // loopback-looking hostname
+		"://not-a-url",
+	}
+	for _, u := range reject {
+		if err := requireLoopbackHTTP(u); err == nil {
+			t.Errorf("requireLoopbackHTTP(%q) accepted, want refusal", u)
+		}
+	}
+	// And the refusal is live at Open itself, before any spawn.
+	if err := NewExecOpener().Open(context.Background(), "http://example.com/"); err == nil {
+		t.Error("Open must refuse a non-loopback URL before spawning anything")
+	}
+}

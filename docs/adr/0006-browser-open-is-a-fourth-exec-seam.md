@@ -40,9 +40,12 @@ type Opener interface {
   `os/exec`. The URL is always a verbatim argv element, never interpolated
   into a shell line. Each launch is bounded by a timeout so a wedged launcher
   cannot stall the caller.
-- `RefusingOpener` is the default, mirroring `worktree.RefusingProvider`: a
-  caller that forgets to inject a real Opener fails loudly instead of
-  silently popping a browser from a test.
+- `RefusingOpener` mirrors `worktree.RefusingProvider` for any code that
+  must hold an Opener without ever opening: a forgotten real injection fails
+  loudly instead of silently popping a browser from a test. The CLI's
+  disabled paths (non-TTY, `--no-web`) are stricter still — they carry a nil
+  Opener, which turns the live view off entirely, so no Opener is consulted
+  at all.
 - `FakeOpener` (records URLs in order, scriptable failure) is what tests
   inject, so every auto-open path stays spawn-free in CI.
 - The interface carries no policy: deciding WHETHER to open is the caller's

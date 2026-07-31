@@ -753,10 +753,11 @@ Scheduler as any other graph.
 - **Browser Opener (interface)** — THE browser-open seam: opens a URL (the
   `serve` live view) in the user's default browser. `ExecOpener` (prod — the
   fourth spawner, ADR 0006: `open`/`xdg-open`/`cmd /c start` behind build
-  tags), `RefusingOpener` (default — a forgotten injection fails loudly),
-  `FakeOpener` (tests). Wired at the `run`/`auto` call sites only, behind
-  the TTY-and-not-`--no-web` gate (see "Web live view"); everywhere else no
-  Opener is injected.
+  tags), `RefusingOpener` (injection safety — code that must hold an Opener
+  without ever opening fails loudly), `FakeOpener` (tests). Wired at the
+  `run`/`auto` call sites only, behind the TTY-and-not-`--no-web` gate (see
+  "Web live view"); everywhere else the Opener is nil — the live view is off
+  entirely and no Opener is consulted.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
   session. Gains `Seed(nodeID, artifactPath, sessionID)` so a resumed run can
   rehydrate a previous leg's artifacts and session ids without Handoff having to

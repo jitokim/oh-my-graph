@@ -3,6 +3,8 @@ package browser
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -43,16 +45,50 @@ func NewExecOpener() *ExecOpener {
 // failure carries the launcher's combined output in the error, because
 // `xdg-open` explains itself on stderr and an exit status alone ("exit
 // status 3") diagnoses nothing.
-func (o *ExecOpener) Open(ctx context.Context, url string) error {
+//
+// Open refuses any URL that is not plain http on a loopback host — not
+// because today's callers could pass one (the only URL ever built comes from
+// the embedded server's own 127.0.0.1 listener), but as the seam's own
+// enforcement of that provenance: on Windows the argv reaches `cmd /c
+// start`, where cmd.exe expands metacharacters like `%` and `&` before argv
+// parsing, so the safe-by-construction URL shape must be a checked contract
+// here rather than an unstated assumption about callers.
+func (o *ExecOpener) Open(ctx context.Context, rawURL string) error {
+	if err := requireLoopbackHTTP(rawURL); err != nil {
+		return fmt.Errorf("open %s in browser: %w", rawURL, err)
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	defer cancel()
 
-	out, err := o.openCmd(cmdCtx, url).CombinedOutput()
+	out, err := o.openCmd(cmdCtx, rawURL).CombinedOutput()
 	if err != nil {
 		if output := strings.TrimSpace(string(out)); output != "" {
-			return fmt.Errorf("open %s in browser: %w: %s", url, err, output)
+			return fmt.Errorf("open %s in browser: %w: %s", rawURL, err, output)
 		}
-		return fmt.Errorf("open %s in browser: %w", url, err)
+		return fmt.Errorf("open %s in browser: %w", rawURL, err)
+	}
+	return nil
+}
+
+// requireLoopbackHTTP rejects anything but `http://<loopback-host>[:port]`
+// with an optional plain path — the only shape the live view ever announces.
+// Query strings and fragments are refused outright: nothing here needs them,
+// and they are exactly where shell-significant characters would live.
+func requireLoopbackHTTP(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("not a parseable URL: %w", err)
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("scheme %q is not http", u.Scheme)
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("host %q is not loopback", host)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return fmt.Errorf("URL carries a query, fragment or userinfo")
 	}
 	return nil
 }
