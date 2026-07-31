@@ -107,7 +107,7 @@ output and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|chat|resume|runs|show|watch|version> ...
+oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|version> ...
 ```
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
@@ -115,6 +115,11 @@ oh-my-graph <run|auto|chat|resume|runs|show|watch|version> ...
 - **`auto "<goal>"`** — you describe a goal in plain language; a coordinator
   plans the DAG for you, then the same engine executes the generated graph.
   The zero-config default.
+- **`lint <graph.yaml>`** — statically validate a graph file without running
+  it: the same load-time checks `run` enforces (DAG/cycle, unknown
+  `depends_on` ids, the session-handoff parent rule, verify blocks), but
+  reporting every problem at once instead of stopping at the first. Exit 0
+  when valid, 1 when not. Read-only, zero cost.
 - **`chat`** — an interactive REPL (prototype). Each line you type is *routed*:
   a conversational turn is answered directly; a task-shaped turn is planned
   into a graph and run — `auto`, but ambient. Type `exit` (or Ctrl-D) to leave.

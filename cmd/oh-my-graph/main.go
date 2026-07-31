@@ -7,6 +7,7 @@
 //
 //	oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
@@ -76,6 +77,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+       oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
        oh-my-graph runs list
        oh-my-graph show <run-id>
@@ -87,6 +89,8 @@ func run(args []string) error {
 		return runGraph(args[1:])
 	case "auto":
 		return runAuto(args[1:])
+	case "lint":
+		return runLint(args[1:])
 	case "resume":
 		return runResume(args[1:])
 	case "runs":
@@ -101,7 +105,7 @@ func run(args []string) error {
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, resume, runs, show, watch, chat, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want run, auto, lint, resume, runs, show, watch, chat, or version)", args[0])
 	}
 }
 
