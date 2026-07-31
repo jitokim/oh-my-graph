@@ -112,6 +112,13 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|version> ...
 
 - **`run <graph.yaml>`** — you write the DAG in YAML, oh-my-graph executes it.
   The precise-control path: exact prompts, tools, and handoffs per node.
+  Add `--dry-run` to load, statically validate, and resolve `--input`
+  interpolation exactly as a real run would, print the resolved plan (node
+  ids and `depends_on` edges), and exit without running any node — zero
+  cost. Exit 0 when a real run would start, 1 when it would refuse. Where
+  `lint` judges the file alone, `--dry-run` also proves every
+  `{{ inputs.* }}` reference resolves against the `--input` values you
+  passed.
 - **`auto "<goal>"`** — you describe a goal in plain language; a coordinator
   plans the DAG for you, then the same engine executes the generated graph.
   The zero-config default.

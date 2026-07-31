@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
@@ -75,7 +75,7 @@ func mainExitCode(args []string) int {
 // than exiting so the exit path lives in exactly one place (mainExitCode).
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
+		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
@@ -125,10 +125,21 @@ func (f inputFlag) Set(pair string) error {
 
 // runGraph is the `run` subcommand: load and validate the graph, warn about any
 // dangerous per-node opt-ins, wire the production collaborators, and execute.
+// With --dry-run it stops after validation and the plan print — nothing is
+// wired and no node runs.
 func runGraph(args []string) error {
+	return runGraphWith(args, runner.NewClaudeCLIRunner())
+}
+
+// runGraphWith is runGraph with the runner seam injectable, so a test can
+// prove --dry-run never reaches it: a FakeRunner must see zero invocations.
+func runGraphWith(args []string, nodeRunner runner.NodeRunner) error {
 	flags := newRunFlags()
 	if err := flags.parse(args); err != nil {
 		return err
+	}
+	if flags.dryRun {
+		return dryRunGraph(os.Stdout, flags.graphPath, flags.inputs)
 	}
 
 	// Read the raw bytes ourselves (rather than graph.Load, which discards
@@ -154,7 +165,7 @@ func runGraph(args []string) error {
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
-	return executeGraph(ctx, newRunID(), g, runner.NewClaudeCLIRunner(), flags.commonRunFlags, nil, 0, flags.graphPath, raw)
+	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, raw)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
