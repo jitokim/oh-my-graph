@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
@@ -169,6 +172,177 @@ func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
 	}
 	if !strings.Contains(got, "run-good") || !strings.Contains(got, "1 run(s), TOTAL COST: $0.1000") {
 		t.Errorf("the good run must still be listed and totaled:\n%s", got)
+	}
+}
+
+// --- an in-flight run renders RUNNING, a settled one PASS/FAIL ---------------
+
+// writeEventFixture writes dir's events.jsonl through the real StreamWriter,
+// so the fixture's lines are exactly the bytes a real run emits — never
+// hand-built JSON that could drift from the stream contract.
+func writeEventFixture(t *testing.T, dir, runID string, events []runfeed.Event) {
+	t.Helper()
+	w, err := runfeed.NewStreamWriter(filepath.Join(dir, runfeed.FileName), runID)
+	if err != nil {
+		t.Fatalf("open fixture event stream: %v", err)
+	}
+	defer w.Close()
+	for _, e := range events {
+		if err := w.Emit(e); err != nil {
+			t.Fatalf("emit fixture event %q: %v", e.Type, err)
+		}
+	}
+}
+
+func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
+	const runID = "run-under-test"
+	const twoNode = `{"name":"demo","nodes":[{"id":"a","prompt":"a"},{"id":"b","prompt":"b","depends_on":["a"]}]}`
+	const gated = `{"name":"gated","nodes":[{"id":"g","type":"gate"}]}`
+	passA := runstate.NodeRecord{Verdict: runstate.VerdictPass, SessionID: "s-a", CostUSD: 0.10}
+	passB := runstate.NodeRecord{Verdict: runstate.VerdictPass, SessionID: "s-b", CostUSD: 0.20}
+	failA := runstate.NodeRecord{Verdict: runstate.VerdictFail, SessionID: "s-a", CostUSD: 0.05}
+
+	cases := []struct {
+		name string
+		// events is appended to the fixture's events.jsonl via the real
+		// StreamWriter; snapshot (when non-nil) is written via runstate.Write;
+		// rawState (when non-nil) is written verbatim as a corrupt state.json.
+		events   []runfeed.Event
+		snapshot *runstate.Snapshot
+		rawState []byte
+		// wantVerdict is the row's VERDICT cell; "" means the run must be
+		// skipped with a warning instead of listed.
+		wantVerdict string
+	}{
+		{
+			name: "open leg with no snapshot yet renders RUNNING",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventNodeStarted, NodeID: "a"},
+			},
+			wantVerdict: verdictRunning,
+		},
+		{
+			name: "open leg with a partial snapshot renders RUNNING, not FAIL",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass},
+				{Type: runfeed.EventNodeStarted, NodeID: "b"},
+			},
+			snapshot: &runstate.Snapshot{
+				RunID: runID,
+				Graph: json.RawMessage(twoNode),
+				Nodes: map[string]runstate.NodeRecord{"a": passA},
+			},
+			wantVerdict: verdictRunning,
+		},
+		{
+			name: "closed passed leg renders PASS",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+			},
+			snapshot: &runstate.Snapshot{
+				RunID: runID,
+				Graph: json.RawMessage(twoNode),
+				Nodes: map[string]runstate.NodeRecord{"a": passA, "b": passB},
+			},
+			wantVerdict: "PASS",
+		},
+		{
+			name: "closed failed leg renders FAIL",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventNodeFailed, NodeID: "a", Verdict: runfeed.VerdictFail},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+			},
+			snapshot: &runstate.Snapshot{
+				RunID: runID,
+				Graph: json.RawMessage(twoNode),
+				Nodes: map[string]runstate.NodeRecord{"a": failA},
+			},
+			wantVerdict: "FAIL",
+		},
+		{
+			name: "paused leg is closed, so it keeps today's FAIL, not RUNNING",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventGatePaused, NodeID: "g"},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+			},
+			snapshot: &runstate.Snapshot{
+				RunID: runID,
+				Graph: json.RawMessage(gated),
+				Gate: runstate.GateState{
+					PausedAt:  "g",
+					Decisions: map[string]runstate.GateDecision{"g": runstate.GatePause},
+				},
+			},
+			wantVerdict: "FAIL",
+		},
+		{
+			name:        "corrupt snapshot with no stream still warns and skips",
+			rawState:    []byte("not json"),
+			wantVerdict: "",
+		},
+		{
+			name: "corrupt snapshot is broken even under an open leg",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+			},
+			rawState:    []byte("not json"),
+			wantVerdict: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, runID)
+			if len(tc.events) > 0 {
+				writeEventFixture(t, dir, runID, tc.events)
+			}
+			if tc.snapshot != nil {
+				if err := runstate.Write(filepath.Join(dir, stateFileName), *tc.snapshot); err != nil {
+					t.Fatalf("write fixture snapshot: %v", err)
+				}
+			}
+			if tc.rawState != nil {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("create fixture run dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, stateFileName), tc.rawState, 0o644); err != nil {
+					t.Fatalf("write corrupt fixture snapshot: %v", err)
+				}
+			}
+
+			var out, warn strings.Builder
+			if err := listRuns(&out, &warn, root); err != nil {
+				t.Fatalf("listRuns returned error: %v", err)
+			}
+			got := out.String()
+
+			if tc.wantVerdict == "" {
+				if !strings.Contains(warn.String(), runID) {
+					t.Errorf("the broken run must be named in a warning, got %q", warn.String())
+				}
+				if strings.Contains(got, runID) {
+					t.Errorf("the broken run must not appear as a row:\n%s", got)
+				}
+				return
+			}
+			if warn.Len() != 0 {
+				t.Fatalf("no run should have been skipped, got warnings:\n%s", warn.String())
+			}
+			row := lineContaining(t, got, runID)
+			fields := strings.Fields(row)
+			if verdict := fields[len(fields)-1]; verdict != tc.wantVerdict {
+				t.Errorf("verdict = %q, want %q (row %q)", verdict, tc.wantVerdict, row)
+			}
+			if !strings.Contains(got, "1 run(s)") {
+				t.Errorf("the row must count toward the run count:\n%s", got)
+			}
+		})
 	}
 }
 
