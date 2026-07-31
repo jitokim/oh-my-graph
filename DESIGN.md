@@ -101,8 +101,9 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   Use for fan-in / reviews (many→one conclusions).
 - **session (`handoff: session`):** dependent runs `--resume <session_id>` of its
   single session-parent (same cwd/git scope). Use for tight sequential
-  continuation (dev→e2e). Validation: a node may resume AT MOST ONE session parent
-  (can't merge two sessions); multi-parent fan-in MUST use artifact.
+  continuation (dev→e2e). Validation: a session node must have EXACTLY ONE parent
+  — a root node has no session to resume, and a fan-in can't merge sessions;
+  both must use artifact. Rejected at load time.
 
 ## Node-as-subagent (`agent:`, v1.1 — hand-written graphs only)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code

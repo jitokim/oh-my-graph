@@ -465,9 +465,10 @@ nodes:
   with the `| inline` filter). Robust, inspectable, parallel-safe — and the only
   option for a fan-in (many parents).
 - **`session`:** the node resumes its single parent's claude session with
-  `--resume`. For tight sequential continuation in the same working tree. A node
-  with two or more parents may not use `session` (a session can't merge) — that
-  is rejected at load time.
+  `--resume`. For tight sequential continuation in the same working tree. A
+  session node must have **exactly one** parent: a root node (zero parents) has
+  no session to resume, and a fan-in (two or more parents) can't merge
+  sessions — both are rejected at load time. Use `artifact` in those cases.
 
 ### Success checks and retry
 
