@@ -16,11 +16,13 @@
 // need an auth story first.
 //
 // The server spawns no processes. In particular it does not shell out to
-// `open`/`xdg-open` to launch a browser: exactly three objects in this repo
-// may spawn a process (internal/invariants, ADR 0002/0005), and auto-opening
-// the browser would be a fourth exec seam requiring its own ADR. The CLI
-// prints the URL instead; auto-open is a deliberate follow-up, not an
-// oversight.
+// `open`/`xdg-open` to launch a browser: exactly four objects in this repo
+// may spawn a process (internal/invariants, ADR 0002/0005/0006), and
+// browser-open belongs to the fourth of them — browser.ExecOpener, behind
+// the browser.Opener seam (ADR 0006). The CLI decides: `run`/`auto` embed
+// this server for the run's duration and, when stdout is a terminal and
+// --no-web was not passed, hand the URL to the injected Opener; the
+// standalone `serve` subcommand just prints the URL.
 package serve
 
 import (

@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -132,12 +133,19 @@ func (f inputFlag) Set(pair string) error {
 // With --dry-run it stops after validation and the plan print — nothing is
 // wired and no node runs.
 func runGraph(args []string) error {
-	return runGraphWith(args, runner.NewClaudeCLIRunner())
+	// One of the two sites (with runAuto) injecting the real browser launcher
+	// (browser.ExecOpener, the fourth exec seam — ADR 0006); everywhere else
+	// the Opener stays refusing or absent. webOpener still gates whether it
+	// is ever used.
+	return runGraphWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
 }
 
-// runGraphWith is runGraph with the runner seam injectable, so a test can
-// prove --dry-run never reaches it: a FakeRunner must see zero invocations.
-func runGraphWith(args []string, nodeRunner runner.NodeRunner) error {
+// runGraphWith is runGraph with its seams injectable: the runner (so a test
+// can prove --dry-run never reaches it — a FakeRunner must see zero
+// invocations) and the live view's opener plus the stdout whose TTY-ness
+// gates it (so a test can prove a terminal run opens the view and a
+// non-terminal run changes nothing, with a FakeOpener and no real spawn).
+func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
 	flags := newRunFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -169,7 +177,8 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner) error {
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
-	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, raw)
+	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, raw,
+		webOpener(flags.noWeb, stdout, opener))
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -189,7 +198,10 @@ func runAuto(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal, nil)
+	// Same live-view gate as `run`, and the second (last) site injecting the
+	// real ExecOpener.
+	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal, nil,
+		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
 }
 
 // planAndExecute is one goal's full auto sequence — plan, save the spec, print
@@ -201,8 +213,11 @@ func runAuto(args []string) error {
 // non-interactive), while a non-nil hook is asked between printing the
 // topology and executing — false discards the plan with a note, which is not
 // an error. A hook error aborts before execution and propagates as-is, so a
-// caller can recognize its own sentinel (chat's EOF-at-the-prompt).
-func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, confirm func() (bool, error)) error {
+// caller can recognize its own sentinel (chat's EOF-at-the-prompt). web is
+// the run's live-view opener or nil for none (see executeGraph); `auto`
+// passes its TTY-gated decision, chat always passes nil — a chat turn's run
+// stays un-wired (ADR 0006).
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, confirm func() (bool, error), web browser.Opener) error {
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
@@ -227,7 +242,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		}
 	}
 
-	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath)
+	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web)
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
@@ -243,16 +258,17 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // already the re-parseable JSON the resumable snapshot needs, so it is reused
 // as-is rather than re-marshaling plan.Graph the way a hand-written `run` has
 // to (see buildRecorder).
-func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec)
+func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener) error {
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, web)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
-// `run` and `auto`. This is where the three exec seams are injected: the
+// `run` and `auto`. This is where the engine's exec seams are injected: the
 // ClaudeCLIRunner the caller passed (a node's claude subprocess), a
 // ShellVerifier (a node's success_check.verify command), and a
-// worktree.GitManager (a node's managed `worktree:` checkout). A planned
+// worktree.GitManager (a node's managed `worktree:` checkout) — three of the
+// program's four seams; the fourth arrives already injected as web. A planned
 // graph can declare neither a verification nor a worktree — the coordinator
 // rejects both fields — so for `auto` those two are wired but never reached. toolPolicies is the per-node
 // execution ceiling: auto passes the coordinator's, `run` passes nil.
@@ -262,8 +278,12 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // line and its total is unchanged. graphSourcePath and rawSource are the
 // snapshot's GraphSourcePath/GraphSHA256 material — the .yaml file (and its
 // bytes) for `run`, the saved graph.json (and the planner's JSON bytes) for
-// `auto`.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte) error {
+// `auto`. web, when non-nil, is the Opener the run's embedded live view
+// hands its URL to (browser.ExecOpener behind the fourth exec seam, ADR
+// 0006); nil means no live view at all — the gate (TTY-and-not---no-web for
+// run/auto, always for a chat turn and `resume`) is the caller's decision,
+// made before this function so nothing here ever probes a terminal.
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener) error {
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)
@@ -290,6 +310,15 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// (internal/worktree, ADR 0005). A graph with no worktree nodes never
 	// spawns git at all.
 	worktrees := worktreeManagerFor(runID)
+
+	// The embedded live view (serve's own listener/handler/lifecycle on an
+	// ephemeral port, plus one browser open) lives exactly as long as the
+	// run: the deferred stop waits for the server to exit, after the ledger
+	// print below, so the process never outlives it — and never exits while
+	// it still holds the port.
+	if web != nil {
+		defer startLiveView(ctx, web, runID)()
+	}
 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,

@@ -10,11 +10,11 @@
 // their own, narrower interface with their own single exec-owning
 // implementation. See docs/adr/0005.
 //
-// The project invariant this restates (it does not weaken it): exactly three
+// The project invariant this restates (it does not weaken it): exactly four
 // objects in oh-my-graph may spawn a process — runner.ClaudeCLIRunner,
-// verify.ShellVerifier and worktree.GitManager — each behind its own injected
-// interface, each scrubbing the child environment through internal/childenv.
-// No other package imports os/exec.
+// verify.ShellVerifier, worktree.GitManager and browser.ExecOpener (ADR 0006)
+// — each behind its own injected interface, each scrubbing the child
+// environment through internal/childenv. No other package imports os/exec.
 package worktree
 
 import (

@@ -22,24 +22,27 @@ let them drift apart.
 - **Subscription-auth env scrub.** Every child process's environment must have
   `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted, via the shared
   `internal/childenv.Scrub` — used by ALL spawners (a claude node, a
-  `success_check.verify` command, and the git commands behind a node's
-  `worktree:`). This is what keeps the tool on subscription billing instead of
-  silently falling back to metered API billing. It is unit-tested in
+  `success_check.verify` command, the git commands behind a node's
+  `worktree:`, and the browser launch of the `serve` URL). This is what keeps
+  the tool on subscription billing instead of silently falling back to
+  metered API billing. It is unit-tested in
   `internal/childenv/childenv_test.go` and at each call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
-  `internal/worktree/git_test.go`) — don't touch env construction without
-  keeping those tests meaningful.
-- **The three exec seams.** Exactly three objects may spawn a process:
+  `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) — don't
+  touch env construction without keeping those tests meaningful.
+- **The four exec seams.** Exactly four objects may spawn a process:
   `runner.ClaudeCLIRunner` (a node's claude subprocess),
-  `verify.ShellVerifier` (a node's evidence command) and
+  `verify.ShellVerifier` (a node's evidence command),
   `worktree.GitManager` (the `git worktree` commands behind a node's
-  `worktree:`) — see `docs/adr/0002-verification-is-a-second-exec-seam.md`
-  and `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md`.
+  `worktree:`) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
+  `serve` URL) — see `docs/adr/0002-verification-is-a-second-exec-seam.md`,
+  `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md` and
+  `docs/adr/0006-browser-open-is-a-fourth-exec-seam.md`.
   Everything else (scheduler, CLI, handoff, ledger, coordinator) depends on
-  the `NodeRunner`, `Verifier` and `worktree.Provider` interfaces only, so
-  the whole engine is testable via the scripted
-  `FakeRunner`/`FakeVerifier`/`FakeManager` with zero real spawns. A fourth
-  spawner needs its own ADR.
+  the `NodeRunner`, `Verifier`, `worktree.Provider` and `browser.Opener`
+  interfaces only, so the whole engine is testable via the scripted
+  `FakeRunner`/`FakeVerifier`/`FakeManager`/`FakeOpener` with zero real
+  spawns. A fifth spawner needs its own ADR.
 - **Artifact handoff is the default.** `handoff: artifact` persists a node's
   result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` (base overridable via
   `OMG_HOME`); `handoff: session`
@@ -77,7 +80,8 @@ internal/schedule/     ready-set scheduler (the engine's core)
 internal/runner/       NodeRunner interface, ClaudeCLIRunner, FakeRunner
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
-internal/childenv/     the shared child-env scrub policy (used by all three spawners)
+internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
+internal/childenv/     the shared child-env scrub policy (used by all four spawners)
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)

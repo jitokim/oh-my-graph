@@ -1,9 +1,10 @@
 // Package runner is the claude-execution seam of oh-my-graph. It defines the
 // NodeRunner interface the Scheduler depends on, the value types crossing that
 // boundary, and two implementations: ClaudeCLIRunner (one of the exactly
-// three objects in the whole program that touch os/exec —
-// verify.ShellVerifier and worktree.GitManager are the others; see ADR 0002
-// and ADR 0005) and FakeRunner (scripted, for tests).
+// four objects in the whole program that touch os/exec —
+// verify.ShellVerifier, worktree.GitManager and browser.ExecOpener are the
+// others; see ADR 0002, ADR 0005 and ADR 0006) and FakeRunner (scripted, for
+// tests).
 //
 // The seam exists so the entire scheduler — topological order, fan-out, fan-in,
 // retry, halt-on-fail, cost summation — is unit-testable against FakeRunner with

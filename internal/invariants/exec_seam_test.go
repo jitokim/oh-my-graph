@@ -1,8 +1,9 @@
 // Package invariants holds repo-wide structural tests. This one enforces the
-// "exactly three exec seams" rule from ADR 0002 and ADR 0005: only
-// runner.ClaudeCLIRunner, verify.ShellVerifier and worktree.GitManager may
-// spawn processes, so only their files may import os/exec. A new importer
-// means a new spawner, which needs its own ADR before it lands.
+// "exactly four exec seams" rule from ADR 0002, ADR 0005 and ADR 0006: only
+// runner.ClaudeCLIRunner, verify.ShellVerifier, worktree.GitManager and
+// browser.ExecOpener may spawn processes, so only their files may import
+// os/exec. A new importer means a new spawner, which needs its own ADR before
+// it lands.
 package invariants
 
 import (
@@ -18,11 +19,11 @@ import (
 
 // allowedExecImporters is the exhaustive list of non-test files (relative to
 // the repo root, slash-separated) that may import os/exec. Each entry belongs
-// to one of the three exec seams; the platform-specific procgroup files are
+// to one of the four exec seams; the platform-specific procgroup files are
 // part of their seam's process-spawning machinery.
 //
 // To add an entry here, first write an ADR introducing the new seam
-// (see docs/adr/0002 and docs/adr/0005).
+// (see docs/adr/0002, docs/adr/0005 and docs/adr/0006).
 var allowedExecImporters = map[string]bool{
 	// Seam 1: runner.ClaudeCLIRunner (ADR 0001/0002)
 	"internal/runner/claude.go":            true,
@@ -34,13 +35,16 @@ var allowedExecImporters = map[string]bool{
 	"internal/verify/procgroup_windows.go": true,
 	// Seam 3: worktree.GitManager (ADR 0005)
 	"internal/worktree/git.go": true,
+	// Seam 4: browser.ExecOpener (ADR 0006) — the build-tagged argv files
+	// only pick the launcher command; exec.go alone imports os/exec.
+	"internal/browser/exec.go": true,
 }
 
 // scannedDirs are the source trees the invariant covers: all production code
 // lives under these two roots.
 var scannedDirs = []string{"internal", "cmd"}
 
-func TestOnlyTheThreeExecSeamsImportOsExec(t *testing.T) {
+func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 
 	importers := map[string]bool{}
@@ -93,11 +97,12 @@ func TestOnlyTheThreeExecSeamsImportOsExec(t *testing.T) {
 	sort.Strings(stale)
 
 	for _, file := range unexpected {
-		t.Errorf("%s imports os/exec but is not one of the three exec seams "+
-			"(runner.ClaudeCLIRunner, verify.ShellVerifier, worktree.GitManager). "+
-			"A fourth spawner needs its own ADR — see docs/adr/0002 and docs/adr/0005. "+
-			"Depend on the NodeRunner/Verifier/worktree.Provider interfaces instead, "+
-			"or write the ADR and extend allowedExecImporters.", file)
+		t.Errorf("%s imports os/exec but is not one of the four exec seams "+
+			"(runner.ClaudeCLIRunner, verify.ShellVerifier, worktree.GitManager, "+
+			"browser.ExecOpener). A fifth spawner needs its own ADR — see "+
+			"docs/adr/0002, docs/adr/0005 and docs/adr/0006. Depend on the "+
+			"NodeRunner/Verifier/worktree.Provider/browser.Opener interfaces "+
+			"instead, or write the ADR and extend allowedExecImporters.", file)
 	}
 	for _, file := range stale {
 		t.Errorf("%s is in allowedExecImporters but no longer imports os/exec; "+

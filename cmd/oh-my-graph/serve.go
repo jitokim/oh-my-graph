@@ -54,9 +54,10 @@ func (f *serveFlags) parse(args []string) error {
 // runServe is the `serve` subcommand: resolve which run to show, bind the
 // loopback-only listener, print the URL, and serve the read-only live view
 // until interrupted. The URL is printed rather than the browser being opened:
-// auto-opening would shell out to `open`/`xdg-open`, a fourth exec seam the
-// invariant in internal/invariants forbids without its own ADR — a deliberate
-// follow-up, not an oversight (see the internal/serve package doc).
+// a fresh `run`/`auto` on a terminal already auto-opens its own embedded view
+// (via the browser.Opener seam, ADR 0006 — see startLiveView), so the person
+// running `serve` explicitly is attaching to an existing run and choosing
+// their own window.
 func runServe(args []string) error {
 	flags := newServeFlags()
 	if err := flags.parse(args); err != nil {
