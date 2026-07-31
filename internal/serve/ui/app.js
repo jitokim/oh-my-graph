@@ -3,7 +3,9 @@
 // Feed-first: the chronological run feed is the main surface — what each
 // node produced, why something failed — and the DAG is a compact,
 // collapsible side map (clicking a map node scrolls the feed to that node's
-// latest entry). Three sources, mirroring the run-feed contract
+// latest entry). A settled node reads as ONE entry: its terminal entry
+// absorbs its started-line (retry lines stay — a retry is a real
+// transition). Three sources, mirroring the run-feed contract
 // (docs/RUN-FEED.md):
 //   /api/graph   the DAG structure (polled until the snapshot exists — a
 //                fresh run has no state.json until its first node completes)
@@ -373,16 +375,22 @@ feedCol.addEventListener("scroll", () => {
 
 // Feed-derived indexes, all reset together on reconnect:
 //   latestEntryByNode  node id -> its most recent entry (the map's tap target)
-//   resultBlocks       node id -> the artifact blocks of its settled entries
+//   startLine          node id -> its open started-line; the node's terminal
+//                      entry absorbs it (one entry per settled node — a retry
+//                      is a real transition and keeps its own line)
+//   resultBlocks       node id -> the artifact renderings of its settled
+//                      entries (block + inline head span)
 //   liveElapsed        node id -> the ticking elapsed span of its latest
-//                      started-line (frozen to the exact span on settle)
+//                      running line (frozen and dropped from the map on settle)
 const latestEntryByNode = new Map();
+const startLine = new Map();
 const resultBlocks = new Map();
 const liveElapsed = new Map();
 
 function resetFeed() {
   $("feed").textContent = "";
   latestEntryByNode.clear();
+  startLine.clear();
   resultBlocks.clear();
   liveElapsed.clear();
   feedAtBottom = true;
@@ -438,18 +446,23 @@ function appendFeed(event, ts) {
       break;
     }
     case "node_started": {
+      // A node re-started without ever settling (an interrupted leg): its
+      // superseded started-line is absorbed by the new one.
+      const prev = startLine.get(event.node_id);
+      if (prev) prev.remove();
       const li = addEntry("line", event.node_id);
-      entryHead(li, "running", event.node_id, "started");
+      const head = entryHead(li, "running", event.node_id, "started");
       const elapsed = document.createElement("span");
       elapsed.className = "entry-elapsed";
-      li.querySelector(".entry-head").appendChild(elapsed);
+      head.appendChild(elapsed);
       liveElapsed.set(event.node_id, elapsed);
+      startLine.set(event.node_id, li);
       break;
     }
     case "node_retried": {
       const li = addEntry("line", event.node_id);
       const nth = event.retries ? `retry #${event.retries}` : "retried";
-      entryHead(li, "running", event.node_id, nth);
+      const head = entryHead(li, "running", event.node_id, nth);
       if (event.detail) {
         const note = document.createElement("p");
         note.className = "entry-note";
@@ -458,7 +471,7 @@ function appendFeed(event, ts) {
       }
       const elapsed = document.createElement("span");
       elapsed.className = "entry-elapsed";
-      li.querySelector(".entry-head").appendChild(elapsed);
+      head.appendChild(elapsed);
       liveElapsed.set(event.node_id, elapsed);
       break;
     }
@@ -466,13 +479,29 @@ function appendFeed(event, ts) {
     case "node_failed": {
       const info = nodeInfo(event.node_id);
       const passed = event.event === "node_passed";
-      // Freeze the started-line's ticking elapsed at the exact final span.
-      const span = liveElapsed.get(event.node_id);
-      if (span) span.textContent = nodeDuration(info);
-      const li = addEntry("rich", event.node_id);
       const duration = nodeDuration(info);
+      // Freeze the latest running-line's ticking elapsed at the exact final
+      // span (it matters when that line is a retry line, which stays), and
+      // stop ticking the node.
+      const span = liveElapsed.get(event.node_id);
+      if (span) span.textContent = duration;
+      liveElapsed.delete(event.node_id);
+      // One entry per settled node: the terminal entry absorbs the node's
+      // started-line — the start is implied by the duration — so the feed is
+      // as long as the run, not twice as long. A retry line stays: a retry
+      // is a real transition worth its own line.
+      const started = startLine.get(event.node_id);
+      if (started) started.remove();
+      startLine.delete(event.node_id);
+      const li = addEntry("rich", event.node_id);
       const word = passed ? "passed" : "failed";
-      entryHead(li, info.state, event.node_id, duration ? `${word} · ${duration}` : word);
+      const head = entryHead(li, info.state, event.node_id, duration ? `${word} · ${duration}` : word);
+      // A single-line artifact renders here, inline in the head, instead of
+      // as a block — paintResultBlock() fills it once the fetch lands.
+      const inline = document.createElement("span");
+      inline.className = "artifact-inline";
+      inline.hidden = true;
+      head.appendChild(inline);
       // On failure the cause leads, emphasized — it is THE human information
       // then; the artifact follows as supporting evidence.
       if (!passed && info.detail) {
@@ -481,8 +510,9 @@ function appendFeed(event, ts) {
         fail.textContent = info.detail;
         li.appendChild(fail);
       }
-      li.appendChild(buildArtifactBlock(event.node_id));
-      li.appendChild(buildMetaLine(info));
+      li.appendChild(buildArtifactBlock(event.node_id, inline));
+      const meta = buildMetaLine(info);
+      if (meta) li.appendChild(meta);
       break;
     }
     case "gate_paused": {
@@ -520,11 +550,13 @@ function appendFeed(event, ts) {
   }
 }
 
-// The artifact block of a settled entry: a monospace pre capped at ~24 lines
-// with a "show more" expander when the content overflows. The artifact is
-// rendered via textContent ONLY — never innerHTML: node output is untrusted
-// text, not markup.
-function buildArtifactBlock(id) {
+// The artifact rendering of a settled entry. A multi-line artifact is a
+// monospace pre capped at 24 lines with a "show more" expander when the
+// content overflows; a single-line artifact renders inline in the entry's
+// head (`inline`) with no block at all; a node with no artifact renders
+// neither. The artifact is rendered via textContent ONLY — never innerHTML:
+// node output is untrusted text, not markup.
+function buildArtifactBlock(id, inline) {
   const wrap = document.createElement("div");
   wrap.className = "artifact-wrap";
   const pre = document.createElement("pre");
@@ -540,19 +572,27 @@ function buildArtifactBlock(id) {
   });
   wrap.appendChild(pre);
   wrap.appendChild(more);
+  const block = { wrap, pre, more, inline };
   if (!resultBlocks.has(id)) resultBlocks.set(id, []);
-  resultBlocks.get(id).push({ pre, more });
-  paintResultBlock(id, { pre, more });
+  resultBlocks.get(id).push(block);
+  paintResultBlock(id, block);
   fetchResult(id);
   return wrap;
 }
 
-// One compact accounting line: truncated session ref (click to copy) and
-// per-node cost — cross-tool reference and bookkeeping, not headlines.
+// One compact accounting line: labelled session ref (click to copy) and
+// per-node cost — cross-tool reference and bookkeeping, not headlines. Its
+// anatomy stays the same whichever parts exist (cost may be absent; the
+// session ref keeps its label and copy affordance); with neither part there
+// is no line at all.
 function buildMetaLine(info) {
+  if (!info.sessionId && !info.costUsd) return null;
   const meta = document.createElement("p");
   meta.className = "entry-meta";
   if (info.sessionId) {
+    const label = document.createElement("span");
+    label.textContent = "session";
+    meta.appendChild(label);
     const full = info.sessionId;
     const session = document.createElement("button");
     session.type = "button";
@@ -611,13 +651,27 @@ function paintResultBlocks(id) {
   for (const block of resultBlocks.get(id) || []) paintResultBlock(id, block);
 }
 
-function paintResultBlock(id, { pre, more }) {
+// Repaints happen as the fetch settles, so every branch sets both the inline
+// span and the block — a later repaint fully reverses an earlier one.
+function paintResultBlock(id, { wrap, pre, more, inline }) {
   const info = nodeInfo(id);
+  const text = info.resultState === "loaded" ? info.result.trim() : "";
+  // A short artifact belongs in the head line ("e2e passed · 18s — PASS"),
+  // not in a full block; a missing (or blank) artifact renders nothing at
+  // all, so the meta line never floats under a "no result" placeholder.
+  const oneLine = text !== "" && !text.includes("\n");
+  const absent = info.resultState === "empty" || (info.resultState === "loaded" && text === "");
+  inline.hidden = !oneLine;
+  inline.textContent = oneLine ? `— ${text}` : "";
+  wrap.hidden = oneLine || absent;
+  if (wrap.hidden) {
+    more.hidden = true;
+    return;
+  }
   const placeholder = info.resultState !== "loaded";
   pre.classList.toggle("placeholder", placeholder);
   switch (info.resultState) {
     case "loaded": pre.textContent = info.result; break;
-    case "empty": pre.textContent = "no result"; break;
     case "error": pre.textContent = "result unavailable"; break;
     default: pre.textContent = "loading…"; break;
   }
@@ -736,7 +790,7 @@ function fmtDuration(ms) {
 
 // One 1s ticker drives every live clock: the header elapsed time (from
 // run_started to now, frozen at run_finished), each running node's card time
-// line, and the ticking elapsed on each running node's started feed line.
+// line, and the ticking elapsed on each running node's open feed line.
 function tick() {
   const el = $("elapsed");
   if (runStartedMs == null) {

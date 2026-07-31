@@ -219,13 +219,22 @@ main { flex: 1; display: flex; min-height: 0; }
   overflow-wrap: anywhere;
 }
 
-/* The node's handoff artifact: the entry's body. Capped at ~24 lines
-   (24 × 18px line boxes + padding) until "show more" expands it. */
+/* A multi-line handoff artifact: the entry's body. Capped at 24 lines
+   (24 × 18px line boxes + 2 × 8px padding + 2 × 1px border = 450px,
+   border-box) until "show more" expands it. A single-line artifact skips
+   the block and renders inline in the entry head instead. */
 .artifact-wrap { margin: 0.45rem 0 0; }
+.artifact-inline {
+  min-width: 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
 .artifact {
   margin: 0;
   padding: 0.5rem 0.6rem;
-  max-height: 452px;
+  max-height: 450px;
   overflow: hidden;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
