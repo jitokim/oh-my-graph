@@ -32,9 +32,20 @@ var (
 )
 
 // Validate enforces the graph's structural invariants and returns the first
-// violation as a *GraphValidationError. The checks run in dependency order so
-// that later checks (cycles, handoff) may assume earlier ones (unique ids,
-// existing parents) already hold:
+// violation as a *GraphValidationError. It is the fail-fast view of Issues —
+// `run` needs one precise reason to refuse a graph, while `lint` renders the
+// whole list — and defining it as Issues' first element keeps the two views
+// incapable of disagreeing about which graphs are valid.
+func (g *Graph) Validate() error {
+	issues := g.Issues()
+	if len(issues) == 0 {
+		return nil
+	}
+	return issues[0]
+}
+
+// Issues enforces the graph's structural invariants and returns every
+// violation found, each a *GraphValidationError, in check order:
 //
 //  1. every node id is non-empty and unique;
 //  2. every type/handoff is a known value;
@@ -47,29 +58,24 @@ var (
 //  7. an agent name, when present, carries no surrounding whitespace;
 //  8. a worktree name, when present, is a single safe path element, and the
 //     node declares no cwd alongside it.
-func (g *Graph) Validate() error {
-	if err := g.validateNodesUnique(); err != nil {
-		return err
-	}
-	if err := g.validateEnums(); err != nil {
-		return err
-	}
-	if err := g.validateDependenciesExist(); err != nil {
-		return err
-	}
-	if err := g.validateAcyclic(); err != nil {
-		return err
-	}
-	if err := g.validateHandoffConstraints(); err != nil {
-		return err
-	}
-	if err := g.validateSuccessChecks(); err != nil {
-		return err
-	}
-	if err := g.validateAgentNames(); err != nil {
-		return err
-	}
-	return g.validateWorktrees()
+//
+// Every check runs even when an earlier one failed, so a graph broken in
+// several ways reports all of them at once instead of one per attempt. That
+// is safe because each check tolerates the others' violations — a missing
+// depends_on id simply contributes no edges to the cycle search — at the
+// cost of one overlap: a self-dependency is named by both the edge check and
+// the cycle check, and both statements are true.
+func (g *Graph) Issues() []error {
+	var issues []error
+	issues = append(issues, g.validateNodesUnique()...)
+	issues = append(issues, g.validateEnums()...)
+	issues = append(issues, g.validateDependenciesExist()...)
+	issues = append(issues, g.validateAcyclic()...)
+	issues = append(issues, g.validateHandoffConstraints()...)
+	issues = append(issues, g.validateSuccessChecks()...)
+	issues = append(issues, g.validateAgentNames()...)
+	issues = append(issues, g.validateWorktrees()...)
+	return issues
 }
 
 // worktreeNamePattern is the shape a worktree name must take: one path
@@ -86,25 +92,26 @@ var worktreeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // the name is a single safe path element, and the node does not also declare
 // a cwd — the worktree IS the node's directory, so a cwd alongside it could
 // only be dead text or a contradiction, and either is worth rejecting.
-func (g *Graph) validateWorktrees() error {
+func (g *Graph) validateWorktrees() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		if n.Worktree == "" {
 			continue
 		}
 		if !worktreeNamePattern.MatchString(n.Worktree) {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("worktree name %q must be a single path element: alphanumerics, '.', '_' or '-', starting with an alphanumeric", n.Worktree),
-			}
+			})
 		}
 		if n.Cwd != "" {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("node declares both cwd %q and worktree %q — a worktree node runs in its managed checkout, so drop one", n.Cwd, n.Worktree),
-			}
+			})
 		}
 	}
-	return nil
+	return issues
 }
 
 // validateAgentNames rejects an agent name carrying surrounding whitespace —
@@ -119,65 +126,72 @@ func (g *Graph) validateWorktrees() error {
 // it is a property of the machine, not of the graph file this validator is
 // reading. Rejecting it would make a graph valid on one machine invalid on
 // another.
-func (g *Graph) validateAgentNames() error {
+func (g *Graph) validateAgentNames() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		if n.Agent != "" && strings.TrimSpace(n.Agent) != n.Agent {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("agent %q has surrounding whitespace", n.Agent),
-			}
+			})
 		}
 	}
-	return nil
+	return issues
 }
 
-func (g *Graph) validateNodesUnique() error {
+func (g *Graph) validateNodesUnique() []error {
+	var issues []error
 	seen := make(map[string]bool, len(g.Nodes))
 	for _, n := range g.Nodes {
 		if strings.TrimSpace(n.ID) == "" {
-			return &GraphValidationError{Reason: "a node has an empty id"}
+			issues = append(issues, &GraphValidationError{Reason: "a node has an empty id"})
+			continue
 		}
 		if seen[n.ID] {
-			return &GraphValidationError{NodeID: n.ID, Reason: "duplicate node id"}
+			issues = append(issues, &GraphValidationError{NodeID: n.ID, Reason: "duplicate node id"})
+			continue
 		}
 		seen[n.ID] = true
 	}
-	return nil
+	return issues
 }
 
-func (g *Graph) validateEnums() error {
+func (g *Graph) validateEnums() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		if !validTypes[n.Type] {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("unknown type %q (want %s or %s)", n.Type, TypeClaudeRun, TypeGate),
-			}
+			})
 		}
 		if !validHandoffs[n.Handoff] {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("unknown handoff %q (want %s or %s)", n.Handoff, HandoffArtifact, HandoffSession),
-			}
+			})
 		}
 	}
-	return nil
+	return issues
 }
 
-func (g *Graph) validateDependenciesExist() error {
+func (g *Graph) validateDependenciesExist() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		for _, parent := range n.DependsOn {
 			if _, ok := g.byID[parent]; !ok {
-				return &GraphValidationError{
+				issues = append(issues, &GraphValidationError{
 					NodeID: n.ID,
 					Reason: fmt.Sprintf("depends_on unknown node %q", parent),
-				}
+				})
+				continue
 			}
 			if parent == n.ID {
-				return &GraphValidationError{NodeID: n.ID, Reason: "node depends on itself"}
+				issues = append(issues, &GraphValidationError{NodeID: n.ID, Reason: "node depends on itself"})
 			}
 		}
 	}
-	return nil
+	return issues
 }
 
 // three-colour DFS marks for cycle detection: an unvisited node is white, a
@@ -189,15 +203,19 @@ const (
 	colourBlack
 )
 
-func (g *Graph) validateAcyclic() error {
+// validateAcyclic reports at most one cycle per pass: a found cycle aborts
+// the DFS with its stack still grey, so continuing the sweep could reach one
+// of those stale grey nodes from another entry point and re-report the same
+// back-edge as a second, spurious cycle. One precise report, fix, re-lint.
+func (g *Graph) validateAcyclic() []error {
 	colour := make(map[string]int, len(g.Nodes))
 	for _, n := range g.Nodes {
 		if colour[n.ID] == colourWhite {
 			if cycleNode, found := g.visit(n.ID, colour); found {
-				return &GraphValidationError{
+				return []error{&GraphValidationError{
 					NodeID: cycleNode,
 					Reason: "dependency cycle detected",
-				}
+				}}
 			}
 		}
 	}
@@ -234,7 +252,8 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 // mean parsing the same string again on the critical path of every attempt.
 // Verify is a pointer, so the parsed value reaches the copy of the Node held in
 // byID and the one the Scheduler reads.
-func (g *Graph) validateSuccessChecks() error {
+func (g *Graph) validateSuccessChecks() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		verification := n.SuccessCheck.Verify
 		if verification == nil {
@@ -242,11 +261,12 @@ func (g *Graph) validateSuccessChecks() error {
 		}
 		timeout, err := validateVerification(n.ID, verification)
 		if err != nil {
-			return err
+			issues = append(issues, err)
+			continue
 		}
 		verification.timeout = timeout
 	}
-	return nil
+	return issues
 }
 
 // validateVerification checks one node's verify block and returns its parsed
@@ -291,17 +311,18 @@ func validateVerification(nodeID string, v *Verification) (time.Duration, error)
 	return timeout, nil
 }
 
-func (g *Graph) validateHandoffConstraints() error {
+func (g *Graph) validateHandoffConstraints() []error {
+	var issues []error
 	for _, n := range g.Nodes {
 		if n.Handoff == HandoffSession && len(n.DependsOn) != 1 {
-			return &GraphValidationError{
+			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf(
 					"handoff: session with %d parents — a session-handoff node must resume exactly one parent's session; use handoff: artifact for a root node or for fan-in",
 					len(n.DependsOn),
 				),
-			}
+			})
 		}
 	}
-	return nil
+	return issues
 }

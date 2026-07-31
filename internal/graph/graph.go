@@ -260,6 +260,36 @@ func Load(path string) (*Graph, error) {
 // Parse decodes and validates a graph from raw YAML bytes. Separated from Load
 // so tests can drive it without touching the filesystem.
 func Parse(data []byte) (*Graph, error) {
+	g, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Validate(); err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+// Lint decodes a graph from raw YAML bytes and returns every structural
+// violation found — the full list whose first element is what Parse would
+// have returned, so the two can never disagree about which graphs are valid.
+// A YAML syntax error is the whole report on its own, since nothing
+// structural can be judged about a document that did not decode. An empty
+// result means the graph is valid: exactly the graphs Parse accepts.
+func Lint(data []byte) []error {
+	g, err := decode(data)
+	if err != nil {
+		return []error{err}
+	}
+	return g.Issues()
+}
+
+// decode unmarshals and normalizes raw YAML into a Graph with its by-id index
+// built, without judging validity — the shared front half of Parse (which
+// then fail-fasts via Validate) and Lint (which collects every issue). No
+// caller outside those two may use it: an unvalidated Graph must never
+// escape this package.
+func decode(data []byte) (*Graph, error) {
 	var raw rawGraph
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse graph YAML: %w", err)
@@ -275,10 +305,6 @@ func Parse(data []byte) (*Graph, error) {
 	g.byID = make(map[string]Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		g.byID[n.ID] = n
-	}
-
-	if err := g.Validate(); err != nil {
-		return nil, err
 	}
 	return g, nil
 }
