@@ -145,9 +145,15 @@ over typing `/oh-my-graph:graph` each turn.
   You keep Claude Code's TUI, streaming, and permission prompts for free.
 - **Plugin-agent limits.** For security, plugin agents ignore the `hooks`,
   `mcpServers`, and `permissionMode` frontmatter fields; this agent uses
-  none of them. Its `tools` list is scoped to graph work:
-  `Bash(oh-my-graph *)`, `Bash(git *)`, `Bash(gh *)`, file read/edit/write
-  and search, `Skill`, and `Agent`.
+  none of them. Its `tools` list names the tools it works with
+  (`Bash`, file read/edit/write and search, `Skill`, `Agent`).
+  **Command-level scoping is NOT enforced by this field, though:** a
+  smoke test showed the parenthesized form (`Bash(oh-my-graph *)`) launches
+  fine but does not actually restrict which shell commands run — the agent
+  could run an out-of-list `echo`. The parenthesized entries are kept as a
+  statement of intent; real command restriction must come from your
+  session-level permission rules (`--allowedTools` / settings), not the
+  agent's `tools` field.
 
 ### Already have your own agents? Nothing conflicts
 
@@ -159,11 +165,13 @@ point:
   `team () { claude --agent team ... }`) are untouched; `team` still starts
   a `team` session, `omg` starts an oh-my-graph session, and plain `claude`
   still starts a default session.
-- Name collisions can't clobber your agents: plugin agents live under the
-  plugin's namespace, and if you ever *did* have your own agent named
-  `oh-my-graph` in `.claude/agents/` or `~/.claude/agents/`, your local
-  definition wins over the plugin's (project/user agents override
-  same-named plugin agents).
+- Name collisions are disambiguable: plugin agents also answer to the
+  plugin-scoped form `claude --agent oh-my-graph:oh-my-graph`. If you ever
+  *did* have your own agent named `oh-my-graph` in `.claude/agents/` or
+  `~/.claude/agents/`, use that scoped form to select the plugin's
+  explicitly. (Which one a bare `--agent oh-my-graph` resolves to on a
+  collision — local or plugin — is not something we've verified; the scoped
+  form removes the ambiguity.)
 - A session whose main agent is oh-my-graph can still **delegate** to your
   other subagents: a main agent launched via `--agent` keeps the Agent
   tool, so all your project- and user-scope subagents remain available as
