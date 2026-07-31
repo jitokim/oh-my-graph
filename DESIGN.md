@@ -81,6 +81,7 @@ Node schema:
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
   permission_mode: dontAsk
   agent: code-reviewer        # optional (v1.1): run as this Claude Code subagent — see "Node-as-subagent"
+  worktree: lane              # optional: run in a managed git worktree shared by every node naming it — see "Worktree isolation"
   budget_usd: 0.50            # per-node cost cap: claude aborts mid-run (--max-budget-usd) + post-hoc FAIL (see Execution engine)
   handoff: artifact           # artifact(default) | session
   success_check:              # see "Success checks" — verify is the only evidence-grounded predicate
@@ -149,6 +150,54 @@ graph it would be a safety question, and the answer there is rejection.
 See ADR 0004 §4: an implicit scan of `~/.claude/agents` would make an `auto`
 run's behaviour depend on files the user forgot they had, and a planned node may
 not carry the field at all.
+
+## Worktree isolation (`worktree:` — hand-written graphs only)
+By default every node runs in the tree oh-my-graph was invoked from (or its
+`cwd`), which is fine for read-only fan-out but broken for parallel EDITS:
+lanes serialize on one checkout, a node's commit can sweep in the user's own
+untracked files, and a node can switch branches under the user's feet (the
+auto-branch bug). `worktree: <name>` is the root fix:
+
+- The engine creates the worktree ONCE per unique name per run —
+  `git worktree add ~/.oh-my-graph/runs/<run-id>/worktrees/<name>
+  -b omg/<run-id>/<name> HEAD` — off the invocation repo's HEAD. The managed
+  path lives under the run directory, NEVER inside the user's checked-out
+  tree.
+- ALL nodes sharing a name run in the SAME worktree (a lane's
+  dev → e2e → review → pr shares one isolated checkout); nodes with
+  DIFFERENT names get DIFFERENT worktrees and edit in parallel with no
+  shared-tree race. A node's `success_check.verify` inherits the worktree as
+  its default cwd, so evidence is gathered where the work happened.
+- A node with NO worktree field keeps today's exact behaviour — fully
+  backward compatible. `worktree` and `cwd` are mutually exclusive, and the
+  name must be a single safe path element (it becomes both a directory and a
+  branch segment); both are load errors (`validateWorktrees`).
+- Cleanup at run end (`cmd/oh-my-graph`, after `Scheduler.Run`, on a fresh
+  context so a halted run still cleans up) never loses work: a worktree
+  holding uncommitted changes is left in place entirely (git refuses to
+  remove it; forcing would discard the changes), a branch carrying commits
+  beyond its base is retained after its worktree dir is removed, and only a
+  branch provably still at its base is deleted. Every retention is reported
+  as a one-line note. A retained branch also means a `resume`d leg
+  re-declaring the name fails loudly on the ref collision instead of
+  resetting retained work.
+- Handoff artifacts still persist to `~/.oh-my-graph/runs/<run-id>/` exactly
+  as before — the worktree isolates the node's WORKING TREE, not its result.
+- **Auto-planned nodes may not set `worktree`.** Provisioning is not a tool
+  call, so no permission mode or ceiling layer ever sees it;
+  `validatePlannedNodes` rejects the field like `cwd`.
+
+**Who runs git — a third exec seam, not the NodeRunner.** Provisioning is
+neither a claude invocation nor an evidence command, so it gets its own seam
+in `internal/worktree`: a `Provider` interface (`Acquire(ctx, name) (path,
+error)`, idempotent per name), with `GitManager` (prod — the third of the
+program's exactly three process-spawning objects, env-scrubbed via
+`internal/childenv` because `git worktree add` fires the repo's own hooks),
+`RefusingProvider` (the `schedule.Options.Worktrees` default: a forgotten
+injection fails loudly) and `FakeManager` (tests — the scheduler's worktree
+path stays spawn-free in CI). Cleanup is deliberately not on the interface:
+the Scheduler only asks where a node runs; teardown is the CLI's job against
+the concrete `GitManager`. See ADR 0005.
 
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
@@ -294,9 +343,9 @@ type Verifier interface {
 }
 ```
 
-- `ShellVerifier` (prod) is the second of the program's exactly two
-  process-spawning seams (ADR 0002) and the only object in `internal/verify`
-  that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
+- `ShellVerifier` (prod) is the second of the program's exactly three
+  process-spawning seams (ADR 0002; the third is `worktree.GitManager`, ADR
+  0005) and the only object in `internal/verify` that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
   the scheduler.
 - `RefusingVerifier` is the `Options.Verifier` default:
   a scheduler test that forgets to inject one gets a loud failure instead of a
@@ -309,11 +358,12 @@ type Verifier interface {
   one kind: minimal implementation, sufficient interface.
 
 **This narrows the "only ClaudeCLIRunner touches `os/exec`" invariant, on
-purpose.** The invariant's restated form: *exactly two objects may spawn a
-process — `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its
-own injected interface, and no other package imports `os/exec`.* Both purposes
+purpose.** The invariant's restated form: *exactly three objects may spawn a
+process — `runner.ClaudeCLIRunner`, `verify.ShellVerifier` and
+`worktree.GitManager` (see "Worktree isolation") — each behind its own
+injected interface, and no other package imports `os/exec`.* Both purposes
 survive: the subscription-auth scrub still has exactly one home per spawner, and
-the engine is still fully testable with zero spawns. See ADR 0002.
+the engine is still fully testable with zero spawns. See ADR 0002 and ADR 0005.
 
 **The env scrub applies to verification commands too.** `verify: { command:
 "claude -p ..." }` is legal and would otherwise run on metered API billing if
@@ -572,6 +622,7 @@ turns that rule into a build failure. Current dispositions:
 | `permission_mode` | constrained — `bypassPermissions` rejected |
 | `cwd` | rejected |
 | `agent` | **rejected** |
+| `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
 | `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
 | `budget_usd`, `retry` | allowed |
 
@@ -597,8 +648,8 @@ Scheduler as any other graph.
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
-    execs under context, parses JSON. One of the exactly two objects that
-    spawn a process (the other: `ShellVerifier`).
+    execs under context, parses JSON. One of the exactly three objects that
+    spawn a process (the others: `ShellVerifier`, `worktree.GitManager`).
   - `FakeRunner` (tests): scripted `map[key]NodeOutcome` keyed by the
     invocation (`NodeInvocation` has no id field; the key defaults to
     `spec.Prompt`, and tests set each node's prompt equal to its id so the
@@ -610,6 +661,12 @@ Scheduler as any other graph.
   way. `ShellVerifier` (prod, the only object in its package that spawns),
   `RefusingVerifier` (default — a forgotten injection fails loudly),
   `FakeVerifier` (tests). See "Success checks".
+- **Worktree Provider (interface)** — THE worktree-provisioning seam: resolves
+  a node's `worktree: <name>` to its managed checkout, creating it on first
+  use (idempotent per name). `GitManager` (prod — the third spawner, ADR
+  0005), `RefusingProvider` (default — a forgotten injection fails loudly),
+  `FakeManager` (tests). Run-end cleanup is the CLI's job against the
+  concrete `GitManager`, never the Scheduler's.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
   session. Gains `Seed(nodeID, artifactPath, sessionID)` so a resumed run can
   rehydrate a previous leg's artifacts and session ids without Handoff having to
@@ -658,7 +715,8 @@ CLI `oh-my-graph run <graph.yaml> --input k=v` and `oh-my-graph auto "<goal>"`
 persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
-any DSL; TUI/dashboard (fleetops's job); worktree auto-creation; coordinator
+any DSL; TUI/dashboard (fleetops's job); worktree auto-creation (opt-in
+per-node `worktree:` shipped later — see "Worktree isolation"); coordinator
 auto-mapping of `agent:` by role (see "Node-as-subagent" — deferred on a design
 constraint, not on effort); sub-call / cross-node budget accounting (per-node
 mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
@@ -676,7 +734,8 @@ cmd/oh-my-graph/{main,flags,resume,runs,show,chat,version}.go + _test  CLI: pars
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
-internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the two exec seams (ADR 0002)
+internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the three exec seams (ADR 0002)
+internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (runner + verify)
 internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
@@ -685,7 +744,7 @@ internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — a
 internal/runfeed/runfeed.go + _test            events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
-docs/adr/000{1..4}-*.md
+docs/adr/000{1..5}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 
@@ -739,7 +798,8 @@ in "Auto mode" above.
    and why a budget-derived wall-clock timeout was rejected as fake enforcement.
 3. parallel nodes sharing one cwd can race edits → v0.1 parallel nodes should be
    read-only (plan) reviews (the motivating fan-out case); parallel edits want
-   worktrees (deferred).
+   worktrees — now available as per-node `worktree:` (see "Worktree
+   isolation").
 4. session-handoff + multi-parent fan-in conflict → validation rejects `handoff:
    session` on a node with 2+ session-parents; multi-parent must use artifact.
 

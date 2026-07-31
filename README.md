@@ -413,6 +413,50 @@ Two things to know:
   `agent:` is rejected on auto-planned nodes, where it would be a safety
   question instead.
 
+### Parallel edit lanes with git worktrees (`worktree:`)
+
+By default every node runs in the working tree you invoked oh-my-graph from —
+fine for read-only fan-out, but nodes that *edit* would race each other there
+(and could sweep your own untracked files into their commits). Give each edit
+lane a worktree name and the engine isolates it:
+
+```yaml
+nodes:
+  - id: dev-a
+    worktree: lane-a          # created once per run, off your repo's HEAD
+    prompt: Implement feature A and commit.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
+
+  - id: review-a
+    depends_on: [dev-a]
+    worktree: lane-a          # same name -> the same checkout dev-a edited
+    permission_mode: plan
+    prompt: Review the diff in this worktree.
+
+  - id: dev-b
+    worktree: lane-b          # different name -> its own checkout, edits in parallel
+    prompt: Implement feature B and commit.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
+```
+
+- Each unique name becomes one `git worktree add` under
+  `~/.oh-my-graph/runs/<run-id>/worktrees/<name>`, on a fresh branch
+  `omg/<run-id>/<name>` off the invocation repo's HEAD — never inside your
+  checked-out tree. All nodes sharing the name share that checkout (a lane's
+  dev → e2e → review runs in one place); different names edit fully in
+  parallel. A node's `success_check.verify` runs in its worktree too.
+- Nodes without `worktree:` behave exactly as before. `worktree` and `cwd`
+  are mutually exclusive (rejected at load), and the name must be a single
+  safe path element — it doubles as a directory and a branch segment.
+- At run end the engine removes what it created **without ever losing work**:
+  a branch that gained commits is kept (only the worktree directory is
+  removed, and the retention is printed), and a worktree holding uncommitted
+  changes is left in place entirely. Pick up a lane's result with
+  `git merge omg/<run-id>/<name>`, cherry-pick it, or open a PR from the
+  branch.
+- Auto-planned (`auto`) nodes may not set `worktree:` — an unreviewed plan
+  doesn't get to create checkouts and branches in your repository.
+
 ### Handoff — how a node receives its parent's work
 
 - **`artifact` (default):** the engine persists every node's result to
@@ -595,8 +639,6 @@ Called out honestly — these are **not** implemented yet:
   contract change) and any whole-graph budget across nodes. A wall-clock timeout
   derived from `budget_usd` was deliberately rejected — the $/minute rate would
   be invented, so it would look like a cap without being one.
-- worktree auto-creation for parallel edits (parallel v0.1 nodes should be
-  read-only reviews).
 - **coordinator auto-mapping of `agent:` by role.** Having `auto` scan your
   `~/.claude/agents` and assign a reviewer node your `code-reviewer` sounds like
   the natural next step; it is deferred on a design constraint, not on effort.

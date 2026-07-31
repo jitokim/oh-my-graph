@@ -25,9 +25,10 @@ type FakeRunner struct {
 	// KeyFn extracts the node key from an invocation. Defaults to spec.Prompt.
 	KeyFn func(spec NodeInvocation) string
 
-	mu       sync.Mutex
-	calls    []string
-	invokedN map[string]int
+	mu          sync.Mutex
+	calls       []string
+	invocations []NodeInvocation
+	invokedN    map[string]int
 }
 
 // NewFakeRunner builds a FakeRunner from a scripted outcome map. The map is
@@ -80,6 +81,7 @@ func (f *FakeRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome,
 
 	f.mu.Lock()
 	f.calls = append(f.calls, key)
+	f.invocations = append(f.invocations, spec)
 	f.invokedN[key]++
 	injected := f.errs[key]
 	outcome, ok := f.outcomes[key]
@@ -101,6 +103,18 @@ func (f *FakeRunner) Calls() []string {
 	defer f.mu.Unlock()
 	out := make([]string, len(f.calls))
 	copy(out, f.calls)
+	return out
+}
+
+// Invocations returns every NodeInvocation Run received, in order — what a
+// test asserts against when the fact under test lives on the invocation
+// itself (the cwd a worktree node was handed, say) rather than in the call
+// order. Returns a copy; never nil.
+func (f *FakeRunner) Invocations() []NodeInvocation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]NodeInvocation, len(f.invocations))
+	copy(out, f.invocations)
 	return out
 }
 

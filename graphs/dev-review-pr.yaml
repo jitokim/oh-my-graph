@@ -10,8 +10,9 @@
 #     (the default) — a fan-in cannot merge sessions, so it MUST use artifacts.
 #
 # The parallel reviews run read-only (permission_mode: plan) because parallel
-# nodes share one working tree and concurrent edits would race (v0.1 keeps
-# fan-out reviews read-only; parallel edits want worktrees, which is deferred).
+# nodes share one working tree and concurrent edits would race. Parallel EDIT
+# lanes should each declare `worktree: <name>` instead, which gives every lane
+# its own managed git checkout (see "worktree" in README).
 #
 # Run:
 #   oh-my-graph run graphs/dev-review-pr.yaml --input repo=/path/to/your/repo

@@ -21,20 +21,25 @@ let them drift apart.
 
 - **Subscription-auth env scrub.** Every child process's environment must have
   `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted, via the shared
-  `internal/childenv.Scrub` — used by BOTH spawners (a claude node and a
-  `success_check.verify` command). This is what keeps the tool on subscription
-  billing instead of silently falling back to metered API billing. It is
-  unit-tested in `internal/childenv/childenv_test.go` and at each call site
-  (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`) — don't
-  touch env construction without keeping those tests meaningful.
-- **The two exec seams.** Exactly two objects may spawn a process:
-  `runner.ClaudeCLIRunner` (a node's claude subprocess) and
-  `verify.ShellVerifier` (a node's evidence command) — see
-  `docs/adr/0002-verification-is-a-second-exec-seam.md`. Everything else
-  (scheduler, CLI, handoff, ledger, coordinator) depends on the `NodeRunner`
-  and `Verifier` interfaces only, so the whole engine is testable via the
-  scripted `FakeRunner`/`FakeVerifier` with zero real spawns. A third spawner
-  needs its own ADR.
+  `internal/childenv.Scrub` — used by ALL spawners (a claude node, a
+  `success_check.verify` command, and the git commands behind a node's
+  `worktree:`). This is what keeps the tool on subscription billing instead of
+  silently falling back to metered API billing. It is unit-tested in
+  `internal/childenv/childenv_test.go` and at each call site
+  (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
+  `internal/worktree/git_test.go`) — don't touch env construction without
+  keeping those tests meaningful.
+- **The three exec seams.** Exactly three objects may spawn a process:
+  `runner.ClaudeCLIRunner` (a node's claude subprocess),
+  `verify.ShellVerifier` (a node's evidence command) and
+  `worktree.GitManager` (the `git worktree` commands behind a node's
+  `worktree:`) — see `docs/adr/0002-verification-is-a-second-exec-seam.md`
+  and `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md`.
+  Everything else (scheduler, CLI, handoff, ledger, coordinator) depends on
+  the `NodeRunner`, `Verifier` and `worktree.Provider` interfaces only, so
+  the whole engine is testable via the scripted
+  `FakeRunner`/`FakeVerifier`/`FakeManager` with zero real spawns. A fourth
+  spawner needs its own ADR.
 - **Artifact handoff is the default.** `handoff: artifact` persists a node's
   result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` (base overridable via
   `OMG_HOME`); `handoff: session`
@@ -71,7 +76,8 @@ internal/graph/        Graph/Node value objects, YAML load, DAG validation
 internal/schedule/     ready-set scheduler (the engine's core)
 internal/runner/       NodeRunner interface, ClaudeCLIRunner, FakeRunner
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
-internal/childenv/     the shared child-env scrub policy (used by both spawners)
+internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
+internal/childenv/     the shared child-env scrub policy (used by all three spawners)
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)

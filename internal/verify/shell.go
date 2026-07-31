@@ -55,8 +55,9 @@ func (e *TimeoutError) Error() string {
 }
 
 // ShellVerifier runs verification commands as real subprocesses. It is the only
-// object in this package that spawns a process, and one of exactly two in the
-// project (the other is runner.ClaudeCLIRunner) — see docs/adr/0002.
+// object in this package that spawns a process, and one of exactly three in the
+// project (the others are runner.ClaudeCLIRunner and worktree.GitManager) —
+// see docs/adr/0002 and docs/adr/0005.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds one,
 // so no test picks up a real spawn by accident.

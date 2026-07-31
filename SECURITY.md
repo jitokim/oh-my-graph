@@ -22,12 +22,16 @@ line is.
 
 ## Subscription-auth guarantees (enforced in code)
 
-- **API-key scrub.** Every node subprocess starts from your environment with
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted**. Those variables
-  silently switch `claude` from your subscription (OAuth) to metered API
-  billing. The scrub is asserted by a unit test
-  (`internal/runner/claude_test.go`) that sets both variables in the parent
-  process and proves neither survives into the built child command.
+- **API-key scrub.** Every child process oh-my-graph spawns — a node
+  subprocess, a `success_check.verify` command, and the git commands behind a
+  node's `worktree:` (a repo's own hooks may invoke claude) — starts from your
+  environment with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
+  **deleted**. Those variables silently switch `claude` from your
+  subscription (OAuth) to metered API billing. The scrub is asserted by a
+  unit test at every call site (`internal/runner/claude_test.go`,
+  `internal/verify/shell_test.go`, `internal/worktree/git_test.go`) that sets
+  both variables in the parent process and proves neither survives into the
+  built child command.
 - **Never `--bare`.** That flag disables OAuth; oh-my-graph never passes it.
 - **Never the Agent SDK / API.** The node runtime is exclusively the `claude`
   CLI subprocess.

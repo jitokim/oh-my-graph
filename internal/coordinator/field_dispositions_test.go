@@ -124,6 +124,12 @@ var nodeFieldDispositions = map[string]fieldRule{
 		probeJSON:      `"agent":"code-reviewer"`,
 		reasonContains: "agent",
 	},
+	"Worktree": {
+		disposition:    rejected,
+		why:            "would have the ENGINE run `git worktree add` — a new checkout and branch in the user's repo — on an unreviewed plan's say-so, outside every ceiling layer",
+		probeJSON:      `"worktree":"lane"`,
+		reasonContains: "worktree",
+	},
 }
 
 // successCheckFieldDispositions is the same table one level down, because the

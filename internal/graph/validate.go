@@ -44,7 +44,9 @@ var (
 //     (a root has no session to resume; more than one can't be merged);
 //  6. every success_check.verify is runnable: a command, a parseable timeout
 //     within the ceiling, a compilable output_matches regex;
-//  7. an agent name, when present, carries no surrounding whitespace.
+//  7. an agent name, when present, carries no surrounding whitespace;
+//  8. a worktree name, when present, is a single safe path element, and the
+//     node declares no cwd alongside it.
 func (g *Graph) Validate() error {
 	if err := g.validateNodesUnique(); err != nil {
 		return err
@@ -64,7 +66,45 @@ func (g *Graph) Validate() error {
 	if err := g.validateSuccessChecks(); err != nil {
 		return err
 	}
-	return g.validateAgentNames()
+	if err := g.validateAgentNames(); err != nil {
+		return err
+	}
+	return g.validateWorktrees()
+}
+
+// worktreeNamePattern is the shape a worktree name must take: one path
+// element, starting with an alphanumeric, using only alphanumerics, '.', '_'
+// and '-'. The name becomes both a directory under the run dir and a branch
+// segment (omg/<run-id>/<name>), so a path separator, a leading dot (".."
+// escapes the managed directory) or whitespace would surface as a filesystem
+// or git failure mid-run — exactly the class of error load-time validation
+// exists to move earlier.
+var worktreeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateWorktrees enforces the two invariants a `worktree:` declaration
+// must satisfy before the engine will run `git worktree add` on its behalf:
+// the name is a single safe path element, and the node does not also declare
+// a cwd — the worktree IS the node's directory, so a cwd alongside it could
+// only be dead text or a contradiction, and either is worth rejecting.
+func (g *Graph) validateWorktrees() error {
+	for _, n := range g.Nodes {
+		if n.Worktree == "" {
+			continue
+		}
+		if !worktreeNamePattern.MatchString(n.Worktree) {
+			return &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("worktree name %q must be a single path element: alphanumerics, '.', '_' or '-', starting with an alphanumeric", n.Worktree),
+			}
+		}
+		if n.Cwd != "" {
+			return &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("node declares both cwd %q and worktree %q — a worktree node runs in its managed checkout, so drop one", n.Cwd, n.Worktree),
+			}
+		}
+	}
+	return nil
 }
 
 // validateAgentNames rejects an agent name carrying surrounding whitespace —

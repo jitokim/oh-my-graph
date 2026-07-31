@@ -85,9 +85,11 @@ func flattenLines(s string) string {
 func (e *NodeOutputError) Unwrap() error { return e.Err }
 
 // ClaudeCLIRunner runs a node as a real `claude -p ...` subprocess on the user's
-// logged-in subscription. It is one of exactly TWO objects in oh-my-graph that
-// may spawn a process (the other is verify.ShellVerifier, which runs a
-// success_check.verify command — see docs/adr/0002); everything upstream
+// logged-in subscription. It is one of exactly THREE objects in oh-my-graph
+// that may spawn a process (the others are verify.ShellVerifier, which runs a
+// success_check.verify command — see docs/adr/0002 — and worktree.GitManager,
+// which provisions a node's `worktree:` checkout — see docs/adr/0005);
+// everything upstream
 // depends on the NodeRunner interface, so the claude-exec surface stays a
 // single, testable point.
 type ClaudeCLIRunner struct {

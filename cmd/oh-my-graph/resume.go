@@ -124,11 +124,19 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	}
 	defer feed.Close()
 
+	// The resumed leg manages worktrees in the same per-run location the
+	// first leg did. Its checkouts are fresh, though: a branch the first leg
+	// retained with commits still exists, so a resumed node re-declaring that
+	// worktree name fails loudly on the ref collision rather than silently
+	// resetting retained work.
+	worktrees := worktreeManagerFor(runID)
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
 		Gate:           gate.NewRecordedController(toGateDecisions(decisions)),
 		Verifier:       verify.NewShellVerifier(),
+		Worktrees:      worktrees,
 		ToolPolicies:   toRunnerToolPolicies(snap.ToolPolicies),
 		Recorder:       recorder,
 		EventSink:      feed,
@@ -149,6 +157,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	defer stop()
 
 	runErr := scheduler.Run(ctx, g, h, led)
+	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)

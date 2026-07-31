@@ -193,6 +193,26 @@ type Node struct {
 	// of the user's subagents (and so which system prompt, tool grant and
 	// model) runs the node.
 	Agent string `yaml:"agent" json:"agent,omitempty"`
+	// Worktree, when set, names the managed git worktree this node runs in
+	// instead of the plain invocation cwd. The engine creates the worktree
+	// once per unique name per run — `git worktree add` under the run
+	// directory, on a fresh branch off the invocation repo's HEAD — and every
+	// node sharing the name runs in that same checkout, while nodes with
+	// different names get different checkouts and can edit files in parallel
+	// without racing each other or the user's own tree (internal/worktree,
+	// ADR 0005). Empty means today's behaviour: run in the node's cwd (or the
+	// invocation directory).
+	//
+	// Mutually exclusive with cwd — a worktree node's directory is managed,
+	// so a declared cwd would be dead text — and the name must be a single
+	// safe path element, since it becomes both a directory under the run dir
+	// and a branch segment. Both are load errors (validateWorktrees), never
+	// mid-run surprises.
+	//
+	// Hand-written graphs only: coordinator.validatePlannedNodes rejects it
+	// on a planned node — an unreviewed plan must not create checkouts or
+	// branches in the user's repository.
+	Worktree string `yaml:"worktree" json:"worktree,omitempty"`
 }
 
 // Graph is the validated DAG: its metadata plus the nodes and a by-id index
