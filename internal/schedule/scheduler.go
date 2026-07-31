@@ -1004,9 +1004,9 @@ func evaluateBudget(node graph.Node, outcome runner.NodeOutcome) error {
 func causeFromRunError(err error) string {
 	var outputErr *runner.NodeOutputError
 	if asErr(err, &outputErr) {
-		return "output_error"
+		return graph.CauseOutputError
 	}
-	return "run_error"
+	return graph.CauseRunError
 }
 
 // causeFromCheck maps a failed verdict to a retry cause token: a blown
@@ -1025,18 +1025,18 @@ func causeFromRunError(err error) string {
 func causeFromCheck(err error) string {
 	var budgetErr *NodeBudgetError
 	if asErr(err, &budgetErr) {
-		return "budget_exceeded"
+		return graph.CauseBudgetExceeded
 	}
 	var checkErr *NodeCheckError
 	if asErr(err, &checkErr) {
 		switch checkErr.Predicate {
 		case predicateVerify:
-			return "verify_failed"
+			return graph.CauseVerifyFailed
 		case "result_matches":
-			return "result_mismatch"
+			return graph.CauseResultMismatch
 		}
 	}
-	return "nonzero_exit"
+	return graph.CauseNonzeroExit
 }
 
 // passRecord / failRecord build the single ledger row for a node's terminal

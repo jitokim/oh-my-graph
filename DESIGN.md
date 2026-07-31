@@ -213,7 +213,12 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    `--continue-on-fail` (opt-in) prunes only the failed subtree.
 5. Done when ready+running are empty.
 
-retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never resume a failed one).
+retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
+resume a failed one). The causes are a closed set — `nonzero_exit`,
+`run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
+`result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
+load-time `GraphValidationError`: it would match no failure the scheduler ever
+produces and silently mean "never retry".
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget

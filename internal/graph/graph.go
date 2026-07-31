@@ -140,9 +140,26 @@ func (c SuccessCheck) IsZero() bool {
 	return !c.ExitZero && c.ResultMatches == "" && c.Verify == nil
 }
 
+// Retry cause tokens — the closed set of values a node's retry.on may list.
+// The Scheduler classifies every failed attempt as exactly one of these (see
+// internal/schedule's causeFromRunError / causeFromCheck, which reference
+// these constants), and shouldRetry matches that token against retry.on by
+// string equality. The set lives here, next to the Retry field it constrains,
+// so the validator and the scheduler can never disagree on a spelling.
+const (
+	CauseNonzeroExit    = "nonzero_exit"
+	CauseRunError       = "run_error"
+	CauseOutputError    = "output_error"
+	CauseBudgetExceeded = "budget_exceeded"
+	CauseVerifyFailed   = "verify_failed"
+	CauseResultMismatch = "result_mismatch"
+)
+
 // Retry is a node's flat re-run policy: up to Max additional attempts when the
 // failure cause is listed in On. A retried attempt always starts a fresh claude
-// session (never resumes a failed one).
+// session (never resumes a failed one). Every entry in On must be one of the
+// Cause* tokens above — an unknown cause would match nothing and silently mean
+// "never retry", so Validate rejects it at load time (validateRetryCauses).
 type Retry struct {
 	Max int      `yaml:"max" json:"max,omitempty"`
 	On  []string `yaml:"on" json:"on,omitempty"`
