@@ -5,7 +5,7 @@ oh-my-graph **executes**; it does not render. Everything an external consumer
 a run lives in that run's directory. oh-my-graph's own read-back commands —
 `runs list`, `show`, `watch`, and the `serve` web live view — are in-repo
 consumers of the very same files under the very same rules (via
-`runfeed.InFlight`/`runfeed.Follow`), with no side channel:
+`runfeed.InFlight` and `runfeed.Follow`/`FollowWait`), with no side channel:
 
 ```
 ~/.oh-my-graph/runs/<run-id>/
@@ -118,6 +118,11 @@ to pause).
   same stream, bracketed by its own `run_started`/`run_finished`. A run that
   paused at a gate therefore contains one bracket pair per leg; the run as a
   whole is finished when the latest `run_finished` outcome is not `"paused"`.
+- **Short lines.** Every event line the writer emits is small (a handful of
+  short fields; well under a few kilobytes even with a long `detail`). The
+  in-repo readers enforce a shared 1 MiB per-line cap and refuse — with an
+  error, never a silent truncation — a stream whose line exceeds it, treating
+  it as corrupt or foreign; an external consumer may assume the same bound.
 
 ## Version / compatibility rule
 

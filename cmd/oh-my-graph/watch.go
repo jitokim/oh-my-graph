@@ -57,10 +57,13 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	feedPath := filepath.Join(runDir, runfeed.FileName)
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE
-	// endpoint streams through, so the two consumers can never drift on line
-	// framing or partial-final-line tolerance. watch keeps only its own
-	// interpretation: formatting, the malformed-line warning, and stopping at
-	// run_finished.
+	// endpoint streams through (via its FollowWait variant), so the two
+	// consumers can never drift on line framing, the shared line cap, or
+	// partial-final-line tolerance. watch deliberately does NOT wait for a
+	// stream to be created: here a missing stream means a mistyped run id,
+	// which must be the unknown-run error below, not an endless wait. watch
+	// keeps only its own interpretation: formatting, the malformed-line
+	// warning, and stopping at run_finished.
 	warnedSchema := false
 	err := runfeed.Follow(ctx, feedPath, poll, func(line []byte) (bool, error) {
 		var event runfeed.Event

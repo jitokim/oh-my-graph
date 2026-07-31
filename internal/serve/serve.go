@@ -6,12 +6,14 @@
 // rewrites, or deletes anything in a run directory. Fleet-wide observation
 // stays fleetops's job; this is one run, live, locally.
 //
-// SECURITY: the listener binds to 127.0.0.1 ONLY (see Listen). Run
-// directories contain node prompts, artifacts and session ids — and the
-// sessions they name hold full transcripts — so the server must never be
-// reachable from off-host. There is no auth in v1 precisely because the
-// loopback bind is the access control; widening the bind address would need
-// an auth story first.
+// SECURITY: the listener binds to 127.0.0.1 ONLY (see Listen), and every
+// request's Host header must name loopback (see requireLoopbackHost) so a
+// hostile page cannot reach /api/* by DNS-rebinding a domain it controls onto
+// 127.0.0.1. Run directories contain node prompts, artifacts and session ids
+// — and the sessions they name hold full transcripts — so the server must
+// never be reachable from off-host. There is no auth in v1 precisely because
+// the loopback bind is the access control; widening the bind address would
+// need an auth story first.
 //
 // The server spawns no processes. In particular it does not shell out to
 // `open`/`xdg-open` to launch a browser: exactly three objects in this repo
@@ -22,6 +24,7 @@
 package serve
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -70,9 +73,32 @@ func Listen(port int) (net.Listener, error) {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w", addr, err)
+		return nil, fmt.Errorf("listen on %s: %w (if the port is taken, pick another with --port)", addr, err)
 	}
 	return listener, nil
+}
+
+// requireLoopbackHost rejects any request whose Host header does not name
+// this machine's loopback — 127.0.0.1 or localhost, with or without a port.
+//
+// SECURITY: this is the DNS-rebinding guard. The loopback bind keeps remote
+// clients out, but a hostile page can point a domain it controls at 127.0.0.1
+// and have the victim's own browser issue same-origin requests to /api/* —
+// arriving over loopback, yet carrying the attacker's hostname. Matching the
+// Host header against the only names a legitimate local viewer uses closes
+// that hole; anything else is 403.
+func requireLoopbackHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			http.Error(w, "forbidden: the live view answers only loopback hosts (127.0.0.1 or localhost)", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Server serves one run's live view out of its run directory. It holds no
@@ -100,7 +126,8 @@ func New(runDir, runID string) *Server {
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //
 // Everything is read-only GETs over the run directory; there is no mutating
-// route to guard.
+// route to guard. Every route sits behind requireLoopbackHost, the
+// DNS-rebinding guard.
 func (s *Server) Handler() http.Handler {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -112,7 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/result", s.handleResult)
 	mux.Handle("GET /", http.FileServerFS(static))
-	return mux
+	return requireLoopbackHost(mux)
 }
 
 // graphPayload is /api/graph's response body. Available is false during the
@@ -229,10 +256,13 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 
 // handleEvents streams the run's events.jsonl as Server-Sent Events: every
 // line already on disk is replayed immediately, then appended lines follow
-// as they land, via the same runfeed.Follow tail `watch` uses. Each event is
-// forwarded as one SSE `data:` frame carrying the stream's own JSON line
-// verbatim — the browser reads the run-feed contract, not a re-encoding of
-// it.
+// as they land, via runfeed.FollowWait — the wait-for-create variant of the
+// same tail `watch` uses, because a fresh run's directory can briefly exist
+// before its stream does (and a pre-runfeed directory has no stream at all),
+// and the connection must be held open rather than 404ing a healthy run.
+// Each event is forwarded as one SSE `data:` frame carrying the stream's own
+// JSON line verbatim — the browser reads the run-feed contract, not a
+// re-encoding of it.
 //
 // Per RUN-FEED.md's compatibility rule a schema bump must be visible, not
 // fatal: on the first event stamped with a schema newer than this binary the
@@ -241,10 +271,11 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 // skipping event types it does not know. (`runs list` refuses instead, but a
 // list can skip one run; a live view going permanently blank on a routine
 // bump would make the bump fatal.) A line that does not decode at all is
-// skipped (the contract's tolerated truncated-final-line damage). The stream
-// ends when the client disconnects; it deliberately does NOT end at
-// run_finished, because a resumed leg appends to the same file and the
-// viewer should see it.
+// skipped (the contract's tolerated truncated-final-line damage), and so is
+// a decodable line containing a raw \r or \n, which sendSSE could not carry
+// in one frame. The stream ends when the client disconnects; it deliberately
+// does NOT end at run_finished, because a resumed leg appends to the same
+// file and the viewer should see it.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -258,28 +289,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// A fresh run's directory can briefly exist before its stream does (and a
-	// pre-runfeed directory has no stream at all): keep the connection open
-	// and wait for the file rather than 404ing a healthy run, exactly as the
-	// tail itself waits for appended lines.
-	for {
-		if _, err := os.Stat(feedPath); err == nil {
-			break
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			sendSSE(w, flusher, "stream_error", errorFrame(err.Error()))
-			return
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-time.After(s.poll):
-		}
-	}
-
 	warnedSchema := false
-	err := runfeed.Follow(r.Context(), feedPath, s.poll, func(line []byte) (bool, error) {
+	err := runfeed.FollowWait(r.Context(), feedPath, s.poll, func(line []byte) (bool, error) {
 		var event runfeed.Event
 		if err := json.Unmarshal(line, &event); err != nil {
+			return false, nil
+		}
+		if bytes.ContainsAny(line, "\r\n") {
+			// A line can decode and still hold a bare \r between JSON tokens
+			// (legal JSON whitespace, though our writer never emits it) — and
+			// an SSE data field is one line, so forwarding it would split the
+			// frame. Skipped, like an undecodable line.
 			return false, nil
 		}
 		if event.Schema > runfeed.Schema && !warnedSchema {
@@ -311,9 +331,10 @@ func errorFrame(msg string) string {
 // sendSSE writes one Server-Sent Event frame. An empty name is the default
 // `message` event (the normal per-line frame); named events are the two the
 // UI listens for separately — `stream_warning` (non-terminal, e.g. a newer
-// schema) and `stream_error` (terminal). data must be a
-// single line, which every frame here is: JSON encoding never contains a raw
-// newline.
+// schema) and `stream_error` (terminal). data must be a single line; sendSSE
+// does not split or escape, so the caller guarantees it — handleEvents skips
+// any stream line carrying a raw \r or \n, and errorFrame's output comes
+// from json.Marshal, which escapes control characters.
 func sendSSE(w http.ResponseWriter, flusher http.Flusher, name, data string) {
 	if name != "" {
 		fmt.Fprintf(w, "event: %s\n", name)
