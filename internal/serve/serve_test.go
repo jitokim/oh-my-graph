@@ -80,6 +80,54 @@ func TestListen_BindsLoopbackOnly(t *testing.T) {
 	}
 }
 
+func TestListen_PortInUseErrorNamesThePortFlag(t *testing.T) {
+	taken, err := Listen(0)
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	defer taken.Close()
+
+	_, err = Listen(taken.Addr().(*net.TCPAddr).Port)
+	if err == nil {
+		t.Fatal("Listen on a taken port returned nil, want an error")
+	}
+	// The one bind failure a user routinely hits is the port being taken; the
+	// error must point at the escape hatch.
+	if !strings.Contains(err.Error(), "--port") {
+		t.Errorf("bind error must mention --port, got %q", err)
+	}
+}
+
+func TestHandler_RejectsNonLoopbackHost(t *testing.T) {
+	// DNS rebinding: a hostile page points a domain it controls at 127.0.0.1,
+	// so the victim's own browser sends same-origin requests to /api/* over
+	// loopback — but carrying the attacker's hostname. The Host check is what
+	// stops that; the loopback bind alone cannot.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	handler := newTestServer(dir, "run-1").Handler()
+
+	for _, host := range []string{"evil.example.com", "evil.example.com:8642", "127.0.0.1.evil.example.com", "[::1]:8642"} {
+		req := httptest.NewRequest("GET", "/api/graph", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Host %q: status = %d, want 403", host, rec.Code)
+		}
+	}
+
+	for _, host := range []string{"127.0.0.1", "127.0.0.1:8642", "localhost", "localhost:9000"} {
+		req := httptest.NewRequest("GET", "/api/graph", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Host %q: status = %d, want 200 — a legitimate local viewer's Host", host, rec.Code)
+		}
+	}
+}
+
 // --- /api/graph --------------------------------------------------------------
 
 func TestHandleGraph_ServesDAGFromSnapshot(t *testing.T) {
@@ -87,7 +135,7 @@ func TestHandleGraph_ServesDAGFromSnapshot(t *testing.T) {
 	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/graph", nil))
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -118,7 +166,7 @@ func TestHandleGraph_NoSnapshotYetIsHonestlyUnavailable(t *testing.T) {
 	dir := t.TempDir()
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-fresh").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/graph", nil))
+	newTestServer(dir, "run-fresh").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -143,7 +191,7 @@ func TestHandleGraph_RefusesIncompatibleSnapshot(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-new").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/graph", nil))
+	newTestServer(dir, "run-new").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -163,7 +211,7 @@ func TestHandleResult_ServesAKnownNodesArtifact(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=a", nil))
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/result?node=a", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -197,7 +245,7 @@ func TestHandleResult_RefusesAnIdNotInTheGraph(t *testing.T) {
 		"a traversal-shaped id": "/api/result?node=" + url.QueryEscape("../state"),
 	} {
 		rec := httptest.NewRecorder()
-		newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642"+target, nil))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404 (body %q)", name, rec.Code, rec.Body.String())
 		}
@@ -212,7 +260,7 @@ func TestHandleResult_KnownNodeWithoutAnArtifactIsNoContent(t *testing.T) {
 	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=b", nil))
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/result?node=b", nil))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -230,7 +278,7 @@ func TestHandleResult_NoSnapshotYetRefusesEveryId(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	newTestServer(dir, "run-fresh").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result?node=a", nil))
+	newTestServer(dir, "run-fresh").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/result?node=a", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -427,13 +475,44 @@ func TestHandleEvents_WarnsOnceOnASchemaNewerThanThisBinary(t *testing.T) {
 	}
 }
 
+func TestHandleEvents_SkipsALineThatWouldSplitAnSSEFrame(t *testing.T) {
+	// Hand-built on purpose: json.Marshal never emits a bare \r, but a bare \r
+	// between JSON tokens is legal whitespace, so a foreign writer's line can
+	// decode fine and still be impossible to carry as one SSE data line.
+	// Forwarding it would split the frame; the handler must skip it, like an
+	// undecodable line, and keep streaming.
+	dir := t.TempDir()
+	raw := `{"schema":2,"ts":"2026-08-01T00:00:00Z","run_id":"run-1","event":"run_started"}` + "\n" +
+		`{"schema":2,` + "\r" + `"ts":"2026-08-01T00:00:01Z","run_id":"run-1","event":"node_started","node_id":"a"}` + "\n" +
+		`{"schema":2,"ts":"2026-08-01T00:00:02Z","run_id":"run-1","event":"node_passed","node_id":"a","verdict":"PASS"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, runfeed.FileName), []byte(raw), 0o644); err != nil {
+		t.Fatalf("write raw fixture event stream: %v", err)
+	}
+
+	stream, cancel := sseClient(t, newTestServer(dir, "run-1"))
+	defer cancel()
+
+	// The \r-bearing node_started line is skipped: run_started arrives, then
+	// node_passed directly.
+	for _, want := range []runfeed.EventType{runfeed.EventRunStarted, runfeed.EventNodePassed} {
+		name, data := stream.readFrame(t)
+		var event runfeed.Event
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("frame data is not one stream event: %v (%q)", err, data)
+		}
+		if name != "" || event.Type != want {
+			t.Errorf("frame = (%q, %s), want a plain message carrying %s", name, event.Type, want)
+		}
+	}
+}
+
 // --- the embedded UI ---------------------------------------------------------
 
 func TestHandler_ServesEmbeddedUIWithVendoredCytoscape(t *testing.T) {
 	handler := newTestServer(t.TempDir(), "run-1").Handler()
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", rec.Code)
 	}
@@ -463,7 +542,7 @@ func TestHandler_ServesEmbeddedUIWithVendoredCytoscape(t *testing.T) {
 		"/vendor/cytoscape-dagre.js": "bf70fe402991dcbff33e05a7e4a5271c78020bb75e85d1c80ab7538e4157112e",
 	} {
 		rec = httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642"+path, nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
 		}

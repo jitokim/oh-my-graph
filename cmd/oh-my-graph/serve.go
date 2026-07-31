@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
@@ -82,20 +83,40 @@ func runServe(args []string) error {
 
 // serveRun announces the URL and serves the live view on listener until ctx
 // is cancelled (Ctrl-C), which is the normal way to stop and not a failure.
+// Serve runs in a goroutine and this function selects on its result against
+// ctx, so a Serve that fails on its own surfaces immediately with nothing
+// left running, and a cancel drains the Serve goroutine before returning.
 // Split from runServe so a test can drive it with its own listener and
 // context, no signals involved.
 func serveRun(ctx context.Context, w io.Writer, listener net.Listener, runDir, runID string) error {
 	fmt.Fprintf(w, "Serving live view of run %s at http://%s/\nOpen it in your browser; Ctrl-C stops the server.\n", runID, listener.Addr())
 
-	server := &http.Server{Handler: serve.New(runDir, runID).Handler()}
-	go func() {
-		<-ctx.Done()
-		// A fresh context: the trigger for this shutdown is exactly the
-		// cancelled one.
-		server.Shutdown(context.Background())
-	}()
+	server := &http.Server{
+		Handler: serve.New(runDir, runID).Handler(),
+		// Request contexts derive from ctx, so cancelling it also ends the
+		// long-lived /api/events SSE streams; without this, Shutdown below
+		// would wait forever on a connected viewer.
+		BaseContext: func(net.Listener) context.Context { return ctx },
+		// Bound a client that connects but never finishes its headers. Write
+		// and Idle timeouts stay unset on purpose: /api/events is a
+		// long-lived SSE stream, and either one would sever a healthy viewer
+		// mid-run.
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
-	if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+
+	select {
+	case err := <-served:
+		// Serve returned before any shutdown was asked for: a real failure.
+		return fmt.Errorf("serve live view: %w", err)
+	case <-ctx.Done():
+	}
+	if err := server.Shutdown(context.Background()); err != nil {
+		return fmt.Errorf("shut down live view: %w", err)
+	}
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve live view: %w", err)
 	}
 	return nil

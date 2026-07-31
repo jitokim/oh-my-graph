@@ -18,6 +18,14 @@ import (
 	"time"
 )
 
+// maxLineBytes is the longest events.jsonl line any reader in this package
+// accepts. The writer emits lines orders of magnitude smaller (an Event is a
+// handful of short fields), so a longer line means a corrupt or foreign file,
+// and every reader refuses it with an error rather than silently truncating
+// (InFlight) or buffering without bound (Follow). One shared constant so the
+// readers can never disagree about which streams are readable.
+const maxLineBytes = 1 << 20 // 1 MiB
+
 // InFlight reports whether the run's event stream says it is currently
 // executing. Ground truth is the run-feed contract (docs/RUN-FEED.md): the
 // stream is a series of legs, each opened by run_started and closed by
@@ -32,7 +40,8 @@ import (
 // with a schema newer than this binary's Schema is surfaced as an error
 // rather than silently misread — RUN-FEED.md's compatibility rule for
 // consumers, and the same loud refusal runstate.Load gives an incompatible
-// snapshot. Known limitation, accepted for v1: a crashed or killed process
+// snapshot. A line longer than maxLineBytes is an error too, same as Follow.
+// Known limitation, accepted for v1: a crashed or killed process
 // leaves its last leg open, so by the stream alone such a run reads as in
 // flight until it is resumed or its directory is cleaned up — there is no
 // liveness probe here, deliberately, to keep every caller a pure reader of
@@ -49,6 +58,9 @@ func InFlight(path string) (bool, error) {
 
 	open := false
 	scanner := bufio.NewScanner(file)
+	// Raise the Scanner's default 64 KiB token limit to the shared per-line
+	// cap, so InFlight and Follow agree on which streams are readable.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 	for scanner.Scan() {
 		var event Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -77,27 +89,78 @@ func InFlight(path string) (bool, error) {
 // lands. A complete line is always one whole JSON event (Emit writes line
 // and newline in a single write), so the only damage Follow ever buffers
 // around is a truncated final line, which is held back until its newline
-// arrives (docs/RUN-FEED.md).
+// arrives (docs/RUN-FEED.md). A line longer than maxLineBytes — which the
+// writer never emits — ends the follow with an error rather than buffering
+// without bound, the same refusal InFlight gives an over-long line.
 //
 // handle receives the raw line without its trailing newline and owns all
 // interpretation — decoding, schema checks, when to stop. Returning stop
 // true ends the follow cleanly (nil); so does ctx being cancelled, which is
 // how a consumer with no natural end (a disconnecting viewer, a Ctrl-C)
 // stops. A handle error, an unopenable file (fs.ErrNotExist preserved for
-// errors.Is), or a read failure ends it with that error.
+// errors.Is — the missing-stream signal `watch` turns into its unknown-run
+// error), or a read failure ends it with that error. A consumer that must
+// instead outwait a stream that does not exist yet uses FollowWait.
 func Follow(ctx context.Context, path string, poll time.Duration, handle func(line []byte) (stop bool, err error)) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open event stream %q: %w", path, err)
 	}
 	defer file.Close()
+	return follow(ctx, file, path, poll, handle)
+}
 
+// FollowWait is Follow for a stream that may not exist yet: a fresh run's
+// directory can briefly exist before events.jsonl does (and a pre-runfeed
+// directory has no stream at all), so FollowWait polls until the file can be
+// opened — at the same cadence the follow itself polls at end-of-stream —
+// and then tails it exactly as Follow does. ctx being cancelled while
+// waiting ends it cleanly (nil), same as during the follow. Callers that
+// need a missing stream to be an error (`watch`, where it means a mistyped
+// run id) use Follow instead.
+func FollowWait(ctx context.Context, path string, poll time.Duration, handle func(line []byte) (stop bool, err error)) error {
+	for {
+		file, err := os.Open(path)
+		if err == nil {
+			defer file.Close()
+			return follow(ctx, file, path, poll, handle)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("open event stream %q: %w", path, err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(poll):
+		}
+	}
+}
+
+// follow is the shared tail loop behind Follow and FollowWait, reading an
+// already-open file. It reads in bounded chunks (ReadSlice) rather than one
+// unbounded ReadBytes so the maxLineBytes cap is enforced while a line is
+// still accumulating, not after it has been buffered whole.
+func follow(ctx context.Context, file *os.File, path string, poll time.Duration, handle func(line []byte) (stop bool, err error)) error {
 	reader := bufio.NewReader(file)
 	var pending []byte
 	for {
-		chunk, err := reader.ReadBytes('\n')
+		chunk, err := reader.ReadSlice('\n')
 		pending = append(pending, chunk...)
+
+		content := len(pending)
+		if content > 0 && pending[content-1] == '\n' {
+			content--
+		}
+		if content > maxLineBytes {
+			return fmt.Errorf("read event stream %q: line exceeds %d bytes (corrupt or foreign file)", path, maxLineBytes)
+		}
+
 		if err != nil {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				// The line spans the reader's internal buffer; keep
+				// accumulating (bounded by the cap above).
+				continue
+			}
 			if !errors.Is(err, io.EOF) {
 				return fmt.Errorf("read event stream %q: %w", path, err)
 			}

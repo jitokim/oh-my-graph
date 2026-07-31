@@ -541,7 +541,9 @@ stance: oh-my-graph executes and does not render *for the fleet* — serve is
 just another **consumer of the run-feed contract** (docs/RUN-FEED.md), living
 in-repo, reading `state.json` for structure and tailing `events.jsonl` for
 progress through the same readers `runs list` and `watch` use
-(`runfeed.InFlight`, `runfeed.Follow`). A stream schema newer than the
+(`runfeed.InFlight`, `runfeed.Follow` — serve via its `FollowWait`
+wait-for-create variant, since a viewer may connect before the stream
+exists). A stream schema newer than the
 binary takes `watch`'s posture, not `runs list`'s: one non-terminal
 warning frame, then keep forwarding (a list can skip one run; a live view
 going blank would make a routine schema bump fatal, which RUN-FEED.md's
@@ -555,7 +557,11 @@ serve is one run, live, locally.
   hold prompts, artifacts and session ids, so the server must never be
   reachable off-host. The loopback bind IS the access control; widening it
   would need an auth story first. Covered by a test on the bound listener
-  address, not just config.
+  address, not just config. Because the bind is the access control, requests
+  whose Host header is not `127.0.0.1`/`localhost` are rejected with 403
+  (`requireLoopbackHost`) — otherwise a hostile page could DNS-rebind a
+  domain it controls onto 127.0.0.1 and read `/api/*` through the victim's
+  own browser.
 - **Zero runtime network dependencies:** one static page embedded with
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).

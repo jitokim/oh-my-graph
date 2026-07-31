@@ -110,3 +110,63 @@ func TestServeRun_PrintsLoopbackURLAndStopsOnCancel(t *testing.T) {
 		t.Errorf("the announcement must carry the run id and a loopback URL, got %q", got)
 	}
 }
+
+func TestServeRun_ServeFailureSurfacesWithoutACancel(t *testing.T) {
+	// Serve can return for a non-cancel reason (here: a dead listener). That
+	// must surface as an error immediately — not hang waiting on a ctx that
+	// will never be cancelled, and not leak a shutdown goroutine.
+	listener, err := serve.Listen(0)
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	listener.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- serveRun(context.Background(), &strings.Builder{}, listener, t.TempDir(), "run-1")
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "serve live view") {
+			t.Fatalf("err = %v, want the serve-live-view failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveRun hung on a Serve failure instead of returning it")
+	}
+}
+
+func TestServeRun_CancelEndsAnOpenSSEStream(t *testing.T) {
+	// /api/events streams are never idle, and Shutdown waits for idle
+	// connections — so a cancel must also cancel the request contexts
+	// (server.BaseContext), or serveRun hangs forever behind one connected
+	// viewer. This pins the whole chain: connect a live SSE client, cancel,
+	// and require serveRun to return promptly and cleanly.
+	listener, err := serve.Listen(0)
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveRun(ctx, &strings.Builder{}, listener, t.TempDir(), "run-1") }()
+
+	resp, err := http.Get("http://" + listener.Addr().String() + "/api/events")
+	if err != nil {
+		t.Fatalf("open SSE stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("SSE status = %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a cancelled serveRun must return nil, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveRun hung on shutdown behind an open SSE stream")
+	}
+}
