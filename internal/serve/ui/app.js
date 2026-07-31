@@ -27,7 +27,11 @@ function statusColor(state) {
   return cssVar(`--${state}`);
 }
 
-const nodes = new Map(); // node id -> {state, verdict, sessionId, costUsd, detail, startedMs, endedMs}
+// node id -> the per-node record nodeInfo() seeds (see its literal for the
+// full shape and the result-fetch states). `verdict` is retained from the
+// stream for completeness but currently displayed nowhere — the panel's
+// status line and the card border already carry the same fact.
+const nodes = new Map();
 let cy = null;
 let totalCost = 0;
 let selectedNode = null;
@@ -265,6 +269,12 @@ function apply(event) {
     case "node_retried": {
       const info = nodeInfo(event.node_id);
       info.state = "running";
+      // A (re)started node's previous result is stale by definition; reset
+      // here, on the state change itself, so a node retried while UNselected
+      // also refetches when it re-settles — a paint function only runs for
+      // the selected node and must not own this invalidation.
+      info.result = "";
+      info.resultState = "none";
       if (!Number.isNaN(ts)) {
         info.startedMs = ts;
         info.endedMs = null;
@@ -431,15 +441,14 @@ function showDetail(id) {
 
 // renderResult paints the panel's result block from the node's fetch state,
 // kicking off the lazy /api/result fetch the first time the node is seen
-// settled (a retried node re-runs, so leaving "running" resets the fetch and
-// re-settling refetches). The artifact is rendered via textContent ONLY —
-// never innerHTML: node output is untrusted text, not markup.
+// settled. Fetch-state INVALIDATION lives in apply()'s (re)start branch, not
+// here — a paint function runs only for the selected node. The artifact is
+// rendered via textContent ONLY — never innerHTML: node output is untrusted
+// text, not markup.
 function renderResult(id, info) {
   const pre = $("detail-result");
   const settled = info.state === "passed" || info.state === "failed";
   if (!settled) {
-    info.result = "";
-    info.resultState = "none";
     setResult(pre, "no result yet", true);
     return;
   }
@@ -454,6 +463,10 @@ function renderResult(id, info) {
       setResult(pre, "result unavailable", true);
       return;
     case "loading":
+      // Repaint even mid-fetch: the pre is shared across selections, so
+      // without this a click away and back would show the OTHER node's text
+      // under this node's heading until the fetch lands.
+      setResult(pre, "loading…", true);
       return;
   }
   info.resultState = "loading";
