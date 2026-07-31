@@ -70,7 +70,7 @@ func TestExecutePlan_CarriesTheCeilingIntoEveryNode(t *testing.T) {
 	// executeGraph writes its run directory under $OMG_HOME, so isolate it
 	// instead of littering the real home with artifacts.
 	isolateRunHome(t)
-	err := executePlan(context.Background(), "test-run", plan, rec, commonRunFlags{inputs: inputFlag{}}, "graph.json")
+	err := executePlan(context.Background(), "test-run", plan, rec, commonRunFlags{inputs: inputFlag{}}, "graph.json", nil)
 	if err != nil {
 		t.Fatalf("executePlan returned error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	rec := &capturingRunner{}
 
 	isolateRunHome(t)
-	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"))
+	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"), nil)
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestExecutePlan_TotalIncludesPlanningCost(t *testing.T) {
 
 	isolateRunHome(t)
 	out := captureStdout(t, func() {
-		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}, "graph.json"); err != nil {
+		if err := executePlan(context.Background(), "issue-15", plan, fake, commonRunFlags{inputs: inputFlag{}}, "graph.json", nil); err != nil {
 			t.Fatalf("executePlan returned error: %v", err)
 		}
 	})

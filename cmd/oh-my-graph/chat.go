@@ -91,7 +91,10 @@ func chatLoop(ctx context.Context, in io.Reader, out io.Writer, coord *coordinat
 		}
 		switch route.Mode {
 		case coordinator.RouteGraph:
-			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, confirm); err != nil {
+			// nil web: a chat graph turn never embeds the live view or opens
+			// a browser (ADR 0006) — the host owns the terminal, `serve` owns
+			// the optional window.
+			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, confirm, nil); err != nil {
 				if errors.Is(err, errConfirmEOF) {
 					return scanner.Err()
 				}

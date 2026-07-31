@@ -24,9 +24,9 @@ import (
 
 // Opener opens a URL in the user's default browser.
 //
-// The interface carries no policy: deciding WHETHER to open (the planned TTY
-// gate, an opt-out flag) is the caller's job. An Opener only ever answers
-// "open this".
+// The interface carries no policy: deciding WHETHER to open (run/auto's TTY
+// gate, the --no-web opt-out) is the caller's job. An Opener only ever
+// answers "open this".
 type Opener interface {
 	Open(ctx context.Context, url string) error
 }

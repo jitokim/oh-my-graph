@@ -19,8 +19,10 @@
 // `open`/`xdg-open` to launch a browser: exactly four objects in this repo
 // may spawn a process (internal/invariants, ADR 0002/0005/0006), and
 // browser-open belongs to the fourth of them — browser.ExecOpener, behind
-// the browser.Opener seam (ADR 0006). The CLI still prints the URL; wiring
-// the Opener into serve, behind a TTY gate, is the planned follow-up.
+// the browser.Opener seam (ADR 0006). The CLI decides: `run`/`auto` embed
+// this server for the run's duration and, when stdout is a terminal and
+// --no-web was not passed, hand the URL to the injected Opener; the
+// standalone `serve` subcommand just prints the URL.
 package serve
 
 import (

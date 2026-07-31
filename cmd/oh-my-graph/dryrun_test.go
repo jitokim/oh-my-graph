@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -108,7 +109,7 @@ nodes:
 
 	var err error
 	out := captureStdout(t, func() {
-		err = runGraphWith([]string{path, "--dry-run", "--input", "repo=."}, fake)
+		err = runGraphWith([]string{path, "--dry-run", "--input", "repo=."}, fake, browser.NewFakeOpener(), os.Stdout)
 	})
 	if err != nil {
 		t.Fatalf("dry run of a valid graph returned error: %v", err)
