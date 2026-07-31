@@ -233,6 +233,89 @@ nodes:
 	}
 }
 
+// TestScheduler_CancelledSiblingDetailNamesTheHalt proves a sibling that
+// halt-on-fail cancelled is recorded with the causal story — which failure
+// halted the run — not the Go error string ("claude run: context canceled")
+// its cancellation surfaces as.
+func TestScheduler_CancelledSiblingDetailNamesTheHalt(t *testing.T) {
+	g := mustGraph(t, `
+name: halt-detail
+nodes:
+  - { id: boom, prompt: boom, success_check: { exit_zero: true } }
+  - { id: sibling, prompt: sibling }
+`)
+	r := &haltRunner{failKey: "boom", blockKey: "sibling", released: make(chan struct{})}
+
+	s, h, led := newHarness(t, r, Options{})
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the run to halt")
+	}
+
+	rec := findRecord(led, "sibling")
+	if rec.Verdict != ledger.VerdictFail {
+		t.Fatalf("sibling verdict = %q, want FAIL", rec.Verdict)
+	}
+	if want := `cancelled: run halted after node "boom" failed`; rec.Detail != want {
+		t.Errorf("sibling detail = %q, want %q", rec.Detail, want)
+	}
+}
+
+// TestScheduler_ExitZeroDetailNamesTheRunnerCause is the incident fix: a node
+// whose subprocess died on a subscription session limit used to be recorded as
+// only "exit code 1". When the runner captured WHY (NodeOutcome.FailureCause),
+// the exit_zero detail must carry it — on both the implicit (empty
+// success_check) and explicit exit_zero paths.
+func TestScheduler_ExitZeroDetailNamesTheRunnerCause(t *testing.T) {
+	g := mustGraph(t, `
+name: exit-cause
+nodes:
+  - { id: implicit, prompt: implicit }
+  - { id: explicit, prompt: explicit, success_check: { exit_zero: true } }
+`)
+	died := runner.NodeOutcome{ExitCode: 1, FailureCause: "You've hit your session limit"}
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"implicit": died, "explicit": died,
+	})
+	s, h, led := newHarness(t, fake, Options{ContinueOnFail: true})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected both nodes to fail")
+	}
+	for _, id := range []string{"implicit", "explicit"} {
+		rec := findRecord(led, id)
+		if want := "exit code 1: You've hit your session limit"; !strings.Contains(rec.Detail, want) {
+			t.Errorf("%s detail = %q, want it to contain %q", id, rec.Detail, want)
+		}
+	}
+}
+
+// TestScheduler_FailureDetailIsCappedAtSharedBound proves an arbitrarily long
+// cause is bounded the moment it becomes a Detail — keeping the tail, where
+// this codebase's long strings put the payload — so the ledger table and every
+// events.jsonl line stay one readable line.
+func TestScheduler_FailureDetailIsCappedAtSharedBound(t *testing.T) {
+	g := mustGraph(t, `
+name: cap
+nodes:
+  - { id: chatty, prompt: chatty }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"chatty": {ExitCode: 1, FailureCause: strings.Repeat("x", 1000) + "the actual complaint"},
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected chatty to fail")
+	}
+	rec := findRecord(led, "chatty")
+	if got := len([]rune(rec.Detail)); got > maxDetailRunes+1 { // +1 for the "…" cut marker
+		t.Errorf("detail is %d runes, want at most %d", got, maxDetailRunes+1)
+	}
+	if !strings.HasPrefix(rec.Detail, "…") || !strings.HasSuffix(rec.Detail, "the actual complaint") {
+		t.Errorf("capping must mark the cut and keep the tail, got %q", rec.Detail)
+	}
+}
+
 // --- continue on fail prunes only the failed subtree ------------------------
 
 // TestScheduler_ContinueOnFailPrunesSubtree proves --continue-on-fail lets an

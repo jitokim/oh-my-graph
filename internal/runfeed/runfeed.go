@@ -130,6 +130,8 @@ type Event struct {
 	Retries int `json:"retries,omitempty"`
 	// Detail is the short human note the ledger records for the same event —
 	// the failure cause on node_failed, the retry/budget note on node_passed.
+	// The producer caps it at one shared bound (240 runes), so a line stays
+	// tailable even when the underlying error was arbitrarily long.
 	Detail string `json:"detail,omitempty"`
 	// Outcome is how the leg ended, on run_finished only.
 	Outcome string `json:"outcome,omitempty"`

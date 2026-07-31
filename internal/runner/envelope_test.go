@@ -126,6 +126,45 @@ func TestParseEnvelope_SuccessCarriesNoStderr(t *testing.T) {
 	}
 }
 
+// TestParseEnvelope_FailureCause pins where the cause comes from inside the
+// envelope itself: the errors array when present, the result text of an
+// is_error envelope otherwise, always flattened to one line — and never
+// anything on a clean success envelope.
+func TestParseEnvelope_FailureCause(t *testing.T) {
+	cases := []struct {
+		name     string
+		envelope string
+		want     string
+	}{
+		{
+			name:     "errors array wins",
+			envelope: `{"session_id":"s1","total_cost_usd":0.02,"is_error":true,"errors":["You've hit your session limit","try again later"]}`,
+			want:     "You've hit your session limit / try again later",
+		},
+		{
+			name:     "is_error falls back to result",
+			envelope: `{"session_id":"s1","result":"You've hit your session limit","total_cost_usd":0.02,"is_error":true}`,
+			want:     "You've hit your session limit",
+		},
+		{
+			name:     "success carries no cause",
+			envelope: `{"session_id":"s1","result":"PASS","total_cost_usd":0.02,"subtype":"success"}`,
+			want:     "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outcome, err := parseEnvelope([]byte(tc.envelope), nil)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if outcome.FailureCause != tc.want {
+				t.Errorf("FailureCause = %q, want %q", outcome.FailureCause, tc.want)
+			}
+		})
+	}
+}
+
 func TestFakeRunner_UnscriptedNodeErrors(t *testing.T) {
 	f := NewFakeRunner(map[string]NodeOutcome{"a": {Result: "PASS"}})
 	_, err := f.Run(context.Background(), NodeInvocation{Prompt: "unscripted"})

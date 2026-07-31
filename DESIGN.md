@@ -35,6 +35,11 @@ The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
 only `AllowedTools`, so its argv is the first two lines and `--resume`.
 run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
+On a failed run the runner also captures WHY as a one-line
+`NodeOutcome.FailureCause` — the envelope's own error report (`errors` /
+`is_error`), else the stderr tail on a non-zero exit — so the failure detail
+downstream (ledger, events.jsonl, watch, serve) names the cause (a
+subscription session limit, say) instead of only "exit code 1".
 - **Subscription auth crux:** start from `os.Environ()` and **DELETE
   `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`** from the child env (they
   silently switch to metered API billing). Enforced in code + asserted by a unit
@@ -211,6 +216,9 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    SUCCESS, decrement dependents' in-degree; newly-0 join ready set.
 4. Node failure → retry policy; still failed → **halt (default)**: cancel shared
    context → kills in-flight children → exit non-zero naming the failing node.
+   A sibling the halt cancelled is recorded with the causal story —
+   `cancelled: run halted after node "X" failed` — not the raw Go
+   "context canceled" its cancellation surfaces as.
    `--continue-on-fail` (opt-in) prunes only the failed subtree.
 5. Done when ready+running are empty.
 
@@ -703,7 +711,7 @@ Scheduler as any other graph.
       Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error)
   }
   type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession, Agent string; Policy ToolPolicy }
-  type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int }
+  type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted bool }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
     execs under context, parses JSON. One of the exactly three objects that

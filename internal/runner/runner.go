@@ -105,6 +105,14 @@ type NodeOutcome struct {
 	Result       string
 	TotalCostUSD float64
 	ExitCode     int
+	// FailureCause is a concise single-line explanation of WHY the subprocess
+	// failed, present only when the run actually failed (an error envelope, or
+	// a non-zero exit). ClaudeCLIRunner fills it from the most informative
+	// source available — the errors the CLI reported inside its own JSON
+	// envelope, else the tail of its stderr — so a failure detail can name the
+	// real cause (a subscription session limit, say) instead of only "exit
+	// code 1". Empty on success and when the child left no diagnosis.
+	FailureCause string
 	// BudgetExhausted is true when claude aborted the run because its own
 	// --max-budget-usd cap was reached (envelope subtype error_max_budget_usd).
 	// It is a budget failure, not the generic non-zero exit its ExitCode would

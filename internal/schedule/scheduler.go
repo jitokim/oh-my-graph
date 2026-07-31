@@ -49,10 +49,25 @@ const (
 // verify_failed retry cause must all agree on.
 const predicateVerify = "verify"
 
-// maxDetailOutputRunes bounds how much of a verification command's output the
-// ledger's one-line DETAIL column carries. Enough to see the failing assertion,
-// short enough not to swamp the end-of-run table.
-const maxDetailOutputRunes = 240
+// maxDetailRunes is the one shared bound on a detail string — applied both to
+// a verification command's output tail and, in failRecord, to every cause at
+// the moment it becomes a ledger/snapshot/event Detail. Enough to see the
+// failing assertion, short enough not to swamp the end-of-run table or an
+// events.jsonl line (which must stay tailable even when an error is
+// arbitrarily long).
+const maxDetailRunes = 240
+
+// capDetail bounds a detail string at maxDetailRunes, keeping the TAIL and
+// marking the cut — the same choice tailOf and outputTail make, because this
+// codebase's long strings put the payload last (a stderr complaint, a failing
+// command's output) and the head they lose (the node id, the predicate) is
+// carried separately by every surface that shows a Detail.
+func capDetail(s string) string {
+	if runes := []rune(s); len(runes) > maxDetailRunes {
+		return "…" + string(runes[len(runes)-maxDetailRunes:])
+	}
+	return s
+}
 
 // Recorder persists the run's resumable snapshot (internal/runstate) as the
 // run progresses. The Scheduler talks to this narrow interface and never
@@ -293,10 +308,51 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 	return err
 }
 
+// haltCause records which node's failure halted the run, so a sibling the halt
+// cancelled can be recorded with the causal story — `cancelled: run halted
+// after node "X" failed` — instead of the Go plumbing string ("claude run:
+// context canceled") its cancellation surfaces as. It is written strictly
+// BEFORE the shared context is cancelled (the errgroup cancels only after the
+// failing node's goroutine returns, and note runs before that return), so any
+// sibling that observes the cancellation is guaranteed to see the cause set.
+type haltCause struct {
+	mu     sync.Mutex
+	nodeID string
+}
+
+// note records the failing node, first writer wins: concurrent failures may
+// race to halt, but the run tells one story.
+func (c *haltCause) note(nodeID string) {
+	c.mu.Lock()
+	if c.nodeID == "" {
+		c.nodeID = nodeID
+	}
+	c.mu.Unlock()
+}
+
+// explain rewrites a context-cancellation error into the halt's causal story
+// when a halt is on record. Every other error passes through untouched — in
+// particular a cancellation with no halt recorded (the user's own Ctrl-C
+// cancels the same context) and a per-node timeout (DeadlineExceeded), which
+// is that node's own failure, not collateral of someone else's.
+func (c *haltCause) explain(err error) error {
+	if !errors.Is(err, context.Canceled) {
+		return err
+	}
+	c.mu.Lock()
+	nodeID := c.nodeID
+	c.mu.Unlock()
+	if nodeID == "" {
+		return err
+	}
+	return fmt.Errorf("cancelled: run halted after node %q failed", nodeID)
+}
+
 // execute is Run's body — everything between the run_started/run_finished pair.
 func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
 	grp, ctx := errgroup.WithContext(ctx)
+	halt := &haltCause{}
 
 	var mu sync.Mutex
 	// inDegree seeds each node's remaining-parent count against s.completedNodes,
@@ -355,7 +411,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 			}
 			defer func() { <-sem }()
 
-			if err := s.runNode(ctx, node, h, led); err != nil {
+			if err := s.runNode(ctx, node, h, led, halt); err != nil {
 				var pause *pauseSignal
 				if errors.As(err, &pause) {
 					pauseMu.Lock()
@@ -386,7 +442,10 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 				}
 				// Halt-on-fail: returning a non-nil error cancels ctx, which
 				// propagates to every in-flight child (killing wedged claude
-				// subprocesses) and stops new nodes from starting.
+				// subprocesses) and stops new nodes from starting. The cause
+				// is noted first, so a cancelled sibling can name it (see
+				// haltCause — the ordering is what makes that race-free).
+				halt.note(id)
 				return &HaltError{NodeID: id, Err: err}
 			}
 
@@ -464,7 +523,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 // this general path at all; see evaluateGate for its three outcomes,
 // including the internal *pauseSignal/*rejectSignal Run() intercepts before
 // they could be mistaken for one of these.
-func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger) error {
+func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, halt *haltCause) error {
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID})
@@ -492,6 +551,10 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 		outcome, runErr := s.runner.Run(ctx, invocation)
 		if runErr != nil {
+			// A sibling this run's halt cancelled surfaces here as a bare
+			// context cancellation; rewrite it into the causal story before
+			// it is recorded anywhere.
+			runErr = halt.explain(runErr)
 			lastErr = runErr
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
 				s.recordRetry(node, attempt+1)
@@ -899,7 +962,7 @@ func verifyFailure(nodeID, detail string) error {
 }
 
 // outputTail renders the end of a verification command's output for the ledger's
-// DETAIL column: the last maxDetailOutputRunes, whitespace-collapsed onto one
+// DETAIL column: the last maxDetailRunes, whitespace-collapsed onto one
 // line so a multi-line test failure cannot break the end-of-run table. The tail
 // is what matters — a failing command explains itself last. Empty output yields
 // an empty string rather than a dangling separator.
@@ -908,10 +971,7 @@ func outputTail(output string) string {
 	if condensed == "" {
 		return ""
 	}
-	if runes := []rune(condensed); len(runes) > maxDetailOutputRunes {
-		condensed = "…" + string(runes[len(runes)-maxDetailOutputRunes:])
-	}
-	return "; output: " + condensed
+	return "; output: " + capDetail(condensed)
 }
 
 // shouldRetry reports whether a failed attempt should be retried: there must be
@@ -955,13 +1015,13 @@ func evaluateSuccessCheck(node graph.Node, outcome runner.NodeOutcome) error {
 
 	if check.IsZero() {
 		if outcome.ExitCode != 0 {
-			return &NodeCheckError{NodeID: node.ID, Predicate: "exit_zero", Detail: fmt.Sprintf("exit code %d", outcome.ExitCode)}
+			return &NodeCheckError{NodeID: node.ID, Predicate: "exit_zero", Detail: exitDetail(outcome)}
 		}
 		return nil
 	}
 
 	if check.ExitZero && outcome.ExitCode != 0 {
-		return &NodeCheckError{NodeID: node.ID, Predicate: "exit_zero", Detail: fmt.Sprintf("exit code %d", outcome.ExitCode)}
+		return &NodeCheckError{NodeID: node.ID, Predicate: "exit_zero", Detail: exitDetail(outcome)}
 	}
 
 	if check.ResultMatches != "" {
@@ -974,6 +1034,19 @@ func evaluateSuccessCheck(node graph.Node, outcome runner.NodeOutcome) error {
 		}
 	}
 	return nil
+}
+
+// exitDetail is the exit_zero failure detail: the exit code, plus the WHY when
+// the runner captured one (the CLI's own error report, or its stderr tail).
+// "exit code 1" alone answers what happened, not why — a subprocess killed by
+// a subscription session limit read exactly like any other non-zero exit until
+// the cause travelled with the outcome.
+func exitDetail(outcome runner.NodeOutcome) string {
+	detail := fmt.Sprintf("exit code %d", outcome.ExitCode)
+	if outcome.FailureCause != "" {
+		detail += ": " + outcome.FailureCause
+	}
+	return detail
 }
 
 // evaluateBudget applies a node's budget_usd to the cost it actually reported,
@@ -1074,8 +1147,11 @@ func failRecord(node graph.Node, sessionID string, cost float64, duration time.D
 		Verdict:   ledger.VerdictFail,
 		Duration:  duration,
 		// A *NodeBudgetError already spells out budgeted-vs-actual and the
-		// overage, so the failing path needs no separate budget note.
-		Detail: cause.Error(),
+		// overage, so the failing path needs no separate budget note. This is
+		// the point where a cause becomes a Detail, so the shared bound is
+		// applied here — an arbitrarily long error must not swamp the ledger
+		// table, the snapshot, or an events.jsonl line.
+		Detail: capDetail(cause.Error()),
 	}
 }
 
