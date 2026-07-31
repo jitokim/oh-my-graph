@@ -185,15 +185,20 @@ func runAuto(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal)
+	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal, nil)
 }
 
 // planAndExecute is one goal's full auto sequence — plan, save the spec, print
 // the topology, execute. It is shared verbatim by `auto` and a chat graph turn
 // so the sequence that must stay identical between them has exactly one home:
 // a graph started from chat is indistinguishable on disk (saved spec,
-// state.json, events.jsonl) from one started at the shell.
-func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string) error {
+// state.json, events.jsonl) from one started at the shell. confirm is the one
+// permitted divergence: nil proceeds straight to execution (`auto` stays fully
+// non-interactive), while a non-nil hook is asked between printing the
+// topology and executing — false discards the plan with a note, which is not
+// an error. A hook error aborts before execution and propagates as-is, so a
+// caller can recognize its own sentinel (chat's EOF-at-the-prompt).
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, confirm func() (bool, error)) error {
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
@@ -206,6 +211,17 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	printPlan(out, plan, specPath)
+
+	if confirm != nil {
+		ok, err := confirm()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(out, "plan discarded.")
+			return nil
+		}
+	}
 
 	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath)
 }

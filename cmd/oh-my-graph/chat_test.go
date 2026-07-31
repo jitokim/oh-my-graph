@@ -84,7 +84,7 @@ func TestChatLoop_GraphTurnRoutesGoalThroughCoordinatorAndScheduler(t *testing.T
 	// The scheduler's ledger prints straight to os.Stdout; capture it so the
 	// test output stays clean — the assertions below read the fake and the disk.
 	captureStdout(t, func() {
-		runChatLoop(t, fake, "clean up the docs please\n")
+		runChatLoop(t, fake, "clean up the docs please\ny\n")
 	})
 
 	if got := fake.InvocationCount(autoPlanKey); got != 1 {
@@ -101,6 +101,56 @@ func TestChatLoop_GraphTurnRoutesGoalThroughCoordinatorAndScheduler(t *testing.T
 	feeds, err := filepath.Glob(filepath.Join(runsRoot(), "*", "events.jsonl"))
 	if err != nil || len(feeds) != 1 {
 		t.Errorf("event streams = %v (err %v), want exactly one events.jsonl — the chat path lost the run feed", feeds, err)
+	}
+}
+
+// TestChatLoop_GraphTurnConfirmation covers the `Run this plan? [y/N]` gate a
+// chat graph turn puts between printing the plan and executing it: only y/yes
+// (case-insensitive) proceeds, anything else — including the empty default —
+// discards the plan and the loop keeps serving turns, and EOF at the prompt
+// ends the session as gracefully as EOF at the main prompt.
+func TestChatLoop_GraphTurnConfirmation(t *testing.T) {
+	plannedSpec := `{"name":"from-chat","nodes":[{"id":"work","prompt":"do the planned work","allowed_tools":["Read"]}]}`
+	cases := []struct {
+		name           string
+		stdin          string
+		wantNodeRuns   int
+		wantRouterHits int
+		wantDiscarded  bool
+	}{
+		{name: "y executes the plan", stdin: "tidy the docs\ny\n", wantNodeRuns: 1, wantRouterHits: 1},
+		{name: "yes is accepted case-insensitively", stdin: "tidy the docs\nYes\n", wantNodeRuns: 1, wantRouterHits: 1},
+		{name: "n discards and the loop serves the next turn", stdin: "tidy the docs\nn\ntidy the docs\ny\n", wantNodeRuns: 1, wantRouterHits: 2, wantDiscarded: true},
+		{name: "empty answer defaults to no", stdin: "tidy the docs\n\nexit\n", wantNodeRuns: 0, wantRouterHits: 1, wantDiscarded: true},
+		{name: "EOF at the prompt ends the session cleanly", stdin: "tidy the docs\n", wantNodeRuns: 0, wantRouterHits: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newChatFake(map[string]runner.NodeOutcome{
+				routerKey:             {Result: `{"mode":"graph","goal":"tidy the docs"}`},
+				autoPlanKey:           {Result: plannedSpec, TotalCostUSD: 0.01},
+				"do the planned work": {SessionID: "s-work", Result: "PASS", ExitCode: 0},
+			})
+
+			isolateRunHome(t)
+			var out string
+			captureStdout(t, func() {
+				out = runChatLoop(t, fake, tc.stdin)
+			})
+
+			if !strings.Contains(out, "Run this plan? [y/N]") {
+				t.Errorf("confirmation prompt not printed:\n%s", out)
+			}
+			if got := fake.InvocationCount("do the planned work"); got != tc.wantNodeRuns {
+				t.Errorf("planned node invoked %d times, want %d", got, tc.wantNodeRuns)
+			}
+			if got := fake.InvocationCount(routerKey); got != tc.wantRouterHits {
+				t.Errorf("router invoked %d times, want %d", got, tc.wantRouterHits)
+			}
+			if got := strings.Contains(out, "plan discarded."); got != tc.wantDiscarded {
+				t.Errorf("output contains %q = %v, want %v:\n%s", "plan discarded.", got, tc.wantDiscarded, out)
+			}
+		})
 	}
 }
 

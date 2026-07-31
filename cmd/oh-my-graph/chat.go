@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,8 +34,19 @@ func runChat(args []string) error {
 	return chatLoop(ctx, os.Stdin, os.Stdout, coordinator.New(nodeRunner), nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 
+// errConfirmEOF marks stdin closing at the plan-confirmation prompt. chatLoop
+// turns it into the same graceful session end as EOF at the main prompt; it
+// never escapes chatLoop.
+var errConfirmEOF = errors.New("chat: input closed at the confirmation prompt")
+
 // chatLoop is the REPL: one line in, one routed turn out, until EOF or an
-// explicit exit/quit. A failed turn — router error, plan rejection, or a
+// explicit exit/quit. A graph turn prints the planned topology and then asks
+// `Run this plan? [y/N]` before executing — the answer is read from the SAME
+// scanner as the main prompt (so scripted-input tests cover it), only
+// y/yes (case-insensitive) proceeds, anything else discards the plan, and
+// EOF at the prompt ends the session exactly like EOF at the main prompt.
+// A declined plan is not an error: "plan discarded." is printed and the next
+// turn is served. A failed turn — router error, plan rejection, or a
 // failed run — is printed and the loop continues; only reading stdin failing
 // (or the surrounding context dying) ends the session, because a chat host
 // that exits on its first bad turn is not a host. Separated from runChat and
@@ -43,6 +55,18 @@ func runChat(args []string) error {
 // still goes to os.Stdout, exactly as in `auto`.
 func chatLoop(ctx context.Context, in io.Reader, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags) error {
 	scanner := bufio.NewScanner(in)
+	confirm := func() (bool, error) {
+		fmt.Fprint(out, "Run this plan? [y/N] ")
+		if !scanner.Scan() {
+			fmt.Fprintln(out)
+			return false, errConfirmEOF
+		}
+		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
+		case "y", "yes":
+			return true, nil
+		}
+		return false, nil
+	}
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -67,7 +91,10 @@ func chatLoop(ctx context.Context, in io.Reader, out io.Writer, coord *coordinat
 		}
 		switch route.Mode {
 		case coordinator.RouteGraph:
-			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal); err != nil {
+			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, confirm); err != nil {
+				if errors.Is(err, errConfirmEOF) {
+					return scanner.Err()
+				}
 				fmt.Fprintf(out, "chat: run failed: %v\n", err)
 			}
 		default:
