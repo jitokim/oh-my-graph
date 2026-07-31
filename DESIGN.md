@@ -569,10 +569,17 @@ serve is one run, live, locally.
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).
   No build step, no npm, no CDN.
-- **Spawns nothing.** The CLI prints the URL; it does not itself shell out
-  to `open`/`xdg-open`. Browser-open lives behind its own seam —
-  `browser.Opener`, the fourth exec seam (ADR 0006) — and wiring it into
-  `serve`, behind a TTY gate, is the planned follow-up, not an oversight.
+- **Spawns nothing.** The server itself never shells out to
+  `open`/`xdg-open`; browser-open lives behind its own seam —
+  `browser.Opener`, the fourth exec seam (ADR 0006) — and only the CLI wires
+  it. A fresh `run`/`auto` whose stdout is a terminal embeds this server
+  (same `serve.Listen`/handler/`serveRun` lifecycle, ephemeral loopback
+  port) for exactly the run's duration, prints the URL as `serve` does, and
+  opens it through the injected `ExecOpener`; `--no-web` opts out, a
+  non-terminal stdout (scripts, CI) gets no server, no browser, and
+  byte-identical output. A chat graph turn and a `resume` leg stay un-wired
+  (ADR 0006), and the standalone `serve` subcommand still just prints the
+  URL.
 - The graph structure appears when it is known: `state.json` is written only
   after each node's terminal verdict, so a fresh run's `/api/graph` honestly
   reports the structure unavailable until the first node completes (the UI
@@ -747,8 +754,9 @@ Scheduler as any other graph.
   `serve` live view) in the user's default browser. `ExecOpener` (prod — the
   fourth spawner, ADR 0006: `open`/`xdg-open`/`cmd /c start` behind build
   tags), `RefusingOpener` (default — a forgotten injection fails loudly),
-  `FakeOpener` (tests). Wiring into `serve`, behind a TTY gate, is a planned
-  follow-up; the CLI still prints the URL.
+  `FakeOpener` (tests). Wired at the `run`/`auto` call sites only, behind
+  the TTY-and-not-`--no-web` gate (see "Web live view"); everywhere else no
+  Opener is injected.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
   session. Gains `Seed(nodeID, artifactPath, sessionID)` so a resumed run can
   rehydrate a previous leg's artifacts and session ids without Handoff having to
@@ -818,7 +826,7 @@ internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRu
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
-internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch; serve wiring is a follow-up
+internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts exactly the four exec-seam files import os/exec (a fifth importer fails CI — ADR 0002/0005/0006)
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing

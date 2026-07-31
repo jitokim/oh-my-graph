@@ -46,10 +46,13 @@ type Opener interface {
 - `FakeOpener` (records URLs in order, scriptable failure) is what tests
   inject, so every auto-open path stays spawn-free in CI.
 - The interface carries no policy: deciding WHETHER to open is the caller's
-  job. Phase 2 wires `ExecOpener` into `serve` behind a **TTY gate** — open
-  only when the CLI is talking to an interactive terminal, so a scripted or
-  CI invocation of `serve` never launches a browser — plus an opt-out flag.
-  This ADR ships the seam; the wiring lands with that gate.
+  job. Phase 2 wires `ExecOpener` behind a **TTY gate** — open only when the
+  CLI is talking to an interactive terminal, so a scripted or CI invocation
+  never launches a browser — plus an opt-out flag. This ADR ships the seam;
+  the wiring lands with that gate. (Phase 2 outcome: the gate landed on
+  `run`/`auto`, which embed the serve live view for the run's duration and
+  open it — `--no-web` opts out; a chat graph turn and a `resume` leg stay
+  un-wired; the standalone `serve` subcommand keeps printing the URL.)
 
 The invariant is **restated, not weakened**:
 

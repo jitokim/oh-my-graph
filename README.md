@@ -80,12 +80,19 @@ cost, verdict, duration) and the total cost. See [Examples](#examples) below
 for a full walkthrough of the output.
 
 ```
-oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]
+oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 ```
 
 - `--input k=v` binds a graph input; repeatable.
 - `--concurrency N` overrides the graph's ready-set width (ceiling 10).
 - `--continue-on-fail` prunes only a failed node's subtree instead of halting.
+- `--no-web` opts out of the web live view (below).
+
+When stdout is a terminal, `run` and `auto` also serve the [web live
+view](#usage) of the starting run on an ephemeral `127.0.0.1` port and open it
+in your default browser; the server lives exactly as long as the run. In a
+script, a pipe, or CI (stdout not a terminal) — or with `--no-web` — nothing
+is served or opened and the output is unchanged.
 
 ### Zero-config: auto mode
 
@@ -149,6 +156,9 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
   directories contain prompts and session ids, so the server is never
   reachable off-host — and prints the URL to open. The page is fully
   embedded (vendored cytoscape.js): zero runtime network dependencies.
+  (A fresh `run`/`auto` on a terminal serves and opens this view by itself —
+  `serve` is for attaching to a run you didn't just start, or after
+  `--no-web`.)
 - **`version`** — print the tool version.
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
