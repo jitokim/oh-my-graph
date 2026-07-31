@@ -137,6 +137,32 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptRequiresScopedStagingInCommitNodes pins the planner guidance
+// that a committing node stages only its own files by explicit path — the
+// same footgun already fixed in graphs/self-dev.yaml, where 'git add -A'
+// swept unrelated untracked files into a planned node's commit. Like the
+// branch-assertion rule above, this is guidance to an untrusted producer,
+// not enforcement, so its load-bearing pieces are pinned here.
+func TestPlan_PromptRequiresScopedStagingInCommitNodes(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "fix the bug and commit on a new branch", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the only sanctioned staging form
+		"'git add <path> ...'",
+		// the forbidden sweep-everything forms
+		"'git add -A'",
+		"'git add .'",
+		"'git add -u'",
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost the scoped-staging guidance: missing %q", want)
+		}
+	}
+}
+
 func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 	reply := "Here is the graph:\n```json\n" + validSpec + "\n```\nGood luck!"
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})
