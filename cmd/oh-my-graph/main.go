@@ -44,6 +44,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/verify"
+	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
 func main() {
@@ -213,11 +214,12 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
-// `run` and `auto`. This is where the two exec seams are injected: the
-// ClaudeCLIRunner the caller passed (a node's claude subprocess) and a
-// ShellVerifier (a node's success_check.verify command). A planned graph can
-// never declare a verification — the coordinator rejects the field — so for
-// `auto` the verifier is wired but never reached. toolPolicies is the per-node
+// `run` and `auto`. This is where the three exec seams are injected: the
+// ClaudeCLIRunner the caller passed (a node's claude subprocess), a
+// ShellVerifier (a node's success_check.verify command), and a
+// worktree.GitManager (a node's managed `worktree:` checkout). A planned
+// graph can declare neither a verification nor a worktree — the coordinator
+// rejects both fields — so for `auto` those two are wired but never reached. toolPolicies is the per-node
 // execution ceiling: auto passes the coordinator's, `run` passes nil.
 // planningCostUSD is the coordinator's one planning-call cost, folded into the
 // ledger's total so an auto run's end-of-run TOTAL COST is honest about the
@@ -246,11 +248,20 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	}
 	defer feed.Close()
 
+	// The worktree manager is per-run: nodes declaring `worktree:` get their
+	// managed checkouts under this run's directory, created off the invocation
+	// repo's HEAD (repoDir "" = the process cwd), and whatever was created is
+	// torn down after the run with committed work retained on its branch
+	// (internal/worktree, ADR 0005). A graph with no worktree nodes never
+	// spawns git at all.
+	worktrees := worktreeManagerFor(runID)
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: flags.continueOnFail,
 		Gate:           gate.NewPauseController(),
 		Verifier:       verify.NewShellVerifier(),
+		Worktrees:      worktrees,
 		ToolPolicies:   toolPolicies,
 		Recorder:       recorder,
 		EventSink:      feed,
@@ -258,6 +269,10 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
 	runErr := scheduler.Run(ctx, g, h, led)
+	// Cleanup runs on a fresh context: the run's own may already be cancelled
+	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
+	// worktrees still need tearing down.
+	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
@@ -415,6 +430,24 @@ func runsRoot() string {
 // generated graph spec.
 func runDirFor(runID string) string {
 	return filepath.Join(runsRoot(), runID)
+}
+
+// worktreeManagerFor builds one run's worktree manager: checkouts created off
+// the invocation repo (repoDir "" = the process cwd) into the run directory's
+// worktrees/ area — never the user's checked-out tree. Shared by `run`/`auto`
+// (executeGraph) and `resume` so the two legs manage the same location.
+func worktreeManagerFor(runID string) *worktree.GitManager {
+	return worktree.NewGitManager("", filepath.Join(runDirFor(runID), "worktrees"), runID)
+}
+
+// reportWorktreeCleanup prints one line per worktree-cleanup note — a branch
+// retained because it carries commits, a worktree kept because it holds
+// uncommitted changes, or a teardown failure. Silent when there is nothing to
+// say, which is the common case (no worktree nodes, or clean removals).
+func reportWorktreeCleanup(w io.Writer, notes []string) {
+	for _, note := range notes {
+		fmt.Fprintf(w, "worktree cleanup: %s\n", note)
+	}
 }
 
 // runIDSeq distinguishes run ids minted in the same instant by one process;

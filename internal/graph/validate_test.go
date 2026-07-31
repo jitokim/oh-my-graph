@@ -498,3 +498,58 @@ nodes:
 		t.Fatalf("an unresolvable agent name is a runtime concern, not a load error: %v", err)
 	}
 }
+
+// TestParse_WorktreeUnsafeNameRejected proves a worktree name that is not a
+// single safe path element fails at LOAD time naming the node. The name
+// becomes a directory under the run dir AND a branch segment, so a separator
+// or a leading dot would otherwise surface mid-run as a filesystem escape or
+// a git ref error — after other nodes have already run and been paid for.
+func TestParse_WorktreeUnsafeNameRejected(t *testing.T) {
+	for _, name := range []string{"a/b", `a\b`, "../escape", ".hidden", "-flag", "has space", "   "} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(`
+name: bad-worktree
+nodes:
+  - { id: a, prompt: a, worktree: "` + name + `" }
+`))
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != "a" || !strings.Contains(vErr.Reason, "worktree") {
+				t.Fatalf("expected worktree error on node a for %q: %+v", name, vErr)
+			}
+		})
+	}
+}
+
+// TestParse_WorktreeWithCwdRejected pins the mutual exclusion: a worktree
+// node's directory is managed by the engine, so a declared cwd alongside it
+// could only be dead text or a contradiction — rejected rather than silently
+// preferring one.
+func TestParse_WorktreeWithCwdRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: worktree-and-cwd
+nodes:
+  - { id: a, prompt: a, cwd: /somewhere, worktree: lane }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" || !strings.Contains(vErr.Reason, "worktree") {
+		t.Fatalf("expected worktree/cwd conflict error on node a: %+v", vErr)
+	}
+}
+
+// TestParse_WorktreeValidNamesAccepted is the positive boundary: names that
+// are plainly one safe path element parse clean, and the field round-trips
+// through normalization.
+func TestParse_WorktreeValidNamesAccepted(t *testing.T) {
+	g, err := Parse([]byte(`
+name: good-worktree
+nodes:
+  - { id: a, prompt: a, worktree: lane-1 }
+  - { id: b, prompt: b, worktree: "Feature_2.x" }
+`))
+	if err != nil {
+		t.Fatalf("valid worktree names must be accepted: %v", err)
+	}
+	if n, _ := g.NodeByID("a"); n.Worktree != "lane-1" {
+		t.Errorf("worktree did not survive parsing: %+v", n)
+	}
+}

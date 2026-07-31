@@ -47,13 +47,14 @@ PR that wires it into a workflow.
 
 ## The exec seams — the one rule that matters most
 
-**Exactly two objects in this codebase may spawn a process**, each behind its
-own injected interface:
+**Exactly three objects in this codebase may spawn a process**, each behind
+its own injected interface:
 
 | object | runs | interface |
 |---|---|---|
 | `internal/runner.ClaudeCLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
+| `internal/worktree.GitManager` | the `git worktree` commands behind a node's `worktree:` | `worktree.Provider` |
 
 ```go
 type NodeRunner interface {
@@ -63,23 +64,29 @@ type NodeRunner interface {
 type Verifier interface {
 	Verify(ctx context.Context, req Request) (Result, error)
 }
+
+type Provider interface {
+	Acquire(ctx context.Context, name string) (string, error)
+}
 ```
 
 Every other package — the scheduler, the CLI, handoff, ledger, coordinator —
 depends only on those interfaces. That is what keeps the entire engine testable
-via `FakeRunner` and `FakeVerifier` with zero real spawns, and it keeps the
-subscription-auth env scrub (`internal/childenv`) to exactly one call site per
-spawner.
+via `FakeRunner`, `FakeVerifier` and `worktree.FakeManager` with zero real
+spawns, and it keeps the subscription-auth env scrub (`internal/childenv`) to
+exactly one call site per spawner.
 
-If your change needs to run a subprocess, it belongs behind one of the two
+If your change needs to run a subprocess, it belongs behind one of the three
 existing seams. A PR that spawns a process (via `os/exec` or any other way of
-shelling out) outside `runner.ClaudeCLIRunner` and `verify.ShellVerifier`
-should be treated as a design regression, not a normal review comment — a
-**third** spawner needs an ADR first, the way the second one got
-[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md). (The invariant
-is about *objects that spawn*, not `os/exec` imports per se: both seam
-packages also carry build-tagged process-group helpers that import `os/exec`
-solely to kill a cancelled child's tree — they never start one.)
+shelling out) outside `runner.ClaudeCLIRunner`, `verify.ShellVerifier` and
+`worktree.GitManager` should be treated as a design regression, not a normal
+review comment — a **fourth** spawner needs an ADR first, the way the second
+and third got
+[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md) and
+[ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md). (The invariant
+is about *objects that spawn*, not `os/exec` imports per se: the runner and
+verify seam packages also carry build-tagged process-group helpers that import
+`os/exec` solely to kill a cancelled child's tree — they never start one.)
 
 ## Invariants a contribution must preserve
 
@@ -88,13 +95,15 @@ These are the load-bearing guarantees the whole project exists to make (see
 without an explicit, discussed design change should not be merged:
 
 - **Subscription-auth env scrub.** Every child process oh-my-graph spawns —
-  a claude node AND a `success_check.verify` command — has
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted from its environment
-  by the shared `internal/childenv.Scrub`. Those variables silently switch
-  `claude` to metered API billing, and `verify: { command: "claude -p ..." }`
-  is a legal thing to write, so both spawners must apply it. It is asserted in
-  `internal/childenv/childenv_test.go` (the policy) and at each call site
-  (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`) — if you
+  a claude node, a `success_check.verify` command, AND the git commands behind
+  a node's `worktree:` — has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
+  deleted from its environment by the shared `internal/childenv.Scrub`. Those
+  variables silently switch `claude` to metered API billing;
+  `verify: { command: "claude -p ..." }` is a legal thing to write, and a
+  repo's own git hooks may invoke claude too, so every spawner must apply it.
+  It is asserted in `internal/childenv/childenv_test.go` (the policy) and at
+  each call site (`internal/runner/claude_test.go`,
+  `internal/verify/shell_test.go`, `internal/worktree/git_test.go`) — if you
   touch env construction, make sure those tests still prove the scrub.
 - **Never the Agent SDK.** The node runtime is exclusively the `claude` CLI
   subprocess (`claude -p ... --output-format json`). Don't introduce an

@@ -2,11 +2,13 @@
 // runs the ready set concurrently under a cap, and enforces the run policy
 // (success checks, flat retry, halt-on-fail). It owns coordination only — it
 // asks the injected NodeRunner to execute a node, the injected Verifier to run
-// a node's evidence check, the Handoff to resolve inputs and persist outputs,
-// and the RunLedger to record results. It never spawns a process itself and
-// never learns whether a real claude ran or what actually ran a verification,
-// which is exactly what lets the whole engine be tested against a FakeRunner
-// and a FakeVerifier.
+// a node's evidence check, the injected worktree.Provider to resolve a node's
+// managed checkout, the Handoff to resolve inputs and persist outputs, and the
+// RunLedger to record results. It never spawns a process itself and never
+// learns whether a real claude ran, what actually ran a verification, or
+// whether a real git created a worktree — which is exactly what lets the
+// whole engine be tested against a FakeRunner, a FakeVerifier and a
+// worktree.FakeManager.
 package schedule
 
 import (
@@ -31,6 +33,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/verify"
+	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
 // Concurrency bounds: the default ready-set width and the hard ceiling no graph
@@ -140,6 +143,15 @@ type Options struct {
 	// loudly instead of quietly spawning a real process. A graph whose nodes
 	// declare no verify never touches it.
 	Verifier verify.Verifier
+	// Worktrees provisions the managed git worktree a node declaring
+	// `worktree: <name>` runs in — one checkout per unique name per run,
+	// shared by every node naming it — the third exec seam, separate from
+	// NodeRunner and Verifier because provisioning a checkout is neither a
+	// claude invocation nor an evidence command (docs/adr/0005). Defaults to
+	// worktree.RefusingProvider, so a caller that forgot to inject one fails
+	// loudly instead of quietly spawning git. A graph whose nodes declare no
+	// worktree never touches it.
+	Worktrees worktree.Provider
 	// ToolPolicies is the per-node tool ceiling keyed by node id. A node with
 	// an entry runs under that COMPLETE policy — the entry is the whole story
 	// for that node, not extra restrictions merged onto its declaration, so
@@ -198,6 +210,7 @@ type Scheduler struct {
 	concurrency    int
 	gate           gate.GateController
 	verifier       verify.Verifier
+	worktrees      worktree.Provider
 	progress       io.Writer
 	recorder       Recorder
 	events         EventSink
@@ -228,6 +241,10 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	if verifier == nil {
 		verifier = verify.NewRefusingVerifier()
 	}
+	worktrees := opts.Worktrees
+	if worktrees == nil {
+		worktrees = worktree.NewRefusingProvider()
+	}
 	progressWriter := opts.ProgressWriter
 	if progressWriter == nil {
 		progressWriter = os.Stderr
@@ -246,6 +263,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		concurrency:    opts.Concurrency,
 		gate:           gateController,
 		verifier:       verifier,
+		worktrees:      worktrees,
 		progress:       progressWriter,
 		recorder:       recorder,
 		events:         eventSink,
@@ -455,7 +473,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		return s.evaluateGate(ctx, node, h, led, start)
 	}
 
-	invocation, err := s.buildInvocation(node, h)
+	invocation, err := s.buildInvocation(ctx, node, h)
 	if err != nil {
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
 	}
@@ -722,9 +740,11 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 }
 
 // buildInvocation renders a node into a runner.NodeInvocation: interpolate its
-// prompt and cwd, resolve the session it resumes (if any), default the
-// permission mode, and attach the node's tool policy.
-func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
+// prompt and cwd, swap in the managed worktree for a node that declares one,
+// resolve the session it resumes (if any), default the permission mode, and
+// attach the node's tool policy. It takes the run context because acquiring a
+// worktree may spawn git (behind the injected worktree.Provider).
+func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
 	prompt, err := h.Interpolate(node.Prompt)
 	if err != nil {
 		return runner.NodeInvocation{}, err
@@ -732,6 +752,16 @@ func (s *Scheduler) buildInvocation(node graph.Node, h *handoff.Handoff) (runner
 	cwd, err := h.Interpolate(node.Cwd)
 	if err != nil {
 		return runner.NodeInvocation{}, err
+	}
+	if node.Worktree != "" {
+		// The managed checkout replaces the plain cwd wholesale (validation
+		// rejects a node declaring both). Acquire is idempotent per name, so
+		// every node sharing this worktree name lands in the same checkout —
+		// and because verifyEvidence inherits the invocation's cwd, the node's
+		// success_check.verify gathers its evidence in the worktree too.
+		if cwd, err = s.worktrees.Acquire(ctx, node.Worktree); err != nil {
+			return runner.NodeInvocation{}, fmt.Errorf("provision worktree %q: %w", node.Worktree, err)
+		}
 	}
 	resume, err := h.ResumeSessionFor(node)
 	if err != nil {

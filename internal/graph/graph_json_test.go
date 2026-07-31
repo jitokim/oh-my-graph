@@ -47,6 +47,7 @@ nodes:
     prompt: ship
     depends_on: [approve]
     handoff: session
+    worktree: lane
 `)
 
 	encoded, err := json.Marshal(original)

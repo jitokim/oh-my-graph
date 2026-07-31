@@ -363,7 +363,8 @@ func toolName(rule string) string {
 //   - no planned node may set cwd (validatePlannedNodeCwd);
 //   - no planned node may set success_check.verify
 //     (validatePlannedNodeVerify);
-//   - no planned node may set agent (validatePlannedNodeAgent).
+//   - no planned node may set agent (validatePlannedNodeAgent);
+//   - no planned node may set worktree (validatePlannedNodeWorktree).
 //
 // EVERY FIELD ON graph.Node MUST HAVE AN EXPLICIT DISPOSITION HERE — allowed,
 // constrained, or rejected. This class of hole recurs every time the schema
@@ -396,6 +397,9 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 			return err
 		}
 		if err := validatePlannedNodeAgent(node); err != nil {
+			return err
+		}
+		if err := validatePlannedNodeWorktree(node); err != nil {
 			return err
 		}
 		if err := validatePlannedNodeTools(node); err != nil {
@@ -482,6 +486,25 @@ func validatePlannedNodeAgent(node graph.Node) error {
 	}
 	return &PlanError{
 		Reason: fmt.Sprintf("planned node %q requested agent %q; auto mode never runs a planned node as one of your subagents", node.ID, node.Agent),
+	}
+}
+
+// validatePlannedNodeWorktree rejects a planned node that asks for a managed
+// git worktree. `worktree:` makes the ENGINE run `git worktree add` in the
+// user's repository — a new checkout and a new branch, created by oh-my-graph
+// itself, outside every per-node guard (provisioning is not a tool call, so
+// no permission mode, allowlist or ceiling layer ever sees it). A
+// hand-written graph asking for that is the user arranging their own
+// repository; an unreviewed plan doing it is the plan mutating repository
+// state nobody sanctioned. Rejected outright, like cwd — and for the same
+// locality reason: a planned node always runs in the invocation's working
+// directory, never in a checkout of its own making.
+func validatePlannedNodeWorktree(node graph.Node) error {
+	if node.Worktree == "" {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf("planned node %q requested worktree %q; auto mode never creates git worktrees from an unreviewed plan", node.ID, node.Worktree),
 	}
 }
 
@@ -577,7 +600,8 @@ Rules:
   there is no other Bash pattern available, so a node needing a different
   shell command cannot be planned; break it into steps that fit the list
   above instead.
-- Do not set permission_mode, budget_usd, type, cwd, or agent on any node.
+- Do not set permission_mode, budget_usd, type, cwd, agent, or worktree on
+  any node.
   Every node runs in the directory oh-my-graph was invoked from, as plain
   claude — never as one of the user's subagents.
 - If the goal involves creating a branch or committing on one, the final

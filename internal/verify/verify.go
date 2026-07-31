@@ -8,11 +8,11 @@
 // reasons to change. Instead verification gets its own, narrower interface with
 // its own single exec-owning implementation. See docs/adr/0002.
 //
-// The project invariant this restates (it does not weaken it): exactly two
-// objects in oh-my-graph may spawn a process — runner.ClaudeCLIRunner and
-// verify.ShellVerifier — each behind its own injected interface, each scrubbing
-// the child environment through internal/childenv. No other package imports
-// os/exec.
+// The project invariant this restates (it does not weaken it): exactly three
+// objects in oh-my-graph may spawn a process — runner.ClaudeCLIRunner,
+// verify.ShellVerifier and worktree.GitManager — each behind its own injected
+// interface, each scrubbing the child environment through internal/childenv.
+// No other package imports os/exec.
 package verify
 
 import (

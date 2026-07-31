@@ -34,10 +34,10 @@ The node runtime is **exclusively** a raw `claude -p` subprocess (path 2).
   (to detect a `--max-budget-usd` abort) are the outputs the engine reads.
 
 All of this lives behind a single `NodeRunner` interface. `ClaudeCLIRunner` is
-one of exactly two objects in the codebase that import `os/exec` (the other is
-`verify.ShellVerifier` — see ADR 0002); everything upstream (the
-scheduler) depends on the interface, and a `FakeRunner` makes the whole engine
-testable without spawning claude.
+one of exactly three objects in the codebase that import `os/exec` (the others
+are `verify.ShellVerifier` — see ADR 0002 — and `worktree.GitManager` — see
+ADR 0005); everything upstream (the scheduler) depends on the interface, and a
+`FakeRunner` makes the whole engine testable without spawning claude.
 
 ## Consequences
 
