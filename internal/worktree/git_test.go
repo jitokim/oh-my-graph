@@ -154,6 +154,49 @@ func TestGitManager_CleanupRetainsBranchThatCarriesCommits(t *testing.T) {
 	}
 }
 
+func TestGitManager_CleanupAfterBranchRenameRemovesEmptyLaneSilently(t *testing.T) {
+	m, repo := newTestManager(t)
+	path, err := m.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	// The node renamed the branch Acquire created; the lane is still empty.
+	gitIn(t, path, "branch", "-m", "feature/renamed")
+
+	notes := m.Cleanup(context.Background())
+	if len(notes) != 0 {
+		t.Errorf("empty lane with a renamed branch should still be removed silently, got notes: %v", notes)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("worktree dir still exists after cleanup")
+	}
+	if branchExists(t, repo, "feature/renamed") {
+		t.Errorf("empty renamed branch was not deleted")
+	}
+}
+
+func TestGitManager_CleanupAfterBranchRenameRetainsCommits(t *testing.T) {
+	m, repo := newTestManager(t)
+	path, err := m.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	gitIn(t, path, "branch", "-m", "feature/renamed")
+	if err := os.WriteFile(filepath.Join(path, "work.txt"), []byte("work"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	gitIn(t, path, "add", "work.txt")
+	gitIn(t, path, "commit", "-q", "-m", "node work")
+
+	notes := m.Cleanup(context.Background())
+	if !branchExists(t, repo, "feature/renamed") {
+		t.Fatalf("renamed branch carrying commits was deleted — work lost")
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "feature/renamed") || !strings.Contains(notes[0], "carries commits") {
+		t.Errorf("retention must name the current branch and the reason, got notes: %v", notes)
+	}
+}
+
 func TestGitManager_CleanupKeepsDirtyWorktreeInPlace(t *testing.T) {
 	m, _ := newTestManager(t)
 	path, err := m.Acquire(context.Background(), "lane")

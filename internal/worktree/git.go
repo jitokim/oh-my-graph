@@ -57,9 +57,9 @@ type managedWorktree struct {
 	path   string
 	branch string
 	// baseSHA is the commit the worktree's branch started at. Cleanup
-	// compares the branch tip against it: a branch still at its base is
-	// provably empty and safe to delete; anything else carries commits and is
-	// retained.
+	// compares the worktree's HEAD against it: a worktree still at its base
+	// is provably empty and safe to delete; anything else carries commits and
+	// its branch is retained.
 	baseSHA string
 }
 
@@ -145,8 +145,18 @@ func (m *GitManager) Cleanup(ctx context.Context) []string {
 
 // cleanupOne tears down a single managed worktree per Cleanup's rules and
 // returns the note the user should see, or "" for a silent clean removal.
+// Emptiness is judged by the worktree's own HEAD, and the branch is addressed
+// by whatever it is currently called: a node may rename the branch Acquire
+// created (`git branch -m`), and the stored name going stale must not turn a
+// provably-empty lane into a noisy retained one.
 func (m *GitManager) cleanupOne(ctx context.Context, name string, wt *managedWorktree) string {
-	tip, tipErr := m.git(ctx, "rev-parse", wt.branch)
+	// Ask the worktree itself, before the removal takes it away.
+	head, headErr := m.git(ctx, "-C", wt.path, "rev-parse", "HEAD")
+	branch, branchErr := m.git(ctx, "-C", wt.path, "rev-parse", "--abbrev-ref", "HEAD")
+	if branchErr != nil || branch == "HEAD" {
+		// Detached or unreadable — fall back to the name Acquire created.
+		branch = wt.branch
+	}
 
 	if _, err := m.git(ctx, "worktree", "remove", wt.path); err != nil {
 		// git refuses to remove a dirty worktree, which is the behaviour this
@@ -155,18 +165,18 @@ func (m *GitManager) cleanupOne(ctx context.Context, name string, wt *managedWor
 			name, wt.path, err, wt.path)
 	}
 
-	if tipErr != nil {
-		// The tip could not be read, so the branch cannot be proven empty —
-		// keep it rather than guess.
-		return fmt.Sprintf("worktree %q removed; branch %s retained (could not verify it is empty: %v)", name, wt.branch, tipErr)
+	if headErr != nil {
+		// The worktree's HEAD could not be read, so the branch cannot be
+		// proven empty — keep it rather than guess.
+		return fmt.Sprintf("worktree %q removed; branch %s retained (could not verify it is empty: %v)", name, branch, headErr)
 	}
-	if tip != wt.baseSHA {
+	if head != wt.baseSHA {
 		return fmt.Sprintf("worktree %q removed; branch %s retained — it carries commits (merge or cherry-pick it, or delete it with `git branch -D %s`)",
-			name, wt.branch, wt.branch)
+			name, branch, branch)
 	}
 
-	if _, err := m.git(ctx, "branch", "-D", wt.branch); err != nil {
-		return fmt.Sprintf("worktree %q removed, but deleting its empty branch %s failed: %v", name, wt.branch, err)
+	if _, err := m.git(ctx, "branch", "-D", branch); err != nil {
+		return fmt.Sprintf("worktree %q removed, but deleting its empty branch %s failed: %v", name, branch, err)
 	}
 	return ""
 }
