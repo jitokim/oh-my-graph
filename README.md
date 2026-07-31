@@ -132,9 +132,10 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|version> ...
   into a graph and run — `auto`, but ambient. Type `exit` (or Ctrl-D) to leave.
 - **`resume <run-id> (--approve <gate-id> | --reject <gate-id>)`** — resume a
   run that paused at a human-approval gate node, approving or rejecting it.
-- **`runs list`** — list past runs from `~/.oh-my-graph/runs/`, newest first:
+- **`runs list`** — list runs from `~/.oh-my-graph/runs/`, newest first:
   graph name, node count, cost, and overall verdict per run, plus a total.
-  Read-only.
+  A run whose event stream is still open renders as `RUNNING` (with `-`
+  placeholders until its first snapshot lands). Read-only.
 - **`show <run-id>`** — print one run's detail: the per-node ledger (session,
   cost, verdict, duration) and the total. Read-only.
 - **`watch <run-id>`** — tail one run's event stream (`events.jsonl`) as plain

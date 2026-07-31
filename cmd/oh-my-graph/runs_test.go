@@ -210,6 +210,10 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 		events   []runfeed.Event
 		snapshot *runstate.Snapshot
 		rawState []byte
+		// rawEvents (when non-nil) is written verbatim as events.jsonl —
+		// hand-built on purpose, because only a hand-built line can carry a
+		// schema today's StreamWriter cannot stamp.
+		rawEvents []byte
 		// wantVerdict is the row's VERDICT cell; "" means the run must be
 		// skipped with a warning instead of listed.
 		wantVerdict string
@@ -286,6 +290,11 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 			wantVerdict: "",
 		},
 		{
+			name:        "a stream schema newer than this binary warns and skips",
+			rawEvents:   []byte(`{"schema":99,"ts":"2026-08-01T00:00:00Z","run_id":"run-under-test","event":"run_started"}` + "\n"),
+			wantVerdict: "",
+		},
+		{
 			name: "corrupt snapshot is broken even under an open leg",
 			events: []runfeed.Event{
 				{Type: runfeed.EventRunStarted},
@@ -301,6 +310,14 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 			dir := filepath.Join(root, runID)
 			if len(tc.events) > 0 {
 				writeEventFixture(t, dir, runID, tc.events)
+			}
+			if tc.rawEvents != nil {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("create fixture run dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, runfeed.FileName), tc.rawEvents, 0o644); err != nil {
+					t.Fatalf("write raw fixture event stream: %v", err)
+				}
 			}
 			if tc.snapshot != nil {
 				if err := runstate.Write(filepath.Join(dir, stateFileName), *tc.snapshot); err != nil {

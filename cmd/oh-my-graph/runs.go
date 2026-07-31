@@ -175,7 +175,12 @@ func summarizeRun(root, runID string) (runSummary, error) {
 //
 // Lines are decoded into the runfeed.Event shape the stream is written with;
 // a line that does not decode is skipped, because the contract's only
-// tolerated damage is one truncated final line. Known limitation, accepted
+// tolerated damage is one truncated final line. A line that DOES decode but
+// is stamped with a schema newer than this binary's runfeed.Schema is
+// surfaced as an error (the caller warns and skips the run) rather than
+// silently misread — RUN-FEED.md's compatibility rule for consumers, and the
+// same loud refusal runstate.Load gives an incompatible snapshot. Known
+// limitation, accepted
 // for v1: a crashed or killed process leaves its last leg open, so by the
 // stream alone such a run renders RUNNING until it is resumed or its
 // directory is cleaned up — there is no liveness probe here, deliberately,
@@ -196,6 +201,9 @@ func runInFlight(feedPath string) (bool, error) {
 		var event runfeed.Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
+		}
+		if event.Schema > runfeed.Schema {
+			return false, fmt.Errorf("event stream %q: schema %d is newer than this binary understands (max %d)", feedPath, event.Schema, runfeed.Schema)
 		}
 		switch event.Type {
 		case runfeed.EventRunStarted:
