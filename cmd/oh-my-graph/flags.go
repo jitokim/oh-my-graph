@@ -26,16 +26,20 @@ func (c *commonRunFlags) register(set *flag.FlagSet) {
 // parsing is testable and runGraph stays about wiring, not argv fiddling.
 type runFlags struct {
 	graphPath string
+	dryRun    bool
 	commonRunFlags
 
 	set *flag.FlagSet
 }
 
 // newRunFlags builds a runFlags with its FlagSet configured. The graph path is a
-// positional argument, so it is not registered as a flag.
+// positional argument, so it is not registered as a flag. --dry-run is `run`'s
+// own, not a commonRunFlags member: `auto` has no equivalent, since its plan
+// step already costs a real planner call.
 func newRunFlags() *runFlags {
 	f := &runFlags{set: flag.NewFlagSet("run", flag.ContinueOnError)}
 	f.register(f.set)
+	f.set.BoolVar(&f.dryRun, "dry-run", false, "validate the graph and print the resolved plan, then exit without running any node")
 	return f
 }
 
