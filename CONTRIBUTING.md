@@ -47,7 +47,7 @@ PR that wires it into a workflow.
 
 ## The exec seams — the one rule that matters most
 
-**Exactly three objects in this codebase may spawn a process**, each behind
+**Exactly four objects in this codebase may spawn a process**, each behind
 its own injected interface:
 
 | object | runs | interface |
@@ -55,6 +55,7 @@ its own injected interface:
 | `internal/runner.ClaudeCLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 | `internal/worktree.GitManager` | the `git worktree` commands behind a node's `worktree:` | `worktree.Provider` |
+| `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
 
 ```go
 type NodeRunner interface {
@@ -68,22 +69,28 @@ type Verifier interface {
 type Provider interface {
 	Acquire(ctx context.Context, name string) (string, error)
 }
+
+type Opener interface {
+	Open(ctx context.Context, url string) error
+}
 ```
 
 Every other package — the scheduler, the CLI, handoff, ledger, coordinator —
 depends only on those interfaces. That is what keeps the entire engine testable
-via `FakeRunner`, `FakeVerifier` and `worktree.FakeManager` with zero real
-spawns, and it keeps the subscription-auth env scrub (`internal/childenv`) to
-exactly one call site per spawner.
+via `FakeRunner`, `FakeVerifier`, `worktree.FakeManager` and
+`browser.FakeOpener` with zero real spawns, and it keeps the
+subscription-auth env scrub (`internal/childenv`) to exactly one call site
+per spawner.
 
-If your change needs to run a subprocess, it belongs behind one of the three
+If your change needs to run a subprocess, it belongs behind one of the four
 existing seams. A PR that spawns a process (via `os/exec` or any other way of
-shelling out) outside `runner.ClaudeCLIRunner`, `verify.ShellVerifier` and
-`worktree.GitManager` should be treated as a design regression, not a normal
-review comment — a **fourth** spawner needs an ADR first, the way the second
-and third got
-[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md) and
-[ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md). (The invariant
+shelling out) outside `runner.ClaudeCLIRunner`, `verify.ShellVerifier`,
+`worktree.GitManager` and `browser.ExecOpener` should be treated as a design
+regression, not a normal review comment — a **fifth** spawner needs an ADR
+first, the way the second, third and fourth got
+[ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md),
+[ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md) and
+[ADR 0006](docs/adr/0006-browser-open-is-a-fourth-exec-seam.md). (The invariant
 is about *objects that spawn*, not `os/exec` imports per se: the runner and
 verify seam packages also carry build-tagged process-group helpers that import
 `os/exec` solely to kill a cancelled child's tree — they never start one.)

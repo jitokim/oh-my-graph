@@ -198,7 +198,8 @@ auto-branch bug). `worktree: <name>` is the root fix:
 neither a claude invocation nor an evidence command, so it gets its own seam
 in `internal/worktree`: a `Provider` interface (`Acquire(ctx, name) (path,
 error)`, idempotent per name), with `GitManager` (prod — the third of the
-program's exactly three process-spawning objects, env-scrubbed via
+program's exactly four process-spawning objects (ADR 0006 added the fourth),
+env-scrubbed via
 `internal/childenv` because `git worktree add` fires the repo's own hooks),
 `RefusingProvider` (the `schedule.Options.Worktrees` default: a forgotten
 injection fails loudly) and `FakeManager` (tests — the scheduler's worktree
@@ -358,9 +359,10 @@ type Verifier interface {
 }
 ```
 
-- `ShellVerifier` (prod) is the second of the program's exactly three
+- `ShellVerifier` (prod) is the second of the program's exactly four
   process-spawning seams (ADR 0002; the third is `worktree.GitManager`, ADR
-  0005) and the only object in `internal/verify` that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
+  0005; the fourth is `browser.ExecOpener`, ADR 0006) and the only object in
+  `internal/verify` that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
   the scheduler.
 - `RefusingVerifier` is the `Options.Verifier` default:
   a scheduler test that forgets to inject one gets a loud failure instead of a
@@ -373,12 +375,13 @@ type Verifier interface {
   one kind: minimal implementation, sufficient interface.
 
 **This narrows the "only ClaudeCLIRunner touches `os/exec`" invariant, on
-purpose.** The invariant's restated form: *exactly three objects may spawn a
-process — `runner.ClaudeCLIRunner`, `verify.ShellVerifier` and
-`worktree.GitManager` (see "Worktree isolation") — each behind its own
-injected interface, and no other package imports `os/exec`.* Both purposes
-survive: the subscription-auth scrub still has exactly one home per spawner, and
-the engine is still fully testable with zero spawns. See ADR 0002 and ADR 0005.
+purpose.** The invariant's restated form: *exactly four objects may spawn a
+process — `runner.ClaudeCLIRunner`, `verify.ShellVerifier`,
+`worktree.GitManager` (see "Worktree isolation") and `browser.ExecOpener`
+(ADR 0006) — each behind its own injected interface, and no other package
+imports `os/exec`.* Both purposes survive: the subscription-auth scrub still
+has exactly one home per spawner, and the engine is still fully testable with
+zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
 
 **The env scrub applies to verification commands too.** `verify: { command:
 "claude -p ..." }` is legal and would otherwise run on metered API billing if
@@ -566,10 +569,10 @@ serve is one run, live, locally.
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).
   No build step, no npm, no CDN.
-- **Spawns nothing.** The CLI prints the URL; it deliberately does not shell
-  out to `open`/`xdg-open`, which would be a fourth exec seam requiring its
-  own ADR (internal/invariants). Auto-open is a possible follow-up, not an
-  oversight.
+- **Spawns nothing.** The CLI prints the URL; it does not itself shell out
+  to `open`/`xdg-open`. Browser-open lives behind its own seam —
+  `browser.Opener`, the fourth exec seam (ADR 0006) — and wiring it into
+  `serve`, behind a TTY gate, is the planned follow-up, not an oversight.
 - The graph structure appears when it is known: `state.json` is written only
   after each node's terminal verdict, so a fresh run's `/api/graph` honestly
   reports the structure unavailable until the first node completes (the UI
@@ -720,8 +723,9 @@ Scheduler as any other graph.
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted bool }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
-    execs under context, parses JSON. One of the exactly three objects that
-    spawn a process (the others: `ShellVerifier`, `worktree.GitManager`).
+    execs under context, parses JSON. One of the exactly four objects that
+    spawn a process (the others: `ShellVerifier`, `worktree.GitManager`,
+    `browser.ExecOpener`).
   - `FakeRunner` (tests): scripted `map[key]NodeOutcome` keyed by the
     invocation (`NodeInvocation` has no id field; the key defaults to
     `spec.Prompt`, and tests set each node's prompt equal to its id so the
@@ -739,6 +743,12 @@ Scheduler as any other graph.
   0005), `RefusingProvider` (default — a forgotten injection fails loudly),
   `FakeManager` (tests). Run-end cleanup is the CLI's job against the
   concrete `GitManager`, never the Scheduler's.
+- **Browser Opener (interface)** — THE browser-open seam: opens a URL (the
+  `serve` live view) in the user's default browser. `ExecOpener` (prod — the
+  fourth spawner, ADR 0006: `open`/`xdg-open`/`cmd /c start` behind build
+  tags), `RefusingOpener` (default — a forgotten injection fails loudly),
+  `FakeOpener` (tests). Wiring into `serve`, behind a TTY gate, is a planned
+  follow-up; the CLI still prints the URL.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
   session. Gains `Seed(nodeID, artifactPath, sessionID)` so a resumed run can
   rehydrate a previous leg's artifacts and session ids without Handoff having to
@@ -806,10 +816,11 @@ cmd/oh-my-graph/{main,flags,resume,runs,show,watch,serve,chat,version}.go + _tes
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
-internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the three exec seams (ADR 0002)
+internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
-internal/invariants/exec_seam_test.go          test-only: asserts exactly the three exec-seam files import os/exec (a fourth importer fails CI — ADR 0002/0005)
-internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (runner + verify)
+internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch; serve wiring is a follow-up
+internal/invariants/exec_seam_test.go          test-only: asserts exactly the four exec-seam files import os/exec (a fifth importer fails CI — ADR 0002/0005/0006)
+internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
 internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController

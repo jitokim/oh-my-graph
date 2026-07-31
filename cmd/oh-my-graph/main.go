@@ -249,10 +249,12 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
-// `run` and `auto`. This is where the three exec seams are injected: the
+// `run` and `auto`. This is where the engine's exec seams are injected: the
 // ClaudeCLIRunner the caller passed (a node's claude subprocess), a
 // ShellVerifier (a node's success_check.verify command), and a
-// worktree.GitManager (a node's managed `worktree:` checkout). A planned
+// worktree.GitManager (a node's managed `worktree:` checkout) — three of the
+// program's four seams; the fourth, browser.ExecOpener (ADR 0006), belongs
+// to `serve`, not to graph execution. A planned
 // graph can declare neither a verification nor a worktree — the coordinator
 // rejects both fields — so for `auto` those two are wired but never reached. toolPolicies is the per-node
 // execution ceiling: auto passes the coordinator's, `run` passes nil.
