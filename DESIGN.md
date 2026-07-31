@@ -73,7 +73,7 @@ other run concurrently (up to cap). No `parallel-group` type in v1.
 
 Node schema:
 ```yaml
-- id: e2e
+- id: e2e                     # one safe path element (alphanumerics, '.', '_', '-'; starts alphanumeric) — it becomes the <id>.out artifact filename and a serve URL parameter; same rule as `worktree`, rejected at load
   type: claude-run            # claude-run | gate (v1.1 — see "Gate nodes and resume")
   depends_on: [dev]           # fan-in: all must succeed first
   prompt: |                   # may interpolate {{ inputs.<name> }} and {{ artifacts.<id> }}

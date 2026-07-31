@@ -536,6 +536,45 @@ nodes:
 	}
 }
 
+// TestParse_NodeIDUnsafeRejected proves a node id that is not a single safe
+// path element fails at LOAD time naming the offending id. The id becomes an
+// artifact filename under the run dir (<node-id>.out) AND a URL parameter
+// (serve's /api/result), so a separator or a leading dot would otherwise
+// surface mid-run as a filesystem escape — after other nodes have already run
+// and been paid for. Same rule as the worktree name, for the same reason.
+func TestParse_NodeIDUnsafeRejected(t *testing.T) {
+	for _, id := range []string{"a/b", `a\b`, "../escape", ".hidden", "-flag", "has space"} {
+		t.Run(id, func(t *testing.T) {
+			_, err := Parse([]byte(`
+name: bad-node-id
+nodes:
+  - { id: '` + id + `', prompt: a }
+`))
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != id || !strings.Contains(vErr.Reason, "node id") {
+				t.Fatalf("expected node id error naming %q: %+v", id, vErr)
+			}
+		})
+	}
+}
+
+// TestParse_NodeIDValidNamesAccepted is the positive boundary: ids that are
+// plainly one safe path element parse clean.
+func TestParse_NodeIDValidNamesAccepted(t *testing.T) {
+	g, err := Parse([]byte(`
+name: good-node-id
+nodes:
+  - { id: lane-1, prompt: a }
+  - { id: "Feature_2.x", prompt: b }
+`))
+	if err != nil {
+		t.Fatalf("valid node ids must be accepted: %v", err)
+	}
+	if _, ok := g.NodeByID("Feature_2.x"); !ok {
+		t.Errorf("node id did not survive parsing")
+	}
+}
+
 // TestParse_UnknownRetryCauseRejected pins the load-time guard against the
 // silent footgun: a typoed retry.on cause matches no failure the scheduler
 // ever produces, so without this check the node would just never retry. The

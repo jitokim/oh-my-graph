@@ -48,7 +48,7 @@ func (g *Graph) Validate() error {
 // Issues enforces the graph's structural invariants and returns every
 // violation found, each a *GraphValidationError, in check order:
 //
-//  1. every node id is non-empty and unique;
+//  1. every node id is non-empty, unique, and a single safe path element;
 //  2. every type/handoff is a known value;
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
@@ -71,6 +71,7 @@ func (g *Graph) Validate() error {
 func (g *Graph) Issues() []error {
 	var issues []error
 	issues = append(issues, g.validateNodesUnique()...)
+	issues = append(issues, g.validateNodeIDs()...)
 	issues = append(issues, g.validateEnums()...)
 	issues = append(issues, g.validateDependenciesExist()...)
 	issues = append(issues, g.validateAcyclic()...)
@@ -148,6 +149,35 @@ func (g *Graph) validateWorktrees() []error {
 			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("node declares both cwd %q and worktree %q — a worktree node runs in its managed checkout, so drop one", n.Cwd, n.Worktree),
+			})
+		}
+	}
+	return issues
+}
+
+// nodeIDPattern is the shape a node id must take: one path element, starting
+// with an alphanumeric, using only alphanumerics, '.', '_' and '-' — the same
+// rule worktreeNamePattern enforces, for the same reason. A node id becomes
+// both an artifact filename under the run dir (<node-id>.out) and a URL
+// parameter (serve's /api/result), so a path separator or a leading dot
+// ("../x" escapes the run directory) would surface as a filesystem escape or
+// a broken route mid-run — exactly the class of error load-time validation
+// exists to move earlier.
+var nodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateNodeIDs enforces that every node id is a single safe path element.
+// An empty id is skipped here — validateNodesUnique already reports it, and
+// reporting the same id twice would be noise, not precision.
+func (g *Graph) validateNodeIDs() []error {
+	var issues []error
+	for _, n := range g.Nodes {
+		if strings.TrimSpace(n.ID) == "" {
+			continue
+		}
+		if !nodeIDPattern.MatchString(n.ID) {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("node id %q must be a single path element: alphanumerics, '.', '_' or '-', starting with an alphanumeric", n.ID),
 			})
 		}
 	}
