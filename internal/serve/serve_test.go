@@ -342,7 +342,10 @@ func TestHandler_ServesEmbeddedUIWithVendoredCytoscape(t *testing.T) {
 	page := rec.Body.String()
 	// The page must reference only embedded, relative assets — a CDN URL here
 	// would be a runtime network dependency the design forbids.
-	for _, want := range []string{"vendor/cytoscape.min.js", "app.js", "style.css"} {
+	for _, want := range []string{
+		"vendor/cytoscape.min.js", "vendor/dagre.min.js", "vendor/cytoscape-dagre.js",
+		"app.js", "style.css",
+	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("index.html must reference embedded asset %q:\n%s", want, page)
 		}
@@ -351,13 +354,21 @@ func TestHandler_ServesEmbeddedUIWithVendoredCytoscape(t *testing.T) {
 		t.Errorf("index.html must not reference any remote URL:\n%s", page)
 	}
 
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/vendor/cytoscape.min.js", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /vendor/cytoscape.min.js status = %d, want 200", rec.Code)
-	}
-	if rec.Body.Len() < 100_000 {
-		t.Errorf("vendored cytoscape is %d bytes — suspiciously small for the real library", rec.Body.Len())
+	// Every vendored library must actually be served, at a size that proves
+	// it is the real library and not a stub or an error page.
+	for path, minBytes := range map[string]int{
+		"/vendor/cytoscape.min.js":   100_000,
+		"/vendor/dagre.min.js":       100_000,
+		"/vendor/cytoscape-dagre.js": 5_000,
+	} {
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
+		}
+		if rec.Body.Len() < minBytes {
+			t.Errorf("vendored %s is %d bytes — suspiciously small for the real library", path, rec.Body.Len())
+		}
 	}
 }
 

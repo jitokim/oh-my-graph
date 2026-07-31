@@ -1,15 +1,53 @@
-/* oh-my-graph serve — hand-written, no build step. Node state colors live in
-   app.js (cytoscape styles); the .sw legend swatches below must match them. */
+/* oh-my-graph serve — hand-written, no build step.
+   Theme tokens live here as CSS custom properties; app.js reads the resolved
+   values via getComputedStyle at init (cytoscape styles cannot read CSS vars)
+   and re-styles the graph on theme change. Status hexes are identical in both
+   modes (validated for both surfaces) and are the one source of truth for
+   node borders, legend chips, header chips and the detail panel. */
 
 :root {
-  --pending: #8b93a7;
-  --running: #2f6fed;
-  --passed: #1e8e3e;
-  --failed: #d93025;
-  --gate-paused: #e8930c;
-  --ink: #1f2430;
-  --paper: #f7f8fa;
-  --line: #d9dde5;
+  /* light */
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --hairline: #e1e0d9;
+  --ring: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  /* status — same hexes both modes */
+  --pending: #898781;
+  --running: #fab219;
+  --passed: #0ca30c;
+  --failed: #d03b3b;
+  --gate-paused: #ec835a;
+}
+
+/* Dark tokens twice — once for the OS preference (only when no explicit
+   choice was made) and once for the explicit toggle choice. A CSS-only page
+   cannot share the block between an attribute selector and a media query,
+   so keep the two lists identical. */
+:root[data-theme="dark"] {
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --hairline: #2c2c2a;
+  --ring: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --hairline: #2c2c2a;
+    --ring: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -19,51 +57,170 @@ html, body {
   margin: 0;
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--ink);
-  background: var(--paper);
+  background: var(--page);
 }
 
 body { display: flex; flex-direction: column; }
 
-header, footer {
+/* --- header ---------------------------------------------------------------- */
+
+header {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
   padding: 0.55rem 1rem;
-  background: #fff;
-  border-bottom: 1px solid var(--line);
+  background: var(--page);
+  border-bottom: 1px solid var(--hairline);
 }
-footer { border-bottom: 0; border-top: 1px solid var(--line); }
 
-.brand { font-weight: 700; }
-.run-id { font-family: ui-monospace, Menlo, monospace; color: #4a5165; }
-.status { text-transform: uppercase; font-size: 12px; letter-spacing: 0.04em; color: #4a5165; }
-.status.running { color: var(--running); }
-.status.passed { color: var(--passed); }
-.status.failed { color: var(--failed); }
-.status.paused { color: var(--gate-paused); }
-.cost { margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
+.brand { font-weight: 600; }
+.run-id { font-family: ui-monospace, Menlo, monospace; color: var(--ink-2); font-size: 13px; }
+.spacer { flex: 1; }
 
-main { flex: 1; display: flex; min-height: 0; }
-#cy { flex: 1; min-width: 0; }
+.status {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+.status.live { animation: chip-pulse 2s ease-in-out infinite; }
+@keyframes chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* State-count chips and the legend share one chip anatomy: an 8px dot wears
+   the status color; the text stays secondary ink — status is never conveyed
+   by text color. */
+.chips { display: inline-flex; gap: 0.5rem; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.pending { background: var(--pending); }
+.dot.running { background: var(--running); }
+.dot.passed { background: var(--passed); }
+.dot.failed { background: var(--failed); }
+.dot.gate-paused { background: var(--gate-paused); }
+
+.elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
+.cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }
+
+.theme-toggle {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); }
+
+/* --- legend strip ---------------------------------------------------------- */
+
+.legend-strip {
+  display: flex;
+  gap: 1rem;
+  padding: 0.3rem 1rem;
+  background: var(--page);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* --- canvas ---------------------------------------------------------------- */
+
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+#cy {
+  flex: 1;
+  min-width: 0;
+  /* Subtle dot grid, dots in the hairline color — plain CSS, no JS. */
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.canvas-controls {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 5;
+}
+/* When the detail panel is open it sits to the right of the canvas; keep the
+   controls over the canvas itself. */
+main:has(#detail:not([hidden])) .canvas-controls { right: calc(300px + 1rem); }
+.canvas-controls button {
+  width: 30px;
+  height: 30px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px var(--ring);
+  cursor: pointer;
+}
+.canvas-controls button:hover { color: var(--ink); }
+
+/* --- detail panel ---------------------------------------------------------- */
 
 aside {
-  width: 280px;
-  border-left: 1px solid var(--line);
-  background: #fff;
+  position: relative;
+  width: 300px;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
   padding: 0.75rem 1rem;
   overflow-y: auto;
 }
-aside h2 { margin: 0 0 0.5rem; font-size: 15px; font-family: ui-monospace, Menlo, monospace; }
+aside h2 {
+  margin: 0 0 0.5rem;
+  font-size: 15px;
+  font-family: ui-monospace, Menlo, monospace;
+  padding-right: 1.5rem;
+  overflow-wrap: anywhere;
+}
 aside dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; }
-aside dt { color: #6a7183; }
-aside dd { margin: 0; font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+aside dt { color: var(--muted); }
+aside dd { margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
 
-.legend { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 12px; color: #4a5165; }
-.sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.sw.pending { background: var(--pending); }
-.sw.running { background: var(--running); }
-.sw.passed { background: var(--passed); }
-.sw.failed { background: var(--failed); }
-.sw.gate-paused { background: var(--gate-paused); }
+.detail-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 24px;
+  height: 24px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.detail-close:hover { color: var(--ink); background: var(--ring); }
 
-.banner { margin-left: auto; color: var(--failed); font-size: 12px; }
+/* --- footer ---------------------------------------------------------------- */
+
+footer {
+  display: flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.3rem 1rem;
+  background: var(--page);
+  border-top: 1px solid var(--hairline);
+}
+.banner { color: var(--failed); font-size: 12px; }

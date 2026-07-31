@@ -1,8 +1,10 @@
 <!doctype html>
 <!-- oh-my-graph serve — single-run live view. Fully self-contained: every
-     asset (including the vendored cytoscape.js, see vendor/README.md) is
-     embedded in the binary and served from 127.0.0.1; nothing is fetched
-     from the network at runtime. -->
+     asset (including the vendored cytoscape.js, dagre and cytoscape-dagre,
+     see vendor/README.md) is embedded in the binary and served from
+     127.0.0.1; nothing is fetched from the network at runtime. Dark-mode
+     first with a light mode; the theme toggle's explicit choice (persisted
+     in localStorage) wins over the OS preference. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -14,14 +16,34 @@
     <span class="brand">oh-my-graph</span>
     <span id="run-id" class="run-id">resolving run…</span>
     <span id="run-status" class="status">connecting</span>
+    <span class="spacer"></span>
+    <span id="state-chips" class="chips"></span>
+    <span id="elapsed" class="elapsed" hidden></span>
     <span id="run-cost" class="cost">$0.0000</span>
+    <button id="theme-toggle" class="theme-toggle" type="button"
+            title="Toggle color theme" aria-label="Toggle color theme">◐</button>
   </header>
+  <div class="legend-strip">
+    <span class="chip"><i class="dot pending"></i>pending</span>
+    <span class="chip"><i class="dot running"></i>running</span>
+    <span class="chip"><i class="dot passed"></i>passed</span>
+    <span class="chip"><i class="dot failed"></i>failed</span>
+    <span class="chip"><i class="dot gate-paused"></i>⏸ gate-paused</span>
+  </div>
   <main>
     <div id="cy"></div>
+    <div class="canvas-controls">
+      <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+      <button id="zoom-fit" type="button" title="Fit graph" aria-label="Fit graph">⤢</button>
+    </div>
     <aside id="detail" hidden>
+      <button id="detail-close" class="detail-close" type="button"
+              title="Close" aria-label="Close detail panel">×</button>
       <h2 id="detail-id"></h2>
       <dl>
         <dt>state</dt><dd id="detail-state"></dd>
+        <dt>duration</dt><dd id="detail-duration"></dd>
         <dt>verdict</dt><dd id="detail-verdict"></dd>
         <dt>session</dt><dd id="detail-session"></dd>
         <dt>cost</dt><dd id="detail-cost"></dd>
@@ -30,14 +52,11 @@
     </aside>
   </main>
   <footer>
-    <span class="legend"><i class="sw pending"></i>pending</span>
-    <span class="legend"><i class="sw running"></i>running</span>
-    <span class="legend"><i class="sw passed"></i>passed</span>
-    <span class="legend"><i class="sw failed"></i>failed</span>
-    <span class="legend"><i class="sw gate-paused"></i>gate-paused</span>
     <span id="banner" class="banner"></span>
   </footer>
   <script src="vendor/cytoscape.min.js"></script>
+  <script src="vendor/dagre.min.js"></script>
+  <script src="vendor/cytoscape-dagre.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

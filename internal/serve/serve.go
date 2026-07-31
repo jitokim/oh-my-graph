@@ -50,9 +50,10 @@ const DefaultPort = 8642
 const defaultPoll = 200 * time.Millisecond
 
 // uiFS embeds the whole static UI — page, hand-written JS/CSS, and the
-// pinned, vendored cytoscape.js (see ui/vendor/README.md for its version and
-// license) — so the served page has zero runtime network dependencies: no
-// CDN fetch, nothing leaves the host to render a run.
+// pinned, vendored libraries (cytoscape.js, dagre, cytoscape-dagre; see
+// ui/vendor/README.md for versions and licenses) — so the served page has
+// zero runtime network dependencies: no CDN fetch, nothing leaves the host
+// to render a run.
 //
 //go:embed ui
 var uiFS embed.FS
@@ -93,7 +94,7 @@ func New(runDir, runID string) *Server {
 
 // Handler returns the server's routes:
 //
-//	/            the embedded static UI (index.html, app.js, style.css, vendored cytoscape.js)
+//	/            the embedded static UI (index.html, app.js, style.css, vendored libraries)
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //
