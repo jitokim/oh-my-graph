@@ -604,6 +604,11 @@ Rules:
   any node.
   Every node runs in the directory oh-my-graph was invoked from, as plain
   claude — never as one of the user's subagents.
+- A node whose prompt commits MUST stage ONLY the files it created or
+  modified for its task, by explicit path ('git add <path> ...'). Never
+  'git add -A', 'git add .', or 'git add -u': the working tree may hold
+  untracked files that are not part of the task, and sweeping them into
+  the commit is a bug.
 - If the goal involves creating a branch or committing on one, the final
   check node MUST verify which branch HEAD is on: its prompt runs
   'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
