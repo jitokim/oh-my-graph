@@ -34,13 +34,17 @@ nodes:
     handoff: artifact
     success_check: { exit_zero: true }
 
+  # `lint` still warns here (handoff: session + retry) — that is advisory and
+  # expected: a retried attempt starts cold instead of resuming dev's session,
+  # and the prompt below is written to survive exactly that case.
   - id: e2e
     type: claude-run
     depends_on: [dev]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Run the end-to-end checks (make local). If the diff touches
-      concurrency-sensitive code, also stress its tests (e.g.
+      Continue the work — or, on a retried attempt, start from the branch's
+      committed state — and run the end-to-end checks (make local). If the
+      diff touches concurrency-sensitive code, also stress its tests (e.g.
       `go test <affected packages> -race -count=300`, or your stack's
       equivalent) — a flaky test passes a single run, and determinism is the
       claim under test. Report PASS or FAIL with the failing step if any.
