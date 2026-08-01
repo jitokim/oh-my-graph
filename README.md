@@ -126,6 +126,13 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 10), and `--continue-on-fail`. Both print a live per-node feed as the graph
 executes, then a cost ledger.
 
+`lint` checks structure — DAG/cycle, unknown `depends_on` ids, the
+session-handoff parent rule, verify blocks — and exits 0 when valid, 1 when
+not. `run --dry-run` shares that exit contract and additionally proves
+`{{ inputs.* }}` resolution against your actual `--input` values. An
+in-flight run shows in `runs list` as `RUNNING` (with `-` placeholders until
+its first snapshot lands).
+
 Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
 relocate the base) — the same directory no matter where you invoke the tool
 from: a versioned snapshot (`state.json`) and an append-only event stream

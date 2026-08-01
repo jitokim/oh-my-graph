@@ -17,8 +17,6 @@ Walkthroughs, in order:
 
 ## Zero-config: auto mode (the headline)
 
-Describe a goal in plain language and a coordinator plans the DAG for you.
-
 Don't want to write YAML? Give `auto` a goal in plain language and a
 coordinator plans the DAG for you — one claude call (through the same
 subscription-auth, env-scrubbed runner every node uses) turns the goal into a
@@ -103,9 +101,6 @@ the planner design the DAG.
 
 ## Dogfooding: developing oh-my-graph with oh-my-graph
 
-oh-my-graph develops itself with its own shipped graphs — and has caught two
-real bugs doing it.
-
 The shipped `graphs/self-dev.yaml` runs a dev → e2e → parallel reviews → PR
 pipeline against *this* repo — the same shape as `dev-review-pr.yaml`, but it
 also takes an explicit `task` input and opens the PR as a **draft** so
@@ -155,9 +150,6 @@ running, and you'll see each node appear in fleetops' fleet list as
 oh-my-graph delegates to it — live, for free, with zero integration code.
 
 ## Ambient chat (prototype)
-
-An early prototype where plain language is the input and the tool routes each
-turn.
 
 `chat` turns the whole tool into an interactive front end: you talk, and each
 turn is *routed* — a conversational turn is answered inline, a task-shaped turn
