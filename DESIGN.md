@@ -29,11 +29,17 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   --allowedTools "<comma,joined>" \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ] \
-  [ --max-budget-usd <amount> ]
+  [ --session-id <uuid> ] [ --max-budget-usd <amount> ]
 ```
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
-only `AllowedTools`, so its argv is the first two lines and `--resume`.
+only `AllowedTools`, so its argv is the first two lines plus `--resume` or
+`--session-id`. Every fresh-session node gets `--session-id` with a UUID the
+scheduler pre-assigned (`runner.NewSessionID`), so the id is published on
+`node_started` while the node is still RUNNING and a live view can find its
+transcript; a resuming node gets `--resume` instead — the two are mutually
+exclusive (`claude --help`, verified 2026-08-02: `--session-id <uuid>`, "must
+be a valid UUID").
 run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
 On a failed run the runner also captures WHY as a one-line
 `NodeOutcome.FailureCause` — the envelope's own error report (`errors` /
@@ -796,7 +802,10 @@ Scheduler as any other graph.
   node_retried/run_finished), one JSON line per transition, fsynced per line.
   Emitted from the same scheduler hook points as the progress line and the
   snapshot, via an `EventSink` interface defaulting to a no-op — the third
-  destination next to `Recorder`, same seam pattern. This is the stable
+  destination next to `Recorder`, same seam pattern. `node_started` and
+  `node_retried` publish the attempt's pre-assigned session id (see
+  `--session-id` above), so a consumer can locate a running node's transcript
+  before the terminal event. This is the stable
   consumer contract fleetops tails (oh-my-graph executes, never renders); the
   full contract, including how it versions alongside `state.json`, is
   docs/RUN-FEED.md.

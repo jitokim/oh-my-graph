@@ -75,10 +75,10 @@ the three can never disagree about a transition. The Go source of truth is
 | `event` | Extra fields | Emitted when |
 |---|---|---|
 | `run_started` | — | A scheduler leg begins, before any node launches. |
-| `node_started` | `node_id` | A node (claude node or gate) begins execution. |
+| `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
-| `node_retried` | `node_id`, `retries` (1-based retry ordinal) | A retry attempt begins after a failed one. |
+| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)* | A retry attempt begins after a failed one. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`) | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
@@ -94,6 +94,19 @@ even when the underlying error was arbitrarily long. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+On `node_started` and `node_retried`, `session_id` is the **pre-assigned**
+session id the engine hands claude via `--session-id` (a UUID minted before
+the subprocess spawns), published early so a consumer can locate a *running*
+node's transcript instead of waiting for the terminal event; the terminal
+events' `session_id` stays envelope-sourced (the same id, as claude reported
+it back). It is **absent** on a gate's `node_started` (a gate spawns no
+subprocess) and on a session-handoff node's `node_started` (that node resumes
+its parent's session, whose id the parent's own terminal event already
+carried). Each retried attempt gets a *fresh* id — the failed attempt's id
+names the failed attempt's transcript — so `node_retried`'s `session_id`
+supersedes the one published before it. This is an optional field existing
+readers ignore, added under the additive rule below: **no schema bump**.
 
 The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
 added in schema **2**) mark the decision itself; an approved/rejected gate
