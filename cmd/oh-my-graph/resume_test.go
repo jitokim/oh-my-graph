@@ -331,7 +331,8 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns
 // everything it wrote, alongside fn's own error. Process-global stderr rather
 // than an injected writer because the warnings under test print to os.Stderr
-// directly.
+// directly. It mutates the process-global os.Stderr, which is why cmd tests
+// must never call t.Parallel.
 func captureStderr(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	origStderr := os.Stderr
