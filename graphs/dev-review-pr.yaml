@@ -26,11 +26,14 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: |
       Implement the change described in the current issue/branch. Keep the diff
-      focused. Commit after each coherent step, not in one giant end-of-node
-      commit — a node timeout must never lose finished work. When done, reply
+      focused. Choose a commit granularity that fits the work — one commit per
+      refactoring unit for refactors, per file for sweeps, per feature slice
+      for new code — and state your choice in the first commit message. Commit
+      as you go: a node timeout must never lose finished work. When done, reply
       with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     success_check: { exit_zero: true }
 
@@ -50,7 +53,12 @@ nodes:
       claim under test. Report PASS or FAIL with the failing step if any.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
-    budget_usd: 0.50  # post-hoc cap: this node FAILS (and halts the run) if it costs more
+    # Runaway insurance ONLY, never cost tuning: a tight budget kills a
+    # nearly-done node at the threshold, and the salvage costs more than
+    # letting it finish (a real $0.02-over kill cost ~6x the remaining work).
+    # Keep this an order of magnitude above a plausible run, or omit it.
+    # The hang guard is `timeout:`, not the budget.
+    budget_usd: 10.00
     handoff: session
     success_check:
       exit_zero: true

@@ -41,6 +41,7 @@ nodes:
       Reply with a one-line summary of which flags you applied.
     allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
     permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     success_check: { exit_zero: true }
 
