@@ -255,6 +255,63 @@ nodes:
 Spec:
 [DESIGN.md § Worktree isolation](../DESIGN.md#worktree-isolation-worktree--hand-written-graphs-only).
 
+## Artifact fan-out vs session chain (`handoff`)
+
+`handoff` decides what a child inherits from its parent: `artifact` (the
+default) hands over the parent's final reply via `{{ artifacts.<id> }}`;
+`session` resumes the parent's claude session, so the child inherits
+everything the parent read, did and concluded — the conversation, not the
+configuration: `allowed_tools`, `permission_mode`, `agent`, `cwd` and
+`budget_usd` are always the child's own. The two shapes side by side:
+
+```yaml
+  # artifact: fan-out — both reviewers read dev's final reply, in parallel
+  - id: dev
+    prompt: Implement the change and summarize what you did.
+  - id: review-security
+    depends_on: [dev]                 # handoff: artifact is the default
+    permission_mode: plan             # read-only: parallel nodes share one tree
+    prompt: "Security-review this summary: {{ artifacts.dev | inline }}"
+  - id: review-style
+    depends_on: [dev]
+    permission_mode: plan             # read-only: parallel nodes share one tree
+    prompt: "Style-review this summary: {{ artifacts.dev | inline }}"
+```
+
+```yaml
+  # session: a chain — each child continues the same conversation
+  - id: dev
+    prompt: Implement the change.
+  - id: e2e
+    depends_on: [dev]
+    handoff: session                  # resumes dev's session
+    prompt: Now test what you just built and report PASS or FAIL.
+  - id: summarize
+    depends_on: [e2e]
+    handoff: session                  # the chain continues
+    prompt: Summarize what was built and how the tests went.
+```
+
+A `handoff: session` node must have **exactly one** parent, and that parent
+must be a `claude-run` node — a root has no session to resume, a fan-in
+can't merge sessions, and a gate never records one; all three are rejected
+at load time (use `artifact` there). And although two siblings each
+resuming the same parent *validates* — the one-parent rule is checked per
+child — that forks one conversation into two parallel continuations, which
+is a footgun, not a pattern: fan-out belongs to `artifact`.
+
+Two more truths of the chain shape, both surfaced by `lint`: a **retried**
+session node does not resume — `retry` always starts the attempt fresh, the
+retried attempt's ledger detail says `retry started fresh — parent session
+not resumed`, and `lint` warns on the combination — so either write the
+child's prompt to still make sense cold, or keep `retry` off a session
+chain. And a session child belongs in its parent's `cwd`/`worktree` —
+claude's session lookup is project-directory-scoped, so `lint` warns on a
+mismatch.
+
+Spec:
+[DESIGN.md § Handoff](../DESIGN.md#handoff--artifact-default-session-opt-in-committed).
+
 ## Budgets (`budget_usd`)
 
 `budget_usd` caps what a node may cost. Once the node finishes, its actual cost
