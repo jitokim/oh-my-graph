@@ -162,6 +162,10 @@ Maintainer checklist for cutting a release:
   `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
   move together with the release — CI does not guard these two, so the
   checklist is the only thing that does.
+- **Sync the Korean README.** A release must not ship a stale translation:
+  fold any `README.md` changes since the last release into `README.ko.md`
+  (English is the source of truth; the ko file carries the precedence
+  notice). Nothing in CI guards this — the checklist does.
 - **`make smoke` before tagging.** Run the real-`claude` smoke locally as the
   last gate — it is the only check that exercises an actual subprocess, and
   it never runs in CI.
