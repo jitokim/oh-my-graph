@@ -118,7 +118,7 @@ func newResumeFlags() *resumeFlags {
 	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
 	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
 	f.set.StringVar(&f.rejectGate, "reject", "", "reject the named gate, pruning its subtree")
-	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute only a halted run's failed and cancelled nodes, keeping every passed node's result")
+	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute a failed run's failed and cancelled nodes, or finish a session-limit-paused run's unfinished nodes; every passed node's result is kept")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	return f
 }

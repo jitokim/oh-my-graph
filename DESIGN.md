@@ -618,8 +618,11 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   node re-declaring the name fails loudly on the ref collision (see "Worktree
   isolation").
 - A `resume.lock` (`O_EXCL`, holding the pid) guards against two concurrent
-  resumes of the same run id double-running nodes. A stale lock is reported with
-  the exact path to delete.
+  legs of the same run id double-running nodes: the `run`/`auto` first leg
+  holds it for its whole duration, and every `resume` takes the same lock — so
+  a `resume --retry-failed` raced against a still-in-flight run fails on the
+  lock instead of double-spawning. A stale lock is reported with the exact
+  path to delete.
 
 **Auto-planned graphs still may not contain gates.** `validatePlannedNodes`
 already rejects `type: gate` and continues to: an unattended run whose planner

@@ -302,6 +302,18 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // run/auto, always for a chat turn and `resume`) is the caller's decision,
 // made before this function so nothing here ever probes a terminal.
 func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener) error {
+	// The first leg holds the run's resume.lock for its whole duration — the
+	// same O_EXCL lock every `resume` takes (internal/runstate.AcquireLock).
+	// Without it, a `resume <run-id> --retry-failed` raced against a
+	// still-in-flight first leg would open a second scheduler over the same
+	// state.json/events.jsonl and double-spawn (double-bill) nodes; instead
+	// the concurrent resume fails on this lock with its usual LockHeldError.
+	release, err := runstate.AcquireLock(filepath.Join(runDirFor(runID), lockFileName))
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)

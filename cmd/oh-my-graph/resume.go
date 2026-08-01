@@ -59,10 +59,12 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	lockPath := filepath.Join(runDir, lockFileName)
 
 	// The lock guards the whole resume, not just the scheduler run: two
-	// concurrent resumes racing to load and rewrite the same snapshot would
+	// concurrent legs racing to load and rewrite the same snapshot would
 	// double-run nodes even before either scheduler starts (DESIGN.md,
-	// "resume.lock ... guards against two concurrent resumes of the same run
-	// id double-running nodes").
+	// "resume.lock ... guards against two concurrent legs of the same run
+	// id double-running nodes"). The first `run`/`auto` leg holds the same
+	// lock (executeGraph), so a resume against a still-in-flight run fails
+	// here too.
 	release, err := runstate.AcquireLock(lockPath)
 	if err != nil {
 		return err
