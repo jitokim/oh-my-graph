@@ -653,6 +653,73 @@ nodes:
 	}
 }
 
+// TestParse_UnknownOnFailRejected pins the load-time guard for the graph-level
+// failure policy: a typoed on_fail would silently mean today's halt behaviour
+// (every lane cancelled by one failure) — the exact surprise the field exists
+// to prevent. The message must name the bogus value and both valid ones, the
+// same contract retry.on causes get.
+func TestParse_UnknownOnFailRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: bad-on-fail
+on_fail: keep-going
+nodes:
+  - { id: a, prompt: a }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "" {
+		t.Fatalf("on_fail is graph-level; error named node %q, want none", vErr.NodeID)
+	}
+	if !strings.Contains(vErr.Reason, `"keep-going"`) {
+		t.Errorf("reason should name the bogus value: %q", vErr.Reason)
+	}
+	for _, valid := range []string{OnFailHalt, OnFailContinue} {
+		if !strings.Contains(vErr.Reason, valid) {
+			t.Errorf("reason should list valid value %q: %q", valid, vErr.Reason)
+		}
+	}
+}
+
+// TestParse_OnFailDefaultsToHalt pins backward compatibility: a graph that
+// never mentions on_fail normalizes to halt — today's behaviour, unchanged.
+func TestParse_OnFailDefaultsToHalt(t *testing.T) {
+	g, err := Parse([]byte(`
+name: no-on-fail
+nodes:
+  - { id: a, prompt: a }
+`))
+	if err != nil {
+		t.Fatalf("graph without on_fail must stay valid: %v", err)
+	}
+	if g.OnFail != OnFailHalt {
+		t.Errorf("OnFail = %q, want %q", g.OnFail, OnFailHalt)
+	}
+	if g.ContinuesOnFail() {
+		t.Error("ContinuesOnFail() = true for an undeclared on_fail, want false")
+	}
+}
+
+// TestParse_OnFailValuesAccepted is the positive boundary: both members of the
+// closed set parse clean, and only continue reports ContinuesOnFail.
+func TestParse_OnFailValuesAccepted(t *testing.T) {
+	for value, wantContinue := range map[string]bool{OnFailHalt: false, OnFailContinue: true} {
+		g, err := Parse([]byte(`
+name: on-fail-` + value + `
+on_fail: ` + value + `
+nodes:
+  - { id: a, prompt: a }
+`))
+		if err != nil {
+			t.Fatalf("on_fail: %s must be accepted: %v", value, err)
+		}
+		if g.OnFail != value {
+			t.Errorf("OnFail = %q, want %q", g.OnFail, value)
+		}
+		if g.ContinuesOnFail() != wantContinue {
+			t.Errorf("ContinuesOnFail() with on_fail: %s = %v, want %v", value, g.ContinuesOnFail(), wantContinue)
+		}
+	}
+}
+
 // TestParse_ValidRetryCausesAccepted is the positive boundary: every token the
 // scheduler can actually produce must pass validation, so the guard can never
 // reject a working retry policy.

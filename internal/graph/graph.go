@@ -39,6 +39,24 @@ const (
 	HandoffSession  = "session"
 )
 
+// Failure-policy constants — what the whole run does when a node fails after
+// exhausting its retries.
+//
+//   - OnFailHalt (default): the first failure cancels the shared context,
+//     killing in-flight siblings — today's behaviour, unchanged for every
+//     graph that does not declare the field.
+//   - OnFailContinue: only the failed node's subtree is pruned; independent
+//     branches keep running. What a graph of independent lanes declares so a
+//     single lane's failure cannot cancel every other lane's in-flight work —
+//     without the operator having to remember --continue-on-fail every time.
+//
+// The graph field ORs with the CLI --continue-on-fail flag: either saying
+// continue means continue (see schedule's effectiveContinueOnFail).
+const (
+	OnFailHalt     = "halt"
+	OnFailContinue = "continue"
+)
+
 // PermissionBypass is the permission mode that lets a node act without
 // prompting. It is never a default: the CLI warns loudly when a hand-written
 // graph opts in, and auto mode refuses planned nodes that request it. One
@@ -267,7 +285,13 @@ type Graph struct {
 	Version     string   `yaml:"version" json:"version,omitempty"`
 	Inputs      []string `json:"inputs,omitempty"`
 	Concurrency int      `yaml:"concurrency" json:"concurrency,omitempty"`
-	Nodes       []Node   `yaml:"nodes" json:"nodes,omitempty"`
+	// OnFail is the graph's own failure policy: OnFailHalt (the default —
+	// decode normalizes an undeclared field to it) or OnFailContinue. Any
+	// other value is a load error (validateOnFail), mirroring how retry.on
+	// causes are rejected. Callers ask via ContinuesOnFail rather than
+	// comparing strings.
+	OnFail string `yaml:"on_fail" json:"on_fail,omitempty"`
+	Nodes  []Node `yaml:"nodes" json:"nodes,omitempty"`
 
 	// byID indexes Nodes by their ID. Unexported: callers ask via NodeByID so
 	// the index can never drift from Nodes.
@@ -282,6 +306,7 @@ type rawGraph struct {
 	Version     string   `yaml:"version"`
 	Inputs      []string `yaml:"inputs"`
 	Concurrency int      `yaml:"concurrency"`
+	OnFail      string   `yaml:"on_fail"`
 	Nodes       []Node   `yaml:"nodes"`
 }
 
@@ -339,6 +364,7 @@ func decode(data []byte) (*Graph, error) {
 		Version:     raw.Version,
 		Inputs:      raw.Inputs,
 		Concurrency: raw.Concurrency,
+		OnFail:      normalizeOnFail(raw.OnFail),
 		Nodes:       normalizeNodes(raw.Nodes),
 	}
 	g.byID = make(map[string]Node, len(g.Nodes))
@@ -346,6 +372,26 @@ func decode(data []byte) (*Graph, error) {
 		g.byID[n.ID] = n
 	}
 	return g, nil
+}
+
+// normalizeOnFail fills in the graph-level failure-policy default, the same
+// move normalizeNodes makes for a node's Type and Handoff: an undeclared
+// on_fail is OnFailHalt, so the rest of the engine never sees an empty policy
+// and today's halt-on-first-failure behaviour is unchanged for every existing
+// graph.
+func normalizeOnFail(onFail string) string {
+	if onFail == "" {
+		return OnFailHalt
+	}
+	return onFail
+}
+
+// ContinuesOnFail reports whether the graph declared on_fail: continue — its
+// own request for the --continue-on-fail behaviour (prune only a failed
+// node's subtree; independent branches keep running). The CLI flag ORs with
+// this: either saying continue means continue.
+func (g *Graph) ContinuesOnFail() bool {
+	return g.OnFail == OnFailContinue
 }
 
 // normalizeNodes fills in the terse-YAML defaults so the rest of the engine

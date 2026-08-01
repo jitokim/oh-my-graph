@@ -30,6 +30,7 @@ func (e *GraphValidationError) Error() string {
 var (
 	validTypes    = map[string]bool{TypeClaudeRun: true, TypeGate: true}
 	validHandoffs = map[string]bool{HandoffArtifact: true, HandoffSession: true}
+	validOnFail   = map[string]bool{OnFailHalt: true, OnFailContinue: true}
 )
 
 // Validate enforces the graph's structural invariants and returns the first
@@ -46,7 +47,10 @@ func (g *Graph) Validate() error {
 }
 
 // Issues enforces the graph's structural invariants and returns every
-// violation found, each a *GraphValidationError, in check order:
+// violation found, each a *GraphValidationError, in check order. One
+// graph-level check runs first — on_fail, when declared, must be halt or
+// continue (the same closed-set rejection retry.on causes get) — then the
+// per-node checks:
 //
 //  1. every node id is non-empty, unique, and a single safe path element;
 //  2. every type/handoff is a known value;
@@ -74,6 +78,7 @@ func (g *Graph) Validate() error {
 // the cycle check, and both statements are true.
 func (g *Graph) Issues() []error {
 	var issues []error
+	issues = append(issues, g.validateOnFail()...)
 	issues = append(issues, g.validateNodesUnique()...)
 	issues = append(issues, g.validateNodeIDs()...)
 	issues = append(issues, g.validateEnums()...)
@@ -124,6 +129,22 @@ func (g *Graph) validateNodeTimeouts() []error {
 		g.byID[n.ID] = g.Nodes[i]
 	}
 	return issues
+}
+
+// validateOnFail rejects a graph-level on_fail outside the closed policy set —
+// the graph analogue of validateRetryCauses. A typo like `on_fail: contnue`
+// would otherwise normalize to "not continue" and silently mean today's halt
+// behaviour: exactly the quiet mid-run surprise (every lane cancelled by one
+// failure) the field exists to prevent. The message names both valid values so
+// the fix needs no trip to the docs. decode has already normalized an
+// undeclared field to OnFailHalt, so an empty value never reaches this check.
+func (g *Graph) validateOnFail() []error {
+	if validOnFail[g.OnFail] {
+		return nil
+	}
+	return []error{&GraphValidationError{
+		Reason: fmt.Sprintf("unknown on_fail %q (want %s or %s)", g.OnFail, OnFailHalt, OnFailContinue),
+	}}
 }
 
 // retryCauses is the closed set of failure-cause tokens retry.on may list, in

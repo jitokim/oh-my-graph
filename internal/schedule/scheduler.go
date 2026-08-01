@@ -136,7 +136,10 @@ type Options struct {
 	// The effective value is always clamped to globalConcurrencyCap.
 	Concurrency int
 	// ContinueOnFail prunes only a failed node's subtree instead of halting the
-	// whole run (the --continue-on-fail flag).
+	// whole run (the --continue-on-fail flag). It ORs with the graph's own
+	// `on_fail: continue` declaration — either saying continue means continue
+	// (see effectiveContinueOnFail) — so a false here still continues when the
+	// graph itself opted in.
 	ContinueOnFail bool
 	// Gate resolves gate nodes. Defaults to gate.PauseController: a gate node
 	// pauses the run unless a caller (resume) injects a RecordedController.
@@ -360,6 +363,7 @@ func (c *haltCause) explain(err error) error {
 // execute is Run's body — everything between the run_started/run_finished pair.
 func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
+	continueOnFail := effectiveContinueOnFail(s.continueOnFail, g)
 	grp, ctx := errgroup.WithContext(ctx)
 	halt := &haltCause{}
 
@@ -441,7 +445,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 					failMu.Unlock()
 					return nil
 				}
-				if s.continueOnFail {
+				if continueOnFail {
 					failMu.Lock()
 					prunedFailures = append(prunedFailures, id)
 					failMu.Unlock()
@@ -1040,6 +1044,19 @@ func effectiveConcurrency(override, graphConcurrency int) int {
 		width = globalConcurrencyCap
 	}
 	return width
+}
+
+// effectiveContinueOnFail resolves the run's failure policy: the CLI
+// --continue-on-fail flag ORs with the graph's own `on_fail: continue` —
+// either saying continue means continue. Unlike effectiveConcurrency there is
+// no override direction: the flag cannot force a halt onto a graph that
+// declared continue, and the graph cannot cancel a flag the operator passed —
+// both are requests to keep independent branches alive, and honouring either
+// is strictly what its author asked for. Resolved here, per execute, rather
+// than at the CLI so every caller (`run`, `auto`, `resume` — whose snapshot
+// round-trips on_fail inside the graph JSON) gets the same rule for free.
+func effectiveContinueOnFail(flag bool, g *graph.Graph) bool {
+	return flag || g.ContinuesOnFail()
 }
 
 // evaluateSuccessCheck applies a node's success_check to its outcome, returning

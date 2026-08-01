@@ -415,6 +415,110 @@ nodes:
 	}
 }
 
+// TestScheduler_GraphOnFailContinuePrunesSubtree proves the graph's own
+// `on_fail: continue` declaration is enough — no CLI flag — to prune only the
+// failed subtree while an independent branch finishes: the graph itself now
+// says what "always pass --continue-on-fail for independent-lane batches"
+// used to leave to operator memory.
+func TestScheduler_GraphOnFailContinuePrunesSubtree(t *testing.T) {
+	g := mustGraph(t, `
+name: graph-continue
+on_fail: continue
+nodes:
+  - { id: bad, prompt: bad, success_check: { exit_zero: true } }
+  - { id: child, prompt: child, depends_on: [bad] }
+  - { id: independent, prompt: independent }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"bad":         {Result: "x", ExitCode: 1},
+		"child":       pass("s", 0),
+		"independent": pass("s", 0),
+	})
+	s, h, led := newHarness(t, fake, Options{}) // no --continue-on-fail flag
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
+	}
+	if !equalStrings(runFailed.FailedNodes, []string{"bad"}) {
+		t.Fatalf("failed nodes = %v, want [bad]", runFailed.FailedNodes)
+	}
+
+	calls := fake.Calls()
+	if indexOf(calls, "child") != -1 {
+		t.Errorf("pruned child should never run; calls=%v", calls)
+	}
+	if indexOf(calls, "independent") == -1 {
+		t.Errorf("independent branch should have run; calls=%v", calls)
+	}
+	if rec, ok := findRecord(led, "independent"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Errorf("independent record = %+v (present=%v), want a PASS record", rec, ok)
+	}
+}
+
+// TestScheduler_ExplicitOnFailHaltStillHalts pins the default's spelled-out
+// form: `on_fail: halt` with no CLI flag behaves exactly like today's
+// undeclared graph — the first failure halts the run and the pruned dependent
+// never launches.
+func TestScheduler_ExplicitOnFailHaltStillHalts(t *testing.T) {
+	g := mustGraph(t, `
+name: graph-halt
+on_fail: halt
+nodes:
+  - { id: bad, prompt: bad, success_check: { exit_zero: true } }
+  - { id: independent, prompt: independent, depends_on: [bad] }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"bad":         {Result: "x", ExitCode: 1},
+		"independent": pass("s", 0),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	err := s.Run(context.Background(), g, h, led)
+	var haltErr *HaltError
+	if !errors.As(err, &haltErr) {
+		t.Fatalf("expected *HaltError, got %T: %v", err, err)
+	}
+	if haltErr.NodeID != "bad" {
+		t.Fatalf("halt named node %q, want bad", haltErr.NodeID)
+	}
+	if indexOf(fake.Calls(), "independent") != -1 {
+		t.Errorf("dependent should never run after the halt; calls=%v", fake.Calls())
+	}
+}
+
+// TestScheduler_FlagORsWithGraphOnFailHalt proves the precedence rule: the CLI
+// --continue-on-fail flag ORs with the graph field, so an explicit
+// `on_fail: halt` cannot cancel a flag the operator passed — either side
+// saying continue means continue.
+func TestScheduler_FlagORsWithGraphOnFailHalt(t *testing.T) {
+	g := mustGraph(t, `
+name: flag-or
+on_fail: halt
+nodes:
+  - { id: bad, prompt: bad, success_check: { exit_zero: true } }
+  - { id: independent, prompt: independent }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"bad":         {Result: "x", ExitCode: 1},
+		"independent": pass("s", 0),
+	})
+	s, h, led := newHarness(t, fake, Options{ContinueOnFail: true})
+
+	err := s.Run(context.Background(), g, h, led)
+	var runFailed *RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError (flag ORs with graph halt), got %T: %v", err, err)
+	}
+	if indexOf(fake.Calls(), "independent") == -1 {
+		t.Errorf("independent branch should have run under the flag; calls=%v", fake.Calls())
+	}
+	if rec, ok := findRecord(led, "independent"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Errorf("independent record = %+v (present=%v), want a PASS record", rec, ok)
+	}
+}
+
 // --- cost summation ---------------------------------------------------------
 
 // TestScheduler_CostSummation proves the ledger sums per-node reported cost.
