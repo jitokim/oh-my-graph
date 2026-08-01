@@ -651,6 +651,20 @@ Rules:
   any node.
   Every node runs in the directory oh-my-graph was invoked from, as plain
   claude — never as one of the user's subagents.
+- Never bound a node's work with a budget: budget_usd stays unset (see
+  above) because a tight budget kills a nearly-done node at the threshold
+  and loses its finished work. If a node doing substantial implementation
+  needs bounding, set "timeout" to a generous Go duration string (e.g.
+  "1h") as a hang guard instead; omit it on short nodes to keep the
+  runner's default.
+- If the goal involves substantial implementation, decompose it into work
+  units sized so each node's output is a reviewable, committable slice —
+  prefer more, smaller nodes (within the node cap) over one node that does
+  everything. A node whose prompt commits MUST also state its commit
+  granularity in its prompt: one commit per refactoring unit (commit-unit)
+  for refactors, per file (file-unit) for mechanical sweeps, or per feature
+  slice (feature-slice) for new code — and commit as it goes, so a timeout
+  never loses finished work.
 - A node whose prompt commits MUST stage ONLY the files it created or
   modified for its task, by explicit path ('git add <path> ...'). Never
   'git add -A', 'git add .', or 'git add -u': the working tree may hold
