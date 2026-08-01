@@ -8,7 +8,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>목표를 설명하세요 — 당신의 Claude subscription 위에서 그래프가 실행됩니다.</em></p>
+<p align="center"><em>목표를 설명하세요 — 그래프는 Claude subscription 위에서 실행됩니다.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -21,7 +21,7 @@
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
 
-> 노드 런타임이 Anthropic API가 아니라 — 당신이 직접 로그인한 `claude` CLI인,
+> 노드 런타임이 Anthropic API가 아니라 — 직접 로그인한 `claude` CLI인,
 > graph-native 멀티 에이전트 오케스트레이터.
 >
 > **oh-my-graph는 실행하고, [fleetops](https://github.com/jitokim/fleetops)는
@@ -29,7 +29,7 @@
 
 ## 빈틈
 
-Graph engineering — 특화된 에이전트들을 DAG로 엮는 일 — 은 지금까지
+특화된 에이전트들을 DAG로 엮는 graph engineering은 지금까지
 Anthropic API, Agent SDK, 그리고 종량제 `ANTHROPIC_API_KEY`를 강요해
 왔습니다. 기존의 graph-native 오케스트레이터는 전부 토큰 단위로 과금됩니다.
 
@@ -44,12 +44,12 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 각 DAG 노드는
 ## Bring your own login
 
 oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 않으며, 공유
-서비스로 실행되지도 않습니다. **당신 자신의** 이미 로그인된 `claude` 세션을
+서비스로 실행되지도 않습니다. 이미 로그인된 **본인의** `claude` 세션을
 재사용합니다 — 직접 `claude -p`를 실행하는 것, 혹은
 [claude-squad](https://github.com/smtg-ai/claude-squad)와 같은 위치입니다.
 개인용, 로컬 도구입니다.
 
-이 보장을 실제로 지키기 위해, 모든 노드 서브프로세스는 당신의 환경에서
+이 보장을 실제로 지키기 위해, 모든 노드 서브프로세스는 환경에서
 `ANTHROPIC_API_KEY`와 `ANTHROPIC_AUTH_TOKEN`이 **삭제된** 상태로
 시작합니다 — 이 변수들은 `claude`를 조용히 종량제 API 과금으로
 전환시킵니다. 이 scrub은 유닛 테스트로 검증됩니다
@@ -84,7 +84,7 @@ subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOK
 실행 중에는 노드별 라이브 라인이 보입니다 — `▶ write  running…`, 이어서
 `✓ write  PASS  $0.0091  4.2s` — 멀티 노드 실행 중에 터미널이 조용해지는
 일은 없습니다. 끝나면 ledger를 받습니다: 노드당 한 줄(session id, 비용,
-verdict, detail)과 총 비용 — 아래 [Example](#example) 참고.
+verdict, detail)과 총 비용 — 아래 [예시](#example) 참고.
 
 stdout이 터미널이면 `run`과 `auto`는 시작되는 run의 [web live
 view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저에서 엽니다.
@@ -155,7 +155,7 @@ session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
 
 모든 run은 `~/.oh-my-graph/runs/<run-id>/`에 영속화됩니다(`OMG_HOME`으로
 베이스 위치 변경 가능) — 도구를 어디서 실행하든 같은 디렉토리입니다:
-버전 관리되는 snapshot(`state.json`)과 append-only 이벤트
+schema 버전이 명시된 snapshot(`state.json`)과 append-only 이벤트
 스트림(`events.jsonl`)이 저장되고, `runs list` / `show` / `watch` /
 `serve`가 이를 다시 읽으며 fleetops 같은 consumer가 tail 할 수 있습니다.
 이 레이아웃은 문서화된 안정적 계약입니다 —
@@ -257,7 +257,7 @@ nodes:
 샘플에 나온 것 외에도, 노드는 다음을 선택적으로 쓸 수 있습니다(권위 있는
 스펙은 DESIGN.md):
 
-- **`agent:`** — 노드를 당신의 Claude Code subagent 중 하나로 실행 — 그
+- **`agent:`** — 노드를 본인의 Claude Code subagent 중 하나로 실행 — 그
   subagent의 시스템 프롬프트, 도구, 모델 그대로 ([spec](DESIGN.md#node-as-subagent-agent-v11--hand-written-graphs-only) · [recipe](docs/EXAMPLES.md#running-a-node-as-your-own-subagent-agent)).
 - **`worktree:`** — 관리되는 git worktree 안의 병렬 편집 레인, lane 이름당
   하나의 격리된 체크아웃 ([spec](DESIGN.md#worktree-isolation-worktree--hand-written-graphs-only) · [recipe](docs/EXAMPLES.md#parallel-edit-lanes-with-git-worktrees-worktree)).
