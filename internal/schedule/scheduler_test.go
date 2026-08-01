@@ -1223,19 +1223,32 @@ func (r *sequenceRunner) Run(_ context.Context, _ runner.NodeInvocation) (runner
 	return r.outcomes[i], nil
 }
 
-// haltRunner fails one node immediately and blocks another until the context is
-// cancelled — proving halt-on-fail interrupts an in-flight sibling.
+// haltRunner fails one node and blocks another until the context is cancelled
+// — proving halt-on-fail interrupts an in-flight sibling. The fail node WAITS
+// until the blocked sibling has actually started (released): without that
+// ordering the halt can land before the scheduler launches the sibling at
+// all, and a never-started node is (by design) never recorded — which made
+// the sibling-detail assertion flake in CI.
 type haltRunner struct {
-	failKey  string
-	blockKey string
-	released chan struct{}
+	failKey   string
+	blockKey  string
+	released  chan struct{}
+	startOnce sync.Once
 }
 
 func (r *haltRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	switch spec.Prompt {
 	case r.failKey:
+		// Fail only once the sibling is provably in flight, so the halt
+		// always has an in-flight sibling to cancel.
+		select {
+		case <-r.released:
+		case <-ctx.Done():
+			return runner.NodeOutcome{}, ctx.Err()
+		}
 		return runner.NodeOutcome{Result: "boom", ExitCode: 1}, nil
 	case r.blockKey:
+		r.startOnce.Do(func() { close(r.released) })
 		<-ctx.Done()
 		return runner.NodeOutcome{}, ctx.Err()
 	default:
