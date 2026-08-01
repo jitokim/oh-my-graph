@@ -25,9 +25,11 @@ func (e *LockHeldError) Error() string {
 }
 
 // AcquireLock creates a resume.lock at path, guarding against two concurrent
-// `oh-my-graph resume` invocations on the same run id double-running nodes
-// (DESIGN.md, "A resume.lock (O_EXCL, holding the pid) guards against two
-// concurrent resumes of the same run id"). O_EXCL makes the create atomic:
+// legs of the same run id double-running nodes — a `run`/`auto` first leg
+// holds it for its whole duration and every `oh-my-graph resume` takes the
+// same lock (DESIGN.md, "A resume.lock (O_EXCL, holding the pid) guards
+// against two concurrent legs of the same run id"). O_EXCL makes the create
+// atomic:
 // exactly one caller among any racing to acquire the same path succeeds. The
 // lock file's content is the holding process's pid — informational only
 // (AcquireLock does not check whether that pid is still alive; a stale lock is

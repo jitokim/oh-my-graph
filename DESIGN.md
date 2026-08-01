@@ -103,7 +103,9 @@ Node schema:
     verify: { command: "make local PORT=8080", timeout: 5m }   # optional (v1.1)
   retry: { max: 1, on: [nonzero_exit] }   # optional
 ```
-Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`, `nodes: [..]`.
+Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
+`on_fail: halt | continue` (default halt — the graph's own failure policy;
+see "Execution engine" step 4), `nodes: [..]`.
 Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`.
 
 ## Handoff — artifact default, session opt-in (committed)
@@ -211,9 +213,10 @@ auto-branch bug). `worktree: <name>` is the root fix:
   remove it; forcing would discard the changes), a branch carrying commits
   beyond its base is retained after its worktree dir is removed, and only a
   branch provably still at its base is deleted. Every retention is reported
-  as a one-line note. A retained branch also means a `resume`d leg
-  re-declaring the name fails loudly on the ref collision instead of
-  resetting retained work.
+  as a one-line note. A retained branch also means a `resume`d leg —
+  `--retry-failed` included, which provisions fresh worktrees exactly as a
+  fresh run would and never reattaches a retained branch — re-declaring the
+  name fails loudly on the ref collision instead of resetting retained work.
 - Handoff artifacts still persist to `~/.oh-my-graph/runs/<run-id>/` exactly
   as before — the worktree isolates the node's WORKING TREE, not its result.
 - **Auto-planned nodes may not set `worktree`.** Provisioning is not a tool
@@ -246,8 +249,26 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    A sibling the halt cancelled is recorded with the causal story —
    `cancelled: run halted after node "X" failed` — not the raw Go
    "context canceled" its cancellation surfaces as.
-   `--continue-on-fail` (opt-in) prunes only the failed subtree.
+   `--continue-on-fail` (opt-in) prunes only the failed subtree. A graph can
+   opt in itself with graph-level `on_fail: continue` (default `halt`; any
+   other value is a load-time `GraphValidationError` naming the valid set,
+   like an unknown retry cause) — what a batch of independent lanes declares
+   so one lane's failure can't cancel every other lane's in-flight work,
+   without the operator remembering the flag. Precedence is an OR, resolved
+   in the scheduler (`effectiveContinueOnFail`, next to
+   `effectiveConcurrency`) so `run`/`auto`/`resume` all share it: either the
+   flag or the graph saying continue means continue; the flag cannot force a
+   halt onto a graph that declared continue, nor the graph cancel a flag the
+   operator passed.
 5. Done when ready+running are empty.
+
+One outcome is exempt from step 4 entirely: a subprocess killed by the
+subscription's **session limit** is a pause, not a node failure (ADR 0009).
+The runner classifies it (`NodeOutcome.SessionLimited`); the scheduler then
+stops launching, drains in-flight siblings instead of cancelling them, records
+the limited node nowhere, and returns `*LimitPausedError` → exit code 2 with a
+`resume --retry-failed` hint. Full semantics under "Gate nodes and `resume`"
+below — the limit rides the same pause/drain machinery a gate does.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
@@ -533,10 +554,13 @@ in-degree as `len(DependsOn) − (parents already completed)`.
 
 Snapshot writes happen after **every** node, not just at gates, so the file on
 disk always reflects everything finished so far, including a Ctrl-C'd or
-crashed run's progress. Resuming that file is future work, though: `resume`
-(v1.1) only continues a run whose snapshot actually recorded a gate pause
-(`Gate.PausedAt != ""`) and refuses anything else — a Ctrl-C'd or crashed run
-included — with "run is not paused" (see `executeResume`'s guard). A snapshot
+crashed run's progress. Two resume modes read that file: the gate mode only
+continues a run whose snapshot actually recorded a gate pause
+(`Gate.PausedAt != ""`) and refuses anything else with "run is not paused"
+(see `executeResume`'s guard), while `--retry-failed` continues a run whose
+snapshot recorded failures (see the CLI contract below). A Ctrl-C'd or
+crashed run that recorded neither a pause nor a failure is still neither
+mode's business — resuming that is future work. A snapshot
 write failure mid-run is non-fatal, but its cost is not merely a gap in the
 printed ledger: the dropped write means that node is absent from the persisted
 state, so a later resume would not know it ran and would re-execute it — a
@@ -547,7 +571,7 @@ stop, and reporting it as a clean pause would lie.
 
 **CLI contract:**
 ```
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
 ```
 - Exactly one of `--approve`/`--reject` is **required** when the run is paused at
   a gate. A bare `resume <run-id>` on a paused run is an error naming the pending
@@ -564,9 +588,41 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concur
   semantic.
 - Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
   pauses again. The decision map makes batch approval a later, additive change.
+- `--retry-failed` salvages a failed run instead of deciding a gate; combining
+  it with `--approve`/`--reject` is a flag error (a retry leg replays prior
+  gate decisions unchanged and must never sneak a new one in). It keeps every
+  PASSED node's record and artifact as-is — dependents interpolate them
+  exactly as after a gate resume — clears the FAILED records, and runs the
+  graph again, so only the cleared nodes plus the nodes an earlier leg
+  cancelled or never reached execute. A REJECTED gate is a standing human
+  decision, not a failure to salvage: its record is retained, it is never
+  retried, and its subtree stays pruned. A run with no retryable failure
+  reports "no failed nodes to retry" and exits 0 without spawning anything or
+  opening a new leg on the event stream — unless the run holds launchable
+  nodes with no record at all (a session-limit pause leaves exactly that
+  state — ADR 0009), in which case the leg runs them as "running unfinished
+  nodes"; a gate-paused run is still redirected to `--approve`/`--reject`.
+- **A subscription session limit is a pause, not a failure (ADR 0009).** The
+  runner classifies the CLI's limit message (`NodeOutcome.SessionLimited`,
+  matcher pinned in `internal/runner/sessionlimit.go`); the scheduler then
+  stops launching new work but drains in-flight siblings (which may
+  themselves limit and join the paused set), records the limited node
+  NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
+  event), and returns `*LimitPausedError` → exit code 2 with a
+  best-effort-parsed "resume after <reset time> with: `resume <run-id>
+  --retry-failed`" hint. A gate pause outranks a limit; a limit outranks
+  continue-on-fail pruned failures. The leg closes on the stream as outcome
+  `"paused"` with a distinguishing `detail`. A retry leg provisions worktrees
+  fresh, exactly as a fresh run would — it does not reattach a branch a
+  failed leg retained; that branch keeps the preserved work, and a retried
+  node re-declaring the name fails loudly on the ref collision (see "Worktree
+  isolation").
 - A `resume.lock` (`O_EXCL`, holding the pid) guards against two concurrent
-  resumes of the same run id double-running nodes. A stale lock is reported with
-  the exact path to delete.
+  legs of the same run id double-running nodes: the `run`/`auto` first leg
+  holds it for its whole duration, and every `resume` takes the same lock — so
+  a `resume --retry-failed` raced against a still-in-flight run fails on the
+  lock instead of double-spawning. A stale lock is reported with the exact
+  path to delete.
 
 **Auto-planned graphs still may not contain gates.** `validatePlannedNodes`
 already rejects `type: gate` and continues to: an unattended run whose planner

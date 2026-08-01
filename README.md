@@ -127,7 +127,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
-| `resume <run-id> (--approve \| --reject) <gate-id>` | Resume a run paused at a human-approval gate node. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. |
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
@@ -136,7 +136,11 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
 10), and `--continue-on-fail`. Both print a live per-node feed as the graph
-executes, then a cost ledger.
+executes, then a cost ledger. A graph can also declare the failure policy
+itself with graph-level `on_fail: continue` (default `halt`) — the right
+default for a batch of independent lanes, where one lane's failure should
+not cancel the others' in-flight work. The flag ORs with the field: either
+saying continue means continue.
 
 `lint` checks structure — DAG/cycle, unknown `depends_on` ids, the
 session-handoff parent rule, verify blocks — and exits 0 when valid, 1 when
@@ -269,6 +273,18 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   for nodes whose legitimate work runs long ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **failure salvage** — `resume <run-id> --retry-failed` re-executes only a
+  failed run's failed and cancelled nodes, keeping every passed node's
+  artifact for its dependents ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **session limits pause, not fail** — when your subscription hits its
+  session limit mid-run, the limited node is not marked failed: the run stops
+  launching new work, lets in-flight nodes finish, and exits with code 2 and
+  a hint like `Resume after 5:20pm with: oh-my-graph resume <run-id>
+  --retry-failed` — which later finishes exactly the work that never ran.
+  Detection is honest string-matching on the CLI's message (it offers no
+  structured signal), so an unrecognized wording safely degrades to an
+  ordinary failure that the same command still salvages
+  ([ADR 0009](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
 ## Platform support
 

@@ -136,7 +136,10 @@ type Options struct {
 	// The effective value is always clamped to globalConcurrencyCap.
 	Concurrency int
 	// ContinueOnFail prunes only a failed node's subtree instead of halting the
-	// whole run (the --continue-on-fail flag).
+	// whole run (the --continue-on-fail flag). It ORs with the graph's own
+	// `on_fail: continue` declaration — either saying continue means continue
+	// (see effectiveContinueOnFail) — so a false here still continues when the
+	// graph itself opted in.
 	ContinueOnFail bool
 	// Gate resolves gate nodes. Defaults to gate.PauseController: a gate node
 	// pauses the run unless a caller (resume) injects a RecordedController.
@@ -313,7 +316,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	s.emitEvent(runfeed.Event{Type: runfeed.EventRunStarted})
 	err := s.execute(ctx, g, h, led)
-	s.emitEvent(runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runOutcome(err)})
+	s.emitEvent(runFinishedEvent(err))
 	return err
 }
 
@@ -360,6 +363,7 @@ func (c *haltCause) explain(err error) error {
 // execute is Run's body — everything between the run_started/run_finished pair.
 func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
+	continueOnFail := effectiveContinueOnFail(s.continueOnFail, g)
 	grp, ctx := errgroup.WithContext(ctx)
 	halt := &haltCause{}
 
@@ -385,17 +389,23 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 	var failMu sync.Mutex
 	var prunedFailures []string
 
-	// pauseMu guards pausedAt: the id of the gate whose DecisionPause first
-	// stopped the run, or "" while no gate has paused it. It is the mechanism
-	// behind "stop launching new work but drain what's in flight" — unlike
-	// halt-on-fail, a pause deliberately does NOT cancel ctx (ADR 0003, "this
-	// is the one place the halt path does not cancel the context"), so an
-	// in-flight sibling runs to completion normally. What stops is new
-	// launches: every successful node checks pausedAt before enqueuing its own
-	// dependents, so the moment any gate pauses, the wavefront of new work
-	// stops advancing while whatever already started keeps running.
+	// pauseMu guards the run's pause state: pausedAt (the id of the gate whose
+	// DecisionPause first stopped the run, or "" while no gate has paused it)
+	// and limitedNodes/limitCause (the nodes whose subprocess hit the
+	// subscription session limit, and the first one's captured cause — ADR
+	// 0009). Both are the mechanism behind "stop launching new work but drain
+	// what's in flight" — unlike halt-on-fail, a pause deliberately does NOT
+	// cancel ctx (ADR 0003, "this is the one place the halt path does not
+	// cancel the context"), so an in-flight sibling runs to completion
+	// normally — and a draining sibling may itself hit the limit and join
+	// limitedNodes. What stops is new launches: every successful node checks
+	// this state before enqueuing its own dependents, so the moment anything
+	// pauses, the wavefront of new work stops advancing while whatever already
+	// started keeps running.
 	var pauseMu sync.Mutex
 	var pausedAt string
+	var limitedNodes []string
+	var limitCause string
 
 	var launch func(id string)
 	launch = func(id string) {
@@ -430,6 +440,22 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 					pauseMu.Unlock()
 					return nil
 				}
+				var limit *limitSignal
+				if errors.As(err, &limit) {
+					// A session limit pauses the run BEFORE the failure
+					// policies below can see it: it is not the node's failure
+					// (continue-on-fail must not prune its subtree as final)
+					// and not a reason to kill in-flight siblings (halt must
+					// not cancel them) — they drain, exactly as at a gate
+					// pause (ADR 0009).
+					pauseMu.Lock()
+					limitedNodes = append(limitedNodes, limit.NodeID)
+					if limitCause == "" {
+						limitCause = limit.Cause
+					}
+					pauseMu.Unlock()
+					return nil
+				}
 				var reject *rejectSignal
 				if errors.As(err, &reject) {
 					// A gate rejection always prunes its own subtree, regardless
@@ -441,7 +467,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 					failMu.Unlock()
 					return nil
 				}
-				if s.continueOnFail {
+				if continueOnFail {
 					failMu.Lock()
 					prunedFailures = append(prunedFailures, id)
 					failMu.Unlock()
@@ -459,12 +485,13 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 			}
 
 			pauseMu.Lock()
-			paused := pausedAt != ""
+			paused := pausedAt != "" || len(limitedNodes) > 0
 			pauseMu.Unlock()
 			if paused {
 				// This node's own success still counts — it is drained, not
-				// cancelled — but a pause elsewhere already means the whole run
-				// stops, not just this branch, so its dependents must not launch.
+				// cancelled — but a pause elsewhere (a gate decision or a
+				// session limit) already means the whole run stops, not just
+				// this branch, so its dependents must not launch.
 				return nil
 			}
 
@@ -498,6 +525,8 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 
 	pauseMu.Lock()
 	gateID := pausedAt
+	limited := append([]string(nil), limitedNodes...)
+	cause := limitCause
 	pauseMu.Unlock()
 	if gateID != "" {
 		// The pause snapshot write happens here — once, after every in-flight
@@ -509,6 +538,22 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 			return fmt.Errorf("persist pause snapshot for gate %q: %w", gateID, err)
 		}
 		return &PausedError{GateID: gateID}
+	}
+
+	if len(limited) > 0 {
+		// A session-limit pause needs no RecordPause: the limited nodes are
+		// deliberately absent from the snapshot (they never really ran), and
+		// every settled node was already persisted per node, so the state on
+		// disk is exactly what `resume --retry-failed` reads. A gate pause
+		// above wins when both happened — the gate needs its human decision
+		// first, and the gate leg re-runs the un-recorded limited nodes
+		// anyway. The limit in turn wins over pruned continue-on-fail
+		// failures below, mirroring the gate-pause ordering: the run is
+		// unfinished-and-resumable, not finished-and-failed, and the retained
+		// FAIL records still tell the failures' story (a --retry-failed
+		// clears and re-runs them together with the limited nodes).
+		sort.Strings(limited)
+		return &LimitPausedError{NodeIDs: limited, Cause: cause}
 	}
 
 	failMu.Lock()
@@ -576,6 +621,17 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				continue
 			}
 			return s.recordFail(led, h, node, "", 0, time.Since(start), attempt, runErr)
+		}
+
+		if outcome.SessionLimited {
+			// The subscription's session limit killed this subprocess — the
+			// account's state, not the node's failure, and not final (the
+			// limit resets). No ledger row, no snapshot record, no terminal
+			// event, no retry (an immediate re-spawn meets the same limit):
+			// the node stays un-run, and Run() turns this signal into the
+			// whole-run pause (ADR 0009).
+			s.logProgress("⏸ %s  session limit reached — pausing run\n", node.ID)
+			return &limitSignal{NodeID: node.ID, Cause: outcome.FailureCause}
 		}
 
 		var verdictErr error
@@ -809,15 +865,34 @@ func (s *Scheduler) emitEvent(e runfeed.Event) {
 	}
 }
 
+// runFinishedEvent builds the leg's closing run_finished event: the outcome
+// token, plus — for a session-limit pause only — a detail naming the limited
+// nodes and the captured cause, so a stream consumer can tell a "waiting for
+// a human" pause from a "wait for the limit to reset" one without a new event
+// type or outcome token (docs/RUN-FEED.md, the additive-field rule).
+func runFinishedEvent(err error) runfeed.Event {
+	e := runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runOutcome(err)}
+	var limit *LimitPausedError
+	if errors.As(err, &limit) {
+		e.Detail = capDetail(fmt.Sprintf("session limit reached at %s: %s", strings.Join(limit.NodeIDs, ", "), limit.Cause))
+	}
+	return e
+}
+
 // runOutcome maps Run's return into the run_finished outcome token: nil is
-// passed, a *PausedError is paused (a pause is not a failure — ADR 0003), and
-// anything else (halt, pruned failures, a failed pause persist) is failed.
+// passed, a *PausedError or *LimitPausedError is paused (a pause is not a
+// failure — ADR 0003, ADR 0009), and anything else (halt, pruned failures, a
+// failed pause persist) is failed.
 func runOutcome(err error) string {
 	if err == nil {
 		return runfeed.OutcomePassed
 	}
 	var paused *PausedError
 	if errors.As(err, &paused) {
+		return runfeed.OutcomePaused
+	}
+	var limited *LimitPausedError
+	if errors.As(err, &limited) {
 		return runfeed.OutcomePaused
 	}
 	return runfeed.OutcomeFailed
@@ -1040,6 +1115,19 @@ func effectiveConcurrency(override, graphConcurrency int) int {
 		width = globalConcurrencyCap
 	}
 	return width
+}
+
+// effectiveContinueOnFail resolves the run's failure policy: the CLI
+// --continue-on-fail flag ORs with the graph's own `on_fail: continue` —
+// either saying continue means continue. Unlike effectiveConcurrency there is
+// no override direction: the flag cannot force a halt onto a graph that
+// declared continue, and the graph cannot cancel a flag the operator passed —
+// both are requests to keep independent branches alive, and honouring either
+// is strictly what its author asked for. Resolved here, per execute, rather
+// than at the CLI so every caller (`run`, `auto`, `resume` — whose snapshot
+// round-trips on_fail inside the graph JSON) gets the same rule for free.
+func effectiveContinueOnFail(flag bool, g *graph.Graph) bool {
+	return flag || g.ContinuesOnFail()
 }
 
 // evaluateSuccessCheck applies a node's success_check to its outcome, returning

@@ -79,7 +79,7 @@ the three can never disagree about a transition. The Go source of truth is
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)* | A retry attempt begins after a failed one. |
-| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`) | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. |
+| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
@@ -133,9 +133,16 @@ to pause).
   Nodes running in parallel interleave; per node, `node_started` always
   precedes its retries and its terminal event.
 - **Legs, not just runs.** A resumed run (`oh-my-graph resume`) appends to the
-  same stream, bracketed by its own `run_started`/`run_finished`. A run that
-  paused at a gate therefore contains one bracket pair per leg; the run as a
-  whole is finished when the latest `run_finished` outcome is not `"paused"`.
+  same stream, bracketed by its own `run_started`/`run_finished` — a gate
+  resume and a `--retry-failed` leg alike. A run that paused at a gate
+  therefore contains one bracket pair per leg; the run as a whole is finished
+  when the latest `run_finished` outcome is not `"paused"` — though a later
+  `resume --retry-failed` may reopen a `"failed"` run with a new bracket
+  pair. Because a retry leg re-executes previously failed nodes, one node id
+  may carry terminal events in more than one leg (a `node_failed` in an
+  earlier one, a fresh `node_started` and terminal in the retry leg); the
+  latest terminal event per node is the authoritative one, matching
+  `state.json`.
 - **Short lines.** Every event line the writer emits is small (a handful of
   short fields; well under a few kilobytes even with a long `detail`). The
   in-repo readers enforce a shared 1 MiB per-line cap and refuse — with an

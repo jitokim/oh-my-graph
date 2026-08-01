@@ -134,7 +134,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
-| `resume <run-id> (--approve \| --reject) <gate-id>` | 사람 승인 gate 노드에서 일시정지된 run을 재개. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. |
 | `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict, 그리고 합계. 읽기 전용. |
 | `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
@@ -143,7 +143,11 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),
 `--continue-on-fail`을 공유합니다. 둘 다 그래프가 실행되는 동안 노드별
-라이브 피드를 출력하고, 이어서 비용 ledger를 출력합니다.
+라이브 피드를 출력하고, 이어서 비용 ledger를 출력합니다. 그래프 자신이
+그래프 레벨 `on_fail: continue`(기본값 `halt`)로 실패 정책을 선언할 수도
+있습니다 — 한 lane의 실패가 다른 lane들의 진행 중인 작업을 취소해서는 안
+되는 독립 lane 배치에 맞는 기본값입니다. 플래그와 필드는 OR로 결합됩니다:
+어느 쪽이든 continue라고 하면 continue입니다.
 
 `lint`는 구조를 검사하고 — DAG/cycle, 알 수 없는 `depends_on` id,
 session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
@@ -279,6 +283,18 @@ nodes:
   모두 적용 ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **gates** — `type: gate` 노드는 사람의 승인을 위해 run을 일시정지시키며,
   `oh-my-graph resume`으로 계속됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **실패 복구** — `resume <run-id> --retry-failed`는 실패한 run에서 실패·취소된
+  노드만 다시 실행하며, 통과한 노드의 artifact는 dependents를 위해 그대로
+  유지됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **세션 한도는 실패가 아니라 일시정지** — run 도중 구독의 세션 한도에
+  도달해도 해당 노드는 실패로 기록되지 않습니다: run은 새 작업 launch를
+  멈추고, 진행 중이던 노드는 끝까지 완료시킨 뒤, exit code 2와 함께
+  `Resume after 5:20pm with: oh-my-graph resume <run-id> --retry-failed`
+  같은 힌트를 출력합니다 — 이 명령이 나중에 실행되지 못한 작업만 정확히
+  마저 끝냅니다. 감지는 CLI 메시지에 대한 정직한 문자열 매칭이며(구조화된
+  신호가 없음), 문구가 바뀌어 인식하지 못하면 일반 실패로 안전하게
+  강등되고 같은 명령으로 여전히 복구됩니다
+  ([ADR 0009](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
 ## 플랫폼 지원
 

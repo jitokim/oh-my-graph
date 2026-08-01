@@ -21,6 +21,7 @@ name: round-trip
 version: "1"
 inputs: [repo, target]
 concurrency: 3
+on_fail: continue
 nodes:
   - id: dev
     prompt: "write the thing for {{ inputs.repo }}"

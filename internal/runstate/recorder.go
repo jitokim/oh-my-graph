@@ -39,6 +39,19 @@ func NewSnapshotRecorder(path string, base Snapshot) *SnapshotRecorder {
 	return &SnapshotRecorder{path: path, snap: base}
 }
 
+// WriteInitial persists the snapshot exactly as seeded, before any node has
+// run. A fresh `run`/`auto` calls it once, up front: every later write only
+// happens at a node's terminal verdict, so without this a run whose FIRST
+// node pauses on a session limit (ADR 0009) would leave no state.json at all
+// — and the very `resume <run-id> --retry-failed` its exit hint recommends
+// would find nothing to load. An initial snapshot with zero Nodes is the
+// honest state: nothing has settled yet.
+func (r *SnapshotRecorder) WriteInitial() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return Write(r.path, r.snap)
+}
+
 // RecordNode records one node's terminal result and writes the snapshot. It
 // is called after EVERY node — pass or fail, gate or claude-run — not only at
 // a gate pause, so a Ctrl-C'd or crashed run is resumable too.
