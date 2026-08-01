@@ -203,6 +203,44 @@ nodes:
 	}
 }
 
+// TestScheduler_RetriedSessionNodeDetailSaysItStartedCold proves that when a
+// session-handoff node passes on a retry, its record's Detail says the retry
+// ran without the parent session — runNode clears ResumeSession on every
+// retry, and that cold start must be visible in the ledger, snapshot and
+// events, not silent.
+func TestScheduler_RetriedSessionNodeDetailSaysItStartedCold(t *testing.T) {
+	g := mustGraph(t, `
+name: session-retry
+nodes:
+  - { id: dev, prompt: dev }
+  - id: e2e
+    prompt: e2e
+    depends_on: [dev]
+    handoff: session
+    success_check: { result_matches: "PASS" }
+    retry: { max: 1, on: [result_mismatch] }
+`)
+	// The chain is sequential, so the scripted order is dev, then e2e's failing
+	// first attempt, then its passing retry.
+	flaky := &sequenceRunner{outcomes: []runner.NodeOutcome{
+		{Result: "PASS", ExitCode: 0, SessionID: "s-dev"},
+		{Result: "NOPE", ExitCode: 0},
+		{Result: "PASS", ExitCode: 0, SessionID: "s-e2e-retry"},
+	}}
+	s, h, led := newHarness(t, flaky, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("expected recovery, got error: %v", err)
+	}
+	rec, ok := findRecord(led, "e2e")
+	if !ok || rec.Verdict != ledger.VerdictPass {
+		t.Fatalf("e2e record = %+v (present=%v), want a PASS record", rec, ok)
+	}
+	if want := "retry started fresh — parent session not resumed"; !strings.Contains(rec.Detail, want) {
+		t.Fatalf("detail %q should carry %q", rec.Detail, want)
+	}
+}
+
 // --- halt on fail cancels siblings -----------------------------------------
 
 // TestScheduler_HaltOnFailCancelsSiblings proves that when one node fails, the

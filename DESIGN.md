@@ -227,7 +227,9 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
 5. Done when ready+running are empty.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
-resume a failed one). The causes are a closed set — `nonzero_exit`,
+resume a failed one). For a `handoff: session` node this means a retried
+attempt does not resume the parent session either — it starts cold, which
+`lint` warns about up front and the passing attempt's ledger detail states. The causes are a closed set — `nonzero_exit`,
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
