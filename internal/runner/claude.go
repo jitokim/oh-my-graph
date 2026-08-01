@@ -338,6 +338,10 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 		// ledger, events.jsonl, watch and serve can name.
 		outcome.FailureCause = flattenLines(tailOf(stderr, maxStderrInError))
 	}
+	// Classified here, after BOTH cause sources (envelope, stderr tail) have
+	// had their say, so a limit reported either way is recognized — the one
+	// call site the matcher has (ADR 0009).
+	outcome.SessionLimited = isSessionLimitCause(outcome.FailureCause)
 	return outcome, nil
 }
 

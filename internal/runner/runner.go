@@ -144,6 +144,14 @@ type NodeOutcome struct {
 	// shares the post-hoc check's budget_exceeded retry token and ledger
 	// language instead of being retried by a plain nonzero_exit policy.
 	BudgetExhausted bool
+	// SessionLimited is true when the run died because the user's subscription
+	// hit its session limit — FailureCause matched the limit's message shape
+	// (sessionlimit.go, ADR 0009). Unlike every other failure this one is not
+	// the node's fault and not final: the Scheduler treats it as a pause (the
+	// node stays un-run, the run drains and exits resumable) rather than a
+	// FAIL. FailureCause still carries the full message, including the "resets
+	// <time>" hint the CLI prints.
+	SessionLimited bool
 }
 
 // NodeRunner runs one node to completion and returns its outcome. A non-nil
