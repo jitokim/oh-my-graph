@@ -5,13 +5,16 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // capturingRunner records the invocation each node was launched with, so a
@@ -115,6 +118,112 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	}
 }
 
+// barrierRunner holds every node's Run at a rendezvous until width nodes have
+// arrived, then releases them all at once — so the scheduler goroutines'
+// subsequent event-stream emits and snapshot writes genuinely overlap instead
+// of trickling through one at a time. The wait blocks on the rendezvous
+// channel or ctx.Done() only, deliberately with no wall-clock fallback
+// (CONTRIBUTING, "Test doubles"): if the scheduler ever ran the lanes
+// narrower than width, the rendezvous could not complete, and that genuine
+// deadlock is go test's own timeout's job to report, naming the stuck line.
+type barrierRunner struct {
+	width   int
+	release chan struct{}
+
+	mu      sync.Mutex
+	arrived int
+}
+
+func (r *barrierRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	r.mu.Lock()
+	r.arrived++
+	if r.arrived == r.width {
+		close(r.release)
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return runner.NodeOutcome{}, ctx.Err()
+	}
+	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
+}
+
+// countEvents counts the events of type eventType carrying nodeID — a count,
+// not a bool, so the exactly-once assertions below cannot be satisfied by a
+// node's events simply being absent.
+func countEvents(events []runfeed.Event, eventType runfeed.EventType, nodeID string) int {
+	n := 0
+	for _, e := range events {
+		if e.Type == eventType && e.NodeID == nodeID {
+			n++
+		}
+	}
+	return n
+}
+
+// TestExecuteGraph_ParallelFanOutWritesEachNodeOnceToBothWriters exists to
+// give -race a window onto the two real writers' mutexes: executeGraph wires
+// the scheduler to a real runfeed.StreamWriter and a real
+// runstate.SnapshotRecorder, each of which serializes concurrent scheduler
+// goroutines behind its own internal mutex — but every other test in this
+// package that reaches both writers runs at most two nodes, in dependency
+// order, so under -race those mutexes only ever see one writer at a time and
+// the exclusion they exist for goes unexercised. Here a four-way fan-out is
+// held at a rendezvous until all four nodes are in flight and then released
+// together, so their terminal writes genuinely contend; the run's artifacts
+// must still record every node exactly once in events.jsonl and exactly once
+// in state.json.
+func TestExecuteGraph_ParallelFanOutWritesEachNodeOnceToBothWriters(t *testing.T) {
+	nodes := []string{"n1", "n2", "n3", "n4"}
+	g := mustParse(t, `{"name":"fan-out","nodes":[
+		{"id":"n1","prompt":"n1"},
+		{"id":"n2","prompt":"n2"},
+		{"id":"n3","prompt":"n3"},
+		{"id":"n4","prompt":"n4"}]}`)
+	rec := &barrierRunner{width: len(nodes), release: make(chan struct{})}
+
+	isolateRunHome(t)
+	// Concurrency is pinned to the fan-out width: the rendezvous only opens
+	// once all four Runs are in flight, so a narrower ready set could never
+	// reach it.
+	err := executeGraph(context.Background(), "fan-out-run", g, rec,
+		commonRunFlags{inputs: inputFlag{}, concurrency: len(nodes)},
+		nil, 0, "fan-out.yaml", []byte("name: fan-out\n"), nil)
+	if err != nil {
+		t.Fatalf("executeGraph returned error: %v", err)
+	}
+
+	events := readRunEvents(t, "fan-out-run")
+	for _, node := range nodes {
+		if got := countEvents(events, runfeed.EventNodeStarted, node); got != 1 {
+			t.Errorf("node %q has %d node_started events, want exactly 1", node, got)
+		}
+		if got := countEvents(events, runfeed.EventNodePassed, node); got != 1 {
+			t.Errorf("node %q has %d node_passed events, want exactly 1", node, got)
+		}
+	}
+
+	snap, err := runstate.Load(filepath.Join(runDirFor("fan-out-run"), "state.json"))
+	if err != nil {
+		t.Fatalf("load state.json: %v", err)
+	}
+	if len(snap.Nodes) != len(nodes) {
+		t.Errorf("state.json records %d nodes, want %d: %+v", len(snap.Nodes), len(nodes), snap.Nodes)
+	}
+	for _, node := range nodes {
+		record, ok := snap.Nodes[node]
+		if !ok {
+			t.Errorf("node %q missing from state.json", node)
+			continue
+		}
+		if record.Verdict != runstate.VerdictPass {
+			t.Errorf("node %q recorded verdict %q in state.json, want %q", node, record.Verdict, runstate.VerdictPass)
+		}
+	}
+}
+
 // TestExecutePlan_TotalIncludesPlanningCost pins the end-to-end accounting the
 // original bug (issue #15) slipped through: the coordinator computes the
 // planning cost and printPlan shows it once up front, but executeGraph's ledger
@@ -156,6 +265,8 @@ func TestExecutePlan_TotalIncludesPlanningCost(t *testing.T) {
 // written. executeGraph prints the ledger table straight to os.Stdout, so this
 // is how a wiring test reads the total the user actually sees. (Scheduler
 // progress goes to os.Stderr, so it does not pollute the capture.)
+// It mutates the process-global os.Stdout, which is why cmd tests must never
+// call t.Parallel.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stdout
