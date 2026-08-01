@@ -30,3 +30,32 @@ jobs:
 
       - name: go test
         run: go test ./... -race -count=1
+
+  # Heavy -race repetition over the concurrency-sensitive packages (flake
+  # post-mortem, v0.3.0). Gated on a paths filter so it only runs when the
+  # diff touches those packages — unrelated PRs skip it entirely. Advisory
+  # until promoted: do NOT add it to branch protection required checks yet.
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            concurrency:
+              - 'internal/schedule/**'
+              - 'internal/runner/**'
+              - 'internal/runfeed/**'
+              - 'internal/verify/**'
+
+      - uses: actions/setup-go@v7
+        if: steps.changes.outputs.concurrency == 'true'
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: go test (stress)
+        if: steps.changes.outputs.concurrency == 'true'
+        run: go test ./internal/schedule ./internal/runner ./internal/runfeed -race -count=200
