@@ -163,6 +163,63 @@ func TestPlan_PromptRequiresScopedStagingInCommitNodes(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptRequiresCommittableSliceDecomposition pins the planner
+// guidance distilled from running large implementation batches: a goal with
+// substantial implementation is decomposed into nodes whose output is a
+// reviewable, committable slice, and a committing node states its commit
+// granularity — commit-unit, file-unit or feature-slice — and commits as it
+// goes, so a timeout never loses finished work (the same discipline the
+// shipped templates' dev nodes carry). Like the staging rule above, this is
+// guidance to an untrusted producer, not enforcement, so its load-bearing
+// pieces are pinned here.
+func TestPlan_PromptRequiresCommittableSliceDecomposition(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "implement the feature and commit it", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the sizing rule for decomposing implementation work
+		"reviewable, committable slice",
+		// the three named commit-granularity options
+		"(commit-unit)",
+		"(file-unit)",
+		"(feature-slice)",
+		// the incremental-commit discipline that makes a timeout non-lossy
+		"commit as it goes",
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost the committable-slice guidance: missing %q", want)
+		}
+	}
+}
+
+// TestPlan_PromptPrefersTimeoutOverBudget pins the budget posture the shipped
+// templates converged on: a tight budget_usd kills a nearly-done node at the
+// threshold and the salvage costs more than letting it finish, so a planned
+// node is never bounded by budget — budget_usd is already in the prompt's
+// do-not-set list — and a long implementation node is bounded by a generous
+// "timeout" hang guard instead (a field a planned node MAY set; see the
+// Timeout disposition in field_dispositions_test.go).
+func TestPlan_PromptPrefersTimeoutOverBudget(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "implement the feature", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// why a budget bound is never the answer
+		"kills a nearly-done node",
+		// the sanctioned bounding mechanism and its posture
+		`set "timeout" to a generous Go duration string`,
+		"hang guard",
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost the timeout-over-budget guidance: missing %q", want)
+		}
+	}
+}
+
 func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 	reply := "Here is the graph:\n```json\n" + validSpec + "\n```\nGood luck!"
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})

@@ -14,9 +14,12 @@
 #      at PR time and can silently undo each other. Dedupe file ownership at
 #      authoring time — or, if two tasks genuinely overlap, serialize them
 #      into one lane (make dev-b depend on pr-a) instead of parallelizing.
-#   2. Phased commits. Every dev prompt demands a commit after each coherent
-#      step: a node timeout must never lose finished work, and worktree
-#      cleanup only preserves a lane's branch if it gained commits.
+#   2. Phased commits. Every dev prompt has the node CHOOSE a commit
+#      granularity fitting its work and commit as it goes: a node timeout must
+#      never lose finished work, and worktree cleanup only preserves a lane's
+#      branch if it gained commits. The hang guard is a generous `timeout:`,
+#      not a tight `budget_usd` — a tight budget kills a nearly-done node at
+#      the threshold, and the salvage costs more than letting it finish.
 #   3. Cold-safe session prompts. An e2e node that resumes its dev session
 #      AND declares retry starts cold on the retried attempt (`lint` warns,
 #      advisory) — so every session prompt here opens with the
@@ -25,6 +28,10 @@
 #      concurrency-sensitive code must stress the affected tests
 #      (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
 #      a flaky test passes a single run; determinism is the claim under test.
+#   5. Independent lanes fail independently. A batch of independent lanes
+#      should declare `on_fail: continue` (as this graph does): one lane's
+#      failure must not halt the others' unrelated work. Dependency edges
+#      still hold — a failed node's own downstream nodes never run.
 #
 # Run (from inside the repo, so the worktrees branch off its HEAD):
 #   oh-my-graph run graphs/backlog-batch.yaml \
@@ -35,6 +42,7 @@ name: backlog-batch
 version: "0.1"
 inputs: [repo, task_a, task_b]
 concurrency: 4
+on_fail: continue  # rule 5: independent lanes — one lane's failure must not halt the rest
 nodes:
   # ---- lane A: feature lane (worktree lane-a) -------------------------------
   - id: dev-a
@@ -46,12 +54,16 @@ nodes:
       touching ONLY the files this task owns (another lane edits other files
       in parallel — do not stray into its territory):
         {{ inputs.task_a }}
-      Add or update tests. Commit after each coherent step, staging only the
-      files you changed, by explicit path (`git add <path> ...`) — never
-      `git add -A`, `git add .`, or `git add -u`.
+      Add or update tests. Choose a commit granularity that fits the work —
+      one commit per refactoring unit for refactors, per file for sweeps, per
+      feature slice for new code — and state your choice in the first commit
+      message. Commit as you go, staging only the files you changed, by
+      explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
+      or `git add -u`.
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
     permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     success_check: { exit_zero: true }
 
@@ -115,12 +127,15 @@ nodes:
       this task owns (another lane edits code in parallel — do not stray
       into its territory):
         {{ inputs.task_b }}
-      Commit after each coherent step, staging only the files you changed,
-      by explicit path (`git add <path> ...`) — never `git add -A`,
+      Choose a commit granularity that fits the work — per file for sweeps,
+      per doc section for larger rewrites — and state your choice in the
+      first commit message. Commit as you go, staging only the files you
+      changed, by explicit path (`git add <path> ...`) — never `git add -A`,
       `git add .`, or `git add -u`.
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     success_check: { exit_zero: true }
 
