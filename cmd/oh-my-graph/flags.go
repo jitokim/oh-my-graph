@@ -106,6 +106,7 @@ type resumeFlags struct {
 	runID       string
 	approveGate string
 	rejectGate  string
+	retryFailed bool
 	concurrency int
 
 	set *flag.FlagSet
@@ -117,6 +118,7 @@ func newResumeFlags() *resumeFlags {
 	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
 	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
 	f.set.StringVar(&f.rejectGate, "reject", "", "reject the named gate, pruning its subtree")
+	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute only a halted run's failed and cancelled nodes, keeping every passed node's result")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	return f
 }
@@ -129,7 +131,7 @@ func newResumeFlags() *resumeFlags {
 // `resume <run-id>` on a paused run is an error naming the pending gate."
 func (f *resumeFlags) parse(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> (--approve|--reject) <gate-id>)")
+		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> ((--approve|--reject) <gate-id> | --retry-failed))")
 	}
 	f.runID = args[0]
 	return f.set.Parse(args[1:])

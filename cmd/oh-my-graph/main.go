@@ -8,7 +8,7 @@
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
-//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
@@ -80,7 +80,7 @@ func run(args []string) error {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
-       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>

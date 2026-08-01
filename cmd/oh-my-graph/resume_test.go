@@ -442,11 +442,14 @@ func TestMainExitCode_VersionMapsToExitCode0(t *testing.T) {
 // so a test can prove a node was launched exactly once across BOTH legs, not
 // merely that it was launched at all — and returns a scripted FAIL outcome
 // (nonzero exit, carrying a cost) for any prompt named in failing, PASS for
-// everything else.
+// everything else. failFirst scripts a transient failure instead: only the
+// prompt's FIRST invocation fails, so a --retry-failed leg can prove the
+// second attempt succeeds.
 type scriptedRunner struct {
 	mu          sync.Mutex
 	invocations map[string]int
 	failing     map[string]float64 // prompt -> cost the failing attempt reports
+	failFirst   map[string]float64 // prompt -> cost; fails the first invocation only
 }
 
 func (r *scriptedRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
@@ -456,7 +459,11 @@ func (r *scriptedRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 		r.invocations = make(map[string]int)
 	}
 	r.invocations[spec.Prompt]++
-	if cost, fails := r.failing[spec.Prompt]; fails {
+	cost, fails := r.failing[spec.Prompt]
+	if !fails && r.invocations[spec.Prompt] == 1 {
+		cost, fails = r.failFirst[spec.Prompt]
+	}
+	if fails {
 		return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "FAIL", ExitCode: 1, TotalCostUSD: cost}, nil
 	}
 	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
@@ -466,6 +473,21 @@ func (r *scriptedRunner) invocationCount(prompt string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.invocations[prompt]
+}
+
+// promptsContaining returns every recorded prompt containing substr — the
+// lookup a test needs for a node whose final prompt is interpolated at run
+// time (it embeds an artifact path the test cannot know up front).
+func (r *scriptedRunner) promptsContaining(substr string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for prompt := range r.invocations {
+		if strings.Contains(prompt, substr) {
+			out = append(out, prompt)
+		}
+	}
+	return out
 }
 
 // TestResume_ContinueOnFail_SettledFailedNodeDoesNotRerunOrDoubleRecord is the
@@ -527,5 +549,197 @@ func TestResume_ContinueOnFail_SettledFailedNodeDoesNotRerunOrDoubleRecord(t *te
 	}
 	if !strings.Contains(out, "0.0500") {
 		t.Fatalf("flaky's original $0.0500 cost must survive into the resumed leg's ledger, undoubled:\n%s", out)
+	}
+}
+
+// --- resume --retry-failed: salvage a halted run ------------------------------
+
+// haltedRetryFlowRun executes a -> flaky -> child under default halt-on-fail
+// against a scriptedRunner whose "flaky" fails only its first attempt, and
+// returns once the run has halted with the mix --retry-failed exists for:
+// "a" PASSED, "flaky" FAILED, "child" cancelled (never launched, no record).
+// child's prompt interpolates a's artifact, so a retry leg can prove a passed
+// parent's artifact still reaches a retried child.
+func haltedRetryFlowRun(t *testing.T) (runID string, rec *scriptedRunner) {
+	t.Helper()
+	g := mustParse(t, `{"name":"retry-flow","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"flaky","prompt":"flaky","depends_on":["a"]},
+		{"id":"child","prompt":"child reads {{ artifacts.a }}","depends_on":["flaky"]}]}`)
+	rec = &scriptedRunner{failFirst: map[string]float64{"flaky": 0.05}}
+	runID = "run-retry"
+
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "retry-flow.yaml", []byte("name: retry-flow\n"), nil)
+	var halted *schedule.HaltError
+	if !errors.As(err, &halted) {
+		t.Fatalf("expected the initial run to halt on flaky, got %T: %v", err, err)
+	}
+	if got := rec.invocationCount("a"); got != 1 {
+		t.Fatalf("a invocation count after leg 1 = %d, want 1", got)
+	}
+	if got := rec.invocationCount("flaky"); got != 1 {
+		t.Fatalf("flaky invocation count after leg 1 = %d, want 1", got)
+	}
+	if got := len(rec.promptsContaining("child")); got != 0 {
+		t.Fatalf("child ran %d time(s) on leg 1, want 0 — the halt cancelled it before launch", got)
+	}
+	return runID, rec
+}
+
+// TestResume_RetryFailed_ReExecutesExactlyTheNonPassedSet is the feature's
+// end-to-end story: after a default halt-on-fail run stops with a mix of
+// passed/failed/cancelled nodes, `resume --retry-failed` re-executes exactly
+// the non-passed set. "a" is never re-run (and never re-paid for), "flaky"
+// runs a second time and passes, and "child" — cancelled on leg 1 — runs with
+// a's artifact path interpolated into its prompt exactly as a gate resume
+// would have handed it. The ledger shows one row per node and events.jsonl
+// brackets the retry as its own leg.
+func TestResume_RetryFailed_ReExecutesExactlyTheNonPassedSet(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := haltedRetryFlowRun(t)
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume --retry-failed returned error: %v", resumeErr)
+	}
+
+	if got := rec.invocationCount("a"); got != 1 {
+		t.Fatalf("a invocation count after retry = %d, want still 1 — a passed node must never re-run", got)
+	}
+	if got := rec.invocationCount("flaky"); got != 2 {
+		t.Fatalf("flaky invocation count after retry = %d, want 2 — the cleared failure re-executes", got)
+	}
+	childPrompts := rec.promptsContaining("child reads ")
+	if len(childPrompts) != 1 {
+		t.Fatalf("child ran %d time(s) after retry, want exactly 1 (prompts: %v)", len(childPrompts), childPrompts)
+	}
+	if !strings.Contains(childPrompts[0], "a.out") {
+		t.Fatalf("child's prompt should interpolate the passed parent's artifact path, got %q", childPrompts[0])
+	}
+
+	if !strings.Contains(out, "retrying failed nodes: flaky") {
+		t.Fatalf("retry banner should name the cleared node:\n%s", out)
+	}
+	for _, node := range []string{"\na ", "\nflaky ", "\nchild "} {
+		if got := strings.Count(out, node); got != 1 {
+			t.Fatalf("ledger shows %d row(s) for %q, want exactly 1:\n%s", got, strings.TrimSpace(node), out)
+		}
+	}
+
+	events := readRunEvents(t, runID)
+	if got := countEvents(events, runfeed.EventRunStarted, ""); got != 2 {
+		t.Fatalf("events.jsonl holds %d run_started, want 2 — the retry is its own leg", got)
+	}
+	if !eventSeen(events, runfeed.EventNodeFailed, "flaky") || !eventSeen(events, runfeed.EventNodePassed, "flaky") {
+		t.Fatalf("the stream should tell flaky's whole story (leg-1 node_failed, retry-leg node_passed); events = %+v", events)
+	}
+	if !eventSeen(events, runfeed.EventNodePassed, "child") {
+		t.Fatal("the retried leg should have run child to a node_passed")
+	}
+}
+
+// TestResume_RetryFailedConflictsWithGateFlags pins the mutual exclusion:
+// retrying failures and deciding a gate are separate resumes, so combining
+// the flags is a clear error before any state is touched.
+func TestResume_RetryFailedConflictsWithGateFlags(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+
+	for _, args := range [][]string{
+		{runID, "--retry-failed", "--approve", "approve"},
+		{runID, "--retry-failed", "--reject", "approve"},
+	} {
+		err := executeResume(parseResumeFlags(t, args), rec)
+		if err == nil || !strings.Contains(err.Error(), "--retry-failed") {
+			t.Fatalf("args %v: expected a flag-conflict error naming --retry-failed, got %v", args, err)
+		}
+	}
+	if rec.invocationFor("ship").Prompt != "" {
+		t.Fatal("a rejected flag combination must never run a node")
+	}
+}
+
+// TestResume_RetryFailedFailsOnHeldRunLock: a retry goes through the same
+// resume.lock as a gate resume, so a run still in flight (its lock held)
+// refuses the retry without spawning anything.
+func TestResume_RetryFailedFailsOnHeldRunLock(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := haltedRetryFlowRun(t)
+
+	release, err := runstate.AcquireLock(filepath.Join(runDirFor(runID), lockFileName))
+	if err != nil {
+		t.Fatalf("acquire lock ahead of the test's retry: %v", err)
+	}
+	defer release()
+
+	err = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	var held *runstate.LockHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("expected *runstate.LockHeldError while the lock is held, got %T: %v", err, err)
+	}
+	if got := rec.invocationCount("flaky"); got != 1 {
+		t.Fatalf("flaky invocation count = %d, want still 1 — a lock-blocked retry must never spawn", got)
+	}
+}
+
+// TestResume_RetryFailedNothingToRetryExitsCleanly: retrying a run with no
+// failed node says so and returns nil (exit 0) without spawning anything or
+// opening a new leg on the event stream.
+func TestResume_RetryFailedNothingToRetryExitsCleanly(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"all-pass","nodes":[{"id":"a","prompt":"a"}]}`)
+	rec := &scriptedRunner{}
+	runID := "run-all-pass"
+	if err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "all-pass.yaml", []byte("name: all-pass\n"), nil); err != nil {
+		t.Fatalf("initial run should complete cleanly: %v", err)
+	}
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	})
+	if resumeErr != nil {
+		t.Fatalf("retrying a fully-passed run must exit cleanly, got: %v", resumeErr)
+	}
+	if !strings.Contains(out, "no failed nodes") {
+		t.Fatalf("expected a 'no failed nodes' notice, got:\n%s", out)
+	}
+	if got := rec.invocationCount("a"); got != 1 {
+		t.Fatalf("a invocation count = %d, want still 1 — nothing may spawn", got)
+	}
+	if got := countEvents(readRunEvents(t, runID), runfeed.EventRunStarted, ""); got != 1 {
+		t.Fatalf("events.jsonl holds %d run_started, want still 1 — no empty retry leg is opened", got)
+	}
+}
+
+// TestResume_RetryFailed_RejectedGateIsNotRetried pins that a gate rejection
+// is a standing human decision, not a failure --retry-failed salvages: after
+// a reject, a retry reports nothing to retry, spawns nothing, and the pruned
+// subtree stays pruned.
+func TestResume_RetryFailed_RejectedGateIsNotRetried(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+
+	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
+	var runFailed *schedule.RunFailedError
+	if !errors.As(err, &runFailed) {
+		t.Fatalf("expected *RunFailedError from the reject, got %T: %v", err, err)
+	}
+
+	var retryErr error
+	out := captureStdout(t, func() {
+		retryErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	})
+	if retryErr != nil {
+		t.Fatalf("retrying a run whose only FAIL is a rejected gate must exit cleanly, got: %v", retryErr)
+	}
+	if !strings.Contains(out, "no failed nodes") {
+		t.Fatalf("expected a 'no failed nodes' notice, got:\n%s", out)
+	}
+	if rec.invocationFor("ship").Prompt != "" {
+		t.Fatal("ship must never run — the rejected gate's subtree stays pruned across a retry")
 	}
 }

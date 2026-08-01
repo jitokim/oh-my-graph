@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/jitokim/oh-my-graph/internal/gate"
@@ -39,9 +41,18 @@ func runResume(args []string) error {
 	return executeResume(flags, runner.NewClaudeCLIRunner())
 }
 
-// executeResume loads a paused run's snapshot, applies exactly one new gate
-// decision to it, and continues the graph from where the first leg left off.
+// executeResume loads a run's snapshot and continues it in one of two modes:
+// the default gate mode applies exactly one new gate decision to a paused run,
+// while --retry-failed clears a halted run's FAILED records and re-executes
+// only the non-passed nodes (see resumeRetryLeg).
 func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
+	// A pure flag contradiction fails before any state is touched: retrying
+	// failures and deciding a gate are separate resumes — a retry leg replays
+	// prior gate decisions unchanged and must never sneak a new one in.
+	if flags.retryFailed && (flags.approveGate != "" || flags.rejectGate != "") {
+		return fmt.Errorf("resume: --retry-failed cannot be combined with --approve or --reject (decide the gate in its own resume)")
+	}
+
 	runID := flags.runID
 	runDir := runDirFor(runID)
 	statePath := filepath.Join(runDir, stateFileName)
@@ -62,15 +73,84 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	if err != nil {
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
-	if snap.Gate.PausedAt == "" {
-		return fmt.Errorf("run %q is not paused (nothing to resume)", runID)
-	}
 	warnIfGraphSourceChanged(snap)
 
+	if flags.retryFailed {
+		return resumeRetryLeg(flags, snap, nodeRunner)
+	}
+	return resumeGateLeg(flags, snap, nodeRunner)
+}
+
+// resumeGateLeg is the gate mode: apply exactly one new gate decision to a
+// paused run and continue the graph from where the earlier leg left off. It
+// carries every snapshot record forward unchanged — passed AND failed — so a
+// settled node never re-runs and the resumed ledger stays honest about the
+// whole run.
+func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
+	if snap.Gate.PausedAt == "" {
+		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
+	}
 	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt)
 	if err != nil {
 		return err
 	}
+	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
+	banner := fmt.Sprintf("Resuming run %q (gate %q %s)", flags.runID, gateID, decisionVerb(decision))
+	return continueRun(flags, snap, snap.Nodes, decisions, banner, nodeRunner)
+}
+
+// resumeRetryLeg is the --retry-failed mode: keep every PASSED node's record
+// and artifact as-is, clear the FAILED records, and run the graph again so
+// only the cleared nodes — plus any node an earlier leg cancelled or never
+// reached, which has no record to clear — execute. Prior gate decisions
+// replay unchanged through the same RecordedController a gate resume uses.
+// When nothing failed there is no leg at all: the run directory is left
+// untouched (no new run_started bracket, no spawn) and the command exits 0.
+func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
+	retained, cleared := partitionForRetry(snap)
+	if len(cleared) == 0 {
+		fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
+		if snap.Gate.PausedAt != "" {
+			fmt.Fprintf(os.Stdout, "It is paused at gate %q — decide it with --approve %s or --reject %s instead.\n",
+				snap.Gate.PausedAt, snap.Gate.PausedAt, snap.Gate.PausedAt)
+		}
+		return nil
+	}
+	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
+	return continueRun(flags, snap, retained, snap.Gate.Decisions, banner, nodeRunner)
+}
+
+// partitionForRetry splits a snapshot's node records for --retry-failed:
+// retained records carry forward as-is — every PASS (dependents interpolate
+// their artifacts exactly as after a gate resume), plus a rejected gate's
+// FAIL, because a rejection is a standing human decision and not a failure to
+// salvage (retrying it would only replay the recorded reject) — and cleared
+// lists, sorted for a stable banner, the FAILED node ids whose records are
+// dropped so the retry leg re-executes them. Cancelled/never-settled nodes
+// have no record and need no clearing: they become runnable again once their
+// parents settle.
+func partitionForRetry(snap runstate.Snapshot) (retained map[string]runstate.NodeRecord, cleared []string) {
+	retained = make(map[string]runstate.NodeRecord, len(snap.Nodes))
+	for id, rec := range snap.Nodes {
+		if rec.Verdict == runstate.VerdictPass || snap.Gate.Decisions[id] == runstate.GateReject {
+			retained[id] = rec
+			continue
+		}
+		cleared = append(cleared, id)
+	}
+	sort.Strings(cleared)
+	return retained, cleared
+}
+
+// continueRun is the shared back half of both resume modes: rebuild the run's
+// collaborators from the snapshot (graph, handoff, ledger, recorder, event
+// stream, worktrees), seed the scheduler so exactly the carried records never
+// re-run, and execute the leg. records is the set of node records this leg
+// carries forward — all of snap.Nodes for a gate resume, the retained subset
+// for a retry — and decisions is the gate-decision map the leg replays.
+func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, banner string, nodeRunner runner.NodeRunner) error {
+	runID := flags.runID
+	runDir := runDirFor(runID)
 
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
@@ -82,12 +162,12 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	warnBypassPermissions(g)
 
 	h := handoff.New(runDir, snap.Inputs)
-	for nodeID, rec := range snap.Nodes {
+	for nodeID, rec := range records {
 		h.Seed(nodeID, rec.ArtifactPath, rec.SessionID)
 	}
 
 	led := ledger.New(runID)
-	for nodeID, rec := range snap.Nodes {
+	for nodeID, rec := range records {
 		led.Record(ledger.Record{
 			NodeID:    nodeID,
 			SessionID: rec.SessionID,
@@ -99,8 +179,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 		})
 	}
 
-	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
-	recorder := runstate.NewSnapshotRecorder(statePath, runstate.Snapshot{
+	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:           runID,
 		GraphSourcePath: snap.GraphSourcePath,
 		GraphSHA256:     snap.GraphSHA256,
@@ -108,7 +187,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 		Inputs:          snap.Inputs,
 		ContinueOnFail:  snap.ContinueOnFail,
 		ToolPolicies:    snap.ToolPolicies,
-		Nodes:           snap.Nodes,
+		Nodes:           records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
@@ -125,12 +204,18 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	defer feed.Close()
 
 	// The resumed leg manages worktrees in the same per-run location the
-	// first leg did. Its checkouts are fresh, though: a branch the first leg
-	// retained with commits still exists, so a resumed node re-declaring that
-	// worktree name fails loudly on the ref collision rather than silently
-	// resetting retained work.
+	// first leg did. Its checkouts are fresh, though — a retry leg included,
+	// which provisions exactly as a fresh run would rather than reattaching
+	// anything: a branch an earlier leg retained with commits still exists,
+	// so a resumed node re-declaring that worktree name fails loudly on the
+	// ref collision rather than silently resetting retained work.
 	worktrees := worktreeManagerFor(runID)
 
+	// carried re-derives the two scheduler seed sets from exactly the records
+	// this leg carries forward, through the same Snapshot methods a fresh
+	// load uses — a record cleared by --retry-failed is in neither set, which
+	// is precisely what makes its node run again.
+	carried := runstate.Snapshot{Nodes: records}
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -143,16 +228,16 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).
-		CompletedNodes: snap.CompletedNodes(),
+		CompletedNodes: carried.CompletedNodes(),
 		// SettledNodes additionally covers a node that FAILED on an earlier
 		// leg (absent from CompletedNodes by design, so it does not wrongly
 		// unblock its dependents), so THAT node itself still never re-runs
 		// either — otherwise --continue-on-fail's "this failure is final"
 		// would silently be undone by a later resume.
-		SettledNodes: snap.SettledNodes(),
+		SettledNodes: carried.SettledNodes(),
 	})
 
-	fmt.Fprintf(os.Stdout, "Resuming run %q (gate %q %s)\n\n", runID, gateID, decisionVerb(decision))
+	fmt.Fprintf(os.Stdout, "%s\n\n", banner)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
