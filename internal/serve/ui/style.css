@@ -288,16 +288,41 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .entry.ledger .entry-word { font-weight: 600; color: var(--ink); }
 
+/* --- splitter (feed/map resize handle) --------------------------------------- */
+
+/* A 7px hit area whose centered 1px line is the feed/map divider; hovering
+   (or dragging) brightens it to the accent as the resize affordance. app.js
+   drives the drag with pointer events and hides the handle while the map is
+   collapsed (the collapsed map then wears its own border). */
+#splitter {
+  flex: none;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(to right,
+    transparent 3px, var(--hairline) 3px, var(--hairline) 4px, transparent 4px);
+}
+#splitter:hover,
+#splitter.dragging {
+  background: linear-gradient(to right,
+    transparent 3px, var(--accent) 3px, var(--accent) 4px, transparent 4px);
+}
+#splitter[hidden] { display: none; }
+
 /* --- map (side panel) ------------------------------------------------------- */
 
+/* The map column grows with the window by default (so a maximized window is
+   not all empty feed margin) and takes a dragged width via --map-w; the feed
+   keeps the remaining space, its text capped at #feed's max-width for line
+   length only. app.js clamps --map-w so neither column collapses. */
 #map {
-  width: 380px;
+  flex: none;
+  width: var(--map-w, clamp(240px, 32vw, 720px));
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--hairline);
   background: var(--surface);
 }
-#map.collapsed { width: auto; }
+#map.collapsed { width: auto; border-left: 1px solid var(--hairline); }
 #map.collapsed .map-body { display: none; }
 
 .map-head {
