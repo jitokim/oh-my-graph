@@ -151,7 +151,7 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 		return err
 	}
 	if flags.dryRun {
-		return dryRunGraph(os.Stdout, flags.graphPath, flags.inputs)
+		return dryRunGraph(os.Stdout, os.Stderr, flags.graphPath, flags.inputs)
 	}
 
 	// Read the raw bytes ourselves (rather than graph.Load, which discards

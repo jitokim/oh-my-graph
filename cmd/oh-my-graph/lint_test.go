@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ nodes:
   - { id: b, prompt: b, depends_on: [a] }
 `)
 	var out strings.Builder
-	err := lintGraph(&out, path)
+	err := lintGraph(&out, io.Discard, path)
 	if err == nil {
 		t.Fatal("a cyclic graph must fail lint")
 	}
@@ -46,7 +47,7 @@ nodes:
   - { id: a, prompt: a, handoff: session }
 `)
 	var out strings.Builder
-	err := lintGraph(&out, path)
+	err := lintGraph(&out, io.Discard, path)
 	if err == nil {
 		t.Fatal("a session-handoff root must fail lint")
 	}
@@ -67,7 +68,7 @@ nodes:
   - { id: d, prompt: d, handoff: session }
 `)
 	var out strings.Builder
-	err := lintGraph(&out, path)
+	err := lintGraph(&out, io.Discard, path)
 	if err == nil {
 		t.Fatal("a broken graph must fail lint")
 	}
@@ -83,7 +84,7 @@ nodes:
 
 func TestLintGraph_UnreadableFileFails(t *testing.T) {
 	var out strings.Builder
-	err := lintGraph(&out, filepath.Join(t.TempDir(), "no-such.yaml"))
+	err := lintGraph(&out, io.Discard, filepath.Join(t.TempDir(), "no-such.yaml"))
 	if err == nil {
 		t.Fatal("a missing graph file must fail lint")
 	}
@@ -95,7 +96,7 @@ func TestLintGraph_UnreadableFileFails(t *testing.T) {
 func TestLintGraph_MalformedYAMLFails(t *testing.T) {
 	path := writeGraphFile(t, "name: [unterminated")
 	var out strings.Builder
-	err := lintGraph(&out, path)
+	err := lintGraph(&out, io.Discard, path)
 	if err == nil {
 		t.Fatal("malformed YAML must fail lint")
 	}
@@ -127,6 +128,68 @@ func TestMainExitCode_LintMapsToOneAndZero(t *testing.T) {
 	}
 }
 
+// --- placeholder warnings ---------------------------------------------------
+
+// TestLintGraph_WarnsOnPlaceholderTypos pins the warning contract: a
+// placeholder-like token that will not resolve is reported to the warning
+// writer in `warning: <graph>: node "<id>": ...` form, while the graph still
+// lints as valid — nil error, "valid" on stdout, warnings never on stdout.
+func TestLintGraph_WarnsOnPlaceholderTypos(t *testing.T) {
+	path := writeGraphFile(t, `
+name: typo
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: review, prompt: "read {{ artifacts.dev | inlin }}", depends_on: [dev] }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("placeholder warnings must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	want := "warning: " + path + `: node "review": prompt: `
+	if !strings.Contains(warnings.String(), want) {
+		t.Errorf("warning should be prefixed %q:\n%s", want, warnings.String())
+	}
+	if !strings.Contains(warnings.String(), "{{ artifacts.dev | inlin }}") {
+		t.Errorf("warning should quote the offending token:\n%s", warnings.String())
+	}
+	if strings.Contains(out.String(), "warning:") {
+		t.Errorf("warnings must not leak to stdout:\n%s", out.String())
+	}
+}
+
+// TestLintGraph_CleanPlaceholdersStaySilent pins the silent side: declared
+// inputs, ancestor artifacts, and deliberate literal {{ }} text produce no
+// warnings at all.
+func TestLintGraph_CleanPlaceholdersStaySilent(t *testing.T) {
+	path := writeGraphFile(t, `
+name: clean
+inputs: [repo]
+nodes:
+  - { id: dev, prompt: "work in {{ inputs.repo }}; explain {{ mustache }} syntax" }
+  - { id: review, prompt: "read {{ artifacts.dev | inline }}", depends_on: [dev] }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("valid graph failed lint: %v", err)
+	}
+	if warnings.String() != "" {
+		t.Errorf("clean placeholders should warn nothing, got:\n%s", warnings.String())
+	}
+}
+
+// TestMainExitCode_PlaceholderWarningsKeepExitZero pins that warnings are
+// advice only: through the real argv path, a graph that only has placeholder
+// warnings still exits 0.
+func TestMainExitCode_PlaceholderWarningsKeepExitZero(t *testing.T) {
+	path := writeGraphFile(t, "name: warned\nnodes:\n  - { id: a, prompt: \"use {{ inputs.ghost }}\" }\n")
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only placeholder warnings exited %d, want 0", code)
+	}
+}
+
 // --- success case -----------------------------------------------------------
 
 func TestLintGraph_ValidGraphPasses(t *testing.T) {
@@ -139,7 +202,7 @@ nodes:
   - { id: join, prompt: join, depends_on: [left, right] }
 `)
 	var out strings.Builder
-	if err := lintGraph(&out, path); err != nil {
+	if err := lintGraph(&out, io.Discard, path); err != nil {
 		t.Fatalf("valid graph failed lint: %v", err)
 	}
 	if !strings.Contains(out.String(), "valid") {
