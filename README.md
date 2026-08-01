@@ -276,6 +276,15 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 - **failure salvage** — `resume <run-id> --retry-failed` re-executes only a
   failed run's failed and cancelled nodes, keeping every passed node's
   artifact for its dependents ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **session limits pause, not fail** — when your subscription hits its
+  session limit mid-run, the limited node is not marked failed: the run stops
+  launching new work, lets in-flight nodes finish, and exits with code 2 and
+  a hint like `Resume after 5:20pm with: oh-my-graph resume <run-id>
+  --retry-failed` — which later finishes exactly the work that never ran.
+  Detection is honest string-matching on the CLI's message (it offers no
+  structured signal), so an unrecognized wording safely degrades to an
+  ordinary failure that the same command still salvages
+  ([ADR 0009](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
 ## Platform support
 

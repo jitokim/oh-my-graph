@@ -262,6 +262,14 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    operator passed.
 5. Done when ready+running are empty.
 
+One outcome is exempt from step 4 entirely: a subprocess killed by the
+subscription's **session limit** is a pause, not a node failure (ADR 0009).
+The runner classifies it (`NodeOutcome.SessionLimited`); the scheduler then
+stops launching, drains in-flight siblings instead of cancelling them, records
+the limited node nowhere, and returns `*LimitPausedError` → exit code 2 with a
+`resume --retry-failed` hint. Full semantics under "Gate nodes and `resume`"
+below — the limit rides the same pause/drain machinery a gate does.
+
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
 attempt does not resume the parent session either — it starts cold, which
@@ -590,7 +598,21 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   decision, not a failure to salvage: its record is retained, it is never
   retried, and its subtree stays pruned. A run with no retryable failure
   reports "no failed nodes to retry" and exits 0 without spawning anything or
-  opening a new leg on the event stream. A retry leg provisions worktrees
+  opening a new leg on the event stream — unless the run holds launchable
+  nodes with no record at all (a session-limit pause leaves exactly that
+  state — ADR 0009), in which case the leg runs them as "running unfinished
+  nodes"; a gate-paused run is still redirected to `--approve`/`--reject`.
+- **A subscription session limit is a pause, not a failure (ADR 0009).** The
+  runner classifies the CLI's limit message (`NodeOutcome.SessionLimited`,
+  matcher pinned in `internal/runner/sessionlimit.go`); the scheduler then
+  stops launching new work but drains in-flight siblings (which may
+  themselves limit and join the paused set), records the limited node
+  NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
+  event), and returns `*LimitPausedError` → exit code 2 with a
+  best-effort-parsed "resume after <reset time> with: `resume <run-id>
+  --retry-failed`" hint. A gate pause outranks a limit; a limit outranks
+  continue-on-fail pruned failures. The leg closes on the stream as outcome
+  `"paused"` with a distinguishing `detail`. A retry leg provisions worktrees
   fresh, exactly as a fresh run would — it does not reattach a branch a
   failed leg retained; that branch keeps the preserved work, and a retried
   node re-declaring the name fails loudly on the ref collision (see "Worktree

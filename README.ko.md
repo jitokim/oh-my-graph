@@ -286,6 +286,15 @@ nodes:
 - **실패 복구** — `resume <run-id> --retry-failed`는 실패한 run에서 실패·취소된
   노드만 다시 실행하며, 통과한 노드의 artifact는 dependents를 위해 그대로
   유지됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **세션 한도는 실패가 아니라 일시정지** — run 도중 구독의 세션 한도에
+  도달해도 해당 노드는 실패로 기록되지 않습니다: run은 새 작업 launch를
+  멈추고, 진행 중이던 노드는 끝까지 완료시킨 뒤, exit code 2와 함께
+  `Resume after 5:20pm with: oh-my-graph resume <run-id> --retry-failed`
+  같은 힌트를 출력합니다 — 이 명령이 나중에 실행되지 못한 작업만 정확히
+  마저 끝냅니다. 감지는 CLI 메시지에 대한 정직한 문자열 매칭이며(구조화된
+  신호가 없음), 문구가 바뀌어 인식하지 못하면 일반 실패로 안전하게
+  강등되고 같은 명령으로 여전히 복구됩니다
+  ([ADR 0009](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
 ## 플랫폼 지원
 
