@@ -81,6 +81,30 @@ func (e *PausedError) Error() string {
 	)
 }
 
+// LimitPausedError is Run's result when a node's claude subprocess hit the
+// subscription's session limit (ADR 0009): the limited node was recorded
+// nowhere (not FAILED — it never really ran), in-flight siblings were drained
+// (not cancelled), and no new work launched, so the run is resumable with
+// `oh-my-graph resume <run-id> --retry-failed` once the limit resets — the
+// limited node re-runs because it was never marked passed. NodeIDs lists every
+// node that hit the limit before the drain finished (siblings draining
+// concurrently may join the paused set), sorted; Cause is the first limited
+// node's captured failure cause, carrying the CLI's own "resets <time>" hint
+// for the CLI layer to surface. cmd/oh-my-graph maps this to exit code 2,
+// exactly like a gate pause — a limit is not a failure and must never be
+// reported or logged as one.
+type LimitPausedError struct {
+	NodeIDs []string
+	Cause   string
+}
+
+func (e *LimitPausedError) Error() string {
+	return fmt.Sprintf(
+		"run paused: session limit reached at node(s) %s; resume with `oh-my-graph resume <run-id> --retry-failed` once the limit resets",
+		strings.Join(e.NodeIDs, ", "),
+	)
+}
+
 // pauseSignal is runNode's internal signal that a gate node's decision was
 // DecisionPause. It is not a node failure: Run's launch loop recognizes it via
 // errors.As before it can reach the continue-on-fail or halt-on-fail paths, so
@@ -99,6 +123,22 @@ func (e *pauseSignal) Error() string { return fmt.Sprintf("node %q: gate paused"
 type rejectSignal struct{ NodeID string }
 
 func (e *rejectSignal) Error() string { return fmt.Sprintf("node %q: gate rejected", e.NodeID) }
+
+// limitSignal is runNode's internal signal that the node's subprocess hit the
+// subscription session limit (NodeOutcome.SessionLimited). Like pauseSignal,
+// Run's launch loop intercepts it before the continue-on-fail / halt-on-fail
+// paths — a limit pauses the whole run regardless of failure policy, and the
+// limited node is deliberately recorded nowhere (no ledger row, no snapshot
+// record, no terminal event), so a later `resume --retry-failed` sees it as
+// simply never run and launches it again (ADR 0009).
+type limitSignal struct {
+	NodeID string
+	Cause  string
+}
+
+func (e *limitSignal) Error() string {
+	return fmt.Sprintf("node %q: session limit reached", e.NodeID)
+}
 
 // MissingToolPolicyError means a caller imposed a tool ceiling (a non-nil
 // Options.ToolPolicies) that has no entry for this node.
