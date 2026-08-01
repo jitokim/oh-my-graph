@@ -1,0 +1,63 @@
+# apply-flags — a reusable "apply review flags" lane.
+#
+#   dev ──▶ verify
+#
+# When to use it (the operator threshold): a one-to-two-line mechanical fix
+# is faster applied by hand — anything more than that goes through this graph,
+# so the fixes land tested, committed, pushed, and independently verified
+# against the flag list instead of being hand-edited under review pressure.
+#
+# Why `cwd` and not `worktree:`: managed worktrees branch from the invocation
+# repo's HEAD, which is the wrong base for an EXISTING branch — this lane must
+# continue the branch the review flags were raised against. So the dev node
+# switches branches inside the repo you point it at, which means that repo's
+# working tree MUST be clean before you run this graph (a `git switch` over
+# local edits would fail, or worse, drag them into the fix commit).
+#
+# Run (against a clean tree):
+#   oh-my-graph run graphs/apply-flags.yaml \
+#     --input repo=/path/to/repo \
+#     --input branch=feat/my-branch \
+#     --input flags="1) nil-check in foo.go:42  2) rename helperX in bar.go"
+name: apply-flags
+version: "0.1"
+inputs: [repo, branch, flags]
+concurrency: 2
+nodes:
+  - id: dev
+    type: claude-run
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      You are in the repo at {{ inputs.repo }}. The working tree is clean.
+      Run `git switch {{ inputs.branch }}` first — this lane continues an
+      existing branch, so stay on it for everything below.
+      Apply ONLY the review flags listed here — no scope creep, no drive-by
+      cleanups, no refactors beyond what a flag literally asks for:
+        {{ inputs.flags }}
+      Then run the project's own checks (its Makefile/test target — whatever
+      the repo's CONTRIBUTING or CI runs). Commit the fixes, staging ONLY the
+      files you changed, by explicit path (`git add <path> ...`) — never
+      `git add -A`, `git add .`, or `git add -u`. Push the branch.
+      Reply with a one-line summary of which flags you applied.
+    allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: verify
+    type: claude-run
+    depends_on: [dev]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Independently verify the fix commit(s) on branch {{ inputs.branch }}.
+      dev reported: {{ artifacts.dev | inline }}.
+      Compare the branch's new diff against this flag list:
+        {{ inputs.flags }}
+      The diff must cover exactly the flags — every flag addressed, and
+      nothing in the diff that no flag asked for. Reply exactly COVERED if
+      both hold; otherwise reply DRIFT followed by the missed flags and/or
+      the unrequested changes.
+    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true, result_matches: "COVERED" }
