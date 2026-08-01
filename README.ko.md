@@ -143,7 +143,11 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),
 `--continue-on-fail`을 공유합니다. 둘 다 그래프가 실행되는 동안 노드별
-라이브 피드를 출력하고, 이어서 비용 ledger를 출력합니다.
+라이브 피드를 출력하고, 이어서 비용 ledger를 출력합니다. 그래프 자신이
+그래프 레벨 `on_fail: continue`(기본값 `halt`)로 실패 정책을 선언할 수도
+있습니다 — 한 lane의 실패가 다른 lane들의 진행 중인 작업을 취소해서는 안
+되는 독립 lane 배치에 맞는 기본값입니다. 플래그와 필드는 OR로 결합됩니다:
+어느 쪽이든 continue라고 하면 continue입니다.
 
 `lint`는 구조를 검사하고 — DAG/cycle, 알 수 없는 `depends_on` id,
 session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로

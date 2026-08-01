@@ -103,7 +103,9 @@ Node schema:
     verify: { command: "make local PORT=8080", timeout: 5m }   # optional (v1.1)
   retry: { max: 1, on: [nonzero_exit] }   # optional
 ```
-Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`, `nodes: [..]`.
+Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
+`on_fail: halt | continue` (default halt — the graph's own failure policy;
+see "Execution engine" step 4), `nodes: [..]`.
 Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`.
 
 ## Handoff — artifact default, session opt-in (committed)
@@ -246,7 +248,17 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    A sibling the halt cancelled is recorded with the causal story —
    `cancelled: run halted after node "X" failed` — not the raw Go
    "context canceled" its cancellation surfaces as.
-   `--continue-on-fail` (opt-in) prunes only the failed subtree.
+   `--continue-on-fail` (opt-in) prunes only the failed subtree. A graph can
+   opt in itself with graph-level `on_fail: continue` (default `halt`; any
+   other value is a load-time `GraphValidationError` naming the valid set,
+   like an unknown retry cause) — what a batch of independent lanes declares
+   so one lane's failure can't cancel every other lane's in-flight work,
+   without the operator remembering the flag. Precedence is an OR, resolved
+   in the scheduler (`effectiveContinueOnFail`, next to
+   `effectiveConcurrency`) so `run`/`auto`/`resume` all share it: either the
+   flag or the graph saying continue means continue; the flag cannot force a
+   halt onto a graph that declared continue, nor the graph cancel a flag the
+   operator passed.
 5. Done when ready+running are empty.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never

@@ -20,7 +20,7 @@ func (c *commonRunFlags) register(set *flag.FlagSet) {
 	c.inputs = make(inputFlag)
 	set.Var(c.inputs, "input", "bind a graph input as key=value (repeatable)")
 	set.IntVar(&c.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
-	set.BoolVar(&c.continueOnFail, "continue-on-fail", false, "prune only a failed node's subtree instead of halting the run")
+	set.BoolVar(&c.continueOnFail, "continue-on-fail", false, "prune only a failed node's subtree instead of halting the run (ORs with the graph's on_fail field: either saying continue means continue)")
 	set.BoolVar(&c.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
 }
 

@@ -29,10 +29,13 @@ import (
 // SCOPE, stated so the guard is not read as covering more than it does: this
 // walks the per-NODE schema (graph.Node and its nested graph.SuccessCheck),
 // which is where every capability-granting field lives. Graph-LEVEL fields
-// (name, version, inputs, concurrency) are deliberately out of scope — they
-// grant a plan no capability, and the one with any teeth, concurrency, is
+// (name, version, inputs, concurrency, on_fail) are deliberately out of scope
+// — they grant a plan no capability. The two with any teeth: concurrency is
 // clamped by schedule.effectiveConcurrency to the same global cap a
-// hand-written graph gets.
+// hand-written graph gets, and on_fail only picks between the two failure
+// policies the operator can already select with --continue-on-fail — every
+// node a continue keeps running is still under the same tool ceiling — with
+// unknown values rejected by graph.Validate like any hand-written graph's.
 
 // disposition is what validatePlannedNodes does with one field of a planned
 // node. There is no "not considered" value on purpose: that is the state this

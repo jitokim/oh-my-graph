@@ -136,7 +136,11 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
 10), and `--continue-on-fail`. Both print a live per-node feed as the graph
-executes, then a cost ledger.
+executes, then a cost ledger. A graph can also declare the failure policy
+itself with graph-level `on_fail: continue` (default `halt`) — the right
+default for a batch of independent lanes, where one lane's failure should
+not cancel the others' in-flight work. The flag ORs with the field: either
+saying continue means continue.
 
 `lint` checks structure — DAG/cycle, unknown `depends_on` ids, the
 session-handoff parent rule, verify blocks — and exits 0 when valid, 1 when
