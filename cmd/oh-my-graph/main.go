@@ -200,8 +200,21 @@ func runAuto(args []string) error {
 	nodeRunner := runner.NewClaudeCLIRunner()
 	// Same live-view gate as `run`, and the second (last) site injecting the
 	// real ExecOpener.
-	return planAndExecute(ctx, os.Stdout, coordinator.New(nodeRunner), nodeRunner, flags.commonRunFlags, flags.goal, nil,
+	coord := coordinator.New(nodeRunner, agentMappingOptions(flags.noAgentMapping)...)
+	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal, nil,
 		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
+}
+
+// agentMappingOptions wires subagent auto-mapping for a production
+// Coordinator: the default user-then-project agent directories, or an
+// explicit off when the user passed --no-agent-mapping. This is the only
+// place the real filesystem locations enter the coordinator — tests construct
+// theirs with temp dirs instead.
+func agentMappingOptions(off bool) []coordinator.Option {
+	if off {
+		return []coordinator.Option{coordinator.WithoutAgentMapping()}
+	}
+	return []coordinator.Option{coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...)}
 }
 
 // planAndExecute is one goal's full auto sequence — plan, save the spec, print
@@ -422,10 +435,39 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		if len(node.AllowedTools) > 0 {
 			line += " [tools: " + strings.Join(node.AllowedTools, ", ") + "]"
 		}
+		if node.Agent != "" {
+			line += " [agent: " + node.Agent + "]"
+		}
 		fmt.Fprintln(w, line)
 	}
+	noteAgentMappings(w, plan.AgentMappings)
 	noteCeiling(w)
 	fmt.Fprintln(w)
+}
+
+// noteAgentMappings discloses every subagent auto-mapping decision before the
+// run starts: skipped candidates with their reason, and — when any mapping
+// applied — the isolation trade a mapped node makes (agent resolution needs
+// the user's settings loaded, so such a node gives up the "no settings load"
+// half of the ceiling; the declared tool list still binds). The mappings
+// themselves are already visible as [agent: ...] on the node lines above;
+// silence here means no candidate matched and nothing changed.
+func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
+	applied := false
+	for _, m := range mappings {
+		if m.SkippedReason != "" {
+			fmt.Fprintf(w, "  ! agent %q not applied to %s: %s\n", m.Agent, m.NodeID, m.SkippedReason)
+			continue
+		}
+		applied = true
+	}
+	if applied {
+		fmt.Fprint(w,
+			"  Nodes marked [agent: ...] were auto-mapped onto your own Claude Code agents; they load\n"+
+				"  your settings so the agent can resolve (their declared tool list still binds).\n"+
+				"  Pass --no-agent-mapping to turn this off.\n",
+		)
+	}
 }
 
 // noteCeiling states what running this plan actually does to the machine. It

@@ -220,8 +220,14 @@ func TestChatLoop_BlankLinesAreSkipped(t *testing.T) {
 	}
 }
 
+// chat accepts exactly one flag, --no-agent-mapping (a chat graph turn is an
+// auto run and must honor the same opt-out); every other flag and any
+// positional argument is still rejected before the loop starts.
 func TestRunChat_RejectsArguments(t *testing.T) {
-	err := runChat([]string{"--concurrency", "2"})
+	if err := runChat([]string{"--concurrency", "2"}); err == nil {
+		t.Fatal("want an error for a flag chat does not define")
+	}
+	err := runChat([]string{"stray"})
 	if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
 		t.Fatalf("err = %v, want an unexpected-argument error", err)
 	}
