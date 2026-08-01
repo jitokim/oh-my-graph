@@ -819,7 +819,7 @@ nodes:
 	if rec.invocationFor("ship").Prompt != "" {
 		t.Error("a gate's dependent must never launch while the run is paused")
 	}
-	if !fr.pausedGates["approve"] {
+	if !fr.pauseRecorded("approve") {
 		t.Error("Recorder.RecordPause was not called for the paused gate")
 	}
 }
@@ -1401,6 +1401,12 @@ func (f *fakeRecorder) recordFor(nodeID string) (runstate.NodeRecord, bool) {
 	defer f.mu.Unlock()
 	rec, ok := f.nodes[nodeID]
 	return rec, ok
+}
+
+func (f *fakeRecorder) pauseRecorded(gateNodeID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pausedGates[gateNodeID]
 }
 
 // --- execution ceiling ------------------------------------------------------
