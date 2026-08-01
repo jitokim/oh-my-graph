@@ -8,18 +8,18 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
-// PlaceholderWarning is one advisory finding from LintPlaceholders: a
-// {{ ... }} token in a node's templated field that looks like it wants to be
-// an interpolation but will not (or cannot) resolve at run time. It is advice,
-// never an error — the runtime deliberately passes unrecognized tokens through
-// verbatim, because a prompt may legitimately contain literal {{ }} text.
-type PlaceholderWarning struct {
+// Warning is one advisory finding from this package's lint sweeps
+// (LintPlaceholders, LintSessions): something a valid graph declares that
+// will — or may — not behave as written at run time. It is advice, never an
+// error, and must never affect whether a graph is valid or what any command
+// exits with.
+type Warning struct {
 	NodeID string
-	Field  string // which templated field: "prompt", "cwd", "success_check.verify.command", "success_check.verify.cwd"
+	Field  string // which node field the finding is about, e.g. "prompt", "cwd", "worktree", "retry"
 	Detail string
 }
 
-func (w PlaceholderWarning) String() string {
+func (w Warning) String() string {
 	return fmt.Sprintf("node %q: %s: %s", w.NodeID, w.Field, w.Detail)
 }
 
@@ -64,13 +64,13 @@ var placeholderKinds = map[string]bool{
 // Callers should hand it an already-validated graph — on a broken one
 // (e.g. a dependency cycle) the ancestry walk still terminates but the
 // findings may be noise on top of the real errors.
-func LintPlaceholders(g *graph.Graph) []PlaceholderWarning {
+func LintPlaceholders(g *graph.Graph) []Warning {
 	declared := make(map[string]bool, len(g.Inputs))
 	for _, name := range g.Inputs {
 		declared[name] = true
 	}
 
-	var warnings []PlaceholderWarning
+	var warnings []Warning
 	for _, node := range g.Nodes {
 		ancestors := ancestorsOf(g, node.ID)
 		fields := []struct{ name, tmpl string }{
@@ -86,7 +86,7 @@ func LintPlaceholders(g *graph.Graph) []PlaceholderWarning {
 		for _, field := range fields {
 			for _, token := range looseTokenPattern.FindAllString(field.tmpl, -1) {
 				if detail := judgeToken(g, node.ID, declared, ancestors, token); detail != "" {
-					warnings = append(warnings, PlaceholderWarning{NodeID: node.ID, Field: field.name, Detail: detail})
+					warnings = append(warnings, Warning{NodeID: node.ID, Field: field.name, Detail: detail})
 				}
 			}
 		}

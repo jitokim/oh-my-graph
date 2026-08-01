@@ -109,7 +109,10 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   single session-parent (same cwd/git scope). Use for tight sequential
   continuation (dev→e2e). Validation: a session node must have EXACTLY ONE parent
   — a root node has no session to resume, and a fan-in can't merge sessions;
-  both must use artifact. Rejected at load time.
+  both must use artifact. Rejected at load time. A gate parent is likewise
+  rejected at load (a gate records no session to resume), and `lint` /
+  `run --dry-run` warn when a session child's cwd/worktree differs from its
+  parent's.
 
 ## Node-as-subagent (`agent:`, v1.1 — hand-written graphs only)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
