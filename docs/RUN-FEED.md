@@ -107,6 +107,9 @@ carried). Each retried attempt gets a *fresh* id — the failed attempt's id
 names the failed attempt's transcript — so `node_retried`'s `session_id`
 supersedes the one published before it. This is an optional field existing
 readers ignore, added under the additive rule below: **no schema bump**.
+The in-repo reference consumer is `serve`'s `/api/transcript`: it reduces
+this stream to "is the node running, and under which session", then serves
+that session's transcript tail as the live view's "now doing" line.
 
 The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
 added in schema **2**) mark the decision itself; an approved/rejected gate

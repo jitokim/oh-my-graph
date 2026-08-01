@@ -614,6 +614,20 @@ serve is one run, live, locally.
   the id is matched against the snapshot's own node set before any
   filesystem use (unknown id → 404; known node without an artifact → 204
   "no result yet").
+- **Live transcript tail:** `/api/transcript?node=<id>` serves a RUNNING
+  node's "now doing" — the last ~30 human-relevant entries (assistant text +
+  tool-use names) of the session transcript named by the pre-assigned
+  `session_id` the feed published on `node_started`/`node_retried`
+  (docs/RUN-FEED.md); the UI polls it onto the node's open feed line every
+  few seconds and drops it on settle. This is serve's ONE read outside the
+  run directory — into the user's own `~/.claude/projects` — and only for
+  the run's own sessions: the file read is named by the feed-published,
+  shape-checked UUID (found by session-id filename, not by reproducing the
+  CLI's undocumented cwd-to-dirname mangling), never by URL input. The node
+  id gets `/api/result`'s membership guard, with one widening: before the
+  first snapshot exists (exactly when the first node is running), the run's
+  own feed vouches instead. Not running / no session id (a gate, a
+  session-handoff node) / no transcript yet → 204.
 - **v1 scope is the single-run live view ONLY:** no run list page, no history
   browsing, no auth, no config file, no WebSocket (SSE over the append-only
   stream is the whole transport).
@@ -862,7 +876,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,resolve}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract
+internal/serve/{serve,resolve,transcript}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract, plus the live transcript tail of a running node's own session
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..6}-*.md
