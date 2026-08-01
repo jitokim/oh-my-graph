@@ -12,7 +12,10 @@
 // claude ran; it only ever sees a NodeOutcome or an error.
 package runner
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ToolPolicy is the complete tool ceiling for one node, as ONE value object
 // rather than a handful of parallel fields — a caller cannot hand the runner
@@ -69,6 +72,19 @@ type NodeInvocation struct {
 	Cwd            string
 	PermissionMode string
 	ResumeSession  string
+	// SessionID, when non-empty, is the PRE-ASSIGNED claude session id for this
+	// invocation, rendered as `--session-id <uuid>` ("Use a specific session ID
+	// for the conversation (must be a valid UUID)" — claude --help, verified
+	// 2026-08-02, help text only). Assigning the id before the child spawns is
+	// what lets the scheduler publish it on node_started, so a live view can
+	// locate a RUNNING node's transcript instead of waiting for the terminal
+	// envelope. Produce it with NewSessionID.
+	//
+	// Mutually exclusive with ResumeSession: a resuming node continues an
+	// EXISTING session (whose id is already known — it is the resume target),
+	// so the scheduler never sets both. Empty means "let claude mint the id",
+	// which is exactly the pre-flag behaviour.
+	SessionID string
 	// Agent, when non-empty, is the name of a Claude Code subagent (as defined
 	// in the user's own ~/.claude/agents or <cwd>/.claude/agents) this node
 	// runs as, rendered as `--agent <name>`. The node then inherits that
@@ -94,6 +110,13 @@ type NodeInvocation struct {
 	// A plain scalar, deliberately NOT folded into Policy: it bounds spend, not
 	// capability, and the two have no reason to change together.
 	BudgetUSD float64
+	// Timeout, when positive, bounds this node's whole run, replacing the
+	// runner's own default (20m). It carries the node's `timeout:` declaration,
+	// already parsed and proven positive at load (graph.Node.TimeoutDuration —
+	// ADR 0007). Zero means "the node declared none": the runner applies its
+	// default, so an invocation is never unbounded either way. Like BudgetUSD
+	// it stays outside Policy — it bounds wall-clock, not capability.
+	Timeout time.Duration
 	// Policy is this node's complete tool ceiling.
 	Policy ToolPolicy
 }

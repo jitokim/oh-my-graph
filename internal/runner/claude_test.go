@@ -98,6 +98,34 @@ func TestBuildCmd_AgentArgv(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_SessionIDArgv pins the full argv of the shape a pre-assigned
+// session id actually occurs in: a fresh-session node (never a resuming one —
+// NodeInvocation documents the two fields as mutually exclusive, and the
+// scheduler enforces it). The id is what the scheduler already published on
+// node_started, so the flag rendering here is the other half of that promise:
+// the transcript a live view went looking for is the one this child writes.
+func TestBuildCmd_SessionIDArgv(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		SessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
+	})
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--allowedTools", "Read",
+		"--session-id", "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
 // TestBuildCmd_OmitsOptionalFlags proves every optional flag is absent when
 // nothing configured it — a fan-in node with a clean session, no tool grants
 // and no imposed ceiling.
@@ -112,6 +140,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	for _, flag := range []string{
 		"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume",
 		"--setting-sources", "--tools", "--strict-mcp-config", "--agent",
+		"--session-id",
 	} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
@@ -481,6 +510,41 @@ exit 0
 	}
 }
 
+// TestRun_SessionIDReachesTheChildAndComesBack closes the pre-assignment loop
+// end to end without real claude: the stub echoes the `--session-id` value it
+// received back as its envelope's session_id, so the assertion proves both
+// that the flag reached the child's argv and that NodeOutcome.SessionID —
+// still sourced from the envelope, exactly as before this flag existed —
+// agrees with the id the scheduler published on node_started.
+func TestRun_SessionIDReachesTheChildAndComesBack(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, `#!/bin/sh
+sid=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--session-id" ]; then sid="$a"; fi
+  prev="$a"
+done
+printf '{"session_id":"%s","result":"PASS","total_cost_usd":0.01}' "$sid"
+`)
+
+	assigned := NewSessionID()
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	outcome, err := r.Run(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		SessionID:      assigned,
+	})
+	if err != nil {
+		t.Fatalf("unexpected Run error: %v", err)
+	}
+	if outcome.SessionID != assigned {
+		t.Errorf("outcome session id = %q, want the pre-assigned %q", outcome.SessionID, assigned)
+	}
+}
+
 // --- cancellation kills the child tree (real spawn) ---------------------------
 
 // TestRun_CancelledRunKillsTheChild proves defaultTimeout's promise — a wedged
@@ -552,4 +616,53 @@ func waitForFile(t *testing.T, path string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("stub never signalled it started (no %s)", path)
+}
+
+// --- per-invocation timeout (ADR 0007) ----------------------------------------
+
+// TestRun_InvocationTimeoutBoundsTheRun proves a node's declared `timeout:`
+// actually governs the run: with the runner still on its 20m default, an
+// invocation carrying a tiny Timeout must be killed by the deadline, promptly,
+// and surface as the context error the Scheduler classifies as a run_error.
+// Like the cancellation test above this needs a real (free, offline) stub —
+// a deadline cannot be proven against code that never runs.
+func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
+
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	start := time.Now()
+	_, err := r.Run(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Timeout:        100 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("a timed-out node must not report success")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a context.DeadlineExceeded error, got %T: %v", err, err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run took %s to honour a 100ms invocation timeout", elapsed)
+	}
+}
+
+// TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault pins the other half of
+// the contract: an invocation that declared nothing (Timeout zero) runs under
+// the runner's own timeout, so no node is ever unbounded. The runner's timeout
+// is shrunk to make the fallback observable without waiting 20 minutes.
+func TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
+
+	r := NewClaudeCLIRunner(WithBinary(stub), WithTimeout(100*time.Millisecond))
+	_, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the runner's own timeout to fire, got %T: %v", err, err)
+	}
 }

@@ -200,6 +200,28 @@ main { flex: 1; display: flex; min-height: 0; }
   overflow-wrap: anywhere;
 }
 
+/* A running node's live "now doing" transcript tail, under its open feed
+   line: quiet monospace ink, capped at ~6 line boxes with the newest lines
+   pinned to the bottom (flex column-reverse would reorder; instead the tail
+   is short by construction — the server caps entries — and overflow clips
+   the OLDEST from the top via the bottom alignment). It disappears with the
+   line when the node settles. */
+.live-tail {
+  margin: 0.25rem 0 0 1.15rem;
+  padding: 0;
+  max-height: 126px; /* 6 × 18px line boxes + a hair */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
 /* A rich settled entry: the node's card in the stream. Failure emphasis is
    weight and a status-color border bar on the cause line — never red text. */
 .entry.rich {

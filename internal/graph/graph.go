@@ -193,6 +193,15 @@ type Node struct {
 	Handoff        string       `yaml:"handoff" json:"handoff,omitempty"`
 	SuccessCheck   SuccessCheck `yaml:"success_check" json:"success_check,omitempty"`
 	Retry          *Retry       `yaml:"retry" json:"retry,omitempty"`
+	// Timeout, when non-empty, is a Go duration string bounding this node's
+	// whole subprocess run, replacing the runner's 20-minute default — the
+	// declaration a legitimately long node makes so the engine's wedge
+	// protection stops killing its real work (ADR 0007). Validate parses it at
+	// LOAD time and refuses anything unparseable or non-positive. Unlike the
+	// verify timeout it has no ceiling: a verification rides on its node's
+	// critical path, whereas this IS the critical path, and raising it is the
+	// point of declaring it. Empty keeps the runner's default.
+	Timeout string `yaml:"timeout" json:"timeout,omitempty"`
 	// Agent, when set, names a Claude Code subagent this node runs as —
 	// rendered as `claude -p --agent <name>`, which resolves it against the
 	// user's OWN ~/.claude/agents or <cwd>/.claude/agents definitions, so the
@@ -230,6 +239,19 @@ type Node struct {
 	// on a planned node — an unreviewed plan must not create checkouts or
 	// branches in the user's repository.
 	Worktree string `yaml:"worktree" json:"worktree,omitempty"`
+
+	// timeout is Timeout parsed once, at load, by Validate
+	// (validateNodeTimeouts). Unexported so the parsed form cannot drift from
+	// the declared string: callers ask via TimeoutDuration.
+	timeout time.Duration
+}
+
+// TimeoutDuration returns the parsed node-level Timeout, or 0 when the node
+// declared none — zero means "use the runner's default bound", so a
+// hand-built Node that never went through validation still ends up under the
+// default, never unbounded.
+func (n Node) TimeoutDuration() time.Duration {
+	return n.timeout
 }
 
 // Graph is the validated DAG: its metadata plus the nodes and a by-id index

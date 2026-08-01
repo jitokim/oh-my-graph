@@ -265,6 +265,8 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   `result_matches`, and the engine-run `verify` command) plus per-cause retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
+- **`timeout`** — a per-node wall-clock bound replacing the 20-minute default,
+  for nodes whose legitimate work runs long ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 

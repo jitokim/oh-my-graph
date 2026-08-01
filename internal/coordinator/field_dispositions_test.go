@@ -79,6 +79,7 @@ var nodeFieldDispositions = map[string]fieldRule{
 	"DependsOn": {disposition: allowed, why: "the plan's topology; graph.Validate enforces existence and acyclicity"},
 	"Handoff":   {disposition: allowed, why: "artifact/session are both safe; arity is enforced by graph.Validate"},
 	"BudgetUSD": {disposition: allowed, why: "a cap on spend — a planner can only make a node cheaper to fail"},
+	"Timeout":   {disposition: allowed, why: "a wall-clock bound with BudgetUSD's standing — it changes how long an already-ceilinged node may run, not what it may do (ADR 0007)"},
 	"Retry":     {disposition: allowed, why: "bounded re-runs of an already-ceilinged node"},
 
 	"Prompt": {

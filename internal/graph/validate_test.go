@@ -691,3 +691,70 @@ nodes:
 		t.Errorf("worktree did not survive parsing: %+v", n)
 	}
 }
+
+// --- node-level timeout: rejected at LOAD, never mid-run --------------------
+//
+// The node `timeout:` (ADR 0007) replaces the runner's 20m default for one
+// node. Like the verify timeout it is parsed once at load; unlike it there is
+// no ceiling — raising the bound is the point of declaring it.
+
+func TestParse_NodeTimeoutUnparseableRejected(t *testing.T) {
+	_, err := Parse([]byte("name: t\nnodes:\n  - { id: slow, prompt: slow, timeout: 45 minutes }\n"))
+
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "slow" {
+		t.Fatalf("error named node %q, want slow", vErr.NodeID)
+	}
+	if !strings.Contains(vErr.Reason, "45 minutes") {
+		t.Fatalf("reason should quote the offending value: %q", vErr.Reason)
+	}
+}
+
+func TestParse_NodeTimeoutNonPositiveRejected(t *testing.T) {
+	for _, timeout := range []string{"0s", "-5m"} {
+		t.Run(timeout, func(t *testing.T) {
+			_, err := Parse([]byte("name: t\nnodes:\n  - { id: slow, prompt: slow, timeout: " + timeout + " }\n"))
+
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != "slow" {
+				t.Fatalf("error named node %q, want slow", vErr.NodeID)
+			}
+			if !strings.Contains(vErr.Reason, "positive") {
+				t.Fatalf("reason should say the timeout must be positive: %q", vErr.Reason)
+			}
+		})
+	}
+}
+
+func TestParse_NodeTimeoutParsedAtLoad(t *testing.T) {
+	g, err := Parse([]byte(`
+name: long-node
+nodes:
+  - { id: slow, prompt: slow, timeout: 45m }
+  - { id: plain, prompt: plain }
+`))
+	if err != nil {
+		t.Fatalf("valid node timeout rejected: %v", err)
+	}
+
+	// Node is a value in both Nodes and byID, so the parsed duration must be
+	// visible through both — the Scheduler reads via NodeByID.
+	slow, _ := g.NodeByID("slow")
+	if got := slow.TimeoutDuration(); got != 45*time.Minute {
+		t.Errorf("declared timeout = %s, want 45m", got)
+	}
+	if got := g.Nodes[0].TimeoutDuration(); got != 45*time.Minute {
+		t.Errorf("timeout via Nodes slice = %s, want 45m", got)
+	}
+
+	plain, _ := g.NodeByID("plain")
+	if got := plain.TimeoutDuration(); got != 0 {
+		t.Errorf("undeclared timeout = %s, want 0 (the runner's default applies)", got)
+	}
+
+	// The ceiling that bounds a verify timeout deliberately does not apply
+	// here: a node may declare far more than 10m.
+	if _, err := Parse([]byte("name: t\nnodes:\n  - { id: vslow, prompt: v, timeout: 3h }\n")); err != nil {
+		t.Errorf("a node timeout over the verify ceiling must still be valid: %v", err)
+	}
+}

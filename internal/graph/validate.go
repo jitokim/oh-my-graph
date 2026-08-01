@@ -61,7 +61,10 @@ func (g *Graph) Validate() error {
 //  8. a worktree name, when present, is a single safe path element, and the
 //     node declares no cwd alongside it;
 //  9. every retry.on cause is a known token — a typoed cause would match
-//     nothing and silently mean "never retry".
+//     nothing and silently mean "never retry";
+//  10. a node-level timeout, when present, is a parseable, positive Go
+//     duration — parsed here, once, so no run ever discovers a malformed
+//     duration halfway through.
 //
 // Every check runs even when an earlier one failed, so a graph broken in
 // several ways reports all of them at once instead of one per attempt. That
@@ -81,6 +84,45 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateAgentNames()...)
 	issues = append(issues, g.validateWorktrees()...)
 	issues = append(issues, g.validateRetryCauses()...)
+	issues = append(issues, g.validateNodeTimeouts()...)
+	return issues
+}
+
+// validateNodeTimeouts parses every node-level `timeout:` at load — the same
+// move validateSuccessChecks makes for the verify timeout, minus the ceiling:
+// the verify ceiling protects a node's critical path from its own evidence
+// check, whereas the node timeout IS the critical path, and a graph declares
+// one precisely to raise it (ADR 0007). An undeclared timeout stays zero,
+// which the runner reads as "use the default bound".
+//
+// Node is a VALUE in both Nodes and byID, so unlike the verify timeout (which
+// travels behind the Verify pointer) the parsed duration must be written to
+// both copies explicitly, or the Scheduler's NodeByID lookup would read a
+// node that never got its timeout.
+func (g *Graph) validateNodeTimeouts() []error {
+	var issues []error
+	for i, n := range g.Nodes {
+		if n.Timeout == "" {
+			continue
+		}
+		timeout, err := time.ParseDuration(n.Timeout)
+		if err != nil {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("invalid timeout %q (want a Go duration like 30m, 1h): %v", n.Timeout, err),
+			})
+			continue
+		}
+		if timeout <= 0 {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("timeout %q must be positive", n.Timeout),
+			})
+			continue
+		}
+		g.Nodes[i].timeout = timeout
+		g.byID[n.ID] = g.Nodes[i]
+	}
 	return issues
 }
 

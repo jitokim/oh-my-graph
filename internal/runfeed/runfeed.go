@@ -121,8 +121,14 @@ type Event struct {
 	// CostUSD is the node's reported spend on terminal node events (omitted
 	// when zero — e.g. a gate, which spawns no subprocess).
 	CostUSD float64 `json:"cost_usd,omitempty"`
-	// SessionID is the claude session the node ran under, on terminal node
-	// events; empty when no session exists (a gate, or a spawn failure).
+	// SessionID is the claude session the node runs under. On node_started and
+	// node_retried it is the PRE-ASSIGNED id the engine hands claude via
+	// --session-id, published early so a consumer can locate a RUNNING node's
+	// transcript; on terminal node events it is the id the claude envelope
+	// reported (the same id, envelope-sourced). Empty when no session exists or
+	// none was pre-assigned: a gate, a spawn failure, or a session-handoff
+	// node's start (its transcript is the parent session, already published on
+	// the parent's terminal event).
 	SessionID string `json:"session_id,omitempty"`
 	// Retries is the 1-based retry ordinal on node_retried, and the number of
 	// retries that preceded the terminal attempt on node_passed/node_failed

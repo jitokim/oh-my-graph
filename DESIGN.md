@@ -29,11 +29,17 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   --allowedTools "<comma,joined>" \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ] \
-  [ --max-budget-usd <amount> ]
+  [ --session-id <uuid> ] [ --max-budget-usd <amount> ]
 ```
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
-only `AllowedTools`, so its argv is the first two lines and `--resume`.
+only `AllowedTools`, so its argv is the first two lines plus `--resume` or
+`--session-id`. Every fresh-session node gets `--session-id` with a UUID the
+scheduler pre-assigned (`runner.NewSessionID`), so the id is published on
+`node_started` while the node is still RUNNING and a live view can find its
+transcript; a resuming node gets `--resume` instead — the two are mutually
+exclusive (`claude --help`, verified 2026-08-02: `--session-id <uuid>`, "must
+be a valid UUID").
 run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
 On a failed run the runner also captures WHY as a one-line
 `NodeOutcome.FailureCause` — the envelope's own error report (`errors` /
@@ -89,6 +95,7 @@ Node schema:
   agent: code-reviewer        # optional (v1.1): run as this Claude Code subagent — see "Node-as-subagent"
   worktree: lane              # optional: run in a managed git worktree shared by every node naming it — see "Worktree isolation"
   budget_usd: 0.50            # per-node cost cap: claude aborts mid-run (--max-budget-usd) + post-hoc FAIL (see Execution engine)
+  timeout: 45m                # optional: wall-clock bound on the node's whole run (Go duration; default 20m, no ceiling) — ADR 0007
   handoff: artifact           # artifact(default) | session
   success_check:              # see "Success checks" — verify is the only evidence-grounded predicate
     exit_zero: true
@@ -293,8 +300,20 @@ the one-envelope `NodeRunner` contract; that alone stays deferred — mid-node
 kill itself no longer does. Deriving a wall-clock timeout from `budget_usd` via
 an assumed $/minute rate was still considered and rejected: the conversion rate
 would be fabricated, so it would look like enforcement while enforcing nothing.
-The per-node `context.WithTimeout` (~20m default) remains as a wall-clock bound
-orthogonal to cost.
+The per-node `context.WithTimeout` (20m default) remains as a wall-clock bound
+orthogonal to cost — and since ADR 0007 a node may replace the default with its
+own `timeout:` (a Go duration, validated at load like the verify timeout but
+with no ceiling: the node timeout IS the critical path, and raising it is the
+point of declaring it). An undeclared timeout keeps the 20m default, so no
+node is ever unbounded.
+
+A **turn-denominated budget** (`budget_turns:` → `claude -p --max-turns N`) was
+proposed as a supplement to `budget_usd` — dollars are a hard cost ceiling but
+a poor scoping unit (hard to estimate per task), while turns are a unit humans
+can estimate — and is **rejected for now**: the installed CLI's `claude --help`
+documents no `--max-turns` flag (verified 2026-08-02), so the engine could ship
+only the schema, not the enforcement. See ADR 0007 for the recorded design and
+the revisit condition.
 
 ## Success checks — evidence-grounded verification (v1.1)
 `success_check` is a conjunction of predicates, cheapest first, evaluated only
@@ -611,6 +630,20 @@ serve is one run, live, locally.
   the id is matched against the snapshot's own node set before any
   filesystem use (unknown id → 404; known node without an artifact → 204
   "no result yet").
+- **Live transcript tail:** `/api/transcript?node=<id>` serves a RUNNING
+  node's "now doing" — the last ~30 human-relevant entries (assistant text +
+  tool-use names) of the session transcript named by the pre-assigned
+  `session_id` the feed published on `node_started`/`node_retried`
+  (docs/RUN-FEED.md); the UI polls it onto the node's open feed line every
+  few seconds and drops it on settle. This is serve's ONE read outside the
+  run directory — into the user's own `~/.claude/projects` — and only for
+  the run's own sessions: the file read is named by the feed-published,
+  shape-checked UUID (found by session-id filename, not by reproducing the
+  CLI's undocumented cwd-to-dirname mangling), never by URL input. The node
+  id gets `/api/result`'s membership guard, with one widening: before the
+  first snapshot exists (exactly when the first node is running), the run's
+  own feed vouches instead. Not running / no session id (a gate, a
+  session-handoff node) / no transcript yet → 204.
 - **v1 scope is the single-run live view ONLY:** no run list page, no history
   browsing, no auth, no config file, no WebSocket (SSE over the append-only
   stream is the whole transport).
@@ -738,7 +771,7 @@ turns that rule into a build failure. Current dispositions:
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
 | `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
-| `budget_usd`, `retry` | allowed |
+| `budget_usd`, `timeout`, `retry` | allowed |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
@@ -749,7 +782,7 @@ Scheduler as any other graph.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
-- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, success_check, handoff, depends_on).
+- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, handoff, depends_on).
 - Edge = implicit `Node.DependsOn []string` (no struct).
 - **Scheduler** — drive DAG: ready/running sets, cap, context cancel, halt/continue;
   calls NodeRunner.Run, consults Graph, writes RunLedger, asks Handoff to resolve/persist.
@@ -810,7 +843,10 @@ Scheduler as any other graph.
   node_retried/run_finished), one JSON line per transition, fsynced per line.
   Emitted from the same scheduler hook points as the progress line and the
   snapshot, via an `EventSink` interface defaulting to a no-op — the third
-  destination next to `Recorder`, same seam pattern. This is the stable
+  destination next to `Recorder`, same seam pattern. `node_started` and
+  `node_retried` publish the attempt's pre-assigned session id (see
+  `--session-id` above), so a consumer can locate a running node's transcript
+  before the terminal event. This is the stable
   consumer contract fleetops tails (oh-my-graph executes, never renders); the
   full contract, including how it versions alongside `state.json`, is
   docs/RUN-FEED.md.
@@ -866,7 +902,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,resolve}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract
+internal/serve/{serve,resolve,transcript}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract, plus the live transcript tail of a running node's own session
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..6}-*.md

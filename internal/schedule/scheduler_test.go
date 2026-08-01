@@ -1627,6 +1627,35 @@ nodes:
 	}
 }
 
+// TestScheduler_NodeTimeoutReachesInvocation proves a node's `timeout:` YAML
+// field survives buildInvocation and arrives at the NodeRunner as
+// NodeInvocation.Timeout, already parsed — the plumbing that lets a
+// legitimately long node replace ClaudeCLIRunner's 20m default (ADR 0007). A
+// node that declared none carries zero, which the runner reads as "apply the
+// default".
+func TestScheduler_NodeTimeoutReachesInvocation(t *testing.T) {
+	g := mustGraph(t, `
+name: long-node
+nodes:
+  - { id: slow, prompt: slow, timeout: 45m }
+  - { id: plain, prompt: plain }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"slow": pass("s-s", 0), "plain": pass("s-p", 0),
+	}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("slow").Timeout; got != 45*time.Minute {
+		t.Errorf("timeout for slow node = %s, want 45m", got)
+	}
+	if got := rec.invocationFor("plain").Timeout; got != 0 {
+		t.Errorf("timeout for node with no timeout: field = %s, want 0", got)
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // findRecord reports whether the ledger holds a record for nodeID. Callers
