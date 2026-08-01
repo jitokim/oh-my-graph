@@ -78,7 +78,7 @@ it's deleted from each node's subprocess environment before that node runs
 While it runs you'll see a live line per node — `▶ write  running…`, then
 `✓ write  PASS  $0.0091  4.2s` — the terminal is never silent during a
 multi-node run. At the end you get a ledger: one row per node (session id,
-cost, verdict, duration) and the total cost — see [Example](#example) below.
+cost, verdict, detail) and the total cost — see [Example](#example) below.
 
 When stdout is a terminal, `run` and `auto` also serve the [web live
 view](#usage) of the starting run on an ephemeral `127.0.0.1` port and open it
@@ -131,10 +131,12 @@ session-handoff parent rule, verify blocks — and exits 0 when valid, 1 when
 not. On a valid graph it also prints advisory `warning:` lines to stderr for
 placeholder-like `{{ ... }}` tokens that won't resolve — a typoed filter
 (`| inlin`), a singular `{{ artifact.x }}`, an undeclared input, or an
-`artifacts.<id>` naming a node that doesn't exist or isn't an ancestor.
+`artifacts.<id>` naming a node that doesn't exist or isn't an ancestor —
+plus, for a `handoff: session` node, a `cwd`/`worktree` that differs from
+its session-parent's, or a `retry` block (a retried attempt starts cold).
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
-while a well-formed reference to an undeclared input or unknown node fails
+while a well-formed reference to an unbound input or unknown node fails
 its node when interpolation runs.
 `run --dry-run` shares that exit contract and the same warnings, and
 additionally proves `{{ inputs.* }}` resolution against your actual

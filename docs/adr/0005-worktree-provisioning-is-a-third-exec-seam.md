@@ -61,6 +61,9 @@ The invariant is **restated, not weakened**:
 > — each behind its own injected interface. No other package imports
 > `os/exec`.
 
+> *(Superseded by [ADR 0006](0006-browser-open-is-a-fourth-exec-seam.md):
+> the count is now four — `browser.ExecOpener` joined the list.)*
+
 The child-environment scrub applies to git too. A repository's own hooks
 (`post-checkout` fires on `git worktree add`) are arbitrary user code that
 may legitimately invoke claude, so `internal/childenv.Scrub` is applied to

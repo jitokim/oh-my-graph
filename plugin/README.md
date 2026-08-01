@@ -48,7 +48,7 @@ oh-my-graph run graphs/dev-review-pr.yaml --input repo=.
 oh-my-graph auto "add a Platform support section to the README"
 ```
 
-Claude then reports the run ledger (session id, cost, verdict, duration per
+Claude then reports the run ledger (session id, cost, verdict, detail per
 node, plus total cost) back to you in the session. For `auto`, it also shows
 the planned graph before the ledger.
 
@@ -116,7 +116,7 @@ over typing `/oh-my-graph:graph` each turn.
 ### Setup
 
 1. Install the plugin (either option in
-   [Installing the plugin](#installing-the-plugin) below).
+   [Installing the plugin](#installing-the-plugin) above).
 2. Add a one-word shell function to your shell rc (`~/.zshrc` / `~/.bashrc`):
 
    ```sh
