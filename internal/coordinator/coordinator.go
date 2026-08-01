@@ -147,6 +147,13 @@ type Plan struct {
 	// the scheduler never has to merge two half-policies. Never nil for a
 	// successful plan, and it has an entry for every node in Graph.
 	ToolPolicies map[string]runner.ToolPolicy
+	// AgentMappings are the subagent auto-mapping decisions (agentmap.go):
+	// every node mapped onto one of the user's own agents, plus every
+	// candidate refused for exceeding the node's tool ceiling. The caller
+	// must print these with the plan — a mapping the human never saw before
+	// execution would defeat the reason the mapping lives in trusted code.
+	// Empty when nothing matched or mapping is off.
+	AgentMappings []AgentMapping
 }
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
@@ -154,11 +161,39 @@ type Plan struct {
 // ClaudeCLIRunner, tests inject FakeRunner.
 type Coordinator struct {
 	runner runner.NodeRunner
+	// agentMappingOff disables subagent auto-mapping (agentmap.go) — the
+	// --no-agent-mapping opt-out, set via WithoutAgentMapping.
+	agentMappingOff bool
+	// agentDirs is where agent definitions are scanned from — the CLI passes
+	// DefaultAgentDirs, tests point it at temp dirs. Empty means no scanning
+	// and no mapping, ever: a Coordinator only reads the filesystem when its
+	// constructor was explicitly told where.
+	agentDirs []string
+}
+
+// Option configures a Coordinator at construction.
+type Option func(*Coordinator)
+
+// WithoutAgentMapping turns off subagent auto-mapping for every Plan call —
+// the `--no-agent-mapping` flag's implementation.
+func WithoutAgentMapping() Option {
+	return func(c *Coordinator) { c.agentMappingOff = true }
+}
+
+// WithAgentDirs sets the directories scanned for agent definitions, lowest
+// precedence first (scanAgentDirs lets later directories win). The CLI passes
+// DefaultAgentDirs; tests pass temp dirs.
+func WithAgentDirs(dirs ...string) Option {
+	return func(c *Coordinator) { c.agentDirs = dirs }
 }
 
 // New builds a Coordinator bound to a NodeRunner.
-func New(nodeRunner runner.NodeRunner) *Coordinator {
-	return &Coordinator{runner: nodeRunner}
+func New(nodeRunner runner.NodeRunner, opts ...Option) *Coordinator {
+	c := &Coordinator{runner: nodeRunner}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // coordinatorInvocation is the shared stance of every coordinator-owned call
@@ -223,12 +258,18 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 	if err := validatePlannedNodes(g, outcome.Result); err != nil {
 		return Plan{}, err
 	}
-	return Plan{
+	plan := Plan{
 		Graph:        g,
 		Spec:         []byte(spec),
 		CostUSD:      outcome.TotalCostUSD,
 		ToolPolicies: toolPoliciesByNode(g),
-	}, nil
+	}
+	// Strictly after validation: the PLAN may not carry agent: (rejected
+	// above); the coordinator's own trusted mapping is what may add it.
+	if err := c.applyAgentMapping(&plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
 }
 
 // toolPoliciesByNode derives the run's execution ceiling: one complete policy
@@ -480,6 +521,12 @@ func validatePlannedNodeVerify(node graph.Node) error {
 // `--setting-sources ""` cannot resolve the user's ~/.claude/agents at all
 // (DESIGN.md, E2), so an accepted `agent:` on a planned node would not even
 // start. Two independent reasons, one rule.
+//
+// This rejection is about the PLAN — untrusted planner output. The
+// coordinator itself may still set `agent:` on a node strictly AFTER this
+// validation, from its own conservative scan of the user's agent files
+// (agentmap.go); that path deliberately trades layer 1 for agent resolution
+// and reports every mapping on the Plan.
 func validatePlannedNodeAgent(node graph.Node) error {
 	if node.Agent == "" {
 		return nil

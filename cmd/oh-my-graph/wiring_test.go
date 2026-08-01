@@ -315,3 +315,36 @@ func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 		t.Errorf("pre-run note still claims declared scopes are unenforced:\n%s", got)
 	}
 }
+
+// TestPrintPlan_ShowsAgentMappingsAndSkips pins the disclosure contract of
+// subagent auto-mapping: every mapping made appears on its node's line, every
+// refused candidate prints its reason, and an applied mapping's isolation
+// trade (the node loads your settings so --agent can resolve) plus the
+// opt-out flag are stated — because a mapping the human never saw before
+// execution would defeat the reason the mapping lives in trusted code.
+func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
+		`{"id":"review","prompt":"p","agent":"code-reviewer"},` +
+		`{"id":"scan","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := coordinator.Plan{Graph: g, AgentMappings: []coordinator.AgentMapping{
+		{NodeID: "review", Agent: "code-reviewer"},
+		{NodeID: "scan", Agent: "scanner", SkippedReason: "tools exceed ceiling: Bash"},
+	}}
+
+	var out strings.Builder
+	printPlan(&out, plan, "/tmp/graph.json")
+	got := out.String()
+
+	for _, want := range []string{
+		"[agent: code-reviewer]",
+		`agent "scanner" not applied to scan: tools exceed ceiling: Bash`,
+		"--no-agent-mapping",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan printout is missing %q:\n%s", want, got)
+		}
+	}
+}

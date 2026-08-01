@@ -1,0 +1,187 @@
+package coordinator
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jitokim/oh-my-graph/internal/runner"
+)
+
+// reviewSpec is a planner reply with one node whose id ("review") token-matches
+// an agent named code-reviewer ("review" is a >=4-rune prefix of "reviewer").
+const reviewSpec = `{"name":"review-run","version":"1","nodes":[` +
+	`{"id":"review","prompt":"review the diff","allowed_tools":["Read","Grep"]}]}`
+
+// writeAgentFile drops one Claude Code agent definition into dir: YAML
+// frontmatter between --- fences, then a system prompt the mapping never reads.
+func writeAgentFile(t *testing.T, dir, filename, frontmatter string) {
+	t.Helper()
+	body := "---\n" + frontmatter + "\n---\n\nYou are the agent.\n"
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func planWithAgents(t *testing.T, opts ...Option) Plan {
+	t.Helper()
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reviewSpec})
+	plan, err := New(fake, opts...).Plan(context.Background(), "review the diff", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return plan
+}
+
+// The happy path: one agent, one clear token match, tools inside the node's
+// ceiling — the node gets agent:, the decision lands on AgentMappings, the
+// node's policy drops layer 1 so --agent can resolve, and the re-encoded Spec
+// carries the mapping so a saved/resumed plan keeps it.
+func TestPlan_AgentMappingHit(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ndescription: reviews code\ntools: Read, Grep")
+
+	plan := planWithAgents(t, WithAgentDirs(dir))
+
+	node, ok := plan.Graph.NodeByID("review")
+	if !ok || node.Agent != "code-reviewer" {
+		t.Fatalf("node agent = %q, want code-reviewer", node.Agent)
+	}
+	if len(plan.AgentMappings) != 1 || plan.AgentMappings[0].Agent != "code-reviewer" || plan.AgentMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want one applied code-reviewer mapping", plan.AgentMappings)
+	}
+	if plan.ToolPolicies["review"].SettingSources != nil {
+		t.Error("a mapped node must drop SettingSources so --agent can resolve")
+	}
+	if !strings.Contains(string(plan.Spec), `"agent":"code-reviewer"`) {
+		t.Errorf("spec must carry the mapping for save/resume, got %s", plan.Spec)
+	}
+}
+
+// Project agents shadow user agents of the same name (later dir wins). The
+// versions are distinguishable by behavior: the user's declares Bash (beyond
+// the ceiling, would be skipped), the project's declares Read (mappable) — so
+// an applied mapping proves the project file won.
+func TestPlan_ProjectAgentShadowsUserAgent(t *testing.T) {
+	userDir, projectDir := t.TempDir(), t.TempDir()
+	writeAgentFile(t, userDir, "code-reviewer.md", "name: code-reviewer\ntools: Bash")
+	writeAgentFile(t, projectDir, "code-reviewer.md", "name: code-reviewer\ntools: Read")
+
+	plan := planWithAgents(t, WithAgentDirs(userDir, projectDir))
+
+	if len(plan.AgentMappings) != 1 || plan.AgentMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want the project version applied", plan.AgentMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "code-reviewer" {
+		t.Errorf("node agent = %q, want code-reviewer", node.Agent)
+	}
+}
+
+// Two agents matching the same node is ambiguity, and ambiguity is no mapping
+// at all — not an entry, not a guess.
+func TestPlan_AmbiguousMatchMapsNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read")
+	writeAgentFile(t, dir, "review-bot.md", "name: review-bot\ntools: Read")
+
+	plan := planWithAgents(t, WithAgentDirs(dir))
+
+	if len(plan.AgentMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none for an ambiguous match", plan.AgentMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q, want empty", node.Agent)
+	}
+}
+
+// A candidate whose frontmatter tools exceed the node's planned allowlist is
+// refused: the refusal is recorded (so the printout can say so), the node
+// stays unmapped, its isolation policy stays intact, and the Spec is left
+// byte-identical to the planner's reply.
+func TestPlan_AgentBeyondCeilingSkippedWithReason(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Bash")
+
+	plan := planWithAgents(t, WithAgentDirs(dir))
+
+	if len(plan.AgentMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one skipped entry", plan.AgentMappings)
+	}
+	skip := plan.AgentMappings[0]
+	if skip.SkippedReason == "" || !strings.Contains(skip.SkippedReason, "Bash") {
+		t.Errorf("SkippedReason = %q, want it to name the offending tool", skip.SkippedReason)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q, want empty after a ceiling skip", node.Agent)
+	}
+	if plan.ToolPolicies["review"].SettingSources == nil {
+		t.Error("an unmapped node must keep its settings isolation")
+	}
+	if string(plan.Spec) != reviewSpec {
+		t.Errorf("spec must stay untouched when nothing applied, got %s", plan.Spec)
+	}
+}
+
+// Scan failures are silent no-mapping, never an error: a missing directory, a
+// file with no frontmatter, and frontmatter with no name must all just drop
+// out — zero-config stays zero-config.
+func TestPlan_AgentScanFailuresAreSilent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "broken.md"), []byte("no frontmatter here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeAgentFile(t, dir, "nameless.md", "description: has no name")
+
+	plan := planWithAgents(t, WithAgentDirs(filepath.Join(dir, "does-not-exist"), dir))
+
+	if len(plan.AgentMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none from a failed scan", plan.AgentMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q, want empty", node.Agent)
+	}
+}
+
+// WithoutAgentMapping (the --no-agent-mapping flag) wins even over a directory
+// holding a perfectly mappable agent: nothing is scanned, nothing changes.
+func TestPlan_WithoutAgentMappingDisablesMapping(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read")
+
+	plan := planWithAgents(t, WithAgentDirs(dir), WithoutAgentMapping())
+
+	if len(plan.AgentMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none with mapping off", plan.AgentMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q, want empty", node.Agent)
+	}
+	if string(plan.Spec) != reviewSpec {
+		t.Errorf("spec must stay untouched with mapping off, got %s", plan.Spec)
+	}
+}
+
+// A short shared token must not match by prefix: "dev" (under minMatchPrefix)
+// against "developer" and "devops" would be a guess, and — belt and braces —
+// even textually it is ambiguous, which already yields no mapping.
+func TestPlan_ShortTokenDoesNotMatchByPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "developer.md", "name: developer\ntools: Read")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"dev-run","version":"1","nodes":[` +
+		`{"id":"dev","prompt":"do the work","allowed_tools":["Read"]}]}`})
+	plan, err := New(fake, WithAgentDirs(dir)).Plan(context.Background(), "do the work", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.AgentMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none for a sub-minimum prefix", plan.AgentMappings)
+	}
+}

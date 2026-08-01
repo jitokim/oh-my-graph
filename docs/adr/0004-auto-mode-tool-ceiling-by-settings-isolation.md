@@ -112,6 +112,16 @@ explicit opt-in such as `--agent-map review=code-reviewer`. The implicit scan is
 rejected permanently: it would make an `auto` run's behaviour depend on files the
 user forgot they had.
 
+> **Update (2026-08-02):** superseded in part. Auto-mapping shipped
+> (`internal/coordinator/agentmap.go`) once (a) and (b) held for the mapped
+> configuration: a mapped node runs `--agent` plus the full `--tools` ceiling —
+> exactly E6's measured setup, where frontmatter tools did not widen past
+> `--tools` — and the coordinator additionally refuses agents whose frontmatter
+> exceeds the node's `allowed_tools`. Condition (c) was relaxed from an explicit
+> opt-in flag to printed disclosure of every mapping in the plan output plus a
+> `--no-agent-mapping` opt-out; the mapped node drops Layer 1 (E2) and the
+> printout says so. See DESIGN.md, "Node-as-subagent".
+
 ## Measurement outcome (added at implementation, claude 2.1.220)
 
 The decision above was taken from reading the shipped binary. Before shipping,

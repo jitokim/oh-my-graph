@@ -108,6 +108,16 @@ oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 있습니다.
 플래너가 만든 노드는 `permission_mode: bypassPermissions`를 절대 쓸 수
 없습니다; 정밀한 제어가 필요하다면 여전히 커스텀 YAML이 그 경로입니다.
+
+자신만의 Claude Code 에이전트(`~/.claude/agents`, `./.claude/agents` —
+프로젝트 쪽이 우선)가 있다면, 노드 id가 에이전트 이름과 명확히 일치할 때
+`auto`가 플랜된 노드를 그 에이전트로 매핑합니다 — 리뷰 노드가 *당신의*
+`code-reviewer`로 실행됩니다. 매칭은 의도적으로 보수적이며(명확한 후보가
+정확히 하나일 때만, 노드의 계획된 도구 허용 목록을 넘는 도구를 원하는
+에이전트는 안내 문구와 함께 스킵), 모든 매핑은 실행 전에 출력되는 플랜에
+표시되고, `--no-agent-mapping`으로 끌 수 있습니다. 트레이드오프도 미리
+밝혀 둡니다: 매핑된 노드는 에이전트를 해석하기 위해 완전한 설정 격리
+대신 사용자의 설정을 로드합니다 — 선언된 도구 목록은 여전히 강제됩니다.
 [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)에서
 플랜 출력, tool ceiling, 라이브 노드 피드를 차례로 다룹니다.
 

@@ -58,17 +58,22 @@ func (f *runFlags) parse(args []string) error {
 // autoFlags holds the parsed `auto` subcommand options. The goal is a
 // positional argument, mirroring how `run` takes its graph path.
 type autoFlags struct {
-	goal string
+	goal           string
+	noAgentMapping bool
 	commonRunFlags
 
 	set *flag.FlagSet
 }
 
 // newAutoFlags builds an autoFlags with its FlagSet configured. The goal is a
-// positional argument, so it is not registered as a flag.
+// positional argument, so it is not registered as a flag. --no-agent-mapping
+// is `auto`'s own, not a commonRunFlags member: `run` executes a hand-written
+// graph whose agent: fields are the user's explicit choice, so there is
+// nothing automatic to switch off there.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
+	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
 	return f
 }
 

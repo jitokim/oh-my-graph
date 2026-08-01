@@ -114,7 +114,7 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   `run --dry-run` warn when a session child's cwd/worktree differs from its
   parent's.
 
-## Node-as-subagent (`agent:`, v1.1 — hand-written graphs only)
+## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
 subagents rather than as plain `claude -p`: the review node runs as *your*
 `code-reviewer`, with its system prompt, its tools and its model. The mechanism
@@ -143,23 +143,39 @@ agent that IS available — turning a dead end into a fix.
 
 **Mutually exclusive with the auto-mode tool ceiling's Layer 1.**
 `--setting-sources ""` also disables discovery of the user's agent definitions
-(E6's neighbour, E2), so the two cannot be combined. Planned nodes reject
-`agent:` outright, so nothing collides today — but Layer 1 can never be extended
-to hand-written graphs without dropping `agent:` with it.
+(E6's neighbour, E2), so the two cannot be combined. A raw plan still rejects
+`agent:` outright; the one path that puts the field on a planned node —
+coordinator auto-mapping, below — pays for it by dropping Layer 1 on exactly
+the mapped nodes, and the plan printout says so before anything runs. Layer 1
+can still never be extended to hand-written graphs without dropping `agent:`
+with it.
 
-**oh-my-graph makes NO claim about tool reconciliation, and has no measurement
-to lean on here.** It does not parse the subagent's frontmatter, and it does not
-reconcile that subagent's own `tools:` with the node's `allowed_tools`. E6 found
-that a subagent's tools do not widen past `--tools` — but `--tools` is emitted
-only by auto mode, which rejects `agent:`, so that result says nothing about the
-hand-written path where `agent:` is legal. For a hand-written graph this is a
-usability question, and both files are the user's own artifacts. For a planned
-graph it would be a safety question, and the answer there is rejection.
+**Tool reconciliation: a claim only where there is a measurement.** For a
+hand-written graph, oh-my-graph does not parse the subagent's frontmatter and
+does not reconcile its `tools:` with the node's `allowed_tools` — that path
+never passes `--tools`, so E6's result does not cover it and no claim is made;
+both files are the user's own artifacts, so it is a usability question there.
+A coordinator-MAPPED node is different: it runs `--agent` *plus* the full
+`--tools`/`--allowedTools` ceiling — exactly E6's measured configuration, where
+frontmatter tools did not widen past `--tools` — and on top of that the
+coordinator refuses to map any agent whose frontmatter declares a tool outside
+the node's own planned `allowed_tools` (the skip and its reason are printed).
 
-**Coordinator auto-mapping is deferred on a design constraint, not on effort.**
-See ADR 0004 §4: an implicit scan of `~/.claude/agents` would make an `auto`
-run's behaviour depend on files the user forgot they had, and a planned node may
-not carry the field at all.
+**Coordinator auto-mapping (`auto` and chat graph turns).** After a plan
+validates — never before, and never by the planner LLM, which keeps getting its
+`agent:` rejected — trusted code scans `~/.claude/agents` and
+`<cwd>/.claude/agents` (project shadows user) and maps planned nodes onto the
+user's own agents by a deliberately conservative name-token rule: exact token
+or ≥4-rune prefix between node id and agent name, exactly one candidate or
+nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
+matching). Scan failures are silent so zero-config stays zero-config;
+`--no-agent-mapping` turns the whole thing off; every decision made is shown
+in the printed plan before execution. ADR 0004 §4 originally deferred this
+pending E6 and a tool bound — both now hold for the mapped configuration (see
+the previous paragraph); its third condition, an explicit opt-in flag, was
+traded for the printed-disclosure-plus-opt-out above, accepting that an `auto`
+run's behaviour may now depend on agent files the user forgot they had —
+visibly, in the plan printout, not silently at run time.
 
 ## Worktree isolation (`worktree:` — hand-written graphs only)
 By default every node runs in the tree oh-my-graph was invoked from (or its
@@ -625,6 +641,17 @@ set of scoped `Bash(<prefix> *)` patterns) — anything else (bare `Bash`,
 an empty list) fails `Plan` with a `*PlanError` naming the node and the
 offending tool.
 
+After validation — and only after — the coordinator may map planned nodes onto
+the user's own Claude Code agents (`internal/coordinator/agentmap.go`): a scan
+of `~/.claude/agents` and `<cwd>/.claude/agents` (project shadows user), a
+conservative name-token match between node id and agent name (exactly one
+candidate or nothing), and a refusal to map any agent whose frontmatter tools
+exceed the node's own `allowed_tools`. A mapped node runs `--agent <name>` and
+drops ceiling Layer 1 (agent resolution needs the user's settings loaded; the
+other layers stay), every decision is shown in the printed plan, and
+`--no-agent-mapping` turns it off. The full rule and its trade live in
+"Node-as-subagent"; the raw plan itself still may not carry `agent:`.
+
 ### The tool ceiling — one layered policy, not a list of flags (v1.1)
 The allowlist above bounds what a plan may **declare**. Execution is bounded by
 a separate, layered policy carried on `Plan.ToolPolicies` (one
@@ -812,9 +839,8 @@ persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
 any DSL; TUI/dashboard (fleetops's job); worktree auto-creation (opt-in
-per-node `worktree:` shipped later — see "Worktree isolation"); coordinator
-auto-mapping of `agent:` by role (see "Node-as-subagent" — deferred on a design
-constraint, not on effort); sub-call / cross-node budget accounting (per-node
+per-node `worktree:` shipped later — see "Worktree isolation"); sub-call /
+cross-node budget accounting (per-node
 mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
 — see "Execution engine").
 
@@ -951,11 +977,11 @@ automated suite stays spawn-free.
   disables discovery of the user's agent definitions. `--agent code-reviewer`
   under isolation fails at startup with *"not found. Available agents: claude,
   Explore, general-purpose, Plan, statusline-setup"* — only built-ins survive.
-  Layer 1 and `agent:` therefore cannot be combined. This costs nothing today
-  (planned nodes reject `agent:`, hand-written graphs get no Layer 1) but it is
-  a hard constraint on ever extending Layer 1 to hand-written graphs, and a
-  second, independent reason coordinator auto-mapping of `agent:` is impossible
-  rather than merely unbuilt.
+  Layer 1 and `agent:` therefore cannot be combined. This is a hard constraint
+  on ever extending Layer 1 to hand-written graphs, and it is why a
+  coordinator-MAPPED node (see "Node-as-subagent") drops Layer 1 on exactly
+  that node — the trade the plan printout discloses — rather than combining
+  the two and failing at startup.
 - **E3 — CONFIRMED SAFE. `--setting-sources ""` does NOT affect subscription
   OAuth.** With `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` absent from the
   environment, `claude -p '…' --output-format json --permission-mode plan
@@ -978,20 +1004,19 @@ automated suite stays spawn-free.
   Layer 4 regardless, since oh-my-graph never passes `--mcp-config` and the flag
   is therefore free; but **no claim is made** that MCP is closed, and
   SECURITY.md says so rather than implying coverage that was not observed.
-- **E6 — MEASURED ONLY IN A CONFIGURATION THIS TOOL NEVER EMITS.** With
+- **E6 — MEASURED, and now load-bearing for one real path.** With
   `--agent code-reviewer` (frontmatter `tools: Read, Grep, Glob, Bash`) plus
   `--tools "Read"`, the node could not run a shell command: zero tool calls, no
   permission denial. So a resolved subagent's frontmatter does not widen past
   `--tools`.
 
-  **That result does not transfer to any path oh-my-graph actually produces**,
-  and saying otherwise would be the overclaim this section exists to prevent.
-  `--tools` is emitted only by auto mode, and auto mode rejects `agent:`; the
-  one path where `agent:` is legal — hand-written graphs — never passes
-  `--tools` at all. So for the real `agent:` case there is **no measured tool
-  bound**, and the precise composition between a subagent's `tools:` and a
-  node's `allowed_tools` is unknown. oh-my-graph states **no reconciliation
-  rule**, and coordinator auto-mapping stays deferred.
+  A coordinator-MAPPED planned node (see "Node-as-subagent") runs exactly this
+  configuration — `--agent` plus the node's `--tools`/`--allowedTools` — so E6
+  is the measurement that bounds it, with the coordinator's own
+  frontmatter-subset check on top. **The result still does not transfer to the
+  hand-written path**, which never passes `--tools` at all: there the precise
+  composition between a subagent's `tools:` and a node's `allowed_tools`
+  remains unmeasured, and oh-my-graph states **no reconciliation rule** for it.
 - **E7 — CONFIRMED: `--setting-sources ""` drops the project CLAUDE.md.** In a
   directory whose `CLAUDE.md` defined a codeword, a plain `claude -p` returned
   the codeword and the same call with `--setting-sources ""` returned
