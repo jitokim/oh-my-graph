@@ -1,0 +1,172 @@
+# backlog-batch — the parallel multi-lane batch idiom, as a documented
+# skeleton you copy and grow (two example lanes; add lane-c the same way).
+#
+#   dev-a ──▶ e2e-a ──▶ review-a ──▶ pr-a     (feature lane, worktree lane-a)
+#   dev-b ──▶ e2e-b ──▶ review-b ──▶ pr-b     (docs lane,    worktree lane-b)
+#
+# Each lane runs in its OWN managed git worktree (branched off the invocation
+# repo's HEAD), so the lanes edit fully in parallel and each ends in its own
+# PR. Invoke from inside the target repo and pass repo="$PWD".
+#
+# The hard-won rules of the idiom — learned by breaking each one once:
+#
+#   1. Lanes must not share files. Two lanes touching one file merge-conflict
+#      at PR time and can silently undo each other. Dedupe file ownership at
+#      authoring time — or, if two tasks genuinely overlap, serialize them
+#      into one lane (make dev-b depend on pr-a) instead of parallelizing.
+#   2. Phased commits. Every dev prompt demands a commit after each coherent
+#      step: a node timeout must never lose finished work, and worktree
+#      cleanup only preserves a lane's branch if it gained commits.
+#   3. Cold-safe session prompts. An e2e node that resumes its dev session
+#      AND declares retry starts cold on the retried attempt (`lint` warns,
+#      advisory) — so every session prompt here opens with the
+#      continue-or-start-from-committed-state form and survives that case.
+#   4. Stress runs for concurrency diffs. A lane whose diff touches
+#      concurrency-sensitive code must stress the affected tests
+#      (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
+#      a flaky test passes a single run; determinism is the claim under test.
+#
+# Run (from inside the repo, so the worktrees branch off its HEAD):
+#   oh-my-graph run graphs/backlog-batch.yaml \
+#     --input repo="$PWD" \
+#     --input task_a="implement <feature>" \
+#     --input task_b="update <docs> to match"
+name: backlog-batch
+version: "0.1"
+inputs: [repo, task_a, task_b]
+concurrency: 4
+nodes:
+  # ---- lane A: feature lane (worktree lane-a) -------------------------------
+  - id: dev-a
+    type: claude-run
+    worktree: lane-a
+    prompt: |
+      You are in an isolated git worktree of the repo {{ inputs.repo }},
+      on a fresh branch. Implement this task, keeping the diff focused and
+      touching ONLY the files this task owns (another lane edits other files
+      in parallel — do not stray into its territory):
+        {{ inputs.task_a }}
+      Add or update tests. Commit after each coherent step, staging only the
+      files you changed, by explicit path (`git add <path> ...`) — never
+      `git add -A`, `git add .`, or `git add -u`.
+      Reply with a one-line summary of what you changed.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  # `lint` still warns here (handoff: session + retry) — advisory and
+  # expected: a retried attempt starts cold, and the prompt is written
+  # to survive exactly that case (rule 3 above).
+  - id: e2e-a
+    type: claude-run
+    depends_on: [dev-a]
+    worktree: lane-a
+    prompt: |
+      Continue the work — or, on a retried attempt, start from the branch's
+      committed state — and run the project's full checks (build + test +
+      lint; `make local` or your stack's equivalent). If the diff touches
+      concurrency-sensitive code, ALSO stress the affected tests
+      (`go test <pkgs> -race -count=300`) — rule 4 in this graph's header.
+      Report exactly PASS if everything succeeds, or FAIL with the failing
+      step.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+    permission_mode: dontAsk
+    handoff: session
+    success_check: { exit_zero: true, result_matches: "PASS" }
+    retry: { max: 1, on: [nonzero_exit] }
+
+  - id: review-a
+    type: claude-run
+    depends_on: [e2e-a]
+    worktree: lane-a
+    prompt: |
+      Review this worktree's diff vs its base for correctness, style, and
+      scope (the diff must serve only this lane's task — flag anything that
+      strays into files another lane could own). e2e said:
+      {{ artifacts.e2e-a | inline }}.
+      Reply with a short bulleted list, or "no issues found".
+    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: pr-a
+    type: claude-run
+    depends_on: [review-a]
+    worktree: lane-a
+    prompt: |
+      Push this worktree's branch and open a DRAFT pull request with
+      `gh pr create --draft`. Put the review in the PR body:
+        {{ artifacts.review-a | inline }}
+      Reply with the PR URL.
+    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  # ---- lane B: docs lane (worktree lane-b) ----------------------------------
+  - id: dev-b
+    type: claude-run
+    worktree: lane-b
+    prompt: |
+      You are in an isolated git worktree of the repo {{ inputs.repo }},
+      on a fresh branch. Do this documentation task, touching ONLY the files
+      this task owns (another lane edits code in parallel — do not stray
+      into its territory):
+        {{ inputs.task_b }}
+      Commit after each coherent step, staging only the files you changed,
+      by explicit path (`git add <path> ...`) — never `git add -A`,
+      `git add .`, or `git add -u`.
+      Reply with a one-line summary of what you changed.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  # Same advisory warning as e2e-a, same cold-safe prompt shape.
+  - id: e2e-b
+    type: claude-run
+    depends_on: [dev-b]
+    worktree: lane-b
+    prompt: |
+      Continue the work — or, on a retried attempt, start from the branch's
+      committed state — and check the docs changes: every renamed or moved
+      reference resolves, examples still match the code they cite, and the
+      project's checks still pass (`make local` or equivalent — docs edits
+      can break embedded snippets and lint gates too).
+      Report exactly PASS if everything holds, or FAIL with what broke.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+    permission_mode: dontAsk
+    handoff: session
+    success_check: { exit_zero: true, result_matches: "PASS" }
+    retry: { max: 1, on: [nonzero_exit] }
+
+  - id: review-b
+    type: claude-run
+    depends_on: [e2e-b]
+    worktree: lane-b
+    prompt: |
+      Review this worktree's diff vs its base for accuracy against the code
+      it documents, tone consistency, and scope (docs files only — flag
+      anything that strays into code another lane could own). e2e said:
+      {{ artifacts.e2e-b | inline }}.
+      Reply with a short bulleted list, or "no issues found".
+    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: pr-b
+    type: claude-run
+    depends_on: [review-b]
+    worktree: lane-b
+    prompt: |
+      Push this worktree's branch and open a DRAFT pull request with
+      `gh pr create --draft`. Put the review in the PR body:
+        {{ artifacts.review-b | inline }}
+      Reply with the PR URL.
+    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }

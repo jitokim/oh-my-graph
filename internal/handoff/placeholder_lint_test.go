@@ -48,6 +48,21 @@ func TestLintPlaceholders_Warnings(t *testing.T) {
 			wantDetail: "does not match",
 		},
 		{
+			name:       "case-variant artifacts kind warns with a lowercase hint",
+			prompt:     "read {{ Artifacts.a }}",
+			wantDetail: "did you mean lowercase?",
+		},
+		{
+			name:       "case-variant inputs kind warns with a lowercase hint",
+			prompt:     "use {{ INPUTS.repo }}",
+			wantDetail: "did you mean lowercase?",
+		},
+		{
+			name:       "case-variant singular typo warns with a lowercase hint",
+			prompt:     "use {{ Input.repo }}",
+			wantDetail: "did you mean lowercase?",
+		},
+		{
 			name:       "undeclared input",
 			prompt:     "use {{ inputs.ghost }}",
 			wantDetail: "does not declare",

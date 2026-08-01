@@ -35,12 +35,16 @@ nodes:
     handoff: artifact
     success_check: { exit_zero: true }
 
+  # `lint` still warns here (handoff: session + retry) — that is advisory and
+  # expected: a retried attempt starts cold instead of resuming dev's session,
+  # and the prompt below is written to survive exactly that case.
   - id: e2e
     type: claude-run
     depends_on: [dev]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Resume the work you just did. Run `make local` (build + test + vet).
+      Continue the work — or, on a retried attempt, start from the branch's
+      committed state — and run `make local` (build + test + vet).
       If the diff touches concurrency-sensitive code or its tests
       (internal/schedule, internal/runner, anything spawning goroutines or
       using channels), ALSO stress those packages —

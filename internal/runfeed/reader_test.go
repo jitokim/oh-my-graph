@@ -194,11 +194,32 @@ func TestReaders_ShareOneLineCap(t *testing.T) {
 func TestFollowWait_DeliversAStreamCreatedAfterItStarted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 
-	lines, done, cancel := startFollow(t, FollowWait, path)
+	// Positive missing-signal, per CONTRIBUTING's test-double rule (no
+	// wall-clock arm): before delegating to FollowWait, the follow goroutine
+	// itself proves the stream does not exist — Follow's documented
+	// fs.ErrNotExist — and only that observation, not a sleep, releases the
+	// writer below to create the stream.
+	observedMissing := make(chan error, 1)
+	followWaitAfterProvenMissing := func(ctx context.Context, p string, poll time.Duration, handle func([]byte) (bool, error)) error {
+		err := Follow(ctx, p, poll, handle)
+		observedMissing <- err
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return FollowWait(ctx, p, poll, handle)
+	}
+
+	lines, done, cancel := startFollow(t, followWaitAfterProvenMissing, path)
 	defer func() { cancel(); expectDone(t, done) }()
 
-	// Give the wait loop time to observe the file genuinely missing.
-	time.Sleep(5 * testPoll)
+	select {
+	case err := <-observedMissing:
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("pre-wait probe err = %v, want fs.ErrNotExist for a not-yet-created stream", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the follower to observe the stream missing")
+	}
 
 	w, err := NewStreamWriter(path, "run-1")
 	if err != nil {
