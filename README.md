@@ -207,6 +207,7 @@ nodes:
 
   - id: e2e
     depends_on: [dev]
+    cwd: "{{ inputs.repo }}"  # a session child works in its parent's tree
     handoff: session          # e2e resumes dev's session — it already knows everything dev just did
     prompt: Run make local and report PASS or FAIL.
     success_check:
@@ -228,15 +229,15 @@ parent.
 
 |                    | `artifact` (default) | `session` |
 |--------------------|----------------------|-----------|
-| The child inherits | the parent's **final reply**, persisted to a file and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **claude session**, resumed with `--resume`: everything the parent read, did and concluded, not just its reply |
-| Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one (rejected at load time otherwise) |
+| The child inherits | the parent's **final reply**, persisted to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **claude session**, resumed with `--resume`: everything the parent read, did and concluded, not just its reply. The conversation, not the configuration — `allowed_tools`, `permission_mode`, `agent`, `cwd` and `budget_usd` are always the child's own |
+| Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one (rejected at load time otherwise), sharing the parent's `cwd`/`worktree` — a constraint the loader does not check for you |
 | Session shape      | each node is a fresh claude session | a sequential chain continuing one conversation |
 
 Why it matters: with `artifact`, context the parent didn't put into its final
 reply is gone — the child starts cold. With `session`, the child picks up
 mid-conversation, so a tight pipeline (implement, then test what you just
-built) needs no re-explaining and loses nothing. Session children still write
-their own `prompt` — what they inherit is the context, not the instructions.
+built) needs no re-explaining. Session children still write their own
+`prompt` — what they inherit is the context, not the instructions.
 
 Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 
