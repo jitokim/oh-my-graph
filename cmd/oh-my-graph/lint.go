@@ -33,10 +33,13 @@ func runLint(args []string) error {
 //
 // A structurally valid graph is additionally swept for placeholder-like
 // {{ ... }} tokens that will not resolve (handoff.LintPlaceholders). Those
-// are printed to warnW as `warning:` lines and never touch the exit code —
-// the runtime deliberately passes such tokens through verbatim, because a
-// prompt may legitimately contain literal {{ }} text. `run --dry-run` prints
-// the same warnings through the same helper (see dryRunGraph).
+// are printed to warnW as `warning:` lines and never touch the exit code.
+// At run time the two warned classes diverge: a MALFORMED token passes
+// through verbatim (a prompt may legitimately contain literal {{ }} text),
+// while a well-formed reference to an undeclared input or unknown node
+// fails its node with an InterpolationError when it runs — the warning is
+// the cheap early copy of that failure. `run --dry-run` prints the same
+// warnings through the same helper (see dryRunGraph).
 func lintGraph(w, warnW io.Writer, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

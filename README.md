@@ -132,8 +132,10 @@ not. On a valid graph it also prints advisory `warning:` lines to stderr for
 placeholder-like `{{ ... }}` tokens that won't resolve — a typoed filter
 (`| inlin`), a singular `{{ artifact.x }}`, an undeclared input, or an
 `artifacts.<id>` naming a node that doesn't exist or isn't an ancestor.
-Warnings never change the exit code: at run time such tokens pass through
-verbatim, since a prompt may legitimately contain literal `{{ }}` text.
+Warnings never change the exit code. At run time, malformed tokens pass
+through verbatim (a prompt may legitimately contain literal `{{ }}` text),
+while a well-formed reference to an undeclared input or unknown node fails
+its node when interpolation runs.
 `run --dry-run` shares that exit contract and the same warnings, and
 additionally proves `{{ inputs.* }}` resolution against your actual
 `--input` values. An
