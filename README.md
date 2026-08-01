@@ -207,7 +207,7 @@ nodes:
 
   - id: e2e
     depends_on: [dev]
-    handoff: session          # resume dev's session (tight sequential continuation)
+    handoff: session          # e2e resumes dev's session — it already knows everything dev just did
     prompt: Run make local and report PASS or FAIL.
     success_check:
       exit_zero: true
@@ -221,14 +221,31 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
+### Handoff — what a child inherits
+
+Edges say *when* a node runs; `handoff` says *what* it inherits from its
+parent.
+
+|                    | `artifact` (default) | `session` |
+|--------------------|----------------------|-----------|
+| The child inherits | the parent's **final reply**, persisted to a file and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **claude session**, resumed with `--resume`: everything the parent read, did and concluded, not just its reply |
+| Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one (rejected at load time otherwise) |
+| Session shape      | each node is a fresh claude session | a sequential chain continuing one conversation |
+
+Why it matters: with `artifact`, context the parent didn't put into its final
+reply is gone — the child starts cold. With `session`, the child picks up
+mid-conversation, so a tight pipeline (implement, then test what you just
+built) needs no re-explaining and loses nothing. Session children still write
+their own `prompt` — what they inherit is the context, not the instructions.
+
 Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 
 - **`agent:`** — run the node as one of your own Claude Code subagents, with its
   system prompt, tools and model ([spec](DESIGN.md#node-as-subagent-agent-v11--hand-written-graphs-only) · [recipe](docs/EXAMPLES.md#running-a-node-as-your-own-subagent-agent)).
 - **`worktree:`** — parallel edit lanes in managed git worktrees, one isolated
   checkout per lane name ([spec](DESIGN.md#worktree-isolation-worktree--hand-written-graphs-only) · [recipe](docs/EXAMPLES.md#parallel-edit-lanes-with-git-worktrees-worktree)).
-- **handoff** — `artifact` (default: dependents read `{{ artifacts.<id> }}`) or
-  `session` (resume the single parent's session) ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed)).
+- **`handoff`** — see [Handoff — what a child inherits](#handoff--what-a-child-inherits)
+  above ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — evidence-grounded gating (`exit_zero`,
   `result_matches`, and the engine-run `verify` command) plus per-cause retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
