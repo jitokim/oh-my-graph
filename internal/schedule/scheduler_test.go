@@ -198,8 +198,8 @@ nodes:
 	if flaky.calls != 2 {
 		t.Fatalf("flaky invoked %d times, want 2", flaky.calls)
 	}
-	if rec := findRecord(led, "flaky"); rec.Verdict != ledger.VerdictPass {
-		t.Fatalf("flaky verdict = %s, want PASS", rec.Verdict)
+	if rec, ok := findRecord(led, "flaky"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Fatalf("flaky record = %+v (present=%v), want a PASS record", rec, ok)
 	}
 }
 
@@ -228,8 +228,16 @@ nodes:
 	if halt.NodeID != "boom" {
 		t.Fatalf("halt named node %q, want boom", halt.NodeID)
 	}
-	if rec := findRecord(led, "sibling"); rec.Verdict == ledger.VerdictPass {
-		t.Fatalf("sibling should have been cancelled, but was recorded PASS")
+	// The strict form: the sibling must be present (the haltRunner guarantees
+	// it starts before the halt lands) and recorded as the cancellation FAIL —
+	// verified x500 under -race. The old `== VerdictPass` shape was satisfiable
+	// by the sibling never having run at all.
+	rec, ok := findRecord(led, "sibling")
+	if !ok {
+		t.Fatal("the cancelled sibling was never recorded in the ledger")
+	}
+	if rec.Verdict != ledger.VerdictFail {
+		t.Fatalf("cancelled sibling verdict = %q, want FAIL", rec.Verdict)
 	}
 }
 
@@ -251,7 +259,10 @@ nodes:
 		t.Fatal("expected the run to halt")
 	}
 
-	rec := findRecord(led, "sibling")
+	rec, ok := findRecord(led, "sibling")
+	if !ok {
+		t.Fatal("the cancelled sibling was never recorded in the ledger")
+	}
 	if rec.Verdict != ledger.VerdictFail {
 		t.Fatalf("sibling verdict = %q, want FAIL", rec.Verdict)
 	}
@@ -282,7 +293,10 @@ nodes:
 		t.Fatal("expected both nodes to fail")
 	}
 	for _, id := range []string{"implicit", "explicit"} {
-		rec := findRecord(led, id)
+		rec, ok := findRecord(led, id)
+		if !ok {
+			t.Fatalf("%s was never recorded in the ledger", id)
+		}
 		if want := "exit code 1: You've hit your session limit"; !strings.Contains(rec.Detail, want) {
 			t.Errorf("%s detail = %q, want it to contain %q", id, rec.Detail, want)
 		}
@@ -307,7 +321,10 @@ nodes:
 	if err := s.Run(context.Background(), g, h, led); err == nil {
 		t.Fatal("expected chatty to fail")
 	}
-	rec := findRecord(led, "chatty")
+	rec, ok := findRecord(led, "chatty")
+	if !ok {
+		t.Fatal("chatty was never recorded in the ledger")
+	}
 	if got := len([]rune(rec.Detail)); got > maxDetailRunes+1 { // +1 for the "…" cut marker
 		t.Errorf("detail is %d runes, want at most %d", got, maxDetailRunes+1)
 	}
@@ -351,8 +368,8 @@ nodes:
 	if indexOf(calls, "independent") == -1 {
 		t.Errorf("independent branch should have run; calls=%v", calls)
 	}
-	if rec := findRecord(led, "independent"); rec.Verdict != ledger.VerdictPass {
-		t.Errorf("independent verdict = %s, want PASS", rec.Verdict)
+	if rec, ok := findRecord(led, "independent"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Errorf("independent record = %+v (present=%v), want a PASS record", rec, ok)
 	}
 }
 
@@ -447,7 +464,10 @@ nodes:
 		t.Errorf("dependent of an over-budget node must never run; calls=%v", fake.Calls())
 	}
 
-	rec := findRecord(led, "spendy")
+	rec, ok := findRecord(led, "spendy")
+	if !ok {
+		t.Fatal("spendy was never recorded in the ledger")
+	}
 	if rec.Verdict != ledger.VerdictFail {
 		t.Errorf("spendy verdict = %s, want FAIL", rec.Verdict)
 	}
@@ -538,7 +558,10 @@ nodes:
 		t.Errorf("dependent of a budget-killed node must never run; calls=%v", fake.Calls())
 	}
 
-	rec := findRecord(led, "spendy")
+	rec, ok := findRecord(led, "spendy")
+	if !ok {
+		t.Fatal("spendy was never recorded in the ledger")
+	}
 	if rec.Verdict != ledger.VerdictFail || !strings.Contains(rec.Detail, "exceeded budget_usd") {
 		t.Errorf("record = %+v, want FAIL naming the overspend", rec)
 	}
@@ -612,8 +635,8 @@ func TestScheduler_BudgetBoundaries(t *testing.T) {
 			if tc.wantErr {
 				wantVerdict = ledger.VerdictFail
 			}
-			if rec := findRecord(led, "solo"); rec.Verdict != wantVerdict {
-				t.Errorf("verdict = %s, want %s", rec.Verdict, wantVerdict)
+			if rec, ok := findRecord(led, "solo"); !ok || rec.Verdict != wantVerdict {
+				t.Errorf("record = %+v (present=%v), want verdict %s", rec, ok, wantVerdict)
 			}
 		})
 	}
@@ -700,8 +723,8 @@ nodes:
 	if indexOf(fake.Calls(), "child") != -1 {
 		t.Errorf("pruned child should never run; calls=%v", fake.Calls())
 	}
-	if rec := findRecord(led, "independent"); rec.Verdict != ledger.VerdictPass {
-		t.Errorf("independent verdict = %s, want PASS", rec.Verdict)
+	if rec, ok := findRecord(led, "independent"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Errorf("independent record = %+v (present=%v), want a PASS record", rec, ok)
 	}
 }
 
@@ -723,7 +746,10 @@ nodes:
 		t.Fatalf("Run returned error: %v", err)
 	}
 
-	rec := findRecord(led, "thrifty")
+	rec, ok := findRecord(led, "thrifty")
+	if !ok {
+		t.Fatal("thrifty was never recorded in the ledger")
+	}
 	if rec.BudgetUSD != 0.50 {
 		t.Errorf("record BudgetUSD = %v, want 0.50", rec.BudgetUSD)
 	}
@@ -840,7 +866,10 @@ nodes:
 		t.Fatalf("paused at gate %q, want approve", paused.GateID)
 	}
 
-	slowRec := findRecord(led, "slow")
+	slowRec, ok := findRecord(led, "slow")
+	if !ok {
+		t.Fatal("the drained sibling was never recorded in the ledger")
+	}
 	if slowRec.Verdict != ledger.VerdictPass {
 		t.Fatalf("the drained sibling must complete as a real PASS, got verdict %q (detail %q)", slowRec.Verdict, slowRec.Detail)
 	}
@@ -900,7 +929,10 @@ nodes:
 	if rec.invocationFor("ship").Prompt == "" {
 		t.Error("an approved gate's dependent must run")
 	}
-	gateRec := findRecord(led, "approve")
+	gateRec, ok := findRecord(led, "approve")
+	if !ok {
+		t.Fatal("the approved gate was never recorded in the ledger")
+	}
 	if gateRec.Verdict != ledger.VerdictPass {
 		t.Errorf("approved gate verdict = %s, want PASS", gateRec.Verdict)
 	}
@@ -942,7 +974,10 @@ nodes:
 	if indexOf(fake.Calls(), "independent") == -1 {
 		t.Error("an independent branch must still finish after a gate rejection")
 	}
-	gateRec := findRecord(led, "approve")
+	gateRec, ok := findRecord(led, "approve")
+	if !ok {
+		t.Fatal("the rejected gate was never recorded in the ledger")
+	}
 	if gateRec.Verdict != ledger.VerdictFail {
 		t.Errorf("rejected gate verdict = %s, want FAIL", gateRec.Verdict)
 	}
@@ -1031,8 +1066,8 @@ nodes:
 	if err := s.Run(context.Background(), g, h, led); err != nil {
 		t.Fatalf("a snapshot write failure mid-run must not fail the run: %v", err)
 	}
-	if rec := findRecord(led, "a"); rec.Verdict != ledger.VerdictPass {
-		t.Fatalf("ledger verdict = %s, want PASS even though the snapshot write failed", rec.Verdict)
+	if rec, ok := findRecord(led, "a"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Fatalf("ledger record = %+v (present=%v), want a PASS record even though the snapshot write failed", rec, ok)
 	}
 	if !strings.Contains(buf.String(), "snapshot write failed") {
 		t.Errorf("the snapshot write failure must be warned on the progress feed: %q", buf.String())
@@ -1546,13 +1581,17 @@ nodes:
 
 // --- helpers ----------------------------------------------------------------
 
-func findRecord(led *ledger.RunLedger, nodeID string) ledger.Record {
+// findRecord reports whether the ledger holds a record for nodeID. Callers
+// must state explicitly whether they mean "absent" or "present with verdict X"
+// — a zero-value Record is indistinguishable from a never-recorded node, which
+// is exactly how an assertion gets silently satisfied by the node not running.
+func findRecord(led *ledger.RunLedger, nodeID string) (ledger.Record, bool) {
 	for _, rec := range led.Records() {
 		if rec.NodeID == nodeID {
-			return rec
+			return rec, true
 		}
 	}
-	return ledger.Record{}
+	return ledger.Record{}, false
 }
 
 func equalStrings(a, b []string) bool {
