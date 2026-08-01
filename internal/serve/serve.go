@@ -3,8 +3,11 @@
 // (Airflow's Graph View, for this tool's runs). It is strictly a consumer of
 // the run-feed contract (docs/RUN-FEED.md): it reads state.json for the
 // run's structure and tails events.jsonl for its progress, and never writes,
-// rewrites, or deletes anything in a run directory. Fleet-wide observation
-// stays fleetops's job; this is one run, live, locally.
+// rewrites, or deletes anything in a run directory. The one read outside the
+// run directory is /api/transcript's: the transcript file of a RUNNING
+// node's own session, under the user's claude projects dir (see
+// handleTranscript's boundary note). Fleet-wide observation stays fleetops's
+// job; this is one run, live, locally.
 //
 // SECURITY: the listener binds to 127.0.0.1 ONLY (see Listen), and every
 // request's Host header must name loopback (see requireLoopbackHost) so a
@@ -111,13 +114,18 @@ type Server struct {
 	runDir string
 	runID  string
 	poll   time.Duration
+	// projectsRoot is where /api/transcript looks for the claude CLI's
+	// session transcripts (the user's ~/.claude/projects). A field, not a
+	// call site, so tests point it at a fixture directory and never touch
+	// the real one.
+	projectsRoot string
 }
 
 // New builds a Server for one run directory. runID is the directory's name —
 // echoed to the UI so the page can identify the run even before any file
 // exists to read it from.
 func New(runDir, runID string) *Server {
-	return &Server{runDir: runDir, runID: runID, poll: defaultPoll}
+	return &Server{runDir: runDir, runID: runID, poll: defaultPoll, projectsRoot: defaultProjectsRoot()}
 }
 
 // Handler returns the server's routes:
@@ -126,10 +134,13 @@ func New(runDir, runID string) *Server {
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
+//	/api/transcript  a RUNNING node's live transcript tail as JSON (?node=<id>)
 //
-// Everything is read-only GETs over the run directory; there is no mutating
-// route to guard. Every route sits behind requireLoopbackHost, the
-// DNS-rebinding guard.
+// Everything is a read-only GET; every route but /api/transcript reads the
+// run directory only, and /api/transcript additionally reads the one
+// transcript file the run's own feed names (see handleTranscript's boundary
+// note). There is no mutating route to guard. Every route sits behind
+// requireLoopbackHost, the DNS-rebinding guard.
 func (s *Server) Handler() http.Handler {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -140,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/graph", s.handleGraph)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/result", s.handleResult)
+	mux.HandleFunc("GET /api/transcript", s.handleTranscript)
 	mux.Handle("GET /", http.FileServerFS(static))
 	return requireLoopbackHost(mux)
 }
