@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ nodes:
   - { id: b, prompt: b, depends_on: [a] }
 `)
 	var out strings.Builder
-	err := dryRunGraph(&out, path, nil)
+	err := dryRunGraph(&out, io.Discard, path, nil)
 	if err == nil {
 		t.Fatal("a cyclic graph must fail a dry run")
 	}
@@ -38,7 +39,7 @@ nodes:
   - { id: scan, prompt: "scan {{ inputs.repo }}" }
 `)
 	var out strings.Builder
-	err := dryRunGraph(&out, path, map[string]string{"other": "x"})
+	err := dryRunGraph(&out, io.Discard, path, map[string]string{"other": "x"})
 	if err == nil {
 		t.Fatal("an unresolved {{ inputs.* }} reference must fail a dry run")
 	}
@@ -60,7 +61,7 @@ nodes:
       verify: { command: "test -d {{ inputs.dir }}", timeout: 30s }
 `)
 	var out strings.Builder
-	if err := dryRunGraph(&out, path, nil); err == nil {
+	if err := dryRunGraph(&out, io.Discard, path, nil); err == nil {
 		t.Fatal("an unresolved input in a verify command must fail a dry run")
 	}
 	if !strings.Contains(out.String(), "inputs.dir") {
@@ -70,7 +71,7 @@ nodes:
 
 func TestDryRunGraph_UnreadableFileFails(t *testing.T) {
 	var out strings.Builder
-	if err := dryRunGraph(&out, "no-such.yaml", nil); err == nil || !strings.Contains(err.Error(), "read graph file") {
+	if err := dryRunGraph(&out, io.Discard, "no-such.yaml", nil); err == nil || !strings.Contains(err.Error(), "read graph file") {
 		t.Errorf("a missing graph file should fail with a read error, got: %v", err)
 	}
 }
@@ -128,6 +129,29 @@ nodes:
 	}
 }
 
+// TestDryRunGraph_PrintsPlaceholderWarnings pins that a dry run reports the
+// same advisory placeholder findings `lint` does, through the same
+// warnPlaceholders path, without failing the dry run.
+func TestDryRunGraph_PrintsPlaceholderWarnings(t *testing.T) {
+	path := writeGraphFile(t, `
+name: typo
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: review, prompt: "read {{ artifact.dev }}", depends_on: [dev] }
+`)
+	var out, warnings strings.Builder
+	if err := dryRunGraph(&out, &warnings, path, nil); err != nil {
+		t.Fatalf("placeholder warnings must not fail a dry run: %v", err)
+	}
+	want := "warning: " + path + `: node "review": prompt: `
+	if !strings.Contains(warnings.String(), want) {
+		t.Errorf("dry run should print the lint warning prefixed %q:\n%s", want, warnings.String())
+	}
+	if !strings.Contains(out.String(), "validation passed") {
+		t.Errorf("the dry run should still pass:\n%s", out.String())
+	}
+}
+
 // TestDryRunGraph_ToleratesArtifactReferences pins the inputs/artifacts
 // asymmetry: {{ artifacts.* }} — including `| inline` reads of files that do
 // not exist yet — resolves at run time, so a static pass must not judge it.
@@ -139,7 +163,7 @@ nodes:
   - { id: b, prompt: "summarize {{ artifacts.a | inline }}", depends_on: [a] }
 `)
 	var out strings.Builder
-	if err := dryRunGraph(&out, path, nil); err != nil {
+	if err := dryRunGraph(&out, io.Discard, path, nil); err != nil {
 		t.Fatalf("artifact references must not fail a dry run: %v", err)
 	}
 	if !strings.Contains(out.String(), "validation passed") {

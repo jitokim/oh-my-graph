@@ -19,8 +19,10 @@ import (
 // exactly one way: lint judges the file alone, while a dry run also holds the
 // invocation's --input bindings, so it can additionally prove every input
 // reference resolves. Exit 0 (nil) when a real run would start, exit 1 (an
-// error carrying the issue count) when it would refuse.
-func dryRunGraph(w io.Writer, path string, inputs map[string]string) error {
+// error carrying the issue count) when it would refuse. Advisory placeholder
+// warnings go to warnW through the same warnPlaceholders helper `lint` uses,
+// and never affect the exit code.
+func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read graph file %q: %w", path, err)
@@ -35,6 +37,7 @@ func dryRunGraph(w io.Writer, path string, inputs map[string]string) error {
 	if err != nil {
 		return err
 	}
+	warnPlaceholders(warnW, path, g)
 	printResolvedPlan(w, g)
 
 	if issues := inputIssues(g, inputs); len(issues) > 0 {

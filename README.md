@@ -128,8 +128,17 @@ executes, then a cost ledger.
 
 `lint` checks structure — DAG/cycle, unknown `depends_on` ids, the
 session-handoff parent rule, verify blocks — and exits 0 when valid, 1 when
-not. `run --dry-run` shares that exit contract and additionally proves
-`{{ inputs.* }}` resolution against your actual `--input` values. An
+not. On a valid graph it also prints advisory `warning:` lines to stderr for
+placeholder-like `{{ ... }}` tokens that won't resolve — a typoed filter
+(`| inlin`), a singular `{{ artifact.x }}`, an undeclared input, or an
+`artifacts.<id>` naming a node that doesn't exist or isn't an ancestor.
+Warnings never change the exit code. At run time, malformed tokens pass
+through verbatim (a prompt may legitimately contain literal `{{ }}` text),
+while a well-formed reference to an undeclared input or unknown node fails
+its node when interpolation runs.
+`run --dry-run` shares that exit contract and the same warnings, and
+additionally proves `{{ inputs.* }}` resolution against your actual
+`--input` values. An
 in-flight run shows in `runs list` as `RUNNING` (with `-` placeholders until
 its first snapshot lands).
 

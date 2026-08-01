@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 )
 
 // runLint is the `lint` subcommand: parse argv and statically validate one
@@ -17,7 +18,7 @@ func runLint(args []string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("lint: unexpected argument %q (usage: oh-my-graph lint <graph.yaml>)", args[1])
 	}
-	return lintGraph(os.Stdout, args[0])
+	return lintGraph(os.Stdout, os.Stderr, args[0])
 }
 
 // lintGraph reads path and reports every structural problem graph.Lint finds
@@ -29,7 +30,17 @@ func runLint(args []string) error {
 // one confirmation line and returns nil (exit 0); an invalid one prints one
 // line per issue to w and returns an error carrying the count, which
 // mainExitCode turns into exit 1.
-func lintGraph(w io.Writer, path string) error {
+//
+// A structurally valid graph is additionally swept for placeholder-like
+// {{ ... }} tokens that will not resolve (handoff.LintPlaceholders). Those
+// are printed to warnW as `warning:` lines and never touch the exit code.
+// At run time the two warned classes diverge: a MALFORMED token passes
+// through verbatim (a prompt may legitimately contain literal {{ }} text),
+// while a well-formed reference to an undeclared input or unknown node
+// fails its node with an InterpolationError when it runs — the warning is
+// the cheap early copy of that failure. `run --dry-run` prints the same
+// warnings through the same helper (see dryRunGraph).
+func lintGraph(w, warnW io.Writer, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read graph file %q: %w", path, err)
@@ -37,6 +48,11 @@ func lintGraph(w io.Writer, path string) error {
 
 	issues := graph.Lint(data)
 	if len(issues) == 0 {
+		g, err := graph.Parse(data) // Lint found nothing, so this cannot fail
+		if err != nil {
+			return err
+		}
+		warnPlaceholders(warnW, path, g)
 		fmt.Fprintf(w, "%s: valid\n", path)
 		return nil
 	}
@@ -48,4 +64,14 @@ func lintGraph(w io.Writer, path string) error {
 		noun = "issue"
 	}
 	return fmt.Errorf("%s: %d %s found", path, len(issues), noun)
+}
+
+// warnPlaceholders prints one `warning:` line per advisory placeholder
+// finding in an already-validated graph — the shared reporting half of `lint`
+// and `run --dry-run`. Warnings are advice only: they never affect any exit
+// code.
+func warnPlaceholders(warnW io.Writer, path string, g *graph.Graph) {
+	for _, warning := range handoff.LintPlaceholders(g) {
+		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
+	}
 }
