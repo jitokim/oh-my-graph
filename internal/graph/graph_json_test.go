@@ -28,6 +28,7 @@ nodes:
     allowed_tools: [Read, "Bash(git *)"]
     permission_mode: dontAsk
     budget_usd: 0.5
+    timeout: 45m
     handoff: artifact
     agent: code-reviewer
     success_check:

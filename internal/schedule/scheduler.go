@@ -851,6 +851,7 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		ResumeSession:  resume,
 		Agent:          node.Agent,
 		BudgetUSD:      node.BudgetUSD,
+		Timeout:        node.TimeoutDuration(),
 		Policy:         policy,
 	}, nil
 }

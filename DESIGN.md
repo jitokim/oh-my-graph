@@ -89,6 +89,7 @@ Node schema:
   agent: code-reviewer        # optional (v1.1): run as this Claude Code subagent — see "Node-as-subagent"
   worktree: lane              # optional: run in a managed git worktree shared by every node naming it — see "Worktree isolation"
   budget_usd: 0.50            # per-node cost cap: claude aborts mid-run (--max-budget-usd) + post-hoc FAIL (see Execution engine)
+  timeout: 45m                # optional: wall-clock bound on the node's whole run (Go duration; default 20m, no ceiling) — ADR 0007
   handoff: artifact           # artifact(default) | session
   success_check:              # see "Success checks" — verify is the only evidence-grounded predicate
     exit_zero: true
@@ -277,8 +278,20 @@ the one-envelope `NodeRunner` contract; that alone stays deferred — mid-node
 kill itself no longer does. Deriving a wall-clock timeout from `budget_usd` via
 an assumed $/minute rate was still considered and rejected: the conversion rate
 would be fabricated, so it would look like enforcement while enforcing nothing.
-The per-node `context.WithTimeout` (~20m default) remains as a wall-clock bound
-orthogonal to cost.
+The per-node `context.WithTimeout` (20m default) remains as a wall-clock bound
+orthogonal to cost — and since ADR 0007 a node may replace the default with its
+own `timeout:` (a Go duration, validated at load like the verify timeout but
+with no ceiling: the node timeout IS the critical path, and raising it is the
+point of declaring it). An undeclared timeout keeps the 20m default, so no
+node is ever unbounded.
+
+A **turn-denominated budget** (`budget_turns:` → `claude -p --max-turns N`) was
+proposed as a supplement to `budget_usd` — dollars are a hard cost ceiling but
+a poor scoping unit (hard to estimate per task), while turns are a unit humans
+can estimate — and is **rejected for now**: the installed CLI's `claude --help`
+documents no `--max-turns` flag (verified 2026-08-02), so the engine could ship
+only the schema, not the enforcement. See ADR 0007 for the recorded design and
+the revisit condition.
 
 ## Success checks — evidence-grounded verification (v1.1)
 `success_check` is a conjunction of predicates, cheapest first, evaluated only
@@ -711,7 +724,7 @@ turns that rule into a build failure. Current dispositions:
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
 | `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
-| `budget_usd`, `retry` | allowed |
+| `budget_usd`, `timeout`, `retry` | allowed |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
@@ -722,7 +735,7 @@ Scheduler as any other graph.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
-- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, success_check, handoff, depends_on).
+- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, handoff, depends_on).
 - Edge = implicit `Node.DependsOn []string` (no struct).
 - **Scheduler** — drive DAG: ready/running sets, cap, context cancel, halt/continue;
   calls NodeRunner.Run, consults Graph, writes RunLedger, asks Handoff to resolve/persist.

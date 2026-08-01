@@ -12,7 +12,10 @@
 // claude ran; it only ever sees a NodeOutcome or an error.
 package runner
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ToolPolicy is the complete tool ceiling for one node, as ONE value object
 // rather than a handful of parallel fields — a caller cannot hand the runner
@@ -94,6 +97,13 @@ type NodeInvocation struct {
 	// A plain scalar, deliberately NOT folded into Policy: it bounds spend, not
 	// capability, and the two have no reason to change together.
 	BudgetUSD float64
+	// Timeout, when positive, bounds this node's whole run, replacing the
+	// runner's own default (20m). It carries the node's `timeout:` declaration,
+	// already parsed and proven positive at load (graph.Node.TimeoutDuration —
+	// ADR 0007). Zero means "the node declared none": the runner applies its
+	// default, so an invocation is never unbounded either way. Like BudgetUSD
+	// it stays outside Policy — it bounds wall-clock, not capability.
+	Timeout time.Duration
 	// Policy is this node's complete tool ceiling.
 	Policy ToolPolicy
 }

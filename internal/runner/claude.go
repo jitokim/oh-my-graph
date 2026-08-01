@@ -17,7 +17,9 @@ import (
 
 // defaultBinary is the claude executable name; defaultTimeout bounds a single
 // node so one wedged child can never hang the whole graph (DESIGN: per-node
-// context.WithTimeout ~20m).
+// context.WithTimeout ~20m). It applies only to a node that declared no
+// `timeout:` of its own — a declared one arrives on the invocation and
+// replaces it (NodeInvocation.Timeout, ADR 0007).
 const (
 	defaultBinary  = "claude"
 	defaultTimeout = 20 * time.Minute
@@ -275,7 +277,9 @@ func (env claudeEnvelope) failureCause() string {
 	return ""
 }
 
-// Run executes one node under a per-node timeout, then parses its JSON envelope.
+// Run executes one node under a per-node timeout — the invocation's own when
+// it declared one, the runner's default otherwise — then parses its JSON
+// envelope.
 //
 // A non-zero exit is NOT a Run error: claude still emits a JSON envelope, so the
 // outcome (with its ExitCode) is returned and the Scheduler's success_check
@@ -283,7 +287,11 @@ func (env claudeEnvelope) failureCause() string {
 // a context cancellation/timeout, a spawn failure, or output that is not a
 // parseable envelope (*NodeOutputError).
 func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	timeout := r.timeout
+	if spec.Timeout > 0 {
+		timeout = spec.Timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := r.buildCmd(ctx, spec)

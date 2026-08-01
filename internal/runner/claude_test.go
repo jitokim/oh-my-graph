@@ -553,3 +553,52 @@ func waitForFile(t *testing.T, path string) {
 	}
 	t.Fatalf("stub never signalled it started (no %s)", path)
 }
+
+// --- per-invocation timeout (ADR 0007) ----------------------------------------
+
+// TestRun_InvocationTimeoutBoundsTheRun proves a node's declared `timeout:`
+// actually governs the run: with the runner still on its 20m default, an
+// invocation carrying a tiny Timeout must be killed by the deadline, promptly,
+// and surface as the context error the Scheduler classifies as a run_error.
+// Like the cancellation test above this needs a real (free, offline) stub —
+// a deadline cannot be proven against code that never runs.
+func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
+
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	start := time.Now()
+	_, err := r.Run(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Timeout:        100 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("a timed-out node must not report success")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a context.DeadlineExceeded error, got %T: %v", err, err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run took %s to honour a 100ms invocation timeout", elapsed)
+	}
+}
+
+// TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault pins the other half of
+// the contract: an invocation that declared nothing (Timeout zero) runs under
+// the runner's own timeout, so no node is ever unbounded. The runner's timeout
+// is shrunk to make the fallback observable without waiting 20 minutes.
+func TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
+
+	r := NewClaudeCLIRunner(WithBinary(stub), WithTimeout(100*time.Millisecond))
+	_, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the runner's own timeout to fire, got %T: %v", err, err)
+	}
+}
