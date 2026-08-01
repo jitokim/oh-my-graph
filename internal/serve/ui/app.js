@@ -14,6 +14,10 @@
 //                node's settled feed entries (200 body / 204 none / 404
 //                unknown node); fetched once per settled node and shared
 //                across every entry that shows it
+//   /api/transcript  a running node's live "now doing" tail (assistant text
+//                and tool-use names from its session transcript), polled
+//                every few seconds onto the node's open feed line and gone
+//                the moment the node settles (200 entries / 204 nothing)
 // Events may arrive before the structure does; per-node state is kept in
 // `nodes` and painted onto the cytoscape map whenever either side updates.
 // The feed is derived purely from the stream, so a full EventSource replay
@@ -382,10 +386,14 @@ feedCol.addEventListener("scroll", () => {
 //                      entries (block + inline head span)
 //   liveElapsed        node id -> the ticking elapsed span of its latest
 //                      running line (frozen and dropped from the map on settle)
+//   liveTails          node id -> the live transcript tail <pre> of its
+//                      latest running line (removed on settle, which also
+//                      stops that node's polling)
 const latestEntryByNode = new Map();
 const startLine = new Map();
 const resultBlocks = new Map();
 const liveElapsed = new Map();
+const liveTails = new Map();
 
 function resetFeed() {
   $("feed").textContent = "";
@@ -393,6 +401,7 @@ function resetFeed() {
   startLine.clear();
   resultBlocks.clear();
   liveElapsed.clear();
+  liveTails.clear();
   feedAtBottom = true;
 }
 
@@ -457,6 +466,7 @@ function appendFeed(event, ts) {
       head.appendChild(elapsed);
       liveElapsed.set(event.node_id, elapsed);
       startLine.set(event.node_id, li);
+      attachLiveTail(li, event.node_id);
       break;
     }
     case "node_retried": {
@@ -473,6 +483,7 @@ function appendFeed(event, ts) {
       elapsed.className = "entry-elapsed";
       head.appendChild(elapsed);
       liveElapsed.set(event.node_id, elapsed);
+      attachLiveTail(li, event.node_id);
       break;
     }
     case "node_passed":
@@ -486,6 +497,9 @@ function appendFeed(event, ts) {
       const span = liveElapsed.get(event.node_id);
       if (span) span.textContent = duration;
       liveElapsed.delete(event.node_id);
+      // The live tail is "now doing"; a settled node has no now. Removing it
+      // here also matters for a retry line, which stays in the feed.
+      removeLiveTail(event.node_id);
       // One entry per settled node: the terminal entry absorbs the node's
       // started-line — the start is implied by the duration — so the feed is
       // as long as the run, not twice as long. A retry line stays: a retry
@@ -614,6 +628,57 @@ function buildMetaLine(info) {
   }
   return meta;
 }
+
+// --- live transcript tail ----------------------------------------------------
+
+// A running node's open feed line carries what its session is doing RIGHT
+// NOW: the last few assistant texts and tool-use names from /api/transcript,
+// polled every few seconds while the node runs. Rendered via textContent
+// ONLY — transcript content is untrusted text, exactly like an artifact. A
+// 204 (no session id published — a session-handoff node or a gate — or no
+// transcript on disk yet) simply keeps the element hidden; polling stops the
+// moment the node leaves running, because settle removes the element.
+const TAIL_POLL_MS = 3000;
+
+function attachLiveTail(li, nodeId) {
+  removeLiveTail(nodeId); // a superseded running line's tail dies with it
+  const pre = document.createElement("pre");
+  pre.className = "live-tail";
+  pre.hidden = true;
+  li.appendChild(pre);
+  liveTails.set(nodeId, pre);
+  pollLiveTail(nodeId); // first paint now, not a full interval later
+}
+
+function removeLiveTail(nodeId) {
+  const pre = liveTails.get(nodeId);
+  if (pre) pre.remove();
+  liveTails.delete(nodeId);
+}
+
+function pollLiveTail(nodeId) {
+  const pre = liveTails.get(nodeId);
+  const info = nodes.get(nodeId);
+  if (!pre || !info || info.state !== "running") return;
+  fetch(`api/transcript?node=${encodeURIComponent(nodeId)}`)
+    .then(async (resp) => {
+      if (resp.status !== 200) return;
+      const payload = await resp.json();
+      // Settled (or superseded) while the fetch was in flight: stale, drop.
+      if (liveTails.get(nodeId) !== pre) return;
+      const lines = (payload.entries || []).map((e) =>
+        e.type === "tool_use" ? `⏺ ${e.name}` : e.text
+      );
+      pre.textContent = lines.join("\n");
+      pre.hidden = lines.length === 0;
+      if (feedAtBottom) feedCol.scrollTop = feedCol.scrollHeight;
+    })
+    .catch(() => {}); // transient fetch failure: the next poll retries
+}
+
+setInterval(() => {
+  for (const nodeId of liveTails.keys()) pollLiveTail(nodeId);
+}, TAIL_POLL_MS);
 
 // fetchResult kicks off the lazy /api/result fetch the first time a node is
 // seen settled; every entry showing that node shares the one fetch. Fetch
