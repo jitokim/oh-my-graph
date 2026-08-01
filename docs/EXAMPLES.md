@@ -255,6 +255,49 @@ nodes:
 Spec:
 [DESIGN.md § Worktree isolation](../DESIGN.md#worktree-isolation-worktree--hand-written-graphs-only).
 
+## Artifact fan-out vs session chain (`handoff`)
+
+`handoff` decides what a child inherits from its parent: `artifact` (the
+default) hands over the parent's final reply via `{{ artifacts.<id> }}`;
+`session` resumes the parent's claude session, so the child inherits
+everything the parent read, did and concluded. The two shapes side by side:
+
+```yaml
+  # artifact: fan-out — both reviewers read dev's final reply, in parallel
+  - id: dev
+    prompt: Implement the change and summarize what you did.
+  - id: review-security
+    depends_on: [dev]                 # handoff: artifact is the default
+    prompt: "Security-review this summary: {{ artifacts.dev | inline }}"
+  - id: review-style
+    depends_on: [dev]
+    prompt: "Style-review this summary: {{ artifacts.dev | inline }}"
+```
+
+```yaml
+  # session: a chain — each child continues the same conversation
+  - id: dev
+    prompt: Implement the change.
+  - id: e2e
+    depends_on: [dev]
+    handoff: session                  # resumes dev's session
+    prompt: Now test what you just built and report PASS or FAIL.
+  - id: summarize
+    depends_on: [e2e]
+    handoff: session                  # the chain continues
+    prompt: Summarize what was built and how the tests went.
+```
+
+A `handoff: session` node must have **exactly one** parent — a root has no
+session to resume, and a fan-in can't merge sessions; both are rejected at
+load time (use `artifact` there). And although two siblings each resuming the
+same parent *validates* — the one-parent rule is checked per child — that
+forks one conversation into two parallel continuations, which is a footgun,
+not a pattern: fan-out belongs to `artifact`.
+
+Spec:
+[DESIGN.md § Handoff](../DESIGN.md#handoff--artifact-default-session-opt-in-committed).
+
 ## Budgets (`budget_usd`)
 
 `budget_usd` caps what a node may cost. Once the node finishes, its actual cost
