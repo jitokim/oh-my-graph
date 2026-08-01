@@ -23,6 +23,14 @@ handoff, retry, and halt-on-fail logic are all exercised through
 `map[nodeID]NodeOutcome` fixtures, so CI never needs a `claude` login and
 never costs money.
 
+**Test doubles.** A double may block on its scripted sync channel or on
+`ctx.Done()`, never on a wall-clock fallback; and an assertion must not be
+satisfiable by a node or record simply being absent — state presence
+explicitly. A wall-clock arm silently degrades choreography into an
+unsynchronized race under CI load, and an absence-satisfiable assertion then
+passes for the wrong reason: this exact combination produced the project's
+only CI flake and survived four review layers before being caught.
+
 ```sh
 make smoke   # builds the binary, then runs graphs/haiku-smoke.yaml for real
 ```
