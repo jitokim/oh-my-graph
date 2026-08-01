@@ -26,7 +26,9 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: |
       Implement the change described in the current issue/branch. Keep the diff
-      focused. When done, reply with a one-line summary of what you changed.
+      focused. Commit after each coherent step, not in one giant end-of-node
+      commit — a node timeout must never lose finished work. When done, reply
+      with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
     handoff: artifact
@@ -37,8 +39,11 @@ nodes:
     depends_on: [dev]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Run the end-to-end checks (make local) and report PASS or FAIL with the
-      failing step if any.
+      Run the end-to-end checks (make local). If the diff touches
+      concurrency-sensitive code, also stress its tests (e.g.
+      `go test <affected packages> -race -count=300`, or your stack's
+      equivalent) — a flaky test passes a single run, and determinism is the
+      claim under test. Report PASS or FAIL with the failing step if any.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
     budget_usd: 0.50  # post-hoc cap: this node FAILS (and halts the run) if it costs more
@@ -69,8 +74,12 @@ nodes:
     depends_on: [e2e]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Review the current diff for style, naming, and simplicity. Reply with a
-      short bulleted list of suggestions, or "no style issues found".
+      Review the current diff for style, naming, and simplicity. If it adds
+      or edits test doubles or concurrency tests, also verify every
+      synchronization field is actually wired (no dead channels, no
+      wall-clock fallback arms) and no assertion passes merely because a
+      record is absent. Reply with a short bulleted list of suggestions, or
+      "no style issues found".
     allowed_tools: [Read, "Bash(git diff*)"]
     permission_mode: plan
     handoff: artifact

@@ -22,8 +22,9 @@ nodes:
       keeping the diff focused and matching the existing style (DESIGN.md is the spec;
       the NodeRunner seam is the only os/exec touch point; English-only):
         {{ inputs.task }}
-      Add or update tests. Commit on the current branch with a clear message —
-      stage ONLY the files you created or modified for this task, by explicit
+      Add or update tests. Commit after each coherent step, not in one giant
+      end-of-node commit — a node timeout must never lose finished work.
+      Stage ONLY the files you created or modified for this task, by explicit
       path (`git add <path> ...`). Never `git add -A`, `git add .`, or
       `git add -u`: the working tree may hold untracked files that are not part
       of this task (assets someone dropped in, scratch output), and sweeping
@@ -39,8 +40,13 @@ nodes:
     depends_on: [dev]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Resume the work you just did. Run `make local` (build + test + vet) and
-      report exactly PASS if it all succeeds, or FAIL with the failing step.
+      Resume the work you just did. Run `make local` (build + test + vet).
+      If the diff touches concurrency-sensitive code or its tests
+      (internal/schedule, internal/runner, anything spawning goroutines or
+      using channels), ALSO stress those packages —
+      `go test <pkgs> -race -count=300` — because a flaky test passes a
+      single run; determinism is the claim under test. Report exactly PASS
+      if everything succeeds, or FAIL with the failing step.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session
@@ -67,6 +73,10 @@ nodes:
     prompt: |
       Review the current branch's diff vs main for style, naming, simplicity, and
       adherence to DESIGN.md's invariants (NodeRunner seam, env scrub, no Agent SDK).
+      If the diff adds or edits test doubles or concurrency tests, also verify:
+      every synchronization field is actually wired (no dead channels, no
+      wall-clock fallback arms — CONTRIBUTING's test-double rule), and no
+      assertion is satisfiable by a record or node simply being absent.
       Reply with a short bulleted list, or "no style issues found".
     allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
     permission_mode: plan
