@@ -545,7 +545,10 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			// A retry never resumes a failed session — start fresh.
+			// A retry never resumes a session — not the failed attempt's own,
+			// and not a session-handoff parent's either: the retried attempt
+			// starts fresh, which passRecord's detail states outright for a
+			// session node so the ledger, snapshot and events all say it.
 			invocation.ResumeSession = ""
 		}
 
@@ -1127,6 +1130,12 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 	var notes []string
 	if attempt > 0 {
 		notes = append(notes, fmt.Sprintf("passed after %d retr%s", attempt, plural(attempt)))
+		// runNode clears ResumeSession on every retry, so a session-handoff
+		// node's passing attempt ran without its parent's conversation — a
+		// fact the surfaces reading this Detail would otherwise never show.
+		if node.Handoff == graph.HandoffSession {
+			notes = append(notes, "retry started fresh — parent session not resumed")
+		}
 	}
 	// A passing node is by definition within budget, so the delta is <= 0 here;
 	// reporting the headroom is what makes "ran at 99% of budget" visible in the

@@ -45,7 +45,7 @@ nodes:
     depends_on: [dev]
   - id: ship
     prompt: ship
-    depends_on: [approve]
+    depends_on: [dev]
     handoff: session
     worktree: lane
 `)

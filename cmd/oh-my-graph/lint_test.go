@@ -190,6 +190,42 @@ func TestMainExitCode_PlaceholderWarningsKeepExitZero(t *testing.T) {
 	}
 }
 
+// --- session warnings --------------------------------------------------------
+
+// TestLintGraph_SessionWarningsKeepExitZero pins that the session-handoff
+// advisories ride the same channel as placeholder warnings: a session child
+// in a different cwd with a retry block gets its `warning:` lines on the
+// warning writer, while the graph still lints as valid — nil error, exit 0
+// through the real argv path.
+func TestLintGraph_SessionWarningsKeepExitZero(t *testing.T) {
+	path := writeGraphFile(t, `
+name: cold-resume
+nodes:
+  - { id: dev, prompt: dev, cwd: /work/app }
+  - id: e2e
+    prompt: e2e
+    depends_on: [dev]
+    handoff: session
+    cwd: /work/other
+    retry: { max: 1, on: [nonzero_exit] }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("session warnings must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	for _, want := range []string{`node "e2e": cwd: `, `node "e2e": retry: `} {
+		if !strings.Contains(warnings.String(), "warning: "+path+": "+want) {
+			t.Errorf("warning writer should carry %q:\n%s", want, warnings.String())
+		}
+	}
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only session warnings exited %d, want 0", code)
+	}
+}
+
 // --- success case -----------------------------------------------------------
 
 func TestLintGraph_ValidGraphPasses(t *testing.T) {

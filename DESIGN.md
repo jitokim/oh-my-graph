@@ -109,7 +109,10 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   single session-parent (same cwd/git scope). Use for tight sequential
   continuation (dev→e2e). Validation: a session node must have EXACTLY ONE parent
   — a root node has no session to resume, and a fan-in can't merge sessions;
-  both must use artifact. Rejected at load time.
+  both must use artifact. Rejected at load time. A gate parent is likewise
+  rejected at load (a gate records no session to resume), and `lint` /
+  `run --dry-run` warn when a session child's cwd/worktree differs from its
+  parent's.
 
 ## Node-as-subagent (`agent:`, v1.1 — hand-written graphs only)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -224,7 +227,9 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
 5. Done when ready+running are empty.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
-resume a failed one). The causes are a closed set — `nonzero_exit`,
+resume a failed one). For a `handoff: session` node this means a retried
+attempt does not resume the parent session either — it starts cold, which
+`lint` warns about up front and the passing attempt's ledger detail states. The causes are a closed set — `nonzero_exit`,
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever

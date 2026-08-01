@@ -151,6 +151,60 @@ nodes:
 	}
 }
 
+// TestParse_SessionHandoffGateParent pins which single parents a session child
+// may actually resume: a gate parent is rejected at load — a gate spawns no
+// subprocess and records no session id, so the resume could only die mid-run —
+// while a claude-run parent stays valid.
+func TestParse_SessionHandoffGateParent(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			name: "gate parent rejected",
+			yaml: `
+name: gate-session
+nodes:
+  - { id: approve, type: gate }
+  - { id: child, prompt: child, depends_on: [approve], handoff: session }
+`,
+			wantErr: true,
+		},
+		{
+			name: "claude-run parent valid",
+			yaml: `
+name: run-session
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: child, prompt: child, depends_on: [dev], handoff: session }
+`,
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("expected a valid graph, got: %v", err)
+				}
+				return
+			}
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != "child" {
+				t.Fatalf("error named node %q, want child", vErr.NodeID)
+			}
+			if !strings.Contains(vErr.Reason, `"approve"`) {
+				t.Fatalf("reason should name the gate parent: %q", vErr.Reason)
+			}
+			if !strings.Contains(vErr.Reason, "handoff: artifact") {
+				t.Fatalf("reason should state the remedy: %q", vErr.Reason)
+			}
+		})
+	}
+}
+
 func TestParse_InvalidYAML(t *testing.T) {
 	_, err := Parse([]byte("name: [unterminated"))
 	if err == nil {
