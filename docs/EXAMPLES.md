@@ -302,8 +302,8 @@ is a footgun, not a pattern: fan-out belongs to `artifact`.
 
 Two more truths of the chain shape, both surfaced by `lint`: a **retried**
 session node does not resume — `retry` always starts the attempt fresh, the
-retried attempt's ledger detail says `retry started fresh — parent session
-not resumed`, and `lint` warns on the combination — so either write the
+retried attempt's ledger detail — when it passes — says `retry started
+fresh — parent session not resumed`, and `lint` warns on the combination — so either write the
 child's prompt to still make sense cold, or keep `retry` off a session
 chain. And a session child belongs in its parent's `cwd`/`worktree` —
 claude's session lookup is project-directory-scoped, so `lint` warns on a

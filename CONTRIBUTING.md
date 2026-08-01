@@ -158,6 +158,10 @@ Maintainer checklist for cutting a release:
   `cmd/oh-my-graph/version.go` and add the `## [x.y.z]` entry to
   `CHANGELOG.md` in the same commit — CI has guarded this pairing since
   v0.3.0 (`TestVersionMatchesChangelog` fails if they drift).
+- **Bump the plugin manifests to the same version.**
+  `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+  move together with the release — CI does not guard these two, so the
+  checklist is the only thing that does.
 - **`make smoke` before tagging.** Run the real-`claude` smoke locally as the
   last gate — it is the only check that exercises an actual subprocess, and
   it never runs in CI.
