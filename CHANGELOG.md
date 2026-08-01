@@ -8,6 +8,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [v0.3.1] - 2026-08-01
+
+The hardening patch after the first CI flake: the test suite, CI, and the
+shipped templates absorb the post-mortem's lessons, and static graph checks
+learn to warn about things that are valid but will not behave as written —
+without changing what any run does.
+
+### Added
+
+- **Advisory placeholder warnings in `lint` and `run --dry-run`.** Every
+  `{{ ... }}` token that is placeholder-like but will not resolve — a typo
+  or unknown filter that ships verbatim into a paid prompt, an input the
+  graph never declares, an artifact of a node that is not an ancestor — now
+  gets one warning, across a node's prompt/cwd and its verify block. Tokens
+  that don't look like placeholders are left alone as deliberate literal
+  text, and the strict-parse judgment comes from the same regex the runtime
+  interpolates with, so lint and run can never drift. Warnings are advice
+  only: runtime behavior and exit codes are
+  unchanged. ([#73](https://github.com/jitokim/oh-my-graph/pull/73))
+- **Session-handoff guards.** Three ways a `handoff: session` node could
+  quietly resume nothing are now caught up front: a **gate parent is
+  rejected at load time** (a gate spawns no subprocess and records no
+  session to resume); lint warns when the child's **cwd/worktree differs
+  from its session-parent's** (claude's session lookup is
+  project-directory-scoped, so the resume may start cold or attach to the
+  wrong project) and when the node also declares a **retry** (a retried
+  attempt never resumes the parent session); and a retried session node's
+  ledger detail now states outright that the retry **started fresh** —
+  parent session not resumed. ([#75](https://github.com/jitokim/oh-my-graph/pull/75))
+- **An advisory CI stress job, and a "Releasing" checklist.** When a change
+  touches the concurrency-heavy packages (schedule, runner, runfeed,
+  verify), CI now runs their tests under `-race -count=200` as a
+  non-blocking job — a flaky test passes a single run, so determinism gets
+  its own signal — and CONTRIBUTING gains the release checklist the v0.3.0
+  post-mortem called for. ([#71](https://github.com/jitokim/oh-my-graph/pull/71))
+
+### Changed
+
+- **The shipped templates teach the post-mortem idioms.** In
+  `dev-review-pr.yaml` and `self-dev.yaml`: dev nodes commit after each
+  coherent step so a node timeout can never lose finished work, e2e nodes
+  stress concurrency-touching diffs with `-race -count=300`, and
+  style-review nodes check test doubles for unwired synchronization and for
+  assertions an absent record would satisfy — the two shapes of the defect
+  that survived review. ([#69](https://github.com/jitokim/oh-my-graph/pull/69))
+
+### Fixed
+
+- **The test suite is hardened against the flaky-test class found in the
+  post-v0.3.0 audit.** The `haltRunner` double is deterministic — it fails
+  only after the sibling has started, instead of racing
+  it ([#68](https://github.com/jitokim/oh-my-graph/pull/68)); the same
+  audit's sweep replaced timing-dependent doubles with deterministic
+  synchronization, made absence assertions prove absence rather than pass
+  on an empty record, and covered the real-writer fan-out
+  paths ([#70](https://github.com/jitokim/oh-my-graph/pull/70)); and the
+  structural gaps it exposed — CLI wiring, dispatch, and run-lock
+  edges — are now pinned by
+  tests ([#72](https://github.com/jitokim/oh-my-graph/pull/72)).
+
+### Documentation
+
+- **Handoff is a first-class README concept.** What was a buried one-liner
+  is now a named section: an artifact-vs-session comparison table, explicit
+  statements of what a resumed session does and does not inherit (the
+  parent's conversation — never its tool grants, permission mode, or cwd),
+  and handoff recipes in
+  [docs/EXAMPLES.md](docs/EXAMPLES.md). ([#74](https://github.com/jitokim/oh-my-graph/pull/74))
+
 ## [v0.3.0] - 2026-08-01
 
 The live view release: a read-only web view of a run, opened automatically
