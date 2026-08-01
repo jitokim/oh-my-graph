@@ -218,7 +218,11 @@ nodes:
 `)
 	r := &haltRunner{failKey: "boom", blockKey: "sibling", released: make(chan struct{})}
 
-	s, h, led := newHarness(t, r, Options{})
+	// Concurrency: 2 is load-bearing wherever a blocking double needs two
+	// nodes in flight at once: with a width of 1 the runner's cross-node
+	// choreography deadlocks until the go test panic timeout. Stating it
+	// explicitly decouples these tests from defaultConcurrency ever dropping.
+	s, h, led := newHarness(t, r, Options{Concurrency: 2})
 	err := s.Run(context.Background(), g, h, led)
 
 	var halt *HaltError
@@ -254,7 +258,7 @@ nodes:
 `)
 	r := &haltRunner{failKey: "boom", blockKey: "sibling", released: make(chan struct{})}
 
-	s, h, led := newHarness(t, r, Options{})
+	s, h, led := newHarness(t, r, Options{Concurrency: 2})
 	if err := s.Run(context.Background(), g, h, led); err == nil {
 		t.Fatal("expected the run to halt")
 	}
@@ -836,7 +840,7 @@ nodes:
   - { id: slow, prompt: slow }
 `)
 	r := &pauseDrainRunner{started: make(chan struct{}), release: make(chan struct{})}
-	s, h, led := newHarness(t, r, Options{})
+	s, h, led := newHarness(t, r, Options{Concurrency: 2})
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(context.Background(), g, h, led) }()
