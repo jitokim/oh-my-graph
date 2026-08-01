@@ -37,6 +37,12 @@ jobs:
   # until promoted: do NOT add it to branch protection required checks yet.
   stress:
     runs-on: ubuntu-latest
+    # paths-filter lists changed files via the API on pull_request events;
+    # pin the permission it needs so a future restricted-default token
+    # setting cannot silently break the filter.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
 
@@ -58,4 +64,4 @@ jobs:
 
       - name: go test (stress)
         if: steps.changes.outputs.concurrency == 'true'
-        run: go test ./internal/schedule ./internal/runner ./internal/runfeed -race -count=200
+        run: go test ./internal/schedule ./internal/runner ./internal/runfeed ./internal/verify -race -count=200
