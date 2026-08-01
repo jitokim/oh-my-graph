@@ -102,7 +102,17 @@ The plan is printed before it runs, and the generated spec is saved to
 `~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
 hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 `permission_mode: bypassPermissions`; custom YAML remains the path for precise
-control. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
+control.
+
+If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
+— project wins), `auto` also maps planned nodes onto them when a node's id
+clearly matches an agent's name — your review node runs as *your*
+`code-reviewer`. The match is deliberately conservative (one clear candidate or
+nothing, and an agent wanting tools beyond the node's planned allowlist is
+skipped with a note), every mapping is shown in the printed plan before
+anything runs, and `--no-agent-mapping` turns it off. The trade, stated
+up front: a mapped node loads your settings so the agent can resolve, instead
+of running fully settings-isolated — its declared tool list still binds. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
 walks through the plan output, the tool ceiling, and the live node feed.
 
 ## Usage

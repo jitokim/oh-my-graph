@@ -75,11 +75,14 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   are not enumerable by any of these mechanisms, and the whole ceiling is
   coupled to one CLI version's behaviour.
   ([#11](https://github.com/jitokim/oh-my-graph/issues/11))
-- **`agent:` tool reconciliation is undefined and unmeasured.** When a node
-  names a subagent, oh-my-graph does not reconcile that subagent's own `tools:`
-  with the node's `allowed_tools` — the CLI decides, and this project makes no
-  claim about how. If the subagent grants tools the node did not, assume it
-  gets them.
+- **`agent:` tool reconciliation is undefined and unmeasured for hand-written
+  graphs.** When a hand-written node names a subagent, oh-my-graph does not
+  reconcile that subagent's own `tools:` with the node's `allowed_tools` — the
+  CLI decides, and this project makes no claim about how. If the subagent
+  grants tools the node did not, assume it gets them. (An auto-MAPPED node is
+  the exception: the coordinator refuses to map an agent whose frontmatter
+  declares a tool outside the node's planned `allowed_tools`, and the node's
+  `--tools` ceiling still binds — DESIGN.md, E6.)
 
 See [Deferred](#deferred-not-in-v01) below for the full out-of-scope list.
 
@@ -97,11 +100,3 @@ Called out honestly — these are **not** implemented yet:
   contract change) and any whole-graph budget across nodes. A wall-clock timeout
   derived from `budget_usd` was deliberately rejected — the $/minute rate would
   be invented, so it would look like a cap without being one.
-- **coordinator auto-mapping of `agent:` by role.** Having `auto` scan your
-  `~/.claude/agents` and assign a reviewer node your `code-reviewer` sounds like
-  the natural next step; it is deferred on a design constraint, not on effort.
-  A planned node may not carry `agent:` at all (it would route around the tool
-  ceiling), and settings-source isolation disables agent discovery anyway, so
-  the two features are mutually exclusive as built. An implicit scan is also
-  rejected permanently: it would make an `auto` run's behaviour depend on files
-  you forgot you had. See `docs/adr/0004-*.md` §4.
