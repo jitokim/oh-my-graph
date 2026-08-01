@@ -2,7 +2,9 @@
 <!-- oh-my-graph serve — single-run live view. Feed-first: the chronological
      run feed (what each node produced, why something failed) is the main
      surface, rebuilt deterministically from the SSE replay; the DAG is a
-     compact, collapsible side map. Fully self-contained: every asset
+     collapsible side map, resizable by dragging the split between the two
+     columns (the chosen width persists in localStorage, like the map and
+     theme choices). Fully self-contained: every asset
      (including the vendored cytoscape.js, dagre and cytoscape-dagre, see
      vendor/README.md) is embedded in the binary and served from 127.0.0.1;
      nothing is fetched from the network at runtime. Dark-mode first with a
@@ -34,6 +36,10 @@
     <section id="feed-col">
       <ol id="feed"></ol>
     </section>
+    <!-- The split handle between feed and map: drag to resize the map
+         column. Hidden while the map is collapsed. -->
+    <div id="splitter" role="separator" aria-orientation="vertical"
+         aria-label="Resize map panel"></div>
     <!-- The map: the DAG as a compact side panel — orientation, not the
          story. Clicking a node scrolls the feed to its latest entry. -->
     <aside id="map">

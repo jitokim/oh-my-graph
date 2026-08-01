@@ -109,6 +109,8 @@ function mapOpen() {
 
 function setMapOpen(open) {
   $("map").classList.toggle("collapsed", !open);
+  // No split to drag while the map is collapsed.
+  $("splitter").hidden = !open;
   const toggle = $("map-toggle");
   toggle.setAttribute("aria-expanded", String(open));
   toggle.textContent = open ? "▸" : "◂";
@@ -126,6 +128,90 @@ $("map-toggle").addEventListener("click", () => {
   const next = !mapOpen();
   setMapOpen(next);
   localStorage.setItem(MAP_KEY, next ? "open" : "closed");
+});
+
+// --- feed/map split (drag to resize) -----------------------------------------
+
+// The dragged map width persists next to the theme and map keys, validated on
+// read the same way; with no stored (or invalid) choice the CSS default — a
+// viewport-proportional clamp — decides, so the map grows with the window.
+// The width is applied as the --map-w custom property, not an inline width,
+// so the collapsed state's `width: auto` still wins while collapsed.
+const MAP_WIDTH_KEY = "omg-map-width";
+const MAP_MIN = 240;
+const FEED_MIN = 280;
+const splitter = $("splitter");
+
+// The user's chosen width in px, or null to leave the CSS default in charge.
+let chosenMapWidth = null;
+
+function clampMapWidth(w) {
+  const max = Math.max(MAP_MIN, window.innerWidth - FEED_MIN - splitter.offsetWidth);
+  return Math.round(Math.min(Math.max(w, MAP_MIN), max));
+}
+
+function applyMapWidth(w) {
+  $("map").style.setProperty("--map-w", `${w}px`);
+}
+
+const storedWidth = Number(localStorage.getItem(MAP_WIDTH_KEY));
+if (Number.isFinite(storedWidth) && storedWidth >= MAP_MIN) {
+  chosenMapWidth = storedWidth;
+  applyMapWidth(clampMapWidth(chosenMapWidth));
+}
+
+// Pointer events (not mouse events) so capture keeps the drag alive when the
+// pointer leaves the 7px handle — one code path for mouse and trackpad. The
+// map width is applied live on every move, but the cytoscape canvas is only
+// re-measured and re-fit on drag END: cy.resize() re-reads the container and
+// redraws, far too heavy per pointermove.
+let dragPointerId = null;
+let dragStartX = 0;
+let dragStartWidth = 0;
+
+splitter.addEventListener("pointerdown", (e) => {
+  dragPointerId = e.pointerId;
+  dragStartX = e.clientX;
+  dragStartWidth = $("map").getBoundingClientRect().width;
+  splitter.setPointerCapture(e.pointerId);
+  splitter.classList.add("dragging");
+  e.preventDefault();
+});
+
+splitter.addEventListener("pointermove", (e) => {
+  if (dragPointerId !== e.pointerId) return;
+  applyMapWidth(clampMapWidth(dragStartWidth + (dragStartX - e.clientX)));
+});
+
+function endDrag(e) {
+  if (dragPointerId !== e.pointerId) return;
+  dragPointerId = null;
+  splitter.classList.remove("dragging");
+  chosenMapWidth = clampMapWidth($("map").getBoundingClientRect().width);
+  applyMapWidth(chosenMapWidth);
+  localStorage.setItem(MAP_WIDTH_KEY, String(chosenMapWidth));
+  if (cy) {
+    cy.resize();
+    cy.fit(24);
+  }
+}
+splitter.addEventListener("pointerup", endDrag);
+splitter.addEventListener("pointercancel", endDrag);
+
+// A maximized/resized window must re-fit the graph (the cytoscape canvas
+// keeps its old pixel size until cy.resize()) and re-clamp a chosen width so
+// the feed keeps its minimum. Debounced: resize fires per frame while the
+// user drags the window edge.
+let windowResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(windowResizeTimer);
+  windowResizeTimer = setTimeout(() => {
+    if (chosenMapWidth != null) applyMapWidth(clampMapWidth(chosenMapWidth));
+    if (cy && mapOpen()) {
+      cy.resize();
+      cy.fit(24);
+    }
+  }, 150);
 });
 
 // --- cytoscape style ---------------------------------------------------------
