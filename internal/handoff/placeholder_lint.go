@@ -34,9 +34,10 @@ var looseTokenPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 var leadingWordPattern = regexp.MustCompile(`^[A-Za-z0-9_]+`)
 
 // placeholderKinds are the body-leading words that mark a token as intended
-// interpolation: the two real kinds plus their singular typos. A {{ ... }}
-// whose body starts with anything else is assumed to be deliberate literal
-// text and is never warned about.
+// interpolation: the two real kinds plus their singular typos, matched
+// case-insensitively so a case-variant like {{ Artifacts.x }} is judged
+// rather than shipped verbatim. A {{ ... }} whose body starts with anything
+// else is assumed to be deliberate literal text and is never warned about.
 var placeholderKinds = map[string]bool{
 	"inputs":    true,
 	"artifacts": true,
@@ -51,7 +52,8 @@ var placeholderKinds = map[string]bool{
 //
 //   - the token fails to parse as {{ inputs.<name> }} / {{ artifacts.<id> }}
 //     (optional filter: | inline) despite its body starting with one of the
-//     placeholder kinds — an unknown filter, a nested path, a singular typo;
+//     placeholder kinds (matched case-insensitively) — an unknown filter, a
+//     nested path, a singular typo, a case-variant like {{ Artifacts.x }};
 //   - the token parses but names an input the graph does not declare;
 //   - the token parses but names an artifact of a node that does not exist,
 //     is the referencing node itself, or is not one of its ancestors (so the
@@ -100,7 +102,8 @@ func LintPlaceholders(g *graph.Graph) []Warning {
 // declared input / an ancestor node's artifact.
 func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bool, token string) string {
 	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{{"), "}}"))
-	if !placeholderKinds[leadingWordPattern.FindString(body)] {
+	leading := leadingWordPattern.FindString(body)
+	if !placeholderKinds[strings.ToLower(leading)] {
 		return "" // deliberate literal text — none of the runtime's business, none of lint's
 	}
 
@@ -108,6 +111,9 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	// exact regex Interpolate substitutes with — anchored to the whole token.
 	loc := placeholderPattern.FindStringIndex(token)
 	if loc == nil || loc[0] != 0 || loc[1] != len(token) {
+		if leading != strings.ToLower(leading) {
+			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token)
+		}
 		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }} or {{ artifacts.<id> }} (optional filter: | inline) — it will reach the prompt verbatim", token)
 	}
 
