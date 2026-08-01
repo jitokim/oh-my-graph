@@ -147,8 +147,8 @@ nodes:
 	if fake.InvocationCount("dev") != 0 {
 		t.Fatal("the node must never run outside its worktree after a failed provisioning")
 	}
-	if rec := findRecord(led, "dev"); rec.Verdict != ledger.VerdictFail {
-		t.Fatalf("expected a FAIL ledger row for dev, got %+v", rec)
+	if rec, ok := findRecord(led, "dev"); !ok || rec.Verdict != ledger.VerdictFail {
+		t.Fatalf("expected a FAIL ledger row for dev, got %+v (present=%v)", rec, ok)
 	}
 }
 

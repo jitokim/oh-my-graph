@@ -65,9 +65,10 @@ func expectDone(t *testing.T, done chan error) error {
 func TestFollow_HoldsBackATruncatedFinalLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	const whole = `{"schema":2,"event":"run_started"}`
+	const sentinel = `{"schema":2,"event":"node_passed","node_id":"sentinel"}`
 	const partHead = `{"schema":2,"ev`
 	const partTail = `ent":"node_started"}`
-	if err := os.WriteFile(path, []byte(whole+"\n"+partHead), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(whole+"\n"+sentinel+"\n"+partHead), 0o644); err != nil {
 		t.Fatalf("write fixture stream: %v", err)
 	}
 
@@ -76,9 +77,13 @@ func TestFollow_HoldsBackATruncatedFinalLine(t *testing.T) {
 
 	expectLine(t, lines, whole)
 
-	// The truncated line must not have been delivered; give the tail a few
-	// polls to prove it holds back rather than racing this check.
-	time.Sleep(10 * testPoll)
+	// Positive hold-back proof: the sentinel is the complete line scanned
+	// immediately before the truncated tail, so its arrival — while the
+	// truncated line still has not arrived — shows the tail reached the
+	// damage and held it back. The old sleep-then-assert-nothing shape only
+	// proved the reader was slower than the sleep, which under CI load it
+	// often was not.
+	expectLine(t, lines, sentinel)
 	select {
 	case got := <-lines:
 		t.Fatalf("truncated line was delivered as %q, want it held back", got)

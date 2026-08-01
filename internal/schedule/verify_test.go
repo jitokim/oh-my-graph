@@ -79,7 +79,10 @@ nodes:
 	// The ledger must say WHY, not just that: the command, its exit code, and
 	// what it printed. Without this the user re-runs the command by hand to
 	// learn something the run already knew.
-	rec := findRecord(led, "dev")
+	rec, ok := findRecord(led, "dev")
+	if !ok {
+		t.Fatal("dev was never recorded in the ledger")
+	}
 	if rec.Verdict != ledger.VerdictFail {
 		t.Errorf("dev verdict = %s, want FAIL", rec.Verdict)
 	}
@@ -445,8 +448,8 @@ nodes:
 	if err := s.Run(context.Background(), g, h, led); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if rec := findRecord(led, "dev"); rec.Verdict != ledger.VerdictPass {
-		t.Errorf("dev verdict = %s, want PASS", rec.Verdict)
+	if rec, ok := findRecord(led, "dev"); !ok || rec.Verdict != ledger.VerdictPass {
+		t.Errorf("dev record = %+v (present=%v), want a PASS record", rec, ok)
 	}
 	if indexOf(fake.Calls(), "ship") == -1 {
 		t.Errorf("dependent of a verified node should run; calls=%v", fake.Calls())
@@ -569,24 +572,20 @@ nodes:
 // channel before answering, so a test can choreograph which node reaches which
 // lifecycle stage first instead of racing them.
 //
-// The wait is bounded: if the event it is waiting for never happens — which is
-// exactly what a regression in the verification path looks like — the runner
-// gives up and lets the test fail on its real assertion instead of deadlocking
-// until the go test timeout.
+// The wait blocks on the scripted channel or ctx.Done() only — deliberately no
+// wall-clock fallback. A genuine deadlock is go test's own timeout's job, which
+// dumps every goroutine naming the stuck line; a give-up arm would instead
+// silently degrade the choreography into an unsynchronized race under CI load
+// and then fail with a message blaming the product.
 type blockingRunner struct {
 	outcomes   map[string]runner.NodeOutcome
 	waitBefore map[string]chan struct{}
 }
 
-// choreographyTimeout is the give-up bound for blockingRunner. Only a broken
-// implementation ever reaches it.
-const choreographyTimeout = 2 * time.Second
-
 func (r *blockingRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	if wait, ok := r.waitBefore[spec.Prompt]; ok {
 		select {
 		case <-wait:
-		case <-time.After(choreographyTimeout):
 		case <-ctx.Done():
 			return runner.NodeOutcome{}, ctx.Err()
 		}

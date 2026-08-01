@@ -501,28 +501,55 @@ func TestRun_CancelledRunKillsTheChild(t *testing.T) {
 	// The stub ignores its argv and wedges like a hung claude whose own child
 	// (here: sleep) inherits stdout. Without the process-group kill, cancel
 	// would kill only the script itself and Run would stay blocked on the pipe
-	// until sleep exited on its own.
-	stub := filepath.Join(t.TempDir(), "claude-stub")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+	// until sleep exited on its own. It touches `started` first so the test
+	// cancels only once the stub is provably running: cancelling after a bare
+	// sleep can, on a stalled machine, land before the stub even spawns — and
+	// then the test proves nothing about killing a live process tree.
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "claude-stub")
+	started := filepath.Join(dir, "started")
+	script := "#!/bin/sh\ntouch '" + started + "'\nsleep 30\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("write stub: %v", err)
 	}
 
 	r := NewClaudeCLIRunner(WithBinary(stub))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
 	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
+		_, err := r.Run(ctx, NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+		done <- err
 	}()
 
-	start := time.Now()
-	_, err := r.Run(ctx, NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	waitForFile(t, started)
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after its context was cancelled")
+	}
 	if err == nil {
 		t.Fatal("a cancelled node must not report success")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected a context.Canceled error, got %T: %v", err, err)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("node outlived its cancelled run by %s", elapsed)
+}
+
+// waitForFile polls for path until it exists, failing the test at a deadline.
+// It is the start signal for the real-spawn cancellation test above.
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
+	t.Fatalf("stub never signalled it started (no %s)", path)
 }

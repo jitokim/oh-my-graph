@@ -3,6 +3,8 @@ package verify
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,23 +113,52 @@ func TestVerify_TimesOutRatherThanHanging(t *testing.T) {
 // is reported as an error, not as an exit code, because the command never
 // reached a verdict.
 func TestVerify_CancelledRunKillsTheChild(t *testing.T) {
+	// The command touches `started` first so the test cancels only once the
+	// child is provably running: cancelling after a bare sleep can, on a
+	// stalled machine, land before the child even spawns — and then the test
+	// proves nothing about killing a live process.
+	started := filepath.Join(t.TempDir(), "started")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
 	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
+		_, err := NewShellVerifier().Verify(ctx, Request{
+			Command: "touch '" + started + "'; sleep 30",
+			Timeout: time.Minute,
+		})
+		done <- err
 	}()
 
-	start := time.Now()
-	_, err := NewShellVerifier().Verify(ctx, Request{Command: "sleep 30", Timeout: time.Minute})
+	waitForFile(t, started)
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Verify did not return after its context was cancelled")
+	}
 	if err == nil {
 		t.Fatal("a cancelled verification must not report success")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected a context.Canceled error, got %T: %v", err, err)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("verification outlived its cancelled run by %s", elapsed)
+}
+
+// waitForFile polls for path until it exists, failing the test at a deadline.
+// It is the start signal for the real-spawn cancellation test above.
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
+	t.Fatalf("child never signalled it started (no %s)", path)
 }
 
 // TestVerify_UnspawnableCommandIsAnError covers the third no-verdict case: the
