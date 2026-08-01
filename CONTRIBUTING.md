@@ -150,6 +150,23 @@ without an explicit, discussed design change should not be merged:
   once. If you can't measure it, say it's unverified — an honest partial
   mechanism beats an overclaimed complete one.
 
+## Releasing
+
+Maintainer checklist for cutting a release:
+
+- **Version bump lands with the CHANGELOG heading.** Bump
+  `cmd/oh-my-graph/version.go` and add the `## [x.y.z]` entry to
+  `CHANGELOG.md` in the same commit — CI has guarded this pairing since
+  v0.3.0 (`TestVersionMatchesChangelog` fails if they drift).
+- **`make smoke` before tagging.** Run the real-`claude` smoke locally as the
+  last gate — it is the only check that exercises an actual subprocess, and
+  it never runs in CI.
+- **One scoped deep meta-review per release, on a rotating subject** (tests →
+  docs → security). Pick the release's subject and ask one targeted question
+  about that area's blind spots, rather than adding another generic review
+  pass — the v0.3.0 flake was found by asking a targeted question about
+  test-double synchronization, after four generic review layers had missed it.
+
 ## Scope
 
 Before proposing a feature, check DESIGN.md's "MVP scope" and "Deferred"
