@@ -98,6 +98,34 @@ func TestBuildCmd_AgentArgv(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_SessionIDArgv pins the full argv of the shape a pre-assigned
+// session id actually occurs in: a fresh-session node (never a resuming one —
+// NodeInvocation documents the two fields as mutually exclusive, and the
+// scheduler enforces it). The id is what the scheduler already published on
+// node_started, so the flag rendering here is the other half of that promise:
+// the transcript a live view went looking for is the one this child writes.
+func TestBuildCmd_SessionIDArgv(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		SessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
+	})
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--allowedTools", "Read",
+		"--session-id", "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
 // TestBuildCmd_OmitsOptionalFlags proves every optional flag is absent when
 // nothing configured it — a fan-in node with a clean session, no tool grants
 // and no imposed ceiling.
@@ -112,6 +140,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	for _, flag := range []string{
 		"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume",
 		"--setting-sources", "--tools", "--strict-mcp-config", "--agent",
+		"--session-id",
 	} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
@@ -478,6 +507,41 @@ exit 0
 	}
 	if outcome.FailureCause != "" {
 		t.Errorf("a clean exit must carry no FailureCause, got %q", outcome.FailureCause)
+	}
+}
+
+// TestRun_SessionIDReachesTheChildAndComesBack closes the pre-assignment loop
+// end to end without real claude: the stub echoes the `--session-id` value it
+// received back as its envelope's session_id, so the assertion proves both
+// that the flag reached the child's argv and that NodeOutcome.SessionID —
+// still sourced from the envelope, exactly as before this flag existed —
+// agrees with the id the scheduler published on node_started.
+func TestRun_SessionIDReachesTheChildAndComesBack(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, `#!/bin/sh
+sid=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--session-id" ]; then sid="$a"; fi
+  prev="$a"
+done
+printf '{"session_id":"%s","result":"PASS","total_cost_usd":0.01}' "$sid"
+`)
+
+	assigned := NewSessionID()
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	outcome, err := r.Run(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		SessionID:      assigned,
+	})
+	if err != nil {
+		t.Fatalf("unexpected Run error: %v", err)
+	}
+	if outcome.SessionID != assigned {
+		t.Errorf("outcome session id = %q, want the pre-assigned %q", outcome.SessionID, assigned)
 	}
 }
 

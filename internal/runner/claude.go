@@ -173,7 +173,7 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 //	  [--max-budget-usd <amount>] [--setting-sources <sources>] [--agent <name>]
 //	  [--allowedTools "<comma,joined>"] [--tools "<comma,joined>"]
 //	  [--strict-mcp-config] [--disallowedTools "<comma,joined>"]
-//	  [--resume <session_id>]
+//	  [--resume <session_id>] [--session-id <uuid>]
 //
 // The order above is the order emitted — keep the two in step, since
 // TestBuildCmd_Argv pins the exact argv. Never --bare (disables OAuth) and
@@ -219,6 +219,9 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	}
 	if spec.ResumeSession != "" {
 		args = append(args, "--resume", spec.ResumeSession)
+	}
+	if spec.SessionID != "" {
+		args = append(args, "--session-id", spec.SessionID)
 	}
 	return args
 }
