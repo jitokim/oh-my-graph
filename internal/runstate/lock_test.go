@@ -9,9 +9,16 @@ import (
 	"testing"
 )
 
-// --- a second concurrent acquire is refused ----------------------------------
+// --- a second acquire while the lock is held is refused -----------------------
 
-func TestAcquireLock_SecondConcurrentAcquireFails(t *testing.T) {
+// TestAcquireLock_SecondAcquireInSameProcessFails proves that acquiring an
+// already-held lock path is refused with a *LockHeldError naming the path.
+// Both acquires happen in this one test process, so what is exercised is the
+// O_EXCL create-refusal on an existing file — the cross-process guarantee (two
+// `resume` invocations racing on the same run id) rests on the kernel making
+// that O_EXCL create atomic, which no same-process test can demonstrate and
+// this suite deliberately does not spawn a second process to try.
+func TestAcquireLock_SecondAcquireInSameProcessFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resume.lock")
 
 	release, err := AcquireLock(path)
@@ -23,7 +30,7 @@ func TestAcquireLock_SecondConcurrentAcquireFails(t *testing.T) {
 	_, err = AcquireLock(path)
 	var held *LockHeldError
 	if !errors.As(err, &held) {
-		t.Fatalf("second concurrent AcquireLock = %T: %v, want *LockHeldError", err, err)
+		t.Fatalf("second AcquireLock = %T: %v, want *LockHeldError", err, err)
 	}
 	if held.Path != path {
 		t.Fatalf("LockHeldError.Path = %q, want %q", held.Path, path)
