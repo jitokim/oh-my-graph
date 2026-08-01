@@ -15,8 +15,9 @@
 //	oh-my-graph serve [<run-id>] [--port N]
 //	oh-my-graph chat
 //
-// Exit codes: 0 every node passed, 1 the run failed, 2 the run paused at a
-// gate and is resumable (ADR 0003) — a pause is not a failure.
+// Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
+// resumable — at a gate awaiting a human decision (ADR 0003) or because the
+// subscription's session limit was hit (ADR 0009). A pause is not a failure.
 package main
 
 import (
@@ -55,11 +56,11 @@ func main() {
 }
 
 // mainExitCode runs the CLI and returns the process exit code: 0 (every node
-// passed), 1 (the run failed — printed to stderr), or 2 (the run paused at a
-// gate and is resumable — the resume hint was already printed to stdout by
-// executeGraph/runResume, so this path prints nothing further). Separated
-// from main so the exit path lives in exactly one place and the mapping
-// itself is testable without calling os.Exit.
+// passed), 1 (the run failed — printed to stderr), or 2 (the run paused — at
+// a gate or on a session limit — and is resumable; the resume hint was
+// already printed to stdout by executeGraph/runResume, so this path prints
+// nothing further). Separated from main so the exit path lives in exactly one
+// place and the mapping itself is testable without calling os.Exit.
 func mainExitCode(args []string) int {
 	err := run(args)
 	if err == nil {
@@ -67,6 +68,10 @@ func mainExitCode(args []string) int {
 	}
 	var paused *schedule.PausedError
 	if errors.As(err, &paused) {
+		return 2
+	}
+	var limited *schedule.LimitPausedError
+	if errors.As(err, &limited) {
 		return 2
 	}
 	fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
@@ -303,6 +308,13 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, flags, toolPolicies)
 	if err != nil {
+		return fmt.Errorf("prepare run snapshot: %w", err)
+	}
+	// The initial write makes state.json exist from the run's first moment,
+	// not only after a node settles — the difference between a first-node
+	// session-limit pause being resumable and it leaving no snapshot at all
+	// (runstate.SnapshotRecorder.WriteInitial, ADR 0009).
+	if err := recorder.WriteInitial(); err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
 
@@ -601,16 +613,29 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 	return out
 }
 
-// printPauseHint prints the exact resume commands when runErr is a
-// *schedule.PausedError — the "print the exact resume command" step of the
-// gate lifecycle (DESIGN.md, "Gate nodes and resume") — and is a silent no-op
-// for any other outcome (success or failure), so it is safe to call
-// unconditionally after every run.
+// printPauseHint prints the exact resume commands when runErr is one of the
+// two pause shapes — a *schedule.PausedError (the gate lifecycle's "print the
+// exact resume command" step — DESIGN.md, "Gate nodes and resume") or a
+// *schedule.LimitPausedError (ADR 0009: the hint carries the CLI's own
+// "resets <time>" when the captured cause yields one, and drops the time
+// rather than inventing one when it doesn't) — and is a silent no-op for any
+// other outcome (success or failure), so it is safe to call unconditionally
+// after every run.
 func printPauseHint(w io.Writer, runID string, runErr error) {
 	var paused *schedule.PausedError
-	if !errors.As(runErr, &paused) {
+	if errors.As(runErr, &paused) {
+		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
+			paused.GateID, runID, paused.GateID, runID, paused.GateID)
 		return
 	}
-	fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
-		paused.GateID, runID, paused.GateID, runID, paused.GateID)
+	var limited *schedule.LimitPausedError
+	if !errors.As(runErr, &limited) {
+		return
+	}
+	if reset := runner.SessionLimitReset(limited.Cause); reset != "" {
+		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed\n",
+			reset, reset, runID)
+		return
+	}
+	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
 }

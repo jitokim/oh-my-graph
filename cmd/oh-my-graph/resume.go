@@ -104,20 +104,60 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 // only the cleared nodes — plus any node an earlier leg cancelled or never
 // reached, which has no record to clear — execute. Prior gate decisions
 // replay unchanged through the same RecordedController a gate resume uses.
-// When nothing failed there is no leg at all: the run directory is left
-// untouched (no new run_started bracket, no spawn) and the command exits 0.
+//
+// A run with nothing to clear may still be unfinished: a session-limit pause
+// (ADR 0009) records the limited nodes NOWHERE — they never really ran — so
+// such a run holds only PASS records plus launchable, un-recorded nodes, and
+// --retry-failed is exactly the command its exit hint promised would finish
+// it. Only when there is genuinely nothing to launch (all passed, or a
+// rejected gate's standing decision blocks the rest) is there no leg at all:
+// the run directory is left untouched (no new run_started bracket, no spawn)
+// and the command exits 0. A gate-paused run is redirected to its own resume
+// mode rather than run — the pending gate needs a human decision, which a
+// retry leg must never sneak past.
 func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
 	retained, cleared := partitionForRetry(snap)
+	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	if len(cleared) == 0 {
-		fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
 		if snap.Gate.PausedAt != "" {
+			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
 			fmt.Fprintf(os.Stdout, "It is paused at gate %q — decide it with --approve %s or --reject %s instead.\n",
 				snap.Gate.PausedAt, snap.Gate.PausedAt, snap.Gate.PausedAt)
+			return nil
 		}
-		return nil
+		unfinished, err := hasUnfinishedWork(snap.Graph, retained)
+		if err != nil {
+			return fmt.Errorf("reconstruct graph for run %q: %w", flags.runID, err)
+		}
+		if !unfinished {
+			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
+			return nil
+		}
+		banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
 	}
-	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	return continueRun(flags, snap, retained, snap.Gate.Decisions, banner, nodeRunner)
+}
+
+// hasUnfinishedWork reports whether a retry leg carrying exactly the retained
+// records would launch anything at all: some node with no record whose
+// dependencies are all retained PASSes. This is the scheduler's own initial
+// launch condition (ReadyGiven(completed) minus settled), applied ahead of
+// time — a node buried behind a retained FAIL (a rejected gate's pruned
+// subtree) is unreachable and does not count, so a retry of such a run stays
+// a clean no-op instead of opening an empty leg.
+func hasUnfinishedWork(graphJSON []byte, retained map[string]runstate.NodeRecord) (bool, error) {
+	g, err := graph.Parse(graphJSON)
+	if err != nil {
+		return false, err
+	}
+	carried := runstate.Snapshot{Nodes: retained}
+	settled := carried.SettledNodes()
+	for _, id := range g.ReadyGiven(carried.CompletedNodes()) {
+		if !settled[id] {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // partitionForRetry splits a snapshot's node records for --retry-failed:
