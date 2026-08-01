@@ -127,7 +127,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
-| `resume <run-id> (--approve \| --reject) <gate-id>` | Resume a run paused at a human-approval gate node. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. |
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
@@ -273,6 +273,9 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   for nodes whose legitimate work runs long ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **failure salvage** — `resume <run-id> --retry-failed` re-executes only a
+  failed run's failed and cancelled nodes, keeping every passed node's
+  artifact for its dependents ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 
 ## Platform support
 

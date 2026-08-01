@@ -133,9 +133,16 @@ to pause).
   Nodes running in parallel interleave; per node, `node_started` always
   precedes its retries and its terminal event.
 - **Legs, not just runs.** A resumed run (`oh-my-graph resume`) appends to the
-  same stream, bracketed by its own `run_started`/`run_finished`. A run that
-  paused at a gate therefore contains one bracket pair per leg; the run as a
-  whole is finished when the latest `run_finished` outcome is not `"paused"`.
+  same stream, bracketed by its own `run_started`/`run_finished` — a gate
+  resume and a `--retry-failed` leg alike. A run that paused at a gate
+  therefore contains one bracket pair per leg; the run as a whole is finished
+  when the latest `run_finished` outcome is not `"paused"` — though a later
+  `resume --retry-failed` may reopen a `"failed"` run with a new bracket
+  pair. Because a retry leg re-executes previously failed nodes, one node id
+  may carry terminal events in more than one leg (a `node_failed` in an
+  earlier one, a fresh `node_started` and terminal in the retry leg); the
+  latest terminal event per node is the authoritative one, matching
+  `state.json`.
 - **Short lines.** Every event line the writer emits is small (a handful of
   short fields; well under a few kilobytes even with a long `detail`). The
   in-repo readers enforce a shared 1 MiB per-line cap and refuse — with an
