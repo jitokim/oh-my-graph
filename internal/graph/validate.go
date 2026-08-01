@@ -53,7 +53,8 @@ func (g *Graph) Validate() error {
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
-//     (a root has no session to resume; more than one can't be merged);
+//     (a root has no session to resume; more than one can't be merged) — and
+//     that parent is not a gate, which never records a session at all;
 //  6. every success_check.verify is runnable: a command, a parseable timeout
 //     within the ceiling, a compilable output_matches regex;
 //  7. an agent name, when present, carries no surrounding whitespace;
@@ -381,15 +382,36 @@ func validateVerification(nodeID string, v *Verification) (time.Duration, error)
 	return timeout, nil
 }
 
+// validateHandoffConstraints enforces that a session-handoff node has a
+// session to resume: exactly one parent, and that parent a node that will
+// actually record a session id. A gate parent fails the second half — a gate
+// spawns no subprocess and records no session (see the scheduler's
+// recordGateApprove), so the child would validate today and then die mid-run
+// at "parent has no recorded session id": exactly the failure load-time
+// validation exists to move earlier. A parent id that names no node at all is
+// tolerated here — validateDependenciesExist already reports it.
 func (g *Graph) validateHandoffConstraints() []error {
 	var issues []error
 	for _, n := range g.Nodes {
-		if n.Handoff == HandoffSession && len(n.DependsOn) != 1 {
+		if n.Handoff != HandoffSession {
+			continue
+		}
+		if len(n.DependsOn) != 1 {
 			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf(
 					"handoff: session with %d parents — a session-handoff node must resume exactly one parent's session; use handoff: artifact for a root node or for fan-in",
 					len(n.DependsOn),
+				),
+			})
+			continue
+		}
+		if parent, ok := g.byID[n.DependsOn[0]]; ok && parent.Type == TypeGate {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf(
+					"handoff: session with gate parent %q — a gate spawns no subprocess and records no session to resume; use handoff: artifact",
+					parent.ID,
 				),
 			})
 		}
