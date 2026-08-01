@@ -193,8 +193,9 @@ This is safe and intentional, not recursion gone wrong:
   auth conflict between parent and children.
 - Child sessions do **not** inherit the parent Claude Code session's
   conversation, context, or open files. Each node's `prompt` in the graph YAML
-  is the entire context it gets, plus whatever `handoff: artifact` or
-  `handoff: session` wires in from its declared parent node. This is by
+  is the entire context it gets, plus whatever `handoff` wires in from its
+  declared parent node — the parent's final reply with `handoff: artifact`,
+  or the parent's entire resumed session with `handoff: session`. This is by
   design — it's what keeps node runs reproducible and inspectable — but it
   means "the graph knows what I'm looking at in this Claude Code session" is
   never true unless you put it in the graph's inputs or prompts yourself.
