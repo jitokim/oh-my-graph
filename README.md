@@ -1,3 +1,5 @@
+<p align="center">English | <a href="README.ko.md">한국어</a></p>
+
 <p align="center">
   <img src="assets/icon-round.png" alt="oh-my-graph logo" width="128" />
 </p>
