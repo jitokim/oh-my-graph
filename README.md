@@ -230,7 +230,7 @@ parent.
 |                    | `artifact` (default) | `session` |
 |--------------------|----------------------|-----------|
 | The child inherits | the parent's **final reply**, persisted to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **claude session**, resumed with `--resume`: everything the parent read, did and concluded, not just its reply. The conversation, not the configuration — `allowed_tools`, `permission_mode`, `agent`, `cwd` and `budget_usd` are always the child's own |
-| Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one (rejected at load time otherwise), sharing the parent's `cwd`/`worktree` — a constraint the loader does not check for you |
+| Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one `claude-run` node (a root, a fan-in or a gate parent is rejected at load time), sharing the parent's `cwd`/`worktree` — `lint` warns on a mismatch |
 | Session shape      | each node is a fresh claude session | a sequential chain continuing one conversation |
 
 Why it matters: with `artifact`, context the parent didn't put into its final

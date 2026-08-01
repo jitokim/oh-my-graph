@@ -292,20 +292,22 @@ configuration: `allowed_tools`, `permission_mode`, `agent`, `cwd` and
     prompt: Summarize what was built and how the tests went.
 ```
 
-A `handoff: session` node must have **exactly one** parent — a root has no
-session to resume, and a fan-in can't merge sessions; both are rejected at
-load time (use `artifact` there). The one parent must also be a `claude-run`
-node — a gate has no session to resume, which surfaces at run time, not load
-time. And although two siblings each resuming the same parent *validates* —
-the one-parent rule is checked per child — that forks one conversation into
-two parallel continuations, which is a footgun, not a pattern: fan-out
-belongs to `artifact`.
+A `handoff: session` node must have **exactly one** parent, and that parent
+must be a `claude-run` node — a root has no session to resume, a fan-in
+can't merge sessions, and a gate never records one; all three are rejected
+at load time (use `artifact` there). And although two siblings each
+resuming the same parent *validates* — the one-parent rule is checked per
+child — that forks one conversation into two parallel continuations, which
+is a footgun, not a pattern: fan-out belongs to `artifact`.
 
-Two more run-time truths the chain shape hides: a **retried** session node
-does not resume — `retry` always starts the attempt fresh (DESIGN
-§ Execution engine) — so either write the child's prompt to still make
-sense cold, or keep `retry` off a session chain; and a session child belongs
-in its parent's `cwd`/`worktree` — the loader does not check that for you.
+Two more truths of the chain shape, both surfaced by `lint`: a **retried**
+session node does not resume — `retry` always starts the attempt fresh, the
+retried attempt's ledger detail says `retry started fresh — parent session
+not resumed`, and `lint` warns on the combination — so either write the
+child's prompt to still make sense cold, or keep `retry` off a session
+chain. And a session child belongs in its parent's `cwd`/`worktree` —
+claude's session lookup is project-directory-scoped, so `lint` warns on a
+mismatch.
 
 Spec:
 [DESIGN.md § Handoff](../DESIGN.md#handoff--artifact-default-session-opt-in-committed).
