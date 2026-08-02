@@ -62,6 +62,25 @@ node shows up as an ordinary claude session in `~/.claude/projects`.
 those transcripts. oh-my-graph is the executor; fleetops is the dashboard. You
 get the observability integration for free.
 
+## It ships itself
+
+Dogfooding here is not a demo: this repository is built by the tool it
+contains. Features, fixes, docs and releases are authored by its own graphs —
+a claude node implements on a branch, sibling nodes run the checks and the
+reviews, and a final node opens the draft PR. The verifiable part, as of
+2026-08-02: 23 of the 80 pull requests merged into `main` carry a Claude
+co-author trailer in their squash commit — the receipt that a claude session
+wrote them. Count them yourself: `git log -i --grep="co-authored-by: claude"`
+(24 matches: those 23 squash commits plus the initial commit). That trailer
+names the model, not the pipeline, so from 2026-08-02 on, commits authored by
+a graph lane also carry `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+— see [CONTRIBUTING.md](CONTRIBUTING.md#attribution).
+
+The templates in [`graphs/`](graphs/) are not samples: `self-dev.yaml`,
+`adr-driven-dev.yaml` and `apply-flags.yaml` are the pipelines this repo
+ships itself with. A full dogfooding run is walked through in
+[docs/EXAMPLES.md](docs/EXAMPLES.md#dogfooding-developing-oh-my-graph-with-oh-my-graph).
+
 ## Quickstart
 
 ```sh
