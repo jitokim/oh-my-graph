@@ -64,6 +64,21 @@ PR that wires it into a workflow.
 - Admin merge is for bypassing the merge-queue mechanics, never for bypassing
   an unfinished review.
 
+### Attribution
+
+Commits authored by a graph lane — a claude node running one of the shipped
+`graphs/*.yaml` pipelines against this repo — end with the trailer
+
+```
+Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>
+```
+
+This is a transparency convention, not a GitHub account: the address receives
+no mail and resolves to no user. It exists so the dogfooding claim in the
+README ("It ships itself") stays verifiable —
+`git log --grep="Co-Authored-By: oh-my-graph"` lists exactly the commits a
+graph lane wrote.
+
 ## The exec seams — the one rule that matters most
 
 **Exactly four objects in this codebase may spawn a process**, each behind
