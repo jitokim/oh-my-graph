@@ -52,17 +52,44 @@ func (r *SnapshotRecorder) WriteInitial() error {
 	return Write(r.path, r.snap)
 }
 
-// RecordNode records one node's terminal result and writes the snapshot. It
-// is called after EVERY node — pass or fail, gate or claude-run — not only at
-// a gate pause, so a Ctrl-C'd or crashed run is resumable too.
+// RecordNode records one node's terminal result (or a feedback declarer's
+// non-terminal marker) and writes the snapshot. It is called after EVERY
+// node — pass or fail, gate or claude-run — not only at a gate pause, so a
+// Ctrl-C'd or crashed run is resumable too.
+//
+// When the incoming record supersedes an earlier feedback round of the same
+// node — its Round is higher, or it replaces a marker of the same round —
+// the superseded record's CostUSD is folded into it before it is stored
+// (ADR 0010): a node's recorded spend accumulates across its rounds, so
+// state.json's per-node figures sum to the same total the ledger's
+// one-row-per-execution table shows. "Cost stays honest" is a property of
+// the contract fleetops reads, not just the local table. An ordinary
+// overwrite (both records round 0 — e.g. a --retry-failed leg re-running a
+// cleared node, whose cleared record is already gone) accumulates nothing,
+// exactly as before.
 func (r *SnapshotRecorder) RecordNode(nodeID string, rec NodeRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.snap.Nodes == nil {
 		r.snap.Nodes = make(map[string]NodeRecord)
 	}
+	if prior, ok := r.snap.Nodes[nodeID]; ok && supersedesRound(prior, rec) {
+		rec.CostUSD += prior.CostUSD
+	}
 	r.snap.Nodes[nodeID] = rec
 	return Write(r.path, r.snap)
+}
+
+// supersedesRound reports whether rec replaces prior as a later (or
+// completing) feedback round whose spend must carry forward: a strictly
+// higher round, or a terminal record landing on the marker of its own round
+// (the marker priced the declarer's failing execution; the terminal record
+// prices the re-run — the node paid for both).
+func supersedesRound(prior, rec NodeRecord) bool {
+	if rec.Round > prior.Round {
+		return true
+	}
+	return rec.Round == prior.Round && prior.Verdict == "" && rec.Verdict != ""
 }
 
 // RecordGateDecision records an approve/reject decision (or a pause — see

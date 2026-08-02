@@ -72,6 +72,17 @@ const (
 	VerdictFail Verdict = "FAIL"
 )
 
+// A record may also carry NO verdict (the empty string): the non-terminal
+// FEEDBACK MARKER a feedback declarer's record is rewritten to when its arc
+// fires (ADR 0010) — round k, no verdict, spend carried. A marker is
+// deliberately neither completed nor settled (both set derivations below
+// test for the two real verdicts), which is exactly what makes a leg stopped
+// mid-loop resume INTO the loop: the declarer relaunches, and its body's
+// superseded rounds are recomputed from the marker's round by the resume
+// path. A runstate FAIL written mid-loop instead would make the declarer
+// settled the moment anything stopped the run, silently collapsing the loop
+// into an ordinary failure on resume.
+
 // GateDecision is a gate's recorded outcome. The values mirror the
 // gate.Decision constants (approve / reject / pause) and are redeclared here for
 // the same reason as Verdict: the snapshot is the source of truth for what a
@@ -157,6 +168,16 @@ type NodeRecord struct {
 	// headroom note. Without it a resumed leg's end-of-run table would show a
 	// blank DETAIL column for every node from an earlier leg.
 	Detail string `json:"detail,omitempty"`
+	// Round is the feedback-round ordinal this record was written during
+	// (ADR 0010): 1-based, absent (0) on any execution outside a feedback
+	// loop — an additive field, no schema bump. On a feedback declarer's
+	// MARKER record (no verdict) it is the round the arc has re-armed; on a
+	// body node's terminal record it is the round that execution belonged
+	// to. The recorded position IS the loop's resume state: body records
+	// with Round below the declarer's marker round are superseded, records
+	// at it are retained, and max − round rounds remain — no separate
+	// rounds-spent counter exists to drift from it.
+	Round int `json:"round,omitempty"`
 }
 
 // GateState records the run's progress through its gates: what has been decided

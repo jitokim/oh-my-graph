@@ -64,7 +64,14 @@ const (
 	// EventNodeFailed is a node's terminal FAIL, same payload as a pass plus
 	// the failure detail.
 	EventNodeFailed EventType = "node_failed"
-	// EventNodeRetried marks one retry attempt beginning after a failed one.
+	// EventNodeRetried marks a failed attempt that is not final: one retry
+	// attempt beginning after a failed one, or — since the additive `round`
+	// field (ADR 0010) — a feedback declarer's non-final judgment failure
+	// re-arming its loop body (detail "feedback round k/N: re-running
+	// <target> → <declarer>", round k, no session id: the re-run's ids are
+	// minted at each body node's own node_started). node_failed stays
+	// terminal either way: it appears at most once per declarer per leg,
+	// when the failure is final.
 	EventNodeRetried EventType = "node_retried"
 	// EventRunFinished closes the leg run_started opened, with its outcome.
 	EventRunFinished EventType = "run_finished"
@@ -139,6 +146,14 @@ type Event struct {
 	// The producer caps it at one shared bound (240 runes), so a line stays
 	// tailable even when the underlying error was arbitrarily long.
 	Detail string `json:"detail,omitempty"`
+	// Round is the feedback-round ordinal on node events emitted by a
+	// feedback re-execution (ADR 0010): 1-based, absent on the initial pass
+	// (absent means 0, like every other omitted zero value). Body nodes
+	// therefore emit one full started→terminal sequence per round within a
+	// leg; the latest terminal event per node stays authoritative, in-leg
+	// rounds included (docs/RUN-FEED.md). An additive optional field — no
+	// schema bump.
+	Round int `json:"round,omitempty"`
 	// Outcome is how the leg ended, on run_finished only.
 	Outcome string `json:"outcome,omitempty"`
 }
