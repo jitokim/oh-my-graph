@@ -337,6 +337,27 @@ func TestGitManager_AcquireRefusesForeignDir(t *testing.T) {
 	})
 }
 
+// TestGitPathAbs pins the portable stand-in for rev-parse's
+// --path-format=absolute (git < 2.31): a path git printed relative is
+// anchored to the directory the command ran in, an absolute one passes
+// through, and "" anchors to the process working directory — matching
+// gitCmd's cmd.Dir semantics.
+func TestGitPathAbs(t *testing.T) {
+	if got := gitPathAbs("/repo", ".git"); got != "/repo/.git" {
+		t.Errorf("relative path not anchored to the command's dir: %q", got)
+	}
+	if got := gitPathAbs("/repo", "/elsewhere/.git"); got != "/elsewhere/.git" {
+		t.Errorf("absolute path must pass through untouched: %q", got)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if got := gitPathAbs("", ".git"); got != filepath.Join(wd, ".git") {
+		t.Errorf("empty dir must anchor to the process working directory: %q", got)
+	}
+}
+
 func TestGitManager_AcquireOutsideARepoFails(t *testing.T) {
 	m := NewGitManager(t.TempDir(), filepath.Join(t.TempDir(), "worktrees"), "test-run")
 	if _, err := m.Acquire(context.Background(), "lane"); err == nil {

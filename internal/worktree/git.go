@@ -153,26 +153,46 @@ func (m *GitManager) Acquire(ctx context.Context, name string) (string, error) {
 // directory must be the invocation repo's. Symlinks are resolved before
 // comparing so a path under a symlinked location (macOS /var → /private/var)
 // still matches.
+//
+// --git-common-dir may come back relative to where the command ran (".git"
+// from inside the main repo); gitPathAbs anchors it there. Doing the
+// anchoring here instead of passing --path-format=absolute keeps the check
+// working on git < 2.31, where rev-parse does not know that option and
+// echoes it as an extra output line, corrupting the parsed path.
 func (m *GitManager) validateOwnWorktree(ctx context.Context, path string) error {
-	top, err := m.git(ctx, "-C", path, "rev-parse", "--path-format=absolute", "--show-toplevel")
+	top, err := m.git(ctx, "-C", path, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("existing dir %s is not a git worktree; refusing to adopt it: %w", path, err)
 	}
 	if resolvePath(top) != resolvePath(path) {
 		return fmt.Errorf("existing dir %s is not a worktree root (toplevel %s); refusing to adopt it", path, top)
 	}
-	repoCommon, err := m.git(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	repoCommon, err := m.git(ctx, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return fmt.Errorf("resolve invocation repo git dir: %w", err)
 	}
-	wtCommon, err := m.git(ctx, "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	wtCommon, err := m.git(ctx, "-C", path, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return fmt.Errorf("resolve git dir of existing dir %s: %w", path, err)
 	}
-	if resolvePath(repoCommon) != resolvePath(wtCommon) {
+	if resolvePath(gitPathAbs(m.repoDir, repoCommon)) != resolvePath(gitPathAbs(path, wtCommon)) {
 		return fmt.Errorf("existing dir %s belongs to another repository (%s); refusing to adopt it", path, wtCommon)
 	}
 	return nil
+}
+
+// gitPathAbs anchors a path git printed against dir, the directory the git
+// command ran in ("" = the process's working directory, matching gitCmd's
+// cmd.Dir), because git may print it relative to there. This is the portable
+// stand-in for rev-parse's --path-format=absolute, which git < 2.31 lacks.
+func gitPathAbs(dir, p string) string {
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
 
 // resolvePath normalizes a path for identity comparison, following symlinks
