@@ -338,7 +338,11 @@ into an ordinary failure on resume. Instead:
   this ADR exists to provide while permitting the same spend shape via
   `retry: { max: N }` — an inconsistency, not a safeguard. The planner
   prompt gains guidance (use it for review loops; keep `max` small), the
-  same treatment decomposition and budget posture got.
+  same treatment decomposition and budget posture got. The "keep it
+  small" guidance is also enforced: `coordinator.validatePlannedNodeFeedback`
+  rejects a planned `feedback.max` above `maxPlannedFeedbackRounds` (3) —
+  a hand-written graph may declare any bound it is willing to pay for,
+  but an unreviewed plan gets a fixed ceiling.
 - **Worktrees:** re-runs share the lane's worktree (stated above; the
   idempotent `Acquire` makes it free).
 - **Sessions:** a re-run is a fresh session, like a retry (stated above;
