@@ -1,0 +1,60 @@
+# review-loop — the minimal bounded review loop (ADR 0010): implement, then
+# review; a failing review re-runs the implementation WITH its findings, at
+# most twice, then fails for real.
+#
+#   impl ─▶ review ──(feedback: rerun impl, max 2)──▶ impl …
+#
+# This is the shape adr-driven-dev's round1→apply1→round2→apply2→round3
+# chain hand-unrolls, as one declared arc: a clean first round costs two
+# sessions instead of five nodes, a second (or third) round fires only when
+# the review actually failed, and the findings flow into the re-run as
+# {{ feedback.review }} — empty on the first pass by design.
+#
+# Cost, honestly: worst case (1 + max) × |body| = 3 × 2 = 6 claude sessions,
+# each under its own budget_usd/timeout below. The ledger prices every round
+# ("feedback round k/2" in the DETAIL column), so tune max against what the
+# table shows you. Keep max small — 2, not 10.
+#
+# Run:
+#   oh-my-graph run graphs/review-loop.yaml \
+#     --input repo=/path/to/your/repo \
+#     --input task="what to implement or fix"
+
+name: review-loop
+version: 1
+inputs: [repo, task]
+concurrency: 1
+
+nodes:
+  - id: impl
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Implement this task: {{ inputs.task }}
+
+      Work in small, verifiable steps and run the project's own tests before
+      you finish. End your reply with a short summary of what changed.
+
+      Reviewer feedback from the previous round follows — it is empty on the
+      first pass. If present, address every point before anything else:
+      {{ feedback.review }}
+    allowed_tools: [Read, Edit, Write, Grep, Glob, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+    permission_mode: dontAsk
+    budget_usd: 2.00
+    timeout: 30m
+
+  - id: review
+    depends_on: [impl]
+    cwd: "{{ inputs.repo }}"
+    permission_mode: plan     # read-only: the reviewer judges, never edits
+    prompt: |
+      Review the working tree against this task: {{ inputs.task }}
+      The implementer reported: {{ artifacts.impl | inline }}
+
+      Judge correctness, tests, and scope. If the work is sound, reply with
+      exactly "ship it" and one sentence of praise. Otherwise DO NOT say
+      "ship it" — reply with a concise, numbered list of required fixes;
+      that list is handed verbatim to the implementation re-run.
+    success_check: { result_matches: "ship it" }
+    feedback: { rerun: impl, max: 2 }
+    budget_usd: 1.00
+    timeout: 15m

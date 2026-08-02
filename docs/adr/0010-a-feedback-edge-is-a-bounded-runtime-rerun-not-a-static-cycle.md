@@ -1,6 +1,6 @@
 # ADR 0010 — A feedback edge is a bounded runtime re-run, not a static cycle
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-02
 
 ## Context

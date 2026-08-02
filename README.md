@@ -306,6 +306,12 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   post-hoc ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — a per-node wall-clock bound replacing the 20-minute default,
   for nodes whose legitimate work runs long ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
+- **`feedback:`** — a bounded review loop without unrolling it: when a
+  reviewer node fails its judgment, `feedback: { rerun: impl, max: 2 }`
+  re-runs the path from `impl` back to the reviewer, handing the findings to
+  the re-run as `{{ feedback.review }}` (empty on the first pass) — at most
+  `max` times, every round priced in the ledger
+  ([spec](DESIGN.md#execution-engine) · [ADR 0010](docs/adr/0010-a-feedback-edge-is-a-bounded-runtime-rerun-not-a-static-cycle.md) · demo: `graphs/review-loop.yaml`).
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **failure salvage** — `resume <run-id> --retry-failed` re-executes only a

@@ -102,11 +102,20 @@ Node schema:
     result_matches: "PASS"    # self-report; never sufficient on its own
     verify: { command: "make local PORT=8080", timeout: 5m }   # optional (v1.1)
   retry: { max: 1, on: [nonzero_exit] }   # optional
+  feedback: { rerun: impl, max: 2 }       # optional (ADR 0010): on a judgment failure, re-run the depends_on path from `rerun` back to this node, at most `max` times — see "Execution engine"
 ```
 Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
 see "Execution engine" step 4), `nodes: [..]`.
-Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`.
+Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`;
+the two-node bounded review loop ships as `graphs/review-loop.yaml`.
+
+`feedback:` keeps the static graph a DAG: the arc lives outside `depends_on`
+and must point strictly backward to a proper `depends_on`-ancestor
+(load-validated, with the loop body side-exit-free, gate-free, disjoint from
+other bodies, and `max` required ≥ 1 — an unbounded loop on a paid runtime is
+unrepresentable). Iteration is a *runtime* phenomenon; full semantics in
+ADR 0010 and under "Execution engine" below.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
@@ -122,6 +131,19 @@ Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-rev
   rejected at load (a gate records no session to resume), and `lint` /
   `run --dry-run` warn when a session child's cwd/worktree differs from its
   parent's.
+- **feedback (`{{ feedback.<id> }}`, ADR 0010):** a third namespace beside
+  inputs and artifacts, resolving to the feedback declarer `<id>`'s latest
+  payload — its result text when the failing execution produced one, else its
+  failure detail. It **always inlines** (no path form, no `| inline` filter)
+  and resolves to the **empty string until a round has fired**, the one place
+  "not there yet" is an expected state rather than a wiring bug; prompts write
+  around it ("review feedback follows — empty on the first pass"). A token
+  outside the body of `<id>`'s feedback edge is a load **error**, not a lint —
+  it would otherwise be silently empty forever. The engine persists the
+  payload to `<run-dir>/<id>.feedback.out` (overwritten per round, latest
+  wins) so a mid-loop resume can re-seed it — an **internal** file, not a
+  consumer contract; the `.out` artifact keeps meaning "a *passed* node's
+  result".
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -269,6 +291,35 @@ stops launching, drains in-flight siblings instead of cancelling them, records
 the limited node nowhere, and returns `*LimitPausedError` → exit code 2 with a
 `resume --retry-failed` hint. Full semantics under "Gate nodes and `resume`"
 below — the limit rides the same pause/drain machinery a gate does.
+
+**Feedback edges (ADR 0010) — the fourth intercepted signal.** A node may
+declare `feedback: { rerun: <ancestor>, max: N }`: when it fails for a
+*judgment* cause (`verify_failed`, `result_mismatch`, `nonzero_exit` — the
+fixed built-in trigger set; infrastructure and spend faults such as an
+interpolation error or `budget_exceeded` fail final immediately), after its
+own retries are spent, and rounds remain, the arc **fires** instead of
+failing: the scheduler persists the declarer's output as the feedback
+payload, writes the non-final trio (a ledger row pricing the failing
+execution, a non-terminal *marker* snapshot record — round k, no verdict —
+and `node_retried` on the stream; never `node_failed`, which stays terminal),
+then re-arms the loop **body** — every node on any `depends_on` path from
+`rerun` up to and including the declarer — by re-seeding in-body in-degrees
+(out-of-body parents ran once and stay satisfied) and relaunching the target.
+The signal rides the same interception seam as `pauseSignal`, `limitSignal`
+and `rejectSignal`: a pause elsewhere suppresses the relaunch exactly as it
+suppresses dependents, and the durable marker means a later resume re-enters
+the loop at round k (body records below the marker's round are superseded
+and re-run; `max − k` rounds remain). Re-runs start fresh sessions (the
+retry cold-start rule) and share the lane's worktree within a leg. When the
+rounds are spent the next judgment failure is final — the FAIL's detail
+reads `feedback exhausted after N rounds of <target> → <declarer>: <cause>`
+— and the existing story runs unchanged: `on_fail` halts or prunes, and
+`resume --retry-failed` salvages by re-arming the loop (clearing the
+declarer's FAIL also clears its body's retained PASSes and resets the rounds
+budget — never by re-running the declarer alone against unchanged
+artifacts). Worst case is legible from the file: `(1 + max) × |body|` runs
+per arc, each under its own timeout/budget/tool ceiling; the ledger prices
+every execution with a `feedback round k/N` note.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
