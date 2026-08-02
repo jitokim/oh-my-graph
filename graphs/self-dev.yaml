@@ -63,8 +63,13 @@ nodes:
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session
-    success_check: { exit_zero: true, result_matches: "^PASS$" }
-    retry: { max: 1, on: [nonzero_exit] }
+    success_check:
+      exit_zero: true
+      result_matches: "^PASS$"      # secondary: the node's own account of itself
+      # The evidence. The engine runs this itself and judges the exit code,
+      # so a node that reports PASS without the suite passing does not pass.
+      verify: { command: "make local", timeout: 5m }
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
   - id: review-security
     type: claude-run

@@ -54,9 +54,9 @@ nodes:
       equivalent) — a flaky test passes a single run, and determinism is the
       claim under test. Run every check SYNCHRONOUSLY and wait for it to
       finish — never in the background. Your FINAL reply is the verdict:
-      never end the turn on an interim report. Report PASS or FAIL with the
-      failing step if any.
-    allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
+      never end the turn on an interim report. Report exactly PASS if
+      everything succeeds, or FAIL with the failing step.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     # Runaway insurance ONLY, never cost tuning: a tight budget kills a
     # nearly-done node at the threshold, and the salvage costs more than
@@ -67,7 +67,7 @@ nodes:
     handoff: session
     success_check:
       exit_zero: true
-      result_matches: "PASS"        # secondary: this is the node's own account of itself
+      result_matches: "^PASS$"      # secondary: this is the node's own account of itself
       # The evidence. oh-my-graph runs this itself and judges the exit code, so
       # a node that reports PASS without the suite passing does not pass.
       verify: { command: "make local", timeout: 5m }
