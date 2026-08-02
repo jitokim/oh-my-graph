@@ -319,6 +319,43 @@ nodes:
 `,
 			want: "only legal inside the body",
 		},
+		{
+			name: "feedback placeholder in cwd outside the body",
+			yaml: `
+name: g
+nodes:
+  - id: impl
+    prompt: p
+  - id: review
+    depends_on: [impl]
+    prompt: p
+    feedback: { rerun: impl, max: 2 }
+  - id: report
+    depends_on: [review]
+    prompt: p
+    cwd: "/tmp/{{ feedback.review }}"
+`,
+			want: "only legal inside the body",
+		},
+		{
+			name: "feedback placeholder in a verify cwd outside the body",
+			yaml: `
+name: g
+nodes:
+  - id: impl
+    prompt: p
+  - id: review
+    depends_on: [impl]
+    prompt: p
+    feedback: { rerun: impl, max: 2 }
+  - id: report
+    depends_on: [review]
+    prompt: p
+    success_check:
+      verify: { command: echo, cwd: "/tmp/{{ feedback.review }}" }
+`,
+			want: "only legal inside the body",
+		},
 	}
 
 	for _, tc := range cases {
