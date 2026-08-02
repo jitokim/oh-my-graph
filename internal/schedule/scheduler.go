@@ -1140,22 +1140,26 @@ func resolveVerification(v graph.Verification, h *handoff.Handoff, nodeCwd strin
 // actually did. This is the whole point of the predicate: the judgement is made
 // here, from observed facts, not by the node reporting on itself.
 func judgeVerification(nodeID string, v graph.Verification, command string, result verify.Result) error {
+	// Already compiled once by graph.Validate at load time, so this cannot fail
+	// for a graph that came through Load/Parse; it is still handled rather than
+	// ignored, because a caller that hand-built a Node bypasses that guarantee.
+	// It is a fault, not a failure, and it is judged before the exit code: a
+	// malformed pattern rendered no verdict on the work even when the exit code
+	// also mismatches, and no re-run can repair the declaration.
+	var pattern *regexp.Regexp
+	if v.OutputMatches != "" {
+		var err error
+		if pattern, err = regexp.Compile(v.OutputMatches); err != nil {
+			return verifyFault(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
+		}
+	}
+
 	if expected := v.ExpectedExitCode(); result.ExitCode != expected {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` exited %d, want %d%s",
 			command, result.ExitCode, expected, outputTail(result.Output)))
 	}
-	if v.OutputMatches == "" {
+	if pattern == nil {
 		return nil
-	}
-
-	// Already compiled once by graph.Validate at load time, so this cannot fail
-	// for a graph that came through Load/Parse; it is still handled rather than
-	// ignored, because a caller that hand-built a Node bypasses that guarantee.
-	// It is a fault, not a failure: a malformed pattern rendered no verdict on
-	// the work, and no re-run can repair the declaration.
-	pattern, err := regexp.Compile(v.OutputMatches)
-	if err != nil {
-		return verifyFault(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
 	}
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
