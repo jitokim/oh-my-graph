@@ -72,10 +72,15 @@ oh-my-graph auto "make the test suite green" --max-cycles 3
   artifacts inside the loop get fixed ceilings; the human's own bound does
   not.
 
-The loop lives in `planAndExecute`. That function is the sequence's "exactly
-one home" today precisely so that `auto` and chat cannot drift; the cycle is
-that sequence run at most N times, so it lives in the same home, with the
-cycle count an explicit parameter of the call. Only `auto` can set it above
+The loop's mechanics live in the coordinator — `coordinator.RunGoal`, the
+cycle engine: plan → validate → hand off to the caller (save, print, confirm,
+execute, observe) → assess → next — and `planAndExecute` is its only caller,
+supplying that hand-off as the `ExecuteCycle` callback. `planAndExecute`
+stays the sequence's "exactly one home" at the surface, precisely so that
+`auto` and chat cannot drift; the cycle count is an explicit parameter of the
+call, and putting the cycle engine behind the coordinator's seam is what
+makes the loop unit-testable against `FakeRunner` with zero real spawns —
+the same reason every other engine behaviour lives behind one. Only `auto` can set it above
 1: `--max-cycles` is an `autoFlags` field, and chat calls `planAndExecute`
 with `commonRunFlags`, which carry no cycle count — **chat stays
 single-cycle in v1**, stated here so "the loop lives in the shared home" is
@@ -154,8 +159,10 @@ cost and artifact path — and assembles from it:
   snapshot-recorded artifact path and truncates to fixed per-artifact and
   total-material caps (named constants, keeping head and tail, like
   `truncate` does for planner replies today);
-- on cycle k ≥ 2, the previous assessment's `remaining` (read from cycle
-  k−1's `assess.json`, same truncation cap) — so the one judge in the system
+- on cycle k ≥ 2, the previous assessment's `remaining` (threaded in-process
+  by the loop from cycle k−1's parsed verdict — `assess.json` is its durable
+  on-disk record, not the loop's read path — same truncation cap) — so the
+  one judge in the system
   can notice that a cycle made no progress. Without this line nothing ever
   could: the planner sees cross-cycle state but doesn't judge, and the
   assessor judges but would see every cycle fresh. A "cycle 3 remains what
@@ -263,16 +270,21 @@ Stated hard, because iteration composes three untrusted artifacts:
   Money, not capability — and the exit-code precedence (§2) is what keeps
   it so: a verdict can stop spending, but an engine-reported failure
   survives any verdict, so the judge can never turn a failed run into
-  exit 0. The money has **one bound in v1: `--max-cycles`, required by
-  construction** (§1). A cross-cycle budget ceiling was drafted as
-  `--max-budget-usd` and **cut**: that exact flag name is already the
+  exit 0. The money has **two bounds in v1: `--max-cycles`, required by
+  construction** (§1), **and an optional cross-cycle budget ceiling**
+  (`GoalOptions.MaxGoalBudgetUSD` in the engine; surfaced as
+  `--max-goal-budget-usd` when the CLI wires it). The ceiling is a soft
+  **cycle-boundary check** that deliberately never kills mid-flight
+  (ADR 0009's pause-not-kill posture): before starting cycle k ≥ 2 the loop
+  compares the goal's spend so far — each cycle's run total, planning
+  included, plus each assessment's cost — against it, so the honest
+  overshoot is up to one cycle plus one assessment. It was first drafted as
+  `--max-budget-usd` and **renamed**: that exact flag name is already the
   claude CLI option oh-my-graph passes per node when a plan declares
-  `budget_usd` — a hard **mid-flight kill** — while this ADR's ceiling was
-  a soft **cycle-boundary check** that deliberately never kills mid-flight.
-  One name carrying opposite semantics at two layers of the same tool is
-  how a bound gets misread as a guarantee; the ceiling returns under an
-  unambiguous name when goal-level spend control earns its surface
-  (Alternatives).
+  `budget_usd` — a hard **mid-flight kill** — and one name carrying
+  opposite semantics at two layers of the same tool is how a bound gets
+  misread as a guarantee. The unambiguous name is what resolves that
+  collision (Alternatives).
 
 **The printed record per cycle, and the non-interactive posture.** Every
 cycle's plan is printed before it executes — topology, tools, agent
@@ -451,18 +463,21 @@ factor of which was typed by a human or fixed in trusted code.
   with it any per-cycle non-interactive gate) is real future work, deferred
   because it needs cross-run lineage in the resume path, not just in `runs
   list`.
-- v1's only money bound is `--max-cycles`: the cross-cycle budget ceiling
-  was cut over its name colliding with the claude CLI's per-node
-  `--max-budget-usd` (opposite semantics, §3), so anyone needing goal-level
-  spend control today must size `--max-cycles` accordingly.
+- The cross-cycle budget ceiling is a soft bound only: it is checked at
+  cycle boundaries, never mid-flight (§3), so a goal can overshoot it by up
+  to one full cycle plus one assessment — a stated price, not a bug. Its
+  original name collided with the claude CLI's per-node `--max-budget-usd`
+  (opposite semantics, §3); it exists only under the unambiguous
+  `MaxGoalBudgetUSD`/`--max-goal-budget-usd` spelling.
 - The non-interactive posture accepts that unattended iteration spends with
   nobody watching, governed by bounds rather than approvals. That is
   consistent with what `auto` already is, but it widens how much an
   unattended invocation can spend from one graph to N — and v1 offers no
   per-cycle human decision on any surface, because chat (the only confirm-
   bearing caller) stays single-cycle (§1).
-- `planAndExecute` grows from a sequence into a loop with termination
-  analysis (met / exhausted / declined / pause / assess-error), and the
+- The coordinator gains the cycle engine (`RunGoal`) with its termination
+  analysis (met / exhausted / budget / declined / pause / assess-error) —
+  `planAndExecute` stays a sequence that calls it — and the
   assessor adds a third coordinator call class that deliberately does
   **not** share `coordinatorInvocation`: a second, stricter stance now
   exists, and its "cannot read a file" property is held by an E-series
@@ -489,14 +504,14 @@ factor of which was typed by a human or fixed in trusted code.
   excerpts cap both spend and injection surface. If excerpts prove too
   thin, widening the *material* is a product change that does not require
   widening the *capability*.
-- **A cross-cycle budget ceiling (`--max-budget-usd`).** Cut from v1, not
-  rejected on substance. The right shape remains a soft cycle-boundary
-  check — never a mid-flight kill, per ADR 0009's pause-not-kill posture,
-  with the honest overshoot of up to one cycle plus one assessment — but
-  the drafted name is already the claude CLI's per-node hard-kill flag that
-  oh-my-graph passes through for a planned `budget_usd`, with exactly
-  opposite semantics. It returns under an unambiguous name (e.g.
-  `--max-goal-budget-usd`) when goal-level spend control earns its surface.
+- **Naming the budget ceiling `--max-budget-usd`.** Rejected — but the
+  ceiling itself is kept (§3), renamed rather than cut. The drafted name is
+  already the claude CLI's per-node hard-kill flag that oh-my-graph passes
+  through for a planned `budget_usd`, with exactly opposite semantics to
+  this soft cycle-boundary check; the same bound under the unambiguous
+  `--max-goal-budget-usd` carries no such trap. (An earlier revision cut
+  the ceiling from v1 entirely over this collision; the rename resolves the
+  collision without giving up goal-level spend control.)
 - **Chat iteration (a cycle count for chat turns).** Deferred: chat calls
   `planAndExecute` with `commonRunFlags`, which carry no cycle count, and
   its per-turn confirm covers exactly the one plan it gates. Giving chat N
