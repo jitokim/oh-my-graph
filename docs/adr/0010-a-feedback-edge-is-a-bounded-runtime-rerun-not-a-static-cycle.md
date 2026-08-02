@@ -336,10 +336,12 @@ into an ordinary failure on resume. Instead:
   no gates) hold for a planned graph exactly as for a hand-written one.
   Going stricter (rejecting it) would forbid the planner the one construct
   this ADR exists to provide while permitting the same spend shape via
-  `retry: { max: N }` — an inconsistency, not a safeguard. The planner
-  prompt gains guidance (use it for review loops; keep `max` small), the
-  same treatment decomposition and budget posture got. The "keep it
-  small" guidance is also enforced: `coordinator.validatePlannedNodeFeedback`
+  `retry: { max: N }` — an inconsistency, not a safeguard. So planned
+  `feedback` receives the same treatment, decomposition and budget
+  posture as `Retry`: the planner prompt gains guidance (use it for
+  review loops; keep `max` small) instead of the field being banned.
+  The "keep it small" guidance is also enforced:
+  `coordinator.validatePlannedNodeFeedback`
   rejects a planned `feedback.max` above `maxPlannedFeedbackRounds` (3) —
   a hand-written graph may declare any bound it is willing to pay for,
   but an unreviewed plan gets a fixed ceiling.
