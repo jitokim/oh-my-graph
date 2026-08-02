@@ -16,6 +16,14 @@ type NodeCheckError struct {
 	NodeID    string
 	Predicate string
 	Detail    string
+	// Infrastructure marks a verification that could not be completed at all —
+	// its command's interpolation failed, its process could not be run, or it
+	// timed out before reaching a verdict. The node still fails (an
+	// uncompleted verification is never a pass) under the same verify_failed
+	// retry cause as a judged failure, but no verdict on the work was
+	// rendered, so a feedback arc must not fire on it (ADR 0010) — see
+	// isJudgmentFailure.
+	Infrastructure bool
 }
 
 func (e *NodeCheckError) Error() string {

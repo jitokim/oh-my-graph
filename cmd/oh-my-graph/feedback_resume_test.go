@@ -213,3 +213,64 @@ func TestResume_RetryFailedReArmsAnExhaustedLoop(t *testing.T) {
 		t.Errorf("final impl record = %+v, want PASS at round 0", impl)
 	}
 }
+
+// TestResume_RetryFailedRoundZeroFailureRetriesDeclarerAlone pins the
+// body-clearing gate: a declarer that FAILED at round 0 never fired its arc
+// (a blown budget_usd here — a non-judgment fault), so the loop never judged
+// the body's artifacts and there is nothing to re-arm. `resume --retry-failed`
+// must clear and re-run the declarer alone, retaining the body's round-0
+// PASSes exactly as it would for a node with no arc at all.
+func TestResume_RetryFailedRoundZeroFailureRetriesDeclarerAlone(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"loop","nodes":[
+		{"id":"impl","prompt":"impl: {{ feedback.review }}"},
+		{"id":"review","prompt":"review: {{ artifacts.impl | inline }}","depends_on":["impl"],
+		 "success_check":{"result_matches":"ship it"},
+		 "budget_usd":0.10,
+		 "feedback":{"rerun":"impl","max":2}}]}`)
+	rec := &promptOutcomeRunner{outcomes: map[string]runner.NodeOutcome{
+		"impl: ":           passOutcome("draft-v1", 0.25),
+		"review: draft-v1": passOutcome("ship it", 5.00), // blows budget_usd at round 0
+	}}
+	runID := "run-loop-round0"
+
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), nil)
+	var halted *schedule.HaltError
+	if !errors.As(err, &halted) {
+		t.Fatalf("expected leg 1 to halt on the budget fault, got %T: %v", err, err)
+	}
+
+	snap := loadSnapshot(t, runID)
+	if review := snap.Nodes["review"]; review.Verdict != runstate.VerdictFail || review.Round != 0 {
+		t.Fatalf("review record after leg 1 = %+v, want a round-0 FAIL (the arc never fired)", review)
+	}
+
+	// The human raised nothing; review simply costs what it should this time.
+	rec.set("review: draft-v1", passOutcome("ship it", 0.05))
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+	if !strings.Contains(out, "retrying failed nodes: review)") {
+		t.Fatalf("banner should name the declarer alone — the un-fired loop's body is retained:\n%s", out)
+	}
+
+	if got := rec.count("impl: "); got != 1 {
+		t.Errorf("impl ran %d times across legs, want 1 — a round-0 declarer failure must not clear the body", got)
+	}
+	if got := rec.count("review: draft-v1"); got != 2 {
+		t.Errorf("review ran %d times across legs, want 2 (failed, then retried against the retained artifact)", got)
+	}
+
+	final := loadSnapshot(t, runID)
+	if review := final.Nodes["review"]; review.Verdict != runstate.VerdictPass || review.Round != 0 {
+		t.Errorf("final review record = %+v, want PASS at round 0", review)
+	}
+	if impl := final.Nodes["impl"]; impl.Verdict != runstate.VerdictPass || impl.Round != 0 {
+		t.Errorf("final impl record = %+v, want its retained round-0 PASS", impl)
+	}
+}

@@ -174,13 +174,18 @@ func hasUnfinishedWork(g *graph.Graph, retained map[string]runstate.NodeRecord) 
 // record and need no clearing: they become runnable again once their parents
 // settle.
 //
-// A cleared FAILED feedback declarer takes its whole loop body with it
-// (ADR 0010, "salvage means re-arming the loop, not re-running the declarer
-// alone"): retaining the body's PASSes would relaunch the declarer against
-// unchanged artifacts — exactly the target-only shape the ADR rejects — so
-// the body's records are cleared too, and with no record left to seed a
-// round from, the re-run starts at round 0 with a fresh rounds budget:
-// explicit human intervention buys a fresh set of rounds.
+// A cleared FAILED feedback declarer whose arc fired at least once (its
+// record carries Round > 0) takes its whole loop body with it (ADR 0010,
+// "salvage means re-arming the loop, not re-running the declarer alone"):
+// retaining the body's PASSes would relaunch the declarer against artifacts
+// its rounds already judged insufficient — exactly the target-only shape the
+// ADR rejects — so the body's records are cleared too, and with no record
+// left to seed a round from, the re-run starts at round 0 with a fresh
+// rounds budget: explicit human intervention buys a fresh set of rounds. A
+// declarer that FAILED at round 0 never fired — only a non-judgment fault (a
+// verify infrastructure fault, a blown budget) fails a declarer before its
+// first fire — so its body's PASSes were never judged and are retained, and
+// the retry leg re-runs the declarer alone, like any other failed node.
 func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[string]runstate.NodeRecord, cleared []string) {
 	clearedSet := make(map[string]bool)
 	retained = make(map[string]runstate.NodeRecord, len(snap.Nodes))
@@ -192,7 +197,7 @@ func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[str
 		retained[id] = rec
 	}
 	for _, n := range g.Nodes {
-		if n.Feedback == nil || !clearedSet[n.ID] {
+		if n.Feedback == nil || !clearedSet[n.ID] || snap.Nodes[n.ID].Round == 0 {
 			continue
 		}
 		for _, member := range g.FeedbackBody(n.ID) {

@@ -161,6 +161,22 @@ func isJudgmentCause(cause string) bool {
 	return false
 }
 
+// isJudgmentFailure lifts isJudgmentCause from tokens to the failure itself,
+// because the verify_failed token alone is not enough: a verification that
+// could not be completed — its command's interpolation failed, its process
+// could not spawn, it timed out — fails the node under that same token (for
+// retry) but rendered no verdict on the work, and firing the arc on it would
+// spend a whole body re-run on a fault the re-run cannot repair. Those
+// failures are marked NodeCheckError.Infrastructure at the verify seam
+// (verifyFault) and excluded here.
+func isJudgmentFailure(cause error) bool {
+	var checkErr *NodeCheckError
+	if asErr(cause, &checkErr) && checkErr.Infrastructure {
+		return false
+	}
+	return isJudgmentCause(causeFromCheck(cause))
+}
+
 // judgeFeedback is consulted exactly where recordFail would otherwise be
 // reached with a verdict failure — after the declarer's own retries are
 // spent — and decides what the failure means for the node's feedback arc:
@@ -180,7 +196,7 @@ func isJudgmentCause(cause string) bool {
 // PersistOutput failure.
 func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h *handoff.Handoff, led *ledger.RunLedger, duration time.Duration, cause error) (*feedbackSignal, error) {
 	f := node.Feedback
-	if f == nil || !isJudgmentCause(causeFromCheck(cause)) {
+	if f == nil || !isJudgmentFailure(cause) {
 		return nil, cause
 	}
 

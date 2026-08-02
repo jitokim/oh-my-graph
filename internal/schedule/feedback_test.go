@@ -10,6 +10,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
 // The feedback tests key the FakeRunner on the PROMPT (its default), because
@@ -213,6 +214,50 @@ nodes:
 	}
 	if got := fake.InvocationCount("review"); got != 1 {
 		t.Errorf("review ran %d times, want 1", got)
+	}
+}
+
+// TestScheduler_VerifyInfrastructureFaultNeverFiresTheArc pins the other side
+// of the trigger boundary: an infrastructure fault in the declarer's own
+// verify block — here an interpolation typo in the command, which resolves to
+// nothing at run time — carries the verify_failed retry cause but rendered no
+// verdict on the work, so the arc must not fire, the body must not re-run,
+// and nothing is ever spawned for the unresolvable command.
+func TestScheduler_VerifyInfrastructureFaultNeverFiresTheArc(t *testing.T) {
+	g := mustGraph(t, `
+name: loop-verify-typo
+nodes:
+  - { id: impl, prompt: "impl: {{ feedback.review }}" }
+  - id: review
+    prompt: "review: {{ artifacts.impl | inline }}"
+    depends_on: [impl]
+    success_check:
+      verify: { command: "check {{ artifacts.impll }}" }
+    feedback: { rerun: impl, max: 2 }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"impl: ":           result("draft-v1", 0),
+		"review: draft-v1": result("looks fine", 0),
+	})
+	verifier := verify.NewFakeVerifier(nil)
+	s, h, led := newVerifyHarness(t, fake, verifier, Options{})
+
+	err := s.Run(context.Background(), g, h, led)
+	var checkErr *NodeCheckError
+	if !errors.As(err, &checkErr) || !checkErr.Infrastructure {
+		t.Fatalf("expected the infrastructure verify fault to surface unchanged, got %T: %v", err, err)
+	}
+	if strings.Contains(err.Error(), "feedback") {
+		t.Fatalf("error = %q — an infrastructure fault must not be wrapped in feedback wording", err)
+	}
+	if got := fake.InvocationCount("impl: "); got != 1 {
+		t.Errorf("impl ran %d times, want 1 — the body must not re-run for a fault no re-run can repair", got)
+	}
+	if got := fake.InvocationCount("review: draft-v1"); got != 1 {
+		t.Errorf("review ran %d times, want 1", got)
+	}
+	if calls := verifier.Calls(); len(calls) != 0 {
+		t.Errorf("nothing must be spawned for an unresolvable command; verifier ran %v", calls)
 	}
 }
 

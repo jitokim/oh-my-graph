@@ -1092,10 +1092,14 @@ func (s *Scheduler) policyFor(node graph.Node) (runner.ToolPolicy, error) {
 //
 // Every failure on this path — an unresolvable interpolation, a timeout, a
 // command that could not spawn, the wrong exit code, output that did not match —
-// becomes the same *NodeCheckError. That is deliberate: they all mean "this
-// node's success was not demonstrated", they all carry the same retry cause
-// (verify_failed), and a verification that could not be completed must never
-// read as a pass.
+// becomes the same *NodeCheckError with the same retry cause (verify_failed):
+// they all mean "this node's success was not demonstrated", and a verification
+// that could not be completed must never read as a pass. But the error keeps
+// the two ways of failing apart: evidence that was gathered and judged
+// insufficient is a judgment, while a verification that never reached a
+// verdict — the interpolation failed, the command could not spawn or timed
+// out — is an Infrastructure fault (verifyFault), so a feedback arc does not
+// spend a whole body re-run on a fault no re-run can repair (ADR 0010).
 func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *handoff.Handoff, nodeCwd string) error {
 	verification := node.SuccessCheck.Verify
 	if verification == nil {
@@ -1104,13 +1108,13 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 
 	request, err := resolveVerification(*verification, h, nodeCwd)
 	if err != nil {
-		return verifyFailure(node.ID, err.Error())
+		return verifyFault(node.ID, err.Error())
 	}
 
 	s.logProgress("… %s  verifying: %s\n", node.ID, request.Command)
 	result, err := s.verifier.Verify(ctx, request)
 	if err != nil {
-		return verifyFailure(node.ID, err.Error())
+		return verifyFault(node.ID, err.Error())
 	}
 	return judgeVerification(node.ID, *verification, request.Command, result)
 }
@@ -1158,9 +1162,18 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 	return nil
 }
 
-// verifyFailure builds the one error shape every verification failure takes.
+// verifyFailure builds the error shape for evidence that was gathered and
+// judged insufficient — a verdict on the work.
 func verifyFailure(nodeID, detail string) error {
 	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail}
+}
+
+// verifyFault builds the error shape for a verification that could not be
+// completed at all — no verdict on the work exists. Same node failure, same
+// verify_failed retry cause, but marked Infrastructure so a feedback arc
+// never fires on it (see isJudgmentFailure).
+func verifyFault(nodeID, detail string) error {
+	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Infrastructure: true}
 }
 
 // outputTail renders the end of a verification command's output for the ledger's
