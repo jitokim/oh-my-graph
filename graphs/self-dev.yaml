@@ -31,6 +31,9 @@ nodes:
       `git add -u`: the working tree may hold untracked files that are not part
       of this task (assets someone dropped in, scratch output), and sweeping
       them into your commit is a bug.
+      End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
     permission_mode: dontAsk
@@ -52,8 +55,11 @@ nodes:
       (internal/schedule, internal/runner, anything spawning goroutines or
       using channels), ALSO stress those packages —
       `go test <pkgs> -race -count=300` — because a flaky test passes a
-      single run; determinism is the claim under test. Report exactly PASS
-      if everything succeeds, or FAIL with the failing step.
+      single run; determinism is the claim under test. Run every check
+      SYNCHRONOUSLY and wait for it to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Report exactly PASS if everything succeeds, or FAIL with the
+      failing step.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session

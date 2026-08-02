@@ -80,8 +80,10 @@ nodes:
       lint; `make local` or your stack's equivalent). If the diff touches
       concurrency-sensitive code, ALSO stress the affected tests
       (`go test <pkgs> -race -count=300`) — rule 4 in this graph's header.
-      Report exactly PASS if everything succeeds, or FAIL with the failing
-      step.
+      Run every check SYNCHRONOUSLY and wait for it to finish — never in
+      the background. Your FINAL reply is the verdict: never end the turn
+      on an interim report. Report exactly PASS if everything succeeds, or
+      FAIL with the failing step.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session
@@ -149,8 +151,11 @@ nodes:
       committed state — and check the docs changes: every renamed or moved
       reference resolves, examples still match the code they cite, and the
       project's checks still pass (`make local` or equivalent — docs edits
-      can break embedded snippets and lint gates too).
-      Report exactly PASS if everything holds, or FAIL with what broke.
+      can break embedded snippets and lint gates too). Run every check
+      SYNCHRONOUSLY and wait for it to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Report exactly PASS if everything holds, or FAIL with what
+      broke.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session

@@ -37,7 +37,9 @@ nodes:
       Then run the project's own checks (its Makefile/test target — whatever
       the repo's CONTRIBUTING or CI runs). Commit the fixes, staging ONLY the
       files you changed, by explicit path (`git add <path> ...`) — never
-      `git add -A`, `git add .`, or `git add -u`. Push the branch.
+      `git add -A`, `git add .`, or `git add -u`. End every commit message
+      with the trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+      (the attribution convention in CONTRIBUTING.md). Push the branch.
       Reply with a one-line summary of which flags you applied.
     allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
     permission_mode: dontAsk
