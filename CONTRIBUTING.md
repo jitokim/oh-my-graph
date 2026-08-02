@@ -53,6 +53,17 @@ PR that wires it into a workflow.
 - New architectural decisions (not just implementation detail) belong in
   `docs/adr/`, following the style of `docs/adr/0001-subprocess-not-sdk.md`.
 
+### Merging
+
+- Graph lanes open PRs as **drafts** — CodeRabbit deliberately skips drafts,
+  so marking the PR ready for review is what starts its review.
+- A PR is merged only after CI is green **and** CodeRabbit's review has
+  completed with every comment triaged: either applied (mechanical fixes may
+  be applied by hand within the one-to-two-line threshold; anything more goes
+  through `graphs/apply-flags.yaml`) or answered with a reason.
+- Admin merge is for bypassing the merge-queue mechanics, never for bypassing
+  an unfinished review.
+
 ## The exec seams — the one rule that matters most
 
 **Exactly four objects in this codebase may spawn a process**, each behind
