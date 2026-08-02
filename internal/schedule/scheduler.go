@@ -675,6 +675,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	for attempt := 0; attempt < attempts; attempt++ {
 		outcome, runErr := s.runner.Run(ctx, invocation)
 		if runErr != nil {
+			// A context kill (the node's own timeout, a halt's cancellation,
+			// Ctrl-C) ends the subprocess before it prints the JSON envelope
+			// that carries total_cost_usd — judged here, before halt.explain
+			// rewrites the error and drops the sentinel from the chain.
+			killedBeforeReporting := errors.Is(runErr, context.Canceled) ||
+				errors.Is(runErr, context.DeadlineExceeded)
 			// A sibling this run's halt cancelled surfaces here as a bare
 			// context cancellation; rewrite it into the causal story before
 			// it is recorded anywhere.
@@ -683,6 +689,14 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
 				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
 				continue
+			}
+			if killedBeforeReporting {
+				// Honest accounting (run 20260802-062446): the row's $0.0000
+				// is "unreported", not "free". Recovering the true figure
+				// would mean re-deriving cost from the session transcript
+				// against model pricing tables only the CLI owns — fragile
+				// coupling for a diagnostic — so the detail says so instead.
+				runErr = fmt.Errorf("%w; cost unknown (killed before reporting)", runErr)
 			}
 			return s.recordFail(led, h, node, "", 0, time.Since(start), attempt, runErr)
 		}
