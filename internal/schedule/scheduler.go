@@ -1151,9 +1151,11 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 	// Already compiled once by graph.Validate at load time, so this cannot fail
 	// for a graph that came through Load/Parse; it is still handled rather than
 	// ignored, because a caller that hand-built a Node bypasses that guarantee.
+	// It is a fault, not a failure: a malformed pattern rendered no verdict on
+	// the work, and no re-run can repair the declaration.
 	pattern, err := regexp.Compile(v.OutputMatches)
 	if err != nil {
-		return verifyFailure(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
+		return verifyFault(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
 	}
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
