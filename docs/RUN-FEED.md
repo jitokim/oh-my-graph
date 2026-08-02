@@ -42,8 +42,17 @@ Top-level fields: `schema`, `run_id`, `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
 `continue_on_fail`, `tool_policies` (auto runs only), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `budget_usd`, `duration`
-in nanoseconds, `artifact_path`, `detail`), and `gate` (`paused_at`,
-`decisions`).
+in nanoseconds, `artifact_path`, `detail`, and — for executions inside a
+feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
+execution outside one), and `gate` (`paused_at`, `decisions`).
+
+One record is not terminal: a feedback declarer's record mid-loop is a
+non-terminal **marker** — `round` k with **no** `verdict` — written the
+moment its arc fires, so a run stopped mid-loop resumes into the loop. A
+consumer deriving "settled" from `nodes` must treat a verdict-less record as
+still in flight. A node's recorded `cost_usd` accumulates across its rounds
+(a superseded round's spend carries into the record that replaces it), so
+the per-node figures still sum to the run's true total.
 
 Guarantees:
 
@@ -78,7 +87,7 @@ the three can never disagree about a transition. The Go source of truth is
 | `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
-| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)* | A retry attempt begins after a failed one. |
+| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)*, `round` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
@@ -94,6 +103,16 @@ even when the underlying error was arbitrarily long. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+Node events emitted by a feedback re-execution (ADR 0010) additionally carry
+`round`, the 1-based feedback round the execution belongs to — an optional
+additive field, **no schema bump**; absent means 0, the initial pass. Body
+nodes therefore emit one full `node_started` → terminal sequence per round
+*within* a leg. The declarer's non-final judgment failure is a
+`node_retried`, never a `node_failed` — `node_failed` stays terminal and
+appears at most once per declarer per leg, when the failure is final (its
+`detail` then names the spend: `feedback exhausted after 2 rounds of impl →
+review: …`).
 
 On `node_started` and `node_retried`, `session_id` is the **pre-assigned**
 session id the engine hands claude via `--session-id` (a UUID minted before
@@ -142,7 +161,9 @@ to pause).
   may carry terminal events in more than one leg (a `node_failed` in an
   earlier one, a fresh `node_started` and terminal in the retry leg); the
   latest terminal event per node is the authoritative one, matching
-  `state.json`.
+  `state.json`. Feedback rounds (ADR 0010) extend the same rule *within* a
+  leg: a body node emits one terminal event per round, and the latest —
+  the highest `round` — is authoritative.
 - **Short lines.** Every event line the writer emits is small (a handful of
   short fields; well under a few kilobytes even with a long `detail`). The
   in-repo readers enforce a shared 1 MiB per-line cap and refuse — with an

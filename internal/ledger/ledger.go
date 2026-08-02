@@ -1,10 +1,16 @@
 // Package ledger records what happened in a run and renders the end-of-run
-// summary: one row per node (session id, cost, verdict, duration), the
-// coordinator's one-time planning cost (auto mode only — zero and hidden for a
-// hand-written `run`), and the total cost across the graph including that
-// planning call. It is the run's accounting book — write-only from the
-// Scheduler's side (per-node) plus a single planning-cost entry from the CLI,
-// rendered once at the end by the CLI.
+// summary: one row per node EXECUTION (session id, cost, verdict, duration),
+// the coordinator's one-time planning cost (auto mode only — zero and hidden
+// for a hand-written `run`), and the total cost across the graph including
+// that planning call. Most nodes execute once and get one row; a feedback
+// round (ADR 0010) re-executes its loop body, and every round's execution of
+// every body node appends its own row, with "feedback round k/N" in the
+// detail — the ledger's one job is the cost story, and the entire risk of a
+// loop on a paid runtime IS the multiplier, so round 2's cost must sit next
+// to round 1's in the same table as everything else. It is the run's
+// accounting book — write-only from the Scheduler's side (per execution)
+// plus a single planning-cost entry from the CLI, rendered once at the end
+// by the CLI.
 package ledger
 
 import (
@@ -99,12 +105,14 @@ func (l *RunLedger) planningCost() float64 {
 
 // Records returns a stable, node-id-sorted copy of the recorded rows so the
 // output is deterministic regardless of the order goroutines finished in.
+// The sort is stable: a node with several execution rows (feedback rounds)
+// keeps them in the order they were recorded — round 1 above round 2.
 func (l *RunLedger) Records() []Record {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := make([]Record, len(l.records))
 	copy(out, l.records)
-	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
 	return out
 }
 

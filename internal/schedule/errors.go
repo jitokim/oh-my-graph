@@ -140,6 +140,27 @@ func (e *limitSignal) Error() string {
 	return fmt.Sprintf("node %q: session limit reached", e.NodeID)
 }
 
+// feedbackSignal is runNode's internal signal that a feedback declarer's
+// judgment failure re-armed its loop (ADR 0010) — the fourth intercepted
+// signal beside pauseSignal, limitSignal and rejectSignal. By the time it
+// surfaces, the non-final record trio is already durable (ledger row, marker
+// snapshot record, node_retried event); what remains is scheduling: Run's
+// launch loop re-seeds the body's in-degrees (counting only in-body parents)
+// and relaunches Target, unless a pause elsewhere (gate or session limit)
+// has already stopped the run — then the relaunch is suppressed exactly as a
+// successful node's dependents are, and the marker makes a later resume
+// re-enter the loop. It never reaches the continue-on-fail or halt paths: a
+// round with budget left is not a failure yet.
+type feedbackSignal struct {
+	NodeID string // the declarer whose arc fired
+	Target string // the rerun target the loop re-launches
+	Round  int    // the round now beginning (1-based)
+}
+
+func (e *feedbackSignal) Error() string {
+	return fmt.Sprintf("node %q: feedback round %d — re-running %s", e.NodeID, e.Round, e.Target)
+}
+
 // MissingToolPolicyError means a caller imposed a tool ceiling (a non-nil
 // Options.ToolPolicies) that has no entry for this node.
 //
