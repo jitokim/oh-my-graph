@@ -169,7 +169,12 @@ cost and artifact path — and assembles from it:
   cycle 2 remained" observation is still only words in `remaining` — the
   structural stop is `--max-cycles`, and the human's early warning is that
   **each cycle's verdict, `remaining` and evidence are printed the moment
-  assessment returns**, not summarized at the end.
+  assessment returns**, not summarized at the end. The seam that makes that
+  possible is named: `GoalOptions.OnCycleAssessed`, the loop's one
+  observational callback, invoked with each cycle's report right after its
+  assessment and before the continue/stop decision — the CLI prints the
+  verdict and persists `assess.json` there. It is purely observational; the
+  loop's control flow never depends on it.
 
 Explicitly **not** fed: the raw planner reply, chat history, prior cycles'
 run material beyond that one `remaining` line, or anything from the user's
@@ -284,7 +289,11 @@ Stated hard, because iteration composes three untrusted artifacts:
   `budget_usd` — a hard **mid-flight kill** — and one name carrying
   opposite semantics at two layers of the same tool is how a bound gets
   misread as a guarantee. The unambiguous name is what resolves that
-  collision (Alternatives).
+  collision (Alternatives). At the CLI the ceiling additionally **requires
+  `--max-cycles ≥ 2` at parse**: it is a cycle-boundary check and a
+  single-cycle run has no cycle boundary, so accepting it there would let a
+  typed bound silently never fire — a flag that reads as a bound and isn't
+  one, rejected loudly instead.
 
 **The printed record per cycle, and the non-interactive posture.** Every
 cycle's plan is printed before it executes — topology, tools, agent

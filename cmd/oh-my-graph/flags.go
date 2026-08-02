@@ -58,8 +58,10 @@ func (f *runFlags) parse(args []string) error {
 // autoFlags holds the parsed `auto` subcommand options. The goal is a
 // positional argument, mirroring how `run` takes its graph path.
 type autoFlags struct {
-	goal           string
-	noAgentMapping bool
+	goal             string
+	noAgentMapping   bool
+	maxCycles        int
+	maxGoalBudgetUSD float64
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -69,11 +71,16 @@ type autoFlags struct {
 // positional argument, so it is not registered as a flag. --no-agent-mapping
 // is `auto`'s own, not a commonRunFlags member: `run` executes a hand-written
 // graph whose agent: fields are the user's explicit choice, so there is
-// nothing automatic to switch off there.
+// nothing automatic to switch off there. --max-cycles and
+// --max-goal-budget-usd are likewise `auto`'s own (ADR 0011 §1): the goal
+// loop iterates PLANS, which only `auto` produces — and keeping the cycle
+// count off commonRunFlags is what keeps chat structurally single-cycle.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call")
+	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
 	return f
 }
 
@@ -92,6 +99,21 @@ func (f *autoFlags) parse(args []string) error {
 	}
 	if f.set.NArg() > 0 {
 		return fmt.Errorf("auto: unexpected argument %q after the flags — quote the goal so it is a single argument", f.set.Arg(0))
+	}
+	// The goal loop's governance is validated at parse, before anything
+	// spends: the flag IS the bound, and it has no unbounded spelling
+	// (ADR 0011 §1).
+	if f.maxCycles < 1 {
+		return fmt.Errorf("auto: --max-cycles must be at least 1, got %d", f.maxCycles)
+	}
+	if f.maxGoalBudgetUSD < 0 {
+		return fmt.Errorf("auto: --max-goal-budget-usd must not be negative, got %v", f.maxGoalBudgetUSD)
+	}
+	// The ceiling is a cycle-boundary check (ADR 0011 §3), and a single-cycle
+	// run has no cycle boundary — accepting the flag there would let it
+	// silently do nothing, which reads as a bound that isn't one.
+	if f.maxGoalBudgetUSD > 0 && f.maxCycles < 2 {
+		return fmt.Errorf("auto: --max-goal-budget-usd is a cross-cycle ceiling and needs --max-cycles of at least 2; a single-cycle run has no cycle boundary to check it at")
 	}
 	return nil
 }

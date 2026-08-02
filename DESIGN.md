@@ -901,6 +901,60 @@ saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can b
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
 Scheduler as any other graph.
 
+### Goal cycles — `auto --max-cycles N` (ADR 0011)
+`auto` plans once by default; `--max-cycles N` (N ≥ 2) opts into the bounded
+goal loop: **plan → validate → execute → assess**, at most N cycles, each
+cycle a whole ordinary run of a freshly planned graph. The flag *is* the
+bound — 0 and negatives are rejected at parse, there is no config or env
+default — and `--max-cycles 1` (the default) is byte-identical to today: one
+plan, one run, no assessment call, no new files or fields.
+
+The cycle engine is `coordinator.RunGoal`; `planAndExecute` is its only
+caller, supplying the save→print→confirm→execute sequence as the
+`ExecuteCycle` callback — so `auto` and chat cannot drift, and the loop is
+unit-testable against `FakeRunner` with zero real spawns. Chat stays
+single-cycle in v1: it calls `planAndExecute` with `singleCycle`
+(`commonRunFlags` carry no cycle count). Per cycle:
+
+- **Plan/validate**: `coordinator.Plan` verbatim — the full field-disposition
+  table and layered ceiling, every cycle, no caching. On cycle k ≥ 2 the
+  planner prompt gains a continuation section carrying the previous
+  assessment's `remaining` (truncated, quoted as context, never as a rule
+  change).
+- **Execute**: an ordinary run — own run id, directory, `graph.json`,
+  `state.json`, `events.jsonl`, `resume.lock`. The snapshot additionally
+  carries the additive `goal` block (`text`, `cycle`, `max_cycles`,
+  `first_run_id` — the group key; no schema bump, absent on single-cycle
+  runs, preserved across resume legs). The browser live-view launch fires
+  for cycle 1 only; later cycles still serve their own view and print its
+  URL.
+- **Assess**: `coordinator.Assess`, the third coordinator call class, under
+  its own stricter stance — `--tools ""`, settings-isolated, strict MCP,
+  deny list extended with Read/Glob/Grep — judging only engine-assembled
+  material: the goal, the run outcome, per-node verdict/detail/cost from the
+  snapshot (the loop re-reads `state.json` after `executeGraph` returns —
+  the observation seam), bounded head+tail artifact excerpts, and the one
+  cross-cycle line (the previous `remaining`). The verdict is a hard JSON
+  contract; garbage is an `*AssessError` that stops the loop. Each verdict
+  is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
+  persisted as `assess.json` in that cycle's run directory (`goal_met`,
+  `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
+  cycle's ledger cannot include, since the ledger prints before assessment).
+
+Termination and exit follow ADR 0011 §2's (outcome × verdict) precedence:
+`goal_met` always stops the loop, but exit 0 additionally requires the final
+cycle's run to have **passed** — the untrusted judge can stop spending, never
+flip an engine-reported failure. Unmet-and-exhausted (or the optional
+`--max-goal-budget-usd` soft ceiling tripping at a cycle boundary, or a
+declined confirm on a later cycle) exits 1 with the final `remaining`; a
+session-limit pause pauses the whole loop (exit 2, standard resume hint —
+the resumed run completes as an ordinary run; the goal loop does not
+re-enter). The ceiling is rejected at parse without `--max-cycles ≥ 2` — a
+flag that could never fire would read as a bound that isn't one. When the
+loop ends, the **goal summary** prints below the final ledger: one line per
+cycle (run id, outcome, run total with planning included, assessment cost,
+verdict) and the grand total — the multiplier is printed, never derivable.
+
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
 - **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, handoff, depends_on).

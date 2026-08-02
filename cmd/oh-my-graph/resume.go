@@ -301,7 +301,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Inputs:          snap.Inputs,
 		ContinueOnFail:  snap.ContinueOnFail,
 		ToolPolicies:    snap.ToolPolicies,
-		Nodes:           records,
+		// Goal lineage carries across legs: a resumed cycle of a goal loop
+		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
+		// group membership just because a second process finished it.
+		Goal:  snap.Goal,
+		Nodes: records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
