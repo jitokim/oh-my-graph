@@ -56,7 +56,7 @@ nodes:
       finish — never in the background. Your FINAL reply is the verdict:
       never end the turn on an interim report. Report exactly PASS if
       everything succeeds, or FAIL with the failing step.
-    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+    allowed_tools: [Read, "Bash(make *)", "Bash(go test *)", "Bash(git *)"]
     permission_mode: dontAsk
     # Runaway insurance ONLY, never cost tuning: a tight budget kills a
     # nearly-done node at the threshold, and the salvage costs more than
