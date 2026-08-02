@@ -1,0 +1,149 @@
+# merge-shepherd — the operator's PR-shipping loop as a graph.
+#
+#   verify ─▶ ready-and-wait ─▶ triage ─▶ approve-merge (gate) ─▶ merge
+#
+# What this replaces: the loop the human operator runs by hand on every PR —
+# fetch the head, `make local` in a scratch checkout, mark the PR ready, wait
+# for CI and CodeRabbit, work through the review comments, merge, pull,
+# rebuild, prune. Same steps, same order, pinned in YAML — with the merge
+# policy encoded in the graph shape itself: merge happens only AFTER
+# CodeRabbit's review has completed and every comment is triaged, and
+# `--admin` is never a way past an unfinished review (it may only grease
+# merge-queue mechanics once the review is complete — see CONTRIBUTING).
+#
+# Clean tree required: verify and merge run `git`/`make` inside the repo you
+# point at. The PR itself is only ever touched through THROWAWAY worktrees
+# (`git worktree add /tmp/shepherd-... FETCH_HEAD` — plain git run by the
+# node via Bash, not the engine's `worktree:` seam, which branches from the
+# invocation repo's HEAD rather than the PR head this graph needs).
+#
+# Honest note on ready-and-wait: it is a POLL under a timeout, not an event
+# subscription — `sleep 30` loops between `gh pr view` checks, bounded by
+# the node's 15m timeout. If CodeRabbit has not finished by then, the node
+# reports the actual state and fails its READY check; the operator decides.
+#
+# The run pauses at the approve-merge gate (exit 2). Read triage's table,
+# then resume:
+#   oh-my-graph resume <run-id> --approve approve-merge
+#
+# Run (against a clean tree):
+#   oh-my-graph run graphs/merge-shepherd.yaml \
+#     --input repo=/path/to/repo \
+#     --input pr=123
+name: merge-shepherd
+version: "0.1"
+inputs: [repo, pr]
+concurrency: 1 # the flow is a strict chain — nothing ever runs in parallel
+nodes:
+  - id: verify
+    type: claude-run
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      You are in the repo at {{ inputs.repo }}; its working tree is clean and
+      must stay untouched. Verify that PR #{{ inputs.pr }} passes the local
+      suite, in a throwaway checkout:
+        1. `gh pr view {{ inputs.pr }}` and `gh pr diff {{ inputs.pr }}` to
+           see what the PR is.
+        2. `git fetch origin pull/{{ inputs.pr }}/head`
+        3. `git worktree add /tmp/shepherd-{{ inputs.pr }} FETCH_HEAD`
+        4. `make -C /tmp/shepherd-{{ inputs.pr }} local` — run it
+           SYNCHRONOUSLY and wait for the exit code, never in the
+           background: your final reply IS the verdict, so you cannot reply
+           before the suite has finished.
+        5. `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+      Begin your reply with PASS, or with FAIL followed by the failing step.
+    allowed_tools: [Read, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 30m
+    handoff: artifact
+    success_check: { exit_zero: true, result_matches: "^PASS" }
+
+  - id: ready-and-wait
+    type: claude-run
+    depends_on: [verify]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Local verify said: {{ artifacts.verify | inline }}.
+      Mark PR #{{ inputs.pr }} ready for review: `gh pr ready {{ inputs.pr }}`.
+      Then poll — `sleep 30` between checks of
+      `gh pr view {{ inputs.pr }} --json reviews,statusCheckRollup` — until
+      BOTH hold:
+        - the `test` check has concluded with SUCCESS, and
+        - coderabbitai has a COMPLETED review on the PR (a submitted review
+          in the reviews list; a "review in progress" placeholder comment
+          does not count).
+      When both hold, begin your reply with READY plus a one-line status.
+      You have 15 minutes: stop polling after ~25 loops and, if either
+      condition is still missing, reply with the honest current state
+      (which one is missing and what it says) — the operator decides what
+      to do next. NEVER reply READY early.
+    allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]
+    permission_mode: dontAsk
+    timeout: 15m
+    handoff: artifact
+    success_check: { exit_zero: true, result_matches: "^READY" }
+
+  - id: triage
+    type: claude-run
+    depends_on: [ready-and-wait]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Triage every CodeRabbit review comment on PR #{{ inputs.pr }}. List
+      them all: `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments`
+      plus the review bodies from `gh pr view {{ inputs.pr }} --json
+      reviews`. If there are zero comments, say so and stop.
+      For each comment, do exactly one of:
+        - Mechanical and within the PR's scope → apply it. Build a fresh
+          throwaway checkout of the PR head
+          (`git fetch origin pull/{{ inputs.pr }}/head`, then
+          `git worktree add /tmp/shepherd-triage-{{ inputs.pr }} FETCH_HEAD`),
+          make the edit there, run the repo's checks
+          (`make -C /tmp/shepherd-triage-{{ inputs.pr }} local`), commit
+          staging ONLY the files you changed by explicit path (`git add
+          <path> ...` — never `git add -A`/`.`/`-u`), push to the PR's
+          branch (`git push origin HEAD:<pr-branch>`), and remove the
+          worktree when done.
+        - You disagree, or it is out of the PR's scope → reply to that
+          comment via `gh api` with a one-sentence reason.
+      HARD limits: do NOT weaken or delete tests, and do NOT change
+      behavior beyond what a comment literally asks — anything bigger is
+      the operator's call, not this node's.
+      End your reply with a triage table: one row per comment → the action
+      taken (applied in <commit> / replied: <reason> ).
+    allowed_tools: [Read, Edit, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 45m
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  # The human gate: the run stops here with exit 2 after triage's table is
+  # in. Read it, then `oh-my-graph resume <run-id> --approve approve-merge`
+  # (or --reject approve-merge to end the run without merging).
+  - id: approve-merge
+    type: gate
+    depends_on: [triage]
+
+  - id: merge
+    type: claude-run
+    depends_on: [approve-merge]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      The operator has approved the merge of PR #{{ inputs.pr }}. Triage
+      reported: {{ artifacts.triage | inline }}.
+        1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
+           plain merge first; add `--admin` ONLY if merge-queue mechanics
+           require it — that is legitimate here because the review is
+           complete by construction (verify passed, CI and CodeRabbit
+           concluded, comments triaged), and `--admin` must never be used
+           to bypass an unfinished review.
+        2. In {{ inputs.repo }}: `git pull --ff-only origin main`.
+        3. `make build`.
+        4. Prune stale local state for this PR: `git remote prune origin`,
+           and `git branch -d` the PR's local branch if one exists.
+      Reply with the merge commit SHA and a one-line ledger of what
+      shipped.
+    allowed_tools: ["Bash(gh *)", "Bash(git *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 15m
+    handoff: artifact
+    success_check: { exit_zero: true }
