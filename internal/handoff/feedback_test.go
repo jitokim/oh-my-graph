@@ -55,6 +55,31 @@ func TestSetFeedback_InlinesAndPersists(t *testing.T) {
 	}
 }
 
+// TestSetFeedback_DottedDeclarerID: node ids may contain dots
+// (graph's nodeIDPattern), so the placeholder reference class must accept
+// them too — {{ feedback.review.v2 }} for declarer "review.v2" inlines the
+// payload rather than shipping verbatim into a paid prompt.
+func TestSetFeedback_DottedDeclarerID(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+
+	if err := h.SetFeedback("review.v2", "round 1 findings"); err != nil {
+		t.Fatalf("SetFeedback: %v", err)
+	}
+
+	got, err := h.Interpolate("{{ feedback.review.v2 }}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "round 1 findings" {
+		t.Fatalf("dotted declarer feedback did not inline: %q", got)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "feedback", "review.v2.out")); err != nil {
+		t.Fatalf("payload file not persisted: %v", err)
+	}
+}
+
 // TestSetFeedback_LatestRoundWins: the payload file and the resolved value
 // are overwritten per round — the re-run always reads the round that just
 // judged it, never an older one.

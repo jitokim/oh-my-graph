@@ -302,6 +302,23 @@ nodes:
 `,
 			want: "only legal inside the body",
 		},
+		{
+			name: "feedback placeholder with a dotted declarer id outside the body",
+			yaml: `
+name: g
+nodes:
+  - id: impl
+    prompt: p
+  - id: review.v2
+    depends_on: [impl]
+    prompt: p
+    feedback: { rerun: impl, max: 2 }
+  - id: report
+    depends_on: [review.v2]
+    prompt: "summarize {{ feedback.review.v2 }}"
+`,
+			want: "only legal inside the body",
+		},
 	}
 
 	for _, tc := range cases {

@@ -48,7 +48,7 @@ func (e *InterpolationError) Error() string {
 // a filter on it loudly (graph.Validate already refuses it at load for any
 // graph that came through Parse).
 var placeholderPattern = regexp.MustCompile(
-	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9_-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
+	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
 // Handoff owns the run directory and the accumulating state of completed nodes.

@@ -56,7 +56,9 @@ var placeholderKinds = map[string]bool{
 //   - the token fails to parse as {{ inputs.<name> }} / {{ artifacts.<id> }}
 //     (optional filter: | inline) despite its body starting with one of the
 //     placeholder kinds (matched case-insensitively) — an unknown filter, a
-//     nested path, a singular typo, a case-variant like {{ Artifacts.x }};
+//     singular typo, a case-variant like {{ Artifacts.x }}; a dotted
+//     reference is NOT that — ids and input names may contain dots, so
+//     {{ inputs.repo.name }} is a well-formed reference to "repo.name";
 //   - the token parses but names an input the graph does not declare;
 //   - the token parses but names an artifact of a node that does not exist,
 //     is the referencing node itself, or is not one of its ancestors (so the

@@ -212,7 +212,7 @@ func (g *Graph) validateFeedback() []error {
 // contract. The reference character class matches the one
 // internal/handoff's placeholderPattern resolves, so what load accepts and
 // what the runtime substitutes can never drift apart.
-var feedbackTokenPattern = regexp.MustCompile(`\{\{\s*feedback\.([A-Za-z0-9_-]+)\s*(\|[^}]*)?\}\}`)
+var feedbackTokenPattern = regexp.MustCompile(`\{\{\s*feedback\.([A-Za-z0-9._-]+)\s*(\|[^}]*)?\}\}`)
 
 // validateFeedbackPlaceholders makes an unresolvable {{ feedback.<id> }} a
 // LOAD error, not an advisory lint: the feedback namespace resolves to the
