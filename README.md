@@ -70,11 +70,13 @@ a claude node implements on a branch, sibling nodes run the checks and the
 reviews, and a final node opens the draft PR. The verifiable part, as of
 2026-08-02: 23 of the 80 pull requests merged into `main` carry a Claude
 co-author trailer in their squash commit — the receipt that a claude session
-wrote them. Count them yourself: `git log -i --grep="co-authored-by: claude"`
+wrote them. Count them yourself:
+`git log main --first-parent -i --grep="co-authored-by: claude"`
 (24 matches: those 23 squash commits plus the initial commit). That trailer
 names the model, not the pipeline, so from 2026-08-02 on, commits authored by
 a graph lane also carry `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
-— see [CONTRIBUTING.md](CONTRIBUTING.md#attribution).
+— a transparency convention, not proof of authorship; see
+[CONTRIBUTING.md](CONTRIBUTING.md#attribution).
 
 The templates in [`graphs/`](graphs/) are not samples: `self-dev.yaml`,
 `adr-driven-dev.yaml` and `apply-flags.yaml` are the pipelines this repo
