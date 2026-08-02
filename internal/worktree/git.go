@@ -52,7 +52,7 @@ type GitManager struct {
 	created map[string]*managedWorktree
 }
 
-// managedWorktree records what Acquire created for one name — everything
+// managedWorktree records what Acquire provisioned for one name — everything
 // Cleanup needs to tear it down without guessing.
 type managedWorktree struct {
 	path   string
@@ -60,9 +60,16 @@ type managedWorktree struct {
 	// baseSHA is the commit the worktree's branch started at. Cleanup
 	// compares the worktree's HEAD against it: a worktree still at its base
 	// is provably empty and safe to delete; anything else carries commits and
-	// its branch is retained.
+	// its branch is retained. adoptedBaseSHA means the lane was adopted from
+	// disk and has no base to prove emptiness against.
 	baseSHA string
 }
+
+// adoptedBaseSHA marks a managedWorktree Acquire adopted from disk (a reused
+// dir, or a retained branch re-attached by a resume leg) rather than created
+// fresh. The lane predates this process, so there is no base commit to prove
+// emptiness against — Cleanup retains its branch instead of ever deleting it.
+const adoptedBaseSHA = ""
 
 // NewGitManager builds the production Provider. repoDir is the repository to
 // create worktrees off ("" = the process's working directory); baseDir is the
@@ -77,11 +84,23 @@ func NewGitManager(repoDir, baseDir, runID string) *GitManager {
 	}
 }
 
-// Acquire returns the path of the managed worktree for name, creating it —
-// `git worktree add <baseDir>/<name> -b <branchPrefix>/<name> HEAD` — the
-// first time the name is seen. The lock covers creation, so two nodes racing
-// on the same name cannot double-create; the loser of the race just gets the
-// same path back.
+// Acquire returns the path of the managed worktree for name. Within one
+// process the map makes it idempotent, but a resume leg is a FRESH process
+// re-provisioning the same run directory, so idempotency must also hold
+// against what an earlier leg left on disk (run 20260802-104005: the paused
+// leg's cleanup removed the dir but retained the branch, and a blind
+// `git worktree add -b` then died on the ref collision). Acquire is therefore
+// disk-aware, in precedence order:
+//
+//   - the managed DIR exists: validate it is a worktree of the invocation
+//     repo and reuse it — a foreign directory squatting on the managed path
+//     is refused, never adopted;
+//   - the run's BRANCH exists with no dir: attach (`git worktree add <path>
+//     <branch>`, no -b) so the lane continues its committed state;
+//   - neither exists: create fresh with -b, exactly as a first leg does.
+//
+// The lock covers the whole decision, so two nodes racing on the same name
+// cannot double-provision; the loser of the race just gets the same path back.
 func (m *GitManager) Acquire(ctx context.Context, name string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -90,22 +109,88 @@ func (m *GitManager) Acquire(ctx context.Context, name string) (string, error) {
 		return wt.path, nil
 	}
 
-	baseSHA, err := m.git(ctx, "rev-parse", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("worktree %q: resolve invocation repo HEAD: %w", name, err)
+	path := filepath.Join(m.baseDir, name)
+	branch := m.branchPrefix + "/" + name
+
+	if _, statErr := os.Stat(path); statErr == nil {
+		if err := m.validateOwnWorktree(ctx, path); err != nil {
+			return "", fmt.Errorf("worktree %q: %w", name, err)
+		}
+		m.created[name] = &managedWorktree{path: path, branch: branch, baseSHA: adoptedBaseSHA}
+		return path, nil
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("worktree %q: stat managed dir: %w", name, statErr)
 	}
+
 	if err := os.MkdirAll(m.baseDir, 0o755); err != nil {
 		return "", fmt.Errorf("worktree %q: create managed base dir: %w", name, err)
 	}
 
-	path := filepath.Join(m.baseDir, name)
-	branch := m.branchPrefix + "/" + name
+	if m.branchExists(ctx, branch) {
+		if _, err := m.git(ctx, "worktree", "add", path, branch); err != nil {
+			return "", fmt.Errorf("worktree %q: attach retained branch %s: %w", name, branch, err)
+		}
+		m.created[name] = &managedWorktree{path: path, branch: branch, baseSHA: adoptedBaseSHA}
+		return path, nil
+	}
+
+	baseSHA, err := m.git(ctx, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("worktree %q: resolve invocation repo HEAD: %w", name, err)
+	}
 	if _, err := m.git(ctx, "worktree", "add", path, "-b", branch, "HEAD"); err != nil {
 		return "", fmt.Errorf("worktree %q: %w", name, err)
 	}
 
 	m.created[name] = &managedWorktree{path: path, branch: branch, baseSHA: baseSHA}
 	return path, nil
+}
+
+// validateOwnWorktree confirms path is the root of a linked worktree of the
+// invocation repository — the only thing Acquire may adopt. Both sides of the
+// comparison come from git itself: the worktree's toplevel must be the path
+// (not some repository-controlled ancestor of it), and its shared git
+// directory must be the invocation repo's. Symlinks are resolved before
+// comparing so a path under a symlinked location (macOS /var → /private/var)
+// still matches.
+func (m *GitManager) validateOwnWorktree(ctx context.Context, path string) error {
+	top, err := m.git(ctx, "-C", path, "rev-parse", "--path-format=absolute", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("existing dir %s is not a git worktree; refusing to adopt it: %w", path, err)
+	}
+	if resolvePath(top) != resolvePath(path) {
+		return fmt.Errorf("existing dir %s is not a worktree root (toplevel %s); refusing to adopt it", path, top)
+	}
+	repoCommon, err := m.git(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return fmt.Errorf("resolve invocation repo git dir: %w", err)
+	}
+	wtCommon, err := m.git(ctx, "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return fmt.Errorf("resolve git dir of existing dir %s: %w", path, err)
+	}
+	if resolvePath(repoCommon) != resolvePath(wtCommon) {
+		return fmt.Errorf("existing dir %s belongs to another repository (%s); refusing to adopt it", path, wtCommon)
+	}
+	return nil
+}
+
+// resolvePath normalizes a path for identity comparison, following symlinks
+// when possible and falling back to a lexical clean when not.
+func resolvePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
+}
+
+// branchExists reports whether the run's branch is already a ref in the
+// invocation repo — the retained-branch signal Acquire attaches on. Any git
+// failure reads as "no such branch": the fresh-create path that follows will
+// then fail loudly with git's own diagnosis if the repo itself is broken.
+func (m *GitManager) branchExists(ctx context.Context, branch string) bool {
+	_, err := m.git(ctx, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
 }
 
 // Cleanup tears down every worktree this manager created, in name order, and
@@ -166,6 +251,13 @@ func (m *GitManager) cleanupOne(ctx context.Context, name string, wt *managedWor
 			name, wt.path, err, wt.path)
 	}
 
+	if wt.baseSHA == adoptedBaseSHA {
+		// The lane predates this leg (Acquire adopted it from disk), so
+		// there is no base to prove it empty against — retain the branch,
+		// never guess.
+		return fmt.Sprintf("worktree %q removed; branch %s retained — it predates this leg (merge or cherry-pick it, or delete it with `git branch -D %s`)",
+			name, branch, branch)
+	}
 	if headErr != nil {
 		// The worktree's HEAD could not be read, so the branch cannot be
 		// proven empty — keep it rather than guess.

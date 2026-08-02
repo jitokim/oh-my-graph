@@ -216,6 +216,127 @@ func TestGitManager_CleanupKeepsDirtyWorktreeInPlace(t *testing.T) {
 	}
 }
 
+// TestGitManager_AcquireReusesExistingWorktreeDir pins the disk-aware half of
+// Acquire's idempotency: a fresh process (a resume leg) re-declaring a name
+// whose managed dir survived on disk must reuse it, not die trying to
+// re-create it — and its cleanup must retain the adopted lane's branch, since
+// nothing proves the lane empty.
+func TestGitManager_AcquireReusesExistingWorktreeDir(t *testing.T) {
+	m1, repo := newTestManager(t)
+	first, err := m1.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("first-leg Acquire: %v", err)
+	}
+
+	// A fresh process: same repo, same managed base, same run id, empty map.
+	m2 := NewGitManager(repo, m1.baseDir, "test-run")
+	second, err := m2.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("resume-leg Acquire must reuse the existing dir: %v", err)
+	}
+	if first != second {
+		t.Fatalf("resume leg resolved a different path: %q vs %q", first, second)
+	}
+	if got := gitIn(t, second, "rev-parse", "--abbrev-ref", "HEAD"); got != "omg/test-run/lane" {
+		t.Errorf("reused worktree is on branch %q, want omg/test-run/lane", got)
+	}
+
+	notes := m2.Cleanup(context.Background())
+	if !branchExists(t, repo, "omg/test-run/lane") {
+		t.Fatalf("adopted lane's branch was deleted at cleanup — it was never provably empty")
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "retained") {
+		t.Errorf("adopted-lane retention must be documented, got notes: %v", notes)
+	}
+}
+
+// TestGitManager_AcquireAttachesRetainedBranch replays run 20260802-104005:
+// a paused leg's cleanup removed the worktree dir but retained the branch
+// (it carries commits), and the resume leg re-declares the name. Acquire must
+// ATTACH to the retained branch — continuing the lane's committed state —
+// instead of colliding on the ref with -b.
+func TestGitManager_AcquireAttachesRetainedBranch(t *testing.T) {
+	m1, repo := newTestManager(t)
+	path, err := m1.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("first-leg Acquire: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "work.txt"), []byte("work"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	gitIn(t, path, "add", "work.txt")
+	gitIn(t, path, "commit", "-q", "-m", "paused-leg work")
+	m1.Cleanup(context.Background())
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("precondition: cleanup should have removed the worktree dir")
+	}
+	if !branchExists(t, repo, "omg/test-run/lane") {
+		t.Fatal("precondition: cleanup should have retained the branch")
+	}
+
+	m2 := NewGitManager(repo, m1.baseDir, "test-run")
+	resumed, err := m2.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("resume-leg Acquire must attach the retained branch: %v", err)
+	}
+	if resumed != path {
+		t.Fatalf("resume leg resolved a different path: %q vs %q", resumed, path)
+	}
+	if got := gitIn(t, resumed, "rev-parse", "--abbrev-ref", "HEAD"); got != "omg/test-run/lane" {
+		t.Errorf("attached worktree is on branch %q, want omg/test-run/lane", got)
+	}
+	// The lane continues its committed state — the paused leg's work is there.
+	if _, err := os.Stat(filepath.Join(resumed, "work.txt")); err != nil {
+		t.Fatalf("attached worktree does not carry the paused leg's committed work: %v", err)
+	}
+
+	notes := m2.Cleanup(context.Background())
+	if !branchExists(t, repo, "omg/test-run/lane") {
+		t.Fatalf("attached lane's branch was deleted at cleanup — the paused leg's commits lost")
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "retained") {
+		t.Errorf("attached-lane retention must be documented, got notes: %v", notes)
+	}
+}
+
+// TestGitManager_AcquireRefusesForeignDir pins the fail-loudly remainder: a
+// directory squatting on the managed path that is NOT a worktree of the
+// invocation repo is refused, never adopted — adopting it could mix or reset
+// work that is not the run's own.
+func TestGitManager_AcquireRefusesForeignDir(t *testing.T) {
+	t.Run("plain directory", func(t *testing.T) {
+		m, _ := newTestManager(t)
+		path := filepath.Join(m.baseDir, "lane")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "stray.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		if _, err := m.Acquire(context.Background(), "lane"); err == nil {
+			t.Fatal("Acquire must refuse to adopt a non-worktree directory")
+		}
+		if _, err := os.Stat(filepath.Join(path, "stray.txt")); err != nil {
+			t.Errorf("the refused directory's contents were touched: %v", err)
+		}
+	})
+
+	t.Run("worktree of another repository", func(t *testing.T) {
+		m, _ := newTestManager(t)
+		other := initRepo(t)
+		path := filepath.Join(m.baseDir, "lane")
+		if err := os.MkdirAll(m.baseDir, 0o755); err != nil {
+			t.Fatalf("mkdir base: %v", err)
+		}
+		gitIn(t, other, "worktree", "add", "-q", path, "-b", "other-branch", "HEAD")
+
+		if _, err := m.Acquire(context.Background(), "lane"); err == nil {
+			t.Fatal("Acquire must refuse to adopt another repository's worktree")
+		}
+	})
+}
+
 func TestGitManager_AcquireOutsideARepoFails(t *testing.T) {
 	m := NewGitManager(t.TempDir(), filepath.Join(t.TempDir(), "worktrees"), "test-run")
 	if _, err := m.Acquire(context.Background(), "lane"); err == nil {

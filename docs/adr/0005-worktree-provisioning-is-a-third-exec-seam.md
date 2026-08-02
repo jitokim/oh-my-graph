@@ -112,6 +112,14 @@ with its disposition recorded in the coordinator's field table, alongside
   ref collision — safe (nothing is reset) but manual: the user merges or
   deletes the branch first. Accepted over auto-suffixing branch names, which
   would silently multiply refs.
+
+  *(Amended 2026-08-02, after run 20260802-104005: `Acquire` is now
+  disk-aware — a resume leg reuses the surviving managed dir or re-attaches
+  the retained branch, no `-b`, so the lane continues its committed state
+  instead of colliding on the ref. Nothing is reset either way. Failing
+  loudly remains only for a foreign directory on the managed path, where
+  adopting an unknown checkout could mix or reset work that is not the
+  run's own — the actual work-preservation rationale above.)*
 - `git` becomes a runtime dependency of graphs that use the field (only of
   those — a graph with no `worktree:` never spawns git). A node declaring a
   worktree outside a git repository fails loudly at that node.

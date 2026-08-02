@@ -237,10 +237,17 @@ auto-branch bug). `worktree: <name>` is the root fix:
   remove it; forcing would discard the changes), a branch carrying commits
   beyond its base is retained after its worktree dir is removed, and only a
   branch provably still at its base is deleted. Every retention is reported
-  as a one-line note. A retained branch also means a `resume`d leg —
-  `--retry-failed` included, which provisions fresh worktrees exactly as a
-  fresh run would and never reattaches a retained branch — re-declaring the
-  name fails loudly on the ref collision instead of resetting retained work.
+  as a one-line note. A retained branch is a resume contract, not a dead
+  end: `Acquire` is disk-aware, so a `resume`d leg (`--retry-failed`
+  included) re-declaring the name reuses the managed worktree dir when it
+  still exists (validated as a worktree of the invocation repo), else
+  re-attaches the retained branch (`git worktree add <path> <branch>`, no
+  `-b`) so the lane continues its committed state, and only creates fresh
+  with `-b` when neither survives. A lane adopted either way is never
+  judged empty at cleanup — its branch is always retained. What still fails
+  loudly is a foreign directory squatting on the managed path: adopting an
+  unknown checkout could mix or reset work that is not the run's own, which
+  is exactly what ADR 0005's work-preservation rule forbids.
 - Handoff artifacts still persist to `~/.oh-my-graph/runs/<run-id>/` exactly
   as before — the worktree isolates the node's WORKING TREE, not its result.
 - **Auto-planned nodes may not set `worktree`.** Provisioning is not a tool
@@ -665,11 +672,11 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   best-effort-parsed "resume after <reset time> with: `resume <run-id>
   --retry-failed`" hint. A gate pause outranks a limit; a limit outranks
   continue-on-fail pruned failures. The leg closes on the stream as outcome
-  `"paused"` with a distinguishing `detail`. A retry leg provisions worktrees
-  fresh, exactly as a fresh run would — it does not reattach a branch a
-  failed leg retained; that branch keeps the preserved work, and a retried
-  node re-declaring the name fails loudly on the ref collision (see "Worktree
-  isolation").
+  `"paused"` with a distinguishing `detail`. A retry leg's worktree
+  provisioning is disk-aware: a retried node re-declaring a name reuses the
+  lane's surviving dir or re-attaches the branch a paused leg retained, so
+  the lane continues its committed state instead of dying on the ref
+  collision (see "Worktree isolation").
 - A `resume.lock` (`O_EXCL`, holding the pid) guards against two concurrent
   legs of the same run id double-running nodes: the `run`/`auto` first leg
   holds it for its whole duration, and every `resume` takes the same lock — so
