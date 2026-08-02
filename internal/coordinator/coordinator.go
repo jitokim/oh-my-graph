@@ -657,6 +657,16 @@ Rules:
   needs bounding, set "timeout" to a generous Go duration string (e.g.
   "1h") as a hang guard instead; omit it on short nodes to keep the
   runner's default.
+- For an iterative implement→review loop, never unroll repeated
+  review/apply node pairs. Declare a feedback arc on the reviewing node
+  instead: "feedback": {"rerun": "<implementing-node-id>", "max": 2} on the
+  node whose success_check judges the work, and have the implementing
+  node's prompt read {{ feedback.<reviewing-node-id> }} ("review feedback
+  follows — empty on the first pass"). Keep max small (2): every round
+  re-runs the whole rerun→reviewer path at full cost. The arc must point
+  backward along depends_on, no node outside the loop may depend on a
+  loop node other than the reviewer, and one node belongs to at most one
+  loop.
 - If the goal involves substantial implementation, decompose it into work
   units sized so each node's output is a reviewable, committable slice —
   prefer more, smaller nodes (within the node cap) over one node that does

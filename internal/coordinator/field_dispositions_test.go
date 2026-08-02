@@ -84,6 +84,7 @@ var nodeFieldDispositions = map[string]fieldRule{
 	"BudgetUSD": {disposition: allowed, why: "a cap on spend — a planner can only make a node cheaper to fail"},
 	"Timeout":   {disposition: allowed, why: "a wall-clock bound with BudgetUSD's standing — it changes how long an already-ceilinged node may run, not what it may do (ADR 0007)"},
 	"Retry":     {disposition: allowed, why: "bounded re-runs of an already-ceilinged node"},
+	"Feedback":  {disposition: allowed, why: "Retry's standing, one level up: bounded re-runs of a depends_on path whose every node is already inside the ceiling — the required max and the load validations (backward-only, side-exit-free, no gates) hold for a planned graph exactly as for a hand-written one (ADR 0010)"},
 
 	"Prompt": {
 		disposition:    constrained,

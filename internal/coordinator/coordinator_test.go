@@ -194,6 +194,35 @@ func TestPlan_PromptRequiresCommittableSliceDecomposition(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptGuidesFeedbackLoops pins the review-loop guidance ADR 0010
+// adds: an iterative implement→review shape is declared as one feedback arc,
+// never hand-unrolled into repeated review/apply pairs, with a small max
+// because every round re-runs the whole path at full cost. Like the staging
+// and decomposition rules above, this is guidance to an untrusted producer,
+// not enforcement — graph.Validate enforces the arc's shape regardless — so
+// its load-bearing pieces are pinned here.
+func TestPlan_PromptGuidesFeedbackLoops(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "implement the feature and review it until it is ready", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the construct itself, in the exact spelling a plan must emit
+		`"feedback": {"rerun": "<implementing-node-id>", "max": 2}`,
+		// the placeholder the implementing node reads the payload through
+		"{{ feedback.<reviewing-node-id> }}",
+		// the anti-pattern the arc replaces
+		"never unroll",
+		// the cost posture: small bounds, priced per round
+		"Keep max small",
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost the feedback-loop guidance: missing %q", want)
+		}
+	}
+}
+
 // TestPlan_PromptPrefersTimeoutOverBudget pins the budget posture the shipped
 // templates converged on: a tight budget_usd kills a nearly-done node at the
 // threshold and the salvage costs more than letting it finish, so a planned
