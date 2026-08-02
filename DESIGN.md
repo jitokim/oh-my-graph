@@ -880,7 +880,7 @@ turns that rule into a build failure. Current dispositions:
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
 | `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
 | `budget_usd`, `timeout`, `retry` | allowed |
-| `feedback` | allowed — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the required `max` and the load validations hold for a planned graph exactly as for a hand-written one (ADR 0010) |
+| `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
