@@ -645,6 +645,11 @@ func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected a context.DeadlineExceeded error, got %T: %v", err, err)
 	}
+	// The expiry is named in the run's own terms, not the raw Go plumbing
+	// string — this message is what the ledger detail and events carry.
+	if !strings.Contains(err.Error(), "timed out after 100ms (node timeout)") {
+		t.Errorf("a node-timeout expiry must name itself, got %q", err)
+	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("Run took %s to honour a 100ms invocation timeout", elapsed)
 	}
@@ -664,5 +669,8 @@ func TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault(t *testing.T) {
 	_, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected the runner's own timeout to fire, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "timed out after 100ms (node timeout)") {
+		t.Errorf("the default-timeout expiry must name itself too, got %q", err)
 	}
 }
