@@ -180,6 +180,24 @@ type NodeRecord struct {
 	Round int `json:"round,omitempty"`
 }
 
+// GoalRef links an iterated auto run — one cycle of a goal loop (ADR 0011) —
+// to its goal group. It is an additive optional block under RUN-FEED's own
+// rule: absent entirely on single-cycle runs, so today's snapshots stay
+// byte-identical and there is NO schema bump. FirstRunID is the stable group
+// key (equal to the run's own id on cycle 1); the rest of the chain is
+// derivable from it plus Cycle, which is why no previous_run_id is stored —
+// a derivable field is a field that can contradict its derivation.
+type GoalRef struct {
+	// Text is the goal in the user's own words, identical across the group.
+	Text string `json:"text"`
+	// Cycle is this run's 1-based ordinal within the goal loop.
+	Cycle int `json:"cycle"`
+	// MaxCycles is the --max-cycles bound the loop was launched with.
+	MaxCycles int `json:"max_cycles"`
+	// FirstRunID is cycle 1's run id — the goal group's stable key.
+	FirstRunID string `json:"first_run_id"`
+}
+
 // GateState records the run's progress through its gates: what has been decided
 // and where, if anywhere, the run is currently parked.
 type GateState struct {
@@ -238,6 +256,10 @@ type Snapshot struct {
 	// settings. Resuming an auto run without it would drop the whole planned-node
 	// guard (see NodeToolPolicy).
 	ToolPolicies map[string]NodeToolPolicy `json:"tool_policies,omitempty"`
+	// Goal links an iterated auto run to its goal group (ADR 0011). nil —
+	// and absent from the JSON — on every single-cycle run, which keeps
+	// today's snapshots byte-identical; see GoalRef.
+	Goal *GoalRef `json:"goal,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
