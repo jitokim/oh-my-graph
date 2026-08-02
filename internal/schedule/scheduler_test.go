@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -308,7 +309,9 @@ nodes:
 	if rec.Verdict != ledger.VerdictFail {
 		t.Fatalf("sibling verdict = %q, want FAIL", rec.Verdict)
 	}
-	if want := `cancelled: run halted after node "boom" failed`; rec.Detail != want {
+	// The causal story, plus the honest-accounting label: the sibling was
+	// killed mid-flight, so whatever it spent went unreported too.
+	if want := `cancelled: run halted after node "boom" failed; cost unknown (killed before reporting)`; rec.Detail != want {
 		t.Errorf("sibling detail = %q, want %q", rec.Detail, want)
 	}
 }
@@ -1757,6 +1760,70 @@ nodes:
 	}
 	if got := rec.invocationFor("plain").Timeout; got != 0 {
 		t.Errorf("timeout for node with no timeout: field = %s, want 0", got)
+	}
+}
+
+// --- honest accounting for killed nodes (run 20260802-062446) ---------------
+
+// TestScheduler_KilledNodeDetailSaysCostUnknown pins the honest-accounting
+// rule: a node killed by a context (its own timeout here) died before printing
+// the envelope that carries total_cost_usd, so its ledger row must say the
+// cost is unknown instead of implying the $0.0000 it records was the spend.
+func TestScheduler_KilledNodeDetailSaysCostUnknown(t *testing.T) {
+	g := mustGraph(t, `
+name: killed
+nodes:
+  - { id: dev, prompt: dev }
+`)
+	fake := runner.NewFakeRunner(nil)
+	fake.InjectError("dev", fmt.Errorf("claude run: timed out after 100ms (node timeout): %w", context.DeadlineExceeded))
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the killed node to fail the run")
+	}
+
+	rec, ok := findRecord(led, "dev")
+	if !ok {
+		t.Fatal("killed node has no ledger record")
+	}
+	if rec.Verdict != ledger.VerdictFail {
+		t.Fatalf("killed node verdict = %s, want %s", rec.Verdict, ledger.VerdictFail)
+	}
+	if rec.CostUSD != 0 {
+		t.Fatalf("killed node cost = %v, want 0 (nothing was reported)", rec.CostUSD)
+	}
+	if !strings.Contains(rec.Detail, "timed out after 100ms (node timeout)") {
+		t.Errorf("detail lost the timeout cause, got %q", rec.Detail)
+	}
+	if !strings.Contains(rec.Detail, "cost unknown (killed before reporting)") {
+		t.Errorf("detail must say the cost is unknown, got %q", rec.Detail)
+	}
+}
+
+// TestScheduler_SpawnFailureDetailHasNoCostUnknownLabel is the boundary: a
+// child that never spawned genuinely cost nothing, so its $0.0000 is the
+// truth and the unknown-cost label must not appear.
+func TestScheduler_SpawnFailureDetailHasNoCostUnknownLabel(t *testing.T) {
+	g := mustGraph(t, `
+name: unspawnable
+nodes:
+  - { id: dev, prompt: dev }
+`)
+	fake := runner.NewFakeRunner(nil)
+	fake.InjectError("dev", errors.New("claude run: spawn failed: exec: \"claude\": executable file not found"))
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the unspawnable node to fail the run")
+	}
+
+	rec, ok := findRecord(led, "dev")
+	if !ok {
+		t.Fatal("unspawnable node has no ledger record")
+	}
+	if strings.Contains(rec.Detail, "cost unknown") {
+		t.Errorf("a spawn failure spent nothing; its detail must not claim unknown cost, got %q", rec.Detail)
 	}
 }
 

@@ -294,10 +294,10 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 	if spec.Timeout > 0 {
 		timeout = spec.Timeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := r.buildCmd(ctx, spec)
+	cmd := r.buildCmd(runCtx, spec)
 	stdout, runErr := cmd.Output()
 
 	exitCode := 0
@@ -310,7 +310,17 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 		// instead of as the cancellation it was. There is no envelope to
 		// salvage either way, and the context error lets the Scheduler tell a
 		// halt-cancellation from a genuine run failure.
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := runCtx.Err(); ctxErr != nil {
+			// A deadline this runner minted itself — the parent context is
+			// still live — is the per-node timeout expiring, and the error
+			// says so in the run's own terms (as ShellVerifier's TimeoutError
+			// does on the other seam) instead of surfacing the raw Go
+			// plumbing string "context deadline exceeded" (run
+			// 20260802-062446). It still wraps the sentinel, so the
+			// Scheduler's classification is unchanged.
+			if errors.Is(ctxErr, context.DeadlineExceeded) && ctx.Err() == nil {
+				return NodeOutcome{}, fmt.Errorf("claude run: timed out after %s (node timeout): %w", timeout, ctxErr)
+			}
 			return NodeOutcome{}, fmt.Errorf("claude run: %w", ctxErr)
 		}
 		var exitErr *exec.ExitError
