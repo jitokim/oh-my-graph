@@ -69,15 +69,17 @@ PR that wires it into a workflow.
 Commits authored by a graph lane — a claude node running one of the shipped
 `graphs/*.yaml` pipelines against this repo — end with the trailer
 
-```
+```text
 Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>
 ```
 
 This is a transparency convention, not a GitHub account: the address receives
 no mail and resolves to no user. It exists so the dogfooding claim in the
 README ("It ships itself") stays verifiable —
-`git log --grep="Co-Authored-By: oh-my-graph"` lists exactly the commits a
-graph lane wrote.
+`git log --grep="Co-Authored-By: oh-my-graph"` lists the commits that declare
+it. Every commit-producing node in the shipped `graphs/*.yaml` prompts for
+the trailer; like any trailer it is a convention, not cryptographic proof of
+authorship.
 
 ## The exec seams — the one rule that matters most
 

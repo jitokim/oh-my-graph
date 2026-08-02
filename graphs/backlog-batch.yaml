@@ -59,7 +59,9 @@ nodes:
       feature slice for new code — and state your choice in the first commit
       message. Commit as you go, staging only the files you changed, by
       explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
-      or `git add -u`.
+      or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
     permission_mode: dontAsk
@@ -133,7 +135,9 @@ nodes:
       per doc section for larger rewrites — and state your choice in the
       first commit message. Commit as you go, staging only the files you
       changed, by explicit path (`git add <path> ...`) — never `git add -A`,
-      `git add .`, or `git add -u`.
+      `git add .`, or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
