@@ -227,8 +227,11 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 	// which stays terminal.
 	rec := failRecord(node, outcome.SessionID, outcome.TotalCostUSD, duration, cause)
 	rec.Detail = capDetail(fmt.Sprintf("feedback round %d/%d: %v", round, f.Max, cause))
-	led.Record(rec)
 
+	// The marker must be durable before anything narrates the round: a paid
+	// re-run without it would replay the whole loop on resume, so a failed
+	// write is terminal (returned, never just logged) — the caller falls
+	// through to recordFail, which prices this execution's single FAIL row.
 	artifactPath, _ := h.ArtifactPath(node.ID)
 	marker := runstate.NodeRecord{
 		SessionID:    rec.SessionID,
@@ -240,8 +243,9 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 		Round:        round,
 	}
 	if err := s.recorder.RecordNode(node.ID, marker); err != nil {
-		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
+		return nil, fmt.Errorf("persist feedback marker for node %q: %w", node.ID, err)
 	}
+	led.Record(rec)
 
 	s.emitEvent(runfeed.Event{
 		Type:   runfeed.EventNodeRetried,

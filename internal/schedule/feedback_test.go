@@ -505,6 +505,67 @@ func TestScheduler_FeedbackWritesMarkerNotFailToSnapshot(t *testing.T) {
 	}
 }
 
+// failingRecorder refuses RecordNode for one node id — the scripted
+// persistence failure the terminality test below needs.
+type failingRecorder struct {
+	historyRecorder
+	failNodeID string
+}
+
+func (r *failingRecorder) RecordNode(nodeID string, rec runstate.NodeRecord) error {
+	if nodeID == r.failNodeID {
+		return errors.New("disk full")
+	}
+	return r.historyRecorder.RecordNode(nodeID, rec)
+}
+
+// TestScheduler_FeedbackMarkerPersistenceFailureIsTerminal pins the
+// durability half of the trio from the other side: when the declarer's
+// round marker cannot be written, the arc must NOT fire — no node_retried,
+// no body re-run — because a paid round without a durable marker would
+// replay the whole loop on resume. The run fails terminally on the
+// persistence error instead, pricing the failing execution exactly once.
+func TestScheduler_FeedbackMarkerPersistenceFailureIsTerminal(t *testing.T) {
+	g := mustGraph(t, feedbackLoopYAML)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"impl: ":           result("draft-v1", 0.10),
+		"review: draft-v1": result("needs work", 0.25),
+		"impl: needs work": result("draft-v2", 0.10), // must never run
+	})
+	recorder := &failingRecorder{failNodeID: "review"}
+	feed, path := newEventStream(t, "run-marker-fail")
+	s, h, led := newHarness(t, fake, Options{Recorder: recorder, EventSink: feed})
+
+	err := s.Run(context.Background(), g, h, led)
+
+	if err == nil || !strings.Contains(err.Error(), `persist feedback marker for node "review"`) {
+		t.Fatalf("Run error = %v, want the marker persistence failure", err)
+	}
+	wantCalls := []string{"impl: ", "review: draft-v1"}
+	if got := fake.Calls(); !equalStrings(got, wantCalls) {
+		t.Fatalf("call order = %v, want %v — no re-run may start without a durable marker", got, wantCalls)
+	}
+
+	events := eventTypes(readEventStream(t, path))
+	sawFailed := false
+	for _, ev := range events {
+		if strings.HasPrefix(ev, "node_retried") {
+			t.Errorf("node_retried emitted despite the failed marker write: %v", events)
+		}
+		if ev == "node_failed review" {
+			sawFailed = true
+		}
+	}
+	if !sawFailed {
+		t.Errorf("events = %v, want a terminal node_failed for review", events)
+	}
+
+	reviewRows := recordsFor(led, "review")
+	if len(reviewRows) != 1 || reviewRows[0].Verdict != ledger.VerdictFail {
+		t.Fatalf("review ledger rows = %+v, want exactly one FAIL row (no double pricing)", reviewRows)
+	}
+}
+
 // TestScheduler_SessionLimitMidRoundPausesTheLoop proves the interplay with
 // ADR 0009 mid-loop: when a re-executed body node hits the subscription
 // session limit, the run pauses exactly as anywhere else — the limited
