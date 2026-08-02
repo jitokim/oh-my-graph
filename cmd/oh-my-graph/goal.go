@@ -57,6 +57,11 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		fmt.Fprintf(out, "— goal cycle %d/%d (run %s) —\n", cycle, cycles.maxCycles, runID)
 		printPlan(out, plan, specPath)
 
+		// Unreachable in v1 production — `auto` passes a nil confirm and
+		// chat, the one confirm-bearing caller, is single-cycle (ADR 0011
+		// §1) — but the hook's per-cycle contract (each plan gated by its
+		// own [y/N], a decline ending the loop) is ADR-mandated, so it is
+		// implemented and tested here for any future confirm-bearing caller.
 		if confirm != nil {
 			ok, err := confirm()
 			if err != nil {
@@ -107,8 +112,10 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 
 	// The summary prints for whatever completed, error or not: a loop that
 	// paused or stopped on a garbage verdict still spent its cycles, and the
-	// multiplier must be printed, not derivable (ADR 0011 §4).
-	printGoalSummary(out, goal, result)
+	// multiplier must be printed, not derivable (ADR 0011 §4). The error is
+	// passed so the cycle that ended the loop mid-flight appears in the
+	// multiplier too, instead of silently vanishing from the accounting.
+	printGoalSummary(out, goal, result, err)
 	if err != nil {
 		return err
 	}
@@ -131,8 +138,9 @@ func isRunFailure(err error) bool {
 // §2 names: executeGraph prints the ledger and returns only error, so rather
 // than widening that signature the loop reads back what the run durably
 // recorded. The run total is the planning call plus every node's
-// snapshot-recorded spend (a node's cost_usd already accumulates across its
-// retry attempts and feedback rounds). Artifact content is read raw and
+// snapshot-recorded spend (a node's cost_usd accumulates across its feedback
+// rounds; a retried node's record prices its terminal attempt, exactly as
+// the ledger does). Artifact content is read raw and
 // whole; the coordinator owns the excerpting and the caps, so they live
 // beside the prompt they protect. A node with no record (never launched — a
 // pruned or cancelled subtree) contributes nothing, and an artifact that
@@ -212,10 +220,15 @@ func saveAssessment(runDir string, a coordinator.Assessment) error {
 // (planning included), assessment cost, verdict — and the grand total.
 // Nothing is averaged or hidden: the entire risk of a loop on a paid runtime
 // is the multiplier, and the multiplier must be printed, not derivable
-// (ADR 0011 §4). Silent when no cycle completed (declined or failed before
-// the first assessment) — there is no spend story to tell yet.
-func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult) {
-	if len(result.Cycles) == 0 {
+// (ADR 0011 §4). That is why loopErr is part of the accounting: a cycle that
+// ended the loop mid-flight (a pause, a planning failure, a garbage verdict)
+// still spent, so it appears in the multiplier as an explicit incomplete
+// cycle rather than vanishing — with a failed assessment's own cost counted,
+// since the seam (AssessError.CostUSD) carries it. Silent only when there is
+// no spend story at all: no cycle completed and no error (a declined cycle-1
+// plan).
+func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, loopErr error) {
+	if len(result.Cycles) == 0 && loopErr == nil {
 		return
 	}
 	fmt.Fprintf(w, "\nGOAL SUMMARY — %q\n", goal)
@@ -233,7 +246,20 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult) {
 		fmt.Fprintf(w, "  cycle %d: run %s  %s  run $%.4f  assess $%.4f  → %s\n",
 			c.Cycle, c.RunID, outcome, c.RunCostUSD, c.Assessment.CostUSD, verdict)
 	}
-	fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d cycle(s)\n", total, len(result.Cycles))
+	if loopErr == nil {
+		fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d cycle(s)\n", total, len(result.Cycles))
+		return
+	}
+	incomplete := len(result.Cycles) + 1
+	var assessErr *coordinator.AssessError
+	if errors.As(loopErr, &assessErr) {
+		total += assessErr.CostUSD
+		fmt.Fprintf(w, "  cycle %d: incomplete — its assessment failed after spending $%.4f (counted); its run spend appears only on its own ledger above\n",
+			incomplete, assessErr.CostUSD)
+	} else {
+		fmt.Fprintf(w, "  cycle %d: incomplete — it never reached assessment; its spend (if any) appears only in its own output above\n", incomplete)
+	}
+	fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d assessed cycle(s) + 1 incomplete cycle\n", total, len(result.Cycles))
 }
 
 // goalExit maps a cleanly-stopped goal loop onto the process exit contract
@@ -272,6 +298,9 @@ func finalRemaining(result coordinator.GoalResult) string {
 	}
 	remaining := result.Cycles[len(result.Cycles)-1].Assessment.Remaining
 	if remaining == "" {
+		// Defensive only: the assess contract requires `remaining` on an
+		// unmet verdict (Assess rejects its absence as garbage), so every
+		// completed-but-unmet cycle carries one.
 		return "no remaining work was recorded"
 	}
 	return "remaining: " + remaining

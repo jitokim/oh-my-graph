@@ -927,10 +927,14 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   `first_run_id` — the group key; no schema bump, absent on single-cycle
   runs, preserved across resume legs). The browser live-view launch fires
   for cycle 1 only; later cycles still serve their own view and print its
-  URL.
+  URL. `serve` stays a per-run view and shows the goal block in its header
+  (`/api/graph` carries it beside the DAG); a goal-level view that follows
+  the chain is additive later.
 - **Assess**: `coordinator.Assess`, the third coordinator call class, under
   its own stricter stance — `--tools ""`, settings-isolated, strict MCP,
-  deny list extended with Read/Glob/Grep — judging only engine-assembled
+  deny list extended with Read/Glob/Grep (measured: E8, ADR 0011's
+  Measurement outcome — a read-this-file lure in an artifact did not reach
+  the verdict) — judging only engine-assembled
   material: the goal, the run outcome, per-node verdict/detail/cost from the
   snapshot (the loop re-reads `state.json` after `executeGraph` returns —
   the observation seam), bounded head+tail artifact excerpts, and the one
@@ -954,6 +958,10 @@ flag that could never fire would read as a bound that isn't one. When the
 loop ends, the **goal summary** prints below the final ledger: one line per
 cycle (run id, outcome, run total with planning included, assessment cost,
 verdict) and the grand total — the multiplier is printed, never derivable.
+A cycle that ended the loop mid-flight (pause, planning failure, garbage
+verdict) prints as an explicit incomplete cycle — a failed assessment's own
+cost still counted (`AssessError.CostUSD`), the run spend pointed at its own
+ledger — so the summary never under-counts silently.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.

@@ -18,8 +18,11 @@ var ErrPlanDeclined = errors.New("plan declined by the confirm hook")
 // money-denominated bound on top.
 type GoalOptions struct {
 	// MaxCycles bounds the loop structurally — the flag IS the bound
-	// (ADR 0011 §1). Must be at least 1; 1 is exactly today's single-cycle
-	// behaviour except that the one cycle is still assessed.
+	// (ADR 0011 §1). Must be at least 1. A MaxCycles-1 RunGoal is NOT
+	// today's single run: its one cycle is still assessed (a paid call)
+	// and judged goal-level. The CLI keeps `--max-cycles 1` byte-identical
+	// to today by dispatching to the single-cycle path without entering
+	// this loop at all.
 	MaxCycles int
 	// MaxGoalBudgetUSD, when positive, is the optional cross-cycle spend
 	// ceiling — a SOFT check at the cycle boundary, never a mid-flight kill

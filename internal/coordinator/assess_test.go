@@ -27,18 +27,20 @@ func assessExpectingError(t *testing.T, fake *runner.FakeRunner, goal string) *A
 }
 
 // Garbage replies must STOP the loop, never be clamped into a verdict — each
-// malformed shape is an *AssessError carrying the raw reply (ADR 0011 §2).
+// malformed shape is an *AssessError carrying the raw reply (ADR 0011 §2) and
+// the call's cost: a garbage reply is a paid reply, and the spend must
+// surface in the goal accounting rather than be discarded with the verdict.
 func TestAssess_MalformedRepliesAreAssessErrors(t *testing.T) {
 	cases := []struct {
 		name    string
 		outcome runner.NodeOutcome
 		wantIn  string
 	}{
-		{"non-zero exit", runner.NodeOutcome{Result: "boom", ExitCode: 3}, "exited with code 3"},
-		{"no JSON object", runner.NodeOutcome{Result: "the goal seems met to me"}, "no JSON object"},
-		{"unparseable JSON", runner.NodeOutcome{Result: `{"goal_met": "kinda"}`}, "not the assess contract"},
-		{"goal_met omitted", runner.NodeOutcome{Result: `{"remaining": "more work"}`}, "omitted goal_met"},
-		{"unmet without remaining", runner.NodeOutcome{Result: `{"goal_met": false, "remaining": "  "}`}, "named no remaining work"},
+		{"non-zero exit", runner.NodeOutcome{Result: "boom", ExitCode: 3, TotalCostUSD: 0.03}, "exited with code 3"},
+		{"no JSON object", runner.NodeOutcome{Result: "the goal seems met to me", TotalCostUSD: 0.03}, "no JSON object"},
+		{"unparseable JSON", runner.NodeOutcome{Result: `{"goal_met": "kinda"}`, TotalCostUSD: 0.03}, "not the assess contract"},
+		{"goal_met omitted", runner.NodeOutcome{Result: `{"remaining": "more work"}`, TotalCostUSD: 0.03}, "omitted goal_met"},
+		{"unmet without remaining", runner.NodeOutcome{Result: `{"goal_met": false, "remaining": "  "}`, TotalCostUSD: 0.03}, "named no remaining work"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,6 +48,9 @@ func TestAssess_MalformedRepliesAreAssessErrors(t *testing.T) {
 			assessErr := assessExpectingError(t, fake, "make the tests green")
 			if !strings.Contains(assessErr.Reason, tc.wantIn) {
 				t.Errorf("reason = %q, want it to contain %q", assessErr.Reason, tc.wantIn)
+			}
+			if assessErr.CostUSD != 0.03 {
+				t.Errorf("CostUSD = %v, want the failed call's 0.03 carried on the error", assessErr.CostUSD)
 			}
 		})
 	}
@@ -153,6 +158,20 @@ func TestAssess_PromptCarriesGoalAndEngineMaterialWithInjectionGuard(t *testing.
 		if !strings.Contains(captured.Prompt, want) {
 			t.Errorf("assess prompt is missing %q", want)
 		}
+	}
+
+	// The injection fence covers the node results too, not only the artifact
+	// excerpts: a node's Detail carries run-originated text verbatim (a
+	// planner-authored regex, a stderr tail), so it must sit inside a marked
+	// data block.
+	open := strings.Index(captured.Prompt, "--- node results")
+	closeMark := strings.Index(captured.Prompt, "--- end node results ---")
+	detail := strings.Index(captured.Prompt, "result did not match ^PASS$")
+	if open == -1 || closeMark == -1 {
+		t.Fatal("the node-results block is not fenced as data")
+	}
+	if !(open < detail && detail < closeMark) {
+		t.Error("a node's Detail text must fall inside the fenced node-results block")
 	}
 }
 

@@ -158,6 +158,48 @@ func TestHandleGraph_ServesDAGFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestHandleGraph_ServesGoalLineageWhenTheRunIsAGoalCycle(t *testing.T) {
+	// ADR 0011 §4: serve stays a per-run view and shows the goal block in its
+	// header — /api/graph carries the snapshot's lineage for the UI to render.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-2",
+		Graph: json.RawMessage(twoNodeGraph),
+		Goal:  &runstate.GoalRef{Text: "make the tests green", Cycle: 2, MaxCycles: 3, FirstRunID: "run-1"},
+	})
+
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-2").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var payload graphPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Goal == nil {
+		t.Fatalf("payload carries no goal block: %+v", payload)
+	}
+	want := goalPayload{Text: "make the tests green", Cycle: 2, MaxCycles: 3, FirstRunID: "run-1"}
+	if *payload.Goal != want {
+		t.Errorf("goal block = %+v, want %+v", *payload.Goal, want)
+	}
+}
+
+func TestHandleGraph_OmitsGoalBlockOnASingleCycleRun(t *testing.T) {
+	// A single-cycle run's snapshot has no goal block, and the payload must
+	// omit the key entirely rather than send an empty object the UI would
+	// render as a blank chip.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
+	if strings.Contains(rec.Body.String(), `"goal"`) {
+		t.Errorf("single-cycle payload must not carry a goal key: %s", rec.Body.String())
+	}
+}
+
 func TestHandleGraph_NoSnapshotYetIsHonestlyUnavailable(t *testing.T) {
 	// A fresh run's window: the directory exists (the event stream is opened
 	// at run start) but state.json is written only after the first node's

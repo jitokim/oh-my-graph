@@ -382,6 +382,166 @@ func TestPlanAndExecute_SessionLimitPausesTheWholeLoop(t *testing.T) {
 	}
 }
 
+// TestPlanAndExecute_GoalLineageSurvivesResumeRetryFailed: RUN-FEED.md
+// promises the snapshot's goal block is preserved across resume legs. A cycle
+// paused by the session limit and later finished by `resume --retry-failed`
+// must still name its goal group afterwards — otherwise the pause would
+// orphan the run from its lineage (ADR 0011 §4).
+func TestPlanAndExecute_GoalLineageSurvivesResumeRetryFailed(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec},
+		"work-1": {ExitCode: 1, FailureCause: limitCauseMsg, SessionLimited: true},
+		// The retry leg's re-launch of the same node is the second node call.
+		"work-2": {SessionID: "s-2", Result: "PASS", ExitCode: 0},
+	})
+
+	_, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
+	var limited *schedule.LimitPausedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("expected the loop to pause with *LimitPausedError, got %T: %v", err, err)
+	}
+	runID := goalSnapshots(t)[0].RunID
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("the retry leg should finish the cycle's run cleanly, got: %v", resumeErr)
+	}
+
+	snap, loadErr := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
+	if loadErr != nil {
+		t.Fatalf("reload the resumed snapshot: %v", loadErr)
+	}
+	if snap.Goal == nil {
+		t.Fatal("the resumed leg dropped the snapshot's goal block — RUN-FEED.md promises it survives legs")
+	}
+	want := runstate.GoalRef{Text: "add a README section", Cycle: 1, MaxCycles: 3, FirstRunID: runID}
+	if *snap.Goal != want {
+		t.Errorf("goal block after resume = %+v, want %+v", *snap.Goal, want)
+	}
+}
+
+// TestPlanAndExecute_AssessErrorStopsTheLoopWithHonestAccounting: a garbage
+// verdict stops the loop as an *AssessError (neither pause type, so
+// mainExitCode maps it to exit 1), plans nothing further, writes no
+// assess.json for the garbage cycle — and the goal summary still prints, with
+// the failed assessment's own cost counted and the cycle named as incomplete
+// rather than vanishing from the multiplier (ADR 0011 §2, §4).
+func TestPlanAndExecute_AssessErrorStopsTheLoopWithHonestAccounting(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1":   {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"assess-1": {Result: "the goal seems met to me", TotalCostUSD: 0.03},
+	})
+
+	out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
+	var assessErr *coordinator.AssessError
+	if !errors.As(err, &assessErr) {
+		t.Fatalf("expected *AssessError, got %T: %v", err, err)
+	}
+	if got := fake.InvocationCount("plan-2"); got != 0 {
+		t.Errorf("a further cycle was planned on the strength of garbage: %d plan-2 calls", got)
+	}
+	runID := goalSnapshots(t)[0].RunID
+	if _, statErr := os.Stat(filepath.Join(runDirFor(runID), assessFileName)); !os.IsNotExist(statErr) {
+		t.Errorf("a garbage verdict must not leave an %s (stat err %v)", assessFileName, statErr)
+	}
+	for _, want := range []string{
+		"GOAL SUMMARY",
+		"cycle 1: incomplete — its assessment failed after spending $0.0300",
+		"GOAL TOTAL: $0.0300 across 0 assessed cycle(s) + 1 incomplete cycle",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestPlanAndExecute_GoalBudgetCeilingThreadsThroughToTheLoop pins the flag's
+// wiring end to end at the cmd layer: the ceiling in goalCycleOptions must
+// reach coordinator.GoalOptions.MaxGoalBudgetUSD, so a cycle-1 spend past it
+// stops the loop at the cycle boundary with the budget message — a field swap
+// or a dropped assignment would run cycle 2 instead and fail here.
+func TestPlanAndExecute_GoalBudgetCeilingThreadsThroughToTheLoop(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1":   {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"assess-1": {Result: cycleAssessNotMet, TotalCostUSD: 0.02},
+	})
+
+	_, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3, maxGoalBudgetUSD: 0.30}, nil)
+	if err == nil {
+		t.Fatal("a tripped goal budget ceiling must apply the unmet-goal exit")
+	}
+	for _, want := range []string{"goal budget ceiling was reached after cycle 1", "add the README section"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("exit error %q is missing %q", err, want)
+		}
+	}
+	if got := fake.InvocationCount("plan-2"); got != 0 {
+		t.Errorf("the ceiling did not stop cycle 2's plan: %d plan-2 calls — is the flag actually threaded into GoalOptions?", got)
+	}
+}
+
+// TestPlanAndExecute_DeclinedLaterCycleIsTheUnmetGoalExit: a confirm hook's
+// decline at cycle k ≥ 2 ends the goal loop as a final human stop — no
+// replan, no execution of the declined plan, and the unmet-goal exit with the
+// last assessment's remaining (ADR 0011 §1).
+func TestPlanAndExecute_DeclinedLaterCycleIsTheUnmetGoalExit(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec},
+		"work-1":   {SessionID: "s-1", Result: "PASS", ExitCode: 0},
+		"assess-1": {Result: cycleAssessNotMet},
+		"plan-2":   {Result: cycleSpec},
+	})
+	asked := 0
+	confirm := func() (bool, error) {
+		asked++
+		return asked == 1, nil // accept cycle 1's plan, decline cycle 2's
+	}
+
+	var out bytes.Buffer
+	var err error
+	captureStdout(t, func() {
+		coord := coordinator.New(fake)
+		err = planAndExecute(context.Background(), &out, coord, fake, commonRunFlags{inputs: inputFlag{}},
+			"add a README section", goalCycleOptions{maxCycles: 3}, confirm, nil)
+	})
+	if err == nil {
+		t.Fatal("a declined cycle-2 plan must apply the unmet-goal exit, not exit 0")
+	}
+	for _, want := range []string{"cycle 2 plan was declined", "add the README section"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("exit error %q is missing %q", err, want)
+		}
+	}
+	if asked != 2 {
+		t.Errorf("the confirm hook was asked %d time(s), want once per printed plan (2)", asked)
+	}
+	// The declined cycle's spec was saved for inspection (that happens before
+	// the confirm, as in the single-cycle path), but it must never have
+	// executed: exactly one run has a snapshot.
+	entries, readErr := os.ReadDir(runsRoot())
+	if readErr != nil {
+		t.Fatalf("read runs root: %v", readErr)
+	}
+	executed := 0
+	for _, entry := range entries {
+		if _, statErr := os.Stat(filepath.Join(runsRoot(), entry.Name(), stateFileName)); statErr == nil {
+			executed++
+		}
+	}
+	if executed != 1 {
+		t.Errorf("%d runs executed, want 1 — the declined plan must never execute", executed)
+	}
+}
+
 // TestPlanAndExecute_BrowserOpensForCycleOneOnly: one surprise tab per goal
 // (ADR 0011 §4) — every cycle serves its own live view, but only cycle 1's
 // launch reaches the opener seam.
