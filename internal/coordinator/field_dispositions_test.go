@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -271,13 +272,15 @@ func TestProbeBaselineIsAccepted(t *testing.T) {
 }
 
 // TestPlannedFeedbackWithinCapIsAccepted is the Feedback probe's negative
-// control: the same loop with max inside maxPlannedFeedbackRounds must plan
-// cleanly, or the probe refuses for the wrong reason — a feedback arc
-// rejected wholesale rather than an excessive max.
+// control: the same loop with max exactly AT maxPlannedFeedbackRounds — the
+// boundary, not merely inside it — must plan cleanly, or the probe refuses
+// for the wrong reason: a feedback arc rejected wholesale (or a cap enforced
+// as > rather than >=) rather than an excessive max.
 func TestPlannedFeedbackWithinCapIsAccepted(t *testing.T) {
 	spec := `{"name":"ok","nodes":[` +
 		`{"id":"impl","prompt":"redo per {{ feedback.probe }}","allowed_tools":["Read"]},` +
-		`{"id":"probe","prompt":"judge","allowed_tools":["Read"],"depends_on":["impl"],"feedback":{"rerun":"impl","max":2}}]}`
+		`{"id":"probe","prompt":"judge","allowed_tools":["Read"],"depends_on":["impl"],` +
+		`"feedback":{"rerun":"impl","max":` + strconv.Itoa(maxPlannedFeedbackRounds) + `}}]}`
 	fake, _ := newPlannerFake(runnerOutcome(spec))
 
 	if _, err := New(fake).Plan(context.Background(), "iterate until it passes", nil); err != nil {

@@ -87,6 +87,16 @@ func TestSetFeedback_LatestRoundWins(t *testing.T) {
 	if string(onDisk) != "round 2" {
 		t.Fatalf("persisted payload was not overwritten: %q", onDisk)
 	}
+
+	// The write is temp+rename (as runstate.Write's is): a successful round
+	// must leave no temp file beside the payload.
+	leftovers, err := filepath.Glob(filepath.Join(dir, "feedback", "review.out.tmp-*"))
+	if err != nil {
+		t.Fatalf("globbing for temp leftovers: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("temp payload files left beside the final one: %v", leftovers)
+	}
 }
 
 // TestInterpolate_FeedbackRejectsFilter: the namespace has no path form and

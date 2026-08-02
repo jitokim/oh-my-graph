@@ -221,16 +221,47 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 // that overlapped for the same declarer could otherwise leave the file
 // holding one payload and the map the other, and a resume (which reads the
 // file) would then disagree with the run it resumed.
+//
+// The file itself is written with the same temp+rename discipline as
+// runstate.Write: the payload lands in a temp file in the feedback
+// directory, is synced and closed, then renamed over the final path. A
+// rename within one directory is atomic on POSIX, so a resume that races a
+// crash reads either the previous round's complete payload or the new one,
+// never a torn file — and the map is updated only after the rename, so the
+// in-memory payload never runs ahead of what a resume would see.
 func (h *Handoff) SetFeedback(nodeID, payload string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	path := h.feedbackPath(nodeID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create feedback dir for node %q: %w", nodeID, err)
 	}
-	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp feedback payload for node %q: %w", nodeID, err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup of the temp file on any failure before the rename;
+	// after a successful rename there is nothing left to remove.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write([]byte(payload)); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("persist feedback payload for node %q: %w", nodeID, err)
 	}
+
 	h.feedback[nodeID] = payload
 	return nil
 }
