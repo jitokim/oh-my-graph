@@ -53,7 +53,7 @@ it fails:
     Implement the ADR (task: {{ inputs.task }}).
     Review feedback from the previous round follows — empty on the
     first pass:
-    {{ feedback.review | inline }}
+    {{ feedback.review }}
   ...
 
 - id: localrun
@@ -69,7 +69,10 @@ it fails:
     max: 2        # REQUIRED — bounded iteration on a paid runtime
 ```
 
-Reading: when `review` fails (after its own retries, if any), the engine
+Reading: when `review` fails for a *judgment* cause (`verify_failed`,
+`result_mismatch`, `nonzero_exit` — the fixed built-in trigger set; see
+Semantics, infrastructure and spend faults fail final immediately), after
+its own retries if any, the engine
 re-runs the path `impl → localrun → review`, handing `review`'s output to
 the re-run as `{{ feedback.review }}` — at most twice. If `review` still
 fails after the second round, it fails for real. This subsumes the
@@ -126,8 +129,22 @@ Load-time validation (all in `internal/graph`, all before anything spends):
    check is ever wanted, that is its own ADR.
 5. A `{{ feedback.<id> }}` placeholder is only legal where it can ever
    resolve: on a node inside the body of a feedback edge that `<id>`
-   declares (a `placeholder_lint` rule, like the existing artifact-reference
-   lints).
+   declares. This is a **load error**, not an advisory lint —
+   `LintPlaceholders` warnings never affect validity, and an out-of-body
+   `{{ feedback.<id> }}` would otherwise resolve to the empty string
+   silently, forever: the exact invariant-weakening this ADR rejects
+   `| optional` for. The same change must teach the placeholder pattern
+   and the interpolation kind table (`internal/handoff`) the new namespace
+   *together*, or the token ships verbatim into a paid prompt.
+6. A body node with `handoff: session` must name a session-parent that is
+   itself **in the body**. An out-of-body session-parent would make round
+   2's `--resume` continue a session round 1 already continued —
+   contradicting the fresh-session rule in Semantics.
+7. Feedback bodies are **disjoint**: no node may lie in the bodies of two
+   feedback edges (a node already declares at most one arc — one `rerun`,
+   one `max`). Overlapping or nested bodies multiply worst-case spend as
+   `(1 + max₁) × (1 + max₂)` and give the re-arming path two owners for
+   one node; v1 rejects the shape at load. Lifting this later is additive.
 
 ### Semantics
 
@@ -144,8 +161,8 @@ is exactly the segment the graph author drew, not the target's whole
 subtree.
 
 Mechanically this is a fourth intercepted signal beside `pauseSignal`,
-`limitSignal` and `rejectSignal`: the declarer's failure, with rounds
-remaining, surfaces as a feedback signal; the scheduler clears the body
+`limitSignal` and `rejectSignal`: the declarer's judgment failure, with
+rounds remaining, surfaces as a feedback signal; the scheduler clears the body
 nodes' completed status, re-seeds their in-degrees counting only in-body
 parents (out-of-body parents stay satisfied; their artifacts are still on
 disk and still interpolate), and launches the target. Independent branches
@@ -159,18 +176,20 @@ of the target it does not exist yet — under today's rules
 `InterpolationError` before iteration 1 ever ran. The answer is a distinct
 namespace with a documented empty default:
 
-- `{{ feedback.<id> }}` follows the artifact grammar (path by default,
-  `| inline` to embed content) and resolves to the declaring node's
-  **feedback payload**: its result text when the failing execution produced
-  one, else its failure detail, persisted to
-  `<run-dir>/<id>.feedback.out` — a separate file, overwritten per round
-  (latest round wins), so the `.out` artifact keeps meaning "a *passed*
-  node's result" and dependants' `{{ artifacts.<id> }}` contract is
-  untouched.
+- `{{ feedback.<id> }}` **always inlines** the declaring node's feedback
+  payload: its result text when the failing execution produced one, else
+  its failure detail. There is no path form and no `| inline` filter — a
+  path grammar would need an on-disk file to point at before any round has
+  fired, and an empty string standing in for a path is exactly the kind of
+  half-value the artifact contract exists to forbid. The engine persists
+  the payload to `<run-dir>/<id>.feedback.out` (overwritten per round,
+  latest wins) as an **internal** implementation file, not a documented
+  contract — promoting it later is additive, demoting it would not be. The
+  `.out` artifact keeps meaning "a *passed* node's result" and dependants'
+  `{{ artifacts.<id> }}` contract is untouched.
 - When no round has fired yet, the placeholder resolves to the **empty
-  string** (under either filter — a path to a file that does not exist
-  would be worse than nothing). Prompts write around it naturally: "review
-  feedback follows — empty on the first pass".
+  string**. Prompts write around it naturally: "review feedback follows —
+  empty on the first pass".
 
 The alternative — an `| optional` filter on ordinary artifacts — was
 rejected: "an unresolvable reference is an error, never a silent empty
@@ -181,16 +200,39 @@ convenience. The feedback namespace confines empty-is-normal semantics to
 the one place where "not there yet" is an expected state rather than a
 wiring bug.
 
+**What fires the arc: judgment causes only.** The point where the arc is
+considered is where `recordFail` would otherwise be reached — after the
+declarer's own retries are spent — but not every cause that lands there
+may fire it. The built-in trigger set is fixed to the three *judgment*
+causes: `verify_failed`, `result_mismatch` and `nonzero_exit` — the causes
+that mean "the node ran and judged the work insufficient". Everything else
+that reaches `recordFail` — an `InterpolationError`, a
+`MissingToolPolicyError`, a runner spawn error, `budget_exceeded` — is an
+infrastructure or spend fault that re-running the body cannot repair: a
+mis-wired `{{ artifacts.x }}` in `impl` would otherwise re-run the whole
+body `max` times with zero chance of success, at full cost — the opposite
+of this ADR's own "refuse at load what would be discovered as spend"
+posture. Those causes fail final immediately, feedback arc or no. A
+user-facing `on:` filter stays deferred (Alternatives); the built-in set
+is not configuration, it is the definition of what a feedback edge is for.
+
 **Composition with retry, and exhaustion.** `retry` operates *inside* one
-execution of a node, exactly as today; the feedback arc fires only where
-`recordFail` would otherwise be reached — after the declarer's retries are
-spent. When the arc has fired `max` times and the declarer fails again, the
-failure becomes final: the node FAILs with a detail naming the spend
+execution of a node, exactly as today; the feedback arc fires only after
+the declarer's retries are spent, and only for the judgment causes above.
+When the arc has fired `max` times and the declarer fails again — or when
+it fails for a non-judgment cause at any point — the failure becomes
+final: the node FAILs with a detail naming the spend
 ("feedback exhausted after 2 rounds of impl → review: " + the underlying
 cause), and from there the existing story runs unchanged — graph `on_fail`
 halts or prunes, and a later `resume --retry-failed` may still salvage the
-run. The four mechanisms compose as one narrative: retry answers "try *me*
-again", feedback answers "the *decision upstream* was wrong, redo the
+run. Salvage means **re-arming the loop, not re-running the declarer
+alone**: `partitionForRetry` learns the feedback shape, so clearing an
+exhausted declarer's FAIL also clears its body's retained PASS records and
+resets the rounds budget — explicit human intervention buys a fresh set of
+rounds. Retaining the body's PASSes would relaunch the declarer alone
+against unchanged artifacts, exactly the target-only shape Alternatives
+rejects. The four mechanisms compose as one narrative: retry answers "try
+*me* again", feedback answers "the *decision upstream* was wrong, redo the
 segment with what we learned", `on_fail` answers "what does the run do when
 we truly give up", `resume` answers "continue a stopped run later".
 
@@ -201,47 +243,84 @@ re-runs, and the same ledger detail note marks it. An in-body
 `handoff: session` child still resumes its parent's session *of the current
 round* (the parent re-ran first and recorded its new id), so session chains
 inside the body keep working; no re-execution ever resumes a superseded
-round's session. Re-runs **share the lane's worktree**: `Acquire` is
-idempotent per name, so iteration 2's `impl` lands in the same checkout
-with iteration 1's commits present — which is the point; the feedback round
-amends the work, it does not restart it.
+round's session — and validation rule 6 guarantees the parent is in the
+body, so no node exists whose round-2 `--resume` would target a session an
+earlier round already continued. Re-runs **share the lane's worktree**:
+`Acquire` is idempotent per name, so iteration 2's `impl` lands in the same
+checkout with iteration 1's commits present — which is the point; the
+feedback round amends the work, it does not restart it. That sharing is a
+**within-leg** claim: `GitManager`'s created-set is in-process state. A run
+stopped mid-loop and resumed provisions worktrees exactly as resume always
+has — fresh checkouts, with a branch an earlier leg retained colliding
+loudly on the ref rather than being silently reset
+(`cmd/oh-my-graph/resume.go`); a feedback body changes nothing about that
+rule.
 
-**events.jsonl narrates rounds additively.** No new event type (the
-event-type set is closed per schema version; a bump for this would tax
-every consumer for what an optional field conveys — the ADR 0009
-precedent). Two additive moves under docs/RUN-FEED.md's rules:
+**events.jsonl narrates rounds additively — and `node_failed` stays
+terminal.** No new event type (the event-type set is closed per schema
+version; a bump for this would tax every consumer for what existing
+vocabulary conveys — the ADR 0009 precedent). But no existing type's
+*meaning* moves either: RUN-FEED's own rules count a meaning change as a
+schema bump, and `node_failed` is documented as terminal. The
+"multiple terminal events per node id, latest authoritative" precedent
+from retry is a *cross-leg* rule; the in-leg vocabulary for "a failed
+attempt that is not final" already exists — `node_retried` — and a
+feedback round reuses it:
 
+- The declarer's non-final judgment failure emits **`node_retried`**, not
+  `node_failed`, with a `detail` of the form "feedback round 1/2:
+  re-running impl → review", so a tailing consumer sees the loop turn
+  without correlating anything. `node_failed` appears at most once per
+  declarer per leg: when the failure is final.
 - Node events emitted by a feedback re-execution carry an optional `round`
   field (1-based round ordinal; absent on the initial pass — absent means
-  0, like every other omitted zero value).
-- The declarer's non-final `node_failed` carries a `detail` of the form
-  "feedback round 1/2: re-running impl → review", so a tailing consumer
-  sees the loop turn without correlating anything.
+  0, like every other omitted zero value). Body nodes therefore emit one
+  full started→terminal sequence per round within a leg; RUN-FEED gains a
+  sentence extending latest-authoritative to in-leg rounds, in the same
+  change that adds `round`.
 
-RUN-FEED already legalizes the resulting shape: retry legs established that
-one node id may carry multiple terminal events and that the latest one is
-authoritative. A feedback round is the same phenomenon within a single leg.
-
-**The ledger prices every execution — one record per attempt, not an
-aggregate.** Each round's execution of each body node appends its own row
-(with "feedback round k/N" in the detail), and the run total is the sum.
-Aggregating rounds into one row was rejected because the ledger's one job
-is the cost story, and the entire risk of a loop construct on a paid
+**The ledger prices every execution; the snapshot records only what is
+real.** Each round's execution of each body node appends its own ledger
+row (with "feedback round k/N" in the detail), and the run total is the
+sum. Aggregating rounds into one row was rejected because the ledger's one
+job is the cost story, and the entire risk of a loop construct on a paid
 runtime *is* the multiplier: an operator tuning `max` needs to see that
 round 2 cost what round 1 cost, per node, in the same table that shows
-everything else. The snapshot stays keyed by node id, latest verdict wins —
-exactly what `resume` needs — and a new additive `state.json` map
-(declarer id → rounds spent; optional field, no schema bump) makes `max`
-enforceable across legs: a run limit-paused mid-loop resumes with its
-rounds intact, while `resume --retry-failed` clearing a declarer's FAIL
-record also resets its rounds counter — explicit human intervention buys a
-fresh budget, silence does not.
+everything else.
+
+The snapshot is where non-final and final part ways. `recordFail` today
+does four things at once — progress line, ledger row, snapshot FAIL
+record, `node_failed` event — and a non-final round keeps only the first
+two: a runstate FAIL written for a declarer mid-loop would make it
+`settled` the moment anything stops the run, silently collapsing the loop
+into an ordinary failure on resume. Instead:
+
+- Snapshot node records gain an optional `round` field (additive; absent
+  means 0). Every body-node record written during round k carries
+  `round: k`, and a node's recorded spend accumulates across its rounds —
+  a superseded record's cost carries into the record that replaces it — so
+  `state.json`'s per-node figures sum to the same total the ledger shows.
+  "Cost stays honest" holds for the contract fleetops reads, not just the
+  local table.
+- Arc-fire is itself durably recorded: in the same step that re-arms the
+  scheduler, the declarer's record is rewritten as a non-terminal
+  *feedback marker* — round k, no verdict. A leg stopped mid-loop
+  therefore resumes into the loop, not out of it: the marker plus the
+  graph (the body is derivable from `rerun` → declarer) tells resume that
+  body records with `round < k` are superseded and drop out of the
+  completed set, records with `round = k` are retained, and `max − k`
+  rounds remain. `ReadyGiven` then relaunches exactly the unfinished
+  remainder of round k. No separate declarer→rounds-spent map is needed —
+  the recorded position *is* the counter (Alternatives).
 
 ### Guardrails
 
 - **`max` is required**, ≥ 1, no default, refused at load (above). The
   worst-case execution count is legible from the file:
-  `(1 + max) × |body|` node runs, each under its own declared `timeout`,
+  `(1 + max) × |body|` node runs **per arc** — and because bodies are
+  disjoint (rule 7), multiple arcs *add* their worst cases; the
+  `(1 + max₁) × (1 + max₂)` blow-up of overlapping loops is
+  unrepresentable. Each run is under its own declared `timeout`,
   `budget_usd` and tool policy per execution — the ceilings apply per
   attempt, so the multiplier is bounded but real, and the docs must say so
   the way adr-driven-dev's header prices its rounds today.
@@ -300,9 +379,15 @@ fresh budget, silence does not.
   fixtures (loops racing pauses, limits mid-round, continue-on-fail
   around a looping branch) before it can ship.
 - Feedback payloads persist failed-execution output to disk
-  (`<id>.feedback.out`) — a new file in the run directory that RUN-FEED
-  must document as internal-or-contract; this ADR proposes contract
-  (consumers may render the loop's dialogue).
+  (`<id>.feedback.out`) — a new file in the run directory, **internal**
+  for v1 (Semantics): promoting it to a consumer contract later is
+  additive, demoting it would not be.
+- The documentation lands with the code, not after it: DESIGN.md (the new
+  `feedback:` keyword, the fourth intercepted signal, the new run-dir
+  file) and `internal/ledger`'s package doc — whose "one row per node"
+  becomes "one row per execution" — must be updated in the same change
+  that implements this ADR; code and DESIGN.md drifting apart is a bug in
+  both.
 - Rounds multiply spend by design. `max` bounds it, but a carelessly large
   `max` on an expensive body is the closest thing this tool has to a
   foot-gun; the shipped templates must model small values (2, not 10).
@@ -347,8 +432,27 @@ fresh budget, silence does not.
   for what one additive optional field (`round`) plus the existing `detail`
   already convey — the same reasoning that rejected `node_limited` in
   ADR 0009.
+- **A non-final `node_failed` on the event stream.** Rejected: RUN-FEED
+  documents `node_failed` as terminal and counts a meaning change against
+  the schema version; the retry precedent for repeated terminal events is
+  cross-leg only. `node_retried` already means "a failed attempt that is
+  not final" in-leg; argued in Semantics.
+- **A separate declarer → rounds-spent map in `state.json`.** Rejected in
+  favour of the per-record `round` field: a counter records how many times
+  the arc fired but not where the loop *stood*, which is what a mid-loop
+  resume actually needs — and once records carry their round, the position
+  implies the counter, so the map is redundant surface.
+- **Path-form `{{ feedback.<id> }}` (artifact grammar with `| inline`).**
+  Rejected for v1: before any round fires there is no file for a path to
+  name, and an empty string standing in for a path is a half-value the
+  placeholder contract exists to forbid. Always-inline confines the
+  empty-is-normal semantics to prompt text; a path form can be added later
+  if a payload ever outgrows a prompt.
 - **A retry-style `on:` cause filter on `feedback`.** Deferred, not
-  rejected: triggering on any terminal failure keeps v1 minimal, and the
-  filter is a purely additive refinement (same closed cause-token set as
-  `retry.on`) if a real graph ever needs "loop on verify_failed but halt on
-  budget_exceeded".
+  rejected: v1 hard-codes the trigger to the three judgment causes
+  (Semantics), and a user-facing filter narrowing *within* that set is a
+  purely additive refinement (same closed cause-token spelling as
+  `retry.on`) if a real graph ever needs "loop on verify_failed but fail
+  fast on nonzero_exit". Widening beyond the judgment set — looping on
+  `budget_exceeded` — stays unrepresentable: re-running a body cannot
+  repair a spend fault.
