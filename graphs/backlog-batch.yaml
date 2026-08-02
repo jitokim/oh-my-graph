@@ -59,7 +59,9 @@ nodes:
       feature slice for new code — and state your choice in the first commit
       message. Commit as you go, staging only the files you changed, by
       explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
-      or `git add -u`.
+      or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
     permission_mode: dontAsk
@@ -80,8 +82,10 @@ nodes:
       lint; `make local` or your stack's equivalent). If the diff touches
       concurrency-sensitive code, ALSO stress the affected tests
       (`go test <pkgs> -race -count=300`) — rule 4 in this graph's header.
-      Report exactly PASS if everything succeeds, or FAIL with the failing
-      step.
+      Run every check SYNCHRONOUSLY and wait for it to finish — never in
+      the background. Your FINAL reply is the verdict: never end the turn
+      on an interim report. Report exactly PASS if everything succeeds, or
+      FAIL with the failing step.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session
@@ -131,7 +135,9 @@ nodes:
       per doc section for larger rewrites — and state your choice in the
       first commit message. Commit as you go, staging only the files you
       changed, by explicit path (`git add <path> ...`) — never `git add -A`,
-      `git add .`, or `git add -u`.
+      `git add .`, or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
       Reply with a one-line summary of what you changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
@@ -149,8 +155,11 @@ nodes:
       committed state — and check the docs changes: every renamed or moved
       reference resolves, examples still match the code they cite, and the
       project's checks still pass (`make local` or equivalent — docs edits
-      can break embedded snippets and lint gates too).
-      Report exactly PASS if everything holds, or FAIL with what broke.
+      can break embedded snippets and lint gates too). Run every check
+      SYNCHRONOUSLY and wait for it to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Report exactly PASS if everything holds, or FAIL with what
+      broke.
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session

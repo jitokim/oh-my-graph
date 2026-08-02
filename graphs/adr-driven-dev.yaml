@@ -55,7 +55,9 @@ nodes:
       house ADR style if the repo has one. Cover the context, the decision,
       the alternatives considered and why they lost, and the failure modes
       and compatibility consequences. No implementation code yet — the ADR
-      comes first. Commit the ADR. Reply with the ADR file path and a
+      comes first. Commit the ADR, ending the commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md). Reply with the ADR file path and a
       one-line summary of the decision.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
@@ -94,8 +96,10 @@ nodes:
       {{ artifacts.adr-review | inline }}
 
       Address every finding: incorporate it, or record in the ADR why it
-      was rejected. Commit the updated ADR. Reply with a one-line summary
-      of what changed.
+      was rejected. Commit the updated ADR, ending the commit message with
+      the trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+      (the attribution convention in CONTRIBUTING.md). Reply with a
+      one-line summary of what changed.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
     handoff: artifact
@@ -113,8 +117,13 @@ nodes:
       that fits the work — one commit per refactoring unit for refactors,
       per file for sweeps, per feature slice for new code — and state your
       choice in the first commit message. Commit as you go: a node timeout
-      must never lose finished work. Reply PASS with a one-line summary
-      when tests are green, or FAIL with what is broken.
+      must never lose finished work. End every commit message with the
+      trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the
+      attribution convention in CONTRIBUTING.md). Run the tests
+      SYNCHRONOUSLY and wait for them to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Reply PASS with a one-line summary when tests are green, or
+      FAIL with what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 1h # hang guard — generous, so real work is never killed mid-flight
@@ -130,8 +139,10 @@ nodes:
       local` here, or the project's closest equivalent — and exercise the
       new behavior end to end. If the diff touches concurrency-sensitive
       code, also stress its tests (`go test <affected packages> -race
-      -count=300`, or your stack's equivalent). Report PASS or FAIL with
-      the failing step if any.
+      -count=300`, or your stack's equivalent). Run every check
+      SYNCHRONOUSLY and wait for it to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Report PASS or FAIL with the failing step if any.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
     # Runaway insurance ONLY, never cost tuning — keep this an order of
@@ -181,8 +192,12 @@ nodes:
       Address every finding — fix it, or commit a note explaining why it
       is wrong. Update the tests to cover what the review exposed, and run
       them until green. This is an apply round: do NOT re-review. Commit
-      as you go. Reply PASS when tests are green, or FAIL with what is
-      broken.
+      as you go, ending every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the
+      attribution convention in CONTRIBUTING.md). Run the tests
+      SYNCHRONOUSLY and wait for them to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Reply PASS when tests are green, or FAIL with what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
@@ -218,8 +233,12 @@ nodes:
 
       Address every finding — fix it, or commit a note explaining why it
       is wrong. Keep the tests updated and green. This is an apply round:
-      do NOT re-review. Commit as you go. Reply PASS when tests are green,
-      or FAIL with what is broken.
+      do NOT re-review. Commit as you go, ending every commit message with
+      the trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+      (the attribution convention in CONTRIBUTING.md). Run the tests
+      SYNCHRONOUSLY and wait for them to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. Reply PASS when tests are green, or FAIL with what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
@@ -258,10 +277,13 @@ nodes:
       {{ artifacts.round3 | inline }}
 
       Apply any remaining flags (small fixes only — a big finding at this
-      stage means another round, done manually), keep the tests green,
-      then push the branch and open a DRAFT pull request whose body
-      summarizes the ADR decision, the implementation, and the three
-      review rounds. Reply with the PR URL.
+      stage means another round, done manually), keep the tests green, and
+      end any commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the
+      attribution convention in CONTRIBUTING.md). Then push the branch and
+      open a DRAFT pull request whose body summarizes the ADR decision,
+      the implementation, and the three review rounds. Reply with the PR
+      URL.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(gh *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 30m
