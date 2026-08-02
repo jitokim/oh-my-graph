@@ -32,6 +32,13 @@ type GoalOptions struct {
 	// InputKeys are the --input names every cycle's planner call may
 	// reference, identical across cycles.
 	InputKeys []string
+	// OnCycleAssessed, when non-nil, receives each cycle's report the moment
+	// its assessment returns — before the loop decides whether to continue —
+	// so the caller can print the verdict and persist it (assess.json) live
+	// rather than as a closing summary (ADR 0011 §2–§3: the record
+	// accumulates as it happens). Purely observational: the loop's control
+	// flow never depends on it.
+	OnCycleAssessed func(CycleReport)
 }
 
 // ExecuteCycle is the hand-off-to-caller seam: it receives one cycle's
@@ -143,13 +150,17 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 			return result, err
 		}
 		spentUSD += evidence.RunCostUSD + assessment.CostUSD
-		result.Cycles = append(result.Cycles, CycleReport{
+		report := CycleReport{
 			Cycle:      cycle,
 			RunID:      evidence.RunID,
 			RunPassed:  evidence.RunPassed,
 			RunCostUSD: evidence.RunCostUSD,
 			Assessment: assessment,
-		})
+		}
+		result.Cycles = append(result.Cycles, report)
+		if opts.OnCycleAssessed != nil {
+			opts.OnCycleAssessed(report)
+		}
 
 		if assessment.GoalMet {
 			result.Stop = StopGoalMet
