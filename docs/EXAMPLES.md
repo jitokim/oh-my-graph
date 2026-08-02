@@ -262,7 +262,12 @@ default) hands over the parent's final reply via `{{ artifacts.<id> }}`;
 `session` resumes the parent's claude session, so the child inherits
 everything the parent read, did and concluded — the conversation, not the
 configuration: `allowed_tools`, `permission_mode`, `agent`, `cwd` and
-`budget_usd` are always the child's own. The two shapes side by side:
+`budget_usd` are always the child's own. Note the split: the graph *file*
+is what you reuse **across** runs, while `session` carries context
+**within** one run. Runs never remember each other — every run starts
+every node fresh by design
+([ADR 0008](adr/0008-cross-run-session-reuse-is-deferred.md)). The two
+shapes side by side:
 
 ```yaml
   # artifact: fan-out — both reviewers read dev's final reply, in parallel
