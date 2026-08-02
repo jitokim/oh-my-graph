@@ -240,6 +240,41 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
+### Recurring pipelines — write it once
+
+A graph file is your prompt engineering, saved. The careful
+goal/format/rules prompt you would otherwise re-type into a chat every
+morning lives in the YAML once, and `oh-my-graph run pipeline.yaml` replays
+it identically on demand — daily analysis, weekly triage, release checks —
+on the subscription you already pay for. Within one run, `handoff: session`
+keeps the chain's context flowing, so downstream prompts stay one-liners
+instead of restating the goal and the format — see
+[Handoff](#handoff--what-a-child-inherits) below.
+
+```yaml
+name: daily-triage
+nodes:
+  - id: collect             # the careful goal/format/rules prompt lives here, once
+    prompt: >
+      Collect today's open issues and failing checks; list each with a
+      one-line status.
+  - id: analyze
+    depends_on: [collect]
+    handoff: session        # continues collect's conversation
+    prompt: Analyze what you just collected and rank by urgency.
+  - id: report
+    depends_on: [analyze]
+    handoff: session        # the chain keeps flowing
+    prompt: Write the ranked findings up as a short report.
+```
+
+One boundary, stated plainly: **runs do not remember each other.** Each run
+starts fresh by design
+([ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md) records
+why cross-run session reuse is deferred) — day-to-day consistency comes
+from the pinned prompts and the `success_check` / `verify` gates, not from
+Claude remembering yesterday.
+
 ### Handoff — what a child inherits
 
 Edges say *when* a node runs; `handoff` says *what* it inherits from its

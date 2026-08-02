@@ -250,6 +250,41 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
+### 반복 파이프라인 — 한 번만 작성하세요
+
+그래프 파일은 당신의 프롬프트 엔지니어링을 저장해 둔 것입니다. 매일 아침
+채팅창에 다시 타이핑했을 목표/포맷/규칙이 담긴 정성 들인 프롬프트가 YAML에
+한 번만 들어가고, `oh-my-graph run pipeline.yaml`이 필요할 때마다 그대로
+재생합니다 — 일일 분석, 주간 triage, 릴리스 체크 — 이미 내고 있는 구독
+요금 안에서. 한 run 안에서는 `handoff: session`이 체인의 컨텍스트를 계속
+흐르게 하므로, 다운스트림 프롬프트는 목표와 포맷을 다시 설명하는 대신
+한 줄이면 됩니다 — 아래
+[Handoff](#handoff--what-a-child-inherits) 참고.
+
+```yaml
+name: daily-triage
+nodes:
+  - id: collect             # the careful goal/format/rules prompt lives here, once
+    prompt: >
+      Collect today's open issues and failing checks; list each with a
+      one-line status.
+  - id: analyze
+    depends_on: [collect]
+    handoff: session        # continues collect's conversation
+    prompt: Analyze what you just collected and rank by urgency.
+  - id: report
+    depends_on: [analyze]
+    handoff: session        # the chain keeps flowing
+    prompt: Write the ranked findings up as a short report.
+```
+
+경계 하나는 분명히 해 둡니다: **run끼리는 서로를 기억하지 않습니다.** 모든
+run은 의도적으로 fresh하게 시작합니다
+([ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md)에 cross-run
+session 재사용을 보류한 이유가 기록되어 있습니다) — 매일의 일관성은 고정된
+프롬프트와 `success_check` / `verify` 게이트에서 나오는 것이지, Claude가
+어제를 기억해서가 아닙니다.
+
 <a id="handoff--what-a-child-inherits"></a>
 ### Handoff — 자식이 무엇을 물려받는가
 
