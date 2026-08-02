@@ -128,8 +128,9 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 		"git rev-parse --abbrev-ref HEAD",
 		// the assertion that the commit did not land on the default branch
 		"default branch",
-		// the gate that turns a failed assertion into a failed node
-		`"success_check": {"result_matches": "PASS"}`,
+		// the gate that turns a failed assertion into a failed node —
+		// anchored at both ends so "PASS" inside a failing reply cannot match
+		`"success_check": {"result_matches": "^PASS$"}`,
 	} {
 		if !strings.Contains(captured.Prompt, want) {
 			t.Errorf("planner prompt lost the branch-assertion guidance: missing %q", want)

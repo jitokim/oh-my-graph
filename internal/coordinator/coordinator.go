@@ -684,8 +684,8 @@ Rules:
   check node MUST verify which branch HEAD is on: its prompt runs
   'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
   output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and replies PASS only when both
-  hold, FAIL otherwise. Give that node
-  "success_check": {"result_matches": "PASS"} so a commit that landed on
+  default branch (e.g. main or master), and replies with exactly PASS only
+  when both hold, FAIL otherwise. Give that node
+  "success_check": {"result_matches": "^PASS$"} so a commit that landed on
   the wrong branch fails the run instead of passing silently.
 `
