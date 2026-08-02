@@ -56,7 +56,7 @@ constraints that shaped everything below:
 Iteration is a flag on `auto`, not a new subcommand and not the new default:
 
 ```sh
-oh-my-graph auto "make the test suite green" --max-cycles 3 --max-budget-usd 5
+oh-my-graph auto "make the test suite green" --max-cycles 3
 ```
 
 - `--max-cycles 1` is the default and is byte-identical to today's behaviour:
@@ -74,10 +74,19 @@ oh-my-graph auto "make the test suite green" --max-cycles 3 --max-budget-usd 5
 
 The loop lives in `planAndExecute`. That function is the sequence's "exactly
 one home" today precisely so that `auto` and chat cannot drift; the cycle is
-that sequence run at most N times, so it lives in the same home. Chat
-inherits the loop for free, and chat's existing confirm hook is asked **per
-cycle** — each cycle's plan is printed and gated by its own `[y/N]` before it
-executes (see §3 for the non-interactive posture).
+that sequence run at most N times, so it lives in the same home, with the
+cycle count an explicit parameter of the call. Only `auto` can set it above
+1: `--max-cycles` is an `autoFlags` field, and chat calls `planAndExecute`
+with `commonRunFlags`, which carry no cycle count — **chat stays
+single-cycle in v1**, stated here so "the loop lives in the shared home" is
+not read as "chat iterates". Giving chat a cycle count is deferred surface
+(Alternatives). The confirm hook keeps its contract inside the loop
+regardless: when a hook is present, each cycle's plan is printed and gated
+by its own `[y/N]` before it executes, and a **declined confirm at cycle
+k ≥ 2 ends the goal loop** — no replan, no retry; the loop terminates as if
+cycles were exhausted, with the last assessment's `remaining` printed and
+the unmet-goal exit applying (§2). Declining a plan is a human stop, and a
+stop is final (see §3 for the non-interactive posture).
 
 Why not the alternatives:
 
@@ -113,25 +122,53 @@ One cycle is, in order:
 3. **Execute** — save the spec, print the plan (and ask the confirm hook when
    present), run the graph as an ordinary run (§4).
 4. **Assess** — a new coordinator call class beside the planner and the chat
-   router: same `coordinatorInvocation` stance (permission mode `plan`, no
-   declared tools, the full deny list of a node that declared nothing), same
-   `extractJSON` reply handling, same PlanError-style failure type.
+   router: same `extractJSON` reply handling, same PlanError-style failure
+   type — but **not** the shared `coordinatorInvocation` stance. That stance
+   is the deny list alone, and `deniableTools` deliberately excludes
+   `Read`/`Glob`/`Grep`; `SettingSources` stays nil and `StrictMCPConfig`
+   false — the right posture for the planner, whose input is the user's own
+   goal and whose job includes reading this repository's CLAUDE.md. The
+   assessor's input is untrusted model output *by design*, so it gets its
+   own, stricter stance: `Tools: []string{}`, permission mode `plan`, the
+   deny list **extended with `Read`, `Glob` and `Grep`**, isolated setting
+   sources and `StrictMCPConfig: true` — the settings-isolation posture of a
+   planned node (ADR 0004), not the planner's. "It cannot read a file" is an
+   empirical claim about the CLI, so it carries the same obligation ADR
+   0004's ceiling did: an E-series measurement (an assessor invocation
+   instructed to read a named file, confirmed refused) lands with the
+   implementation; until it does, the claim is a design goal, not a
+   property.
 
 The assessor is fed **only engine-produced material**, assembled by trusted
-code:
+code — and the seam that produces it is named, because none exists today:
+`executeGraph` prints the ledger and returns only `error`, so the loop gets
+nothing back from a cycle in-process. Rather than widening that signature,
+the loop **re-reads the cycle's snapshot from disk** after `executeGraph`
+returns — `Snapshot.Nodes` already records every node's verdict, detail,
+cost and artifact path — and assembles from it:
 
 - the goal text (the user's own words);
 - the run's outcome and per-node results — verdict, detail, cost — as the
-  ledger and snapshot recorded them;
-- bounded excerpts of the run's artifacts: the engine reads each
-  `<node-id>.out` and truncates to fixed per-artifact and total-material caps
-  (named constants, keeping head and tail, like `truncate` does for planner
-  replies today).
+  snapshot recorded them;
+- bounded excerpts of the run's artifacts: the engine follows each
+  snapshot-recorded artifact path and truncates to fixed per-artifact and
+  total-material caps (named constants, keeping head and tail, like
+  `truncate` does for planner replies today);
+- on cycle k ≥ 2, the previous assessment's `remaining` (read from cycle
+  k−1's `assess.json`, same truncation cap) — so the one judge in the system
+  can notice that a cycle made no progress. Without this line nothing ever
+  could: the planner sees cross-cycle state but doesn't judge, and the
+  assessor judges but would see every cycle fresh. A "cycle 3 remains what
+  cycle 2 remained" observation is still only words in `remaining` — the
+  structural stop is `--max-cycles`, and the human's early warning is that
+  **each cycle's verdict, `remaining` and evidence are printed the moment
+  assessment returns**, not summarized at the end.
 
 Explicitly **not** fed: the raw planner reply, chat history, prior cycles'
-material, or anything from the user's settings. The assessor has no tools —
-it cannot be lured into reading a file; it sees exactly the excerpts the
-engine chose to show it.
+run material beyond that one `remaining` line, or anything from the user's
+settings. The assessor cannot be lured into reading a file — a sentence
+backed by the measured stance above, not by wishing — and it sees exactly
+the excerpts the engine chose to show it.
 
 **The assess contract** is JSON, like the planner's:
 
@@ -164,20 +201,37 @@ cycle on the strength of garbage.
   code, exactly as the planner prompt is — the coordinator plans the work and
   assesses the work; the work never writes its own reviews.
 
-**Cycle termination.** After assess: `goal_met` → stop, exit 0 (even with
-cycles remaining — a met goal spends nothing more). Not met with cycles
-remaining and budget headroom → next cycle. Not met with cycles or budget
-exhausted → stop, print the final `remaining`, exit 1: the *runs* may each
-have passed, but `--max-cycles ≥ 2` makes the command's contract goal-level,
-and "we stopped without meeting the goal" is a failure and must not exit 0.
-Assessment runs after **every** cycle including the last (that is what
-grounds the exit code and the final verdict the user reads) and after a
-**failed** run too — a failed cycle's failure detail is precisely what the
-next plan needs to route around. The one outcome that short-circuits
-assessment is a **pause**: a planned graph cannot contain gates, so the only
-pause an auto run can hit is a session limit (ADR 0009), and a session limit
-means the subscription window is exhausted — there is no capacity to assess
-or re-plan *with*. A paused cycle pauses the whole loop: print the standard
+**Cycle termination and the exit code.** The verdict decides whether the
+loop *continues*; the engine's own run outcome co-decides what the process
+*exits*. Splitting those is deliberate: `goal_met` always stops the loop —
+a met goal spends nothing more, so the worst a lying "met" can do is stop
+spending early — but exit 0 additionally requires that the final cycle's
+run **passed**. The untrusted judge may end the loop; it may never convert
+an engine-reported failure into success — that would be capability, not
+money (§3). The full (outcome × verdict) precedence:
+
+| final cycle's run outcome | assess verdict       | loop                          | exit |
+|---------------------------|----------------------|-------------------------------|------|
+| passed                    | `goal_met`           | stop                          | 0    |
+| passed                    | not met, cycles left | next cycle                    | —    |
+| passed                    | not met, exhausted   | stop, print final `remaining` | 1    |
+| failed                    | `goal_met`           | stop, contradiction printed   | 1    |
+| failed                    | not met, cycles left | next cycle                    | —    |
+| failed                    | not met, exhausted   | stop, print final `remaining` | 1    |
+| passed or failed          | garbage reply        | stop (assessment error)       | 1    |
+| paused (session limit)    | — not assessed —     | pause the whole loop          | 2    |
+
+"Next cycle" holds for failed runs too — a failed cycle's failure detail is
+precisely what the next plan needs to route around — and assessment runs
+after **every** completed cycle including the last, which is what grounds
+the exit code and the final verdict the user reads. The "not met, exhausted"
+exit is 1 even when every *run* passed: `--max-cycles ≥ 2` makes the
+command's contract goal-level, and "we stopped without meeting the goal"
+must not exit 0. The one outcome that short-circuits assessment is a
+**pause**: a planned graph cannot contain gates, so the only pause an auto
+run can hit is a session limit (ADR 0009), and a session limit means the
+subscription window is exhausted — there is no capacity to assess or
+re-plan *with*. A paused cycle pauses the whole loop: print the standard
 resume instructions, exit 2. The resumed run completes as an ordinary run;
 re-entering the goal loop afterwards is deferred (Consequences).
 
@@ -187,9 +241,11 @@ Stated hard, because iteration composes three untrusted artifacts:
 
 - **Artifacts are untrusted model output.** They were produced by planned
   nodes and may contain anything, including prompt injection aimed at
-  whoever reads them. The assessor reads them (excerpted, bounded, toolless);
-  the *planner* then reads the assessor's `remaining`. Both readers are
-  read-only, deny-listed coordinator calls that emit JSON.
+  whoever reads them. The assessor reads them (excerpted, bounded,
+  tool-stripped and settings-isolated — the §2 stance); the *planner* then
+  reads the assessor's `remaining`. Both readers are read-only coordinator
+  calls that emit JSON, and the assessor's stance is deliberately the
+  stricter of the two because only its input is adversarial by design.
 - **The planner's output is untrusted and hits the same validation every
   cycle.** An injected artifact that steers the assessor, which steers the
   planner, still produces a plan that must survive `validatePlannedNodes`,
@@ -204,36 +260,38 @@ Stated hard, because iteration composes three untrusted artifacts:
   exactly as cycle 1 was. A false "met" wastes the goal (and the user reads
   the printed verdict and evidence); a false "not met" burns cycles up to the
   bound; a poisoned `remaining` steers a plan that is ceilinged anyway.
-  Money, not capability — and the money has two independent bounds:
+  Money, not capability — and the exit-code precedence (§2) is what keeps
+  it so: a verdict can stop spending, but an engine-reported failure
+  survives any verdict, so the judge can never turn a failed run into
+  exit 0. The money has **one bound in v1: `--max-cycles`, required by
+  construction** (§1). A cross-cycle budget ceiling was drafted as
+  `--max-budget-usd` and **cut**: that exact flag name is already the
+  claude CLI option oh-my-graph passes per node when a plan declares
+  `budget_usd` — a hard **mid-flight kill** — while this ADR's ceiling was
+  a soft **cycle-boundary check** that deliberately never kills mid-flight.
+  One name carrying opposite semantics at two layers of the same tool is
+  how a bound gets misread as a guarantee; the ceiling returns under an
+  unambiguous name when goal-level spend control earns its surface
+  (Alternatives).
 
-- **`--max-cycles` is required by construction** (§1).
-- **`--max-budget-usd` is an optional cross-cycle ceiling**, checked at the
-  cycle boundary: before planning cycle k+1, if the accumulated spend of all
-  cycles (run totals, planner calls, assessments) has reached the ceiling,
-  the loop stops with the last assessment's verdict printed. It deliberately
-  does **not** kill a cycle mid-execution — the planner prompt already
-  encodes why ("a tight budget kills a nearly-done node at the threshold and
-  loses its finished work"), and a cycle boundary is the clean stopping
-  point, the same posture as ADR 0009's pause-not-kill. Consequence, stated
-  honestly: actual spend can overshoot the ceiling by up to one cycle plus
-  one assessment. The flag is only legal with `--max-cycles ≥ 2`: at one
-  cycle it could only ever be checked after everything had already run — a
-  no-op masquerading as a cap.
-
-**The printed plan per cycle, and the non-interactive posture.** Every
-cycle's plan is printed before it executes — topology, tools, agent mappings,
-spec path — exactly as today. In chat, the existing `[y/N]` confirm gate is
-asked per cycle, so interactive use has a human approving each plan. `auto`
+**The printed record per cycle, and the non-interactive posture.** Every
+cycle's plan is printed before it executes — topology, tools, agent
+mappings, spec path — exactly as today, and every cycle's verdict is
+printed the moment its assessment returns (§2), so the record accumulates
+live rather than arriving as a closing summary. `auto`
 stays what it has always been: fully non-interactive, `confirm == nil`,
 plans printed but not gated. That is stated plainly rather than dressed up:
 an unattended `auto --max-cycles 5` may spend five planner calls, five
 graphs and five assessments with nobody watching. The governance for that
-posture is the pair of bounds the human typed, the per-cycle validation and
-ceiling, and the printed record of every plan — not a hidden prompt that
-would deadlock the unattended case (the same reasoning that made a gate a
-clean stop, ADR 0003, and rejected blocking on a TTY). A user who wants a
-human decision per cycle uses chat; a per-cycle pause-and-resume gate for
-non-interactive use would need goal-level resume and is deferred with it.
+posture is the bound the human typed, the per-cycle validation and
+ceiling, and the printed record of every plan and verdict — not a hidden
+prompt that would deadlock the unattended case (the same reasoning that
+made a gate a clean stop, ADR 0003, and rejected blocking on a TTY). Stated
+equally plainly: **v1 offers no per-cycle human decision on any surface** —
+`auto` has no confirm hook, and chat, the surface that has one, is
+single-cycle (§1). A per-cycle pause-and-resume gate for non-interactive
+use would need goal-level resume and is deferred with it; chat iteration is
+deferred beside it (Alternatives).
 
 ### 4. Run shape: a new run per cycle, linked by an additive lineage block
 
@@ -270,36 +328,57 @@ additive optional fields, so **no schema bump** under RUN-FEED's own rule:
   "text": "make the test suite green",
   "cycle": 2,
   "max_cycles": 3,
-  "first_run_id": "<cycle 1's run id>",
-  "previous_run_id": "<cycle 1's run id>"
+  "first_run_id": "<cycle 1's run id>"
 }
 ```
 
 Absent entirely on single-cycle runs (today's snapshots are byte-identical).
 `first_run_id` is the stable group key (equal to the run's own id on cycle
-1); `previous_run_id` is the chain. The assessment verdict is persisted as
+1). A `previous_run_id` was drafted and cut: the chain is derivable from
+`first_run_id` plus `cycle`, and a derivable field is a field that can
+contradict its derivation. **Lineage is snapshot-only, and that is the
+stated price of "no schema bump":** no `events.jsonl` event carries the
+goal group, because RUN-FEED's event-type set is closed and a goal event
+would bump it. A consumer that only tails the feed sees N well-formed but
+unrelated runs; grouping them requires reading the `goal` block from
+`state.json`. That asymmetry is accepted here, not discovered later. The
+assessment verdict is persisted as
 `assess.json` in the assessed cycle's run directory — a documented consumer
 file beside `graph.json`, present only on iterated auto runs — so the
 observation step leaves the same kind of on-disk trace the planning step
 does.
 
-**Observability.** `runs list` groups runs sharing a `first_run_id` and
-narrates the goal: each cycle's line gains `cycle 2/3` and the group is
-titled by the goal text — an iterated goal reads as a story, not as N
-unrelated runs. `serve` stays a per-run view (each cycle is a complete,
+**Observability.** `runs list` is untouched in v1: each cycle appears as an
+ordinary run. Grouping runs by `first_run_id` and narrating the goal (each
+cycle's line gaining `cycle 2/3`, the group titled by the goal text) is
+additive later and **deferred** — the lineage it would render is already
+durably on disk, and v1's story is told live instead: each cycle announces
+its run id, its plan and its verdict as they happen, and the goal summary
+closes the loop. `serve` stays a per-run view (each cycle is a complete,
 self-describing run) and shows the `goal` block in its header; a goal-level
-view that follows the chain is additive later. fleetops needs nothing: every
+view that follows the chain is additive later.
+
+**The live view across cycles** is decided rather than left to fall out:
+today a TTY `auto` run auto-opens the browser on its embedded live view,
+and a naive loop would fire one launch through the ADR-0006 opener seam per
+cycle — N tabs for one goal. Instead the browser opens for **cycle 1
+only**; every later cycle still starts its own live view (a new run on a
+new ephemeral port) and prints its URL, but does not re-launch the browser.
+One surprise tab per goal, and the printed URL is the per-cycle escape
+hatch. fleetops needs nothing: every
 cycle is a well-formed run under the existing contract, and a consumer that
 ignores the `goal` block and `assess.json` sees exactly what it sees today.
 
 **Ledger honesty.** Each cycle's run prints its own ledger — one row per
 execution, its own planner call as the planning-cost line, per the existing
-contract. The assessment call's cost is recorded against the cycle it
-assessed (a second CLI-recorded entry beside `RecordPlanningCost`, and a
-field in that cycle's `assess.json`). When the loop ends, a **goal summary**
-prints below the final cycle's ledger: one line per cycle — run id, run
-total, assessment cost — and the accumulating grand total, which is the same
-number the `--max-budget-usd` check reads at each boundary. Nothing is
+contract. Admitted plainly: **the per-cycle ledger cannot include the
+assessment's own cost**, because the ledger prints inside `executeGraph`,
+before the assessment that judges the cycle has run. The assessment cost is
+recorded where the seam allows: as a field in that cycle's `assess.json`,
+and as its own column in the goal summary. When the loop ends, that **goal
+summary** prints below the final cycle's ledger: one line per cycle — run
+id, run total (read back from the cycle's snapshot, the same seam §2 uses
+for evidence), assessment cost — and the accumulating grand total. Nothing is
 averaged or hidden: cycle 2 costing what cycle 1 cost is visible in the same
 place, for the same reason ADR 0010 refused to aggregate feedback rounds
 into one row — the entire risk of a loop on a paid runtime is the
@@ -342,15 +421,19 @@ factor of which was typed by a human or fixed in trusted code.
 - `auto` becomes an actual orchestrator loop — plan, execute, observe,
   re-plan — while `--max-cycles 1` keeps every existing invocation
   byte-identical, and the loop's every dangerous degree of freedom (cycle
-  count, budget, per-cycle validation, per-cycle printing) is bounded or
-  visible by construction.
+  count, per-cycle validation, per-cycle printing of plan and verdict) is
+  bounded or visible by construction.
 - The consumer contract is untouched: no schema bumps, one additive optional
-  snapshot block, one new documented file. Every cycle is an ordinary run;
-  fleetops and the in-repo readers work unmodified.
+  snapshot block, one new documented file — at the stated price that goal
+  lineage lives only in snapshots, never in the event stream (§4). Every
+  cycle is an ordinary run; fleetops and the in-repo readers work
+  unmodified.
 - Assessment is trusted-code-owned end to end: coordinator prompt, engine-
-  assembled evidence, toolless read-only invocation, hard JSON contract,
+  assembled evidence, a tool-stripped and settings-isolated read-only
+  invocation (measured, not assumed — §2), hard JSON contract,
   stop-on-garbage. The untrusted parties (plan, artifacts, verdict) can
-  waste bounded money and nothing else.
+  waste bounded money and nothing else — a verdict cannot even flip a
+  failed run's exit code (§2).
 - The failure/iteration story now has all four layers, each with its own
   bound and its own question: `retry` (same node), `feedback` (same graph
   segment, ADR 0010), `--max-cycles` (same goal, new graph), `resume`
@@ -368,17 +451,22 @@ factor of which was typed by a human or fixed in trusted code.
   with it any per-cycle non-interactive gate) is real future work, deferred
   because it needs cross-run lineage in the resume path, not just in `runs
   list`.
-- `--max-budget-usd` is a boundary check, not a guillotine: overshoot by up
-  to one cycle plus one assessment is possible and documented. Anyone
-  needing a hard cap must size `--max-cycles` accordingly.
+- v1's only money bound is `--max-cycles`: the cross-cycle budget ceiling
+  was cut over its name colliding with the claude CLI's per-node
+  `--max-budget-usd` (opposite semantics, §3), so anyone needing goal-level
+  spend control today must size `--max-cycles` accordingly.
 - The non-interactive posture accepts that unattended iteration spends with
   nobody watching, governed by bounds rather than approvals. That is
   consistent with what `auto` already is, but it widens how much an
-  unattended invocation can spend from one graph to N.
+  unattended invocation can spend from one graph to N — and v1 offers no
+  per-cycle human decision on any surface, because chat (the only confirm-
+  bearing caller) stays single-cycle (§1).
 - `planAndExecute` grows from a sequence into a loop with termination
-  analysis (met / exhausted / budget / pause / assess-error), and the
-  assessor adds a third coordinator call class to keep in stance-lockstep
-  with the planner and router. DESIGN.md (the cycle, the `goal` block,
+  analysis (met / exhausted / declined / pause / assess-error), and the
+  assessor adds a third coordinator call class that deliberately does
+  **not** share `coordinatorInvocation`: a second, stricter stance now
+  exists, and its "cannot read a file" property is held by an E-series
+  measurement, not by prose. DESIGN.md (the cycle, the `goal` block,
   `assess.json`, the goal summary) and RUN-FEED.md must land in the same
   change that implements this ADR.
 
@@ -396,10 +484,24 @@ factor of which was typed by a human or fixed in trusted code.
   untrusted plan — the work grading its own homework. Assessment is a
   coordinator-owned prompt over engine-chosen evidence. Argued in §2.
 - **Feeding the assessor the raw run directory (or giving it Read).**
-  Rejected: a toolless judge over engine-excerpted material cannot be lured
-  into reading arbitrary paths, and bounded excerpts cap both spend and
-  injection surface. If excerpts prove too thin, widening the *material* is
-  a product change that does not require widening the *capability*.
+  Rejected: a tool-stripped judge (the §2 stance) over engine-excerpted
+  material cannot be lured into reading arbitrary paths, and bounded
+  excerpts cap both spend and injection surface. If excerpts prove too
+  thin, widening the *material* is a product change that does not require
+  widening the *capability*.
+- **A cross-cycle budget ceiling (`--max-budget-usd`).** Cut from v1, not
+  rejected on substance. The right shape remains a soft cycle-boundary
+  check — never a mid-flight kill, per ADR 0009's pause-not-kill posture,
+  with the honest overshoot of up to one cycle plus one assessment — but
+  the drafted name is already the claude CLI's per-node hard-kill flag that
+  oh-my-graph passes through for a planned `budget_usd`, with exactly
+  opposite semantics. It returns under an unambiguous name (e.g.
+  `--max-goal-budget-usd`) when goal-level spend control earns its surface.
+- **Chat iteration (a cycle count for chat turns).** Deferred: chat calls
+  `planAndExecute` with `commonRunFlags`, which carry no cycle count, and
+  its per-turn confirm covers exactly the one plan it gates. Giving chat N
+  is real surface — per-turn syntax plus the declined-confirm semantics §1
+  defines — and nothing in v1 needs it.
 - **One run with a leg per cycle.** Rejected: every existing leg replays the
   snapshot's one recorded graph; a cycle replans. N graphs per snapshot is a
   meaning change to both consumer files (schema bumps) and a rewrite of
@@ -408,11 +510,10 @@ factor of which was typed by a human or fixed in trusted code.
 - **Nested run directories per goal.** Rejected: moves run dirs out of
   `runs/<run-id>/`, breaking every existing consumer's glob for zero
   semantic gain. Argued in §4.
-- **Clamping instead of stopping on a budget-exceeded or garbage-assess
-  reply.** Rejected: a loop that "kept going sensibly" past its ceiling or
-  on an unparseable verdict is exactly the quiet-spend behaviour every bound
-  in this codebase exists to make unrepresentable. Stops are loud and carry
-  the evidence.
+- **Clamping instead of stopping on a garbage assess reply.** Rejected: a
+  loop that "kept going sensibly" on an unparseable verdict is exactly the
+  quiet-spend behaviour every bound in this codebase exists to make
+  unrepresentable. Stops are loud and carry the evidence.
 - **A cross-cycle artifact namespace (`{{ cycles.* }}`).** Deferred, not
   rejected: no goal yet needs cycle 2 to read cycle 1's artifacts (the
   working tree carries the real product), and adding a namespace is additive
