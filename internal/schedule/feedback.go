@@ -21,9 +21,11 @@ import (
 // execute() from graph.FeedbackBody, the same computation validation used,
 // so the runtime and the validator cannot disagree about what "the loop" is.
 //
-// All methods are nil-safe on the receiver (round 0, no arcs): a graph with
-// no feedback edges pays nothing, and helpers that run before execute()
-// initialized the state degrade to today's behaviour.
+// The read helpers (roundOf, roundNote) are nil-safe on the receiver
+// (round 0, no note), so paths that run before execute() built the state
+// degrade to today's behaviour. fire and bodyInDegrees are NOT: both run
+// only after judgeFeedback consulted a real arc, which requires a built
+// state — firing an arc without one is a bug to surface, not degrade.
 type feedbackState struct {
 	mu sync.Mutex
 	// rounds is each node's current feedback round: 0 on the initial pass,
