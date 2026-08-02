@@ -15,6 +15,12 @@
 # ("feedback round k/2" in the DETAIL column), so tune max against what the
 # table shows you. Keep max small — 2, not 10.
 #
+# impl EDITS the repo you point it at, in place — and every fired round edits
+# it again on top of the last, so run it against a clean, committed state:
+# each round's changes stay inspectable (and revertible) with git. To keep
+# your main checkout untouched, point --input repo= at a dedicated git
+# worktree or clone instead (see "worktree" in README).
+#
 # Run:
 #   oh-my-graph run graphs/review-loop.yaml \
 #     --input repo=/path/to/your/repo \
@@ -54,7 +60,9 @@ nodes:
       exactly "ship it" and one sentence of praise. Otherwise DO NOT say
       "ship it" — reply with a concise, numbered list of required fixes;
       that list is handed verbatim to the implementation re-run.
-    success_check: { result_matches: "ship it" }
+    # Anchored: a failing review that merely MENTIONS the verdict phrase
+    # ("can't say ship it yet") must not read as a pass.
+    success_check: { result_matches: "^ship it" }
     feedback: { rerun: impl, max: 2 }
     budget_usd: 1.00
     timeout: 15m
