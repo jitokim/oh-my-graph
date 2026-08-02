@@ -32,6 +32,25 @@ func TestRecords_SortedByNodeID(t *testing.T) {
 	}
 }
 
+// TestRecords_DuplicateNodeIDKeepsInsertionOrder pins the stability Records
+// promises: a node with several execution rows (feedback rounds) keeps them
+// in the order they were recorded — round 1 above round 2 — after the
+// node-id sort interleaves other nodes around them.
+func TestRecords_DuplicateNodeIDKeepsInsertionOrder(t *testing.T) {
+	l := New("run-1")
+	l.Record(Record{NodeID: "review", Detail: "feedback round 1/2", Verdict: VerdictFail})
+	l.Record(Record{NodeID: "impl", Verdict: VerdictPass})
+	l.Record(Record{NodeID: "review", Detail: "feedback round 2/2", Verdict: VerdictPass})
+
+	got := l.Records()
+	if len(got) != 3 || got[0].NodeID != "impl" || got[1].NodeID != "review" || got[2].NodeID != "review" {
+		t.Fatalf("records not sorted by node id: %+v", got)
+	}
+	if got[1].Detail != "feedback round 1/2" || got[2].Detail != "feedback round 2/2" {
+		t.Fatalf("duplicate-id rows lost their insertion order: %+v", got)
+	}
+}
+
 func TestRender_IncludesRowsAndTotal(t *testing.T) {
 	l := New("run-42")
 	l.Record(Record{NodeID: "write", SessionID: "sess-write", CostUSD: 0.02, Verdict: VerdictPass, Duration: time.Second})
