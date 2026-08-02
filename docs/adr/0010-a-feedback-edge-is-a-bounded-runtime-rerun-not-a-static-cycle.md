@@ -1,0 +1,354 @@
+# ADR 0010 — A feedback edge is a bounded runtime re-run, not a static cycle
+
+- Status: Proposed
+- Date: 2026-08-02
+
+## Context
+
+The graph vocabulary has nodes and one kind of edge: `depends_on`, the
+success-flow edge — "run me after my parents passed". Failure has three
+answers today, and all three are the wrong shape for the most common
+iterative pattern in real pipelines:
+
+- **`retry` (node × attempt)** re-runs *the same node* with the same inputs.
+  It recovers transient faults; it cannot express "the *work an earlier node
+  produced* was judged wrong, redo it".
+- **`on_fail` (graph policy)** decides what the *run* does once a failure is
+  final — halt or prune the subtree and continue. Both discard the branch;
+  neither recovers it.
+- **`resume` (run level)** continues a stopped run across processes. It is a
+  boundary between legs, not a control-flow construct.
+
+What none of them can say is the sentence every review-driven pipeline is
+built around: *"if this node fails, re-run that earlier node with this
+node's output as feedback, then come back — at most N times."*
+
+The shipped `adr-driven-dev.yaml` template is the workaround made flesh: its
+`round1 → apply1 → round2 → apply2 → round3` chain is a review loop
+**statically unrolled** to a fixed depth. The unrolling has every defect of
+manual loop unrolling: the iteration count is baked in (a clean first round
+still pays for rounds two and three's sessions; a third round of findings has
+nowhere to go), the apply prompts are near-duplicates, and the graph's length
+hides its actual shape — a two-node loop — from the reader.
+
+The constraint that shaped everything below: **the static graph must stay a
+DAG.** `Graph.ReadyGiven`, the three-colour cycle validator, the snapshot's
+"graph × completed determines the ready set" resume rule (ADR 0003), and the
+inline-adjacency design ("edges are not a separate list; each Node carries
+its own `DependsOn`") all assume an acyclic `depends_on` relation.
+Iteration is a *runtime* phenomenon and must be represented as one — the
+file the validator walks stays acyclic and fully checkable at load time.
+
+## Decision
+
+### Surface: a node-level `feedback:` block, not a conditional edge, not a `loop:` construct
+
+A node — typically a reviewer or verifier — declares the arc that fires when
+it fails:
+
+```yaml
+- id: impl
+  depends_on: [adr-apply]
+  prompt: |
+    Implement the ADR (task: {{ inputs.task }}).
+    Review feedback from the previous round follows — empty on the
+    first pass:
+    {{ feedback.review | inline }}
+  ...
+
+- id: localrun
+  depends_on: [impl]
+  ...
+
+- id: review
+  depends_on: [localrun]
+  agent: code-reviewer-deep
+  success_check: { exit_zero: true, result_matches: "ready to merge" }
+  feedback:
+    rerun: impl   # a proper depends_on-ancestor of this node
+    max: 2        # REQUIRED — bounded iteration on a paid runtime
+```
+
+Reading: when `review` fails (after its own retries, if any), the engine
+re-runs the path `impl → localrun → review`, handing `review`'s output to
+the re-run as `{{ feedback.review }}` — at most twice. If `review` still
+fails after the second round, it fails for real. This subsumes the
+adr-driven-dev unrolling: `round1/apply1/round2/apply2/round3` collapses to
+one review node with `feedback: { rerun: impl, max: 2 }`, the apply prompts
+folding into `impl`'s own prompt via the feedback placeholder — same maximum
+depth, but a clean first round now costs one review session instead of five
+nodes, and a graph reader sees the loop instead of reconstructing it.
+
+Why this shape over the alternatives (argued in full below):
+
+- The declaration is **inline on a node**, like every other edge in this
+  schema. `depends_on` already established that edges live on the node that
+  needs them, not in a separate edge list; the failure edge lives on the node
+  that closes the loop, with its bound adjacent to it.
+- The static graph **stays untouched**. `feedback.rerun` is stored outside
+  `DependsOn`, so `ReadyGiven`, `DependsOn`-walking, cycle validation, the
+  JSON snapshot round-trip and every existing consumer are unchanged. The
+  arc points strictly *backward* along already-validated `depends_on` paths
+  (enforced at load), so it cannot introduce a static cycle even in
+  principle — it annotates the DAG, it is not an edge in it.
+- The name is **not** `on_fail`. Candidate (a) in the design discussion
+  spelled this block `on_fail: { rerun: ..., max: N }`, but the graph-level
+  `on_fail:` already means something on the *other side of the finality
+  line*: what the run does once a failure is final. This block acts *before*
+  finality — it is a recovery arc, kin to `retry`, not a post-mortem policy.
+  One keyword meaning "give up policy" at one indentation and "don't give up
+  yet" at another would be a standing misreading. `feedback` also names the
+  payload: the failing node's output *is* the feedback, and the
+  `{{ feedback.<id> }}` namespace ties the edge, the placeholder and the
+  prompt narrative to one word.
+
+Load-time validation (all in `internal/graph`, all before anything spends):
+
+1. `rerun` names an existing node that is a **proper `depends_on`-ancestor**
+   of the declaring node. This one check rules out self-loops, forward arcs,
+   and arcs between unrelated branches, and guarantees the runtime arc
+   closes over a path the static DAG already contains.
+2. `max` is **required** and ≥ 1. There is no default: an unbounded loop on
+   a paid runtime must be unrepresentable, not merely discouraged (same
+   posture as the verify-timeout ceiling — refuse at load what would only be
+   discovered as spend at run time).
+3. The **loop body is side-exit free.** The body is the between-set — every
+   node on any `depends_on` path from the target up to (and including) the
+   declaring node. Every dependent of a body node other than the declarer
+   must itself be in the body: a node outside the loop consuming an
+   intermediate artifact would observe whichever iteration happened to have
+   written last, a race with no right answer. Rejected at load, not
+   discovered as nondeterminism. (Parents *feeding into* the body from
+   outside are fine — they ran once, their artifacts are stable.)
+4. **No gate in the body.** A gate records a standing human decision
+   (ADR 0003); replaying it on iteration two via `RecordedController` would
+   silently re-approve a round the human never saw. If a per-iteration human
+   check is ever wanted, that is its own ADR.
+5. A `{{ feedback.<id> }}` placeholder is only legal where it can ever
+   resolve: on a node inside the body of a feedback edge that `<id>`
+   declares (a `placeholder_lint` rule, like the existing artifact-reference
+   lints).
+
+### Semantics
+
+**What re-runs: the path, not just the target.** When the arc fires, every
+body node re-executes in dependency order — `impl`, then `localrun`, then
+`review` re-judges. Re-running only the target would be cheaper but wrong
+twice over: the intermediate nodes' artifacts would be stale (a `localrun`
+verdict about iteration 1's code, feeding iteration 2's review), and the
+declaring node itself must re-run or nothing re-judges the new work at all.
+The between-set is also the *smallest correct* set: descendants of the
+target that do not lead to the declarer are outside the loop (and rule 3
+guarantees there are none inside the affected region), so the blast radius
+is exactly the segment the graph author drew, not the target's whole
+subtree.
+
+Mechanically this is a fourth intercepted signal beside `pauseSignal`,
+`limitSignal` and `rejectSignal`: the declarer's failure, with rounds
+remaining, surfaces as a feedback signal; the scheduler clears the body
+nodes' completed status, re-seeds their in-degrees counting only in-body
+parents (out-of-body parents stay satisfied; their artifacts are still on
+disk and still interpolate), and launches the target. Independent branches
+are untouched, and a pause elsewhere (gate or session limit) suppresses the
+re-launch exactly as it suppresses dependents.
+
+**What the re-run inherits — and the iteration-1 problem.** The declaring
+node's output must be readable by the re-run, but on the *first* execution
+of the target it does not exist yet — under today's rules
+`{{ artifacts.review }}` in `impl`'s prompt would be an
+`InterpolationError` before iteration 1 ever ran. The answer is a distinct
+namespace with a documented empty default:
+
+- `{{ feedback.<id> }}` follows the artifact grammar (path by default,
+  `| inline` to embed content) and resolves to the declaring node's
+  **feedback payload**: its result text when the failing execution produced
+  one, else its failure detail, persisted to
+  `<run-dir>/<id>.feedback.out` — a separate file, overwritten per round
+  (latest round wins), so the `.out` artifact keeps meaning "a *passed*
+  node's result" and dependants' `{{ artifacts.<id> }}` contract is
+  untouched.
+- When no round has fired yet, the placeholder resolves to the **empty
+  string** (under either filter — a path to a file that does not exist
+  would be worse than nothing). Prompts write around it naturally: "review
+  feedback follows — empty on the first pass".
+
+The alternative — an `| optional` filter on ordinary artifacts — was
+rejected: "an unresolvable reference is an error, never a silent empty
+substitution" is a load-bearing property of the artifact contract (it is
+what turns a mis-wired graph into a loud failure), and weakening it
+globally to serve one feature would trade a universal guarantee for a local
+convenience. The feedback namespace confines empty-is-normal semantics to
+the one place where "not there yet" is an expected state rather than a
+wiring bug.
+
+**Composition with retry, and exhaustion.** `retry` operates *inside* one
+execution of a node, exactly as today; the feedback arc fires only where
+`recordFail` would otherwise be reached — after the declarer's retries are
+spent. When the arc has fired `max` times and the declarer fails again, the
+failure becomes final: the node FAILs with a detail naming the spend
+("feedback exhausted after 2 rounds of impl → review: " + the underlying
+cause), and from there the existing story runs unchanged — graph `on_fail`
+halts or prunes, and a later `resume --retry-failed` may still salvage the
+run. The four mechanisms compose as one narrative: retry answers "try *me*
+again", feedback answers "the *decision upstream* was wrong, redo the
+segment with what we learned", `on_fail` answers "what does the run do when
+we truly give up", `resume` answers "continue a stopped run later".
+
+**Sessions and worktrees.** Every re-executed body node starts a **fresh
+claude session** — the cold-start rule `retry` already documents ("retry
+started fresh — parent session not resumed") applies verbatim to feedback
+re-runs, and the same ledger detail note marks it. An in-body
+`handoff: session` child still resumes its parent's session *of the current
+round* (the parent re-ran first and recorded its new id), so session chains
+inside the body keep working; no re-execution ever resumes a superseded
+round's session. Re-runs **share the lane's worktree**: `Acquire` is
+idempotent per name, so iteration 2's `impl` lands in the same checkout
+with iteration 1's commits present — which is the point; the feedback round
+amends the work, it does not restart it.
+
+**events.jsonl narrates rounds additively.** No new event type (the
+event-type set is closed per schema version; a bump for this would tax
+every consumer for what an optional field conveys — the ADR 0009
+precedent). Two additive moves under docs/RUN-FEED.md's rules:
+
+- Node events emitted by a feedback re-execution carry an optional `round`
+  field (1-based round ordinal; absent on the initial pass — absent means
+  0, like every other omitted zero value).
+- The declarer's non-final `node_failed` carries a `detail` of the form
+  "feedback round 1/2: re-running impl → review", so a tailing consumer
+  sees the loop turn without correlating anything.
+
+RUN-FEED already legalizes the resulting shape: retry legs established that
+one node id may carry multiple terminal events and that the latest one is
+authoritative. A feedback round is the same phenomenon within a single leg.
+
+**The ledger prices every execution — one record per attempt, not an
+aggregate.** Each round's execution of each body node appends its own row
+(with "feedback round k/N" in the detail), and the run total is the sum.
+Aggregating rounds into one row was rejected because the ledger's one job
+is the cost story, and the entire risk of a loop construct on a paid
+runtime *is* the multiplier: an operator tuning `max` needs to see that
+round 2 cost what round 1 cost, per node, in the same table that shows
+everything else. The snapshot stays keyed by node id, latest verdict wins —
+exactly what `resume` needs — and a new additive `state.json` map
+(declarer id → rounds spent; optional field, no schema bump) makes `max`
+enforceable across legs: a run limit-paused mid-loop resumes with its
+rounds intact, while `resume --retry-failed` clearing a declarer's FAIL
+record also resets its rounds counter — explicit human intervention buys a
+fresh budget, silence does not.
+
+### Guardrails
+
+- **`max` is required**, ≥ 1, no default, refused at load (above). The
+  worst-case execution count is legible from the file:
+  `(1 + max) × |body|` node runs, each under its own declared `timeout`,
+  `budget_usd` and tool policy per execution — the ceilings apply per
+  attempt, so the multiplier is bounded but real, and the docs must say so
+  the way adr-driven-dev's header prices its rounds today.
+- **Planned (auto) graphs: `feedback` is allowed, with `Retry`'s standing.**
+  The field-disposition table (`coordinator/field_dispositions_test.go`)
+  already forces this decision mechanically — adding the field to
+  `graph.Node` fails the completeness test until a row exists. The row
+  reads like `Retry`'s ("bounded re-runs of an already-ceilinged node"),
+  because the disposition framework judges *capability*, not spend: a
+  feedback arc grants a planned node no tool, no path, no shell — it only
+  repeats nodes that are already inside every ceiling layer, and the
+  required `max` plus the load validations (backward-only, side-exit-free,
+  no gates) hold for a planned graph exactly as for a hand-written one.
+  Going stricter (rejecting it) would forbid the planner the one construct
+  this ADR exists to provide while permitting the same spend shape via
+  `retry: { max: N }` — an inconsistency, not a safeguard. The planner
+  prompt gains guidance (use it for review loops; keep `max` small), the
+  same treatment decomposition and budget posture got.
+- **Worktrees:** re-runs share the lane's worktree (stated above; the
+  idempotent `Acquire` makes it free).
+- **Sessions:** a re-run is a fresh session, like a retry (stated above;
+  the already-documented cold-start rule applies).
+
+## Consequences
+
+**Positive**
+
+- The review loop — the single most common iterative shape in real
+  pipelines — becomes one declared arc instead of a hand-unrolled chain.
+  adr-driven-dev's eleven nodes reduce to seven with *greater* fidelity: a
+  clean first round stops early, and every round's findings actually flow
+  into the re-implementation instead of only rounds the unrolling
+  anticipated.
+- The static graph remains a DAG and every existing consumer —
+  validation, `ReadyGiven`, resume, the snapshot round-trip, fleetops —
+  is untouched or extended only by optional fields. No schema bumps.
+- The failure-handling story becomes complete and layered: retry (same
+  node), feedback (path), on_fail (run policy), resume (across legs) — each
+  answers a different question, none overlaps.
+- Cost stays honest: bounded by construction, priced per execution in the
+  ledger, narrated per round on the stream.
+
+**Negative / trade-offs**
+
+- A third failure keyword (`retry`, `feedback`, `on_fail`) is real surface
+  area; the docs owe the reader the one-paragraph layering above, or the
+  three will read as synonyms.
+- The side-exit-free rule rejects some legitimate-looking graphs (a metrics
+  node hanging off `impl`, say) that would be fine in practice most of the
+  time. Accepted: "most of the time" is what nondeterministic artifact
+  races look like from the outside, and the fix (move the tap after the
+  declarer) is mechanical.
+- The scheduler grows its first re-arming path — clearing completed status
+  and re-seeding in-degrees mid-leg. It is the largest engine change since
+  gates, and it must be built and stress-tested against `FakeRunner`
+  fixtures (loops racing pauses, limits mid-round, continue-on-fail
+  around a looping branch) before it can ship.
+- Feedback payloads persist failed-execution output to disk
+  (`<id>.feedback.out`) — a new file in the run directory that RUN-FEED
+  must document as internal-or-contract; this ADR proposes contract
+  (consumers may render the loop's dialogue).
+- Rounds multiply spend by design. `max` bounds it, but a carelessly large
+  `max` on an expensive body is the closest thing this tool has to a
+  foot-gun; the shipped templates must model small values (2, not 10).
+
+## Alternatives considered
+
+- **Node-level `on_fail: { rerun, max }` (candidate a's spelling).**
+  Rejected on the name alone; the mechanics are what this ADR adopts. The
+  graph-level `on_fail` is a post-finality policy (halt/continue); reusing
+  the keyword for a pre-finality recovery arc would make one word span both
+  sides of the finality line, differing by indentation.
+- **Edge-level conditions (`depends_on` entries with `when:`).** Rejected.
+  It turns `DependsOn []string` into a list of objects, churning every
+  consumer of the field (ready-set computation, dependents walking,
+  session-arity validation, the JSON snapshot round-trip) for a feature
+  none of them needs; and it decomposes the one sentence being expressed —
+  "go back there, with this, at most N times" — into conditions scattered
+  across edges that the reader must reassemble into a loop. Conditional
+  *success* routing may someday want edge conditions; failure recovery is
+  not that feature.
+- **A `loop:` block declaring a bounded subgraph cycle.** Rejected. It
+  introduces a second topology construct that overlaps the first: nodes
+  would belong to both a `depends_on` DAG and a loop membership list, and
+  validation would have to prove the two agree — precisely the two-sources-
+  of-truth bug class the inline-adjacency design exists to avoid (ADR 0003
+  rejected persisting ready sets on the same grounds). It also misstates
+  the phenomenon: the engine is a ready-set scheduler, not a structured-
+  control-flow interpreter, and iteration here is a *failure-recovery arc*,
+  not a while-loop. A `loop:` block's natural evolution (conditions,
+  `while:`) points directly at the unbounded iteration this design makes
+  unrepresentable.
+- **Re-run only the target, not the path.** Rejected: leaves intermediate
+  artifacts stale and never re-judges the new work; argued in Semantics.
+- **`| optional` on ordinary artifact placeholders instead of a feedback
+  namespace.** Rejected: globally weakens the "unresolvable is loud"
+  artifact invariant to serve one local need; argued in Semantics.
+- **Aggregate rounds into one ledger row.** Rejected: hides the loop's cost
+  multiplier — the one number the bound exists to control; argued in
+  Semantics.
+- **A new `node_feedback` event type.** Rejected: the event-type set is
+  closed per schema version, so it forces a schema bump on every consumer
+  for what one additive optional field (`round`) plus the existing `detail`
+  already convey — the same reasoning that rejected `node_limited` in
+  ADR 0009.
+- **A retry-style `on:` cause filter on `feedback`.** Deferred, not
+  rejected: triggering on any terminal failure keeps v1 minimal, and the
+  filter is a purely additive refinement (same closed cause-token set as
+  `retry.on`) if a real graph ever needs "loop on verify_failed but halt on
+  budget_exceeded".
