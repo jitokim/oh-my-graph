@@ -6,7 +6,7 @@
 //     {{ feedback.<id> }} into a node's prompt and cwd before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
 //     so dependents can read it (the artifact-default handoff), and a feedback
-//     declarer's failing payload to <node-id>.feedback.out so a feedback
+//     declarer's failing payload to feedback/<node-id>.out so a feedback
 //     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
 //     contract);
 //   - resolve which claude session a session-handoff node resumes.
@@ -208,28 +208,35 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 // SetFeedback records a feedback declarer's payload — its result text when
 // the failing execution produced one, else its failure detail (the Scheduler
 // decides which) — so the loop body's re-run resolves {{ feedback.<id> }} to
-// it. The payload is also persisted to <run-dir>/<node-id>.feedback.out,
+// it. The payload is also persisted to <run-dir>/feedback/<node-id>.out,
 // overwritten per round (latest wins): an INTERNAL implementation file, not
 // a documented consumer contract (ADR 0010) — it exists so a run stopped
 // mid-loop can re-seed the payload on resume (SeedFeedback). The .out
-// artifact contract is untouched: .feedback.out never means "a passed
-// node's result".
+// artifact contract is untouched: artifacts live flat in the run directory,
+// payloads under feedback/, so a payload never means "a passed node's
+// result" — and a node literally named "x.feedback" cannot collide with
+// node "x"'s payload file (node ids allow dots).
+//
+// The mutex is held across the file write AND the map update: two rounds
+// that overlapped for the same declarer could otherwise leave the file
+// holding one payload and the map the other, and a resume (which reads the
+// file) would then disagree with the run it resumed.
 func (h *Handoff) SetFeedback(nodeID, payload string) error {
-	if err := os.MkdirAll(h.runDir, 0o755); err != nil {
-		return fmt.Errorf("create run dir %q: %w", h.runDir, err)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	path := h.feedbackPath(nodeID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create feedback dir for node %q: %w", nodeID, err)
 	}
-	if err := os.WriteFile(h.feedbackPath(nodeID), []byte(payload), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		return fmt.Errorf("persist feedback payload for node %q: %w", nodeID, err)
 	}
-
-	h.mu.Lock()
 	h.feedback[nodeID] = payload
-	h.mu.Unlock()
 	return nil
 }
 
 // SeedFeedback rehydrates one declarer's feedback payload for a resumed run
-// from the .feedback.out file SetFeedback persisted — the payload's analogue
+// from the feedback/<id>.out file SetFeedback persisted — the payload's analogue
 // of Seed. A missing file is a clean no-op, not an error: it means no round
 // had fired (or the payload predates a crash that lost it), and the
 // namespace's documented empty default is exactly the right degraded
@@ -250,11 +257,13 @@ func (h *Handoff) SeedFeedback(nodeID string) error {
 }
 
 // feedbackPath is the on-disk location of a declarer's persisted feedback
-// payload, sanitized exactly as artifactPath is and for the same reason.
+// payload, sanitized exactly as artifactPath is and for the same reason. It
+// lives under its own feedback/ directory rather than sharing the run
+// directory with artifacts: node ids allow dots, so a suffix scheme like
+// <id>.feedback.out would let a node literally named "x.feedback" produce an
+// artifact at node "x"'s payload path.
 func (h *Handoff) feedbackPath(nodeID string) string {
-	safe := strings.ReplaceAll(nodeID, "/", "_")
-	safe = strings.ReplaceAll(safe, string(os.PathSeparator), "_")
-	return filepath.Join(h.runDir, safe+".feedback.out")
+	return filepath.Join(h.runDir, "feedback", sanitizeNodeID(nodeID)+".out")
 }
 
 // ResumeSessionFor returns the claude session id a session-handoff node must
@@ -300,14 +309,18 @@ func (h *Handoff) ArtifactPath(nodeID string) (string, bool) {
 	return path, ok
 }
 
-// artifactPath is the on-disk location of a node's persisted result. Node ids
-// are validated (no path separators expected), but both '/' and this OS's own
+// artifactPath is the on-disk location of a node's persisted result.
+func (h *Handoff) artifactPath(nodeID string) string {
+	return filepath.Join(h.runDir, sanitizeNodeID(nodeID)+".out")
+}
+
+// sanitizeNodeID makes a node id safe as a single path element. Node ids are
+// validated (no path separators expected), but both '/' and this OS's own
 // separator are replaced so a stray separator can never escape the run
 // directory on any platform — Windows resolves '/' as a separator too, so
 // sanitizing os.PathSeparator alone would leave a '/'-carrying id escaping
 // there.
-func (h *Handoff) artifactPath(nodeID string) string {
+func sanitizeNodeID(nodeID string) string {
 	safe := strings.ReplaceAll(nodeID, "/", "_")
-	safe = strings.ReplaceAll(safe, string(os.PathSeparator), "_")
-	return filepath.Join(h.runDir, safe+".out")
+	return strings.ReplaceAll(safe, string(os.PathSeparator), "_")
 }

@@ -141,10 +141,11 @@ ADR 0010 and under "Execution engine" below.
   around it ("review feedback follows — empty on the first pass"). A token
   outside the body of `<id>`'s feedback edge is a load **error**, not a lint —
   it would otherwise be silently empty forever. The engine persists the
-  payload to `<run-dir>/<id>.feedback.out` (overwritten per round, latest
+  payload to `<run-dir>/feedback/<id>.out` (overwritten per round, latest
   wins) so a mid-loop resume can re-seed it — an **internal** file, not a
-  consumer contract; the `.out` artifact keeps meaning "a *passed* node's
-  result".
+  consumer contract, in its own directory so it can never collide with an
+  artifact (node ids allow dots, so a node named `x.feedback` is legal); the
+  `.out` artifact keeps meaning "a *passed* node's result".
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code

@@ -182,7 +182,7 @@ namespace with a documented empty default:
   path grammar would need an on-disk file to point at before any round has
   fired, and an empty string standing in for a path is exactly the kind of
   half-value the artifact contract exists to forbid. The engine persists
-  the payload to `<run-dir>/<id>.feedback.out` (overwritten per round,
+  the payload to `<run-dir>/feedback/<id>.out` (overwritten per round,
   latest wins) as an **internal** implementation file, not a documented
   contract — promoting it later is additive, demoting it would not be. The
   `.out` artifact keeps meaning "a *passed* node's result" and dependants'
@@ -379,7 +379,7 @@ into an ordinary failure on resume. Instead:
   fixtures (loops racing pauses, limits mid-round, continue-on-fail
   around a looping branch) before it can ship.
 - Feedback payloads persist failed-execution output to disk
-  (`<id>.feedback.out`) — a new file in the run directory, **internal**
+  (`feedback/<id>.out`) — a new file under the run directory, **internal**
   for v1 (Semantics): promoting it to a consumer contract later is
   additive, demoting it would not be.
 - The documentation lands with the code, not after it: DESIGN.md (the new

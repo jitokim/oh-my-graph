@@ -25,8 +25,11 @@ func TestInterpolate_FeedbackDefaultsToEmpty(t *testing.T) {
 }
 
 // TestSetFeedback_InlinesAndPersists covers the fired arc: the payload
-// inlines (never a path), and the internal <id>.feedback.out file holds the
-// same bytes so a mid-loop resume can re-seed it.
+// inlines (never a path), and the internal feedback/<id>.out file holds the
+// same bytes so a mid-loop resume can re-seed it. The payload lives under
+// feedback/, NOT flat beside the artifacts: node ids allow dots, so a flat
+// suffix scheme would let a node named "review.feedback" collide with node
+// "review"'s payload file.
 func TestSetFeedback_InlinesAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	h := New(dir, nil)
@@ -43,7 +46,7 @@ func TestSetFeedback_InlinesAndPersists(t *testing.T) {
 		t.Fatalf("feedback did not inline the payload: %q", got)
 	}
 
-	onDisk, err := os.ReadFile(filepath.Join(dir, "review.feedback.out"))
+	onDisk, err := os.ReadFile(filepath.Join(dir, "feedback", "review.out"))
 	if err != nil {
 		t.Fatalf("payload file not persisted: %v", err)
 	}
@@ -56,7 +59,8 @@ func TestSetFeedback_InlinesAndPersists(t *testing.T) {
 // are overwritten per round — the re-run always reads the round that just
 // judged it, never an older one.
 func TestSetFeedback_LatestRoundWins(t *testing.T) {
-	h := New(t.TempDir(), nil)
+	dir := t.TempDir()
+	h := New(dir, nil)
 
 	if err := h.SetFeedback("review", "round 1"); err != nil {
 		t.Fatalf("SetFeedback: %v", err)
@@ -71,6 +75,17 @@ func TestSetFeedback_LatestRoundWins(t *testing.T) {
 	}
 	if got != "round 2" {
 		t.Fatalf("latest payload did not win: %q", got)
+	}
+
+	// The file is what SeedFeedback reads on resume, so "latest wins" must
+	// hold on disk too — a regression that stops overwriting it would leave
+	// a resumed run re-running the body against round 1's findings.
+	onDisk, err := os.ReadFile(filepath.Join(dir, "feedback", "review.out"))
+	if err != nil {
+		t.Fatalf("payload file not persisted: %v", err)
+	}
+	if string(onDisk) != "round 2" {
+		t.Fatalf("persisted payload was not overwritten: %q", onDisk)
 	}
 }
 
