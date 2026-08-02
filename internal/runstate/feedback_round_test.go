@@ -59,7 +59,11 @@ func TestNodeRecord_RoundRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(encoded) != `{"verdict":"PASS","session_id":"","cost_usd":0,"duration":0,"artifact_path":""}` {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := fields["round"]; present {
 		t.Fatalf("round is not omitempty — existing readers would see a new key on every record: %s", encoded)
 	}
 }
