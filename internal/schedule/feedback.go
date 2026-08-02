@@ -135,13 +135,8 @@ func (st *feedbackState) fire(declarer string) int {
 	return round
 }
 
-// bodyOf returns declarer's body ids and bodyInDegrees its re-arming
-// in-degrees; both are the precomputed slices/maps, so callers must not
-// mutate them.
-func (st *feedbackState) bodyOf(declarer string) []string {
-	return st.bodies[declarer]
-}
-
+// bodyInDegrees returns declarer's re-arming in-degrees — the precomputed
+// map, so callers must not mutate it.
 func (st *feedbackState) bodyInDegrees(declarer string) map[string]int {
 	return st.bodyInDegree[declarer]
 }

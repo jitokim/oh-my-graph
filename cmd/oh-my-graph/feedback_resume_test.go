@@ -59,14 +59,15 @@ func passOutcome(text string, cost float64) runner.NodeOutcome {
 }
 
 // feedbackLoopGraph is the two-node review loop both tests run: review's
-// judgment failure re-runs impl with review's findings, at most max times.
-func feedbackLoopGraph(t *testing.T, max int) string {
+// judgment failure re-runs impl with review's findings, at most maxRounds
+// times.
+func feedbackLoopGraph(t *testing.T, maxRounds int) string {
 	t.Helper()
 	return fmt.Sprintf(`{"name":"loop","nodes":[
 		{"id":"impl","prompt":"impl: {{ feedback.review }}"},
 		{"id":"review","prompt":"review: {{ artifacts.impl | inline }}","depends_on":["impl"],
 		 "success_check":{"result_matches":"ship it"},
-		 "feedback":{"rerun":"impl","max":%d}}]}`, max)
+		 "feedback":{"rerun":"impl","max":%d}}]}`, maxRounds)
 }
 
 func loadSnapshot(t *testing.T, runID string) runstate.Snapshot {
