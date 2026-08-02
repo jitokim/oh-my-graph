@@ -68,7 +68,13 @@ func (g *Graph) Validate() error {
 //     nothing and silently mean "never retry";
 //  10. a node-level timeout, when present, is a parseable, positive Go
 //     duration — parsed here, once, so no run ever discovers a malformed
-//     duration halfway through.
+//     duration halfway through;
+//  11. every feedback arc has the shape ADR 0010 requires — a
+//     proper-ancestor rerun target, a required max >= 1, a side-exit-free
+//     body with no gates and in-body session parents, disjoint bodies —
+//     and every {{ feedback.<id> }} placeholder sits inside the body of the
+//     edge <id> declares (a LOAD error, not an advisory: an out-of-place
+//     feedback token would resolve to the empty string silently, forever).
 //
 // Every check runs even when an earlier one failed, so a graph broken in
 // several ways reports all of them at once instead of one per attempt. That
@@ -90,6 +96,8 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateWorktrees()...)
 	issues = append(issues, g.validateRetryCauses()...)
 	issues = append(issues, g.validateNodeTimeouts()...)
+	issues = append(issues, g.validateFeedback()...)
+	issues = append(issues, g.validateFeedbackPlaceholders()...)
 	return issues
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -271,6 +272,35 @@ nodes:
 	}
 	if !strings.Contains(checkErr.Detail, "no tests to run") {
 		t.Errorf("detail should quote what the command actually printed, got %q", checkErr.Detail)
+	}
+}
+
+// TestJudgeVerification_InvalidRegexIsAnInfrastructureFault pins the
+// taxonomy for the one judgement-path error that is not a verdict: a
+// malformed output_matches (unreachable for a loaded graph — Validate
+// compiles it — but reachable from a hand-built Node) rendered no judgment
+// on the work, and no re-run can repair the declaration, so it must carry
+// the Infrastructure mark that keeps a feedback arc from firing on it.
+// The fault must win even when the exit code also mismatches — a broken
+// declaration judged after the exit code would surface as a judgment
+// failure and let a feedback arc fire on it.
+func TestJudgeVerification_InvalidRegexIsAnInfrastructureFault(t *testing.T) {
+	cases := map[string]verify.Result{
+		"matching exit code":   {ExitCode: 0, Output: "ok\n"},
+		"mismatched exit code": {ExitCode: 1, Output: "ok\n"},
+	}
+	for name, result := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := judgeVerification("dev", graph.Verification{OutputMatches: "("}, "go test ./...", result)
+
+			var checkErr *NodeCheckError
+			if !errors.As(err, &checkErr) || checkErr.Predicate != predicateVerify {
+				t.Fatalf("expected a verify check error, got %T: %v", err, err)
+			}
+			if !checkErr.Infrastructure {
+				t.Fatalf("an invalid regex must be an infrastructure fault, not a judgment: %+v", checkErr)
+			}
+		})
 	}
 }
 

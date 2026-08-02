@@ -57,7 +57,7 @@ nodes:
     allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
     permission_mode: dontAsk
     handoff: session
-    success_check: { exit_zero: true, result_matches: "PASS" }
+    success_check: { exit_zero: true, result_matches: "^PASS$" }
     retry: { max: 1, on: [nonzero_exit] }
 
   - id: review-security

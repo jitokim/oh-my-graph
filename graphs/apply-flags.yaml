@@ -61,4 +61,4 @@ nodes:
     allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)"]
     permission_mode: plan
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "COVERED" }
+    success_check: { exit_zero: true, result_matches: "^COVERED$" }

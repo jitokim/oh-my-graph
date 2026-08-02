@@ -2,10 +2,13 @@
 // delegates to it, so the Scheduler never touches the filesystem or string
 // templates itself:
 //
-//   - interpolate {{ inputs.<name> }} and {{ artifacts.<id> }} into a node's
-//     prompt and cwd before it runs;
+//   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }} and
+//     {{ feedback.<id> }} into a node's prompt and cwd before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
-//     so dependents can read it (the artifact-default handoff);
+//     so dependents can read it (the artifact-default handoff), and a feedback
+//     declarer's failing payload to feedback/<node-id>.out so a feedback
+//     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
+//     contract);
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
@@ -37,11 +40,15 @@ func (e *InterpolationError) Error() string {
 	return fmt.Sprintf("cannot resolve {{ %s.%s }}: %s", e.Kind, e.Reference, e.Reason)
 }
 
-// placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} with an
-// optional `| inline` filter. Group 1 = kind, group 2 = reference, group 3 =
-// filter (empty or "inline"). Whitespace around each token is tolerated.
+// placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} /
+// {{ feedback.id }} with an optional `| inline` filter. Group 1 = kind,
+// group 2 = reference, group 3 = filter (empty or "inline"). Whitespace
+// around each token is tolerated. The filter is only meaningful on
+// artifacts; a feedback placeholder always inlines and resolveLocked rejects
+// a filter on it loudly (graph.Validate already refuses it at load for any
+// graph that came through Parse).
 var placeholderPattern = regexp.MustCompile(
-	`\{\{\s*(inputs|artifacts)\.([A-Za-z0-9_-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
+	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
 // Handoff owns the run directory and the accumulating state of completed nodes.
@@ -52,6 +59,7 @@ type Handoff struct {
 	mu            sync.Mutex
 	artifactPaths map[string]string // node id -> persisted .out path
 	sessions      map[string]string // node id -> claude session id
+	feedback      map[string]string // declarer id -> latest feedback payload (ADR 0010)
 }
 
 // New builds a Handoff bound to a run directory and the invocation's inputs. The
@@ -66,18 +74,27 @@ func New(runDir string, inputs map[string]string) *Handoff {
 		inputs:        copied,
 		artifactPaths: make(map[string]string),
 		sessions:      make(map[string]string),
+		feedback:      make(map[string]string),
 	}
 }
 
-// Interpolate substitutes every {{ inputs.x }} and {{ artifacts.id }} in tmpl.
+// Interpolate substitutes every {{ inputs.x }}, {{ artifacts.id }} and
+// {{ feedback.id }} in tmpl.
 //
 //   - inputs resolve to the bound input value.
 //   - artifacts resolve to the persisted .out FILE PATH by default (robust,
 //     lets the node read it however it likes); the `| inline` filter instead
 //     inlines the file's content.
+//   - feedback ALWAYS inlines the declarer's latest feedback payload, and
+//     resolves to the EMPTY string while no round has fired (ADR 0010) —
+//     the one namespace where "not there yet" is an expected state rather
+//     than a wiring bug, which is why graph.Validate confines the token to
+//     the declarer's loop body at load.
 //
 // An unknown input, or an artifact whose producer has not persisted yet, is an
-// *InterpolationError — never a silent empty substitution.
+// *InterpolationError — never a silent empty substitution. The feedback
+// namespace's empty default is deliberately NOT that: it is a documented
+// value, confined to the one place it can mean something.
 func (h *Handoff) Interpolate(tmpl string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -107,6 +124,19 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no such input was provided"}
 		}
 		return value, nil
+	}
+
+	if kind == "feedback" {
+		if filter != "" {
+			return "", &InterpolationError{
+				Kind:      kind,
+				Reference: ref,
+				Reason:    "a feedback placeholder takes no filter — {{ feedback.<id> }} always inlines the payload",
+			}
+		}
+		// Empty while no round has fired: the documented first-pass default,
+		// never an error (see Interpolate).
+		return h.feedback[ref], nil
 	}
 
 	// kind == "artifacts"
@@ -175,6 +205,98 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 	h.sessions[nodeID] = sessionID
 }
 
+// SetFeedback records a feedback declarer's payload — its result text when
+// the failing execution produced one, else its failure detail (the Scheduler
+// decides which) — so the loop body's re-run resolves {{ feedback.<id> }} to
+// it. The payload is also persisted to <run-dir>/feedback/<node-id>.out,
+// overwritten per round (latest wins): an INTERNAL implementation file, not
+// a documented consumer contract (ADR 0010) — it exists so a run stopped
+// mid-loop can re-seed the payload on resume (SeedFeedback). The .out
+// artifact contract is untouched: artifacts live flat in the run directory,
+// payloads under feedback/, so a payload never means "a passed node's
+// result" — and a node literally named "x.feedback" cannot collide with
+// node "x"'s payload file (node ids allow dots).
+//
+// The mutex is held across the file write AND the map update: two rounds
+// that overlapped for the same declarer could otherwise leave the file
+// holding one payload and the map the other, and a resume (which reads the
+// file) would then disagree with the run it resumed.
+//
+// The file itself is written with the same temp+rename discipline as
+// runstate.Write: the payload lands in a temp file in the feedback
+// directory, is synced and closed, then renamed over the final path. A
+// rename within one directory is atomic on POSIX, so a resume that races a
+// crash reads either the previous round's complete payload or the new one,
+// never a torn file — and the map is updated only after the rename, so the
+// in-memory payload never runs ahead of what a resume would see.
+func (h *Handoff) SetFeedback(nodeID, payload string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	path := h.feedbackPath(nodeID)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create feedback dir for node %q: %w", nodeID, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp feedback payload for node %q: %w", nodeID, err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup of the temp file on any failure before the rename;
+	// after a successful rename there is nothing left to remove.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write([]byte(payload)); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp feedback payload for node %q: %w", nodeID, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("persist feedback payload for node %q: %w", nodeID, err)
+	}
+
+	h.feedback[nodeID] = payload
+	return nil
+}
+
+// SeedFeedback rehydrates one declarer's feedback payload for a resumed run
+// from the feedback/<id>.out file SetFeedback persisted — the payload's analogue
+// of Seed. A missing file is a clean no-op, not an error: it means no round
+// had fired (or the payload predates a crash that lost it), and the
+// namespace's documented empty default is exactly the right degraded
+// behaviour. Any other read failure is returned so the resume path can warn
+// rather than silently run a round without its feedback.
+func (h *Handoff) SeedFeedback(nodeID string) error {
+	payload, err := os.ReadFile(h.feedbackPath(nodeID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("re-read feedback payload for node %q: %w", nodeID, err)
+	}
+	h.mu.Lock()
+	h.feedback[nodeID] = string(payload)
+	h.mu.Unlock()
+	return nil
+}
+
+// feedbackPath is the on-disk location of a declarer's persisted feedback
+// payload, sanitized exactly as artifactPath is and for the same reason. It
+// lives under its own feedback/ directory rather than sharing the run
+// directory with artifacts: node ids allow dots, so a suffix scheme like
+// <id>.feedback.out would let a node literally named "x.feedback" produce an
+// artifact at node "x"'s payload path.
+func (h *Handoff) feedbackPath(nodeID string) string {
+	return filepath.Join(h.runDir, "feedback", sanitizeNodeID(nodeID)+".out")
+}
+
 // ResumeSessionFor returns the claude session id a session-handoff node must
 // resume — the session of its single parent. It returns "" and nil for any node
 // that is not a session-handoff node (an artifact node resumes nothing). It is
@@ -218,14 +340,18 @@ func (h *Handoff) ArtifactPath(nodeID string) (string, bool) {
 	return path, ok
 }
 
-// artifactPath is the on-disk location of a node's persisted result. Node ids
-// are validated (no path separators expected), but both '/' and this OS's own
+// artifactPath is the on-disk location of a node's persisted result.
+func (h *Handoff) artifactPath(nodeID string) string {
+	return filepath.Join(h.runDir, sanitizeNodeID(nodeID)+".out")
+}
+
+// sanitizeNodeID makes a node id safe as a single path element. Node ids are
+// validated (no path separators expected), but both '/' and this OS's own
 // separator are replaced so a stray separator can never escape the run
 // directory on any platform — Windows resolves '/' as a separator too, so
 // sanitizing os.PathSeparator alone would leave a '/'-carrying id escaping
 // there.
-func (h *Handoff) artifactPath(nodeID string) string {
+func sanitizeNodeID(nodeID string) string {
 	safe := strings.ReplaceAll(nodeID, "/", "_")
-	safe = strings.ReplaceAll(safe, string(os.PathSeparator), "_")
-	return filepath.Join(h.runDir, safe+".out")
+	return strings.ReplaceAll(safe, string(os.PathSeparator), "_")
 }

@@ -405,7 +405,9 @@ func toolName(rule string) string {
 //   - no planned node may set success_check.verify
 //     (validatePlannedNodeVerify);
 //   - no planned node may set agent (validatePlannedNodeAgent);
-//   - no planned node may set worktree (validatePlannedNodeWorktree).
+//   - no planned node may set worktree (validatePlannedNodeWorktree);
+//   - no planned node may declare a feedback max above
+//     maxPlannedFeedbackRounds (validatePlannedNodeFeedback).
 //
 // EVERY FIELD ON graph.Node MUST HAVE AN EXPLICIT DISPOSITION HERE — allowed,
 // constrained, or rejected. This class of hole recurs every time the schema
@@ -441,6 +443,9 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 			return err
 		}
 		if err := validatePlannedNodeWorktree(node); err != nil {
+			return err
+		}
+		if err := validatePlannedNodeFeedback(node); err != nil {
 			return err
 		}
 		if err := validatePlannedNodeTools(node); err != nil {
@@ -499,6 +504,32 @@ func validatePlannedNodeVerify(node graph.Node) error {
 		Reason: fmt.Sprintf(
 			"planned node %q set success_check.verify (command %q); auto mode never runs a shell command from an unreviewed plan — exit_zero and result_matches are available instead",
 			node.ID, node.SuccessCheck.Verify.Command,
+		),
+	}
+}
+
+// maxPlannedFeedbackRounds is the ceiling on a planned node's feedback max.
+// The planner prompt asks for 2; the ceiling leaves one round of headroom so
+// a defensible 3 does not fail a plan the user already paid for.
+const maxPlannedFeedbackRounds = 3
+
+// validatePlannedNodeFeedback bounds a planned feedback arc's round count.
+// `feedback:` itself keeps Retry's standing — bounded re-runs of body nodes
+// already inside every ceiling layer, granting no tool, no path, no shell —
+// but `max` is the multiplier on that spend, and load validation only
+// requires max >= 1. A hand-written graph has a human reviewer for the upper
+// bound; an unreviewed plan does not, so an untrusted planner reply could
+// otherwise multiply the loop body's subprocess spend by an arbitrary round
+// count. Rejected rather than clamped: a plan that asked for 50 rounds and
+// silently ran 3 is a different plan from the one that was validated.
+func validatePlannedNodeFeedback(node graph.Node) error {
+	if node.Feedback == nil || node.Feedback.Max <= maxPlannedFeedbackRounds {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf(
+			"planned node %q declared feedback max %d; auto mode caps a planned loop at %d rounds — every round re-runs the whole loop body at full cost",
+			node.ID, node.Feedback.Max, maxPlannedFeedbackRounds,
 		),
 	}
 }
@@ -657,6 +688,17 @@ Rules:
   needs bounding, set "timeout" to a generous Go duration string (e.g.
   "1h") as a hang guard instead; omit it on short nodes to keep the
   runner's default.
+- For an iterative implement→review loop, never unroll repeated
+  review/apply node pairs. Declare a feedback arc on the reviewing node
+  instead: "feedback": {"rerun": "<implementing-node-id>", "max": 2} on the
+  node whose success_check judges the work, and have the implementing
+  node's prompt read {{ feedback.<reviewing-node-id> }} ("review feedback
+  follows — empty on the first pass"). Keep max small (2): every round
+  re-runs the whole rerun→reviewer path at full cost, and a max above 3
+  is rejected outright. The arc must point
+  backward along depends_on, no node outside the loop may depend on a
+  loop node other than the reviewer, and one node belongs to at most one
+  loop.
 - If the goal involves substantial implementation, decompose it into work
   units sized so each node's output is a reviewable, committable slice —
   prefer more, smaller nodes (within the node cap) over one node that does
@@ -674,8 +716,8 @@ Rules:
   check node MUST verify which branch HEAD is on: its prompt runs
   'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
   output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and replies PASS only when both
-  hold, FAIL otherwise. Give that node
-  "success_check": {"result_matches": "PASS"} so a commit that landed on
+  default branch (e.g. main or master), and replies with exactly PASS only
+  when both hold, FAIL otherwise. Give that node
+  "success_check": {"result_matches": "^PASS$"} so a commit that landed on
   the wrong branch fails the run instead of passing silently.
 `

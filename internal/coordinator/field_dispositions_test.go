@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,8 +67,14 @@ type fieldRule struct {
 	why string
 	// probeJSON is a JSON key/value fragment, at NODE level, that sets this
 	// field to a value auto mode must refuse. Required for constrained and
-	// rejected; unused for allowed.
+	// rejected (unless probeGraph is set); unused for allowed.
 	probeJSON string
+	// probeGraph is a complete planner reply for refusals a single-node
+	// fragment cannot express — a feedback arc needs a declarer AND the
+	// backward depends_on target, or graph validation fails before the
+	// refusal under test can fire. The offending node must be named "probe"
+	// so the node-naming assertion below still holds.
+	probeGraph string
 	// reasonContains is a substring the resulting *PlanError must carry, so the
 	// probe proves THIS field was the reason rather than merely that some check
 	// fired on the same node.
@@ -84,6 +91,15 @@ var nodeFieldDispositions = map[string]fieldRule{
 	"BudgetUSD": {disposition: allowed, why: "a cap on spend — a planner can only make a node cheaper to fail"},
 	"Timeout":   {disposition: allowed, why: "a wall-clock bound with BudgetUSD's standing — it changes how long an already-ceilinged node may run, not what it may do (ADR 0007)"},
 	"Retry":     {disposition: allowed, why: "bounded re-runs of an already-ceilinged node"},
+
+	"Feedback": {
+		disposition: constrained,
+		why:         "Retry's standing, one level up: bounded re-runs of a depends_on path whose every node is already inside the ceiling — the load validations (backward-only, side-exit-free, no gates) hold for a planned graph exactly as for a hand-written one (ADR 0010). But load validation only requires max >= 1, and max multiplies the loop body's subprocess spend; a hand-written graph has a human reviewer for the upper bound, an unreviewed plan does not, so the coordinator enforces maxPlannedFeedbackRounds",
+		probeGraph: `{"name":"probe","nodes":[` +
+			`{"id":"impl","prompt":"redo per {{ feedback.probe }}","allowed_tools":["Read"]},` +
+			`{"id":"probe","prompt":"judge","allowed_tools":["Read"],"depends_on":["impl"],"feedback":{"rerun":"impl","max":50}}]}`,
+		reasonContains: "feedback",
+	},
 
 	"Prompt": {
 		disposition:    constrained,
@@ -201,7 +217,7 @@ func assertDispositionsMatchStruct(t *testing.T, name string, typ reflect.Type, 
 			continue
 		}
 		// A refusal recorded without a probe is a claim, not a guarantee.
-		if rule.probeJSON == "" || rule.reasonContains == "" {
+		if (rule.probeJSON == "" && rule.probeGraph == "") || rule.reasonContains == "" {
 			t.Errorf("%s.%s is recorded as constrained/rejected but carries no probe, so the refusal is unverified", name, fieldName)
 		}
 	}
@@ -225,7 +241,11 @@ func TestPlannedNodeRefusalsAreReal(t *testing.T) {
 				continue
 			}
 			t.Run(table.name+"."+fieldName, func(t *testing.T) {
-				fake, _ := newPlannerFake(runnerOutcome(probeSpec(rule.probeJSON)))
+				spec := rule.probeGraph
+				if spec == "" {
+					spec = probeSpec(rule.probeJSON)
+				}
+				fake, _ := newPlannerFake(runnerOutcome(spec))
 
 				planErr := planExpectingError(t, fake, "do something")
 				if !strings.Contains(planErr.Reason, "probe") {
@@ -248,6 +268,23 @@ func TestProbeBaselineIsAccepted(t *testing.T) {
 
 	if _, err := New(fake).Plan(context.Background(), "do something", nil); err != nil {
 		t.Fatalf("the probe baseline must plan cleanly, or every probe passes vacuously: %v", err)
+	}
+}
+
+// TestPlannedFeedbackWithinCapIsAccepted is the Feedback probe's negative
+// control: the same loop with max exactly AT maxPlannedFeedbackRounds — the
+// boundary, not merely inside it — must plan cleanly, or the probe refuses
+// for the wrong reason: a feedback arc rejected wholesale (or a cap enforced
+// as > rather than >=) rather than an excessive max.
+func TestPlannedFeedbackWithinCapIsAccepted(t *testing.T) {
+	spec := `{"name":"ok","nodes":[` +
+		`{"id":"impl","prompt":"redo per {{ feedback.probe }}","allowed_tools":["Read"]},` +
+		`{"id":"probe","prompt":"judge","allowed_tools":["Read"],"depends_on":["impl"],` +
+		`"feedback":{"rerun":"impl","max":` + strconv.Itoa(maxPlannedFeedbackRounds) + `}}]}`
+	fake, _ := newPlannerFake(runnerOutcome(spec))
+
+	if _, err := New(fake).Plan(context.Background(), "iterate until it passes", nil); err != nil {
+		t.Fatalf("a planned feedback loop within the cap must be accepted, got: %v", err)
 	}
 }
 

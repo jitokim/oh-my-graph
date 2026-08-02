@@ -218,6 +218,13 @@ type Options struct {
 	// `resume` passes runstate.Snapshot.SettledNodes(); CompletedNodes keeps
 	// deciding topology, SettledNodes only gates re-launch.
 	SettledNodes map[string]bool
+	// NodeRounds seeds each node's current feedback round for a resumed leg
+	// (ADR 0010): the resume path derives it from a declarer's non-terminal
+	// marker record (round k → every body node resumes at round k), so the
+	// leg's events and snapshot records carry the right round and the
+	// declarer's remaining budget is max − k. nil for a fresh run — every
+	// node starts at round 0.
+	NodeRounds map[string]int
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -242,6 +249,14 @@ type Scheduler struct {
 	// settledNodes is the set of node ids that reached ANY terminal verdict in
 	// an earlier leg (pass or fail) — see Options.SettledNodes.
 	settledNodes map[string]bool
+	// nodeRounds seeds the feedback state per Run — see Options.NodeRounds.
+	nodeRounds map[string]int
+	// feedback is this Run's view of every feedback arc: rounds, bodies,
+	// re-arming in-degrees (ADR 0010). Built by execute() from the graph it
+	// is handed — the one piece of per-run state the Scheduler holds, which
+	// is safe because every caller constructs a Scheduler per run; a second
+	// sequential Run simply rebuilds it.
+	feedback *feedbackState
 	// sessionIDs mints the pre-assigned session id for each fresh-session
 	// claude attempt (runner.NewSessionID in production; tests script it for
 	// determinism). Assigning the id BEFORE the child spawns is what lets
@@ -296,6 +311,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		toolPolicies:   opts.ToolPolicies,
 		completedNodes: opts.CompletedNodes,
 		settledNodes:   opts.SettledNodes,
+		nodeRounds:     opts.NodeRounds,
 		sessionIDs:     runner.NewSessionID,
 	}
 }
@@ -364,6 +380,7 @@ func (c *haltCause) explain(err error) error {
 func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
 	sem := make(chan struct{}, effectiveConcurrency(s.concurrency, g.Concurrency))
 	continueOnFail := effectiveContinueOnFail(s.continueOnFail, g)
+	s.feedback = newFeedbackState(g, s.nodeRounds)
 	grp, ctx := errgroup.WithContext(ctx)
 	halt := &haltCause{}
 
@@ -389,6 +406,15 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 	var failMu sync.Mutex
 	var prunedFailures []string
 
+	// rearmed (guarded by mu, like inDegree) is the set of node ids a fired
+	// feedback arc has re-armed this leg. It exists for the resumed-leg case:
+	// a body node that PASSED in an earlier leg is in settledNodes, and
+	// without this override the launch guard below would refuse to re-run it
+	// — but a fired arc supersedes that verdict for exactly the body's nodes
+	// (the marker made that durable), so membership here bypasses the guard.
+	// settledNodes itself stays untouched: it is the caller's map.
+	rearmed := make(map[string]bool)
+
 	// pauseMu guards the run's pause state: pausedAt (the id of the gate whose
 	// DecisionPause first stopped the run, or "" while no gate has paused it)
 	// and limitedNodes/limitCause (the nodes whose subprocess hit the
@@ -409,7 +435,10 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 
 	var launch func(id string)
 	launch = func(id string) {
-		if s.settledNodes[id] {
+		mu.Lock()
+		wasRearmed := rearmed[id]
+		mu.Unlock()
+		if s.settledNodes[id] && !wasRearmed {
 			// This node already reached a terminal verdict (pass or fail) in
 			// an earlier leg. A PASS never reaches here at all — it is
 			// excluded from the initial ReadyGiven(completedNodes) set and
@@ -454,6 +483,38 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 						limitCause = limit.Cause
 					}
 					pauseMu.Unlock()
+					return nil
+				}
+				var feedback *feedbackSignal
+				if errors.As(err, &feedback) {
+					// A fired feedback arc (ADR 0010) — the fourth intercepted
+					// signal. The non-final record trio is already durable
+					// (judgeFeedback wrote it); what happens here is pure
+					// scheduling. A pause elsewhere suppresses the relaunch
+					// exactly as it suppresses a successful node's dependents
+					// — the marker means a later resume re-enters the loop.
+					pauseMu.Lock()
+					paused := pausedAt != "" || len(limitedNodes) > 0
+					pauseMu.Unlock()
+					if paused {
+						return nil
+					}
+					// Re-arm the body: clear each member's completed status by
+					// re-seeding its in-degree counting only IN-BODY parents
+					// (out-of-body parents ran once and stay satisfied), mark
+					// the members re-armed so a cross-leg settled verdict
+					// cannot block their relaunch, and launch the target —
+					// the one body node whose in-body in-degree is zero.
+					// Independent branches are untouched. All body nodes had
+					// settled before the declarer could fail, so no member is
+					// in flight while this rewires it.
+					mu.Lock()
+					for member, degree := range s.feedback.bodyInDegrees(feedback.NodeID) {
+						inDegree[member] = degree
+						rearmed[member] = true
+					}
+					mu.Unlock()
+					launch(feedback.Target)
 					return nil
 				}
 				var reject *rejectSignal
@@ -573,10 +634,13 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 //
 // It returns nil on success, or the failure (an interpolation error, a runner
 // error, a *NodeCheckError — including a failed verification — or a
-// *NodeBudgetError) after retries are exhausted. A gate node never reaches
-// this general path at all; see evaluateGate for its three outcomes,
-// including the internal *pauseSignal/*rejectSignal Run() intercepts before
-// they could be mistaken for one of these.
+// *NodeBudgetError) after retries are exhausted. A feedback declarer's
+// judgment failure with rounds remaining returns a *feedbackSignal instead
+// (see judgeFeedback), which Run() intercepts and turns into the body's
+// re-arm rather than a failure. A gate node never reaches this general path
+// at all; see evaluateGate for its three outcomes, including the internal
+// *pauseSignal/*rejectSignal Run() intercepts before they could be mistaken
+// for one of these.
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, halt *haltCause) error {
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
@@ -591,7 +655,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	if node.Type != graph.TypeGate && node.Handoff != graph.HandoffSession {
 		sessionID = s.sessionIDs()
 	}
-	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, SessionID: sessionID})
+	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
 
 	if node.Type == graph.TypeGate {
 		return s.evaluateGate(ctx, node, h, led, start)
@@ -673,7 +737,16 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
 			continue
 		}
-		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, verdictErr)
+		// The feedback arc is consulted exactly where the failure would
+		// otherwise become final — after retries, before recordFail. A fired
+		// arc returns the signal Run's launch loop intercepts; an exhausted
+		// (or absent, or non-judgment) one falls through to the terminal
+		// FAIL, its cause wrapped with the spend when rounds were used up.
+		signal, finalErr := s.judgeFeedback(node, outcome, h, led, time.Since(start), verdictErr)
+		if signal != nil {
+			return signal
+		}
+		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, finalErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -730,9 +803,10 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, sessionID string, cost float64, duration time.Duration, attempt int, cause error) error {
 	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
 	rec := failRecord(node, sessionID, cost, duration, cause)
+	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
-	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt))
+	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
 }
 
@@ -742,10 +816,24 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
 	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
 	rec := passRecord(node, outcome, duration, attempt)
+	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
-	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt))
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return nil
+}
+
+// appendRoundNote joins a body node's "feedback round k/N" note onto its
+// ledger detail, so every execution's row says which round it priced
+// (ADR 0010, "the ledger prices every execution"). A no-op outside a round.
+func appendRoundNote(rec *ledger.Record, note string) {
+	if note == "" {
+		return
+	}
+	if rec.Detail != "" {
+		rec.Detail += "; "
+	}
+	rec.Detail += note
 }
 
 // recordGateApprove writes the gate's live "approved" progress line and its
@@ -761,7 +849,8 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
 	s.recordGateDecision(node, runstate.GateApprove)
-	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0))
+	// A gate is never in a feedback body (validated), so its round is 0.
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0, 0))
 	return nil
 }
 
@@ -785,7 +874,7 @@ func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation) string {
 // retryNumber is 1-based: the first retry after the initial attempt is 1.
 func (s *Scheduler) recordRetry(node graph.Node, retryNumber int, sessionID string) {
 	s.logProgress("↻ %s  retry\n", node.ID)
-	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeRetried, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID})
+	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeRetried, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
 }
 
 // recordSnapshot converts rec into a runstate.NodeRecord — filling in
@@ -799,7 +888,7 @@ func (s *Scheduler) recordRetry(node graph.Node, retryNumber int, sessionID stri
 // "Gate nodes and resume").
 func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff) {
 	artifactPath, _ := h.ArtifactPath(node.ID)
-	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath)); err != nil {
+	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID))); err != nil {
 		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
 	}
 }
@@ -816,7 +905,7 @@ func (s *Scheduler) recordGateDecision(node graph.Node, decision runstate.GateDe
 // Scheduler already built for the same node, so the two never carry different
 // cost/verdict/detail for the same event — one accounting computation, two
 // destinations (the ledger for this leg's table, the snapshot for a resume).
-func toNodeRecord(rec ledger.Record, artifactPath string) runstate.NodeRecord {
+func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.NodeRecord {
 	verdict := runstate.VerdictFail
 	if rec.Verdict == ledger.VerdictPass {
 		verdict = runstate.VerdictPass
@@ -829,6 +918,7 @@ func toNodeRecord(rec ledger.Record, artifactPath string) runstate.NodeRecord {
 		Duration:     rec.Duration,
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
+		Round:        round,
 	}
 }
 
@@ -836,8 +926,9 @@ func toNodeRecord(rec ledger.Record, artifactPath string) runstate.NodeRecord {
 // the Scheduler already built for the same transition — one accounting
 // computation, three destinations (ledger, snapshot, event stream) — so the
 // stream can never carry a different cost/verdict/detail than the other two.
-// retries is the number of retries that preceded the terminal attempt.
-func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries int) runfeed.Event {
+// retries is the number of retries that preceded the terminal attempt;
+// round is the feedback round the execution belonged to (0 outside a loop).
+func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, round int) runfeed.Event {
 	return runfeed.Event{
 		Type:      eventType,
 		NodeID:    rec.NodeID,
@@ -846,6 +937,7 @@ func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries int) 
 		SessionID: rec.SessionID,
 		Retries:   retries,
 		Detail:    rec.Detail,
+		Round:     round,
 	}
 }
 
@@ -1000,10 +1092,14 @@ func (s *Scheduler) policyFor(node graph.Node) (runner.ToolPolicy, error) {
 //
 // Every failure on this path — an unresolvable interpolation, a timeout, a
 // command that could not spawn, the wrong exit code, output that did not match —
-// becomes the same *NodeCheckError. That is deliberate: they all mean "this
-// node's success was not demonstrated", they all carry the same retry cause
-// (verify_failed), and a verification that could not be completed must never
-// read as a pass.
+// becomes the same *NodeCheckError with the same retry cause (verify_failed):
+// they all mean "this node's success was not demonstrated", and a verification
+// that could not be completed must never read as a pass. But the error keeps
+// the two ways of failing apart: evidence that was gathered and judged
+// insufficient is a judgment, while a verification that never reached a
+// verdict — the interpolation failed, the command could not spawn or timed
+// out — is an Infrastructure fault (verifyFault), so a feedback arc does not
+// spend a whole body re-run on a fault no re-run can repair (ADR 0010).
 func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *handoff.Handoff, nodeCwd string) error {
 	verification := node.SuccessCheck.Verify
 	if verification == nil {
@@ -1012,13 +1108,13 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 
 	request, err := resolveVerification(*verification, h, nodeCwd)
 	if err != nil {
-		return verifyFailure(node.ID, err.Error())
+		return verifyFault(node.ID, err.Error())
 	}
 
 	s.logProgress("… %s  verifying: %s\n", node.ID, request.Command)
 	result, err := s.verifier.Verify(ctx, request)
 	if err != nil {
-		return verifyFailure(node.ID, err.Error())
+		return verifyFault(node.ID, err.Error())
 	}
 	return judgeVerification(node.ID, *verification, request.Command, result)
 }
@@ -1044,20 +1140,26 @@ func resolveVerification(v graph.Verification, h *handoff.Handoff, nodeCwd strin
 // actually did. This is the whole point of the predicate: the judgement is made
 // here, from observed facts, not by the node reporting on itself.
 func judgeVerification(nodeID string, v graph.Verification, command string, result verify.Result) error {
+	// Already compiled once by graph.Validate at load time, so this cannot fail
+	// for a graph that came through Load/Parse; it is still handled rather than
+	// ignored, because a caller that hand-built a Node bypasses that guarantee.
+	// It is a fault, not a failure, and it is judged before the exit code: a
+	// malformed pattern rendered no verdict on the work even when the exit code
+	// also mismatches, and no re-run can repair the declaration.
+	var pattern *regexp.Regexp
+	if v.OutputMatches != "" {
+		var err error
+		if pattern, err = regexp.Compile(v.OutputMatches); err != nil {
+			return verifyFault(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
+		}
+	}
+
 	if expected := v.ExpectedExitCode(); result.ExitCode != expected {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` exited %d, want %d%s",
 			command, result.ExitCode, expected, outputTail(result.Output)))
 	}
-	if v.OutputMatches == "" {
+	if pattern == nil {
 		return nil
-	}
-
-	// Already compiled once by graph.Validate at load time, so this cannot fail
-	// for a graph that came through Load/Parse; it is still handled rather than
-	// ignored, because a caller that hand-built a Node bypasses that guarantee.
-	pattern, err := regexp.Compile(v.OutputMatches)
-	if err != nil {
-		return verifyFailure(nodeID, fmt.Sprintf("invalid output_matches regex %q: %v", v.OutputMatches, err))
 	}
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
@@ -1066,9 +1168,18 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 	return nil
 }
 
-// verifyFailure builds the one error shape every verification failure takes.
+// verifyFailure builds the error shape for evidence that was gathered and
+// judged insufficient — a verdict on the work.
 func verifyFailure(nodeID, detail string) error {
 	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail}
+}
+
+// verifyFault builds the error shape for a verification that could not be
+// completed at all — no verdict on the work exists. Same node failure, same
+// verify_failed retry cause, but marked Infrastructure so a feedback arc
+// never fires on it (see isJudgmentFailure).
+func verifyFault(nodeID, detail string) error {
+	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Infrastructure: true}
 }
 
 // outputTail renders the end of a verification command's output for the ledger's

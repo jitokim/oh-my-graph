@@ -43,9 +43,9 @@ func TestLintPlaceholders_Warnings(t *testing.T) {
 			wantDetail: "does not match",
 		},
 		{
-			name:       "nested path fails the strict pattern",
+			name:       "dotted reference is one whole name, judged against declarations",
 			prompt:     "use {{ inputs.repo.name }}",
-			wantDetail: "does not match",
+			wantDetail: "does not declare",
 		},
 		{
 			name:       "case-variant artifacts kind warns with a lowercase hint",

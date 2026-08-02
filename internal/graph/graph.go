@@ -257,6 +257,22 @@ type Node struct {
 	// on a planned node — an unreviewed plan must not create checkouts or
 	// branches in the user's repository.
 	Worktree string `yaml:"worktree" json:"worktree,omitempty"`
+	// Feedback, when non-nil, declares this node's failure-recovery arc
+	// (ADR 0010): on a judgment failure (verify_failed / result_mismatch /
+	// nonzero_exit) after this node's own retries are spent, the engine
+	// re-runs the depends_on path from Feedback.Rerun up through this node —
+	// at most Feedback.Max times — handing this node's output to the re-run
+	// as {{ feedback.<this-id> }}. The arc annotates the DAG without joining
+	// it: validateFeedback enforces a proper-ancestor target, a required
+	// bound, a side-exit-free body with no gates, in-body session parents,
+	// and disjoint bodies across arcs — all at load, before anything spends.
+	//
+	// Planned graphs keep the field (Retry's standing), under one extra
+	// ceiling: coordinator.validatePlannedNodeFeedback rejects a planned
+	// Max above its small fixed cap (maxPlannedFeedbackRounds), while the
+	// load validations above apply to a planned graph exactly as to a
+	// hand-written one.
+	Feedback *Feedback `yaml:"feedback" json:"feedback,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate
 	// (validateNodeTimeouts). Unexported so the parsed form cannot drift from

@@ -118,7 +118,11 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 // mode rather than run — the pending gate needs a human decision, which a
 // retry leg must never sneak past.
 func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
-	retained, cleared := partitionForRetry(snap)
+	g, err := graph.Parse(snap.Graph)
+	if err != nil {
+		return fmt.Errorf("reconstruct graph for run %q: %w", flags.runID, err)
+	}
+	retained, cleared := partitionForRetry(g, snap)
 	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	if len(cleared) == 0 {
 		if snap.Gate.PausedAt != "" {
@@ -127,11 +131,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 				snap.Gate.PausedAt, snap.Gate.PausedAt, snap.Gate.PausedAt)
 			return nil
 		}
-		unfinished, err := hasUnfinishedWork(snap.Graph, retained)
-		if err != nil {
-			return fmt.Errorf("reconstruct graph for run %q: %w", flags.runID, err)
-		}
-		if !unfinished {
+		if !hasUnfinishedWork(g, retained) {
 			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
 			return nil
 		}
@@ -146,38 +146,68 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 // launch condition (ReadyGiven(completed) minus settled), applied ahead of
 // time — a node buried behind a retained FAIL (a rejected gate's pruned
 // subtree) is unreachable and does not count, so a retry of such a run stays
-// a clean no-op instead of opening an empty leg.
-func hasUnfinishedWork(graphJSON []byte, retained map[string]runstate.NodeRecord) (bool, error) {
-	g, err := graph.Parse(graphJSON)
-	if err != nil {
-		return false, err
-	}
+// a clean no-op instead of opening an empty leg. A feedback declarer's
+// retained mid-loop marker (no verdict — see partitionForRetry) counts as
+// unfinished through the same computation: the marker is neither completed
+// nor settled, so the declarer itself reads as launchable.
+func hasUnfinishedWork(g *graph.Graph, retained map[string]runstate.NodeRecord) bool {
 	carried := runstate.Snapshot{Nodes: retained}
 	settled := carried.SettledNodes()
 	for _, id := range g.ReadyGiven(carried.CompletedNodes()) {
 		if !settled[id] {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // partitionForRetry splits a snapshot's node records for --retry-failed:
 // retained records carry forward as-is — every PASS (dependents interpolate
 // their artifacts exactly as after a gate resume), plus a rejected gate's
 // FAIL, because a rejection is a standing human decision and not a failure to
-// salvage (retrying it would only replay the recorded reject) — and cleared
-// lists, sorted for a stable banner, the FAILED node ids whose records are
-// dropped so the retry leg re-executes them. Cancelled/never-settled nodes
-// have no record and need no clearing: they become runnable again once their
-// parents settle.
-func partitionForRetry(snap runstate.Snapshot) (retained map[string]runstate.NodeRecord, cleared []string) {
+// salvage (retrying it would only replay the recorded reject), plus a
+// feedback declarer's non-terminal mid-loop MARKER (no verdict — ADR 0010),
+// because a marker is not a failure either: retaining it is what lets
+// continueRun resume INTO the loop at the recorded round — and cleared
+// lists, sorted for a stable banner, the node ids whose records are dropped
+// so the retry leg re-executes them. Cancelled/never-settled nodes have no
+// record and need no clearing: they become runnable again once their parents
+// settle.
+//
+// A cleared FAILED feedback declarer whose arc fired at least once (its
+// record carries Round > 0) takes its whole loop body with it (ADR 0010,
+// "salvage means re-arming the loop, not re-running the declarer alone"):
+// retaining the body's PASSes would relaunch the declarer against artifacts
+// its rounds already judged insufficient — exactly the target-only shape the
+// ADR rejects — so the body's records are cleared too, and with no record
+// left to seed a round from, the re-run starts at round 0 with a fresh
+// rounds budget: explicit human intervention buys a fresh set of rounds. A
+// declarer that FAILED at round 0 never fired — only a non-judgment fault (a
+// verify infrastructure fault, a blown budget) fails a declarer before its
+// first fire — so its body's PASSes were never judged and are retained, and
+// the retry leg re-runs the declarer alone, like any other failed node.
+func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[string]runstate.NodeRecord, cleared []string) {
+	clearedSet := make(map[string]bool)
 	retained = make(map[string]runstate.NodeRecord, len(snap.Nodes))
 	for id, rec := range snap.Nodes {
-		if rec.Verdict == runstate.VerdictPass || snap.Gate.Decisions[id] == runstate.GateReject {
-			retained[id] = rec
+		if rec.Verdict == runstate.VerdictFail && snap.Gate.Decisions[id] != runstate.GateReject {
+			clearedSet[id] = true
 			continue
 		}
+		retained[id] = rec
+	}
+	for _, n := range g.Nodes {
+		if n.Feedback == nil || !clearedSet[n.ID] || snap.Nodes[n.ID].Round == 0 {
+			continue
+		}
+		for _, member := range g.FeedbackBody(n.ID) {
+			if _, carried := retained[member]; carried {
+				clearedSet[member] = true
+				delete(retained, member)
+			}
+		}
+	}
+	for id := range clearedSet {
 		cleared = append(cleared, id)
 	}
 	sort.Strings(cleared)
@@ -206,6 +236,37 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	h := handoff.New(runDir, snap.Inputs)
 	for nodeID, rec := range records {
 		h.Seed(nodeID, rec.ArtifactPath, rec.SessionID)
+	}
+
+	// A feedback declarer carrying a non-terminal MARKER record (round k, no
+	// verdict — ADR 0010) means the earlier leg stopped mid-loop, and this leg
+	// must resume INTO the loop, not out of it. The marker plus the graph is
+	// the whole resume state: body records written before round k are
+	// superseded — dropped below from the completed and settled seeds so the
+	// remainder of round k re-executes — every body node resumes at round k
+	// (so max − k rounds remain and events/snapshot records stamp the right
+	// round), and the declarer's persisted feedback payload is re-read so the
+	// re-run cannot silently run without it (a failure to re-read is fatal
+	// for the same reason).
+	nodeRounds := make(map[string]int)
+	superseded := make(map[string]bool)
+	for _, n := range g.Nodes {
+		if n.Feedback == nil {
+			continue
+		}
+		marker, recorded := records[n.ID]
+		if !recorded || marker.Verdict != "" || marker.Round == 0 {
+			continue
+		}
+		if err := h.SeedFeedback(n.ID); err != nil {
+			return fmt.Errorf("resume run %q mid-loop: %w", runID, err)
+		}
+		for _, member := range g.FeedbackBody(n.ID) {
+			nodeRounds[member] = marker.Round
+			if rec, carried := records[member]; carried && rec.Round < marker.Round {
+				superseded[member] = true
+			}
+		}
 	}
 
 	led := ledger.New(runID)
@@ -256,8 +317,19 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// carried re-derives the two scheduler seed sets from exactly the records
 	// this leg carries forward, through the same Snapshot methods a fresh
 	// load uses — a record cleared by --retry-failed is in neither set, which
-	// is precisely what makes its node run again.
+	// is precisely what makes its node run again. A body record a mid-loop
+	// marker superseded is then removed from BOTH sets: dropping it from
+	// completed is what re-runs it, and dropping it from settled is what lets
+	// the scheduler relaunch a node an earlier leg's PASS would otherwise
+	// have pinned (the record itself stays in `records`, so its spend still
+	// seeds the ledger and accumulates into the round that replaces it).
 	carried := runstate.Snapshot{Nodes: records}
+	completed := carried.CompletedNodes()
+	settled := carried.SettledNodes()
+	for id := range superseded {
+		delete(completed, id)
+		delete(settled, id)
+	}
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -270,13 +342,17 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).
-		CompletedNodes: carried.CompletedNodes(),
+		CompletedNodes: completed,
 		// SettledNodes additionally covers a node that FAILED on an earlier
 		// leg (absent from CompletedNodes by design, so it does not wrongly
 		// unblock its dependents), so THAT node itself still never re-runs
 		// either — otherwise --continue-on-fail's "this failure is final"
 		// would silently be undone by a later resume.
-		SettledNodes: carried.SettledNodes(),
+		SettledNodes: settled,
+		// NodeRounds re-enters a mid-loop feedback leg at the marker's round:
+		// re-executed body nodes stamp round k on their events and records,
+		// and the declarer's remaining budget is max − k (ADR 0010).
+		NodeRounds: nodeRounds,
 	})
 
 	fmt.Fprintf(os.Stdout, "%s\n\n", banner)

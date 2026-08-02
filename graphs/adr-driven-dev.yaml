@@ -119,7 +119,7 @@ nodes:
     permission_mode: dontAsk
     timeout: 1h # hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "PASS" }
+    success_check: { exit_zero: true, result_matches: "^PASS" }
 
   - id: localrun
     type: claude-run
@@ -141,7 +141,7 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "PASS" # secondary: the node's own account of itself
+      result_matches: "^PASS" # secondary: the node's own account of itself
       # The evidence. The engine runs this itself and judges the exit code,
       # so a node that reports PASS without the suite passing does not pass.
       verify: { command: "make local", timeout: 5m }
@@ -189,7 +189,7 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "PASS"
+      result_matches: "^PASS"
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
@@ -226,7 +226,7 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "PASS"
+      result_matches: "^PASS"
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 

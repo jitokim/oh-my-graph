@@ -50,6 +50,12 @@ nodes:
     depends_on: [dev]
     handoff: session
     worktree: lane
+  - id: impl
+    prompt: "redo with {{ feedback.check }}"
+  - id: check
+    depends_on: [impl]
+    prompt: judge
+    feedback: { rerun: impl, max: 2 }
 `)
 
 	encoded, err := json.Marshal(original)
