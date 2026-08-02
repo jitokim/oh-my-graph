@@ -266,6 +266,12 @@ type Node struct {
 	// it: validateFeedback enforces a proper-ancestor target, a required
 	// bound, a side-exit-free body with no gates, in-body session parents,
 	// and disjoint bodies across arcs — all at load, before anything spends.
+	//
+	// Planned graphs keep the field (Retry's standing), under one extra
+	// ceiling: coordinator.validatePlannedNodeFeedback rejects a planned
+	// Max above its small fixed cap (maxPlannedFeedbackRounds), while the
+	// load validations above apply to a planned graph exactly as to a
+	// hand-written one.
 	Feedback *Feedback `yaml:"feedback" json:"feedback,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate
