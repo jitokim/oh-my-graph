@@ -104,6 +104,7 @@ Node schema:
   retry: { max: 1, on: [nonzero_exit] }   # optional
   feedback: { rerun: impl, max: 2 }       # optional (ADR 0010): on a judgment failure, re-run the depends_on path from `rerun` back to this node, at most `max` times — see "Execution engine"
 ```
+
 Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
 see "Execution engine" step 4), `nodes: [..]`.

@@ -60,8 +60,10 @@ Guarantees:
   always sees a complete, self-consistent document — never a partial write.
 - It is rewritten after **every** node's terminal verdict, so it is at most
   one in-flight node stale.
-- It carries only terminal state: a node currently running is absent from
-  `nodes`. Live progress is what `events.jsonl` is for.
+- It carries settled state only: a node currently running is absent from
+  `nodes`. The one non-terminal record is the feedback marker above —
+  `round` with no `verdict` — which is a settled fact about the loop, not
+  live progress. Live progress is what `events.jsonl` is for.
 
 ## `events.jsonl` — the stream
 
