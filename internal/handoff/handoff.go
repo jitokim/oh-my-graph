@@ -2,10 +2,13 @@
 // delegates to it, so the Scheduler never touches the filesystem or string
 // templates itself:
 //
-//   - interpolate {{ inputs.<name> }} and {{ artifacts.<id> }} into a node's
-//     prompt and cwd before it runs;
+//   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }} and
+//     {{ feedback.<id> }} into a node's prompt and cwd before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
-//     so dependents can read it (the artifact-default handoff);
+//     so dependents can read it (the artifact-default handoff), and a feedback
+//     declarer's failing payload to <node-id>.feedback.out so a feedback
+//     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
+//     contract);
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
@@ -37,11 +40,15 @@ func (e *InterpolationError) Error() string {
 	return fmt.Sprintf("cannot resolve {{ %s.%s }}: %s", e.Kind, e.Reference, e.Reason)
 }
 
-// placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} with an
-// optional `| inline` filter. Group 1 = kind, group 2 = reference, group 3 =
-// filter (empty or "inline"). Whitespace around each token is tolerated.
+// placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} /
+// {{ feedback.id }} with an optional `| inline` filter. Group 1 = kind,
+// group 2 = reference, group 3 = filter (empty or "inline"). Whitespace
+// around each token is tolerated. The filter is only meaningful on
+// artifacts; a feedback placeholder always inlines and resolveLocked rejects
+// a filter on it loudly (graph.Validate already refuses it at load for any
+// graph that came through Parse).
 var placeholderPattern = regexp.MustCompile(
-	`\{\{\s*(inputs|artifacts)\.([A-Za-z0-9_-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
+	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9_-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
 // Handoff owns the run directory and the accumulating state of completed nodes.
@@ -52,6 +59,7 @@ type Handoff struct {
 	mu            sync.Mutex
 	artifactPaths map[string]string // node id -> persisted .out path
 	sessions      map[string]string // node id -> claude session id
+	feedback      map[string]string // declarer id -> latest feedback payload (ADR 0010)
 }
 
 // New builds a Handoff bound to a run directory and the invocation's inputs. The
@@ -66,18 +74,27 @@ func New(runDir string, inputs map[string]string) *Handoff {
 		inputs:        copied,
 		artifactPaths: make(map[string]string),
 		sessions:      make(map[string]string),
+		feedback:      make(map[string]string),
 	}
 }
 
-// Interpolate substitutes every {{ inputs.x }} and {{ artifacts.id }} in tmpl.
+// Interpolate substitutes every {{ inputs.x }}, {{ artifacts.id }} and
+// {{ feedback.id }} in tmpl.
 //
 //   - inputs resolve to the bound input value.
 //   - artifacts resolve to the persisted .out FILE PATH by default (robust,
 //     lets the node read it however it likes); the `| inline` filter instead
 //     inlines the file's content.
+//   - feedback ALWAYS inlines the declarer's latest feedback payload, and
+//     resolves to the EMPTY string while no round has fired (ADR 0010) —
+//     the one namespace where "not there yet" is an expected state rather
+//     than a wiring bug, which is why graph.Validate confines the token to
+//     the declarer's loop body at load.
 //
 // An unknown input, or an artifact whose producer has not persisted yet, is an
-// *InterpolationError — never a silent empty substitution.
+// *InterpolationError — never a silent empty substitution. The feedback
+// namespace's empty default is deliberately NOT that: it is a documented
+// value, confined to the one place it can mean something.
 func (h *Handoff) Interpolate(tmpl string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -107,6 +124,19 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no such input was provided"}
 		}
 		return value, nil
+	}
+
+	if kind == "feedback" {
+		if filter != "" {
+			return "", &InterpolationError{
+				Kind:      kind,
+				Reference: ref,
+				Reason:    "a feedback placeholder takes no filter — {{ feedback.<id> }} always inlines the payload",
+			}
+		}
+		// Empty while no round has fired: the documented first-pass default,
+		// never an error (see Interpolate).
+		return h.feedback[ref], nil
 	}
 
 	// kind == "artifacts"
@@ -173,6 +203,58 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 	defer h.mu.Unlock()
 	h.artifactPaths[nodeID] = artifactPath
 	h.sessions[nodeID] = sessionID
+}
+
+// SetFeedback records a feedback declarer's payload — its result text when
+// the failing execution produced one, else its failure detail (the Scheduler
+// decides which) — so the loop body's re-run resolves {{ feedback.<id> }} to
+// it. The payload is also persisted to <run-dir>/<node-id>.feedback.out,
+// overwritten per round (latest wins): an INTERNAL implementation file, not
+// a documented consumer contract (ADR 0010) — it exists so a run stopped
+// mid-loop can re-seed the payload on resume (SeedFeedback). The .out
+// artifact contract is untouched: .feedback.out never means "a passed
+// node's result".
+func (h *Handoff) SetFeedback(nodeID, payload string) error {
+	if err := os.MkdirAll(h.runDir, 0o755); err != nil {
+		return fmt.Errorf("create run dir %q: %w", h.runDir, err)
+	}
+	if err := os.WriteFile(h.feedbackPath(nodeID), []byte(payload), 0o644); err != nil {
+		return fmt.Errorf("persist feedback payload for node %q: %w", nodeID, err)
+	}
+
+	h.mu.Lock()
+	h.feedback[nodeID] = payload
+	h.mu.Unlock()
+	return nil
+}
+
+// SeedFeedback rehydrates one declarer's feedback payload for a resumed run
+// from the .feedback.out file SetFeedback persisted — the payload's analogue
+// of Seed. A missing file is a clean no-op, not an error: it means no round
+// had fired (or the payload predates a crash that lost it), and the
+// namespace's documented empty default is exactly the right degraded
+// behaviour. Any other read failure is returned so the resume path can warn
+// rather than silently run a round without its feedback.
+func (h *Handoff) SeedFeedback(nodeID string) error {
+	payload, err := os.ReadFile(h.feedbackPath(nodeID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("re-read feedback payload for node %q: %w", nodeID, err)
+	}
+	h.mu.Lock()
+	h.feedback[nodeID] = string(payload)
+	h.mu.Unlock()
+	return nil
+}
+
+// feedbackPath is the on-disk location of a declarer's persisted feedback
+// payload, sanitized exactly as artifactPath is and for the same reason.
+func (h *Handoff) feedbackPath(nodeID string) string {
+	safe := strings.ReplaceAll(nodeID, "/", "_")
+	safe = strings.ReplaceAll(safe, string(os.PathSeparator), "_")
+	return filepath.Join(h.runDir, safe+".feedback.out")
 }
 
 // ResumeSessionFor returns the claude session id a session-handoff node must

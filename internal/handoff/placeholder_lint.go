@@ -34,15 +34,18 @@ var looseTokenPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 var leadingWordPattern = regexp.MustCompile(`^[A-Za-z0-9_]+`)
 
 // placeholderKinds are the body-leading words that mark a token as intended
-// interpolation: the two real kinds plus their singular typos, matched
-// case-insensitively so a case-variant like {{ Artifacts.x }} is judged
-// rather than shipped verbatim. A {{ ... }} whose body starts with anything
-// else is assumed to be deliberate literal text and is never warned about.
+// interpolation: the three real kinds plus their number typos (singular for
+// the plural kinds, plural for feedback), matched case-insensitively so a
+// case-variant like {{ Artifacts.x }} is judged rather than shipped
+// verbatim. A {{ ... }} whose body starts with anything else is assumed to
+// be deliberate literal text and is never warned about.
 var placeholderKinds = map[string]bool{
 	"inputs":    true,
 	"artifacts": true,
+	"feedback":  true,
 	"input":     true,
 	"artifact":  true,
+	"feedbacks": true,
 }
 
 // LintPlaceholders statically inspects every templated field the Scheduler
@@ -114,7 +117,7 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		if leading != strings.ToLower(leading) {
 			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token)
 		}
-		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }} or {{ artifacts.<id> }} (optional filter: | inline) — it will reach the prompt verbatim", token)
+		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline) or {{ feedback.<id> }} — it will reach the prompt verbatim", token)
 	}
 
 	groups := placeholderPattern.FindStringSubmatch(token)
@@ -123,6 +126,14 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		if !declared[ref] {
 			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token)
 		}
+		return ""
+	}
+	if kind == "feedback" {
+		// The feedback namespace is judged at LOAD, not here: an out-of-body
+		// or filtered token is a graph.Validate error (ADR 0010), so on any
+		// graph this lint is handed the token is already known-legal —
+		// re-reporting it would be noise, and warning about a legal one
+		// would contradict the validator.
 		return ""
 	}
 
