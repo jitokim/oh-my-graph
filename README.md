@@ -25,65 +25,102 @@
 > **It executes; [fleetops](https://github.com/jitokim/fleetops) observes the
 > same `~/.claude/projects` transcripts.**
 
-## The whitespace
+<p align="center">
+  <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
+</p>
+<p align="center"><em>The live view mid-run — a real dogfood run (the ADR-0012 skill-mapping graph) captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
+
+## What it is
 
 Graph engineering — wiring specialized agents together as a DAG — currently
 forces you onto the Anthropic API, the Agent SDK, and a metered
 `ANTHROPIC_API_KEY`. Every existing graph-native orchestrator bills per token.
 
 There is no orchestrator that drives the **subscription** `claude` CLI. That is
-the gap oh-my-graph fills: each DAG node runs as a raw `claude -p` subprocess on
-the plan you already pay for. Marginal cost per node: `$0`, inside your Max/Pro
-subscription.
+the gap oh-my-graph fills: you describe the work as a DAG, and each node runs as
+a raw `claude -p` subprocess on the subscription you already pay for
+([Bring your own login](#bring-your-own-login) has the plan and credential
+detail).
 
 How oh-my-graph compares to its nearest neighbours — conductor, OMK,
 open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
 
-## Bring your own login
+## What it can do
 
-oh-my-graph never ships credentials, never proxies auth, and never runs as a
-shared service. It re-uses **your own** already-logged-in `claude` session — the
-same standing as running `claude -p` yourself, or as
-[claude-squad](https://github.com/smtg-ai/claude-squad). It is a personal, local
-tool.
+- **The engine.** A graph is YAML — a list of nodes whose edges are inline
+  `depends_on` ids — and each node is one `claude -p` subprocess under its own
+  tool ceiling (`allowed_tools`, `permission_mode`), with parallelism emerging
+  from the topology up to a concurrency cap. Exactly four objects in the whole
+  codebase may spawn a process, and every one of them starts its child from an
+  environment with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted
+  ([the graph model](#the-custom-path--write-the-graph-yourself) ·
+  [DESIGN.md](DESIGN.md) ·
+  [ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md) ·
+  [ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md) ·
+  [ADR 0006](docs/adr/0006-browser-open-is-a-fourth-exec-seam.md)).
+- **Failure is a first-class grammar.** A node passes on evidence, not on
+  self-report: `success_check` with an engine-run `verify` command, per-cause
+  `retry`, graph-level `on_fail`, bounded `feedback:` review loops, `auto`'s
+  plan→run→assess goal cycles, human gates, and a subscription session limit
+  that pauses the run instead of failing it — `resume --retry-failed` later
+  finishes exactly the work that never ran
+  ([what else a node can declare](#what-else-a-node-can-declare)).
+- **Observation.** A web live view served on `127.0.0.1` while a leg runs, then
+  `runs list` / `show` / `watch` afterward, over an append-only `events.jsonl`
+  any consumer can tail — plus a per-node cost ledger with a run total
+  ([Usage](#usage) · [docs/RUN-FEED.md](docs/RUN-FEED.md)).
+- **Your own Claude setup.** Nodes are the `claude -p` you already log into, so
+  they inherit it; `agent:` runs a node as one of your own Claude Code
+  subagents, and `auto` maps planned nodes onto your agents and skills
+  ([`auto` in depth](#auto-in-depth)).
 
-To keep that guarantee real, every node subprocess starts from your environment
-with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted** — those silently
-switch `claude` to metered API billing. The scrub is unit-tested
-(`internal/runner/claude_test.go`); oh-my-graph never uses `--bare` (which
-disables OAuth) and never touches the Agent SDK. Full stance:
-[SECURITY.md](SECURITY.md).
+<p align="center">
+  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: a LIVE header with 2 running / 68 passed / 19 failed run chips and a cumulative spend total, an IN FLIGHT row of two live run cards each drawing its own mini-DAG with per-node states, and a collapsed SETTLED group of 87 runs" width="100%" />
+</p>
+<p align="center"><em>The dashboard, one step up from a single run — a real dogfood board: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header is cumulative subscription usage across the project's whole development — not a per-run price, and not free.</em></p>
 
-## Pairs with fleetops
+## What makes it different
 
-Nodes run in real working directories with session persistence **on**, so every
-node shows up as an ordinary claude session in `~/.claude/projects`.
-[fleetops](https://github.com/jitokim/fleetops) — the fleet cockpit — observes
-those transcripts. oh-my-graph is the executor; fleetops is the dashboard. You
-get the observability integration for free.
+- **The graph is an artifact, not a transcript.** The DAG lives in a YAML file
+  you version, review in a pull request and replay — the same topology, the same
+  tool ceiling, the same prompts every time. That is the opposite of an agent
+  improvising a fresh plan, or writing a fresh throwaway script, on every
+  invocation.
+- **A human can stand in the middle of the run.** A `type: gate` node stops the
+  run for approval and `oh-my-graph resume` continues it — from the terminal or
+  straight from the live view — so an irreversible step waits for a person
+  instead of for the best case.
+- **Failure semantics live in the engine, not in your glue code.** Evidence
+  checks, per-cause retry, continue-or-halt policy, bounded feedback loops, gate
+  pauses and failed-run salvage are behaviour you declare in the graph, not
+  shell you write and maintain around it.
+- **It ships itself.** Dogfooding here is not a demo: this repository is built
+  by the tool it contains. Features, fixes, docs and releases are authored by
+  its own graphs — a claude node implements on a branch, sibling nodes run the
+  checks and the reviews, and a final node opens the draft PR. The verifiable
+  part, as of 2026-08-02: 23 of the 80 pull requests merged into `main` carry a
+  Claude co-author trailer in their squash commit — the receipt that a claude
+  session wrote them. Count them yourself:
+  `git log main --first-parent -i --grep="co-authored-by: claude"` (24 matches:
+  those 23 squash commits plus the initial commit). That trailer names the
+  model, not the pipeline, so from 2026-08-02 on, commits authored by a graph
+  lane also carry `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` — a
+  transparency convention, not proof of authorship; see
+  [CONTRIBUTING.md](CONTRIBUTING.md#attribution). The templates in
+  [`graphs/`](graphs/) are not samples: `self-dev.yaml`, `adr-driven-dev.yaml`
+  and `apply-flags.yaml` are the pipelines this repo ships itself with, and a
+  full dogfooding run is walked through in
+  [docs/EXAMPLES.md](docs/EXAMPLES.md#dogfooding-developing-oh-my-graph-with-oh-my-graph).
 
-## It ships itself
+## How to use it
 
-Dogfooding here is not a demo: this repository is built by the tool it
-contains. Features, fixes, docs and releases are authored by its own graphs —
-a claude node implements on a branch, sibling nodes run the checks and the
-reviews, and a final node opens the draft PR. The verifiable part, as of
-2026-08-02: 23 of the 80 pull requests merged into `main` carry a Claude
-co-author trailer in their squash commit — the receipt that a claude session
-wrote them. Count them yourself:
-`git log main --first-parent -i --grep="co-authored-by: claude"`
-(24 matches: those 23 squash commits plus the initial commit). That trailer
-names the model, not the pipeline, so from 2026-08-02 on, commits authored by
-a graph lane also carry `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
-— a transparency convention, not proof of authorship; see
-[CONTRIBUTING.md](CONTRIBUTING.md#attribution).
+Two paths, both runnable in a minute: let `auto` plan the graph from a
+plain-language goal, or write the YAML yourself when you want precise control.
 
-The templates in [`graphs/`](graphs/) are not samples: `self-dev.yaml`,
-`adr-driven-dev.yaml` and `apply-flags.yaml` are the pipelines this repo
-ships itself with. A full dogfooding run is walked through in
-[docs/EXAMPLES.md](docs/EXAMPLES.md#dogfooding-developing-oh-my-graph-with-oh-my-graph).
+<a id="quickstart"></a>
+<a id="example"></a>
 
-## Quickstart
+### The easy path — install, `init`, state a goal
 
 ```sh
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
@@ -91,7 +128,10 @@ go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 # Write the example graphs that ship inside the binary into ./graphs/:
 oh-my-graph init
 
-# The cheapest real smoke test (a few cents):
+# Zero config — describe the goal and let auto plan the graph:
+oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+
+# Or run a shipped graph — the cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
@@ -105,12 +145,42 @@ nothing at all.
 No `ANTHROPIC_API_KEY` needed — the smoke test runs on your logged-in `claude`
 subscription; if the key (or `ANTHROPIC_AUTH_TOKEN`) is set in your shell,
 it's deleted from each node's subprocess environment before that node runs
-(see [Bring your own login](#bring-your-own-login) above).
+(see [Bring your own login](#bring-your-own-login) below).
 
-While it runs you'll see a live line per node — `▶ write  running…`, then
+`auto` is the zero-config default: one claude call (through the same
+subscription-auth, env-scrubbed runner) turns the goal into a graph spec, which
+is validated and executed by the same engine. The plan is printed before it
+runs, and the generated spec is saved to
+`~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
+hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
+`permission_mode: bypassPermissions`; custom YAML remains the path for precise
+control. Its knobs — goal cycles, agent mapping, skill mapping — are in
+[`auto` in depth](#auto-in-depth) below.
+
+While a graph runs you'll see a live line per node — `▶ write  running…`, then
 `✓ write  PASS  $0.0091  4.2s` — the terminal is never silent during a
 multi-node run. At the end you get a ledger: one row per node (session id,
-cost, verdict, detail) and the total cost — see [Example](#example) below.
+cost, verdict, detail) and the total cost. The shipped
+`graphs/haiku-smoke.yaml` above (two nodes: `write` then `critique`, wired by
+the default artifact handoff) is the cheapest real end-to-end check of all of
+it:
+
+```text
+Running graph "haiku-smoke" (run 20260729-101532)
+
+▶ write  running…
+✓ write  PASS  $0.0091  4.2s
+▶ critique  running…
+✓ critique  PASS  $0.0034  2.1s
+
+Run 20260729-101532 — 2 node(s)
+NODE             VERDICT    SESSION                     COST(USD)  DETAIL
+------------------------------------------------------------------------------
+critique         PASS       a1b2c3d4-e5f6-47a8-9c1…       0.0034
+write            PASS       f9e8d7c6-b5a4-4321-8765…      0.0091
+------------------------------------------------------------------------------
+TOTAL COST: $0.0125
+```
 
 When stdout is a terminal, `run`, `auto` and `resume` also serve the [web live
 view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
@@ -118,10 +188,9 @@ open it in your default browser; the server lives exactly as long as that leg.
 In a script, a pipe, or CI (stdout not a terminal) — or with `--no-web` —
 nothing is served or opened and the output is unchanged.
 
-<p align="center">
-  <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
-</p>
-<p align="center"><em>The live view mid-run — a real dogfood run (the ADR-0012 skill-mapping graph) captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
+More walkthroughs — auto mode in depth, dogfooding, observing with fleetops,
+ambient chat — plus per-feature recipes live in
+[docs/EXAMPLES.md](docs/EXAMPLES.md).
 
 ### Prebuilt binaries
 
@@ -146,65 +215,96 @@ tar xzf "${ARCHIVE}"
 
 Move `oh-my-graph` onto your `PATH` and the smoke test above runs unchanged.
 
-### Zero-config: auto mode
+### The custom path — write the graph yourself
 
-Don't want to write YAML? Give `auto` a goal and it plans the graph for you —
-one claude call (through the same subscription-auth, env-scrubbed runner) turns
-the goal into a graph spec, which is validated and executed by the same engine:
+A graph is YAML: a `name`, optional `inputs` and `concurrency`, and a list of
+`nodes`. Each node is one `claude -p` subprocess. Edges are inline `depends_on`
+ids — there is no separate edge list, so the topology has a single source of
+truth. Parallelism is **emergent**: nodes that share a parent but don't depend
+on each other run concurrently, up to the cap.
 
-```sh
-oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+```yaml
+name: dev-review-pr
+inputs: [repo]
+concurrency: 4
+nodes:
+  - id: dev
+    cwd: "{{ inputs.repo }}"
+    prompt: Implement the change and summarize what you did.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
+    permission_mode: dontAsk
+
+  - id: e2e
+    depends_on: [dev]
+    cwd: "{{ inputs.repo }}"  # a session child works in its parent's tree
+    handoff: session          # e2e resumes dev's session — it already knows everything dev just did
+    prompt: Run make local and report PASS or FAIL.
+    success_check:
+      exit_zero: true
+      result_matches: "PASS"          # what the node said
+      verify: { command: "make local" }  # what the engine saw
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
+
+  - id: review
+    depends_on: [e2e]
+    permission_mode: plan     # read-only
+    prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
-The plan is printed before it runs, and the generated spec is saved to
-`~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
-hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
-`permission_mode: bypassPermissions`; custom YAML remains the path for precise
-control.
+Three things worth knowing about from the start, each one line of YAML:
 
-Want `auto` to keep going until the goal is actually met? `--max-cycles N`
-(default 1) turns one invocation into a bounded loop of up to N whole
-plan→run→assess cycles: after each run, a tool-stripped assessor judges the
-goal against the run's own recorded evidence, and if work remains, the next
-cycle replans around it — every cycle re-validated under the same tool
-ceiling, every plan and verdict printed as it happens, and a goal summary
-totalling each cycle's spend at the end. Exit 0 requires both a goal-met
-verdict and a passed final run. `--max-goal-budget-usd X` adds an optional
-soft spend ceiling checked between cycles; it requires `--max-cycles` of at
-least 2, since a single-cycle run has no cycle boundary to check it at, and
-the flag is rejected at parse otherwise. Stated honestly: `auto` is
-non-interactive, so an unattended `--max-cycles 5` may spend five planner
-calls, five graphs and five assessments with nobody watching — the
-governance is the bound you typed, the per-cycle validation, and the printed
-record, not a confirmation prompt.
+- **gates** — a node declared `type: gate` stops the run for human approval,
+  continued with `oh-my-graph resume`
+  ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **`feedback:`** — `feedback: { rerun: impl, max: 2 }` on a reviewer node
+  turns a review into a bounded loop instead of an unrolled chain
+  ([ADR 0010](docs/adr/0010-a-feedback-edge-is-a-bounded-runtime-rerun-not-a-static-cycle.md)
+  · demo: `graphs/review-loop.yaml`).
+- **`worktree:`** — parallel edit lanes, one isolated git checkout per lane name
+  ([recipe](docs/EXAMPLES.md#parallel-edit-lanes-with-git-worktrees-worktree)).
 
-If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
-— project wins), `auto` also maps planned nodes onto them when a node's id
-clearly matches an agent's name — your review node runs as *your*
-`code-reviewer`. The match is deliberately conservative (one clear candidate or
-nothing, and an agent wanting tools beyond the node's planned allowlist is
-skipped with a note), every mapping is shown in the printed plan before
-anything runs, and `--no-agent-mapping` turns it off. The trade, stated
-up front: a mapped node loads your settings so the agent can resolve, instead
-of running fully settings-isolated — its declared tool list still binds.
+The full field list is in [what else a node can
+declare](#what-else-a-node-can-declare) below; DESIGN.md is the authoritative
+spec.
 
-Your Claude Code skills (`~/.claude/skills` only — never a project directory)
-reach `auto` runs too, by a blunter mechanism stated plainly: a planned node
-cannot see or invoke skills at all (measured), so when a node's id clearly
-matches a skill's name, the skill's SKILL.md body is **copied into that node's
-prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
-are skipped with a note, never truncated), paid for on every invocation of
-that node, and applied unconditionally where Claude Code itself would activate
-the skill only when relevant. Every inlining prints its size and a SHA-256
-prefix before the run, the exact text — from which the full hash is
-recomputable — is snapshotted into the saved `graph.json`
-(later skill edits don't reach an already-planned run), and
-`--no-skill-mapping` turns it off. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
-walks through the plan output, the tool ceiling, and the live node feed.
+### Recurring pipelines — write it once
+
+A graph file is your prompt engineering, saved. The careful
+goal/format/rules prompt you would otherwise re-type into a chat every
+morning lives in the YAML once, and `oh-my-graph run pipeline.yaml` replays
+it identically on demand — daily analysis, weekly triage, release checks —
+on the subscription you already pay for. Within one run, `handoff: session`
+keeps the chain's context flowing, so downstream prompts stay one-liners
+instead of restating the goal and the format — see
+[Handoff](#handoff--what-a-child-inherits) below.
+
+```yaml
+name: daily-triage
+nodes:
+  - id: collect             # the careful goal/format/rules prompt lives here, once
+    prompt: >
+      Collect today's open issues and failing checks; list each with a
+      one-line status.
+  - id: analyze
+    depends_on: [collect]
+    handoff: session        # continues collect's conversation
+    prompt: Analyze what you just collected and rank by urgency.
+  - id: report
+    depends_on: [analyze]
+    handoff: session        # the chain keeps flowing
+    prompt: Write the ranked findings up as a short report.
+```
+
+One boundary, stated plainly: **runs do not remember each other.** Each run
+starts fresh by design
+([ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md) records
+why cross-run session reuse is deferred) — day-to-day consistency comes
+from the pinned prompts and the `success_check` / `verify` gates, not from
+Claude remembering yesterday.
 
 ## Usage
 
-```
+```text
 oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
@@ -248,120 +348,49 @@ additionally proves `{{ inputs.* }}` resolution against your actual
 in-flight run shows in `runs list` as `RUNNING` (with `-` placeholders until
 its first snapshot lands).
 
-Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
-relocate the base) — the same directory no matter where you invoke the tool
-from: a versioned snapshot (`state.json`) and an append-only event stream
-(`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
-a consumer like fleetops can tail. The layout is a documented, stable
-contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md).
+<a id="auto-in-depth"></a>
 
-## Use it from Claude Code (plugin)
+### `auto` in depth — goal cycles, agents, skills
 
-The CLI above is the product. To stay inside a Claude Code session instead,
-[`plugin/`](plugin/) is a thin plugin adding a `/graph` slash command — it
-shells out to the same `oh-my-graph` binary, no logic reimplemented — plus a
-graph-engineering **agent** as the lower-friction entry point: add
-`omg () { claude --agent oh-my-graph "$@"; }` to your shell rc, and `omg`
-opens a session where every turn is graph-aware. Install and usage:
-[plugin/README.md](plugin/README.md) ([agent section](plugin/README.md#the-oh-my-graph-agent-ambient-entry-point)).
+Want `auto` to keep going until the goal is actually met? `--max-cycles N`
+(default 1) turns one invocation into a bounded loop of up to N whole
+plan→run→assess cycles: after each run, a tool-stripped assessor judges the
+goal against the run's own recorded evidence, and if work remains, the next
+cycle replans around it — every cycle re-validated under the same tool
+ceiling, every plan and verdict printed as it happens, and a goal summary
+totalling each cycle's spend at the end. Exit 0 requires both a goal-met
+verdict and a passed final run. `--max-goal-budget-usd X` adds an optional
+soft spend ceiling checked between cycles; it requires `--max-cycles` of at
+least 2, since a single-cycle run has no cycle boundary to check it at, and
+the flag is rejected at parse otherwise. Stated honestly: `auto` is
+non-interactive, so an unattended `--max-cycles 5` may spend five planner
+calls, five graphs and five assessments with nobody watching — the
+governance is the bound you typed, the per-cycle validation, and the printed
+record, not a confirmation prompt.
 
-## Example
+If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
+— project wins), `auto` also maps planned nodes onto them when a node's id
+clearly matches an agent's name — your review node runs as *your*
+`code-reviewer`. The match is deliberately conservative (one clear candidate or
+nothing, and an agent wanting tools beyond the node's planned allowlist is
+skipped with a note), every mapping is shown in the printed plan before
+anything runs, and `--no-agent-mapping` turns it off. The trade, stated
+up front: a mapped node loads your settings so the agent can resolve, instead
+of running fully settings-isolated — its declared tool list still binds.
 
-The cheapest real end-to-end check: the [Quickstart](#quickstart) command,
-using the shipped `graphs/haiku-smoke.yaml` (two nodes: `write` then
-`critique`, wired by the default artifact handoff). What you'll see:
-
-```
-Running graph "haiku-smoke" (run 20260729-101532)
-
-▶ write  running…
-✓ write  PASS  $0.0091  4.2s
-▶ critique  running…
-✓ critique  PASS  $0.0034  2.1s
-
-Run 20260729-101532 — 2 node(s)
-NODE             VERDICT    SESSION                     COST(USD)  DETAIL
-------------------------------------------------------------------------------
-critique         PASS       a1b2c3d4-e5f6-47a8-9c1…       0.0034
-write            PASS       f9e8d7c6-b5a4-4321-8765…      0.0091
-------------------------------------------------------------------------------
-TOTAL COST: $0.0125
-```
-
-More walkthroughs — auto mode in depth, dogfooding, observing with fleetops,
-ambient chat — plus per-feature recipes live in
-[docs/EXAMPLES.md](docs/EXAMPLES.md).
-
-## The graph model
-
-A graph is YAML: a `name`, optional `inputs` and `concurrency`, and a list of
-`nodes`. Each node is one `claude -p` subprocess. Edges are inline `depends_on`
-ids — there is no separate edge list, so the topology has a single source of
-truth. Parallelism is **emergent**: nodes that share a parent but don't depend
-on each other run concurrently, up to the cap.
-
-```yaml
-name: dev-review-pr
-inputs: [repo]
-concurrency: 4
-nodes:
-  - id: dev
-    cwd: "{{ inputs.repo }}"
-    prompt: Implement the change and summarize what you did.
-    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
-    permission_mode: dontAsk
-
-  - id: e2e
-    depends_on: [dev]
-    cwd: "{{ inputs.repo }}"  # a session child works in its parent's tree
-    handoff: session          # e2e resumes dev's session — it already knows everything dev just did
-    prompt: Run make local and report PASS or FAIL.
-    success_check:
-      exit_zero: true
-      result_matches: "PASS"          # what the node said
-      verify: { command: "make local" }  # what the engine saw
-    retry: { max: 1, on: [nonzero_exit, verify_failed] }
-
-  - id: review
-    depends_on: [e2e]
-    permission_mode: plan     # read-only
-    prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
-```
-
-### Recurring pipelines — write it once
-
-A graph file is your prompt engineering, saved. The careful
-goal/format/rules prompt you would otherwise re-type into a chat every
-morning lives in the YAML once, and `oh-my-graph run pipeline.yaml` replays
-it identically on demand — daily analysis, weekly triage, release checks —
-on the subscription you already pay for. Within one run, `handoff: session`
-keeps the chain's context flowing, so downstream prompts stay one-liners
-instead of restating the goal and the format — see
-[Handoff](#handoff--what-a-child-inherits) below.
-
-```yaml
-name: daily-triage
-nodes:
-  - id: collect             # the careful goal/format/rules prompt lives here, once
-    prompt: >
-      Collect today's open issues and failing checks; list each with a
-      one-line status.
-  - id: analyze
-    depends_on: [collect]
-    handoff: session        # continues collect's conversation
-    prompt: Analyze what you just collected and rank by urgency.
-  - id: report
-    depends_on: [analyze]
-    handoff: session        # the chain keeps flowing
-    prompt: Write the ranked findings up as a short report.
-```
-
-One boundary, stated plainly: **runs do not remember each other.** Each run
-starts fresh by design
-([ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md) records
-why cross-run session reuse is deferred) — day-to-day consistency comes
-from the pinned prompts and the `success_check` / `verify` gates, not from
-Claude remembering yesterday.
+Your Claude Code skills (`~/.claude/skills` only — never a project directory)
+reach `auto` runs too, by a blunter mechanism stated plainly: a planned node
+cannot see or invoke skills at all (measured), so when a node's id clearly
+matches a skill's name, the skill's SKILL.md body is **copied into that node's
+prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
+are skipped with a note, never truncated), paid for on every invocation of
+that node, and applied unconditionally where Claude Code itself would activate
+the skill only when relevant. Every inlining prints its size and a SHA-256
+prefix before the run, the exact text — from which the full hash is
+recomputable — is snapshotted into the saved `graph.json`
+(later skill edits don't reach an already-planned run), and
+`--no-skill-mapping` turns it off. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
+walks through the plan output, the tool ceiling, and the live node feed.
 
 ### Handoff — what a child inherits
 
@@ -379,6 +408,8 @@ reply is gone — the child starts cold. With `session`, the child picks up
 mid-conversation, so a tight pipeline (implement, then test what you just
 built) needs no re-explaining. Session children still write their own
 `prompt` — what they inherit is the context, not the instructions.
+
+### What else a node can declare
 
 Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 
@@ -415,6 +446,45 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   ordinary failure that the same command still salvages
   ([ADR 0009](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
+## Use it from Claude Code (plugin)
+
+The CLI above is the product. To stay inside a Claude Code session instead,
+[`plugin/`](plugin/) is a thin plugin adding a `/graph` slash command — it
+shells out to the same `oh-my-graph` binary, no logic reimplemented — plus a
+graph-engineering **agent** as the lower-friction entry point: add
+`omg () { claude --agent oh-my-graph "$@"; }` to your shell rc, and `omg`
+opens a session where every turn is graph-aware. Install and usage:
+[plugin/README.md](plugin/README.md) ([agent section](plugin/README.md#the-oh-my-graph-agent-ambient-entry-point)).
+
+## Run artifacts and the run feed
+
+Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
+relocate the base) — the same directory no matter where you invoke the tool
+from: a versioned snapshot (`state.json`) and an append-only event stream
+(`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
+a consumer like fleetops can tail. The layout is a documented, stable
+contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md).
+
+## Bring your own login
+
+oh-my-graph never ships credentials, never proxies auth, and never runs as a
+shared service. It re-uses **your own** already-logged-in `claude` session — the
+same standing as running `claude -p` yourself, or as
+[claude-squad](https://github.com/smtg-ai/claude-squad). It is a personal, local
+tool. Nodes run inside the Max/Pro plan you already pay for, with no metered key
+involved.
+
+To keep that guarantee real, every node subprocess starts from your environment
+with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted** — those silently
+switch `claude` to metered API billing. The scrub is one shared policy
+(`internal/childenv`), unit-tested on its own
+(`internal/childenv/childenv_test.go`) and again at each of the four exec seams
+(`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
+`internal/worktree/git_test.go`, `internal/browser/exec_test.go`);
+oh-my-graph never uses `--bare` (which
+disables OAuth) and never touches the Agent SDK. Full stance:
+[SECURITY.md](SECURITY.md).
+
 ## Platform support
 
 macOS and Linux are the supported targets; CI builds and tests on Linux.
@@ -424,6 +494,14 @@ Windows compiles and runs, best-effort (no Windows CI): `verify` runs under
 `cmd /c` rather than `sh -c`, cancellation kills only the direct child, and
 the env scrub is case-sensitive — prefer WSL. Full platform detail, known
 limitations and the deferred list: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+## Pairs with fleetops
+
+Nodes run in real working directories with session persistence **on**, so every
+node shows up as an ordinary claude session in `~/.claude/projects`.
+[fleetops](https://github.com/jitokim/fleetops) — the fleet cockpit — observes
+those transcripts. oh-my-graph is the executor; fleetops is the dashboard. You
+get the observability integration for free.
 
 ## Development
 
