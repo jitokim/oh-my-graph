@@ -46,6 +46,9 @@ nodes:
       You are in the repo at {{ inputs.repo }}; its working tree is clean and
       must stay untouched. Verify that PR #{{ inputs.pr }} passes the local
       suite, in a throwaway checkout:
+        0. Clear any leftover from an earlier attempt so a retry cannot
+           collide: `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+           (ignore the error if there is nothing to remove).
         1. `gh pr view {{ inputs.pr }}` and `gh pr diff {{ inputs.pr }}` to
            see what the PR is.
         2. `git fetch origin pull/{{ inputs.pr }}/head`
@@ -54,7 +57,9 @@ nodes:
            SYNCHRONOUSLY and wait for the exit code, never in the
            background: your final reply IS the verdict, so you cannot reply
            before the suite has finished.
-        5. `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+        5. ALWAYS remove the worktree before you answer, on the FAIL path
+           as well as the PASS path:
+           `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
       Begin your reply with PASS, or with FAIL followed by the failing step.
     allowed_tools: [Read, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
@@ -131,6 +136,13 @@ nodes:
   # The human gate: the run stops here with exit 2 after triage's table is
   # in. Read it, then `oh-my-graph resume <run-id> --approve approve-merge`
   # (or --reject approve-merge to end the run without merging).
+  #
+  # Known limitation to check here: the graph does not loop back to
+  # ready-and-wait after triage. If triage's table says it PUSHED a fix, the
+  # head SHA you are about to merge has only been checked by triage's own
+  # `make ... local` — the GitHub `test` check and CodeRabbit's review both
+  # concluded on the PRE-triage SHA. Confirm CI and review status on the
+  # FINAL SHA yourself before approving.
   - id: approve-merge
     type: gate
     depends_on: [triage]
@@ -156,7 +168,14 @@ nodes:
       Run every step in the foreground and finish all four before you
       answer: your final reply IS the verdict. Reply with the merge commit
       SHA and a one-line ledger of what shipped.
-    allowed_tools: ["Bash(gh *)", "Bash(git *)", "Bash(make *)"]
+    # Narrower than every other node's grant: this is the one irreversible
+    # mutation in the pipeline, so it may run only the five commands above.
+    allowed_tools:
+      - "Bash(gh pr merge *)"
+      - "Bash(git pull *)"
+      - "Bash(git remote prune *)"
+      - "Bash(git branch -d *)"
+      - "Bash(make build)"
     permission_mode: dontAsk
     timeout: 15m
     handoff: artifact
