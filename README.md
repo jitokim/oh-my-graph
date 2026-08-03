@@ -65,9 +65,11 @@ open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
   that pauses the run instead of failing it — `resume --retry-failed` later
   finishes exactly the work that never ran
   ([what else a node can declare](#what-else-a-node-can-declare)).
-- **Observation.** A web live view served on `127.0.0.1` while a leg runs, then
-  `runs list` / `show` / `watch` afterward, over an append-only `events.jsonl`
-  any consumer can tail — plus a per-node cost ledger with a run total
+- **Observation.** A web live view served on `127.0.0.1` while a leg runs —
+  or `serve` with no run id for a dashboard of every run at once, one live
+  mini-DAG card each — then `runs list` / `show` / `watch` afterward, over an
+  append-only `events.jsonl` any consumer can tail — plus a per-node cost
+  ledger with a run total
   ([Usage](#usage) · [docs/RUN-FEED.md](docs/RUN-FEED.md)).
 - **Your own Claude setup.** Nodes are the `claude -p` you already log into, so
   they inherit it; `agent:` runs a node as one of your own Claude Code
@@ -187,6 +189,15 @@ view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
 open it in your default browser; the server lives exactly as long as that leg.
 In a script, a pipe, or CI (stdout not a terminal) — or with `--no-web` —
 nothing is served or opened and the output is unchanged.
+
+To watch runs that are already going, run `oh-my-graph serve`. With no run id
+it is a **dashboard** — the board pictured above: one port, one tab, one live
+mini-DAG card per run — in-flight runs first with their state, elapsed, cost
+and node counts, settled runs collapsed below — and clicking a card opens that
+run's full live view. Cards appear and settle live, so a run started after you
+opened the page shows up on it. It opens in your browser too (on a terminal;
+`--no-open` opts out), and `oh-my-graph serve <run-id>` still goes straight to
+that one run's view.
 
 More walkthroughs — auto mode in depth, dogfooding, observing with fleetops,
 ambient chat — plus per-feature recipes live in
@@ -319,7 +330,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
-| `serve [<run-id>]` | Web live view of a run, bound to `127.0.0.1` only (default port 8642, `--port` to change). Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
+| `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open` prints the URL instead. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
 | `version` | Print the tool version. |
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling

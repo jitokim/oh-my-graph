@@ -72,10 +72,12 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로
   대신 일시정지시키는 구독 세션 한도 — `resume --retry-failed`가 나중에
   실행되지 못한 작업만 정확히 마저 끝냅니다
   ([노드가 선언할 수 있는 나머지](#what-else-a-node-can-declare)).
-- **관찰.** run이 진행되는 동안에는 `127.0.0.1`에 서빙되는 web live view,
-  끝난 뒤에는 `runs list` / `show` / `watch` — 모두 어떤 consumer든 tail 할
-  수 있는 append-only `events.jsonl` 위에서 동작합니다. 여기에 노드별 비용
-  ledger와 run 합계가 더해집니다
+- **관찰.** run이 진행되는 동안에는 `127.0.0.1`에 서빙되는 web live view —
+  run id 없이 `serve`를 실행하면 모든 run을 한눈에 보는 dashboard가 되고,
+  run마다 live mini-DAG 카드가 하나씩 뜹니다 — 끝난 뒤에는 `runs list` /
+  `show` / `watch`. 모두 어떤 consumer든 tail 할 수 있는 append-only
+  `events.jsonl` 위에서 동작합니다. 여기에 노드별 비용 ledger와 run 합계가
+  더해집니다
   ([사용법](#usage) · [docs/RUN-FEED.md](docs/RUN-FEED.md)).
 - **당신의 Claude 설정 그대로.** 노드는 당신이 이미 로그인해 쓰는
   `claude -p` 그 자체이므로 그 설정을 그대로 물려받습니다. `agent:`는
@@ -202,6 +204,15 @@ view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저�
 서버는 정확히 그 leg가 지속되는 동안만 살아 있습니다. 스크립트, 파이프,
 CI에서(stdout이 터미널이 아닐 때) — 또는 `--no-web`을 주면 — 아무것도
 서빙하거나 열지 않으며 출력도 달라지지 않습니다.
+
+이미 돌고 있는 run들을 보려면 `oh-my-graph serve`를 실행하세요. run id 없이
+실행하면 **dashboard**입니다 — 위에 실린 바로 그 보드로, 포트 하나, 탭
+하나에 run마다 live mini-DAG 카드가 하나씩 — 진행 중인 run이 위에
+상태·경과 시간·비용·노드 수와 함께, 끝난 run은 아래에 접힌 목록으로 —
+그리고 카드를 클릭하면 그 run의 전체 live view가 열립니다. 카드는 실시간으로
+나타나고 정착하므로, 페이지를 연 뒤에 시작한 run도 그대로 올라옵니다. 이것도
+브라우저에서 열립니다(터미널일 때; `--no-open`으로 끌 수 있음).
+`oh-my-graph serve <run-id>`는 여전히 그 run의 view로 바로 갑니다.
 
 더 많은 워크스루 — auto 모드 심화, dogfooding, fleetops로 관찰하기,
 ambient chat — 와 기능별 레시피는
@@ -341,7 +352,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict, 그리고 합계. 읽기 전용. |
 | `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
-| `serve [<run-id>]` | run의 web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
+| `serve [<run-id>]` | Web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). **run id 없이** 실행하면 dashboard입니다 — run마다 live mini-DAG 카드가 하나씩 뜨고, 카드를 클릭하면 그 run의 view(`/run/<id>/`)로 갑니다. run id를 주면 그 run의 view로 바로 갑니다. stdout이 터미널이면 브라우저로 열립니다(`--no-open`이면 URL만 출력). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
 | `version` | 도구 버전을 출력. |
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),

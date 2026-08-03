@@ -701,12 +701,22 @@ decides where a human should be interrupted is not a feature, and it collides
 with the deny-by-default field policy below.
 
 ## Web live view — `oh-my-graph serve`
-`serve [<run-id>] [--port N]` is a web live view of ONE run: a
-chronological run feed — what each node produced, why something failed — as
-the main surface, with the DAG as a compact collapsible side map (GitHub
-Actions' log-first layout, not Airflow's graph-first one: for this tool's
-runs the substance is in the node output, not the topology). It changes
-nothing about the visibility
+`serve [<run-id>] [--port N] [--no-open]` is two views on one port,
+depending on its one optional argument:
+
+- **`serve <run-id>`** is the live view of ONE run: a chronological run feed
+  — what each node produced, why something failed — as the main surface,
+  with the DAG as a compact collapsible side map (GitHub Actions' log-first
+  layout, not Airflow's graph-first one: for this tool's runs the substance
+  is in the node output, not the topology).
+- **`serve` with no run id** is the **dashboard**: `/` renders one live
+  mini-DAG card per run — in-flight first (state colour, elapsed, cost, node
+  counts), settled runs in a collapsed list below — and each run's own live
+  view is mounted at `/run/<id>/`, which is where a card click goes.
+  Watching four concurrent runs is one process, one port and one tab
+  instead of four of each.
+
+It changes nothing about the visibility
 stance: oh-my-graph executes and does not render *for the fleet* — serve is
 a **consumer of the run-feed contract** (docs/RUN-FEED.md) in everything but
 one route, living
@@ -736,9 +746,44 @@ standalone `serve` process injects a resumer: a paused run's process has
 already exited (ADR 0003), so an embedded live view can never be looking at
 one, and it answers 409 like any other view that cannot resume.
 
-- **Run resolution:** an explicit id wins; otherwise the newest in-flight run
-  (the leg-walking `runs list` uses for RUNNING); otherwise the newest run
-  directory (`serve.ResolveRun`).
+- **Run resolution:** `serve <run-id>` resolves that id (`serve.ResolveRun`;
+  a mistyped id is a clear error, raised before the listener binds). With no
+  id there is nothing to resolve — the dashboard is the view of *every* run,
+  including the ones that do not exist yet, so an empty (or absent) runs
+  root is an empty dashboard that fills in when something runs, not an
+  error. `ResolveRun`'s in-flight-then-newest preference remains for the
+  embedded views.
+- **The dashboard subscribes to the runs ROOT** the way a run view
+  subscribes to its `events.jsonl`: `/api/cards/events` sweeps the root at
+  the same poll cadence and streams one `card` frame per run that is new or
+  changed, one `card_removed` per deleted directory, and `cards_ready` after
+  the first sweep; `/api/cards` is the same data in one read. "Changed" is
+  the size-and-modtime of the two contract files, so an idle dashboard with
+  forty settled runs costs two stats per run per tick and re-sends nothing.
+  A card is derived through the EXISTING readers only — `runfeed.InFlight`
+  for the open leg, `runfeed.Walk` (the one-shot counterpart to `Follow`)
+  for per-node state and the leg boundaries, `runstate.Load` + `graph.Parse`
+  for structure and cost — so a card can never disagree with `runs list`,
+  `watch` or the run's own view about the same run. Cost is the snapshot's
+  per-node total, the same accounting `runs list` prints. A run directory
+  this binary cannot read renders as an `unknown` card carrying the reason
+  rather than being dropped: `runs list` can skip a broken run with a
+  warning because a table can, but a dashboard that silently omitted one
+  would be lying about what is on the machine.
+- **`/run/<id>/` mounts the single-run view unchanged.** Endpoints are
+  path-scoped (`/run/<id>/api/...`) rather than query-scoped because that is
+  by far the smaller diff: the page already fetches with document-relative
+  URLs (`api/graph`, `api/events`, `api/result`, `api/transcript`,
+  `api/gate/*`) and links `style.css`/`app.js` the same way, so mounting the
+  existing route set (`Server.routes`) under the prefix reaches every
+  endpoint AND every asset with zero UI changes. A `?run=<id>` scheme would
+  have to be threaded through every fetch and the `EventSource`, and would
+  not scope the static assets at all. **The run id in the URL is matched
+  against the runs root's DIRECTORY LISTING before any path is built from
+  it** (`runInRoot`) — exactly as strict as `/api/result`'s node-id check,
+  one level up: a typo and a traversal probe are the same 404, reached
+  without a single path join. The gate token is the serving *process*'s, so
+  the dashboard page and every run view mounted under it carry the same one.
 - **127.0.0.1 only** (`serve.Listen`, default port 8642): run directories
   hold prompts, artifacts and session ids, so the server must never be
   reachable off-host. The loopback bind IS the access control for reading;
@@ -775,8 +820,12 @@ one, and it answers 409 like any other view that cannot resume.
   stdout (scripts, CI) gets no server, no browser, and byte-identical
   output. A resumed leg's view reads the same run directory the first leg's
   did, so it shows the whole run's history, not just this leg's. A chat
-  graph turn stays un-wired (ADR 0006), and the standalone `serve`
-  subcommand still just prints the URL.
+  graph turn stays un-wired (ADR 0006). The standalone `serve` subcommand
+  takes the SAME gate: it prints the URL and, when stdout is a terminal and
+  `--no-open` was not passed, hands it to the injected `ExecOpener` —
+  `--no-open` is `serve`'s name for `--no-web`'s opt-out, and a non-terminal
+  stdout reaches no Opener at all, leaving its output byte-identical to
+  before.
 - The graph structure appears when it is known: `state.json` is written only
   after each node's terminal verdict, so a fresh run's `/api/graph` honestly
   reports the structure unavailable until the first node completes (the UI
@@ -813,10 +862,14 @@ one, and it answers 409 like any other view that cannot resume.
   leg is detached from the request so closing the tab does not kill it. The
   `oh-my-graph resume` command stays on the entry as secondary text: it is
   still the way in from an embedded view.
-- **v1 scope is the single-run live view ONLY:** no run list page, no history
-  browsing, no login (the gate token is a CSRF guard, not auth), no config
-  file, no WebSocket (SSE over the append-only stream is the whole
-  transport).
+- **Scope:** the dashboard is a card wall over the run directories and the
+  single-run view behind it — no history browsing beyond what is on disk, no
+  login (the gate token is a CSRF guard, not auth), no config file, no
+  WebSocket (SSE over the append-only stream and the runs root is the whole
+  transport). A card's mini-DAG is hand-drawn SVG (layered by depth, one dot
+  per node, one line per `depends_on`) rather than a cytoscape instance per
+  card: a dashboard can hold dozens of cards, and this is orientation at a
+  glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
 `oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
@@ -1159,7 +1212,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
+internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph parses)
 docs/adr/000{1..6}-*.md
