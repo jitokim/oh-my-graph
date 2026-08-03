@@ -26,11 +26,13 @@
 //     skills listing" only under the full ceiling — the composite is
 //     unmeasured, so v1 refuses it instead of assuming it.
 //
-// Every '{{' in an inlined body is neutralized ('{ {') before appending:
-// node.Prompt is a handoff template, and un-neutralized skill prose would
-// otherwise become template code — a well-formed {{ artifacts.<id> | inline }}
-// inside a body is a file read with no tool and no ceiling involvement
-// (ADR 0012 §4). Templating is not a feature of inlined skill text.
+// An inlined body is neutralized ('{{' -> '{ {', repeated until none remains)
+// before appending: node.Prompt is a handoff template, and un-neutralized
+// skill prose would otherwise become template code — a well-formed
+// {{ artifacts.<id> | inline }} inside a body is a file read with no tool and
+// no ceiling involvement (ADR 0012 §4). The pass repeats because a single
+// non-overlapping replacement lets an odd brace run re-form a live token.
+// Templating is not a feature of inlined skill text.
 //
 // The fence carries a per-plan random nonce because an unfenced delimiter is
 // forgeable by the very file it delimits (12 of the 35 measured bodies contain
@@ -261,10 +263,18 @@ func skillCandidateFor(nodeID string, skills map[string]skillDef) (skillDef, boo
 }
 
 // inlinedSkillText is the exact text that goes between the fence markers: the
-// skill's body with every '{{' neutralized. Both the deciding pass (size cap,
-// hash) and the applying pass call this, so what was measured is what lands.
+// skill's body neutralized until no '{{' remains. A single non-overlapping
+// ReplaceAll is not enough — an odd brace run re-forms a live token ('{{{'
+// becomes '{ {{') — so the pass repeats until the output is free of '{{',
+// which is the one property placeholderPattern needs to never match. Both the
+// deciding pass (size cap, hash) and the applying pass call this, so what was
+// measured is what lands.
 func inlinedSkillText(def skillDef) string {
-	return strings.ReplaceAll(def.body, "{{", "{ {")
+	s := def.body
+	for strings.Contains(s, "{{") { // terminates: each pass shortens every brace run
+		s = strings.ReplaceAll(s, "{{", "{ {")
+	}
+	return s
 }
 
 // fencedSkillBlock renders the attributed block appended to a mapped node's

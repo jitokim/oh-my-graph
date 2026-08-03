@@ -813,8 +813,9 @@ are absent under the planned-node argv, so a prompt reference would be dead
 text. Instead, trusted code scans `~/.claude/skills/*/SKILL.md` only (never a
 project directory — that surface is cut from v1), matches by the same
 conservative name-token rule, and **appends the skill's body to the node's
-prompt** in a nonce-fenced, attributed block with every `{{` neutralized (the
-prompt is a handoff template; skill prose must not become template code). No
+prompt** in a nonce-fenced, attributed block with `{{` neutralized until none
+remains (the prompt is a handoff template; skill prose must not become
+template code, and a single pass would let odd brace runs re-form tokens). No
 ceiling layer is touched — an agent-mapped node (Layer 1 dropped) is refused a
 skill outright, because that composite is unmeasured. Bodies over 16 KiB are
 skipped, never truncated; every decision prints with the inlined size and

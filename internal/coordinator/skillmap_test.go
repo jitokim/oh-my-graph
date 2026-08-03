@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -83,10 +84,24 @@ func TestPlan_SkillMappingHit(t *testing.T) {
 	}
 }
 
+// fenceNonceOf extracts the nonce from a mapped node's opening fence marker.
+func fenceNonceOf(t *testing.T, plan Plan) string {
+	t.Helper()
+	node, _ := plan.Graph.NodeByID("review")
+	_, opening, found := strings.Cut(node.Prompt, "--- skill: pr-code-review ")
+	if !found {
+		t.Fatalf("prompt carries no opening fence marker:\n%s", node.Prompt)
+	}
+	nonce, _, _ := strings.Cut(opening, " ")
+	return nonce
+}
+
 // The fence must carry entropy the fenced text cannot predict: both markers
 // name the skill and share one per-plan nonce, and the block is attributed to
 // its source file — an unfenced delimiter would be forgeable by the very file
-// it delimits.
+// it delimits. Unpredictability is the fence's entire property, so a shape
+// check is not enough: the nonce must decode as hex AND vary across plans —
+// a hardcoded "abcdef" must fail here.
 func TestPlan_InlinedBodyIsNonceFencedAndAttributed(t *testing.T) {
 	dir := t.TempDir()
 	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the body")
@@ -94,19 +109,22 @@ func TestPlan_InlinedBodyIsNonceFencedAndAttributed(t *testing.T) {
 	plan := planWithSkills(t, WithSkillDirs(dir))
 
 	node, _ := plan.Graph.NodeByID("review")
-	_, opening, found := strings.Cut(node.Prompt, "--- skill: pr-code-review ")
-	if !found {
-		t.Fatalf("prompt carries no opening fence marker:\n%s", node.Prompt)
-	}
-	nonce, _, _ := strings.Cut(opening, " ")
+	nonce := fenceNonceOf(t, plan)
 	if len(nonce) != 6 {
 		t.Fatalf("fence nonce = %q, want 6 hex characters", nonce)
+	}
+	if _, err := hex.DecodeString(nonce); err != nil {
+		t.Fatalf("fence nonce = %q does not decode as hex: %v", nonce, err)
 	}
 	if !strings.Contains(node.Prompt, "--- end skill: pr-code-review "+nonce+" ---") {
 		t.Errorf("closing fence does not repeat the nonce, so the fence is forgeable:\n%s", node.Prompt)
 	}
 	if !strings.Contains(node.Prompt, "(mapped by oh-my-graph from "+filepath.Join(dir, "pr-code-review", "SKILL.md")+")") {
 		t.Errorf("fence does not attribute the inlined text to its source file:\n%s", node.Prompt)
+	}
+
+	if second := fenceNonceOf(t, planWithSkills(t, WithSkillDirs(dir))); second == nonce {
+		t.Errorf("two plans minted the same nonce %q — a constant nonce is forgeable by the fenced text", nonce)
 	}
 }
 
@@ -139,6 +157,59 @@ func TestPlan_InlinedBodyBracesAreNeutralized(t *testing.T) {
 	sum := sha256.Sum256([]byte(neutralized))
 	if m.SHA256 != hex.EncodeToString(sum[:]) {
 		t.Errorf("SHA256 must hash the neutralized text as inlined, got %q", m.SHA256)
+	}
+}
+
+// Neutralization must survive adversarial brace runs, and the judge is
+// handoff's own placeholderPattern — not the literal "{{" — so the neutralizer
+// can never drift from what lint and the runtime actually match. A single
+// non-overlapping ReplaceAll fails this: "{{{" becomes "{ {{", re-forming a
+// live token (deep review #1).
+func TestInlinedSkillText_AdversarialBraceRunsNeverFormPlaceholders(t *testing.T) {
+	bodies := []string{
+		"{{{ artifacts.review | inline }}}", // odd run: single ReplaceAll leaves "{ {{ artifacts... }}" live
+		"{{{ inputs.x }}}",
+		"{{{{ inputs.x }}}}", // even run
+		"{{{{{ artifacts.a }}}}}",
+		"{{ {{ artifacts.a | inline }} }}", // nested
+		"{ {{{ artifacts.a }}}",            // pre-spaced prefix plus odd run
+		strings.Repeat("{", 63) + " inputs.x " + strings.Repeat("}", 63), // long odd run
+		strings.Repeat("{", 64) + " feedback.n " + strings.Repeat("}", 64) + "\n{{{ artifacts.b | inline }}}",
+	}
+	for _, body := range bodies {
+		out := inlinedSkillText(skillDef{body: body})
+		if strings.Contains(out, "{{") {
+			t.Errorf("neutralized %q still carries '{{': %q", body, out)
+		}
+		if handoff.ContainsPlaceholder(out) {
+			t.Errorf("neutralized %q still forms a live placeholder: %q", body, out)
+		}
+	}
+}
+
+// The cap must measure the NEUTRALIZED size: neutralization grows brace-heavy
+// text, so a body under the cap raw can cross it neutralized. Such a body is
+// skipped whole — there is deliberately no truncation path, because a cut at
+// the boundary could sever a brace run and re-form a live placeholder.
+func TestPlan_BodyCrossingCapWhenNeutralizedIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	// 3 bytes raw per unit, 4 neutralized: raw stays under the cap, the
+	// neutralized text crosses it.
+	unit := "{{ "
+	count := maxInlinedSkillBytes/len(unit) - 8
+	if neutralized := len("{ { ") * count; neutralized <= maxInlinedSkillBytes {
+		t.Fatalf("fixture broken: neutralized size %d does not cross the cap", neutralized)
+	}
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.TrimSpace(strings.Repeat(unit, count)))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 || !strings.Contains(plan.SkillMappings[0].SkippedReason, "cap") {
+		t.Fatalf("mappings = %+v, want one cap skip measured on the neutralized size", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched — skip must never truncate", node.Prompt)
 	}
 }
 
@@ -246,7 +317,10 @@ func TestPlan_AgentMappedNodeIsNotSkillMapped(t *testing.T) {
 
 // Scan failures are silent no-mapping, never an error: a missing directory, a
 // SKILL.md with no frontmatter, frontmatter with no name, and a skill with an
-// empty body must all just drop out — zero-config stays zero-config.
+// empty body must all just drop out — zero-config stays zero-config. A valid
+// skill sits in the SAME directory as the broken ones and must still map:
+// without that positive control the assertions are satisfiable by a scanner
+// that rejects everything (deep review #4).
 func TestPlan_SkillScanFailuresAreSilent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "broken"), 0o755); err != nil {
@@ -257,15 +331,77 @@ func TestPlan_SkillScanFailuresAreSilent(t *testing.T) {
 	}
 	writeSkillFile(t, dir, "nameless", "description: has no name", "a body")
 	writeSkillFile(t, dir, "bodyless-review", "name: bodyless-review", "")
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the valid body")
 
 	plan := planWithSkills(t, WithSkillDirs(filepath.Join(dir, "does-not-exist"), dir))
 
-	if len(plan.SkillMappings) != 0 {
-		t.Fatalf("mappings = %+v, want none from a failed scan", plan.SkillMappings)
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want exactly the one valid skill mapped past its broken neighbours", plan.SkillMappings)
+	}
+	if m := plan.SkillMappings[0]; m.Skill != "pr-code-review" || m.SkippedReason != "" {
+		t.Fatalf("mapping = %+v, want pr-code-review applied", m)
 	}
 	node, _ := plan.Graph.NodeByID("review")
-	if node.Prompt != "review the diff" {
-		t.Errorf("node prompt = %q, want it untouched", node.Prompt)
+	if !strings.Contains(node.Prompt, "the valid body") {
+		t.Errorf("the valid skill's body must land despite broken neighbours:\n%s", node.Prompt)
+	}
+}
+
+// A SKILL.md saved with a UTF-8 BOM and CRLF line endings — the shape a
+// Windows editor produces — must still parse and map: parseSkillFile strips
+// the BOM and accepts \r\n around the frontmatter fences.
+func TestPlan_BOMAndCRLFSkillFileStillMaps(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "pr-code-review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "\ufeff---\r\nname: pr-code-review\r\n---\r\n\r\nthe windows body\r\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 || plan.SkillMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want the BOM+CRLF skill applied", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if !strings.Contains(node.Prompt, "the windows body") {
+		t.Errorf("node prompt does not carry the BOM+CRLF skill's body:\n%s", node.Prompt)
+	}
+}
+
+// One skill matching two nodes is not ambiguity — ambiguity is per node, over
+// skills — so both nodes get the body, inside fences sharing the one per-plan
+// nonce.
+func TestPlan_OneSkillMapsOntoTwoNodes(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the shared body")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"two-reviews","version":"1","nodes":[` +
+		`{"id":"review-a","prompt":"first pass","allowed_tools":["Read"]},` +
+		`{"id":"review-b","prompt":"second pass","allowed_tools":["Read"],"depends_on":["review-a"]}]}`})
+	plan, err := New(fake, WithSkillDirs(dir)).Plan(context.Background(), "review twice", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(plan.SkillMappings) != 2 {
+		t.Fatalf("mappings = %+v, want the skill applied to both matching nodes", plan.SkillMappings)
+	}
+	for _, id := range []string{"review-a", "review-b"} {
+		node, _ := plan.Graph.NodeByID(id)
+		if !strings.Contains(node.Prompt, "the shared body") {
+			t.Errorf("node %s does not carry the shared body:\n%s", id, node.Prompt)
+		}
+	}
+	nodeA, _ := plan.Graph.NodeByID("review-a")
+	_, opening, _ := strings.Cut(nodeA.Prompt, "--- skill: pr-code-review ")
+	nonce, _, _ := strings.Cut(opening, " ")
+	nodeB, _ := plan.Graph.NodeByID("review-b")
+	if !strings.Contains(nodeB.Prompt, "--- skill: pr-code-review "+nonce+" ") {
+		t.Errorf("both nodes must share the one per-plan nonce %q:\n%s", nonce, nodeB.Prompt)
 	}
 }
 

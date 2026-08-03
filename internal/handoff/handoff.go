@@ -51,6 +51,15 @@ var placeholderPattern = regexp.MustCompile(
 	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
+// ContainsPlaceholder reports whether s holds any sequence Interpolate would
+// treat as a live placeholder. It exists for code that must guarantee text is
+// template-inert — the coordinator's skill-inlining neutralizer tests against
+// it — so that guarantee is judged by the engine's own pattern and can never
+// drift from what Interpolate and LintPlaceholders actually match.
+func ContainsPlaceholder(s string) bool {
+	return placeholderPattern.MatchString(s)
+}
+
 // Handoff owns the run directory and the accumulating state of completed nodes.
 type Handoff struct {
 	runDir string
