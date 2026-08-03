@@ -229,6 +229,62 @@ func TestDashboard_ARunWithNoSnapshotYetStillGetsALiveCard(t *testing.T) {
 	}
 }
 
+func TestDashboard_ARunDirectoryThatHasSaidNothingIsPendingNotFailed(t *testing.T) {
+	// A run directory exists before either contract file does: the run lock is
+	// taken (and an auto run's graph.json saved) before the first event lands
+	// and long before the first snapshot. Nothing on disk has spoken yet, which
+	// is pending — the state the card starts in. Calling it failed would put a
+	// red card on the dashboard for every healthy run, for as long as it takes
+	// that run to emit its first event.
+	root := runsRootWith(t, "run-brand-new")
+
+	var cards []runCard
+	getJSON(t, newTestDashboard(root), "/api/cards", &cards)
+	card := cardByID(t, cards, "run-brand-new")
+	if card.State != statePending {
+		t.Errorf("card state = %q, want %q", card.State, statePending)
+	}
+	if card.Available || len(card.Nodes) != 0 || card.Error != "" {
+		t.Errorf("card = %+v, want an empty pending card with no error", card)
+	}
+}
+
+func TestDashboard_AFailedRunIsAFailedCard(t *testing.T) {
+	// The settled-and-not-all-passed case: the leg is closed and one node
+	// failed. It is runState's default arm — the one with no positive fact of
+	// its own — so it is pinned here rather than left to be reached only by
+	// accident.
+	root := runsRootWith(t, "run-fail")
+	dir := filepath.Join(root, "run-fail")
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-fail",
+		Graph: json.RawMessage(twoNodeGraph),
+		Nodes: map[string]runstate.NodeRecord{
+			"a": {Verdict: runstate.VerdictPass, CostUSD: 0.25},
+			"b": {Verdict: runstate.VerdictFail, CostUSD: 0.75},
+		},
+	})
+	writeEvents(t, dir, "run-fail",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass, CostUSD: 0.25},
+		runfeed.Event{Type: runfeed.EventNodeFailed, NodeID: "b", Verdict: runfeed.VerdictFail, CostUSD: 0.75},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+	)
+
+	var cards []runCard
+	getJSON(t, newTestDashboard(root), "/api/cards", &cards)
+	card := cardByID(t, cards, "run-fail")
+	if card.State != stateFailed {
+		t.Errorf("card state = %q, want %q", card.State, stateFailed)
+	}
+	if got := (cardCounts{Total: 2, Passed: 1, Failed: 1}); card.Counts != got {
+		t.Errorf("card counts = %+v, want %+v", card.Counts, got)
+	}
+	if card.EndedAt == "" {
+		t.Errorf("a settled card has no end timestamp; its elapsed cannot be rendered")
+	}
+}
+
 func TestDashboard_AnUnreadableRunIsShownNotDropped(t *testing.T) {
 	// `runs list` skips a broken run with a warning, because a table can. A
 	// dashboard that silently omitted one would be lying about what is on the
@@ -243,6 +299,64 @@ func TestDashboard_AnUnreadableRunIsShownNotDropped(t *testing.T) {
 	card := cardByID(t, cards, "run-broken")
 	if card.State != stateUnknown || card.Error == "" {
 		t.Errorf("card = (state %q, error %q), want an unknown card carrying the reason", card.State, card.Error)
+	}
+}
+
+func TestBuildCard_InFlightAgreesWithRunfeed(t *testing.T) {
+	// buildCard reads the stream ONCE and derives the open leg from that walk
+	// rather than paying a second read for runfeed.InFlight. That is only safe
+	// while the derived rule and InFlight's own rule are the same rule, so this
+	// judges one against the other — on the shapes where a leg rule can go
+	// wrong — instead of restating the expected answer by hand.
+	cases := map[string][]runfeed.Event{
+		"no events at all": {},
+		"open leg": {
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventNodeStarted, NodeID: "a"},
+		},
+		"closed leg": {
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+		},
+		"resumed: a second leg reopens it": {
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventNodeStarted, NodeID: "b"},
+		},
+		"resumed and settled": {
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+		},
+		"a close with no open before it": {
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+		},
+		"node events only": {
+			{Type: runfeed.EventNodeStarted, NodeID: "a"},
+		},
+	}
+	for name, events := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if len(events) > 0 {
+				writeEvents(t, dir, "run-1", events...)
+			}
+			feedPath := filepath.Join(dir, runfeed.FileName)
+
+			want, err := runfeed.InFlight(feedPath)
+			if err != nil {
+				t.Fatalf("runfeed.InFlight returned error: %v", err)
+			}
+			_, started, ended, err := walkNodeStates(feedPath)
+			if err != nil {
+				t.Fatalf("walkNodeStates returned error: %v", err)
+			}
+			if got := started != "" && ended == ""; got != want {
+				t.Errorf("derived inFlight = %v, want runfeed.InFlight's %v", got, want)
+			}
+		})
 	}
 }
 
@@ -352,7 +466,7 @@ func TestDashboard_RejectsNonLoopbackHostEverywhereIncludingMountedRuns(t *testi
 	handler := newTestDashboard(root).Handler()
 
 	for _, path := range []string{"/", "/api/cards", "/run/run-live/", "/run/run-live/api/graph"} {
-		req := httptest.NewRequest("GET", path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", path, nil)
 		req.Host = "evil.example.com"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)

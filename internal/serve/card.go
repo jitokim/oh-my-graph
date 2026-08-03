@@ -87,10 +87,13 @@ type cardNode struct {
 }
 
 // buildCard derives one run's card from its directory. It reads through the
-// existing readers only — runfeed.InFlight for whether a leg is open,
-// runfeed.Walk for per-node state and the leg boundaries, runstate.Load plus
-// graph.Parse for the structure and the cost — so a card can never disagree
-// with `runs list`, `watch` or the single-run view about the same run.
+// existing readers only — ONE runfeed.Walk for per-node state, the leg
+// boundaries and (by runfeed.InFlight's own rule) whether a leg is open, plus
+// runstate.Load and graph.Parse for the structure and the cost — so a card can
+// never disagree with `runs list`, `watch` or the single-run view about the
+// same run. One walk, not two: a card is rebuilt on every tick for every run
+// that changed, so reading the stream twice per card was a doubling the
+// dashboard pays on its hot path.
 //
 // It never returns an error: a run directory this binary cannot read becomes
 // a stateUnknown card carrying the reason. The dashboard's job is to show
@@ -100,16 +103,19 @@ func buildCard(runsRoot, runID string) runCard {
 	runDir := filepath.Join(runsRoot, runID)
 	card := runCard{RunID: runID, State: statePending}
 
-	inFlight, err := runfeed.InFlight(filepath.Join(runDir, runfeed.FileName))
-	if err != nil {
-		return brokenCard(runID, err)
-	}
-
 	states, started, ended, err := walkNodeStates(filepath.Join(runDir, runfeed.FileName))
 	if err != nil {
 		return brokenCard(runID, err)
 	}
 	card.StartedAt, card.EndedAt = started, ended
+	// runfeed.InFlight's rule — the last leg is still open — read off the walk
+	// above instead of walking the stream a second time. walkNodeStates already
+	// carries the leg state (it clears ended on every run_started and sets it on
+	// every run_finished), and the dashboard rebuilds a card for every changed
+	// run on every tick, so the second read was doubling the I/O on the hot
+	// path. The two must not drift: TestBuildCard_InFlightAgreesWithRunfeed
+	// judges this against runfeed.InFlight itself.
+	inFlight := started != "" && ended == ""
 
 	snap, err := runstate.Load(filepath.Join(runDir, stateFileName))
 	switch {
@@ -146,7 +152,17 @@ func buildCard(runsRoot, runID string) runCard {
 		for _, id := range sortedKeys(states) {
 			card.Nodes = append(card.Nodes, cardNode{ID: id, State: states[id]})
 		}
-		card.State = runState(inFlight, false, false)
+		// A directory whose stream has said NOTHING — no leg, no node — keeps
+		// the pending it started as. That is a real window, not a corner case:
+		// the run lock creates the directory (and an auto run saves its
+		// graph.json there) before the first event is emitted, and a pre-runfeed
+		// directory has no stream at all. runState's default arm means "settled
+		// and not all done", and a run that has not spoken is neither, so
+		// letting it fall through would paint every healthy run's first moments
+		// red.
+		if inFlight || len(states) > 0 {
+			card.State = runState(inFlight, false, false)
+		}
 	default:
 		return brokenCard(runID, err)
 	}
