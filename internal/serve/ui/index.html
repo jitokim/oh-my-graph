@@ -13,6 +13,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- This page is the ONE asset rendered per process rather than shipped
+       byte-for-byte: the token below is minted by the serving process and
+       sent back on every gate decision (see app.js's decideGate and
+       serve.requireGateToken). It is a CSRF guard — a page some other origin
+       serves cannot read it — not a login. -->
+  <meta name="omg-token" content="{{.Token}}">
   <title>oh-my-graph — live run</title>
   <link rel="stylesheet" href="style.css">
 </head>
