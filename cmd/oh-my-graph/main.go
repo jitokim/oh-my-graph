@@ -13,7 +13,7 @@
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
-//	oh-my-graph serve [<run-id>] [--port N]
+//	oh-my-graph serve [<run-id>] [--port N]   (no run id: the dashboard over every run)
 //	oh-my-graph chat
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
@@ -95,7 +95,7 @@ func run(args []string) error {
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
-       oh-my-graph serve [<run-id>] [--port N]
+       oh-my-graph serve [<run-id>] [--port N]   (no run id: the dashboard over every run)
        oh-my-graph chat`)
 	}
 	switch args[0] {

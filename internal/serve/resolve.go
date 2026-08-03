@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 )
@@ -46,20 +45,13 @@ func ResolveRun(root, explicit string) (string, error) {
 		return explicit, nil
 	}
 
-	entries, err := os.ReadDir(root)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("read runs dir %q: %w", root, err)
-	}
-	var runIDs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			runIDs = append(runIDs, entry.Name())
-		}
+	runIDs, err := listRunIDs(root)
+	if err != nil {
+		return "", err
 	}
 	if len(runIDs) == 0 {
 		return "", fmt.Errorf("no runs found under %s (start one with `oh-my-graph run` or `auto`)", root)
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(runIDs)))
 
 	for _, runID := range runIDs {
 		inFlight, err := runfeed.InFlight(filepath.Join(root, runID, runfeed.FileName))

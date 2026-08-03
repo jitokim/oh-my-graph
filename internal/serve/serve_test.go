@@ -379,11 +379,18 @@ type sseStream struct {
 // that tears the request down.
 func sseClient(t *testing.T, s *Server) (*sseStream, context.CancelFunc) {
 	t.Helper()
-	httpServer := httptest.NewServer(s.Handler())
+	return sseClientAt(t, s.Handler(), "/api/events")
+}
+
+// sseClientAt is sseClient for any handler and path — the dashboard's card
+// stream reads exactly the same way the run's event stream does.
+func sseClientAt(t *testing.T, handler http.Handler, path string) (*sseStream, context.CancelFunc) {
+	t.Helper()
+	httpServer := httptest.NewServer(handler)
 	t.Cleanup(httpServer.Close)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(ctx, "GET", httpServer.URL+"/api/events", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", httpServer.URL+path, nil)
 	if err != nil {
 		cancel()
 		t.Fatalf("build SSE request: %v", err)
