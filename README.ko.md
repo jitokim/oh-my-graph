@@ -143,7 +143,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict, 그리고 합계. 읽기 전용. |
 | `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
-| `serve [<run-id>]` | run의 읽기 전용 web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). |
+| `serve [<run-id>]` | run의 web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
 | `version` | 도구 버전을 출력. |
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),
