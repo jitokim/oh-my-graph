@@ -109,6 +109,11 @@ in your default browser; the server lives exactly as long as the run. In a
 script, a pipe, or CI (stdout not a terminal) — or with `--no-web` — nothing
 is served or opened and the output is unchanged.
 
+<p align="center">
+  <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
+</p>
+<p align="center"><em>The live view mid-run — a real dogfood run (the ADR-0012 skill-mapping graph) captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
+
 ### Zero-config: auto mode
 
 Don't want to write YAML? Give `auto` a goal and it plans the graph for you —
