@@ -69,7 +69,11 @@ func approveViaCLI(t *testing.T) legOutcome {
 	// test output stays about the assertions.
 	captureStdout(t, func() {
 		runID, rec = pausedGateFlowRun(t)
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+		// nil Opener: no embedded live view, so this leg is byte-for-byte the
+		// terminal's — which is exactly what the live-view leg is compared
+		// against, and the live-view leg passes nil for its own reason (it is
+		// already being watched by the serve process; see cliGateResumer).
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)

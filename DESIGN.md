@@ -633,7 +633,7 @@ stop, and reporting it as a clean pause would lie.
 `executeResume` and nothing else. `oh-my-graph resume` parses it from flags;
 the web live view POSTs it from the browser (`POST /api/gate/approve`
 |`/reject` → `serve.GateResumer` → `cliGateResumer` → the same
-`executeResume`, ADR 0011). The lock, the snapshot load, the explicit-gate-id
+`executeResume`, ADR 0014). The lock, the snapshot load, the explicit-gate-id
 check, the `RecordedController` and the leg itself are shared, so the two
 front-ends cannot drift; only the standalone `serve` process wires the
 browser one.
@@ -721,7 +721,7 @@ going blank would make a routine schema bump fatal, which RUN-FEED.md's
 compatibility rule forbids). fleetops's fleet-wide role is unchanged;
 serve is one run, live, locally.
 
-**serve is deliberately no longer strictly read-only** (ADR 0011). Every
+**serve is deliberately no longer strictly read-only** (ADR 0014). Every
 route reads except two: `POST /api/gate/approve` and `POST /api/gate/reject`
 decide the gate a run is paused at, which continues the run — rewriting
 `state.json`, appending to `events.jsonl`, and running the nodes the gate was
@@ -762,7 +762,7 @@ one, and it answers 409 like any other view that cannot resume.
 - **Spawns nothing itself.** The `internal/serve` package imports no
   `os/exec` and starts no process; the two processes its features imply are
   reached through injected seams the CLI builds — a resumed leg's nodes
-  through `runner.ClaudeCLIRunner` behind `serve.GateResumer` (ADR 0011), so
+  through `runner.ClaudeCLIRunner` behind `serve.GateResumer` (ADR 0014), so
   a gate decided in the browser spawns exactly what `oh-my-graph resume`
   would. The server itself never shells out to
   `open`/`xdg-open`; browser-open lives behind its own seam —
@@ -1135,7 +1135,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0011)
+internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
 docs/adr/000{1..6}-*.md

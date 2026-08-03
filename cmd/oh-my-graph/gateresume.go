@@ -37,6 +37,13 @@ type cliGateResumer struct {
 // Ctrl-C on the serve process stops the leg — while the browser tab that
 // started it can close without killing it (serve's handleGateDecision detaches
 // the call from the request for the same reason).
+//
+// The leg gets no live-view Opener (nil), unlike the one `resume` starts from
+// a terminal: this leg is already being watched. The `serve` process that owns
+// this resumer is itself the live view of this very run, and the browser that
+// POSTed the decision is sitting on it — an embedded second server on a second
+// port, opening a second tab onto the same run feed, would be a duplicate of
+// the page the human is already looking at.
 func (r cliGateResumer) Resume(_ context.Context, runID, gateID string, decision gate.Decision) error {
 	flags := newResumeFlags()
 	flags.runID = runID
@@ -52,7 +59,7 @@ func (r cliGateResumer) Resume(_ context.Context, runID, gateID string, decision
 		return fmt.Errorf("resume gate %q: %q is not a decision a live view can apply", gateID, decision)
 	}
 
-	err := executeResume(flags, r.nodeRunner)
+	err := executeResume(flags, r.nodeRunner, nil)
 	if err != nil {
 		fmt.Fprintf(r.errOut, "live view: resume of run %s at gate %s: %v\n", runID, gateID, err)
 	}

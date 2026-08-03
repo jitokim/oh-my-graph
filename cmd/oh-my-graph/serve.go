@@ -61,7 +61,7 @@ func (f *serveFlags) parse(args []string) error {
 // their own window.
 //
 // This is also the only process that can decide a gate from the browser, so
-// it is the only one that injects a resumer (ADR 0011): a run paused at a gate
+// it is the only one that injects a resumer (ADR 0014): a run paused at a gate
 // has already exited (ADR 0003), taking its embedded live view with it, so
 // `serve` is by definition the view a paused run is looked at through. The
 // resumer runs the leg's nodes through the production ClaudeCLIRunner, exactly

@@ -9,7 +9,7 @@
 // run, live, locally.
 //
 // It is no longer strictly read-only. Every route reads except the two gate
-// routes (see handleGateDecision and ADR 0011): approving or rejecting the
+// routes (see handleGateDecision and ADR 0014): approving or rejecting the
 // gate a run is paused at continues the run, which rewrites state.json,
 // appends to events.jsonl and runs the nodes the gate was blocking. This
 // package still owns no gate logic — it calls the injected GateResumer, which
@@ -33,7 +33,7 @@
 // 0002/0005/0006), and both processes this package's features imply belong to
 // them — browser-open to browser.ExecOpener behind the browser.Opener seam
 // (ADR 0006), and a resumed leg's nodes to runner.ClaudeCLIRunner, reached
-// only through the GateResumer the CLI injects (ADR 0011). The CLI decides:
+// only through the GateResumer the CLI injects (ADR 0014). The CLI decides:
 // `run`/`auto` embed this server for the run's duration and, when stdout is a
 // terminal and --no-web was not passed, hand the URL to the injected Opener;
 // the standalone `serve` subcommand just prints the URL, and is the only one
@@ -192,7 +192,7 @@ func New(runDir, runID string) *Server {
 //
 // Every GET reads only: the run directory, plus — for /api/transcript — the
 // one transcript file the run's own feed names (see handleTranscript's
-// boundary note). The two gate POSTs are the mutating routes (ADR 0011): they
+// boundary note). The two gate POSTs are the mutating routes (ADR 0014): they
 // continue the paused run through the injected GateResumer, and they carry
 // their own CSRF guard on top of the ones every route gets. Every route sits
 // behind requireLoopbackHost, the DNS-rebinding guard; the method-scoped

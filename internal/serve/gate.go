@@ -101,7 +101,7 @@ func (s *Server) requireGateToken(w http.ResponseWriter, r *http.Request) bool {
 // reads; these two continue the run — the resumed leg writes state.json,
 // appends to events.jsonl, and (through the injected GateResumer, which is
 // built in cmd/) spawns the node processes the gate was blocking. That is a
-// deliberate change of what `serve` is, recorded in ADR 0011 and in DESIGN.md's
+// deliberate change of what `serve` is, recorded in ADR 0014 and in DESIGN.md's
 // serve section; it is guarded by requireLoopbackHost (Host), the loopback
 // bind (reachability) and requireGateToken (CSRF), in that order.
 //

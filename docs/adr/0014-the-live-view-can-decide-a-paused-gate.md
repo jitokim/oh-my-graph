@@ -1,4 +1,4 @@
-# ADR 0011 — The live view can decide a paused gate
+# ADR 0014 — The live view can decide a paused gate
 
 - Status: Accepted
 - Date: 2026-08-03

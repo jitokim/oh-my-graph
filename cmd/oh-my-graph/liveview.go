@@ -44,7 +44,7 @@ func isTerminal(f *os.File) bool {
 // The embedded view gets NO gate resumer (the nil below): this view lives
 // exactly as long as the run it belongs to, and that run holds the resume.lock
 // a leg would need — so its gate buttons answer 409 and the pause hint's
-// `oh-my-graph resume`/`serve` remains the way to decide (ADR 0003, ADR 0011).
+// `oh-my-graph resume`/`serve` remains the way to decide (ADR 0003, ADR 0014).
 //
 // The returned stop tears the server down and waits for it to exit; callers
 // defer it so the server lives exactly as long as the run.
