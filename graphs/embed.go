@@ -12,9 +12,16 @@ package graphs
 
 import "embed"
 
-// FS holds every YAML graph in this directory. The pattern is a glob rather
-// than a hardcoded list so a new template added here ships automatically —
-// there is no second place to remember to update.
+// FS holds every YAML graph in this directory AND every fragment file in the
+// fragments/ subdirectory. Both patterns are globs rather than hardcoded lists
+// so a new template or fragment added here ships automatically — there is no
+// second place to remember to update.
 //
-//go:embed *.yaml
+// The fragments/ pattern is load-bearing, not tidiness: a template that cites
+// `use: <name>` (ADR 0013) resolves it against its own fragments/ sibling ON
+// DISK, so a binary that embedded the templates but not the fragments would
+// unpack graphs that cannot load. `//go:embed *.yaml` does not descend into
+// subdirectories, which is exactly how that regression happened once.
+//
+//go:embed *.yaml fragments/*.yaml
 var FS embed.FS
