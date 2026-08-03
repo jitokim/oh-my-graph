@@ -57,8 +57,16 @@ reviews:
       instructions: >
         Flag claims that the code contradicts (stale invariants, wrong flags,
         renamed symbols, deferred features described as shipped). Keep the docs
-        English-only. DESIGN.md is the spec — flag drift between it and the
-        implementation.
+        English-only — except README.ko.md, the deliberate Korean translation
+        (see its own instruction below). DESIGN.md is the spec — flag drift
+        between it and the implementation.
+    - path: "README.ko.md"
+      instructions: >
+        This file is the repo's one deliberate Korean artifact: the Korean
+        translation of README.md (PR #77; CONTRIBUTING's "Sync the Korean
+        README" release-checklist bullet). Korean prose, alt text, and
+        captions are correct here — never flag them for not being English.
+        Do flag content drift against README.md, the English source of truth.
     - path: "**/*.{sh,yaml,yml}"
       instructions: >
         Flag unsafe shell (unquoted expansions, injection via interpolated
