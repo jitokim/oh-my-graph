@@ -18,9 +18,13 @@
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
 # Honest note on ready-and-wait: it is a POLL under a timeout, not an event
-# subscription — `sleep 30` loops between `gh pr view` checks, bounded by
-# the node's 15m timeout. If CodeRabbit has not finished by then, the node
-# reports the actual state and fails its READY check; the operator decides.
+# subscription — `sleep 30` loops between `gh pr view` checks, in the
+# FOREGROUND, bounded by the node's 15m timeout. A node's final reply is its
+# verdict, so nothing may be backgrounded: a node that kicks off a polling
+# loop and reports "will follow up" has already ended its turn, and
+# success_check sees the interim report instead of the verdict. If CodeRabbit
+# has not finished by the timeout, the node reports the actual state and fails
+# its READY check; the operator decides.
 #
 # The run pauses at the approve-merge gate (exit 2). Read triage's table,
 # then resume:
@@ -65,18 +69,24 @@ nodes:
     prompt: |
       Local verify said: {{ artifacts.verify | inline }}.
       Mark PR #{{ inputs.pr }} ready for review: `gh pr ready {{ inputs.pr }}`.
-      Then poll — `sleep 30` between checks of
-      `gh pr view {{ inputs.pr }} --json reviews,statusCheckRollup` — until
-      BOTH hold:
+      Then poll SYNCHRONOUSLY, in the foreground, and wait out every check:
+      run `gh pr view {{ inputs.pr }} --json reviews,statusCheckRollup`,
+      read it, then `sleep 30`, then run it again — one loop iteration per
+      tool call, blocking each time. NEVER background anything: no `&`, no
+      `nohup`, no run_in_background, no "I'll keep polling and report
+      back". Your FINAL reply IS the verdict, so you cannot reply until
+      the poll has actually reached a verdict — an interim report ends the
+      node and fails it.
+      Keep looping until BOTH hold:
         - the `test` check has concluded with SUCCESS, and
         - coderabbitai has a COMPLETED review on the PR (a submitted review
           in the reviews list; a "review in progress" placeholder comment
           does not count).
       When both hold, begin your reply with READY plus a one-line status.
-      You have 15 minutes: stop polling after ~25 loops and, if either
-      condition is still missing, reply with the honest current state
-      (which one is missing and what it says) — the operator decides what
-      to do next. NEVER reply READY early.
+      You have 15 minutes: as that timeout comes near (after ~25 loops),
+      stop polling and reply with the honest current state — which
+      condition is still missing and what it says — as your final answer.
+      The operator decides what to do next. NEVER reply READY early.
     allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]
     permission_mode: dontAsk
     timeout: 15m
@@ -98,7 +108,9 @@ nodes:
           (`git fetch origin pull/{{ inputs.pr }}/head`, then
           `git worktree add /tmp/shepherd-triage-{{ inputs.pr }} FETCH_HEAD`),
           make the edit there, run the repo's checks
-          (`make -C /tmp/shepherd-triage-{{ inputs.pr }} local`), commit
+          (`make -C /tmp/shepherd-triage-{{ inputs.pr }} local` —
+          SYNCHRONOUSLY, waiting for the exit code, never in the
+          background), commit
           staging ONLY the files you changed by explicit path (`git add
           <path> ...` — never `git add -A`/`.`/`-u`), push to the PR's
           branch (`git push origin HEAD:<pr-branch>`), and remove the
@@ -137,11 +149,13 @@ nodes:
            concluded, comments triaged), and `--admin` must never be used
            to bypass an unfinished review.
         2. In {{ inputs.repo }}: `git pull --ff-only origin main`.
-        3. `make build`.
+        3. `make build` — SYNCHRONOUSLY, waiting for the exit code, never
+           in the background.
         4. Prune stale local state for this PR: `git remote prune origin`,
            and `git branch -d` the PR's local branch if one exists.
-      Reply with the merge commit SHA and a one-line ledger of what
-      shipped.
+      Run every step in the foreground and finish all four before you
+      answer: your final reply IS the verdict. Reply with the merge commit
+      SHA and a one-line ledger of what shipped.
     allowed_tools: ["Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 15m
