@@ -36,8 +36,12 @@
       "allowed_tools": [
         "Read",
         "Bash(make *)",
-        "Bash(go *)",
-        "Bash(git *)"
+        "Bash(go build *)",
+        "Bash(go test *)",
+        "Bash(go vet *)",
+        "Bash(git status*)",
+        "Bash(git diff*)",
+        "Bash(git log*)"
       ],
       "permission_mode": "dontAsk",
       "budget_usd": 10,

@@ -27,7 +27,19 @@ node:
     background. Your FINAL reply is the verdict: never end the turn on an
     interim report. Report exactly PASS if everything succeeds, or FAIL
     with the failing step.
-  allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  # A check gate gets the verbs a check gate runs, and nothing else. The wide
+  # forms this replaced were `Bash(go *)` — which includes `go run`, i.e.
+  # execute arbitrary code out of the tree under review — and `Bash(git *)`,
+  # which includes push, reset and history rewriting in a node whose only job
+  # is to report PASS or FAIL. Neither is reachable from anything this prompt
+  # asks for: the gate has no Edit/Write, so it cannot fix what it finds, and
+  # the evidence command is run by the ENGINE (success_check.verify), not by
+  # the node. Git is read-only here for the same reason.
+  #
+  # A non-Go repo adopting this fragment overrides `allowed_tools` on its using
+  # node — the override is announced in the disclosure line at every run, which
+  # is the point: widening a grant should be visible, not inherited silently.
+  allowed_tools: [Read, "Bash(make *)", "Bash(go build *)", "Bash(go test *)", "Bash(go vet *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: dontAsk
   # Runaway insurance ONLY, never cost tuning: a tight budget kills a
   # nearly-done node at the threshold, and the salvage costs more than

@@ -86,6 +86,11 @@ nodes:
   # warns here (handoff: session + retry) — advisory and expected: a retried
   # attempt starts cold, and the fragment's prompt is written to survive
   # exactly that case (rule 3 above).
+  #
+  # The gate's tool grant is narrow on purpose (make + read-only go/git — a
+  # gate reports, it does not fix). Copying this skeleton into a non-Go repo
+  # means adding an `allowed_tools:` line to each gate node with that stack's
+  # check verbs; the override is announced in the run's disclosure line.
   - id: e2e-a
     use: e2e-verify
     depends_on: [dev-a]

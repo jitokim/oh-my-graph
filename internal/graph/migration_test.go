@@ -34,12 +34,16 @@ var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-b
 // pre-migration files, or the migration does not merge.
 var migratedTemplates = map[string]map[string][]string{
 	"self-dev.yaml": {
-		"e2e":             {"prompt", "budget_usd"}, // gains the fragment's runaway-insurance budget
+		// budget_usd gains the fragment's runaway insurance; allowed_tools is
+		// NARROWED — the old grant's Bash(go *)/Bash(git *) let a report-only
+		// gate `go run` the tree and rewrite history, which the fragment now
+		// refuses (see graphs/fragments/e2e-verify.yaml).
+		"e2e":             {"prompt", "budget_usd", "allowed_tools"},
 		"review-security": {"prompt"},
 		"review-style":    {"prompt"},
 	},
 	"dev-review-pr.yaml": {
-		"e2e":             {"prompt", "allowed_tools"}, // Bash(go test *) widens to the fragment's Bash(go *)
+		"e2e":             {"prompt", "allowed_tools"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant
 		"review-security": {"prompt", "allowed_tools"}, // gains Bash(git log*)
 		"review-style":    {"prompt", "allowed_tools"}, // gains Bash(git log*)
 	},
@@ -93,8 +97,12 @@ func TestMigratedTemplates_ByteIdenticalOutsideConvergedFields(t *testing.T) {
 			if err != nil {
 				t.Fatalf("migrated template must resolve: %v", err)
 			}
-			if len(post.Resolutions) != 3 {
-				t.Fatalf("want the three converted nodes resolved, got %+v", post.Resolutions)
+			// Derived from the mask rather than written out: the mask already
+			// names every converted node, so a template that gains or loses a
+			// fragment node updates one place, not two, and can never leave a
+			// stale constant failing for the wrong reason.
+			if len(post.Resolutions) != len(masks) {
+				t.Fatalf("want the %d converted nodes resolved, got %+v", len(masks), post.Resolutions)
 			}
 			for _, r := range post.Resolutions {
 				if len(r.Overridden) != 0 {
