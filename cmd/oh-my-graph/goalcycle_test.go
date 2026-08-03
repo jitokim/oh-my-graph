@@ -330,8 +330,49 @@ func TestPlanAndExecute_FailedCycleStillIterates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cycle 2 met the goal on a passed run; the failed cycle 1 must not have ended the loop: %v", err)
 	}
-	if !strings.Contains(out, "FAILED") {
+	// The summary row's own shape, not the whole output: "FAILED" alone also
+	// appears in node ledgers, so a bare Contains would pass on the wrong row.
+	if !strings.Contains(out, "cycle 1: run ") || !strings.Contains(out, "  FAILED  run $") {
 		t.Errorf("the goal summary should show cycle 1's run as FAILED:\n%s", out)
+	}
+}
+
+// TestReadArtifactBounded: an artifact is read whole only when it fits the
+// read bound; an oversized one contributes its head and tail around a loud
+// cut marker, so a huge file cannot inflate a cycle's memory yet its final
+// verdict lines still reach the assessor's excerpt.
+func TestReadArtifactBounded(t *testing.T) {
+	dir := t.TempDir()
+
+	small := filepath.Join(dir, "small.out")
+	if err := os.WriteFile(small, []byte("tiny artifact"), 0o644); err != nil {
+		t.Fatalf("write small artifact: %v", err)
+	}
+	got, err := readArtifactBounded(small)
+	if err != nil || got != "tiny artifact" {
+		t.Fatalf("small artifact = %q, %v; want it read whole", got, err)
+	}
+
+	big := filepath.Join(dir, "big.out")
+	content := "HEAD-MARK " + strings.Repeat("x", 2*maxArtifactReadBytes) + " TAIL-MARK"
+	if err := os.WriteFile(big, []byte(content), 0o644); err != nil {
+		t.Fatalf("write big artifact: %v", err)
+	}
+	got, err = readArtifactBounded(big)
+	if err != nil {
+		t.Fatalf("read big artifact: %v", err)
+	}
+	if len(got) > maxArtifactReadBytes+len(artifactReadCutMarker) {
+		t.Errorf("bounded read returned %d bytes, want at most %d", len(got), maxArtifactReadBytes+len(artifactReadCutMarker))
+	}
+	for _, want := range []string{"HEAD-MARK", "TAIL-MARK", artifactReadCutMarker} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bounded read is missing %q", want)
+		}
+	}
+
+	if _, err := readArtifactBounded(filepath.Join(dir, "absent.out")); err == nil {
+		t.Error("a missing artifact must error, not read as empty")
 	}
 }
 

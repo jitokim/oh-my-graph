@@ -140,8 +140,10 @@ func isRunFailure(err error) bool {
 // recorded. The run total is the planning call plus every node's
 // snapshot-recorded spend (a node's cost_usd accumulates across its feedback
 // rounds; a retried node's record prices its terminal attempt, exactly as
-// the ledger does). Artifact content is read raw and
-// whole; the coordinator owns the excerpting and the caps, so they live
+// the ledger does). Artifact content is read raw but bounded
+// (readArtifactBounded caps what one file may contribute, so a huge artifact
+// cannot inflate the cycle's peak memory); the coordinator still owns the
+// prompt-level excerpting and caps, which live
 // beside the prompt they protect. A node with no record (never launched — a
 // pruned or cancelled subtree) contributes nothing, and an artifact that
 // cannot be read back contributes its verdict without content rather than
@@ -171,13 +173,56 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 			CostUSD: rec.CostUSD,
 		}
 		if rec.ArtifactPath != "" {
-			if content, readErr := os.ReadFile(rec.ArtifactPath); readErr == nil {
-				nodeEvidence.Artifact = string(content)
+			if content, readErr := readArtifactBounded(rec.ArtifactPath); readErr == nil {
+				nodeEvidence.Artifact = content
 			}
 		}
 		evidence.Nodes = append(evidence.Nodes, nodeEvidence)
 	}
 	return evidence, nil
+}
+
+// maxArtifactReadBytes bounds what one node's artifact may contribute to the
+// assessor's material BEFORE the coordinator's own excerpting runs, so a huge
+// artifact cannot inflate the cycle's peak memory on its way to a 2KB excerpt.
+const maxArtifactReadBytes = 64 << 10
+
+// artifactReadCutMarker marks the bytes readArtifactBounded dropped from the
+// middle of an oversized artifact — the cut is said out loud, never silent.
+const artifactReadCutMarker = "\n… (middle omitted at read: the artifact exceeds the read bound) …\n"
+
+// readArtifactBounded reads at most maxArtifactReadBytes of the artifact at
+// path: the whole file when it fits, otherwise its head and tail halves around
+// a cut marker. Head AND tail, not a prefix, because the coordinator's excerpt
+// keeps both for the same reason — a check node prints its "PASS"/"FAIL" last,
+// and a prefix-only read would hide exactly that.
+func readArtifactBounded(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if info.Size() <= maxArtifactReadBytes {
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	half := int64(maxArtifactReadBytes / 2)
+	head := make([]byte, half)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return "", err
+	}
+	tail := make([]byte, half)
+	if _, err := f.ReadAt(tail, info.Size()-half); err != nil {
+		return "", err
+	}
+	return string(head) + artifactReadCutMarker + string(tail), nil
 }
 
 // printCycleVerdict prints one cycle's assessment the moment it returns, so
