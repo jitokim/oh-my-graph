@@ -164,6 +164,18 @@ func decodeResolved(doc *yaml.Node) (*Graph, error) {
 // one exists so the token is gone before the runtime looks.
 var withTokenPattern = regexp.MustCompile(`\{\{\s*with\.([A-Za-z0-9._-]+)\s*\}\}`)
 
+// fragmentNamePattern is the grammar of a `use:` value: a BARE name, never a
+// path. The lookup rule ADR 0013 spends a section defending is "one location,
+// no search path" — but filepath.Join cleans lexically, so an unconstrained
+// name reaches straight out of the fragments/ sibling it is documented to
+// resolve inside (`use: ../../evil` → <repo>/evil.yaml, `use: a/b` → a nested
+// search path). The refused file supplies a real prompt, allowed_tools and
+// success_check.verify.command, so "which files can a graph pull behavior
+// from" is exactly the boundary a reviewer reads fragments/ to check. A
+// leading alphanumeric rules out `..` and dotfiles; the class rules out every
+// separator, on either platform.
+var fragmentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // fragmentWiringFields are the node fields a fragment file must NOT declare:
 // graph-local wiring (depends_on and feedback name ids that only exist in the
 // using graph; a worktree name is lane choreography; cwd is
@@ -255,6 +267,11 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 	name := strings.TrimSpace(scalarValue(useNode))
 	if useNode.Kind != yaml.ScalarNode || name == "" {
 		fail(&FragmentError{NodeID: id, Reason: "use: must be a single non-empty fragment name"})
+		return
+	}
+	if !fragmentNamePattern.MatchString(name) {
+		fail(&FragmentError{NodeID: id, Fragment: name,
+			Reason: "use: must be a bare fragment name (letters, digits, then any of . _ -), not a path — a use: resolves against the graph file's own fragments/ sibling and nowhere else, so a separator, a leading dot or a .. has no location to mean"})
 		return
 	}
 	if keys["prompt"] != nil {
@@ -366,6 +383,23 @@ func loadFragmentFile(name, source string) *loadedFragment {
 	if bodyKeys["use"] != nil || bodyKeys["with"] != nil {
 		badFile("a fragment's node may not itself carry use:/with: — fragments do not reference fragments in v1 (single-pass resolution, no cycle detection needed)")
 	}
+	// A fragment body must be walkable in full, because BOTH halves of the
+	// substitution contract are walks: the undeclared-token check below, and
+	// the substitution itself. A YAML alias hides its scalars behind a pointer
+	// into another part of the file, so `prompt: &p "{{ with.x }}"` / `other:
+	// *p` would be neither checked against substitutions: nor substituted —
+	// the token would ship verbatim into a paid prompt, which is precisely the
+	// silent-verbatim failure the load-time/run-time token split exists to
+	// abolish. Refusing is the honest fix rather than descending into
+	// node.Alias: the descent would have to inline the target to substitute
+	// into it (an alias points at the fragment file's tree, which the cache
+	// shares across every using node), and inlining nested aliases is an
+	// exponential-expansion bomb on a file the loader reads before any
+	// validation. Anchors remain sanctioned everywhere else in a graph file —
+	// this is a rule about the one block that gets spliced.
+	if containsAlias(body) {
+		badFile("the fragment's node: uses a YAML alias (a *reference or a `<<:` merge key) — a spliced body must be walkable in full, or a {{ with.x }} hiding behind the alias would be neither declaration-checked nor substituted and would reach the model verbatim; write the shared value out, or declare it as a substitution point")
+	}
 
 	// Judge the body's tokens once: an undeclared point is an authoring bug
 	// in the FRAGMENT, found the first time any graph resolves it; a declared
@@ -441,7 +475,11 @@ func bindingsFor(withNode *yaml.Node, frag *fragmentFile, nodeID string) (map[st
 		}
 		for i := 0; i+1 < len(withNode.Content); i += 2 {
 			key := withNode.Content[i].Value
-			bindings[key] = withNode.Content[i+1]
+			// An alias is resolved to its target here, once, so both
+			// substitution shapes see the bound VALUE: a `*ref` bound to an
+			// embedded token is judged by what it refers to rather than
+			// rejected as "a alias".
+			bindings[key] = resolveAlias(withNode.Content[i+1])
 			boundOrder = append(boundOrder, key)
 		}
 	}
@@ -626,11 +664,14 @@ func walkScalarNodes(node *yaml.Node, visit func(scalar *yaml.Node)) {
 }
 
 // deepCopyNode clones a yaml.Node subtree so one fragment body can be spliced
-// into several using nodes without sharing mutable state. Alias pointers are
-// kept as-is: the anchored node they reference lives in the same document the
-// alias will be decoded from.
+// into several using nodes without sharing mutable state. Anchors are dropped
+// from the copy: a fragment body may not contain aliases (loadFragmentFile
+// refuses them), so an anchor on the copy names nothing, and carrying it into
+// the entry document would put a second definition of that anchor name in a
+// tree that already has its own.
 func deepCopyNode(node *yaml.Node) *yaml.Node {
 	copied := *node
+	copied.Anchor = ""
 	if len(node.Content) > 0 {
 		copied.Content = make([]*yaml.Node, len(node.Content))
 		for i, child := range node.Content {
@@ -638,6 +679,31 @@ func deepCopyNode(node *yaml.Node) *yaml.Node {
 		}
 	}
 	return &copied
+}
+
+// containsAlias reports whether a subtree carries a YAML alias node anywhere —
+// keys included, since `<<:` merge keys and aliased keys are aliases too.
+func containsAlias(node *yaml.Node) bool {
+	if node.Kind == yaml.AliasNode {
+		return true
+	}
+	for _, child := range node.Content {
+		if containsAlias(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveAlias follows a YAML alias to the node it names, so a value bound in
+// the using node's with: is judged and spliced as the thing it refers to
+// rather than as an alias. One hop is the whole walk: an alias node cannot
+// itself carry an anchor, so aliases never chain.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	if node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		return node.Alias
+	}
+	return node
 }
 
 // kindName names a yaml.Kind for error messages.

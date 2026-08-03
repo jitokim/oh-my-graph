@@ -164,6 +164,67 @@ node: { use: other, prompt2: "{{ with.checks }}" }
 `},
 			wantErr: "fragments do not reference fragments",
 		},
+		{
+			// filepath.Join cleans, so an unconstrained name walks straight
+			// out of the fragments/ sibling — the one location the ADR
+			// promises. The name is refused before any file is opened.
+			name:    "use escaping the fragments sibling with ..",
+			entry:   usingGraph("  - { id: e2e, use: ../../evil, depends_on: [dev] }\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			name:    "use naming a nested path",
+			entry:   usingGraph("  - { id: e2e, use: sub/evil, depends_on: [dev] }\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			name:    "use naming a backslash path",
+			entry:   usingGraph(`  - { id: e2e, use: "sub\\evil", depends_on: [dev] }` + "\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			name:    "use naming an absolute path",
+			entry:   usingGraph("  - { id: e2e, use: /etc/passwd, depends_on: [dev] }\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			name:    "use naming the parent directory itself",
+			entry:   usingGraph("  - { id: e2e, use: .., depends_on: [dev] }\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			name:    "use naming a dotfile",
+			entry:   usingGraph("  - { id: e2e, use: .hidden, depends_on: [dev] }\n"),
+			wantErr: "must be a bare fragment name",
+		},
+		{
+			// The silent-verbatim case: the token is anchored on one key and
+			// aliased onto another, so a walk that stops at Scalar/Sequence/
+			// Mapping never sees the aliased copy — it would be neither
+			// declaration-checked nor substituted, and `{{ with.checks }}`
+			// would reach the model as literal text in a paid prompt.
+			name:  "fragment body hiding a substitution token behind an alias",
+			entry: usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+substitutions: [checks]
+node:
+  prompt: &p "do {{ with.checks }}"
+  agent: *p
+`},
+			wantErr: "uses a YAML alias",
+		},
+		{
+			name:  "fragment body using a merge key",
+			entry: usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+substitutions: [checks]
+base: &base { permission_mode: plan }
+node:
+  <<: *base
+  prompt: "{{ with.checks }}"
+`},
+			wantErr: "uses a YAML alias",
+		},
 	}
 	for _, wiring := range []string{"id", "depends_on", "cwd", "worktree", "feedback"} {
 		value := map[string]string{
@@ -209,6 +270,41 @@ node: { use: other, prompt2: "{{ with.checks }}" }
 				t.Fatalf("LintFile first issue %q != LoadFile error %q", issues[0], err)
 			}
 		})
+	}
+}
+
+// TestLoadFile_UseCannotReadOutsideTheFragmentsSibling proves the refusal is
+// a boundary and not just a message: a real, well-formed fragment file placed
+// exactly where `use: ../evil` would land is never read, so the node cannot
+// take its prompt, its tool grant or its verify command from outside the one
+// directory a reviewer reads. An assertion on the error alone would pass
+// against a loader that read the file first and complained afterwards.
+func TestLoadFile_UseCannotReadOutsideTheFragmentsSibling(t *testing.T) {
+	path := writeGraphDir(t, usingGraph("  - { id: e2e, use: ../evil, depends_on: [dev], with: { checks: c } }\n"),
+		map[string]string{"e2e-verify": testFragment})
+	outside := filepath.Join(filepath.Dir(path), "evil.yaml")
+	if err := os.WriteFile(outside, []byte(`fragment: evil
+substitutions: [checks]
+node: { prompt: "pwned {{ with.checks }}", allowed_tools: ["Bash(*)"] }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("use: reached outside the fragments/ sibling")
+	} else if !strings.Contains(err.Error(), "must be a bare fragment name") {
+		t.Fatalf("want the bare-name refusal, got: %v", err)
+	}
+
+	// And the file's contents never entered the report either.
+	issues, _, err := LintFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range issues {
+		if strings.Contains(issue.Error(), "pwned") {
+			t.Errorf("the out-of-tree file was read: %v", issue)
+		}
 	}
 }
 
@@ -418,6 +514,31 @@ func TestLoadFile_BoundRuntimePlaceholdersSurviveResolution(t *testing.T) {
 		if !strings.Contains(e2e.Prompt, token) {
 			t.Errorf("runtime placeholder %s must survive load-time resolution untouched:\n%s", token, e2e.Prompt)
 		}
+	}
+}
+
+// TestLoadFile_BindingWrittenAsAnAliasResolves is the other side of the
+// alias rule: aliases are refused inside a fragment BODY (which gets walked
+// and substituted), never in the using graph, where they are ordinary YAML.
+// A binding written as `*ref` must therefore be judged as the value it names —
+// including in the embedded case, whose "must be a scalar" check would
+// otherwise report the alias node's kind rather than the bound value's.
+func TestLoadFile_BindingWrittenAsAnAliasResolves(t *testing.T) {
+	entry := "name: t\nshared: &checks run make local.\nnodes:\n  - { id: dev, prompt: build }\n" +
+		`  - id: e2e
+    use: e2e-verify
+    depends_on: [dev]
+    with: { checks: *checks }
+`
+	path := writeGraphDir(t, entry, map[string]string{"e2e-verify": testFragment})
+
+	res, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("a binding written as an alias must resolve: %v", err)
+	}
+	e2e, _ := res.Graph.NodeByID("e2e")
+	if !strings.Contains(e2e.Prompt, "run make local.") {
+		t.Errorf("the aliased binding's value must be substituted into the prompt:\n%s", e2e.Prompt)
 	}
 }
 
