@@ -480,13 +480,14 @@ by a measurement, not by prose. The measurement is **E8** (continuing ADR
   > produced is not demonstrated."
 
 - **What it establishes, and what it does not.** One measured configuration
-  of one CLI version: the §2 stance, this prompt shape, claude 2.1.220. The
-  file's content did not reach the verdict and the reply shows no tool use —
-  the "cannot read a file" sentence in §2 is now backed by this measurement
-  rather than by intent. It does not establish robustness against every lure
-  phrasing; the structural defense remains the stance itself (no tools to
-  invoke), with the prompt's data-fencing as the second layer the reply
-  happens to also demonstrate.
+  of one CLI version: the §2 stance, this prompt shape, claude 2.1.220. What
+  the measurement observes is non-disclosure — the file's content did not
+  reach the verdict. It does not independently record tool activity, so it
+  cannot by itself prove no read happened: "cannot read a file" rests on the
+  stance itself (no tools to invoke), with this measurement as its
+  observable check. Nor does it establish robustness against every lure
+  phrasing; the prompt's data-fencing is the second layer the reply happens
+  to also demonstrate.
 
 ## Consequences
 
