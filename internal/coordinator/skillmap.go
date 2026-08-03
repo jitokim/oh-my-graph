@@ -33,6 +33,8 @@
 // {{ artifacts.<id> | inline }} inside a body is a file read with no tool and
 // no ceiling involvement (ADR 0012 §4). The pass repeats because a single
 // non-overlapping replacement lets an odd brace run re-form a live token.
+// The fence's own metadata — the skill name and its source path — is
+// neutralized the same way, since it too is chosen by the scanned file.
 // Templating is not a feature of inlined skill text.
 //
 // The fence carries a per-plan random nonce because an unfenced delimiter is
@@ -149,6 +151,12 @@ type skillDef struct {
 // frontmatter that does not parse, a blank or whitespace-carrying name, an
 // empty body — skips just that much and stays silent: a broken skill file
 // must not break `auto`.
+//
+// Directory-ness is decided by os.Stat, not entry.IsDir(): os.ReadDir does not
+// follow symlinks, so a `~/.claude/skills/<name>` symlinked out to a dotfiles
+// checkout — how skills are commonly kept under version control — would
+// otherwise be invisible here while the equivalent symlinked agent .md already
+// scans fine (scanAgentDirs filters on suffix, not on IsDir).
 func scanSkillDirs(dirs []string) map[string]skillDef {
 	skills := make(map[string]skillDef)
 	for _, dir := range dirs {
@@ -157,7 +165,8 @@ func scanSkillDirs(dirs []string) map[string]skillDef {
 			continue
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() {
+			info, err := os.Stat(filepath.Join(dir, entry.Name()))
+			if err != nil || !info.IsDir() {
 				continue
 			}
 			def, ok := parseSkillFile(filepath.Join(dir, entry.Name(), "SKILL.md"))
@@ -294,7 +303,14 @@ func skillCandidateFor(nodeID string, skills map[string]skillDef) (skillDef, boo
 // deciding pass (size cap, hash) and the applying pass call this, so what was
 // measured is what lands.
 func inlinedSkillText(def skillDef) string {
-	s := def.body
+	return neutralizeBraces(def.body)
+}
+
+// neutralizeBraces is that repeated pass, over any string a skill file gets to
+// choose. Everything the fence renders comes from the file — body, frontmatter
+// name, and the path (a directory name the user's skills tree supplies) — so
+// all three go through here rather than the body alone.
+func neutralizeBraces(s string) string {
 	for strings.Contains(s, "{{") { // terminates: each pass shortens every brace run
 		s = strings.ReplaceAll(s, "{{", "{ {")
 	}
@@ -303,11 +319,16 @@ func inlinedSkillText(def skillDef) string {
 
 // fencedSkillBlock renders the attributed block appended to a mapped node's
 // prompt. The nonce appears in both markers so the fenced text — which the
-// fence's author does not control — cannot forge a matching delimiter.
+// fence's author does not control — cannot forge a matching delimiter. The
+// metadata is neutralized like the body: a skill named or stored under a path
+// holding '{{' would otherwise put a live placeholder into node.Prompt from
+// OUTSIDE the fenced text, which the body's neutralization does not cover
+// (review round 4).
 func fencedSkillBlock(def skillDef, inlined, nonce string) string {
 	return fmt.Sprintf(
 		"\n\n--- skill: %s %s (mapped by oh-my-graph from %s) ---\n%s\n--- end skill: %s %s ---\n",
-		def.Name, nonce, def.path, inlined, def.Name, nonce,
+		neutralizeBraces(def.Name), nonce, neutralizeBraces(def.path), inlined,
+		neutralizeBraces(def.Name), nonce,
 	)
 }
 

@@ -125,8 +125,9 @@ user forgot they had.
 > **Update (2026-08-03):** ADR 0012 re-opens the same "no implicit scan"
 > clause for the user's skills (`~/.claude/skills`), under the same
 > relaxation with stronger disclosure: plan-time inlining of SKILL.md bodies
-> into matching planned nodes' prompts, every decision printed with size and
-> SHA-256, a 16 KiB skip-not-truncate cap, agent-mapped nodes excluded, and
+> into matching planned nodes' prompts, every decision printed — each mapping
+> with its inlined size and SHA-256 prefix, each refusal with its reason — a
+> 16 KiB skip-not-truncate cap, agent-mapped nodes excluded, and
 > `--no-skill-mapping` as the opt-out. See
 > `0012-skill-mapping-is-plan-time-inlining.md`.
 

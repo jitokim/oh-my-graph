@@ -505,3 +505,107 @@ func TestPlan_ShortTokenDoesNotMatchSkillByPrefix(t *testing.T) {
 		t.Fatalf("mappings = %+v, want none for a sub-minimum prefix", plan.SkillMappings)
 	}
 }
+
+// The fence's METADATA is chosen by the scanned file too: a skill whose
+// frontmatter name — or whose directory name, which becomes the printed source
+// path — carries '{{' would put a live placeholder into node.Prompt from
+// outside the body the neutralizer covers, and the scheduler's
+// handoff.Interpolate would then resolve it (a file read, or a run-killing
+// InterpolationError). Both must land inert (review round 4).
+func TestPlan_FenceMetadataBracesAreNeutralized(t *testing.T) {
+	cases := []struct {
+		what     string
+		dirname  string
+		nameLine string
+	}{
+		// A name may carry no whitespace (parseSkillFile refuses that), so the
+		// reachable shape is the whitespace-free placeholder — which
+		// placeholderPattern matches just as happily.
+		{"frontmatter name", "pr-code-review", "name: pr-code-review{{artifacts.review}}"},
+		{"source path", "pr-code-review{{ inputs.x }}", "name: pr-code-review"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.what, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSkillFile(t, dir, tc.dirname, tc.nameLine+"\ndescription: reviews pull requests", "the body")
+
+			plan := planWithSkills(t, WithSkillDirs(dir))
+
+			if len(plan.SkillMappings) != 1 || plan.SkillMappings[0].SkippedReason != "" {
+				t.Fatalf("mappings = %+v, want one applied mapping", plan.SkillMappings)
+			}
+			node, ok := plan.Graph.NodeByID("review")
+			if !ok || !strings.Contains(node.Prompt, "the body") {
+				t.Fatalf("node prompt does not carry the inlined body:\n%s", node.Prompt)
+			}
+			if handoff.ContainsPlaceholder(node.Prompt) {
+				t.Errorf("fence metadata left a live placeholder in the prompt:\n%s", node.Prompt)
+			}
+		})
+	}
+}
+
+// A skill kept under version control is commonly symlinked into
+// ~/.claude/skills rather than copied there. os.ReadDir does not follow
+// symlinks, so entry.IsDir() is false for such a directory — the scan must
+// stat the entry instead, or every dotfiles-managed skill is silently
+// invisible while the equivalent symlinked agent .md already scans fine.
+func TestPlan_SymlinkedSkillDirIsScanned(t *testing.T) {
+	store := t.TempDir()
+	writeSkillFile(t, store, "pr-code-review", "name: pr-code-review", "the symlinked body")
+
+	scanned := t.TempDir()
+	if err := os.Symlink(filepath.Join(store, "pr-code-review"), filepath.Join(scanned, "pr-code-review")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	plan := planWithSkills(t, WithSkillDirs(scanned))
+
+	if len(plan.SkillMappings) != 1 || plan.SkillMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want the symlinked skill mapped", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if !strings.Contains(node.Prompt, "the symlinked body") {
+		t.Errorf("node prompt does not carry the symlinked skill's body:\n%s", node.Prompt)
+	}
+}
+
+// DefaultSkillDirs is the only place the real filesystem location enters the
+// coordinator, and its shape is the security-relevant half of ADR 0012: the
+// user's own directory is scanned and the PROJECT directory
+// (<cwd>/.claude/skills) — 100% of the genuinely new injection surface — is
+// not. A later append of a project directory must fail here, not ship.
+func TestDefaultSkillDirs_UserSkillsOnlyNeverTheProjectDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dirs := DefaultSkillDirs()
+
+	want := []string{filepath.Join(home, ".claude", "skills")}
+	if len(dirs) != len(want) || dirs[0] != want[0] {
+		t.Fatalf("DefaultSkillDirs() = %v, want exactly %v", dirs, want)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range dirs {
+		if !filepath.IsAbs(dir) {
+			t.Errorf("dir %q is relative — it would resolve against the invocation directory", dir)
+		}
+		if rel, err := filepath.Rel(cwd, dir); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Errorf("dir %q sits under the working directory — the project scan is cut from v1", dir)
+		}
+	}
+}
+
+// An unresolvable home just drops out: the scan is silent about missing
+// directories anyway, and a malformed path (".claude/skills" relative, or
+// "/.claude/skills") would be a scan of somewhere nobody asked for.
+func TestDefaultSkillDirs_NoHomeScansNothing(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	if dirs := DefaultSkillDirs(); len(dirs) != 0 {
+		t.Fatalf("DefaultSkillDirs() = %v, want none when the home cannot be resolved", dirs)
+	}
+}

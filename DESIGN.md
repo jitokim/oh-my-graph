@@ -818,8 +818,10 @@ remains (the prompt is a handoff template; skill prose must not become
 template code, and a single pass would let odd brace runs re-form tokens). No
 ceiling layer is touched — an agent-mapped node (Layer 1 dropped) is refused a
 skill outright, because that composite is unmeasured. Bodies over 16 KiB are
-skipped, never truncated; every decision prints with the inlined size and
-SHA-256, the full text lands in the saved `graph.json`, and
+skipped, never truncated; every decision prints one line — a mapping with the
+inlined size and a SHA-256 prefix, a refusal with its reason (there is no
+inlined text to measure or hash) — the full text lands in the saved
+`graph.json`, and
 `--no-skill-mapping` turns it off. Honest cost: a mapped node pays for the
 body on every invocation, and inlining is unconditional where Claude Code's
 own `description`-driven activation is conditional — whether that helps or
