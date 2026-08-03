@@ -57,6 +57,7 @@ nodes:
         `go test <affected packages> -race -count=300`, or your stack's
         equivalent) — a flaky test passes a single run, and determinism is
         the claim under test.
+      verify_command: make local
 
   - id: review-security
     use: review-security

@@ -60,6 +60,7 @@ nodes:
         using channels), ALSO stress those packages —
         `go test <pkgs> -race -count=300` — because a flaky test passes a
         single run; determinism is the claim under test.
+      verify_command: make local
 
   - id: review-security
     use: review-security

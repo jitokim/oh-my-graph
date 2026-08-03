@@ -17,12 +17,21 @@ import (
 // rubber-stamping it decays the mechanism into noise.
 var update = flag.Bool("update", false, "regenerate testdata/golden resolved-graph fixtures")
 
+// goldenTemplates is EVERY shipped template that cites a fragment — the set
+// the blast-radius golden covers. It is deliberately wider than
+// migratedTemplates below: backlog-batch.yaml's conversion is not an
+// equivalence claim (its gates gain a real success_check.verify, so the graph
+// also gains a required `checks_command` input), so it has no frozen
+// pre-migration fixture to be judged against — but a fragment edit still
+// changes it, and that has to show up in a PR diff.
+var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml"}
+
 // migratedTemplates are the two shipped templates ADR 0013's migration
-// converted onto fragments, with the exact (template, node, field) set the
-// migration PR converges — the fields whose old→new values are a reviewed
-// behavior change, not an equivalence claim. Everything OUTSIDE this mask
-// must be byte-identical to the frozen pre-migration files, or the
-// migration does not merge.
+// converted onto fragments WITHOUT changing what they do, with the exact
+// (template, node, field) set the migration PR converges — the fields whose
+// old→new values are a reviewed behavior change, not an equivalence claim.
+// Everything OUTSIDE this mask must be byte-identical to the frozen
+// pre-migration files, or the migration does not merge.
 var migratedTemplates = map[string]map[string][]string{
 	"self-dev.yaml": {
 		"e2e":             {"prompt", "budget_usd"}, // gains the fragment's runaway-insurance budget
@@ -119,7 +128,7 @@ func TestMigratedTemplates_ByteIdenticalOutsideConvergedFields(t *testing.T) {
 // testdata/pre-migration/ (frozen history): one fixture cannot honestly be
 // both the equivalence proof and the drift tripwire.
 func TestShippedTemplateGoldens_ResolvedGraphsMatchFixtures(t *testing.T) {
-	for name := range migratedTemplates {
+	for _, name := range goldenTemplates {
 		t.Run(name, func(t *testing.T) {
 			res, err := LoadFile(filepath.Join("..", "..", "graphs", name))
 			if err != nil {
