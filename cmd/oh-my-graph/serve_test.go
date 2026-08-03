@@ -78,7 +78,7 @@ func TestServeRun_PrintsLoopbackURLAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var out strings.Builder
 	done := make(chan error, 1)
-	go func() { done <- serveRun(ctx, &out, listener, t.TempDir(), "run-1") }()
+	go func() { done <- serveRun(ctx, &out, listener, t.TempDir(), "run-1", nil) }()
 
 	// The server must actually answer on the announced address before we
 	// cancel — proving serveRun serves, not just prints.
@@ -123,7 +123,7 @@ func TestServeRun_ServeFailureSurfacesWithoutACancel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- serveRun(context.Background(), &strings.Builder{}, listener, t.TempDir(), "run-1")
+		done <- serveRun(context.Background(), &strings.Builder{}, listener, t.TempDir(), "run-1", nil)
 	}()
 	select {
 	case err := <-done:
@@ -149,7 +149,7 @@ func TestServeRun_CancelEndsAnOpenSSEStream(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveRun(ctx, &strings.Builder{}, listener, t.TempDir(), "run-1") }()
+	go func() { done <- serveRun(ctx, &strings.Builder{}, listener, t.TempDir(), "run-1", nil) }()
 
 	resp, err := http.Get("http://" + listener.Addr().String() + "/api/events")
 	if err != nil {

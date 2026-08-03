@@ -126,6 +126,32 @@ func TestHandler_RejectsNonLoopbackHost(t *testing.T) {
 			t.Errorf("Host %q: status = %d, want 200 — a legitimate local viewer's Host", host, rec.Code)
 		}
 	}
+
+	// The mutating routes sit behind the same guard, and it runs before any
+	// of their own checks: a rebound Host is 403, not a token error and never
+	// a resume.
+	gated := pausedGateForHostTest(t)
+	for _, host := range []string{"evil.example.com", "evil.example.com:8642"} {
+		for _, path := range []string{"/api/gate/approve", "/api/gate/reject"} {
+			req := httptest.NewRequest("POST", path, strings.NewReader(`{"node":"approve"}`))
+			req.Header.Set("X-OMG-Token", gated.token)
+			req.Host = host
+			rec := httptest.NewRecorder()
+			gated.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("POST %s with Host %q: status = %d, want 403", path, host, rec.Code)
+			}
+		}
+	}
+}
+
+// pausedGateForHostTest is a server over a run paused at a gate, with a
+// resumer wired — so a 403 below can only come from the Host guard, never
+// from the route refusing for some other reason.
+func pausedGateForHostTest(t *testing.T) *Server {
+	t.Helper()
+	s, _ := pausedGateServer(t, newFakeResumer())
+	return s
 }
 
 // --- /api/graph --------------------------------------------------------------

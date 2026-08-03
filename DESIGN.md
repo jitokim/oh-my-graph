@@ -629,6 +629,15 @@ rather than silently swallowed; a snapshot write failure **at a gate pause is
 fatal**, because a pause whose state was not persisted is an unrecoverable
 stop, and reporting it as a clean pause would lie.
 
+**Two front-ends, one resume.** A gate decision reaches the run through
+`executeResume` and nothing else. `oh-my-graph resume` parses it from flags;
+the web live view POSTs it from the browser (`POST /api/gate/approve`
+|`/reject` → `serve.GateResumer` → `cliGateResumer` → the same
+`executeResume`, ADR 0014). The lock, the snapshot load, the explicit-gate-id
+check, the `RecordedController` and the leg itself are shared, so the two
+front-ends cannot drift; only the standalone `serve` process wires the
+browser one.
+
 **CLI contract:**
 ```
 oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
@@ -692,14 +701,15 @@ decides where a human should be interrupted is not a feature, and it collides
 with the deny-by-default field policy below.
 
 ## Web live view — `oh-my-graph serve`
-`serve [<run-id>] [--port N]` is a read-only web live view of ONE run: a
+`serve [<run-id>] [--port N]` is a web live view of ONE run: a
 chronological run feed — what each node produced, why something failed — as
 the main surface, with the DAG as a compact collapsible side map (GitHub
 Actions' log-first layout, not Airflow's graph-first one: for this tool's
 runs the substance is in the node output, not the topology). It changes
 nothing about the visibility
 stance: oh-my-graph executes and does not render *for the fleet* — serve is
-just another **consumer of the run-feed contract** (docs/RUN-FEED.md), living
+a **consumer of the run-feed contract** (docs/RUN-FEED.md) in everything but
+one route, living
 in-repo, reading `state.json` for structure and tailing `events.jsonl` for
 progress through the same readers `runs list` and `watch` use
 (`runfeed.InFlight`, `runfeed.Follow` — serve via its `FollowWait`
@@ -711,23 +721,50 @@ going blank would make a routine schema bump fatal, which RUN-FEED.md's
 compatibility rule forbids). fleetops's fleet-wide role is unchanged;
 serve is one run, live, locally.
 
+**serve is deliberately no longer strictly read-only** (ADR 0014). Every
+route reads except two: `POST /api/gate/approve` and `POST /api/gate/reject`
+decide the gate a run is paused at, which continues the run — rewriting
+`state.json`, appending to `events.jsonl`, and running the nodes the gate was
+blocking. The boundary that moved is what `serve` *is*, not who may reach it:
+the package still owns no gate logic (it calls the injected `GateResumer`,
+which the CLI builds over `executeResume` — see "Gate nodes and resume"), it
+still imports no `os/exec`, and a decision is valid ONLY while the viewed run
+is genuinely paused at the named gate. A held `resume.lock` (a leg in
+flight), a missing snapshot, `Gate.PausedAt == ""`, a gate id that is not the
+pending one, and a view with no resumer injected are each **409**. Only the
+standalone `serve` process injects a resumer: a paused run's process has
+already exited (ADR 0003), so an embedded live view can never be looking at
+one, and it answers 409 like any other view that cannot resume.
+
 - **Run resolution:** an explicit id wins; otherwise the newest in-flight run
   (the leg-walking `runs list` uses for RUNNING); otherwise the newest run
   directory (`serve.ResolveRun`).
 - **127.0.0.1 only** (`serve.Listen`, default port 8642): run directories
   hold prompts, artifacts and session ids, so the server must never be
-  reachable off-host. The loopback bind IS the access control; widening it
-  would need an auth story first. Covered by a test on the bound listener
-  address, not just config. Because the bind is the access control, requests
-  whose Host header is not `127.0.0.1`/`localhost` are rejected with 403
-  (`requireLoopbackHost`) — otherwise a hostile page could DNS-rebind a
+  reachable off-host. The loopback bind IS the access control for reading;
+  widening it would need an auth story first. Covered by a test on the bound
+  listener address, not just config. Because the bind is the access control,
+  requests whose Host header is not `127.0.0.1`/`localhost` are rejected with
+  403 (`requireLoopbackHost`) — otherwise a hostile page could DNS-rebind a
   domain it controls onto 127.0.0.1 and read `/api/*` through the victim's
-  own browser.
+  own browser. Neither guard covers a *mutating* route — a page the user is
+  already visiting can POST to `http://127.0.0.1:8642/` with a perfectly
+  legitimate Host — so the two gate POSTs additionally require a per-process
+  random token (`crypto/rand`, hex), minted in `serve.New`, rendered into the
+  served page (the one asset not shipped byte-for-byte) and sent back as
+  `X-OMG-Token`: missing is 400, mismatched is 403, compared in constant
+  time. It is a CSRF guard, not a login — a custom header also forces a
+  preflight, which a cross-origin form POST cannot satisfy.
 - **Zero runtime network dependencies:** one static page embedded with
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).
   No build step, no npm, no CDN.
-- **Spawns nothing.** The server itself never shells out to
+- **Spawns nothing itself.** The `internal/serve` package imports no
+  `os/exec` and starts no process; the two processes its features imply are
+  reached through injected seams the CLI builds — a resumed leg's nodes
+  through `runner.ClaudeCLIRunner` behind `serve.GateResumer` (ADR 0014), so
+  a gate decided in the browser spawns exactly what `oh-my-graph resume`
+  would. The server itself never shells out to
   `open`/`xdg-open`; browser-open lives behind its own seam —
   `browser.Opener`, the fourth exec seam (ADR 0006) — and only the CLI wires
   it. A leg whose stdout is a terminal — a fresh `run`/`auto`, or a
@@ -764,9 +801,22 @@ serve is one run, live, locally.
   first snapshot exists (exactly when the first node is running), the run's
   own feed vouches instead. Not running / no session id (a gate, a
   session-handoff node) / no transcript yet → 204.
+- **Deciding the paused gate** is the view's one action: the gate the run is
+  parked at carries approve/reject buttons on its feed entry and nowhere
+  else. They are derived from the stream like the rest of the feed — a
+  `gate_paused` with no later `gate_approved`/`gate_rejected` for that node
+  is the actionable state — so a reconnect's full replay puts them back on
+  exactly the gate still waiting. A POST is answered **202** the moment the
+  leg starts (a leg runs for minutes; the run feed is the progress report,
+  streaming into the SSE connection the page already holds open — which is
+  why `/api/events` deliberately does not end at `run_finished`), and the
+  leg is detached from the request so closing the tab does not kill it. The
+  `oh-my-graph resume` command stays on the entry as secondary text: it is
+  still the way in from an embedded view.
 - **v1 scope is the single-run live view ONLY:** no run list page, no history
-  browsing, no auth, no config file, no WebSocket (SSE over the append-only
-  stream is the whole transport).
+  browsing, no login (the gate token is a CSRF guard, not auth), no config
+  file, no WebSocket (SSE over the append-only stream is the whole
+  transport).
 
 ## Auto mode — planned graphs, no hand-written YAML
 `oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
@@ -1085,7 +1135,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,resolve,transcript}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract, plus the live transcript tail of a running node's own session
+internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph parses)
 docs/adr/000{1..6}-*.md

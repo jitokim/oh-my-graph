@@ -5,8 +5,8 @@
 // collapsible side map (clicking a map node scrolls the feed to that node's
 // latest entry). A settled node reads as ONE entry: its terminal entry
 // absorbs its started-line (retry lines stay — a retry is a real
-// transition). Three sources, mirroring the run-feed contract
-// (docs/RUN-FEED.md):
+// transition). Four read sources, mirroring the run-feed contract
+// (docs/RUN-FEED.md), and — on a paused gate's entry only — one write:
 //   /api/graph   the DAG structure (polled until the snapshot exists — a
 //                fresh run has no state.json until its first node completes)
 //   /api/events  the event stream over SSE (replay, then follow)
@@ -18,6 +18,10 @@
 //                and tool-use names from its session transcript), polled
 //                every few seconds onto the node's open feed line and gone
 //                the moment the node settles (200 entries / 204 nothing)
+//   /api/gate/approve, /api/gate/reject  POSTed by the approve/reject buttons
+//                on the entry of the gate the run is paused at, carrying the
+//                per-process token this page was served with (see decideGate;
+//                202 leg started / 4xx-5xx refused, with the reason shown)
 // Events may arrive before the structure does; per-node state is kept in
 // `nodes` and painted onto the cytoscape map whenever either side updates.
 // The feed is derived purely from the stream, so a full EventSource replay
@@ -29,6 +33,12 @@
 // getComputedStyle at init and the graph is re-styled on theme change.
 
 "use strict";
+
+// This page's gate token, rendered into it by the process that served it
+// (serve.handleIndex). It is sent back on every gate decision and on nothing
+// else; a page served by some other origin has no way to know it, which is
+// what keeps a cross-origin POST from deciding this run's gate.
+const GATE_TOKEN = document.querySelector('meta[name="omg-token"]')?.content || "";
 
 // Status palette — style.css's custom properties (--pending, --running, …)
 // are the one source of truth; node borders read them via statusColor(), so
@@ -479,6 +489,8 @@ feedCol.addEventListener("scroll", () => {
 
 // Feed-derived indexes, all reset together on reconnect:
 //   latestEntryByNode  node id -> its most recent entry (the map's tap target)
+//   gateActions        gate node id -> the approve/reject pair on its paused
+//                      entry, dropped when the stream reports the decision
 //   startLine          node id -> its open started-line; the node's terminal
 //                      entry absorbs it (one entry per settled node — a retry
 //                      is a real transition and keeps its own line)
@@ -494,6 +506,7 @@ const startLine = new Map();
 const resultBlocks = new Map();
 const liveElapsed = new Map();
 const liveTails = new Map();
+const gateActions = new Map();
 
 function resetFeed() {
   $("feed").textContent = "";
@@ -502,6 +515,7 @@ function resetFeed() {
   resultBlocks.clear();
   liveElapsed.clear();
   liveTails.clear();
+  gateActions.clear();
   feedAtBottom = true;
 }
 
@@ -632,21 +646,27 @@ function appendFeed(event, ts) {
     case "gate_paused": {
       const li = addEntry("line", event.node_id);
       entryHead(li, "gate-paused", event.node_id, "⏸ gate paused");
+      // Decide it here — or from the terminal, which stays a first-class way
+      // in (and the only one when this view is embedded in the running
+      // process, whose POSTs are refused).
+      buildGateActions(li, event.node_id);
       const note = document.createElement("p");
       note.className = "entry-note";
       const runRef = event.run_id || "<run-id>";
-      note.textContent = `the run is paused — resume with: oh-my-graph resume ${runRef} --approve ${event.node_id} (or --reject)`;
+      note.textContent = `or from the terminal: oh-my-graph resume ${runRef} --approve ${event.node_id} (or --reject)`;
       li.appendChild(note);
       break;
     }
     case "gate_approved": {
       const li = addEntry("line", event.node_id);
       entryHead(li, "passed", event.node_id, "gate approved");
+      dropGateActions(event.node_id);
       break;
     }
     case "gate_rejected": {
       const li = addEntry("line", event.node_id);
       entryHead(li, "failed", event.node_id, "gate rejected");
+      dropGateActions(event.node_id);
       break;
     }
     case "run_finished": {
@@ -662,6 +682,66 @@ function appendFeed(event, ts) {
     default:
       break;
   }
+}
+
+// --- gate decisions ----------------------------------------------------------
+
+// The one place this page writes rather than reads: the approve/reject pair on
+// a paused gate's feed entry, POSTing to /api/gate/* (see serve's
+// handleGateDecision). The buttons live on that entry and nowhere else, and
+// they are derived from the stream like everything else in the feed: a
+// gate_paused entry gets them, and the gate_approved/gate_rejected that
+// answers it takes them away — so a replay after a reconnect leaves them on
+// exactly the gate that is still waiting.
+function buildGateActions(li, nodeId) {
+  const actions = document.createElement("div");
+  actions.className = "gate-actions";
+  const buttons = [];
+  for (const decision of ["approve", "reject"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `gate-btn ${decision}`;
+    button.textContent = decision;
+    button.addEventListener("click", () => decideGate(nodeId, decision, buttons));
+    actions.appendChild(button);
+    buttons.push(button);
+  }
+  li.appendChild(actions);
+  gateActions.set(nodeId, actions);
+}
+
+function dropGateActions(nodeId) {
+  const actions = gateActions.get(nodeId);
+  if (actions) actions.remove();
+  gateActions.delete(nodeId);
+}
+
+// decideGate sends one decision. The token comes from the meta tag the serving
+// process rendered into this page (serve.handleIndex); without it the server
+// refuses, which is what stops another origin from POSTing on the user's
+// behalf. A 202 means the leg started: the buttons stay disabled and the
+// stream's own gate_approved/gate_rejected renders the outcome, so nothing is
+// drawn here from the response. Any other status leaves the gate decidable and
+// says why in the banner.
+function decideGate(nodeId, decision, buttons) {
+  for (const button of buttons) button.disabled = true;
+  fetch(`api/gate/${decision}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-OMG-Token": GATE_TOKEN },
+    body: JSON.stringify({ node: nodeId }),
+  })
+    .then(async (resp) => {
+      if (resp.status === 202) {
+        banner(`gate ${nodeId}: ${decision} sent — resuming`);
+        return;
+      }
+      banner(`gate ${decision}: ${(await resp.text()).trim()}`);
+      for (const button of buttons) button.disabled = false;
+    })
+    .catch((err) => {
+      banner(`gate ${decision}: ${err}`);
+      for (const button of buttons) button.disabled = false;
+    });
 }
 
 // The artifact rendering of a settled entry. A multi-line artifact is a
