@@ -73,6 +73,11 @@ open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
   subagents, and `auto` maps planned nodes onto your agents and skills
   ([`auto` in depth](#auto-in-depth)).
 
+<p align="center">
+  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: a LIVE header with 2 running / 68 passed / 19 failed run chips and a cumulative spend total, an IN FLIGHT row of two live run cards each drawing its own mini-DAG with per-node states, and a collapsed SETTLED group of 87 runs" width="100%" />
+</p>
+<p align="center"><em>The dashboard, one step up from a single run — a real dogfood board: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header is cumulative subscription usage across the project's whole development — not a per-run price, and not free.</em></p>
+
 ## What makes it different
 
 - **The graph is an artifact, not a transcript.** The DAG lives in a YAML file
