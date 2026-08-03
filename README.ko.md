@@ -71,10 +71,19 @@ transcript들을 관찰합니다. oh-my-graph는 executor이고, fleetops는
 ```sh
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
+# 바이너리 안에 함께 실린 예제 그래프를 ./graphs/에 풀어 놓습니다:
+oh-my-graph init
+
 # 가장 저렴한 실제 smoke test (몇 센트):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
+
+`go install`은 실행 파일 하나만 복사하므로, `init`이 그 실행 파일에 임베드된
+예제 그래프를 `./graphs/`에 풀어 놓습니다 — 디렉토리를
+넘기면(`oh-my-graph init <dir>`) `<dir>/graphs/`에 씁니다. 절대 덮어쓰지
+않습니다: 대상 파일이 하나라도 이미 존재하면 그 경로를 알려주고 아무것도
+쓰지 않습니다.
 
 `ANTHROPIC_API_KEY`는 필요 없습니다 — smoke test는 로그인된 `claude`
 subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOKEN`)가
@@ -96,6 +105,29 @@ CI에서(stdout이 터미널이 아닐 때) — 또는 `--no-web`을 주면 — 
   <img src="assets/live-view.png" alt="실제 oh-my-graph run의 web live view: 왼쪽은 노드 출력 피드, 오른쪽은 passed/running/pending 노드가 표시된 DAG 맵, 헤더에는 실시간 비용과 경과 시간" width="100%" />
 </p>
 <p align="center"><em>실행 중의 live view — 실제 dogfood run(ADR-0012 skill-mapping 그래프)을 라이브로 캡처한 화면: 왼쪽은 노드 출력 피드, 오른쪽은 DAG 맵, 헤더에는 비용과 경과 시간.</em></p>
+
+### 미리 빌드된 바이너리
+
+태그가 붙은 릴리스마다 [GitHub Releases
+페이지](https://github.com/jitokim/oh-my-graph/releases)에 미리 빌드된
+바이너리도 함께 올라갑니다 — darwin과 linux, `arm64`와 `amd64` 모두,
+`.tar.gz` 아카이브와 그 옆의 `checksums.txt`. Go 툴체인을 두고 싶지 않을 때
+`go install` 대신 쓰는 경로입니다. Homebrew tap은 없으며, Windows는 빌드
+매트릭스에 없습니다 — 거기서는 소스에서 빌드하세요.
+
+Releases 페이지에서 태그를 고른 다음:
+
+```sh
+VERSION=0.3.1 OS=darwin ARCH=arm64   # 태그(앞의 v 제외)와 사용하는 플랫폼
+ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}$" checksums.txt | shasum -a 256 -c -   # linux에서는: sha256sum -c -
+tar xzf "${ARCHIVE}"
+./oh-my-graph version
+```
+
+`oh-my-graph`를 `PATH` 위로 옮기면 위의 smoke test가 그대로 실행됩니다.
 
 ### Zero-config: auto 모드
 
@@ -130,11 +162,12 @@ YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 �
 ## 사용법
 
 ```
-oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 | subcommand | 용도 |
 |---|---|
+| `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
 | `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |

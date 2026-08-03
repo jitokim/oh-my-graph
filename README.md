@@ -88,10 +88,19 @@ ships itself with. A full dogfooding run is walked through in
 ```sh
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
+# Write the example graphs that ship inside the binary into ./graphs/:
+oh-my-graph init
+
 # The cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
+
+`go install` copies one executable and nothing else, so `init` unpacks the
+example graphs embedded in that executable into `./graphs/` — pass a directory
+(`oh-my-graph init <dir>`) to write to `<dir>/graphs/` instead. It never
+overwrites: if any target file already exists it names that path and writes
+nothing at all.
 
 No `ANTHROPIC_API_KEY` needed — the smoke test runs on your logged-in `claude`
 subscription; if the key (or `ANTHROPIC_AUTH_TOKEN`) is set in your shell,
@@ -113,6 +122,29 @@ nothing is served or opened and the output is unchanged.
   <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
 </p>
 <p align="center"><em>The live view mid-run — a real dogfood run (the ADR-0012 skill-mapping graph) captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
+
+### Prebuilt binaries
+
+Each tagged release also publishes prebuilt binaries on the [GitHub Releases
+page](https://github.com/jitokim/oh-my-graph/releases) — darwin and linux, on
+both `arm64` and `amd64`, as `.tar.gz` archives with a `checksums.txt` next to
+them. An alternative to `go install` when you'd rather not keep a Go toolchain
+around. There's no Homebrew tap, and Windows is not in the build matrix — build
+from source there.
+
+Pick a tag from the Releases page, then:
+
+```sh
+VERSION=0.3.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}$" checksums.txt | shasum -a 256 -c -   # on linux: sha256sum -c -
+tar xzf "${ARCHIVE}"
+./oh-my-graph version
+```
+
+Move `oh-my-graph` onto your `PATH` and the smoke test above runs unchanged.
 
 ### Zero-config: auto mode
 
@@ -160,11 +192,12 @@ walks through the plan output, the tool ceiling, and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 | subcommand | purpose |
 |---|---|
+| `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
