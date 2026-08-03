@@ -404,9 +404,42 @@ node: { prompt: "do {{ with.checks }}" }
 	if len(advisories) != 1 || !strings.Contains(advisories[0].Detail, `"unused"`) {
 		t.Fatalf("want one advisory naming the unreferenced point, got %v", advisories)
 	}
-	// Advice must not affect the fail-fast view either.
-	if _, err := LoadFile(path); err != nil {
+	// Advice must not affect the fail-fast view either — and LoadFile must
+	// still HAND BACK what it found, so `run` can print the same warning
+	// `lint` does instead of silently swallowing it.
+	res, err := LoadFile(path)
+	if err != nil {
 		t.Fatalf("LoadFile must accept a graph whose only finding is advisory: %v", err)
+	}
+	if len(res.Advisories) != 1 || !strings.Contains(res.Advisories[0].Detail, `"unused"`) {
+		t.Fatalf("LoadFile must expose the same advisory LintFile reports, got %v", res.Advisories)
+	}
+}
+
+// TestLoadFile_TokensInOtherNamespacesPassThroughAFragmentBody is the
+// counterpart to the malformed-with-token refusals: the loose token scan must
+// judge ONLY the with namespace. A runtime placeholder is resolved much later
+// by handoff, and literal {{ }} prose is nobody's business — a fragment body
+// that carries either must load unchanged, or the refusal has swallowed the
+// composition rule fragments are built on.
+func TestLoadFile_TokensInOtherNamespacesPassThroughAFragmentBody(t *testing.T) {
+	frag := `fragment: e2e-verify
+description: a gate
+substitutions: [checks]
+node:
+  prompt: "do {{ with.checks }} in {{ inputs.repo }} after {{ artifacts.dev | inline }} — {{ literal prose }}"
+`
+	path := writeGraphDir(t, usingGraph(usingE2E), map[string]string{"e2e-verify": frag})
+
+	res, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("a body carrying non-with tokens must load: %v", err)
+	}
+	e2e, _ := res.Graph.NodeByID("e2e")
+	for _, want := range []string{"do run make local.", "{{ inputs.repo }}", "{{ artifacts.dev | inline }}", "{{ literal prose }}"} {
+		if !strings.Contains(e2e.Prompt, want) {
+			t.Errorf("resolved prompt must contain %q:\n%s", want, e2e.Prompt)
+		}
 	}
 }
 

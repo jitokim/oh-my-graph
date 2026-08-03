@@ -179,6 +179,14 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 	}
 	g := loaded.Graph
 	printFragmentResolutions(os.Stdout, loaded.Resolutions)
+	// The advisory half of the same disclosure, through the same helper `lint`
+	// and `--dry-run` use: a run that announces which fragments it spliced must
+	// announce their drift smell too, or an identical file warns under `lint`
+	// and goes quiet under the command that spends money. Advice only — it
+	// cannot fail the run. The two handoff sweeps (placeholders, cold session
+	// resumes) stay lint-only by contrast: those judge the whole graph and are
+	// the pre-flight command's job, not a per-run disclosure.
+	warnFragmentAdvisories(os.Stderr, flags.graphPath, loaded.Advisories)
 	warnBypassPermissions(g)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

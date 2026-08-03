@@ -250,6 +250,41 @@ func TestLintGraph_FragmentAdvisoryWarnsAndKeepsExitZero(t *testing.T) {
 	}
 }
 
+// TestRunGraphWith_WarnsOnFragmentAdvisoryAndStillRuns is the run-path half of
+// the advisory channel. `run` prints the fragment disclosure, so it must print
+// the disclosure's advisory half too: a fragment file whose only finding is
+// drift smell warned under `lint` and went completely silent under the command
+// that spends money — the one place the reader is actually watching. The run
+// must still succeed: advice never touches an exit code.
+func TestRunGraphWith_WarnsOnFragmentAdvisoryAndStillRuns(t *testing.T) {
+	isolateRunHome(t)
+	frag := "fragment: gate\ndescription: a gate\nsubstitutions: [checks, unused]\nnode: { prompt: \"Continue — and {{ with.checks }}\", success_check: { exit_zero: true } }\n"
+	path := writeFragmentGraphDir(t, "graph.yaml",
+		"name: drifty\nnodes:\n  - { id: dev, prompt: build }\n  - { id: e2e, use: gate, depends_on: [dev], with: { checks: run make local., unused: u } }\n",
+		map[string]string{"gate": frag})
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"build":                          {SessionID: "s-dev", Result: "ok", ExitCode: 0},
+		"Continue — and run make local.": {SessionID: "s-e2e", Result: "ok", ExitCode: 0},
+	})
+
+	warnings, err := captureStderr(t, func() error {
+		var runErr error
+		captureStdout(t, func() {
+			runErr = runGraphWith([]string{path}, fake, browser.NewFakeOpener(), os.Stdout)
+		})
+		return runErr
+	})
+	if err != nil {
+		t.Fatalf("an advisory-only graph must still run: %v", err)
+	}
+	if !strings.Contains(warnings, "warning: "+path+": fragment") || !strings.Contains(warnings, `"unused"`) {
+		t.Errorf("run must warn about the unreferenced substitution point, the way lint does:\n%s", warnings)
+	}
+	if n := len(fake.Invocations()); n != 2 {
+		t.Errorf("advice must not stop the run — %d nodes invoked, want 2", n)
+	}
+}
+
 // TestLintGraph_SweepsTheResolvedGraph pins that the advisory placeholder
 // sweep runs on the RESOLVED nodes: a typoed token living in the fragment
 // body is warned about on the using graph — no sweep learns what a fragment

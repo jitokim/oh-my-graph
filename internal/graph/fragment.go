@@ -79,15 +79,24 @@ func (a FragmentAdvisory) String() string {
 // LoadResult is what LoadFile hands the CLI: the validated graph, the entry
 // file's raw bytes (the datum `run` needs for GraphSHA256 — the hash is of
 // the ENTRY file only, the snapshot is the authority on resolved content),
-// and one FragmentResolution per resolved `use:` — which is both the
-// disclosure line's input and the snapshot's re-encode signal (whenever any
-// node resolved a fragment, the snapshot must store the re-encoded resolved
-// graph, never the raw entry bytes, or a JSON-authored fragment graph would
-// snapshot unresolved and fail its own resume).
+// one FragmentResolution per resolved `use:` — which is both the disclosure
+// line's input and the snapshot's re-encode signal (whenever any node
+// resolved a fragment, the snapshot must store the re-encoded resolved graph,
+// never the raw entry bytes, or a JSON-authored fragment graph would snapshot
+// unresolved and fail its own resume) — and the advisory findings about the
+// fragment FILES this load spliced.
+//
+// Advisories travel with a successful load, not only with LintFile, because
+// they belong to the same disclosure the run already prints: `run` announces
+// which fragments it spliced, so it must be able to announce their drift
+// smell too, or the identical file warns under `lint` and stays silent under
+// the command that spends money. They remain advice — nothing here affects
+// whether the load succeeded.
 type LoadResult struct {
 	Graph       *Graph
 	Source      []byte
 	Resolutions []FragmentResolution
+	Advisories  []FragmentAdvisory
 }
 
 // LoadFile is the path-aware load stage (ADR 0013) that `run` is wired onto:
@@ -115,7 +124,7 @@ func LoadFile(path string) (*LoadResult, error) {
 	if err := g.Validate(); err != nil {
 		return nil, err
 	}
-	return &LoadResult{Graph: g, Source: data, Resolutions: outcome.resolutions}, nil
+	return &LoadResult{Graph: g, Source: data, Resolutions: outcome.resolutions, Advisories: outcome.advisories}, nil
 }
 
 // LintFile is LoadFile's collect-all counterpart, mirroring Lint: every
