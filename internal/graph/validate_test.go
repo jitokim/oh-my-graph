@@ -880,3 +880,35 @@ func TestParse_RefusesUseCarriedInJSON(t *testing.T) {
 		t.Fatal("JSON-authored use: must be refused naming the node")
 	}
 }
+
+// TestParse_RefusesPresentButEmptyWith pins that the backstop tests PRESENCE,
+// not size. Both decoders turn `with: {}` into a non-nil EMPTY map, so a
+// length test would wave through the one binding block that is dead by
+// construction while refusing every populated one — the loudest case going
+// quietest. Both notations, because the two decode paths (a YAML file, a JSON
+// snapshot) reach this validator independently.
+func TestParse_RefusesPresentButEmptyWith(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"yaml", "name: frag\nnodes:\n  - { id: a, prompt: fine, with: {} }\n"},
+		{"json", `{"name":"frag","nodes":[{"id":"a","prompt":"fine","with":{}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src))
+			if err == nil {
+				t.Fatal("an empty but present with: is still a dead binding — it must be refused")
+			}
+			if asUnresolvedFragmentError(t, err).NodeID != "a" {
+				t.Fatal("the refusal must name the node carrying the dead with:")
+			}
+		})
+	}
+}
+
+// TestParse_AcceptsAnAbsentWith is the other half: a node that never declares
+// with: at all must stay valid, or the presence test above has turned every
+// ordinary node into an error.
+func TestParse_AcceptsAnAbsentWith(t *testing.T) {
+	if _, err := Parse([]byte("name: frag\nnodes:\n  - { id: a, prompt: fine }\n")); err != nil {
+		t.Fatalf("a node with no with: key must be valid: %v", err)
+	}
+}

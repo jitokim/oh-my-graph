@@ -480,10 +480,20 @@ func validateVerification(nodeID string, v *Verification) (time.Duration, error)
 // the decoded-but-unresolved fields exist to make loud. `with:` is refused on
 // its own too: outside a resolution it is a dead binding, a wiring bug, not a
 // style choice.
+//
+// The `with:` half tests PRESENCE, not size: yaml.v3 and encoding/json both
+// decode `with: {}` into a non-nil empty map, so a length test would wave
+// through the one shape that is dead by construction — a binding block that
+// binds nothing — while refusing the populated ones. Presence is also what the
+// file loader refuses (resolveNode's dead-`with:` error does not count keys),
+// so the backstop and the loader agree on what a stray `with:` is. `with: null`
+// decodes to nil and is indistinguishable from an absent key after decoding;
+// it stays tolerated rather than paying for a presence-preserving decode of
+// every node field to catch a shape nobody writes.
 func (g *Graph) validateFragmentsResolved() []error {
 	var issues []error
 	for _, n := range g.Nodes {
-		if n.Use == "" && len(n.With) == 0 {
+		if n.Use == "" && n.With == nil {
 			continue
 		}
 		issues = append(issues, &UnresolvedFragmentError{GraphValidationError{
