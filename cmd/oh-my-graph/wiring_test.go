@@ -348,3 +348,38 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintPlan_ShowsSkillMappingsAndSkips pins skill mapping's disclosure
+// contract (ADR 0012 §6): one line per decision — an applied mapping prints
+// its name, inlined size, hash prefix (the integrity link to the full text in
+// the saved spec file), target node and description; a refused candidate
+// prints its reason; and the opt-out flag is stated. Inlined text the human
+// never saw before execution would defeat the reason the mapping lives in
+// trusted code.
+func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
+		`{"id":"impl","prompt":"p"},` +
+		`{"id":"verify","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := coordinator.Plan{Graph: g, SkillMappings: []coordinator.SkillMapping{
+		{NodeID: "impl", Skill: "coding-rules", Description: "team coding rules",
+			InlinedBytes: 6861, SHA256: strings.Repeat("ab12", 16)},
+		{NodeID: "verify", Skill: "pre-commit-checklist", SkippedReason: "body 86.6 KiB exceeds 16 KiB cap"},
+	}}
+
+	var out strings.Builder
+	printPlan(&out, plan, "/tmp/graph.json")
+	got := out.String()
+
+	for _, want := range []string{
+		`skill mapped: coding-rules (6.7 KiB, sha256:ab12ab12ab12…) -> impl — "team coding rules"`,
+		"skill skipped: pre-commit-checklist -> verify: body 86.6 KiB exceeds 16 KiB cap",
+		"--no-skill-mapping",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan printout is missing %q:\n%s", want, got)
+		}
+	}
+}

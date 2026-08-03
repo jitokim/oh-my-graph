@@ -158,7 +158,7 @@ all 7 map, and the 86.6 KiB outlier (`pre-commit-checklist`) stays excluded.
 The cap is therefore **16 KiB**. Measured yield, stated as the accepted
 cost: 30 of 35 skills are mappable, 7 of 28 shipped node ids actually map,
 and the 5 oversize skills are each skipped with a printed reason
-(`skipped: body 86 KiB exceeds 16 KiB cap`). An earlier draft set 8 KiB
+(`skipped: body 86.6 KiB exceeds 16 KiB cap`). An earlier draft set 8 KiB
 against an assumed "typical 1–4 KiB" body — false on this very corpus (2 of
 35) — which would have delivered ~3.5% coverage on the exact setup that
 motivates the feature. A cap must be recalibrated if the corpus changes
@@ -275,10 +275,15 @@ no prompt at all. So the disclosure for skill mapping is: **one line per
 decision** in the plan printout, alongside the agent-mapping note —
 
 ```
-skill mapped: coding-rules (6.7 KiB, sha256:ab12…) -> impl — "team coding rules for implementation and review"
-skill skipped: pre-commit-checklist -> verify: body 86 KiB exceeds 16 KiB cap
-skill skipped: review-a: node is agent-mapped (composite with dropped Layer 1 unmeasured)
+skill mapped: coding-rules (6.7 KiB, sha256:ab12ab12ab12…) -> impl — "team coding rules for implementation and review"
+skill skipped: pre-commit-checklist -> verify: body 86.6 KiB exceeds 16 KiB cap
+skill skipped: pr-code-review -> review-a: node is agent-mapped (composite with dropped Layer 1 unmeasured)
 ```
+
+(One decision format, `<skill> -> <node>: <reason>` for every refusal, so the
+agent-mapped line names the refused skill too; sizes print with one decimal
+and the hash prints a 12-hex-character prefix — the full hash lives on the
+Plan and in the saved spec.)
 
 — plus the full inlined text in the saved spec/`graph.json`, which the
 printout names. A gated run adds no further display: the gate shows the
@@ -287,9 +292,10 @@ approving reads the named spec file; the printed hash is the integrity link
 between the printout and that file. (An earlier draft claimed the gate
 displays inlined text; it does not, and this ADR does not depend on it.)
 
-Every decision — mapping made, candidate refused (size, ambiguity,
-agent-mapped node) — is recorded on the Plan (`SkillMappings`) and printed
-before execution. Opt out with `--no-skill-mapping` (mirroring
+Every decision — mapping made, candidate refused (size, agent-mapped node) —
+is recorded on the Plan (`SkillMappings`) and printed before execution. An
+ambiguous match is not a decision but silence (§2): no entry, no line —
+exactly how agent mapping records it. Opt out with `--no-skill-mapping` (mirroring
 `--no-agent-mapping`, including on `chat`). Scan failures — missing
 directories, unreadable files, broken frontmatter, a blank name — are silent
 no-mapping, never an error: zero-config stays zero-config. Directories are

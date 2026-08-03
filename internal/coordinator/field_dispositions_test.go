@@ -103,7 +103,7 @@ var nodeFieldDispositions = map[string]fieldRule{
 
 	"Prompt": {
 		disposition:    constrained,
-		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend",
+		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend. Since ADR 0012 the final prompt is planner-authored text PLUS trusted-code-appended local file content: applySkillMapping may append a user SKILL.md body after validation, nonce-fenced, '{{'-neutralized, and recorded on Plan.SkillMappings with path, size and hash",
 		probeJSON:      `"prompt":"   "`,
 		reasonContains: "prompt",
 	},

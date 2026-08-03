@@ -21,25 +21,26 @@ import (
 // turn is classified by one router call through the same env-scrubbed
 // NodeRunner every node uses; a converse turn is answered inline, a graph turn
 // takes the exact `auto` path (coordinator.Plan → validate → scheduler.Run,
-// with the live progress feed and the run's events.jsonl). One flag only:
-// --no-agent-mapping, because a chat graph turn IS an auto run and must honor
-// the same opt-out; everything else stays prototype scope — the loop and the
-// router, nothing else.
+// with the live progress feed and the run's events.jsonl). Two flags only:
+// --no-agent-mapping and --no-skill-mapping, because a chat graph turn IS an
+// auto run and must honor the same opt-outs; everything else stays prototype
+// scope — the loop and the router, nothing else.
 func runChat(args []string) error {
 	set := flag.NewFlagSet("chat", flag.ContinueOnError)
 	noAgentMapping := set.Bool("no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	noSkillMapping := set.Bool("no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
 	if set.NArg() > 0 {
-		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping])", set.Arg(0))
+		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping])", set.Arg(0))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, agentMappingOptions(*noAgentMapping)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(*noAgentMapping, *noSkillMapping)...)
 	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 

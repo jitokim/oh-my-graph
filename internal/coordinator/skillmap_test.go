@@ -1,0 +1,308 @@
+package coordinator
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jitokim/oh-my-graph/internal/runner"
+)
+
+// writeSkillFile drops one Claude Code skill definition into dir: a
+// <name>/SKILL.md with YAML frontmatter between --- fences, then the body the
+// mapping inlines (unlike an agent's system prompt, which mapping never reads).
+func writeSkillFile(t *testing.T, dir, dirname, frontmatter, body string) {
+	t.Helper()
+	skillDir := filepath.Join(dir, dirname)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\n" + frontmatter + "\n---\n\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func planWithSkills(t *testing.T, opts ...Option) Plan {
+	t.Helper()
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reviewSpec})
+	plan, err := New(fake, opts...).Plan(context.Background(), "review the diff", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return plan
+}
+
+// The happy path: one skill, one clear token match ("review" is a token of
+// "pr-code-review"), body under the cap — the body lands in the node's prompt
+// inside a nonce-fenced, attributed block; the decision records the source
+// path, byte count and SHA-256 of that exact inlined text; and the re-encoded
+// Spec carries the inlined prompt so a saved/resumed plan keeps exactly the
+// text that was approved.
+func TestPlan_SkillMappingHit(t *testing.T) {
+	dir := t.TempDir()
+	body := "Always begin your reply with the word FENCEPOST."
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review\ndescription: reviews pull requests", body)
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one applied pr-code-review mapping", plan.SkillMappings)
+	}
+	m := plan.SkillMappings[0]
+	if m.Skill != "pr-code-review" || m.NodeID != "review" || m.SkippedReason != "" {
+		t.Fatalf("mapping = %+v, want pr-code-review applied to review", m)
+	}
+	if m.Description != "reviews pull requests" {
+		t.Errorf("Description = %q, want the frontmatter description carried for the printout", m.Description)
+	}
+	if m.SourcePath != filepath.Join(dir, "pr-code-review", "SKILL.md") {
+		t.Errorf("SourcePath = %q, want the scanned SKILL.md path", m.SourcePath)
+	}
+	if m.InlinedBytes != len(body) {
+		t.Errorf("InlinedBytes = %d, want %d (the exact inlined text)", m.InlinedBytes, len(body))
+	}
+	sum := sha256.Sum256([]byte(body))
+	if m.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Errorf("SHA256 = %q does not hash the inlined text — the printed hash would not verify against the saved spec", m.SHA256)
+	}
+
+	node, ok := plan.Graph.NodeByID("review")
+	if !ok || !strings.Contains(node.Prompt, body) {
+		t.Fatalf("node prompt does not carry the inlined body:\n%s", node.Prompt)
+	}
+	if !strings.HasPrefix(node.Prompt, "review the diff") {
+		t.Errorf("inlining must APPEND — the planner-authored prompt must stay first:\n%s", node.Prompt)
+	}
+	if !strings.Contains(string(plan.Spec), "FENCEPOST") {
+		t.Errorf("spec must carry the inlined prompt for save/resume, got %s", plan.Spec)
+	}
+}
+
+// The fence must carry entropy the fenced text cannot predict: both markers
+// name the skill and share one per-plan nonce, and the block is attributed to
+// its source file — an unfenced delimiter would be forgeable by the very file
+// it delimits.
+func TestPlan_InlinedBodyIsNonceFencedAndAttributed(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the body")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	node, _ := plan.Graph.NodeByID("review")
+	_, opening, found := strings.Cut(node.Prompt, "--- skill: pr-code-review ")
+	if !found {
+		t.Fatalf("prompt carries no opening fence marker:\n%s", node.Prompt)
+	}
+	nonce, _, _ := strings.Cut(opening, " ")
+	if len(nonce) != 6 {
+		t.Fatalf("fence nonce = %q, want 6 hex characters", nonce)
+	}
+	if !strings.Contains(node.Prompt, "--- end skill: pr-code-review "+nonce+" ---") {
+		t.Errorf("closing fence does not repeat the nonce, so the fence is forgeable:\n%s", node.Prompt)
+	}
+	if !strings.Contains(node.Prompt, "(mapped by oh-my-graph from "+filepath.Join(dir, "pr-code-review", "SKILL.md")+")") {
+		t.Errorf("fence does not attribute the inlined text to its source file:\n%s", node.Prompt)
+	}
+}
+
+// Every '{{' in an inlined body is neutralized before appending: node.Prompt
+// is a handoff template, and un-neutralized skill prose would become template
+// code — a {{ artifacts.<id> | inline }} would read another node's artifact
+// file with no tool involved, and an unresolvable {{ inputs.x }} would kill
+// the node at run time with an InterpolationError (ADR 0012 §4). The recorded
+// size and hash must describe the NEUTRALIZED text, or the printed hash would
+// not verify against the saved spec.
+func TestPlan_InlinedBodyBracesAreNeutralized(t *testing.T) {
+	dir := t.TempDir()
+	body := "See {{ artifacts.review | inline }} and {{ inputs.x }}."
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", body)
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	node, _ := plan.Graph.NodeByID("review")
+	if strings.Contains(node.Prompt, "{{") {
+		t.Fatalf("inlined text still carries '{{' — skill prose became template code:\n%s", node.Prompt)
+	}
+	neutralized := "See { { artifacts.review | inline }} and { { inputs.x }}."
+	if !strings.Contains(node.Prompt, neutralized) {
+		t.Fatalf("prompt does not carry the neutralized body:\n%s", node.Prompt)
+	}
+	m := plan.SkillMappings[0]
+	if m.InlinedBytes != len(neutralized) {
+		t.Errorf("InlinedBytes = %d, want %d — size must describe the text as inlined", m.InlinedBytes, len(neutralized))
+	}
+	sum := sha256.Sum256([]byte(neutralized))
+	if m.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Errorf("SHA256 must hash the neutralized text as inlined, got %q", m.SHA256)
+	}
+}
+
+// Later directories shadow earlier ones on a name collision — the same
+// precedence shape as agent scanning (v1's CLI only passes the user dir, but
+// the mechanism must not silently change if a measured project scan is ever
+// added). The versions are distinguishable by body, so the inlined text proves
+// which file won.
+func TestPlan_LaterSkillDirShadowsEarlier(t *testing.T) {
+	userDir, projectDir := t.TempDir(), t.TempDir()
+	writeSkillFile(t, userDir, "pr-code-review", "name: pr-code-review", "USER VERSION")
+	writeSkillFile(t, projectDir, "pr-code-review", "name: pr-code-review", "PROJECT VERSION")
+
+	plan := planWithSkills(t, WithSkillDirs(userDir, projectDir))
+
+	node, _ := plan.Graph.NodeByID("review")
+	if !strings.Contains(node.Prompt, "PROJECT VERSION") || strings.Contains(node.Prompt, "USER VERSION") {
+		t.Errorf("prompt must carry the later directory's body:\n%s", node.Prompt)
+	}
+}
+
+// Two skills matching the same node is ambiguity, and ambiguity is no mapping
+// at all — not an entry, not a guess (the same silence as agent mapping).
+func TestPlan_AmbiguousSkillMatchMapsNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "body a")
+	writeSkillFile(t, dir, "review-bot", "name: review-bot", "body b")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none for an ambiguous match", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched", node.Prompt)
+	}
+}
+
+// A candidate whose body exceeds the 16 KiB cap is refused, never truncated
+// (severed instructions can invert meaning): the refusal is recorded with a
+// reason naming the sizes, the prompt stays untouched, and the Spec is left
+// byte-identical to the planner's reply.
+func TestPlan_OversizeSkillSkippedWithReason(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.Repeat("x", maxInlinedSkillBytes+1))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one skipped entry", plan.SkillMappings)
+	}
+	skip := plan.SkillMappings[0]
+	if skip.SkippedReason == "" || !strings.Contains(skip.SkippedReason, "16 KiB cap") {
+		t.Errorf("SkippedReason = %q, want it to name the cap", skip.SkippedReason)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched after a cap skip", node.Prompt)
+	}
+	if string(plan.Spec) != reviewSpec {
+		t.Errorf("spec must stay untouched when nothing applied, got %s", plan.Spec)
+	}
+}
+
+// A body exactly AT the cap is the boundary and must map — otherwise the cap
+// is enforced as > rather than >=, silently shrinking the measured fit.
+func TestPlan_SkillExactlyAtCapIsMapped(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.Repeat("x", maxInlinedSkillBytes))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 || plan.SkillMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want the at-cap body applied", plan.SkillMappings)
+	}
+}
+
+// An agent-mapped node is never mapped a skill: applyAgentMapping drops
+// ceiling Layer 1 on that node, and ADR 0012's probe established "no skills
+// listing" only under the full ceiling — the composite is unmeasured, so v1
+// refuses it with a recorded, printable reason instead of assuming it.
+func TestPlan_AgentMappedNodeIsNotSkillMapped(t *testing.T) {
+	agentDir, skillDir := t.TempDir(), t.TempDir()
+	writeAgentFile(t, agentDir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
+	writeSkillFile(t, skillDir, "pr-code-review", "name: pr-code-review", "the body")
+
+	plan := planWithSkills(t, WithAgentDirs(agentDir), WithSkillDirs(skillDir))
+
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "code-reviewer" {
+		t.Fatalf("precondition failed: node agent = %q, want code-reviewer", node.Agent)
+	}
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one skipped entry", plan.SkillMappings)
+	}
+	skip := plan.SkillMappings[0]
+	if !strings.Contains(skip.SkippedReason, "agent-mapped") {
+		t.Errorf("SkippedReason = %q, want it to name the agent-mapped refusal", skip.SkippedReason)
+	}
+	if strings.Contains(node.Prompt, "the body") {
+		t.Errorf("an agent-mapped node's prompt must stay uninlined:\n%s", node.Prompt)
+	}
+}
+
+// Scan failures are silent no-mapping, never an error: a missing directory, a
+// SKILL.md with no frontmatter, frontmatter with no name, and a skill with an
+// empty body must all just drop out — zero-config stays zero-config.
+func TestPlan_SkillScanFailuresAreSilent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "broken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken", "SKILL.md"), []byte("no frontmatter here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeSkillFile(t, dir, "nameless", "description: has no name", "a body")
+	writeSkillFile(t, dir, "bodyless-review", "name: bodyless-review", "")
+
+	plan := planWithSkills(t, WithSkillDirs(filepath.Join(dir, "does-not-exist"), dir))
+
+	if len(plan.SkillMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none from a failed scan", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched", node.Prompt)
+	}
+}
+
+// WithoutSkillMapping (the --no-skill-mapping flag) wins even over a directory
+// holding a perfectly mappable skill: nothing is scanned, nothing changes.
+func TestPlan_WithoutSkillMappingDisablesMapping(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the body")
+
+	plan := planWithSkills(t, WithSkillDirs(dir), WithoutSkillMapping())
+
+	if len(plan.SkillMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none with mapping off", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched with mapping off", node.Prompt)
+	}
+	if string(plan.Spec) != reviewSpec {
+		t.Errorf("spec must stay untouched with mapping off, got %s", plan.Spec)
+	}
+}
+
+// A short shared token must not match by prefix: "dev" (under minMatchPrefix)
+// against a "developer" skill would be a guess — the same rule, and the same
+// boundary, as agent matching.
+func TestPlan_ShortTokenDoesNotMatchSkillByPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "developer", "name: developer", "the body")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"dev-run","version":"1","nodes":[` +
+		`{"id":"dev","prompt":"do the work","allowed_tools":["Read"]}]}`})
+	plan, err := New(fake, WithSkillDirs(dir)).Plan(context.Background(), "do the work", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.SkillMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none for a sub-minimum prefix", plan.SkillMappings)
+	}
+}

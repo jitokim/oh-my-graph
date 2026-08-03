@@ -60,6 +60,7 @@ func (f *runFlags) parse(args []string) error {
 type autoFlags struct {
 	goal             string
 	noAgentMapping   bool
+	noSkillMapping   bool
 	maxCycles        int
 	maxGoalBudgetUSD float64
 	commonRunFlags
@@ -69,16 +70,18 @@ type autoFlags struct {
 
 // newAutoFlags builds an autoFlags with its FlagSet configured. The goal is a
 // positional argument, so it is not registered as a flag. --no-agent-mapping
-// is `auto`'s own, not a commonRunFlags member: `run` executes a hand-written
-// graph whose agent: fields are the user's explicit choice, so there is
-// nothing automatic to switch off there. --max-cycles and
-// --max-goal-budget-usd are likewise `auto`'s own (ADR 0011 §1): the goal
-// loop iterates PLANS, which only `auto` produces — and keeping the cycle
-// count off commonRunFlags is what keeps chat structurally single-cycle.
+// and --no-skill-mapping are `auto`'s own, not commonRunFlags members: `run`
+// executes a hand-written graph whose agent: fields and prompts are the user's
+// explicit choice, so there is nothing automatic to switch off there.
+// --max-cycles and --max-goal-budget-usd are likewise `auto`'s own
+// (ADR 0011 §1): the goal loop iterates PLANS, which only `auto` produces —
+// and keeping the cycle count off commonRunFlags is what keeps chat
+// structurally single-cycle.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
 	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call")
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
 	return f

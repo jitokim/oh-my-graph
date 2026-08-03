@@ -805,6 +805,25 @@ other layers stay), every decision is shown in the printed plan, and
 `--no-agent-mapping` turns it off. The full rule and its trade live in
 "Node-as-subagent"; the raw plan itself still may not carry `agent:`.
 
+Strictly after agent mapping, the coordinator may also map the user's own
+Claude Code skills onto planned nodes (`internal/coordinator/skillmap.go`,
+ADR 0012) — by a different mechanism, because measurement (claude 2.1.220)
+shows both model-side skill surfaces (the skills listing and the `Skill` tool)
+are absent under the planned-node argv, so a prompt reference would be dead
+text. Instead, trusted code scans `~/.claude/skills/*/SKILL.md` only (never a
+project directory — that surface is cut from v1), matches by the same
+conservative name-token rule, and **appends the skill's body to the node's
+prompt** in a nonce-fenced, attributed block with every `{{` neutralized (the
+prompt is a handoff template; skill prose must not become template code). No
+ceiling layer is touched — an agent-mapped node (Layer 1 dropped) is refused a
+skill outright, because that composite is unmeasured. Bodies over 16 KiB are
+skipped, never truncated; every decision prints with the inlined size and
+SHA-256, the full text lands in the saved `graph.json`, and
+`--no-skill-mapping` turns it off. Honest cost: a mapped node pays for the
+body on every invocation, and inlining is unconditional where Claude Code's
+own `description`-driven activation is conditional — whether that helps or
+misfires is ADR 0012's required (a)/(b) probes, not assumed here.
+
 ### The tool ceiling — one layered policy, not a list of flags (v1.1)
 The allowlist above bounds what a plan may **declare**. Execution is bounded by
 a separate, layered policy carried on `Plan.ToolPolicies` (one
@@ -859,7 +878,9 @@ independent mechanisms, so a wrong assumption about any one layer degrades to
 the previous behaviour rather than to nothing.
 
 Remaining honest gaps, unchanged by this work: skill/slash-command surfaces are
-still not enumerable; **Layer 4 is unverified** (E5 — `--strict-mcp-config`
+still not enumerable — though ADR 0012 has since measured the planned-node case
+(both the skills listing and the `Skill` tool are absent under this argv, which
+is why skill mapping inlines content at plan time instead of referencing it); **Layer 4 is unverified** (E5 — `--strict-mcp-config`
 ships because it is free, not because MCP closure was observed); and dropping
 user settings also drops the user's CLAUDE.md, hooks and MCP servers for planned
 nodes — a behaviour change that makes planned nodes *more isolated and less
