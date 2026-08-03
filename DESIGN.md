@@ -138,23 +138,33 @@ once, upstream, instead of copy-varied across graphs:
 
 ```yaml
 # graphs/fragments/e2e-verify.yaml
-fragment: e2e-verify
+fragment: e2e-verify        # REQUIRED, and must equal the filename (the name a use: resolves)
 description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
-substitutions: [checks]
+substitutions: [checks, verify_command]
 node:
   type: claude-run
   prompt: |
     Continue the work — … and {{ with.checks }} …
   allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
   handoff: session
-  success_check: { exit_zero: true, result_matches: "^PASS$", verify: { command: "make local", timeout: 5m } }
+  success_check: { exit_zero: true, result_matches: "^PASS$", verify: { command: "{{ with.verify_command }}", timeout: 5m } }
   retry: { max: 1, on: [nonzero_exit, verify_failed] }
 ```
+
+`fragment:` and `description:` are **checked, not decorative**. Both are
+required: a `fragment:` disagreeing with the filename is a load error (the
+filename is authoritative, so a mismatch is a typo no reader would catch), and
+`description:` is what the disclosure line prints at every `run` and every
+`lint`, so an empty one costs the reader of a run log the answer to "what is
+this node".
 
 **Lookup rule — one location, no search path:** `use: <name>` in
 `/dir/graph.yaml` resolves to `/dir/fragments/<name>.yaml` and nowhere else;
 resolution is a pure function of the entry file's path (no cwd dependence,
-no shipped/embedded tier in v1). Resolution happens on a **path-aware load
+no shipped/embedded tier in v1). The name must be **bare** —
+`^[A-Za-z0-9][A-Za-z0-9._-]*$`, refused before any file is opened — so a
+separator, a leading dot or a `..` cannot walk out of the `fragments/`
+sibling (`filepath.Join` cleans, so an unconstrained name would). Resolution happens on a **path-aware load
 stage** — `graph.LoadFile` (fail-fast; also returns the entry file's raw
 bytes and one `FragmentResolution` per resolved `use:`) and its collect-all
 counterpart `graph.LintFile` (every fragment issue plus every structural
@@ -173,7 +183,12 @@ substitution points or it is a different shape. The behavior fields
 `success_check`, `retry`, `agent`, `type`) default from the fragment; a key
 written in the using node overrides the **whole** top-level subtree (never a
 deep merge). A fragment may not declare wiring — `id`, `depends_on`, `cwd`,
-`worktree`, `feedback` (load error) — nor `use:` itself (no nesting in v1).
+`worktree`, `feedback` (load error) — nor `use:` itself (no nesting in v1) —
+nor a **YAML alias or `<<:` merge key inside the `node:` block** (load error):
+a spliced body has to be walkable in full, or a `{{ with.x }}` hiding behind
+an alias would be neither declaration-checked nor substituted and would reach
+the model verbatim. Anchors stay sanctioned everywhere else in a graph file,
+and in the using graph a `with:` value written as `*ref` resolves normally.
 Substitution tokens `{{ with.<name> }}` reuse the placeholder grammar but
 resolve once, at load: typed replacement when the token is the entire scalar
 (a bound list stays a list), textual when embedded (scalars only). A bound
@@ -183,14 +198,18 @@ unbound declared points, undeclared body tokens, and `with:` without `use:`
 are load errors; a declared-but-unreferenced point and a stray
 `{{ with.x }}` in a plain node are advisories.
 
-Downstream of the loader **no fragment concept exists**: the run prints one
-disclosure line per resolved fragment (source file + every overridden key),
-the snapshot stores the re-encoded **resolved** graph whenever any node
-resolved a fragment (so resume never re-reads a fragment; `GraphSHA256`
-still hashes the entry file's bytes), and scheduler/handoff/events/fleetops
-see exactly the graphs they see today. Shipped shapes live in
-`graphs/fragments/`; `internal/graph/testdata/golden/` holds the resolved
-goldens that turn any fragment edit into a reviewed multi-template diff.
+Downstream of the loader **no fragment concept exists**: `run` and `lint` both
+print one disclosure line per resolved fragment (source file + the fragment's
+own description + every overridden key), the snapshot stores the re-encoded
+**resolved** graph whenever any node resolved a fragment (so resume never
+re-reads a fragment; `GraphSHA256` still hashes the entry file's bytes), and
+scheduler/handoff/events/fleetops see exactly the graphs they see today.
+Shipped shapes live in `graphs/fragments/` and ship inside the binary
+alongside the templates (`//go:embed *.yaml fragments/*.yaml`), so
+`oh-my-graph init` unpacks a tree whose `use:` nodes resolve;
+`internal/graph/testdata/golden/` holds the resolved goldens — one per
+fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`) — that
+turn any fragment edit into a reviewed multi-template diff.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
@@ -1235,8 +1254,8 @@ internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — a
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph loads)
-graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013)
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
+graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
 docs/adr/00{01..14}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```

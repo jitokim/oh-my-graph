@@ -327,21 +327,46 @@ contract the structural checks live under):
 **One location, no search path: the graph file's own `fragments/`
 sibling.** A `use:` in `/repo/graphs/foo.yaml` resolves to
 `/repo/graphs/fragments/<name>.yaml`, and nowhere else. Resolution is a
-pure function of the entry file's path — no cwd dependence. A
-shipped/embedded fragment tier is **cut from v1**: the earlier draft had
-it "riding the same embedding vehicle the example graphs use", and no
-such vehicle exists (nothing `go:embed`s `graphs/`; only
-`internal/serve`'s UI embeds anything) — a second tier would mean
-building an embed pipeline, a search order, a shadowing lint rule and a
-local-wins narrative for a need no graph has yet demonstrated. Cutting
-it costs the migration nothing (`graphs/fragments/` is already the
-shipped templates' sibling, so the shipped templates resolve like any
-other graph), and adding a shipped tier later is purely additive — with
-its own decision about precedence and shadowing when it earns one. The
-resolver **prints one line per resolved fragment naming the source file
-and every key the using node overrides** — the disclosure posture the
-agent-mapping design established, extended to overrides so a hollowed
-`success_check` or widened `allowed_tools` is announced at every run.
+pure function of the entry file's path — no cwd dependence.
+
+*Amended at implementation (twice, both corrections to this paragraph).*
+First: the name must be **bare**, matching
+`^[A-Za-z0-9][A-Za-z0-9._-]*$` and refused before any file is opened.
+"Nowhere else" is not self-enforcing — `filepath.Join` cleans lexically,
+so an unconstrained `use: ../../evil` resolved to `<repo>/evil.yaml`, and
+the file a `use:` names supplies the node's real prompt, tool grant and
+`success_check.verify.command`. The constraint is what makes
+`fragments/` the review boundary this section claims it is.
+
+Second, a factual correction: this ADR originally cut a
+shipped/embedded fragment tier partly on the grounds that "no such
+vehicle exists (nothing `go:embed`s `graphs/`)". That was **wrong** —
+`graphs/embed.go` embeds the shipped templates, and `oh-my-graph init`
+unpacks them, which is how a `go install` user gets any graphs at all.
+The consequence was a real regression: `//go:embed *.yaml` does not
+descend into subdirectories, so the migrated templates shipped without
+their fragments and died at load for every `go install` user. The
+pattern is now `*.yaml fragments/*.yaml` and `init` unpacks the tree.
+What stays cut is a fragment **search tier** — a precedence order in
+which a `use:` not found locally falls back to an embedded copy — which
+would still mean a search order, a shadowing lint rule and a local-wins
+narrative for a need no graph has demonstrated. Unpacking is not
+shadowing: the unpacked fragments are ordinary files in the user's own
+`graphs/fragments/`, resolved by the one rule above. Adding a real
+shipped tier later remains purely additive, with its own decision about
+precedence when it earns one. The
+resolver **prints one line per resolved fragment naming the source file,
+the fragment's own `description:` and every key the using node
+overrides** — the disclosure posture the agent-mapping design
+established, extended to overrides so a hollowed `success_check` or
+widened `allowed_tools` is announced at every run, and at every `lint`.
+*Amended at implementation:* `fragment:` and `description:` were
+initially read by nothing. Both are now required — the first must equal
+the filename, since the filename is what a `use:` resolves and a
+disagreement is a typo no reader would catch; the second is what makes
+the disclosure line legible without opening the file. A schema key that
+nothing checks is the same silent-mismatch class this ADR refuses
+everywhere else.
 For a hand-written graph this adds no new trust surface at all: the
 fragment lives in the same repo, at the same trust level, under the
 same review as the graph file that names it — a repo that could plant a
@@ -419,7 +444,7 @@ facts govern it:
    graph that must not follow a fragment's evolution forks it under a
    new fragment name — or goes back to an inline node, honestly.
 
-### Migration: two shipped templates in the same PR — structure proven, prompts converged in the open
+### Migration: every shipped template holding the shape — structure proven, prompts converged in the open
 
 The proof that the machinery is sound is shipped with the machinery.
 One honesty correction first, because the measurement demands it:
@@ -457,6 +482,27 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   diverge more than they share; forcing them into fragments would mean
   substitution points bigger than the shared text, which is the smell
   that says "different shape").
+- Convert **`backlog-batch.yaml`** too — added at implementation, and
+  its omission would have been this ADR's founding complaint surviving
+  its own fix: that template held **two more** copies of the cold-safe
+  e2e shape (`e2e-a`/`e2e-b`) and two of the review shape
+  (`review-a`/`review-b`), so the next cold-safe correction would still
+  have been a partial hand sweep. Converting it honestly required one
+  fragment change: `e2e-verify` hardcoded `verify: { command: "make
+  local" }`, which is this repo's build and not every repo's, while
+  backlog-batch is a skeleton you copy into any repo — which is exactly
+  why its gates had no `verify:` at all. Overriding `success_check`
+  from the using node would have produced what this ADR argues against:
+  an unproven gate wearing a proven name. So the command joins `checks`
+  as a declared substitution point (`verify_command`) — what only the
+  graph can know — and the shape stays the fragment's. `self-dev` and
+  `dev-review-pr` bind `make local`, so their resolved graphs are
+  unchanged and the equivalence proof below is untouched.
+  backlog-batch's conversion is deliberately **not** an equivalence
+  claim: its gates gain a real engine-run `verify` (and the graph a
+  required `checks_command` input to feed it), which is an upgrade —
+  previously the node's own "PASS" was the only thing judging it. It
+  therefore has no frozen pre-migration fixture, only a golden.
 - Gate the PR twice, on two different fixtures with two different jobs:
   1. **Structure and non-converged behavior fields: byte-identical,
      tested.** The pre-migration files are checked in as
@@ -475,8 +521,9 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
      they are — not laundered through a "zero behavior change" claim.
 - The **ongoing blast-radius golden** (Versioning, above) is a separate
   fixture with a separate job: it captures the *post-migration*
-  resolved graphs and fails on any future fragment edit until
-  regenerated. One fixture cannot honestly be both the equivalence
+  resolved graphs of **all three** fragment-citing templates (a wider
+  set than the two-template equivalence mask, on purpose) and fails on
+  any future fragment edit until regenerated. One fixture cannot honestly be both the equivalence
   proof and the drift tripwire; `testdata/pre-migration/` is frozen
   history, the golden is living state.
 
@@ -528,7 +575,19 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
 - **YAML anchors and merge keys (`&`, `*`, `<<:`) — already work
   today.** Kept, honestly credited, and insufficient. Anchors are the
   right tool for intra-file repetition and nothing in this ADR touches
-  them. But the measured problem is *cross-file*: 58 distinct graphs
+  them — with one narrow exception added at implementation: a fragment
+  file's `node:` block may not contain an alias or a `<<:` merge key
+  (load error). That block is walked twice, to check body tokens against
+  `substitutions:` and to substitute them, and an alias hides its
+  scalars from both walks — so `prompt: &p "{{ with.x }}"` / `other: *p`
+  would ship a literal `{{ with.x }}` into a paid prompt: the exact
+  silent-verbatim failure the load-time/run-time token split exists to
+  abolish. Descending into the alias instead would mean inlining its
+  target to substitute into it (the target lives in the cached fragment
+  tree that every using node shares), and inlining nested aliases is an
+  exponential-expansion bomb on a file read before any validation runs.
+  Anchors remain untouched everywhere else, including in a using graph's
+  `with:` values. But the measured problem is *cross-file*: 58 distinct graphs
   forking a half-dozen shapes, and YAML defines no cross-document
   anchor, so anchors cannot express the fix at all. They also lack the
   two properties the incident demands: declared substitution points
