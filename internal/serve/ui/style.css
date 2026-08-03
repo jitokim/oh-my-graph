@@ -289,6 +289,29 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .show-more:hover { text-decoration: underline; }
 
+/* The approve/reject pair on the entry of the gate the run is paused at — the
+   page's only action, so it is quiet: the same flat, hairline-bordered
+   affordance as .session-ref, with the verdict colors reserved for the words
+   themselves. Disabled while a decision is in flight. */
+.gate-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.45rem 0 0;
+}
+.gate-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-2);
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 0.15rem 0.55rem;
+  cursor: pointer;
+}
+.gate-btn.approve:hover { color: var(--passed); border-color: var(--passed); }
+.gate-btn.reject:hover { color: var(--failed); border-color: var(--failed); }
+.gate-btn:disabled { color: var(--muted); border-color: var(--hairline); cursor: default; }
+
 /* Accounting, not headline: session ref + per-node cost on one muted line. */
 .entry-meta {
   display: flex;

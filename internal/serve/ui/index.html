@@ -9,7 +9,10 @@
      vendor/README.md) is embedded in the binary and served from 127.0.0.1;
      nothing is fetched from the network at runtime. Dark-mode first with a
      light mode; the theme toggle's explicit choice (persisted in
-     localStorage) wins over the OS preference. -->
+     localStorage) wins over the OS preference. The page reads the run
+     everywhere but one place: the gate the run is paused at carries approve
+     and reject buttons on its feed entry, which POST back (see app.js's
+     decideGate). -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
