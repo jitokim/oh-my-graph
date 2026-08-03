@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# GoReleaser creates the GitHub Release and uploads the archives/checksums.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history and tags: goreleaser derives the version from the tag and
+      # builds the changelog from the commits since the previous one, so a
+      # shallow clone would produce a wrong version and an empty changelog.
+      # persist-credentials: false — this job escalates to `contents: write`,
+      # and checkout otherwise leaves that token in .git/config for the rest of
+      # the job, including while the third-party goreleaser action runs.
+      # goreleaser only reads the local history and authenticates to the API
+      # via the GITHUB_TOKEN env below, so it never needs the git credential.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: goreleaser release
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          # Matches `version: 2` in .goreleaser.yaml.
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

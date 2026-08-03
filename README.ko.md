@@ -106,6 +106,29 @@ CI에서(stdout이 터미널이 아닐 때) — 또는 `--no-web`을 주면 — 
 </p>
 <p align="center"><em>실행 중의 live view — 실제 dogfood run(ADR-0012 skill-mapping 그래프)을 라이브로 캡처한 화면: 왼쪽은 노드 출력 피드, 오른쪽은 DAG 맵, 헤더에는 비용과 경과 시간.</em></p>
 
+### 미리 빌드된 바이너리
+
+태그가 붙은 릴리스마다 [GitHub Releases
+페이지](https://github.com/jitokim/oh-my-graph/releases)에 미리 빌드된
+바이너리도 함께 올라갑니다 — darwin과 linux, `arm64`와 `amd64` 모두,
+`.tar.gz` 아카이브와 그 옆의 `checksums.txt`. Go 툴체인을 두고 싶지 않을 때
+`go install` 대신 쓰는 경로입니다. Homebrew tap은 없으며, Windows는 빌드
+매트릭스에 없습니다 — 거기서는 소스에서 빌드하세요.
+
+Releases 페이지에서 태그를 고른 다음:
+
+```sh
+VERSION=0.3.1 OS=darwin ARCH=arm64   # 태그(앞의 v 제외)와 사용하는 플랫폼
+ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}$" checksums.txt | shasum -a 256 -c -   # linux에서는: sha256sum -c -
+tar xzf "${ARCHIVE}"
+./oh-my-graph version
+```
+
+`oh-my-graph`를 `PATH` 위로 옮기면 위의 smoke test가 그대로 실행됩니다.
+
 ### Zero-config: auto 모드
 
 YAML을 쓰고 싶지 않다면? `auto`에 목표만 주면 그래프를 대신 설계합니다 —
