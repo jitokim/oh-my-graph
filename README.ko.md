@@ -110,8 +110,11 @@ Releases 페이지에서 태그를 고른 다음:
 
 ```sh
 VERSION=0.3.1 OS=darwin ARCH=arm64   # 태그(앞의 v 제외)와 사용하는 플랫폼
-curl -sSfL "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz" \
-  | tar xz
+ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
+curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}$" checksums.txt | shasum -a 256 -c -   # linux에서는: sha256sum -c -
+tar xzf "${ARCHIVE}"
 ./oh-my-graph version
 ```
 

@@ -15,17 +15,17 @@ jobs:
       # Full history and tags: goreleaser derives the version from the tag and
       # builds the changelog from the commits since the previous one, so a
       # shallow clone would produce a wrong version and an empty changelog.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.25'
           cache: true
 
       - name: goreleaser release
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           # Matches `version: 2` in .goreleaser.yaml.
           version: '~> v2'
