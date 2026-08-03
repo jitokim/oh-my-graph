@@ -99,7 +99,7 @@ func approveViaLiveView(t *testing.T) legOutcome {
 	token := servedGateToken(t, handler)
 
 	captureStdout(t, func() {
-		req := httptest.NewRequest("POST", "http://127.0.0.1:8642/api/gate/approve", strings.NewReader(`{"node":"approve"}`))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "http://127.0.0.1:8642/api/gate/approve", strings.NewReader(`{"node":"approve"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-OMG-Token", token)
 		w := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func approveViaLiveView(t *testing.T) legOutcome {
 // exists.
 func servedGateToken(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	req := httptest.NewRequest("GET", "http://127.0.0.1:8642/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:8642/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -184,7 +184,7 @@ func TestLiveViewReject_RecordsTheRejectionLikeTheCLI(t *testing.T) {
 	token := servedGateToken(t, handler)
 
 	captureStdout(t, func() {
-		req := httptest.NewRequest("POST", "http://127.0.0.1:8642/api/gate/reject", strings.NewReader(`{"node":"approve"}`))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "http://127.0.0.1:8642/api/gate/reject", strings.NewReader(`{"node":"approve"}`))
 		req.Header.Set("X-OMG-Token", token)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
