@@ -67,12 +67,15 @@ delimits — 12 of the 35 measured bodies already contain a bare `---` line.
 This is the same stance the goal loop already takes when fencing
 run-originated text.
 
-Each mapping records on the Plan (`SkillMappings`, the shape of
+Each mapping records on the in-memory Plan (`SkillMappings`, the shape of
 `AgentMappings`): the skill name and description, the source path, the
 inlined byte count, and the **SHA-256 of the exact inlined text**. The hash
-is printed (§6) and saved with the plan. From this point on the saved
-`graph.json` mixes planner-authored text and local-file text inside one
-`prompt` string; the recorded path + size + hash is what keeps the local-file
+is printed (§6); like `AgentMappings`, the decisions themselves are not
+persisted — the durable record is the saved `graph.json`, whose fenced
+blocks carry the inlined text and its source path, from which the hash is
+recomputable at any time. From this point on the saved `graph.json` mixes
+planner-authored text and local-file text inside one `prompt` string; the
+fence attribution plus the recomputable hash is what keeps the local-file
 part machine-checkably attributable rather than folklore.
 
 Project-dir scanning (`<cwd>/.claude/skills`) is **cut from v1** — it is
@@ -200,9 +203,11 @@ This is not hypothetical: 3 of the 35 measured bodies already carry
 `{{ ... }}` tokens (`{{ github.sha }}` in a CI-convention skill,
 prompt-template examples in two others).
 
-Disposition: every `{{` in an inlined body is rewritten to a form
-`Interpolate` and `LintPlaceholders` cannot recognize (e.g. `{ {`) before the
-block is appended. Templating is explicitly **not** a feature of inlined
+Disposition: an inlined body is rewritten until no `{{` remains, to a form
+`Interpolate` and `LintPlaceholders` cannot recognize (`{ {`), before the
+block is appended — *until none remains*, not in one pass, because a single
+non-overlapping rewrite lets an odd brace run re-form a live token (`{{{`
+becomes `{ {{`). Templating is explicitly **not** a feature of inlined
 skill text; neutralizing at the source keeps §5's "text cannot mint tools"
 bullet true instead of forcing its deletion. The cosmetic damage to a
 rendered `{{ github.sha }}` example inside skill prose is accepted and noted
@@ -238,7 +243,8 @@ bounds:
   silent widening.
 - Every mapping decision is printed before anything runs (§6 states exactly
   what is printed and where the full text lives), and the inlined text is
-  snapshotted with its hash into the saved plan.
+  snapshotted into the saved plan, where its hash stays recomputable (the
+  hash itself is printed, not persisted — §6).
 - `--no-skill-mapping` turns the whole mechanism off.
 - **Residual:** within the node's declared tools, an inlined body steers
   behaviour — that is its purpose — including wrongly, when the skill does
@@ -283,7 +289,12 @@ skill skipped: pr-code-review -> review-a: node is agent-mapped (composite with 
 (One decision format, `<skill> -> <node>: <reason>` for every refusal, so the
 agent-mapped line names the refused skill too; sizes print with one decimal
 and the hash prints a 12-hex-character prefix — the full hash lives on the
-Plan and in the saved spec.)
+in-memory Plan only. Nothing persists it: the saved spec carries the inlined
+text itself, from which the full hash is recomputable, and that recomputation
+is the verification path. The known edge of not persisting decisions: a gated
+run resumed later — possibly from another terminal — re-displays no mapping
+lines, because the plan printout is the only place they exist; what such a
+reader has is the saved spec's fenced, attributed blocks.)
 
 — plus the full inlined text in the saved spec/`graph.json`, which the
 printout names. A gated run adds no further display: the gate shows the
@@ -413,8 +424,10 @@ prior E-number):
   claim is unscoped — the one composite where it would not hold (an
   agent-mapped node, Layer 1 dropped) is excluded from mapping (§2).
 - The inlined text is snapshotted into the plan artifact with its source
-  path, size and hash, so what the user approved is what runs, including
-  across resume — with machine-checkable provenance for the local-file part.
+  path (in the fence attribution), so what the user approved is what runs,
+  including across resume — size and hash are printed at plan time and stay
+  recomputable from the snapshot, machine-checkable provenance for the
+  local-file part.
 - A candidate that cannot be mapped — oversize, ambiguous, agent-mapped
   node — is refused with a printed reason instead of half-working.
 
