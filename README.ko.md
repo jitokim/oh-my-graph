@@ -264,9 +264,9 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
-시작부터 알아 둘 만한 필드 셋, 각각 YAML 한 줄입니다:
+시작부터 알아 둘 만한 셋, 각각 YAML 한 줄입니다:
 
-- **`gate:`** — `type: gate` 노드는 사람의 승인을 위해 run을 멈추고,
+- **gate 노드** — `type: gate`로 선언한 노드는 사람의 승인을 위해 run을 멈추고,
   `oh-my-graph resume`으로 계속됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **`feedback:`** — 리뷰어 노드에 붙인 `feedback: { rerun: impl, max: 2 }`는
   리뷰를 펼쳐 놓은 체인 대신 경계가 있는 루프로 만듭니다
@@ -502,8 +502,11 @@ oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 �
 이 보장을 실제로 지키기 위해, 모든 노드 서브프로세스는 환경에서
 `ANTHROPIC_API_KEY`와 `ANTHROPIC_AUTH_TOKEN`이 **삭제된** 상태로
 시작합니다 — 이 변수들은 `claude`를 조용히 종량제 API 과금으로
-전환시킵니다. 이 scrub은 유닛 테스트로 검증됩니다
-(`internal/runner/claude_test.go`); oh-my-graph는 (OAuth를 비활성화하는)
+전환시킵니다. 이 scrub은 하나의 공유 정책(`internal/childenv`)이며,
+정책 자체(`internal/childenv/childenv_test.go`)와 네 개의 exec seam
+각각(`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
+`internal/worktree/git_test.go`, `internal/browser/exec_test.go`)에서
+유닛 테스트로 검증됩니다; oh-my-graph는 (OAuth를 비활성화하는)
 `--bare`를 절대 쓰지 않고, Agent SDK도 절대 건드리지 않습니다. 전체 입장:
 [SECURITY.md](SECURITY.md).
 

@@ -245,10 +245,11 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
-Three fields worth knowing about from the start, each one line of YAML:
+Three things worth knowing about from the start, each one line of YAML:
 
-- **`gate:`** — a `type: gate` node stops the run for human approval, continued
-  with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
+- **gates** — a node declared `type: gate` stops the run for human approval,
+  continued with `oh-my-graph resume`
+  ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **`feedback:`** — `feedback: { rerun: impl, max: 2 }` on a reviewer node
   turns a review into a bounded loop instead of an unrolled chain
   ([ADR 0010](docs/adr/0010-a-feedback-edge-is-a-bounded-runtime-rerun-not-a-static-cycle.md)
@@ -468,8 +469,12 @@ tool.
 
 To keep that guarantee real, every node subprocess starts from your environment
 with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted** — those silently
-switch `claude` to metered API billing. The scrub is unit-tested
-(`internal/runner/claude_test.go`); oh-my-graph never uses `--bare` (which
+switch `claude` to metered API billing. The scrub is one shared policy
+(`internal/childenv`), unit-tested on its own
+(`internal/childenv/childenv_test.go`) and again at each of the four exec seams
+(`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
+`internal/worktree/git_test.go`, `internal/browser/exec_test.go`);
+oh-my-graph never uses `--bare` (which
 disables OAuth) and never touches the Agent SDK. Full stance:
 [SECURITY.md](SECURITY.md).
 
