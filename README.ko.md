@@ -212,7 +212,10 @@ CI에서(stdout이 터미널이 아닐 때) — 또는 `--no-web`을 주면 — 
 그리고 카드를 클릭하면 그 run의 전체 live view가 열립니다. 카드는 실시간으로
 나타나고 정착하므로, 페이지를 연 뒤에 시작한 run도 그대로 올라옵니다. 이것도
 브라우저에서 열립니다(터미널일 때; `--no-open`으로 끌 수 있음).
-`oh-my-graph serve <run-id>`는 여전히 그 run의 view로 바로 갑니다.
+`oh-my-graph serve <run-id>`는 여전히 그 run의 view로 바로 갑니다. 위의
+embedded live view와 달리 `serve`는 서빙 자체가 요청받은 일입니다:
+스크립트·파이프·CI에서도 포트를 그대로 열고 서빙하며, 브라우저만 열지 않고
+출력도 달라지지 않습니다.
 
 더 많은 워크스루 — auto 모드 심화, dogfooding, fleetops로 관찰하기,
 ambient chat — 와 기능별 레시피는
@@ -352,7 +355,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict, 그리고 합계. 읽기 전용. |
 | `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
-| `serve [<run-id>]` | Web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). **run id 없이** 실행하면 dashboard입니다 — run마다 live mini-DAG 카드가 하나씩 뜨고, 카드를 클릭하면 그 run의 view(`/run/<id>/`)로 갑니다. run id를 주면 그 run의 view로 바로 갑니다. stdout이 터미널이면 브라우저로 열립니다(`--no-open`이면 URL만 출력). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
+| `serve [<run-id>]` | Web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). **run id 없이** 실행하면 dashboard입니다 — run마다 live mini-DAG 카드가 하나씩 뜨고, 카드를 클릭하면 그 run의 view(`/run/<id>/`)로 갑니다. run id를 주면 그 run의 view로 바로 갑니다. stdout이 터미널이면 브라우저로 열립니다(`--no-open`이거나 파이프·CI면 URL만 출력하고 서빙은 그대로 합니다). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
 | `version` | 도구 버전을 출력. |
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),

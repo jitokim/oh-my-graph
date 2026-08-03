@@ -197,7 +197,9 @@ and node counts, settled runs collapsed below — and clicking a card opens that
 run's full live view. Cards appear and settle live, so a run started after you
 opened the page shows up on it. It opens in your browser too (on a terminal;
 `--no-open` opts out), and `oh-my-graph serve <run-id>` still goes straight to
-that one run's view.
+that one run's view. Unlike the embedded live view above, `serve` is the thing
+you asked for: in a script, a pipe, or CI it still binds the port and serves —
+it just opens no browser, and its output is unchanged.
 
 More walkthroughs — auto mode in depth, dogfooding, observing with fleetops,
 ambient chat — plus per-feature recipes live in
@@ -330,7 +332,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
-| `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open` prints the URL instead. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
+| `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
 | `version` | Print the tool version. |
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
