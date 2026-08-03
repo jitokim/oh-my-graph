@@ -54,8 +54,10 @@ type Opener interface {
   never launches a browser — plus an opt-out flag. This ADR ships the seam;
   the wiring lands with that gate. (Phase 2 outcome: the gate landed on
   `run`/`auto`, which embed the serve live view for the run's duration and
-  open it — `--no-web` opts out; a chat graph turn and a `resume` leg stay
-  un-wired; the standalone `serve` subcommand keeps printing the URL.)
+  open it — `--no-web` opts out; `resume` was wired next, through the same
+  gate and the same `--no-web` flag, so a resumed leg is watchable exactly
+  as a first leg is; a chat graph turn stays un-wired; the standalone
+  `serve` subcommand keeps printing the URL.)
 
 The invariant is **restated, not weakened**:
 
