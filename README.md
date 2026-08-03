@@ -219,7 +219,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
-| `serve [<run-id>]` | Read-only web live view of a run, bound to `127.0.0.1` only (default port 8642, `--port` to change). |
+| `serve [<run-id>]` | Web live view of a run, bound to `127.0.0.1` only (default port 8642, `--port` to change). Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
 | `version` | Print the tool version. |
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling

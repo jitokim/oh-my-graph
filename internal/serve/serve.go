@@ -1,31 +1,43 @@
-// Package serve owns `oh-my-graph serve`: a read-only web live view of ONE
-// run — the DAG rendered in the browser with nodes colored live as they run
-// (Airflow's Graph View, for this tool's runs). It is strictly a consumer of
-// the run-feed contract (docs/RUN-FEED.md): it reads state.json for the
-// run's structure and tails events.jsonl for its progress, and never writes,
-// rewrites, or deletes anything in a run directory. The one read outside the
-// run directory is /api/transcript's: the transcript file of a RUNNING
-// node's own session, under the user's claude projects dir (see
-// handleTranscript's boundary note). Fleet-wide observation stays fleetops's
-// job; this is one run, live, locally.
+// Package serve owns `oh-my-graph serve`: a web live view of ONE run — the
+// DAG rendered in the browser with nodes colored live as they run (Airflow's
+// Graph View, for this tool's runs). It is a consumer of the run-feed
+// contract (docs/RUN-FEED.md): it reads state.json for the run's structure
+// and tails events.jsonl for its progress. The one read outside the run
+// directory is /api/transcript's: the transcript file of a RUNNING node's own
+// session, under the user's claude projects dir (see handleTranscript's
+// boundary note). Fleet-wide observation stays fleetops's job; this is one
+// run, live, locally.
+//
+// It is no longer strictly read-only. Every route reads except the two gate
+// routes (see handleGateDecision and ADR 0014): approving or rejecting the
+// gate a run is paused at continues the run, which rewrites state.json,
+// appends to events.jsonl and runs the nodes the gate was blocking. This
+// package still owns no gate logic — it calls the injected GateResumer, which
+// the CLI builds over the same code path `oh-my-graph resume` takes.
 //
 // SECURITY: the listener binds to 127.0.0.1 ONLY (see Listen), and every
 // request's Host header must name loopback (see requireLoopbackHost) so a
 // hostile page cannot reach /api/* by DNS-rebinding a domain it controls onto
 // 127.0.0.1. Run directories contain node prompts, artifacts and session ids
 // — and the sessions they name hold full transcripts — so the server must
-// never be reachable from off-host. There is no auth in v1 precisely because
-// the loopback bind is the access control; widening the bind address would
-// need an auth story first.
+// never be reachable from off-host. Access control is that pair plus, for the
+// mutating gate routes only, a per-process random token embedded in the served
+// page and demanded back on every POST (requireGateToken) — because a loopback
+// bind and a Host check do not stop a page the user is already visiting from
+// POSTing to 127.0.0.1. Widening the bind address would still need a real auth
+// story first; the token is a CSRF guard, not a login.
 //
-// The server spawns no processes. In particular it does not shell out to
-// `open`/`xdg-open` to launch a browser: exactly four objects in this repo
-// may spawn a process (internal/invariants, ADR 0002/0005/0006), and
-// browser-open belongs to the fourth of them — browser.ExecOpener, behind
-// the browser.Opener seam (ADR 0006). The CLI decides: `run`/`auto` embed
-// this server for the run's duration and, when stdout is a terminal and
-// --no-web was not passed, hand the URL to the injected Opener; the
-// standalone `serve` subcommand just prints the URL.
+// The server itself spawns no processes: it does not shell out to
+// `open`/`xdg-open` to launch a browser, and it does not run nodes. Exactly
+// four objects in this repo may spawn a process (internal/invariants, ADR
+// 0002/0005/0006), and both processes this package's features imply belong to
+// them — browser-open to browser.ExecOpener behind the browser.Opener seam
+// (ADR 0006), and a resumed leg's nodes to runner.ClaudeCLIRunner, reached
+// only through the GateResumer the CLI injects (ADR 0014). The CLI decides:
+// `run`/`auto` embed this server for the run's duration and, when stdout is a
+// terminal and --no-web was not passed, hand the URL to the injected Opener;
+// the standalone `serve` subcommand just prints the URL, and is the only one
+// that injects a GateResumer.
 package serve
 
 import (
@@ -34,6 +46,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"net"
 	"net/http"
@@ -42,9 +55,19 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+)
+
+// stateFileName and lockFileName are the two run-directory files this server
+// reads beyond the event stream and node artifacts: the resumable snapshot
+// (which says whether the run is paused at a gate) and the concurrent-leg
+// guard the gate routes take before deciding anything.
+const (
+	stateFileName = "state.json"
+	lockFileName  = "resume.lock"
 )
 
 // DefaultPort is the port `serve` binds when --port is not given. It is an
@@ -107,9 +130,12 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 }
 
 // Server serves one run's live view out of its run directory. It holds no
-// state beyond the paths: every request re-reads the contract files, so the
-// view is always as fresh as the disk and the server survives the run's
-// files appearing after it started (a fresh run's state.json window).
+// state ABOUT THE RUN beyond the paths: every request re-reads the contract
+// files, so the view is always as fresh as the disk and the server survives
+// the run's files appearing after it started (a fresh run's state.json
+// window). The three non-path fields are this process's own: the gate token
+// it mints, the page template that carries it, and the resume machinery the
+// CLI injects.
 type Server struct {
 	runDir string
 	runID  string
@@ -119,29 +145,58 @@ type Server struct {
 	// call site, so tests point it at a fixture directory and never touch
 	// the real one.
 	projectsRoot string
+	// token is this process's CSRF token for the gate routes, minted once in
+	// New, rendered into the served page and demanded back on every gate POST
+	// (see requireGateToken).
+	token string
+	// index is the served page, parsed once, as a template — the ONE asset
+	// that is not shipped byte-for-byte, because it carries token.
+	index *template.Template
+	// resumer continues a run paused at a gate; nil (the default) means this
+	// view answers 409 to every gate decision. See WithGateResumer.
+	resumer GateResumer
 }
 
 // New builds a Server for one run directory. runID is the directory's name —
 // echoed to the UI so the page can identify the run even before any file
-// exists to read it from.
+// exists to read it from. The returned Server has no GateResumer: a live view
+// is read-only until the CLI injects one (WithGateResumer).
 func New(runDir, runID string) *Server {
-	return &Server{runDir: runDir, runID: runID, poll: defaultPoll, projectsRoot: defaultProjectsRoot()}
+	page, err := template.ParseFS(uiFS, "ui/index.html")
+	if err != nil {
+		// Unreachable: the page is embedded at compile time.
+		panic(err)
+	}
+	return &Server{
+		runDir:       runDir,
+		runID:        runID,
+		poll:         defaultPoll,
+		projectsRoot: defaultProjectsRoot(),
+		token:        newGateToken(),
+		index:        page,
+	}
 }
 
 // Handler returns the server's routes:
 //
-//	/            the embedded static UI (index.html, app.js, style.css, vendored libraries)
+//	/            the served page, rendered with this process's gate token
+//	/index.html  the same page (the FileServer's own name for it)
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges,
 //	             plus the goal-lineage block when the run is a goal cycle)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //	/api/transcript  a RUNNING node's live transcript tail as JSON (?node=<id>)
+//	POST /api/gate/approve  decide the gate the run is paused at (?node in the body)
+//	POST /api/gate/reject   the same, rejecting
+//	/*           the rest of the embedded static UI (app.js, style.css, vendored libraries)
 //
-// Everything is a read-only GET; every route but /api/transcript reads the
-// run directory only, and /api/transcript additionally reads the one
-// transcript file the run's own feed names (see handleTranscript's boundary
-// note). There is no mutating route to guard. Every route sits behind
-// requireLoopbackHost, the DNS-rebinding guard.
+// Every GET reads only: the run directory, plus — for /api/transcript — the
+// one transcript file the run's own feed names (see handleTranscript's
+// boundary note). The two gate POSTs are the mutating routes (ADR 0014): they
+// continue the paused run through the injected GateResumer, and they carry
+// their own CSRF guard on top of the ones every route gets. Every route sits
+// behind requireLoopbackHost, the DNS-rebinding guard; the method-scoped
+// patterns make a GET of a gate route a 405 without any code.
 func (s *Server) Handler() http.Handler {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -153,8 +208,31 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/result", s.handleResult)
 	mux.HandleFunc("GET /api/transcript", s.handleTranscript)
+	mux.HandleFunc("POST /api/gate/approve", s.handleGateDecision(gate.DecisionApprove))
+	mux.HandleFunc("POST /api/gate/reject", s.handleGateDecision(gate.DecisionReject))
+	// The page is rendered per process (it carries the gate token); every
+	// other asset is still shipped byte-for-byte off the embedded FS. `{$}`
+	// matches the root path exactly, so the bare "GET /" below stays the
+	// subtree catch-all for the JS, CSS and vendored libraries.
+	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /index.html", s.handleIndex)
 	mux.Handle("GET /", http.FileServerFS(static))
 	return requireLoopbackHost(mux)
+}
+
+// handleIndex serves the live view's page with this process's gate token
+// rendered into its <meta name="omg-token">, which is where the page's
+// approve/reject buttons read it from. The token is per Server and never
+// written to disk, so it dies with the process that minted it — a page left
+// open from a previous `serve` cannot decide this run's gate.
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	var page bytes.Buffer
+	if err := s.index.Execute(&page, struct{ Token string }{s.token}); err != nil {
+		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(page.Bytes())
 }
 
 // graphPayload is /api/graph's response body. Available is false during the
@@ -206,7 +284,7 @@ func (s *Server) loadRunGraph() (*graph.Graph, error) {
 // for the one endpoint (/api/graph) that renders it. Kept as one load so the
 // graph and the goal always come from the same snapshot read.
 func (s *Server) loadRunGraphAndGoal() (*graph.Graph, *runstate.GoalRef, error) {
-	snap, err := runstate.Load(filepath.Join(s.runDir, "state.json"))
+	snap, err := runstate.Load(filepath.Join(s.runDir, stateFileName))
 	if err != nil {
 		return nil, nil, err
 	}

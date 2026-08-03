@@ -9,10 +9,19 @@
      vendor/README.md) is embedded in the binary and served from 127.0.0.1;
      nothing is fetched from the network at runtime. Dark-mode first with a
      light mode; the theme toggle's explicit choice (persisted in
-     localStorage) wins over the OS preference. -->
+     localStorage) wins over the OS preference. The page reads the run
+     everywhere but one place: the gate the run is paused at carries approve
+     and reject buttons on its feed entry, which POST back (see app.js's
+     decideGate). -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- This page is the ONE asset rendered per process rather than shipped
+       byte-for-byte: the token below is minted by the serving process and
+       sent back on every gate decision (see app.js's decideGate and
+       serve.requireGateToken). It is a CSRF guard — a page some other origin
+       serves cannot read it — not a login. -->
+  <meta name="omg-token" content="{{.Token}}">
   <title>oh-my-graph — live run</title>
   <link rel="stylesheet" href="style.css">
 </head>
