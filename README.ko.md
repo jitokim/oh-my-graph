@@ -92,6 +92,11 @@ view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저�
 CI에서(stdout이 터미널이 아닐 때) — 또는 `--no-web`을 주면 — 아무것도
 서빙하거나 열지 않으며 출력도 달라지지 않습니다.
 
+<p align="center">
+  <img src="assets/live-view.png" alt="실제 oh-my-graph run의 web live view: 왼쪽은 노드 출력 피드, 오른쪽은 passed/running/pending 노드가 표시된 DAG 맵, 헤더에는 실시간 비용과 경과 시간" width="100%" />
+</p>
+<p align="center"><em>실행 중의 live view — 실제 dogfood run(ADR-0012 skill-mapping 그래프)을 라이브로 캡처한 화면: 왼쪽은 노드 출력 피드, 오른쪽은 DAG 맵, 헤더에는 비용과 경과 시간.</em></p>
+
 ### Zero-config: auto 모드
 
 YAML을 쓰고 싶지 않다면? `auto`에 목표만 주면 그래프를 대신 설계합니다 —
