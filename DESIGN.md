@@ -105,6 +105,18 @@ Node schema:
   feedback: { rerun: impl, max: 2 }       # optional (ADR 0010): on a judgment failure, re-run the depends_on path from `rerun` back to this node, at most `max` times — see "Execution engine"
 ```
 
+Instead of an inline body, a node may cite a fragment (`use:` + `with:`,
+resolved away at load time — see "Fragments" below):
+
+```yaml
+- id: e2e
+  use: e2e-verify             # splice graphs-file-sibling fragments/e2e-verify.yaml
+  depends_on: [dev]
+  cwd: "{{ inputs.repo }}"
+  with:                       # bindings for the fragment's declared substitution points
+    checks: run `make local` (build + test + vet).
+```
+
 Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
 see "Execution engine" step 4), `nodes: [..]`.
@@ -117,6 +129,68 @@ and must point strictly backward to a proper `depends_on`-ancestor
 other bodies, and `max` required ≥ 1 — an unbounded loop on a paid runtime is
 unrepresentable). Iteration is a *runtime* phenomenon; full semantics in
 ADR 0010 and under "Execution engine" below.
+
+### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013)
+
+A fragment is a **single-node definition file** with declared substitution
+points — a proven node shape (the e2e gate, the security review) written
+once, upstream, instead of copy-varied across graphs:
+
+```yaml
+# graphs/fragments/e2e-verify.yaml
+fragment: e2e-verify
+description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
+substitutions: [checks]
+node:
+  type: claude-run
+  prompt: |
+    Continue the work — … and {{ with.checks }} …
+  allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  handoff: session
+  success_check: { exit_zero: true, result_matches: "^PASS$", verify: { command: "make local", timeout: 5m } }
+  retry: { max: 1, on: [nonzero_exit, verify_failed] }
+```
+
+**Lookup rule — one location, no search path:** `use: <name>` in
+`/dir/graph.yaml` resolves to `/dir/fragments/<name>.yaml` and nowhere else;
+resolution is a pure function of the entry file's path (no cwd dependence,
+no shipped/embedded tier in v1). Resolution happens on a **path-aware load
+stage** — `graph.LoadFile` (fail-fast; also returns the entry file's raw
+bytes and one `FragmentResolution` per resolved `use:`) and its collect-all
+counterpart `graph.LintFile` (every fragment issue plus every structural
+issue of the resolved graph, plus advisories on their own channel) — which
+`run`, `lint` and `run --dry-run` all load through. The resolved document
+feeds the exact same decode → `Validate` pipeline as a hand-written graph;
+`Parse` stays fragment-blind, and `Validate` refuses any node still carrying
+`use:`/`with:` as a backstop (the coordinator converts that refusal into a
+`PlanError` — the planner may not emit fragments).
+
+**Merge rules** (raw-YAML splice, judged by key presence, never Go zero
+values): `id` is always the using node's, and required. `prompt:` alongside
+`use:` is a load **error** — customization goes through declared
+substitution points or it is a different shape. The behavior fields
+(`allowed_tools`, `permission_mode`, `budget_usd`, `timeout`, `handoff`,
+`success_check`, `retry`, `agent`, `type`) default from the fragment; a key
+written in the using node overrides the **whole** top-level subtree (never a
+deep merge). A fragment may not declare wiring — `id`, `depends_on`, `cwd`,
+`worktree`, `feedback` (load error) — nor `use:` itself (no nesting in v1).
+Substitution tokens `{{ with.<name> }}` reuse the placeholder grammar but
+resolve once, at load: typed replacement when the token is the entire scalar
+(a bound list stays a list), textual when embedded (scalars only). A bound
+value may itself carry `{{ inputs.x }}`/`{{ artifacts.y }}` — those survive
+resolution and interpolate at run time as always. Unknown `with:` keys,
+unbound declared points, undeclared body tokens, and `with:` without `use:`
+are load errors; a declared-but-unreferenced point and a stray
+`{{ with.x }}` in a plain node are advisories.
+
+Downstream of the loader **no fragment concept exists**: the run prints one
+disclosure line per resolved fragment (source file + every overridden key),
+the snapshot stores the re-encoded **resolved** graph whenever any node
+resolved a fragment (so resume never re-reads a fragment; `GraphSHA256`
+still hashes the entry file's bytes), and scheduler/handoff/events/fleetops
+see exactly the graphs they see today. Shipped shapes live in
+`graphs/fragments/`; `internal/graph/testdata/golden/` holds the resolved
+goldens that turn any fragment edit into a reviewed multi-template diff.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
@@ -1146,7 +1220,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ## Repo layout
 ```
 cmd/oh-my-graph/{main,flags,init,resume,runs,show,watch,serve,chat,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/resume/runs/show/watch/serve/chat, print ledger
-internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
+internal/graph/{graph,validate,feedback,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges, and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
@@ -1161,8 +1235,9 @@ internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — a
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/serve/{serve,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph parses)
-docs/adr/000{1..6}-*.md
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph loads)
+graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013)
+docs/adr/00{01..14}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 

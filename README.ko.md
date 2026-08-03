@@ -457,6 +457,13 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
   `{{ feedback.review }}`로 재실행에 넘깁니다(첫 패스에서는 비어 있음) —
   최대 `max`번, 매 라운드가 ledger에 비용으로 기록됩니다
   ([spec](DESIGN.md#execution-engine) · [ADR 0010](docs/adr/0010-a-feedback-edge-is-a-bounded-runtime-rerun-not-a-static-cycle.md) · demo: `graphs/review-loop.yaml`).
+- **`use:` fragments** — 재사용 가능한 노드 shape: 노드가 `use: e2e-verify`라고
+  쓰면 그래프 파일 옆 `fragments/` 디렉토리의 단일 노드 fragment 파일이 로드
+  시점에 스플라이스되고, 선언된 치환 포인트는 `with:`로 바인딩됩니다 — 검증된
+  프롬프트·툴 grant·`success_check`가 업스트림에 한 번만 존재하므로, 공유
+  shape의 다음 수정은 복사본 전수 수작업이 아니라 한 번의 편집이 됩니다.
+  resolve된 그래프는 손으로 쓴 그래프와 구별되지 않습니다 (제공 shape:
+  `graphs/fragments/` · [ADR 0013](docs/adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md)).
 - **gates** — `type: gate` 노드는 사람의 승인을 위해 run을 일시정지시키며,
   `oh-my-graph resume`으로 계속됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **실패 복구** — `resume <run-id> --retry-failed`는 실패한 run에서 실패·취소된

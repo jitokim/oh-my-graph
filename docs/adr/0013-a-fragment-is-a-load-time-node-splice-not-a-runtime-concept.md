@@ -1,6 +1,10 @@
 # ADR 0013 — A fragment is a load-time node splice, not a runtime concept
 
-- Status: Proposed
+- Status: Accepted — implemented, with the deviations recorded inline as
+  "amended at implementation" (`LoadResult`, `LintFile`'s advisory channel,
+  the coordinator-side backstop conversion, the shipped fragment's
+  `permission_mode`/`budget_usd`, and the review fragments' `evidence`
+  substitution point)
 - Date: 2026-08-03
 
 ## Context
@@ -438,14 +442,16 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   from the shipped templates, with substitution points covering the
   spans that *should stay* per-graph (what checks to run, which diff to
   review, which extra focus paragraphs apply — those divergences are
-  real and stay declared). Amended at implementation, two points: the
-  review fragments also declare `evidence` — the upstream gate's
+  real and stay declared). Amended at implementation, two points:
+  `review-security` also declares `evidence` — the upstream gate's
   `{{ artifacts.<id> | inline }}` reference names a graph-local node
   id, which is wiring, so it binds in rather than being hardcoded into
   the fragment (and it exercises the compose rule: a bound runtime
-  placeholder survives resolution untouched); and `review-style`'s
-  `focus` binds `""` in the template with no extra paragraph — the
-  honest spelling of "none" under v1's no-defaults rule.
+  placeholder survives resolution untouched); `review-style` does not,
+  its shape reading a diff rather than the gate's verdict. And
+  `review-style`'s `focus` binds `""` in `dev-review-pr.yaml`, whose
+  pipeline adds no extra paragraph — the honest spelling of "none"
+  under v1's no-defaults rule.
 - Convert **`self-dev.yaml`** and **`dev-review-pr.yaml`** — the e2e
   and review nodes; `dev` and `pr` stay inline for now (their prompts
   diverge more than they share; forcing them into fragments would mean

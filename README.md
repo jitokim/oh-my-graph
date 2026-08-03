@@ -431,6 +431,14 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   the re-run as `{{ feedback.review }}` (empty on the first pass) — at most
   `max` times, every round priced in the ledger
   ([spec](DESIGN.md#execution-engine) · [ADR 0010](docs/adr/0010-a-feedback-edge-is-a-bounded-runtime-rerun-not-a-static-cycle.md) · demo: `graphs/review-loop.yaml`).
+- **`use:` fragments** — reusable node shapes: a node says `use: e2e-verify`
+  and is spliced, at load time, from a single-node fragment file in the
+  graph's own `fragments/` sibling directory, binding the fragment's declared
+  substitution points with `with:` — the proven prompt, tool grant and
+  `success_check` live once, upstream, so the next fix to a shared shape is
+  one edit instead of a hand-sweep across every copy; the resolved graph is
+  indistinguishable from a hand-written one (shipped shapes:
+  `graphs/fragments/` · [ADR 0013](docs/adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md)).
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **failure salvage** — `resume <run-id> --retry-failed` re-executes only a
