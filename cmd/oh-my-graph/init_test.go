@@ -190,6 +190,57 @@ func TestInitGraphs_WritesNothingWhenItRefuses(t *testing.T) {
 	}
 }
 
+// TestInitGraphs_RollsBackWhenAWriteFailsMidLoop covers the case the pre-flight
+// sweep structurally cannot: a path that is free when the sweep looks at it but
+// occupied by the time the loop reaches it. A dangling symlink is the
+// deterministic stand-in — os.Stat follows it and reports "not there", so the
+// sweep passes, while O_EXCL refuses it, so the write fails after earlier files
+// have already landed. Without rollback the user is left with exactly the
+// half-unpacked graphs/ the docstring, README and DESIGN.md all promise they
+// cannot get.
+func TestInitGraphs_RollsBackWhenAWriteFailsMidLoop(t *testing.T) {
+	names := embeddedGraphNames(t)
+	if len(names) < 2 {
+		t.Skip("needs at least two embedded graphs for a write to fail after another succeeded")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "graphs")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("prepare target dir: %v", err)
+	}
+	// The last name alphabetically, so every other write succeeds first.
+	blocked := names[len(names)-1]
+	if err := os.Symlink(filepath.Join(dir, "nowhere.yaml"), filepath.Join(target, blocked)); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	var out strings.Builder
+	err := initGraphs(&out, dir)
+	if err == nil {
+		t.Fatal("init must fail when a target path is taken by the time it writes")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(target, blocked)) {
+		t.Errorf("error should name the offending path %q: %v", blocked, err)
+	}
+
+	entries, readErr := os.ReadDir(target)
+	if readErr != nil {
+		t.Fatalf("read target dir: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != blocked {
+		got := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			got = append(got, entry.Name())
+		}
+		t.Errorf("a failed init must leave nothing behind, found %v in %s", got, target)
+	}
+	// A listing naming files that were rolled back would send the user looking
+	// for graphs that are not there.
+	if out.String() != "" {
+		t.Errorf("a failed init should print no listing:\n%s", out.String())
+	}
+}
+
 // --- argv and exit codes -------------------------------------------------------
 
 func TestRunInit_ArgvErrors(t *testing.T) {

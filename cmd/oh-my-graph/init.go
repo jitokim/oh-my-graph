@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jitokim/oh-my-graph/graphs"
 )
@@ -43,7 +44,11 @@ func runInit(args []string) error {
 // twice, or into a directory holding their own edited copies, cannot end up
 // with a half-replaced set. The writes themselves use O_EXCL so a file that
 // appears between the sweep and the write is still refused rather than
-// clobbered.
+// clobbered; because that refusal happens mid-loop, a failing write also
+// removes the files this run already created, so "nothing at all is written"
+// holds for the whole command and not just for the sweep. The listing is
+// buffered for the same reason: it names files only once they are all there
+// to stay.
 //
 // Nothing here spawns a process: unpacking is pure file I/O over bytes already
 // linked into the binary.
@@ -71,18 +76,22 @@ func initGraphs(w io.Writer, dir string) error {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("init: create %s: %w", target, err)
 	}
+	var listing strings.Builder
+	written := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		data, err := graphs.FS.ReadFile(entry.Name())
 		if err != nil {
-			return fmt.Errorf("init: read embedded graph %q: %w", entry.Name(), err)
+			return undoWrites(written, fmt.Errorf("init: read embedded graph %q: %w", entry.Name(), err))
 		}
 		path := filepath.Join(target, entry.Name())
 		if err := writeNewFile(path, data); err != nil {
-			return fmt.Errorf("init: write %s: %w", path, err)
+			return undoWrites(written, fmt.Errorf("init: write %s: %w", path, err))
 		}
-		fmt.Fprintf(w, "wrote %s\n", path)
+		written = append(written, path)
+		fmt.Fprintf(&listing, "wrote %s\n", path)
 	}
 
+	io.WriteString(w, listing.String())
 	fmt.Fprintf(w, "%d graph(s) written to %s\n", len(entries), target)
 	// The cheapest real end-to-end check, quoted from the Quickstart — but only
 	// when that graph is actually part of what was just written.
@@ -105,6 +114,19 @@ func fileWasWritten(entries []fs.DirEntry, name string) bool {
 		}
 	}
 	return false
+}
+
+// undoWrites removes the files this run created and returns cause unchanged.
+// It is the rollback half of the all-or-nothing contract: the pre-flight sweep
+// cannot see a file that appears while the loop is running, so the loop has to
+// be able to put the directory back the way it found it. Removal errors are
+// deliberately dropped — the caller's problem is cause, and reporting a failed
+// cleanup instead would hide why `init` stopped.
+func undoWrites(written []string, cause error) error {
+	for _, path := range written {
+		os.Remove(path)
+	}
+	return cause
 }
 
 // writeNewFile creates path with data, failing if path already exists. The
