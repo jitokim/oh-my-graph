@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
@@ -848,7 +849,13 @@ func TestResume_LiveViewIsServedAndOpenedOnceThenDiesWithTheLeg(t *testing.T) {
 	if !strings.Contains(out, "Serving live view of run") {
 		t.Errorf("the resumed leg must announce the URL exactly as `serve` does, got:\n%s", out)
 	}
-	if resp, err := http.Get(urls[0]); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urls[0], nil)
+	if err != nil {
+		t.Fatalf("building the shutdown probe request: %v", err)
+	}
+	if resp, err := http.DefaultClient.Do(req); err == nil {
 		resp.Body.Close()
 		t.Error("the live view is still answering after the resume ended — the server outlived its leg")
 	}
