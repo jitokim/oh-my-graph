@@ -88,10 +88,19 @@ ships itself with. A full dogfooding run is walked through in
 ```sh
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
+# Write the example graphs that ship inside the binary into ./graphs/:
+oh-my-graph init
+
 # The cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
+
+`go install` copies one executable and nothing else, so `init` unpacks the
+example graphs embedded in that executable into `./graphs/` — pass a directory
+(`oh-my-graph init <dir>`) to write to `<dir>/graphs/` instead. It never
+overwrites: if any target file already exists it names that path and writes
+nothing at all.
 
 No `ANTHROPIC_API_KEY` needed — the smoke test runs on your logged-in `claude`
 subscription; if the key (or `ANTHROPIC_AUTH_TOKEN`) is set in your shell,
@@ -160,11 +169,12 @@ walks through the plan output, the tool ceiling, and the live node feed.
 ## Usage
 
 ```
-oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 | subcommand | purpose |
 |---|---|
+| `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |

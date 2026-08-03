@@ -1071,7 +1071,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,resume,runs,show,watch,serve,chat,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, run/resume/runs/show/watch/serve/chat, print ledger
+cmd/oh-my-graph/{main,flags,init,resume,runs,show,watch,serve,chat,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/resume/runs/show/watch/serve/chat, print ledger
 internal/graph/{graph,validate}.go + _test   Graph/Node value objects, YAML, DAG validation, ReadyGiven
 internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
 internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
@@ -1087,7 +1087,7 @@ internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — a
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/serve/{serve,resolve,transcript}.go + ui/ + _test  `serve`: read-only, 127.0.0.1-only web live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a consumer of the run-feed contract, plus the live transcript tail of a running node's own session
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts they parse)
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml` (a glob, so a new template ships automatically) — `oh-my-graph init [dir]` unpacks them into <dir>/graphs/ (dir defaults to `.`) and never overwrites: one existing target aborts the whole command, writing nothing (+ internal/graph/shipped_graphs_test.go asserts every embedded graph parses)
 docs/adr/000{1..6}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
