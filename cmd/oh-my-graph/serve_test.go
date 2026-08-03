@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
@@ -78,7 +80,8 @@ func TestServeDashboard_AnEmptyRunsRootServesAnEmptyDashboard(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var out strings.Builder
 	done := make(chan error, 1)
-	go func() { done <- serveDashboard(ctx, &out, listener, root, nil) }()
+	handler, banner := dashboardView(listener, root, nil)
+	go func() { done <- serveUntilCancelled(ctx, &out, listener, handler, banner, nil) }()
 
 	body := getWithRetry(t, "http://"+listener.Addr().String()+"/api/cards")
 	if strings.TrimSpace(body) != "[]" {
@@ -87,7 +90,7 @@ func TestServeDashboard_AnEmptyRunsRootServesAnEmptyDashboard(t *testing.T) {
 
 	cancel()
 	if err := <-done; err != nil {
-		t.Fatalf("a cancelled serveDashboard must return nil, got %v", err)
+		t.Fatalf("a cancelled dashboard must return nil, got %v", err)
 	}
 	if got := out.String(); !strings.Contains(got, "dashboard") || !strings.Contains(got, "http://127.0.0.1:") {
 		t.Errorf("the announcement must name the dashboard and a loopback URL, got %q", got)
@@ -119,7 +122,8 @@ func TestServeDashboard_CardsAndTheMountedRunView(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveDashboard(ctx, &strings.Builder{}, listener, runsDir, nil) }()
+	handler, banner := dashboardView(listener, runsDir, nil)
+	go func() { done <- serveUntilCancelled(ctx, &strings.Builder{}, listener, handler, banner, nil) }()
 
 	base := "http://" + listener.Addr().String()
 	body := getWithRetry(t, base+"/api/cards")
@@ -133,7 +137,7 @@ func TestServeDashboard_CardsAndTheMountedRunView(t *testing.T) {
 
 	cancel()
 	if err := <-done; err != nil {
-		t.Fatalf("a cancelled serveDashboard must return nil, got %v", err)
+		t.Fatalf("a cancelled dashboard must return nil, got %v", err)
 	}
 }
 
@@ -262,5 +266,142 @@ func TestServeRun_CancelEndsAnOpenSSEStream(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serveRun hung on shutdown behind an open SSE stream")
+	}
+}
+
+// --- auto-open: the URL goes to the browser on a terminal --------------------
+
+func TestServeFlags_AutoOpenerGatesOnTTYAndNoOpen(t *testing.T) {
+	// `serve` prints a URL and waits, so on a terminal it should also OPEN it.
+	// The gate is the one the whole CLI shares (webOpener): a terminal and no
+	// opt-out. Everything else yields nil — no Opener is consulted at all, so
+	// a scripted `serve` cannot spawn anything.
+	fake := browser.NewFakeOpener()
+	pipe, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pipe.Close()
+	defer w.Close()
+	pty := openPTY(t)
+
+	cases := []struct {
+		name   string
+		args   []string
+		stdout *os.File
+		want   browser.Opener
+	}{
+		{name: "a terminal and no opt-out opens", args: nil, stdout: pty, want: fake},
+		{name: "--no-open on a terminal opens nothing", args: []string{"--no-open"}, stdout: pty, want: nil},
+		{name: "a pipe (scripts, CI) opens nothing", args: nil, stdout: w, want: nil},
+		{name: "--no-open composes with a run id and a port", args: []string{"run-1", "--port", "9100", "--no-open"}, stdout: pty, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := newServeFlags()
+			flags.set.SetOutput(&strings.Builder{})
+			if err := flags.parse(tc.args); err != nil {
+				t.Fatalf("parse returned error: %v", err)
+			}
+			if got := flags.autoOpener(tc.stdout, fake); got != tc.want {
+				t.Errorf("autoOpener = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestServeUntilCancelled_HandsTheServedURLToTheOpener(t *testing.T) {
+	listener, err := serve.Listen(0)
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	fake := browser.NewFakeOpener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var out strings.Builder
+	handler, banner := dashboardView(listener, t.TempDir(), nil)
+	done := make(chan error, 1)
+	go func() { done <- serveUntilCancelled(ctx, &out, listener, handler, banner, fake) }()
+
+	// Opened, and opened at the address actually being served — the URL the
+	// banner printed, not a reconstruction of it.
+	body := getWithRetry(t, "http://"+listener.Addr().String()+"/api/cards")
+	if strings.TrimSpace(body) != "[]" {
+		t.Errorf("the opened server did not answer: %q", body)
+	}
+	want := "http://" + listener.Addr().String() + "/"
+	if urls := fake.URLs(); len(urls) != 1 || urls[0] != want {
+		t.Errorf("opener received %v, want exactly [%s]", urls, want)
+	}
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("the opened URL is not the announced one:\n%s", out.String())
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a cancelled serve must return nil, got %v", err)
+	}
+}
+
+func TestServeUntilCancelled_WithoutAnOpenerNothingSpawnsAndStdoutIsIdentical(t *testing.T) {
+	// The non-TTY / --no-open contract: byte-identical output to a build with
+	// no auto-open at all. Proven by running both paths and comparing.
+	serveOnce := func(opener browser.Opener) string {
+		t.Helper()
+		listener, err := serve.Listen(0)
+		if err != nil {
+			t.Fatalf("Listen returned error: %v", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		var out strings.Builder
+		handler, banner := runView(listener, t.TempDir(), "run-1", nil)
+		done := make(chan error, 1)
+		go func() { done <- serveUntilCancelled(ctx, &out, listener, handler, banner, opener) }()
+		getWithRetry(t, "http://"+listener.Addr().String()+"/api/graph")
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("a cancelled serve must return nil, got %v", err)
+		}
+		// The port is the one value that legitimately differs between runs.
+		return strings.ReplaceAll(out.String(), listener.Addr().String(), "ADDR")
+	}
+
+	fake := browser.NewFakeOpener()
+	opened := serveOnce(fake)
+	quiet := serveOnce(nil)
+
+	if len(fake.URLs()) != 1 {
+		t.Errorf("the opened run must have reached the opener exactly once, got %v", fake.URLs())
+	}
+	if quiet != opened {
+		t.Errorf("stdout differs with and without auto-open:\n--- no opener ---\n%s\n--- opener ---\n%s", quiet, opened)
+	}
+}
+
+func TestServeUntilCancelled_AFailedLaunchStillServes(t *testing.T) {
+	// No display, no registered handler: the launch fails, the server does not.
+	// The URL is already printed, and the server is what was asked for.
+	listener, err := serve.Listen(0)
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	fake := browser.NewFakeOpener()
+	fake.InjectError(errors.New("no display"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handler, banner := dashboardView(listener, t.TempDir(), nil)
+	done := make(chan error, 1)
+	go func() { done <- serveUntilCancelled(ctx, &strings.Builder{}, listener, handler, banner, fake) }()
+
+	if body := getWithRetry(t, "http://"+listener.Addr().String()+"/api/cards"); strings.TrimSpace(body) != "[]" {
+		t.Errorf("the server stopped answering after a failed launch: %q", body)
+	}
+	if urls := fake.URLs(); len(urls) != 1 {
+		t.Errorf("the launch must still have been attempted once, got %v", urls)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a failed browser launch must not fail the serve, got %v", err)
 	}
 }

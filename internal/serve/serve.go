@@ -33,11 +33,12 @@
 // 0002/0005/0006), and both processes this package's features imply belong to
 // them — browser-open to browser.ExecOpener behind the browser.Opener seam
 // (ADR 0006), and a resumed leg's nodes to runner.ClaudeCLIRunner, reached
-// only through the GateResumer the CLI injects (ADR 0014). The CLI decides:
-// `run`/`auto` embed this server for the run's duration and, when stdout is a
-// terminal and --no-web was not passed, hand the URL to the injected Opener;
-// the standalone `serve` subcommand just prints the URL, and is the only one
-// that injects a GateResumer.
+// only through the GateResumer the CLI injects (ADR 0014). The CLI decides
+// both: `run`/`auto` embed this server for the run's duration, and the
+// standalone `serve` subcommand serves either one run (Server) or all of them
+// (Dashboard) and is the only one that injects a GateResumer. All of them hand
+// the URL to the injected Opener under one gate — stdout is a terminal and the
+// opt-out (--no-web, or `serve`'s --no-open) was not passed.
 package serve
 
 import (
