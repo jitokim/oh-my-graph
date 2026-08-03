@@ -41,6 +41,11 @@ func isTerminal(f *os.File) bool {
 // part of it — so a bind error disables it with a stderr note and a failed
 // browser launch leaves the printed URL as the way in.
 //
+// The embedded view gets NO gate resumer (the nil below): this view lives
+// exactly as long as the run it belongs to, and that run holds the resume.lock
+// a leg would need — so its gate buttons answer 409 and the pause hint's
+// `oh-my-graph resume`/`serve` remains the way to decide (ADR 0003, ADR 0011).
+//
 // The returned stop tears the server down and waits for it to exit; callers
 // defer it so the server lives exactly as long as the run.
 func startLiveView(ctx context.Context, opener browser.Opener, runID string) (stop func()) {
@@ -57,7 +62,7 @@ func startLiveView(ctx context.Context, opener browser.Opener, runID string) (st
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := serveRun(serveCtx, os.Stdout, listener, runDirFor(runID), runID); err != nil {
+		if err := serveRun(serveCtx, os.Stdout, listener, runDirFor(runID), runID, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "live view: %v\n", err)
 		}
 	}()
