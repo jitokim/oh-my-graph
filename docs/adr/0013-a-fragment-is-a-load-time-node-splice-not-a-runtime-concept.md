@@ -59,6 +59,8 @@ node:
     interim report. Report exactly PASS if everything succeeds, or FAIL
     with the failing step.
   allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  permission_mode: dontAsk
+  budget_usd: 10.00   # runaway insurance, an order of magnitude above a plausible run
   handoff: session
   success_check:
     exit_zero: true
@@ -70,7 +72,12 @@ node:
 Note what is *not* a substitution point: `allowed_tools` is the
 fragment's own, because the grant is part of the proven shape (Semantics,
 below). A using graph that needs a different grant overrides the key
-explicitly — it does not get asked to supply one every time.
+explicitly — it does not get asked to supply one every time. (Amended at
+implementation: the shipped fragment also carries `permission_mode` and
+the runaway-insurance `budget_usd`, shown above — a gate that must run
+non-interactively and its insurance ceiling are part of the proven shape
+too, and the budget is the "`budget_usd` on one" convergence the
+Migration section enumerates.)
 
 A using graph splices it in with `use:`, binding the substitution points
 and adding its own wiring:
@@ -431,7 +438,14 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   from the shipped templates, with substitution points covering the
   spans that *should stay* per-graph (what checks to run, which diff to
   review, which extra focus paragraphs apply — those divergences are
-  real and stay declared).
+  real and stay declared). Amended at implementation, two points: the
+  review fragments also declare `evidence` — the upstream gate's
+  `{{ artifacts.<id> | inline }}` reference names a graph-local node
+  id, which is wiring, so it binds in rather than being hardcoded into
+  the fragment (and it exercises the compose rule: a bound runtime
+  placeholder survives resolution untouched); and `review-style`'s
+  `focus` binds `""` in the template with no extra paragraph — the
+  honest spelling of "none" under v1's no-defaults rule.
 - Convert **`self-dev.yaml`** and **`dev-review-pr.yaml`** — the e2e
   and review nodes; `dev` and `pr` stay inline for now (their prompts
   diverge more than they share; forcing them into fragments would mean

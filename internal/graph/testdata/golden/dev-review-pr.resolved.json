@@ -1,0 +1,120 @@
+{
+  "name": "dev-review-pr",
+  "version": "0.1",
+  "inputs": [
+    "repo"
+  ],
+  "concurrency": 4,
+  "on_fail": "halt",
+  "nodes": [
+    {
+      "id": "dev",
+      "type": "claude-run",
+      "prompt": "Implement the change described in the current issue/branch. Keep the diff\nfocused. Choose a commit granularity that fits the work — one commit per\nrefactoring unit for refactors, per file for sweeps, per feature slice\nfor new code — and state your choice in the first commit message. Commit\nas you go: a node timeout must never lose finished work. End every commit\nmessage with the trailer `Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e`\n(the attribution convention in CONTRIBUTING.md). When done, reply\nwith a one-line summary of what you changed.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash(git *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true
+      },
+      "timeout": "1h"
+    },
+    {
+      "id": "e2e",
+      "type": "claude-run",
+      "depends_on": [
+        "dev"
+      ],
+      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run the end-to-end checks (make local). If the\ndiff touches concurrency-sensitive code, also stress its tests (e.g.\n`go test \u003caffected packages\u003e -race -count=300`, or your stack's\nequivalent) — a flaky test passes a single run, and determinism is\nthe claim under test.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. Report exactly PASS if everything succeeds, or FAIL\nwith the failing step.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Bash(make *)",
+        "Bash(go *)",
+        "Bash(git *)"
+      ],
+      "permission_mode": "dontAsk",
+      "budget_usd": 10,
+      "handoff": "session",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^PASS$",
+        "verify": {
+          "command": "make local",
+          "timeout": "5m"
+        }
+      },
+      "retry": {
+        "max": 1,
+        "on": [
+          "nonzero_exit",
+          "verify_failed"
+        ]
+      }
+    },
+    {
+      "id": "review-security",
+      "type": "claude-run",
+      "depends_on": [
+        "e2e"
+      ],
+      "prompt": "Review the current diff for security issues (injection, secrets, unsafe\nshell, unsafe exec, authz gaps). The e2e verdict was: {{ artifacts.e2e | inline }}.\nReply with a short bulleted list of findings, or \"no security issues found\".\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Bash(git diff*)",
+        "Bash(git log*)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true
+      }
+    },
+    {
+      "id": "review-style",
+      "type": "claude-run",
+      "depends_on": [
+        "e2e"
+      ],
+      "prompt": "Review the current diff for style, naming, and simplicity.\n\nIf the diff adds or edits test doubles or concurrency tests, also verify:\nevery synchronization field is actually wired (no dead channels, no\nwall-clock fallback arms) and no assertion is satisfiable by a record or\nnode simply being absent.\nReply with a short bulleted list, or \"no style issues found\".\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Bash(git diff*)",
+        "Bash(git log*)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true
+      }
+    },
+    {
+      "id": "pr",
+      "type": "claude-run",
+      "depends_on": [
+        "review-security",
+        "review-style"
+      ],
+      "prompt": "Open a pull request for the current branch. Incorporate these reviews into\nthe PR body:\n  Security review: {{ artifacts.review-security | inline }}\n  Style review:    {{ artifacts.review-style | inline }}\nReply with the PR URL.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Bash(git *)",
+        "Bash(gh *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# e2e-verify — the cold-safe e2e gate (ADR 0013's founding shape).
+#
+# The first sentence is the cold-safe retry wording: a retried attempt starts
+# cold instead of resuming its session-parent, and the prompt is written to
+# survive exactly that case. It used to be hand-swept across every template;
+# it now exists once, here.
+#
+# What stays per-graph is the one substitution point: `checks` — the checks
+# this graph's gate actually runs. Everything else is the proven shape:
+# session continuation, synchronous execution, a verdict-only final reply,
+# and an evidence-grounded success_check (the engine runs `verify` itself
+# and judges the exit code, so a node that reports PASS without the suite
+# passing does not pass).
+fragment: e2e-verify
+description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
+substitutions: [checks]
+node:
+  type: claude-run
+  prompt: |
+    Continue the work — or, on a retried attempt, start from the branch's
+    committed state — and {{ with.checks }}
+    Run every check SYNCHRONOUSLY and wait for it to finish — never in the
+    background. Your FINAL reply is the verdict: never end the turn on an
+    interim report. Report exactly PASS if everything succeeds, or FAIL
+    with the failing step.
+  allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  permission_mode: dontAsk
+  # Runaway insurance ONLY, never cost tuning: a tight budget kills a
+  # nearly-done node at the threshold, and the salvage costs more than
+  # letting it finish (a real $0.02-over kill cost ~6x the remaining work).
+  # Keep this an order of magnitude above a plausible run. The hang guard
+  # is `timeout:`, not the budget.
+  budget_usd: 10.00
+  handoff: session
+  success_check:
+    exit_zero: true
+    result_matches: "^PASS$"      # secondary: the node's own account of itself
+    # The evidence. The engine runs this itself and judges the exit code,
+    # so a node that reports PASS without the suite passing does not pass.
+    verify: { command: "make local", timeout: 5m }
+  retry: { max: 1, on: [nonzero_exit, verify_failed] }

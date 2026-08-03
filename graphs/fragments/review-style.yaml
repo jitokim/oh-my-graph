@@ -1,0 +1,24 @@
+# review-style — the read-only style/naming/simplicity review of a diff,
+# with the test-double discipline check built in (CONTRIBUTING's rule: every
+# synchronization field wired, no assertion satisfiable by absence).
+#
+# Per-graph spans stay declared: `diff` (which diff this graph reviews) and
+# `focus` (the extra focus paragraph a graph adds — repo invariants, a
+# subsystem to stare at; bind "" when there is none).
+fragment: review-style
+description: read-only style/naming/simplicity review of a diff, with the test-double discipline check
+substitutions: [diff, focus]
+node:
+  type: claude-run
+  prompt: |
+    Review {{ with.diff }} for style, naming, and simplicity.
+    {{ with.focus }}
+    If the diff adds or edits test doubles or concurrency tests, also verify:
+    every synchronization field is actually wired (no dead channels, no
+    wall-clock fallback arms) and no assertion is satisfiable by a record or
+    node simply being absent.
+    Reply with a short bulleted list, or "no style issues found".
+  allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+  permission_mode: plan
+  handoff: artifact
+  success_check: { exit_zero: true }

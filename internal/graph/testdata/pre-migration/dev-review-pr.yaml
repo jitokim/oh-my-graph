@@ -1,0 +1,118 @@
+# dev-review-pr — the worked example: a small delivery pipeline as a DAG.
+#
+#   dev  ──▶  e2e  ──▶  review-security ─┐
+#                  └─▶  review-style ────┴─▶  pr
+#
+# Handoff choices illustrate both strategies:
+#   - e2e resumes dev's claude session (handoff: session) — tight sequential
+#     continuation in the same working tree, so e2e sees exactly what dev did.
+#   - the two reviews and the pr node read upstream results as artifacts
+#     (the default) — a fan-in cannot merge sessions, so it MUST use artifacts.
+#
+# The parallel reviews run read-only (permission_mode: plan) because parallel
+# nodes share one working tree and concurrent edits would race. Parallel EDIT
+# lanes should each declare `worktree: <name>` instead, which gives every lane
+# its own managed git checkout (see "worktree" in README).
+#
+# Run:
+#   oh-my-graph run graphs/dev-review-pr.yaml --input repo=/path/to/your/repo
+name: dev-review-pr
+version: "0.1"
+inputs: [repo]
+concurrency: 4
+nodes:
+  - id: dev
+    type: claude-run
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Implement the change described in the current issue/branch. Keep the diff
+      focused. Choose a commit granularity that fits the work — one commit per
+      refactoring unit for refactors, per file for sweeps, per feature slice
+      for new code — and state your choice in the first commit message. Commit
+      as you go: a node timeout must never lose finished work. End every commit
+      message with the trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+      (the attribution convention in CONTRIBUTING.md). When done, reply
+      with a one-line summary of what you changed.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)"]
+    permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  # `lint` still warns here (handoff: session + retry) — that is advisory and
+  # expected: a retried attempt starts cold instead of resuming dev's session,
+  # and the prompt below is written to survive exactly that case.
+  - id: e2e
+    type: claude-run
+    depends_on: [dev]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Continue the work — or, on a retried attempt, start from the branch's
+      committed state — and run the end-to-end checks (make local). If the
+      diff touches concurrency-sensitive code, also stress its tests (e.g.
+      `go test <affected packages> -race -count=300`, or your stack's
+      equivalent) — a flaky test passes a single run, and determinism is the
+      claim under test. Run every check SYNCHRONOUSLY and wait for it to
+      finish — never in the background. Your FINAL reply is the verdict:
+      never end the turn on an interim report. Report exactly PASS if
+      everything succeeds, or FAIL with the failing step.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go test *)", "Bash(git *)"]
+    permission_mode: dontAsk
+    # Runaway insurance ONLY, never cost tuning: a tight budget kills a
+    # nearly-done node at the threshold, and the salvage costs more than
+    # letting it finish (a real $0.02-over kill cost ~6x the remaining work).
+    # Keep this an order of magnitude above a plausible run, or omit it.
+    # The hang guard is `timeout:`, not the budget.
+    budget_usd: 10.00
+    handoff: session
+    success_check:
+      exit_zero: true
+      result_matches: "^PASS$"      # secondary: this is the node's own account of itself
+      # The evidence. oh-my-graph runs this itself and judges the exit code, so
+      # a node that reports PASS without the suite passing does not pass.
+      verify: { command: "make local", timeout: 5m }
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
+
+  - id: review-security
+    type: claude-run
+    depends_on: [e2e]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Review the current diff for security issues (injection, secrets, unsafe
+      shell, authz gaps). The e2e result was: {{ artifacts.e2e | inline }}.
+      Reply with a bulleted findings list, or "no security issues found".
+    allowed_tools: [Read, "Bash(git diff*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: review-style
+    type: claude-run
+    depends_on: [e2e]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Review the current diff for style, naming, and simplicity. If it adds
+      or edits test doubles or concurrency tests, also verify every
+      synchronization field is actually wired (no dead channels, no
+      wall-clock fallback arms) and no assertion passes merely because a
+      record is absent. Reply with a short bulleted list of suggestions, or
+      "no style issues found".
+    allowed_tools: [Read, "Bash(git diff*)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true }
+
+  - id: pr
+    type: claude-run
+    depends_on: [review-security, review-style]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Open a pull request for the current branch. Incorporate these reviews into
+      the PR body:
+        Security review: {{ artifacts.review-security | inline }}
+        Style review:    {{ artifacts.review-style | inline }}
+      Reply with the PR URL.
+    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    success_check: { exit_zero: true }
