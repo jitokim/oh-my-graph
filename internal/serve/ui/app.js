@@ -307,6 +307,7 @@ async function loadGraph() {
     return;
   }
   $("run-id").textContent = payload.run_id;
+  renderGoal(payload.goal);
   if (!payload.available) {
     // Honest window: structure is unknown until the first node's terminal
     // verdict writes state.json. Keep polling; events still stream meanwhile.
@@ -315,6 +316,19 @@ async function loadGraph() {
     return;
   }
   render(payload);
+}
+
+// renderGoal shows the header's goal-lineage chip when this run is one cycle
+// of an iterated auto goal (ADR 0011: serve stays a per-run view and shows
+// the goal block in its header). The goal text is untrusted input, so it is
+// set via textContent only; the title carries the full text for hover when
+// the chip's CSS ellipsis truncates it.
+function renderGoal(goal) {
+  if (!goal) return;
+  const el = $("goal-lineage");
+  el.textContent = `goal “${goal.text}” · cycle ${goal.cycle}/${goal.max_cycles}`;
+  el.title = goal.text;
+  el.hidden = false;
 }
 
 function render(payload) {

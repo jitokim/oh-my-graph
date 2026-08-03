@@ -63,7 +63,7 @@ func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 
 	var runErr error
 	out := captureStdout(t, func() {
-		runErr = executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "limit-flow.yaml", []byte("name: limit-flow\n"), nil)
+		runErr = executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "limit-flow.yaml", []byte("name: limit-flow\n"), nil, nil)
 	})
 	var limited *schedule.LimitPausedError
 	if !errors.As(runErr, &limited) {

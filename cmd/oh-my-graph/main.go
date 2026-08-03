@@ -6,7 +6,7 @@
 // Usage:
 //
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-//	oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
 //	oh-my-graph runs list
@@ -18,6 +18,10 @@
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
 // resumable — at a gate awaiting a human decision (ADR 0003) or because the
 // subscription's session limit was hit (ADR 0009). A pause is not a failure.
+// An iterated auto run (--max-cycles ≥ 2, ADR 0011) makes the contract
+// goal-level: exit 0 additionally requires the assessor's goal-met verdict on
+// a passed final cycle, and stopping unmet (cycles exhausted, budget ceiling,
+// a declined later cycle) exits 1 even when every run passed.
 package main
 
 import (
@@ -83,7 +87,7 @@ func mainExitCode(args []string) int {
 func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+       oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
        oh-my-graph runs list
@@ -183,7 +187,7 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, raw,
-		webOpener(flags.noWeb, stdout, opener))
+		webOpener(flags.noWeb, stdout, opener), nil)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -206,7 +210,8 @@ func runAuto(args []string) error {
 	// Same live-view gate as `run` and `resume`, the other two sites injecting
 	// the real ExecOpener.
 	coord := coordinator.New(nodeRunner, agentMappingOptions(flags.noAgentMapping)...)
-	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal, nil,
+	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
+		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, nil,
 		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
 }
 
@@ -222,6 +227,20 @@ func agentMappingOptions(off bool) []coordinator.Option {
 	return []coordinator.Option{coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...)}
 }
 
+// goalCycleOptions is the goal-iteration surface planAndExecute receives from
+// its caller: `auto` forwards its --max-cycles/--max-goal-budget-usd flags,
+// chat always passes singleCycle. Chat staying single-cycle in v1 (ADR 0011
+// §1) is enforced by what its caller can pass — commonRunFlags carry no cycle
+// count — not by a runtime check.
+type goalCycleOptions struct {
+	maxCycles        int
+	maxGoalBudgetUSD float64
+}
+
+// singleCycle is the non-iterating goalCycleOptions: one plan, one run, no
+// assessment — today's behaviour, byte-identical (ADR 0011 §1).
+var singleCycle = goalCycleOptions{maxCycles: 1}
+
 // planAndExecute is one goal's full auto sequence — plan, save the spec, print
 // the topology, execute. It is shared verbatim by `auto` and a chat graph turn
 // so the sequence that must stay identical between them has exactly one home:
@@ -235,7 +254,18 @@ func agentMappingOptions(off bool) []coordinator.Option {
 // the run's live-view opener or nil for none (see executeGraph); `auto`
 // passes its TTY-gated decision, chat always passes nil — a chat turn's run
 // stays un-wired (ADR 0006).
-func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, confirm func() (bool, error), web browser.Opener) error {
+//
+// cycles decides whether the sequence runs once (maxCycles 1 — this function
+// body, exactly today's) or as the bounded goal loop of ADR 0011 (maxCycles
+// ≥ 2 — planAndExecuteCycles, which re-enters coordinator.Plan per cycle and
+// runs this same save→print→confirm→execute sequence as the loop's
+// ExecuteCycle callback). It is an explicit parameter of the call so that
+// planAndExecute stays the sequence's one home for both shapes.
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, cycles goalCycleOptions, confirm func() (bool, error), web browser.Opener) error {
+	if cycles.maxCycles > 1 {
+		return planAndExecuteCycles(ctx, out, coord, nodeRunner, flags, goal, cycles, confirm, web)
+	}
+
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
@@ -260,7 +290,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		}
 	}
 
-	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web)
+	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web, nil)
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
@@ -275,9 +305,10 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // the planner's JSON spec was saved (runAuto's graph.json) — plan.Spec is
 // already the re-parseable JSON the resumable snapshot needs, so it is reused
 // as-is rather than re-marshaling plan.Graph the way a hand-written `run` has
-// to (see buildRecorder).
-func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, web)
+// to (see buildRecorder). goal is the run's goal-lineage block for an
+// iterated auto cycle (ADR 0011 §4), nil on every single-cycle run.
+func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener, goal *runstate.GoalRef) error {
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, web, goal)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
@@ -301,8 +332,11 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // 0006); nil means no live view at all — the gate (TTY-and-not---no-web for
 // run/auto, and for `resume` through the same webOpener; always nil for a
 // chat turn) is the caller's decision, made before this function so nothing
-// here ever probes a terminal.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener) error {
+// here ever probes a terminal. goal is the goal-lineage block an iterated
+// auto cycle stamps into its snapshot (ADR 0011 §4); nil — the only value
+// `run` and single-cycle auto ever pass — keeps the snapshot byte-identical
+// to today's.
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener, goal *runstate.GoalRef) error {
 	// The first leg holds the run's resume.lock for its whole duration — the
 	// same O_EXCL lock every `resume` takes (internal/runstate.AcquireLock).
 	// Without it, a `resume <run-id> --retry-failed` raced against a
@@ -319,7 +353,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)
 
-	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, flags, toolPolicies)
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, flags, toolPolicies, goal)
 	if err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
@@ -397,7 +431,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 // snapshot document (runstate.Write would fail marshaling it), so it is
 // re-encoded via json.Marshal(g) — safe because graph.Node/Graph's json tags
 // mirror their yaml tags exactly (see internal/graph, Node's doc comment).
-func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy) (*runstate.SnapshotRecorder, error) {
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
 	graphJSON := rawSource
 	if !json.Valid(rawSource) {
 		marshaled, err := json.Marshal(g)
@@ -416,6 +450,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
 		ToolPolicies:    toNodeToolPolicies(toolPolicies),
+		Goal:            goal,
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }

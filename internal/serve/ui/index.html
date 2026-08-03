@@ -20,6 +20,10 @@
   <header>
     <span class="brand">oh-my-graph</span>
     <span id="run-id" class="run-id">resolving run…</span>
+    <!-- Goal lineage (ADR 0011): shown only when the snapshot carries a goal
+         block, i.e. this run is one cycle of an iterated auto goal. The goal
+         text is untrusted input and is rendered via textContent only. -->
+    <span id="goal-lineage" class="goal" hidden></span>
     <span id="run-status" class="status">connecting</span>
     <span class="spacer"></span>
     <span id="state-chips" class="chips"></span>

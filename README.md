@@ -130,6 +130,22 @@ hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 `permission_mode: bypassPermissions`; custom YAML remains the path for precise
 control.
 
+Want `auto` to keep going until the goal is actually met? `--max-cycles N`
+(default 1) turns one invocation into a bounded loop of up to N whole
+plan→run→assess cycles: after each run, a tool-stripped assessor judges the
+goal against the run's own recorded evidence, and if work remains, the next
+cycle replans around it — every cycle re-validated under the same tool
+ceiling, every plan and verdict printed as it happens, and a goal summary
+totalling each cycle's spend at the end. Exit 0 requires both a goal-met
+verdict and a passed final run. `--max-goal-budget-usd X` adds an optional
+soft spend ceiling checked between cycles; it requires `--max-cycles` of at
+least 2, since a single-cycle run has no cycle boundary to check it at, and
+the flag is rejected at parse otherwise. Stated honestly: `auto` is
+non-interactive, so an unattended `--max-cycles 5` may spend five planner
+calls, five graphs and five assessments with nobody watching — the
+governance is the bound you typed, the per-cycle validation, and the printed
+record, not a confirmation prompt.
+
 If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
 — project wins), `auto` also maps planned nodes onto them when a node's id
 clearly matches an agent's name — your review node runs as *your*
@@ -150,7 +166,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | subcommand | purpose |
 |---|---|
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
