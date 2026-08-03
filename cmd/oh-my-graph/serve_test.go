@@ -113,7 +113,12 @@ func TestServeDashboard_CardsAndTheMountedRunView(t *testing.T) {
 	if err := feed.Emit(runfeed.Event{Type: runfeed.EventRunStarted}); err != nil {
 		t.Fatalf("emit fixture event: %v", err)
 	}
-	feed.Close()
+	// Closed before the dashboard reads it, and checked: Close is where a final
+	// write error surfaces, so an unchecked one would leave this test asserting
+	// against a fixture that never fully landed.
+	if err := feed.Close(); err != nil {
+		t.Fatalf("close fixture stream: %v", err)
+	}
 
 	listener, err := serve.Listen(0)
 	if err != nil {

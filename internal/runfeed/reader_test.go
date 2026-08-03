@@ -296,6 +296,28 @@ func TestWalk_RefusesASchemaNewerThanThisBinary(t *testing.T) {
 	}
 }
 
+// TestWalk_RefusesALineOverTheSharedCap pins the per-line bound Walk and Follow
+// share, so a corrupt or foreign file is refused rather than misread. Walk gets
+// the cap from bufio.Scanner's token limit, which is exactly the kind of thing a
+// later edit to the scanner.Buffer arguments could quietly turn into a truncated
+// or skipped line.
+func TestWalk_RefusesALineOverTheSharedCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	writeLines(t, path, `{"schema":1,"event":"run_started","detail":"`+strings.Repeat("x", maxLineBytes)+`"}`)
+
+	visited := 0
+	err := Walk(path, func(Event) error {
+		visited++
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "read event stream") {
+		t.Fatalf("err = %v, want the over-long-line refusal", err)
+	}
+	if visited != 0 {
+		t.Errorf("visited %d events from an over-long line, want none", visited)
+	}
+}
+
 // TestWalk_VisitErrorEndsTheWalk lets a caller stop early on its own terms.
 func TestWalk_VisitErrorEndsTheWalk(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
