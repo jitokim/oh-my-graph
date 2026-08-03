@@ -43,7 +43,8 @@ Anthropic API, Agent SDK, 그리고 종량제 `ANTHROPIC_API_KEY`를 강요해
 **subscription** 기반 `claude` CLI를 구동하는 오케스트레이터는 없습니다.
 oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로 기술하면,
 각 노드는 이미 결제 중인 구독 위에서 순수한 `claude -p` 서브프로세스로
-실행됩니다 — Max/Pro 플랜 안에서, 종량제 키는 개입하지 않습니다.
+실행됩니다(플랜과 자격 증명에 대한 자세한 내용은
+[Bring your own login](#bring-your-own-login)에 있습니다).
 
 가장 가까운 이웃들 — conductor, OMK, open-multi-agent — 과 oh-my-graph의
 비교는 [docs/PRIOR-ART.md](docs/PRIOR-ART.md)에 정리되어 있습니다.
@@ -83,7 +84,7 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로
   ([`auto` 심화](#auto-in-depth)).
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: LIVE 헤더에 2 running / 68 passed / 19 failed run 칩과 누적 지출 합계, IN FLIGHT 행에는 각자 노드 상태가 표시된 미니 DAG를 그리는 실행 중 run 카드 두 개, 그리고 접혀 있는 SETTLED 87" width="100%" />
+  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: LIVE 헤더에 2 running / 68 passed / 19 failed run 칩과 누적 지출 합계, IN FLIGHT 행에는 각자 노드 상태가 표시된 미니 DAG를 그리는 실행 중 run 카드 두 개, 그리고 87개의 run이 접혀 있는 SETTLED 그룹" width="100%" />
 </p>
 <p align="center"><em>run 하나에서 한 단계 올라간 dashboard — 실제 dogfood 보드입니다: 카드 하나하나가 이 저장소 자체의 개발을 돌린 실제 run입니다. 헤더의 <code>$906.1948</code>은 프로젝트 전체 개발 기간에 걸친 누적 구독 사용량이며, run 하나의 가격이 아니고 공짜도 아닙니다.</em></p>
 
@@ -179,7 +180,7 @@ YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 �
 handoff로 연결)이 이 전부를 확인하는 가장 저렴한 실제 end-to-end
 체크입니다:
 
-```
+```text
 Running graph "haiku-smoke" (run 20260729-101532)
 
 ▶ write  running…
@@ -229,7 +230,7 @@ tar xzf "${ARCHIVE}"
 ./oh-my-graph version
 ```
 
-`oh-my-graph`를 `PATH` 위로 옮기면 위의 smoke test가 그대로 실행됩니다.
+`oh-my-graph`를 `PATH`에 추가하면 위의 smoke test가 그대로 실행됩니다.
 
 <a id="the-custom-path--write-the-graph-yourself"></a>
 
@@ -325,7 +326,7 @@ session 재사용을 보류한 이유가 기록되어 있습니다) — 매일�
 
 ## 사용법
 
-```
+```text
 oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
@@ -502,7 +503,8 @@ oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 �
 서비스로 실행되지도 않습니다. 이미 로그인된 **본인의** `claude` 세션을
 재사용합니다 — 직접 `claude -p`를 실행하는 것, 혹은
 [claude-squad](https://github.com/smtg-ai/claude-squad)와 같은 위치입니다.
-개인용, 로컬 도구입니다.
+개인용, 로컬 도구입니다. 노드는 이미 결제 중인 Max/Pro 플랜 안에서 실행되며,
+종량제 키는 개입하지 않습니다.
 
 이 보장을 실제로 지키기 위해, 모든 노드 서브프로세스는 환경에서
 `ANTHROPIC_API_KEY`와 `ANTHROPIC_AUTH_TOKEN`이 **삭제된** 상태로

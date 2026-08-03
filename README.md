@@ -38,8 +38,9 @@ forces you onto the Anthropic API, the Agent SDK, and a metered
 
 There is no orchestrator that drives the **subscription** `claude` CLI. That is
 the gap oh-my-graph fills: you describe the work as a DAG, and each node runs as
-a raw `claude -p` subprocess on the subscription you already pay for — inside
-your Max/Pro plan, with no metered key involved.
+a raw `claude -p` subprocess on the subscription you already pay for
+([Bring your own login](#bring-your-own-login) has the plan and credential
+detail).
 
 How oh-my-graph compares to its nearest neighbours — conductor, OMK,
 open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
@@ -65,7 +66,7 @@ open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
   finishes exactly the work that never ran
   ([what else a node can declare](#what-else-a-node-can-declare)).
 - **Observation.** A web live view served on `127.0.0.1` while a leg runs, then
-  `runs list` / `show` / `watch` afterwards, over an append-only `events.jsonl`
+  `runs list` / `show` / `watch` afterward, over an append-only `events.jsonl`
   any consumer can tail — plus a per-node cost ledger with a run total
   ([Usage](#usage) · [docs/RUN-FEED.md](docs/RUN-FEED.md)).
 - **Your own Claude setup.** Nodes are the `claude -p` you already log into, so
@@ -164,7 +165,7 @@ cost, verdict, detail) and the total cost. The shipped
 the default artifact handoff) is the cheapest real end-to-end check of all of
 it:
 
-```
+```text
 Running graph "haiku-smoke" (run 20260729-101532)
 
 ▶ write  running…
@@ -303,7 +304,7 @@ Claude remembering yesterday.
 
 ## Usage
 
-```
+```text
 oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
@@ -470,7 +471,8 @@ oh-my-graph never ships credentials, never proxies auth, and never runs as a
 shared service. It re-uses **your own** already-logged-in `claude` session — the
 same standing as running `claude -p` yourself, or as
 [claude-squad](https://github.com/smtg-ai/claude-squad). It is a personal, local
-tool.
+tool. Nodes run inside the Max/Pro plan you already pay for, with no metered key
+involved.
 
 To keep that guarantee real, every node subprocess starts from your environment
 with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted** — those silently
