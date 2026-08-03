@@ -254,3 +254,86 @@ func TestFollowWait_CtxCancelWhileWaitingReturnsNil(t *testing.T) {
 	default:
 	}
 }
+
+// --- Walk: the one-shot reader ------------------------------------------------
+
+// TestWalk_DeliversEveryDecodableEventOldestFirst pins the one-shot read: a
+// caller that wants a settled answer about a run right now sees the whole
+// stream, in order, with the contract's tolerated damage (an undecodable line)
+// skipped rather than fatal.
+func TestWalk_DeliversEveryDecodableEventOldestFirst(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	writeLines(t, path,
+		`{"schema":1,"event":"run_started"}`,
+		`not json at all`,
+		`{"schema":1,"event":"node_passed","node_id":"a"}`,
+		`{"schema":1,"event":"run_finished","outcome":"passed"}`,
+	)
+
+	var got []string
+	if err := Walk(path, func(e Event) error {
+		got = append(got, string(e.Type)+"/"+e.NodeID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk returned error: %v", err)
+	}
+	want := []string{"run_started/", "node_passed/a", "run_finished/"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("visited %v, want %v", got, want)
+	}
+}
+
+// TestWalk_RefusesASchemaNewerThanThisBinary pins RUN-FEED.md's consumer
+// compatibility rule at the shared reader, so no one-shot consumer has to
+// restate it (and none can forget to).
+func TestWalk_RefusesASchemaNewerThanThisBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	writeLines(t, path, fmt.Sprintf(`{"schema":%d,"event":"run_started"}`, Schema+1))
+
+	err := Walk(path, func(Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "newer than this binary") {
+		t.Fatalf("err = %v, want the newer-schema refusal", err)
+	}
+}
+
+// TestWalk_VisitErrorEndsTheWalk lets a caller stop early on its own terms.
+func TestWalk_VisitErrorEndsTheWalk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	writeLines(t, path, `{"schema":1,"event":"run_started"}`, `{"schema":1,"event":"run_finished"}`)
+
+	stop := errors.New("enough")
+	seen := 0
+	err := Walk(path, func(Event) error {
+		seen++
+		return stop
+	})
+	if !errors.Is(err, stop) {
+		t.Fatalf("err = %v, want the visit error", err)
+	}
+	if seen != 1 {
+		t.Errorf("visited %d events after a visit error, want 1", seen)
+	}
+}
+
+// TestWalk_MissingStreamIsErrNotExist keeps the missing-stream signal
+// translatable: Walk reports it, each consumer decides what it means (InFlight
+// reads it as "no legs at all", a card builder as "no events yet").
+func TestWalk_MissingStreamIsErrNotExist(t *testing.T) {
+	err := Walk(filepath.Join(t.TempDir(), FileName), func(Event) error { return nil })
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want one wrapping fs.ErrNotExist", err)
+	}
+}
+
+// writeLines writes one events.jsonl with the given lines, each newline
+// terminated exactly as Emit writes them.
+func writeLines(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	body := ""
+	for _, line := range lines {
+		body += line + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+}
