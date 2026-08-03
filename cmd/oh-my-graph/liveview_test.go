@@ -170,7 +170,7 @@ func TestRunGraph_NonTTYSpawnsNothingAndOutputIsByteIdentical(t *testing.T) {
 	g := mustParse(t, liveGraphYAML)
 	want := captureStdout(t, func() {
 		if err := executeGraph(context.Background(), "baseline-run-id", g, runner.NewFakeRunner(outcomes),
-			commonRunFlags{inputs: inputFlag{}}, nil, 0, path, []byte(liveGraphYAML), nil); err != nil {
+			commonRunFlags{inputs: inputFlag{}}, nil, 0, path, []byte(liveGraphYAML), nil, nil); err != nil {
 			t.Errorf("baseline run returned error: %v", err)
 		}
 	})

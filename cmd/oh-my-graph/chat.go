@@ -102,8 +102,10 @@ func chatLoop(ctx context.Context, in io.Reader, out io.Writer, coord *coordinat
 		case coordinator.RouteGraph:
 			// nil web: a chat graph turn never embeds the live view or opens
 			// a browser (ADR 0006) — the host owns the terminal, `serve` owns
-			// the optional window.
-			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, confirm, nil); err != nil {
+			// the optional window. singleCycle: chat stays single-cycle in v1
+			// (ADR 0011 §1) — its confirm covers exactly the one plan it
+			// gates.
+			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, singleCycle, confirm, nil); err != nil {
 				if errors.Is(err, errConfirmEOF) {
 					return scanner.Err()
 				}

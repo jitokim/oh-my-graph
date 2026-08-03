@@ -40,7 +40,7 @@ func TestRun_FirstLegHoldsRunLockAgainstConcurrentResume(t *testing.T) {
 
 	firstLeg := make(chan error, 1)
 	go func() {
-		firstLeg <- executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-race.yaml", []byte("name: lock-race\n"), nil)
+		firstLeg <- executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-race.yaml", []byte("name: lock-race\n"), nil, nil)
 	}()
 	<-rec.started
 

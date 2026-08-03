@@ -13,6 +13,7 @@ consumers of the very same files under the very same rules (via
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
   <node-id>.out  per-node artifacts (handoff: artifact)
   graph.json     the planned spec (auto runs only)
+  assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
 ```
 
 Run directories live under the user's home regardless of where oh-my-graph
@@ -40,7 +41,8 @@ types); this section is the consumer-facing summary.
 
 Top-level fields: `schema`, `run_id`, `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
-`continue_on_fail`, `tool_policies` (auto runs only), `nodes` (map of node id →
+`continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
+runs only — see "Goal cycles" below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, and — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
@@ -64,6 +66,46 @@ Guarantees:
   `nodes`. The one non-terminal record is the feedback marker above —
   `round` with no `verdict` — which is a settled fact about the loop, not
   live progress. Live progress is what `events.jsonl` is for.
+
+## Goal cycles (ADR 0011) — the `goal` block and `assess.json`
+
+An iterated auto run (`oh-my-graph auto "<goal>" --max-cycles N`, N ≥ 2)
+executes each cycle as **its own ordinary run** under everything documented
+here — fresh run id, own directory, own snapshot and stream. Two additive
+artifacts link and judge the cycles; both follow the additive rule (**no
+schema bump**), and a consumer that ignores them sees exactly N well-formed,
+unrelated runs.
+
+- **`goal`** — an optional top-level `state.json` block, absent entirely on
+  single-cycle runs (today's snapshots are byte-identical):
+
+  ```json
+  "goal": {
+    "text": "make the test suite green",
+    "cycle": 2,
+    "max_cycles": 3,
+    "first_run_id": "<cycle 1's run id>"
+  }
+  ```
+
+  `first_run_id` is the stable group key (equal to the run's own id on cycle
+  1); the chain is derivable from it plus `cycle`, so no previous-run pointer
+  is stored. The block survives resume legs (a session-limit-paused cycle
+  keeps its lineage when finished by `resume --retry-failed`).
+
+- **`assess.json`** — the cycle's assessment verdict, written into the
+  assessed run's directory the moment assessment returns: `goal_met` (bool),
+  `remaining` (what is left; omitted when empty), `evidence` (the material
+  that decided it; omitted when empty), and `assess_cost_usd` — the
+  assessment call's own spend, recorded here because the run's ledger prints
+  before the assessment that judges it has run. Absent on single-cycle runs,
+  and absent on a cycle that never got a verdict (a pause, a declined plan).
+
+Stated as the price of "no schema bump": **goal lineage is snapshot-only.**
+No `events.jsonl` event carries the goal group — the stream's event-type set
+is closed per schema version, and each cycle's stream is simply that run's
+ordinary `run_started` … `run_finished` bracket. A consumer that only tails
+feeds must read the `goal` block from `state.json` to group cycles.
 
 ## `events.jsonl` — the stream
 

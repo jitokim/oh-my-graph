@@ -76,6 +76,14 @@ header {
 
 .brand { font-weight: 600; }
 .run-id { font-family: ui-monospace, Menlo, monospace; color: var(--ink-2); font-size: 13px; }
+.goal {
+  font-size: 12px;
+  color: var(--ink-2);
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .spacer { flex: 1; }
 
 .status {

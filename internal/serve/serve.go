@@ -131,7 +131,8 @@ func New(runDir, runID string) *Server {
 // Handler returns the server's routes:
 //
 //	/            the embedded static UI (index.html, app.js, style.css, vendored libraries)
-//	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges)
+//	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges,
+//	             plus the goal-lineage block when the run is a goal cycle)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //	/api/transcript  a RUNNING node's live transcript tail as JSON (?node=<id>)
@@ -167,6 +168,19 @@ type graphPayload struct {
 	Available bool        `json:"available"`
 	Name      string      `json:"name,omitempty"`
 	Nodes     []graphNode `json:"nodes,omitempty"`
+	// Goal is the run's goal-lineage block when this run is one cycle of an
+	// iterated auto goal (ADR 0011 §4: serve stays a per-run view and shows
+	// the goal block in its header). Absent on every single-cycle run.
+	Goal *goalPayload `json:"goal,omitempty"`
+}
+
+// goalPayload is runstate.GoalRef re-encoded for the UI rather than embedded,
+// so serve's response shape cannot silently change when the snapshot's does.
+type goalPayload struct {
+	Text       string `json:"text"`
+	Cycle      int    `json:"cycle"`
+	MaxCycles  int    `json:"max_cycles"`
+	FirstRunID string `json:"first_run_id"`
 }
 
 // graphNode is one node of the DAG as the UI needs it: identity, its
@@ -184,15 +198,23 @@ type graphNode struct {
 // endpoint's honest answer differs); any other failure is a load/parse error
 // worth a 500 carrying the reason.
 func (s *Server) loadRunGraph() (*graph.Graph, error) {
+	g, _, err := s.loadRunGraphAndGoal()
+	return g, err
+}
+
+// loadRunGraphAndGoal is loadRunGraph plus the snapshot's goal-lineage block,
+// for the one endpoint (/api/graph) that renders it. Kept as one load so the
+// graph and the goal always come from the same snapshot read.
+func (s *Server) loadRunGraphAndGoal() (*graph.Graph, *runstate.GoalRef, error) {
 	snap, err := runstate.Load(filepath.Join(s.runDir, "state.json"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return nil, fmt.Errorf("reconstruct graph: %w", err)
+		return nil, nil, fmt.Errorf("reconstruct graph: %w", err)
 	}
-	return g, nil
+	return g, snap.Goal, nil
 }
 
 // handleGraph serves the run's DAG structure. A snapshot that exists but
@@ -200,7 +222,7 @@ func (s *Server) loadRunGraph() (*graph.Graph, error) {
 // runstate.Load's loud refusal) is a 500 carrying the reason, not a silent
 // empty graph.
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
-	g, err := s.loadRunGraph()
+	g, goal, err := s.loadRunGraphAndGoal()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeJSON(w, graphPayload{RunID: s.runID, Available: false})
@@ -211,6 +233,9 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := graphPayload{RunID: s.runID, Available: true, Name: g.Name}
+	if goal != nil {
+		payload.Goal = &goalPayload{Text: goal.Text, Cycle: goal.Cycle, MaxCycles: goal.MaxCycles, FirstRunID: goal.FirstRunID}
+	}
 	for _, node := range g.Nodes {
 		payload.Nodes = append(payload.Nodes, graphNode{ID: node.ID, Type: node.Type, DependsOn: node.DependsOn})
 	}
