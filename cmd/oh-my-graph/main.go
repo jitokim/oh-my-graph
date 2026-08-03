@@ -213,22 +213,31 @@ func runAuto(args []string) error {
 	nodeRunner := runner.NewClaudeCLIRunner()
 	// Same live-view gate as `run` and `resume`, the other two sites injecting
 	// the real ExecOpener.
-	coord := coordinator.New(nodeRunner, agentMappingOptions(flags.noAgentMapping)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(flags.noAgentMapping, flags.noSkillMapping)...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, nil,
 		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
 }
 
-// agentMappingOptions wires subagent auto-mapping for a production
-// Coordinator: the default user-then-project agent directories, or an
-// explicit off when the user passed --no-agent-mapping. This is the only
+// mappingOptions wires the two auto-mappings for a production Coordinator:
+// subagent mapping over the default user-then-project agent directories, and
+// skill mapping over the default user skill directory (never a project one —
+// ADR 0012), each independently switchable off by its flag. This is the only
 // place the real filesystem locations enter the coordinator — tests construct
 // theirs with temp dirs instead.
-func agentMappingOptions(off bool) []coordinator.Option {
-	if off {
-		return []coordinator.Option{coordinator.WithoutAgentMapping()}
+func mappingOptions(noAgentMapping, noSkillMapping bool) []coordinator.Option {
+	var opts []coordinator.Option
+	if noAgentMapping {
+		opts = append(opts, coordinator.WithoutAgentMapping())
+	} else {
+		opts = append(opts, coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...))
 	}
-	return []coordinator.Option{coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...)}
+	if noSkillMapping {
+		opts = append(opts, coordinator.WithoutSkillMapping())
+	} else {
+		opts = append(opts, coordinator.WithSkillDirs(coordinator.DefaultSkillDirs()...))
+	}
+	return opts
 }
 
 // goalCycleOptions is the goal-iteration surface planAndExecute receives from
@@ -505,6 +514,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		fmt.Fprintln(w, line)
 	}
 	noteAgentMappings(w, plan.AgentMappings)
+	noteSkillMappings(w, plan.SkillMappings)
 	noteCeiling(w)
 	fmt.Fprintln(w)
 }
@@ -530,6 +540,31 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 			"  Nodes marked [agent: ...] were auto-mapped onto your own Claude Code agents; they load\n"+
 				"  your settings so the agent can resolve (their declared tool list still binds).\n"+
 				"  Pass --no-agent-mapping to turn this off.\n",
+		)
+	}
+}
+
+// noteSkillMappings discloses every skill auto-mapping decision before the run
+// starts, one line per decision (ADR 0012 §6): a mapping's name, inlined size,
+// hash prefix, target node and description — the printed hash is the integrity
+// link to the full inlined text in the saved spec file, which printPlan already
+// names — and a refused candidate's reason (oversize body, agent-mapped node).
+// Silence means no candidate matched and nothing changed.
+func noteSkillMappings(w io.Writer, mappings []coordinator.SkillMapping) {
+	applied := false
+	for _, m := range mappings {
+		if m.SkippedReason != "" {
+			fmt.Fprintf(w, "  skill skipped: %s -> %s: %s\n", m.Skill, m.NodeID, m.SkippedReason)
+			continue
+		}
+		fmt.Fprintf(w, "  skill mapped: %s (%.1f KiB, sha256:%.12s…) -> %s — %q\n",
+			m.Skill, float64(m.InlinedBytes)/1024, m.SHA256, m.NodeID, m.Description)
+		applied = true
+	}
+	if applied {
+		fmt.Fprint(w,
+			"  Nodes marked above got that skill's SKILL.md body appended to their prompt (full text\n"+
+				"  in the saved spec file). Pass --no-skill-mapping to turn this off.\n",
 		)
 	}
 }

@@ -159,6 +159,13 @@ type Plan struct {
 	// execution would defeat the reason the mapping lives in trusted code.
 	// Empty when nothing matched or mapping is off.
 	AgentMappings []AgentMapping
+	// SkillMappings are the skill auto-mapping decisions (skillmap.go): every
+	// node whose prompt got one of the user's own SKILL.md bodies inlined —
+	// with the source path, byte count and SHA-256 of the exact inlined text —
+	// plus every candidate refused (oversize body, agent-mapped node). Same
+	// disclosure contract as AgentMappings: the caller must print these with
+	// the plan. Empty when nothing matched or mapping is off.
+	SkillMappings []SkillMapping
 }
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
@@ -174,6 +181,13 @@ type Coordinator struct {
 	// and no mapping, ever: a Coordinator only reads the filesystem when its
 	// constructor was explicitly told where.
 	agentDirs []string
+	// skillMappingOff disables skill auto-mapping (skillmap.go) — the
+	// --no-skill-mapping opt-out, set via WithoutSkillMapping.
+	skillMappingOff bool
+	// skillDirs is where skill definitions are scanned from — the CLI passes
+	// DefaultSkillDirs, tests point it at temp dirs. Empty means no scanning
+	// and no mapping, ever, exactly like agentDirs.
+	skillDirs []string
 }
 
 // Option configures a Coordinator at construction.
@@ -190,6 +204,19 @@ func WithoutAgentMapping() Option {
 // DefaultAgentDirs; tests pass temp dirs.
 func WithAgentDirs(dirs ...string) Option {
 	return func(c *Coordinator) { c.agentDirs = dirs }
+}
+
+// WithoutSkillMapping turns off skill auto-mapping for every Plan call — the
+// `--no-skill-mapping` flag's implementation.
+func WithoutSkillMapping() Option {
+	return func(c *Coordinator) { c.skillMappingOff = true }
+}
+
+// WithSkillDirs sets the directories scanned for skill definitions, lowest
+// precedence first (scanSkillDirs lets later directories win). The CLI passes
+// DefaultSkillDirs; tests pass temp dirs.
+func WithSkillDirs(dirs ...string) Option {
+	return func(c *Coordinator) { c.skillDirs = dirs }
 }
 
 // New builds a Coordinator bound to a NodeRunner.
@@ -286,6 +313,12 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
 	if err := c.applyAgentMapping(&plan); err != nil {
+		return Plan{}, err
+	}
+	// Strictly after agent mapping's rebuild: skill mapping must see which
+	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
+	// into the graph that becomes the final Spec, exactly once.
+	if err := c.applySkillMapping(&plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil

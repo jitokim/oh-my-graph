@@ -114,6 +114,38 @@ func TestPersistOutput_SlashInNodeIDCannotEscapeRunDir(t *testing.T) {
 	}
 }
 
+// --- placeholder detection --------------------------------------------------
+
+// ContainsPlaceholder is the contract callers outside this package lean on to
+// prove text is template-inert (the coordinator's skill-inlining neutralizer
+// is judged by it). It must answer for exactly what Interpolate would resolve:
+// a live placeholder with or without the inline filter, nothing for text a
+// neutralizing pass has already broken, and nothing for a namespace this
+// engine does not own.
+func TestContainsPlaceholder(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"input", "cd {{ inputs.repo }}", true},
+		{"artifact with inline filter", "{{ artifacts.a | inline }}", true},
+		{"feedback", "see {{ feedback.reviewer }}", true},
+		{"no whitespace", "{{artifacts.a}}", true},
+		{"neutralized", "{ { artifacts.a }}", false},
+		{"unknown namespace", "{{ other.a }}", false},
+		{"unopened", "artifacts.a }}", false},
+		{"plain prose", "no placeholders here", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ContainsPlaceholder(tc.in); got != tc.want {
+				t.Errorf("ContainsPlaceholder(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // --- session resolution -----------------------------------------------------
 
 func TestResumeSessionFor_ArtifactNodeReturnsEmpty(t *testing.T) {

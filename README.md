@@ -186,7 +186,20 @@ nothing, and an agent wanting tools beyond the node's planned allowlist is
 skipped with a note), every mapping is shown in the printed plan before
 anything runs, and `--no-agent-mapping` turns it off. The trade, stated
 up front: a mapped node loads your settings so the agent can resolve, instead
-of running fully settings-isolated — its declared tool list still binds. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
+of running fully settings-isolated — its declared tool list still binds.
+
+Your Claude Code skills (`~/.claude/skills` only — never a project directory)
+reach `auto` runs too, by a blunter mechanism stated plainly: a planned node
+cannot see or invoke skills at all (measured), so when a node's id clearly
+matches a skill's name, the skill's SKILL.md body is **copied into that node's
+prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
+are skipped with a note, never truncated), paid for on every invocation of
+that node, and applied unconditionally where Claude Code itself would activate
+the skill only when relevant. Every inlining prints its size and a SHA-256
+prefix before the run, the exact text — from which the full hash is
+recomputable — is snapshotted into the saved `graph.json`
+(later skill edits don't reach an already-planned run), and
+`--no-skill-mapping` turns it off. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
 walks through the plan output, the tool ceiling, and the live node feed.
 
 ## Usage
