@@ -122,6 +122,44 @@ node:
 			wantErr: "{{ with.undeclared }}, which substitutions: does not declare",
 		},
 		{
+			// A token that claims the with namespace but breaks its grammar is
+			// worse than an undeclared point: it cannot substitute at all, and
+			// without the loose scan it would survive into the spliced prompt
+			// and reach the model verbatim. A filter is the likeliest form —
+			// {{ artifacts.x | inline }} is legal one line above.
+			name:  "fragment body filtering a substitution token",
+			entry: usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
+substitutions: [checks]
+node:
+  prompt: "do {{ with.checks | inline }}"
+`},
+			wantErr: "claims the with namespace but is not a substitution token",
+		},
+		{
+			name:  "fragment body with an empty substitution name",
+			entry: usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
+substitutions: [checks]
+node:
+  prompt: "do {{ with.checks }} and {{ with. }}"
+`},
+			wantErr: "{{ with. }}, which claims the with namespace",
+		},
+		{
+			name:  "fragment body with a case-variant substitution token",
+			entry: usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
+substitutions: [checks]
+node:
+  prompt: "do {{ With.checks }}"
+`},
+			wantErr: "{{ With.checks }}, which claims the with namespace",
+		},
+		{
 			name:      "embedded token bound to a list",
 			entry:     usingGraph("  - { id: e2e, use: e2e-verify, depends_on: [dev], with: { checks: [a, b] } }\n"),
 			fragments: map[string]string{"e2e-verify": testFragment},

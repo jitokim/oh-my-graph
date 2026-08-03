@@ -174,6 +174,21 @@ func decodeResolved(doc *yaml.Node) (*Graph, error) {
 // one exists so the token is gone before the runtime looks.
 var withTokenPattern = regexp.MustCompile(`\{\{\s*with\.([A-Za-z0-9._-]+)\s*\}\}`)
 
+// looseTokenPattern finds every {{ ... }} token in a fragment body, well-formed
+// or not. withTokenPattern alone can only see tokens that ALREADY obey the
+// grammar, so on its own it never notices `{{ with.checks | inline }}` or
+// `{{ with. }}` or `{{ With.checks }}`: each one claims the with namespace,
+// none of them substitutes, and all three survive resolution into the spliced
+// prompt and reach the model verbatim — the exact silent-verbatim failure the
+// load-time/run-time token split exists to abolish. Scanning loosely and then
+// judging is the same shape handoff's placeholder lint uses; it is duplicated
+// here rather than shared because handoff imports graph, not the reverse.
+var looseTokenPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// tokenLeadingWord extracts the first identifier of a {{ ... }} token's body —
+// the word that decides whether the token claims the with namespace at all.
+var tokenLeadingWord = regexp.MustCompile(`^[A-Za-z0-9_]+`)
+
 // fragmentNamePattern is the grammar of a `use:` value: a BARE name, never a
 // path. The lookup rule ADR 0013 spends a section defending is "one location,
 // no search path" — but filepath.Join cleans lexically, so an unconstrained
@@ -431,19 +446,30 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		badFile("the fragment's node: uses a YAML alias (a *reference or a `<<:` merge key) — a spliced body must be walkable in full, or a {{ with.x }} hiding behind the alias would be neither declaration-checked nor substituted and would reach the model verbatim; write the shared value out, or declare it as a substitution point")
 	}
 
-	// Judge the body's tokens once: an undeclared point is an authoring bug
-	// in the FRAGMENT, found the first time any graph resolves it; a declared
-	// point the body never uses is drift smell, worth an advisory.
+	// Judge the body's tokens once: a token that claims the with namespace but
+	// breaks its grammar can never substitute at all; an undeclared point is an
+	// authoring bug in the FRAGMENT, found the first time any graph resolves it;
+	// a declared point the body never uses is drift smell, worth an advisory.
+	// The scan is loose (every {{ ... }}) so the first class is visible: a
+	// strict scan sees only the tokens that are already fine.
 	declared := make(map[string]bool, len(substitutions))
 	for _, s := range substitutions {
 		declared[s] = true
 	}
 	referenced := make(map[string]bool)
 	walkScalars(body, func(value string) {
-		for _, match := range withTokenPattern.FindAllStringSubmatch(value, -1) {
-			referenced[match[1]] = true
-			if !declared[match[1]] {
-				badFile(fmt.Sprintf("the fragment body references {{ with.%s }}, which substitutions: does not declare — an undeclared point would silently never substitute", match[1]))
+		for _, token := range looseTokenPattern.FindAllString(value, -1) {
+			point, claimsWith := withTokenName(token)
+			if !claimsWith {
+				continue // another namespace, or deliberate literal text — not this loader's business
+			}
+			if point == "" {
+				badFile(fmt.Sprintf("the fragment body contains %s, which claims the with namespace but is not a substitution token — the grammar is exactly {{ with.<name> }}, lowercase and unfiltered (a substitution point is bound, not filtered), so this one would never substitute and would reach the model verbatim", token))
+				continue
+			}
+			referenced[point] = true
+			if !declared[point] {
+				badFile(fmt.Sprintf("the fragment body references {{ with.%s }}, which substitutions: does not declare — an undeclared point would silently never substitute", point))
 			}
 		}
 	})
@@ -462,6 +488,32 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		frag:       &fragmentFile{name: name, description: description, source: source, substitutions: substitutions, referenced: referenced, node: body},
 		advisories: advisories,
 	}
+}
+
+// withTokenName classifies one {{ ... }} token found in a fragment body.
+// claimsWith reports whether the token claims the substitution namespace — its
+// leading word is `with`, compared case-INSENSITIVELY, because
+// `{{ With.checks }}` is a typo that ships verbatim rather than deliberate
+// literal text. point is the substitution point the token names, and is empty
+// exactly when the token claims the namespace without obeying the grammar.
+//
+// A body that genuinely wants the literal text `{{ with ... }}` in a prompt is
+// the price: it must write it some other way. That trade is deliberate — a
+// fragment body is a template, and a token there is far likelier to be a
+// broken substitution than prose.
+func withTokenName(token string) (point string, claimsWith bool) {
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{{"), "}}"))
+	if !strings.EqualFold(tokenLeadingWord.FindString(body), "with") {
+		return "", false
+	}
+	// The grammar judgment must come from withTokenPattern itself — the exact
+	// regex substituteWithTokens replaces with — anchored to the whole token,
+	// so what this loader calls well-formed and what actually substitutes can
+	// never drift apart.
+	if m := withTokenPattern.FindStringSubmatchIndex(token); m != nil && m[0] == 0 && m[1] == len(token) {
+		return token[m[2]:m[3]], true
+	}
+	return "", true
 }
 
 // substitutionNames decodes the substitutions: sequence. A missing key means
