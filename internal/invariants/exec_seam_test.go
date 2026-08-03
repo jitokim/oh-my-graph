@@ -41,8 +41,10 @@ var allowedExecImporters = map[string]bool{
 }
 
 // scannedDirs are the source trees the invariant covers: all production code
-// lives under these two roots.
-var scannedDirs = []string{"internal", "cmd"}
+// lives under these roots. `graphs` is one of them — it holds the //go:embed
+// declaration for the shipped example graphs, and a file added there would
+// otherwise be outside this walk.
+var scannedDirs = []string{"internal", "cmd", "graphs"}
 
 func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")

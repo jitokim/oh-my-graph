@@ -71,10 +71,19 @@ transcript들을 관찰합니다. oh-my-graph는 executor이고, fleetops는
 ```sh
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
+# 바이너리 안에 함께 실린 예제 그래프를 ./graphs/에 풀어 놓습니다:
+oh-my-graph init
+
 # 가장 저렴한 실제 smoke test (몇 센트):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
+
+`go install`은 실행 파일 하나만 복사하므로, `init`이 그 실행 파일에 임베드된
+예제 그래프를 `./graphs/`에 풀어 놓습니다 — 디렉토리를
+넘기면(`oh-my-graph init <dir>`) `<dir>/graphs/`에 씁니다. 절대 덮어쓰지
+않습니다: 대상 파일이 하나라도 이미 존재하면 그 경로를 알려주고 아무것도
+쓰지 않습니다.
 
 `ANTHROPIC_API_KEY`는 필요 없습니다 — smoke test는 로그인된 `claude`
 subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOKEN`)가
@@ -153,11 +162,12 @@ YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 �
 ## 사용법
 
 ```
-oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 | subcommand | 용도 |
 |---|---|
+| `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
 | `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |

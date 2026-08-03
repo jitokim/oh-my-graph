@@ -5,6 +5,7 @@
 //
 // Usage:
 //
+//	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
@@ -86,7 +87,8 @@ func mainExitCode(args []string) int {
 // than exiting so the exit path lives in exactly one place (mainExitCode).
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf(`usage: oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+		return fmt.Errorf(`usage: oh-my-graph init [dir]
+       oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
@@ -97,6 +99,8 @@ func run(args []string) error {
        oh-my-graph chat`)
 	}
 	switch args[0] {
+	case "init":
+		return runInit(args[1:])
 	case "run":
 		return runGraph(args[1:])
 	case "auto":
@@ -119,7 +123,7 @@ func run(args []string) error {
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want run, auto, lint, resume, runs, show, watch, serve, chat, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, run, auto, lint, resume, runs, show, watch, serve, chat, or version)", args[0])
 	}
 }
 
