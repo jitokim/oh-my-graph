@@ -17,8 +17,9 @@
 //
 // TWO REFUSALS, both recorded and printed rather than half-working:
 //
-//   - An oversize body (over maxInlinedSkillBytes after neutralization) is
-//     SKIPPED, never truncated — instructions cut mid-way can invert meaning.
+//   - An oversize body (raw, or over the cap once neutralization has grown
+//     it) is SKIPPED, never truncated — instructions cut mid-way can invert
+//     meaning.
 //     The cap is an empirical fit against the measured corpus (ADR 0012 §3),
 //     not a principle.
 //   - An agent-mapped node is never mapped a skill: applyAgentMapping drops
@@ -57,6 +58,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +88,13 @@ func DefaultSkillDirs() []string {
 // p90 17.0 KiB; 30 of 35 fit, and the 86.6 KiB outlier stays excluded) — the
 // number must be recalibrated if the corpus changes character, not defended.
 const maxInlinedSkillBytes = 16 * 1024
+
+// maxSkillFileBytes bounds the raw SKILL.md read itself — the scan's only
+// otherwise-unbounded cost. It sits well above maxInlinedSkillBytes so an
+// oversize-but-plausible body still earns its printed skip (ADR 0012 §3's
+// 86.6 KiB outlier included); only a pathological file is refused here, and
+// silently, like any other file the scan cannot use.
+const maxSkillFileBytes = 1 << 20
 
 // skillFenceNonceBytes sizes the per-plan fence nonce: 3 random bytes render
 // as 6 hex characters — entropy the fenced text cannot predict, which is all
@@ -166,10 +175,16 @@ func scanSkillDirs(dirs []string) map[string]skillDef {
 // closing `---` line, then the skill's instructions — which, unlike an agent's
 // system prompt, the mapping DOES read: the body is what gets inlined. ok is
 // false for anything that is not that shape, including an empty body (there
-// would be nothing to inline).
+// would be nothing to inline) and a file over maxSkillFileBytes (nothing that
+// large could ever inline, so it is not worth holding in memory).
 func parseSkillFile(path string) (skillDef, bool) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
+		return skillDef{}, false
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxSkillFileBytes+1))
+	if err != nil || len(raw) > maxSkillFileBytes {
 		return skillDef{}, false
 	}
 	content := strings.TrimPrefix(string(raw), "\ufeff")
@@ -221,14 +236,23 @@ func mapSkills(g *graph.Graph, skills map[string]skillDef) []SkillMapping {
 			})
 			continue
 		}
-		inlined := inlinedSkillText(def)
-		if len(inlined) > maxInlinedSkillBytes {
+		// The raw body is checked BEFORE neutralization: neutralization only
+		// grows text ('{{' -> '{ {'), so a body already over the cap would be
+		// refused anyway — refusing it on its own size skips the repeated
+		// neutralization passes an oversize brace-heavy file would cost.
+		size := len(def.body)
+		inlined := ""
+		if size <= maxInlinedSkillBytes {
+			inlined = inlinedSkillText(def)
+			size = len(inlined)
+		}
+		if size > maxInlinedSkillBytes {
 			mappings = append(mappings, SkillMapping{
 				NodeID:        node.ID,
 				Skill:         def.Name,
 				Description:   def.Description,
 				SourcePath:    def.path,
-				SkippedReason: fmt.Sprintf("body %.1f KiB exceeds 16 KiB cap", float64(len(inlined))/1024),
+				SkippedReason: fmt.Sprintf("body %.1f KiB exceeds %d KiB cap", float64(size)/1024, maxInlinedSkillBytes/1024),
 			})
 			continue
 		}

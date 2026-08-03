@@ -288,6 +288,69 @@ func TestPlan_SkillExactlyAtCapIsMapped(t *testing.T) {
 	}
 }
 
+// An over-cap body is refused on its RAW size, before neutralization runs:
+// the printed size names the file's own bytes (16385 -> "16.0 KiB", where the
+// neutralized text would have grown well past that), which pins the
+// cap-then-neutralize order — an oversize brace-heavy file must never cost
+// the repeated neutralization passes.
+func TestPlan_OversizeBodyRefusedOnRawSizeBeforeNeutralization(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.Repeat("{", maxInlinedSkillBytes+1))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one skipped entry", plan.SkillMappings)
+	}
+	skip := plan.SkillMappings[0]
+	if !strings.Contains(skip.SkippedReason, "body 16.0 KiB exceeds") {
+		t.Errorf("SkippedReason = %q, want the RAW body size — a grown size means neutralization ran on an already-oversize body", skip.SkippedReason)
+	}
+}
+
+// A body within the cap whose neutralization GROWS it past the cap is still
+// refused: the cap binds the inlined text (what actually rides in the prompt),
+// not the file, so the second check reports the grown size.
+func TestPlan_NeutralizationGrowthPastCapIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	// len = 3*(cap/3) <= cap raw; each "{{x" neutralizes to "{ {x", growing
+	// the text by a third — past the cap.
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.Repeat("{{x", maxInlinedSkillBytes/3))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 1 {
+		t.Fatalf("mappings = %+v, want one skipped entry", plan.SkillMappings)
+	}
+	skip := plan.SkillMappings[0]
+	if skip.SkippedReason == "" || !strings.Contains(skip.SkippedReason, "16 KiB cap") {
+		t.Errorf("SkippedReason = %q, want the grown body refused against the cap", skip.SkippedReason)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched after a cap skip", node.Prompt)
+	}
+}
+
+// A SKILL.md over maxSkillFileBytes is refused at read time — silently, like
+// any other unusable file, and unlike the printed over-cap skip: nothing that
+// large could ever inline, so it is never worth holding in memory, and no
+// candidate entry appears at all.
+func TestPlan_PathologicallyLargeSkillFileIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", strings.Repeat("x", maxSkillFileBytes))
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if len(plan.SkillMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none for a file over maxSkillFileBytes", plan.SkillMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("node prompt = %q, want it untouched", node.Prompt)
+	}
+}
+
 // An agent-mapped node is never mapped a skill: applyAgentMapping drops
 // ceiling Layer 1 on that node, and ADR 0012's probe established "no skills
 // listing" only under the full ceiling — the composite is unmeasured, so v1

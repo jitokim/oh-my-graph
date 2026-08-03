@@ -163,8 +163,9 @@ matches a skill's name, the skill's SKILL.md body is **copied into that node's
 prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
 are skipped with a note, never truncated), paid for on every invocation of
 that node, and applied unconditionally where Claude Code itself would activate
-the skill only when relevant. Every inlining prints its size and SHA-256
-before the run, the exact text is snapshotted into the saved `graph.json`
+the skill only when relevant. Every inlining prints its size and a SHA-256
+prefix before the run, the exact text — from which the full hash is
+recomputable — is snapshotted into the saved `graph.json`
 (later skill edits don't reach an already-planned run), and
 `--no-skill-mapping` turns it off. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
 walks through the plan output, the tool ceiling, and the live node feed.

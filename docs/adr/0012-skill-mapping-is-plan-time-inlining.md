@@ -54,7 +54,7 @@ file's frontmatter (`name`, `description`), and maps planned nodes onto a
 matching skill by **appending the skill's body to the node's prompt** inside
 a nonce-fenced, attributed block:
 
-```
+```text
 --- skill: coding-rules 7f3a91 (mapped by oh-my-graph from ~/.claude/skills/coding-rules/SKILL.md) ---
 <the SKILL.md body, below its frontmatter, with `{{` neutralized per §4>
 --- end skill: coding-rules 7f3a91 ---
@@ -280,7 +280,7 @@ the place prompts live; it does not print prompts, and the gate path prints
 no prompt at all. So the disclosure for skill mapping is: **one line per
 decision** in the plan printout, alongside the agent-mapping note —
 
-```
+```text
 skill mapped: coding-rules (6.7 KiB, sha256:ab12ab12ab12…) -> impl — "team coding rules for implementation and review"
 skill skipped: pre-commit-checklist -> verify: body 86.6 KiB exceeds 16 KiB cap
 skill skipped: pr-code-review -> review-a: node is agent-mapped (composite with dropped Layer 1 unmeasured)
