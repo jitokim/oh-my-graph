@@ -59,6 +59,7 @@ func (r cliGateResumer) Resume(_ context.Context, runID, gateID string, decision
 		return fmt.Errorf("resume gate %q: %q is not a decision a live view can apply", gateID, decision)
 	}
 
+	//nolint:contextcheck // deliberate: the leg installs its own signal-cancelled context (see above).
 	err := executeResume(flags, r.nodeRunner, nil)
 	if err != nil {
 		fmt.Fprintf(r.errOut, "live view: resume of run %s at gate %s: %v\n", runID, gateID, err)

@@ -98,7 +98,7 @@ func pausedGateServer(t *testing.T, resumer GateResumer) (*Server, string) {
 func postGate(t *testing.T, s *Server, path, token, node string) *httptest.ResponseRecorder {
 	t.Helper()
 	body := strings.NewReader(`{"node":"` + node + `"}`)
-	req := httptest.NewRequest("POST", "http://127.0.0.1:8642"+path, body)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "http://127.0.0.1:8642"+path, body)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("X-OMG-Token", token)
@@ -148,7 +148,7 @@ func TestIndex_CarriesThisProcessesTokenAndItIsTheOneThatWorks(t *testing.T) {
 	resumer := newFakeResumer()
 	s, _ := pausedGateServer(t, resumer)
 
-	req := httptest.NewRequest("GET", "http://127.0.0.1:8642/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:8642/", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -312,7 +312,7 @@ func TestGateDecision_GetDecidesNothing(t *testing.T) {
 	// asset by that name: 404, and no leg.
 	resumer := newFakeResumer()
 	s, _ := pausedGateServer(t, resumer)
-	req := httptest.NewRequest("GET", "http://127.0.0.1:8642/api/gate/approve", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:8642/api/gate/approve", nil)
 	req.Header.Set("X-OMG-Token", s.token)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
