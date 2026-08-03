@@ -114,6 +114,26 @@ nothing is served or opened and the output is unchanged.
 </p>
 <p align="center"><em>The live view mid-run — a real dogfood run (the ADR-0012 skill-mapping graph) captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
 
+### Prebuilt binaries
+
+Each tagged release also publishes prebuilt binaries on the [GitHub Releases
+page](https://github.com/jitokim/oh-my-graph/releases) — darwin and linux, on
+both `arm64` and `amd64`, as `.tar.gz` archives with a `checksums.txt` next to
+them. An alternative to `go install` when you'd rather not keep a Go toolchain
+around. There's no Homebrew tap, and Windows is not in the build matrix — build
+from source there.
+
+Pick a tag from the Releases page, then:
+
+```sh
+VERSION=0.3.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+curl -sSfL "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz" \
+  | tar xz
+./oh-my-graph version
+```
+
+Move `oh-my-graph` onto your `PATH` and the smoke test above runs unchanged.
+
 ### Zero-config: auto mode
 
 Don't want to write YAML? Give `auto` a goal and it plans the graph for you —
