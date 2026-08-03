@@ -211,6 +211,11 @@ func (d *Dashboard) handleCards(w http.ResponseWriter, r *http.Request) {
 // and replaces, so a reconnect rebuilds the whole dashboard deterministically
 // — the same replay property the single-run feed has.
 //
+// The seen-set is per CONNECTION, deliberately: this handler holds no state
+// across viewers. A run removed while a viewer was disconnected therefore gets
+// no card_removed frame — the next connection's replay simply never names it,
+// and the page treats that replay (closed by cards_ready) as the full list.
+//
 // The stream ends when the client disconnects, never on its own: runs keep
 // starting, and a dashboard that stopped listening after the last one settled
 // would be exactly the thing this replaces.

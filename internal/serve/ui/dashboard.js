@@ -12,7 +12,12 @@
 // The page is a pure function of the cards it has been sent: every frame is
 // keyed by run id and replaces, so a reconnect rebuilds the whole dashboard
 // deterministically — the same replay property the single-run feed has. The
-// server sends a card only when its run changed, so an idle dashboard with
+// one thing a replay cannot say is what went AWAY while the page was
+// disconnected (the server's seen-set is per connection, so it has no
+// card_removed to send), which is why `cards_ready` also drops every card the
+// replay it closes did not mention.
+//
+// The server sends a card only when its run changed, so an idle dashboard with
 // forty settled runs is silent.
 //
 // The one thing that ticks without a frame is elapsed: a card carries its
@@ -50,6 +55,18 @@ $("theme-toggle").addEventListener("click", () => {
 
 function connect() {
   const source = new EventSource("api/cards/events");
+  // Run ids the CURRENT connection has replayed. The server keeps its
+  // seen-set per connection, so a run whose directory disappeared while we
+  // were disconnected gets no `card_removed` frame — the new connection's
+  // replay simply never mentions it. That replay is therefore the only truth
+  // about which runs still exist, and anything it does not mention is dropped
+  // at cards_ready. Pruning THERE rather than on the error keeps a transient
+  // reconnect from blanking a dashboard someone is reading.
+  let replayed = new Set();
+
+  source.onopen = () => {
+    replayed = new Set();
+  };
 
   source.addEventListener("card", (event) => {
     let card;
@@ -59,13 +76,16 @@ function connect() {
       return; // a frame this page cannot read is skipped, never fatal
     }
     if (!card || !card.run_id) return;
+    replayed.add(card.run_id);
     cards.set(card.run_id, card);
     render();
   });
 
   source.addEventListener("card_removed", (event) => {
     try {
-      cards.delete(JSON.parse(event.data).run_id);
+      const runID = JSON.parse(event.data).run_id;
+      replayed.delete(runID);
+      cards.delete(runID);
     } catch {
       return;
     }
@@ -73,6 +93,13 @@ function connect() {
   });
 
   source.addEventListener("cards_ready", () => {
+    // The sweep behind this frame listed every run there is, so a card still
+    // held from an earlier connection and absent from it is a run directory
+    // that is gone. Dropping it here is what keeps a reconnect from leaving a
+    // tile whose link now 404s.
+    for (const runID of cards.keys()) {
+      if (!replayed.has(runID)) cards.delete(runID);
+    }
     setStatus("live", true);
     render();
   });
@@ -83,8 +110,9 @@ function connect() {
 
   source.onerror = () => {
     // Connection dropped (server stopped, laptop slept). EventSource retries
-    // on its own; the replay on reconnect rebuilds every card, so there is
-    // nothing to reset here beyond saying so.
+    // on its own, and the replay on reconnect rebuilds every card and prunes
+    // the ones it does not mention (cards_ready above), so the last known
+    // dashboard is left on screen — stale for a moment beats blank.
     setStatus("reconnecting", false);
   };
 }
