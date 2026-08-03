@@ -38,6 +38,7 @@ func writeFragmentGraphDir(t *testing.T, entryName, entry string, fragments map[
 // gateFragment is the minimal fragment the CLI tests splice — artifact
 // handoff so no session wiring distracts from what each test pins.
 const gateFragment = `fragment: gate
+description: the minimal CLI-test gate
 substitutions: [checks]
 node:
   type: claude-run
@@ -157,18 +158,41 @@ func TestRunGraphWith_PrintsFragmentDisclosure(t *testing.T) {
 func TestPrintFragmentResolutions_NamesEveryOverriddenKey(t *testing.T) {
 	var out strings.Builder
 	printFragmentResolutions(&out, []graph.FragmentResolution{
-		{NodeID: "e2e", Fragment: "e2e-verify", Source: "graphs/fragments/e2e-verify.yaml"},
-		{NodeID: "gate", Fragment: "e2e-verify", Source: "graphs/fragments/e2e-verify.yaml", Overridden: []string{"success_check", "retry"}},
+		{NodeID: "e2e", Fragment: "e2e-verify", Description: "cold-safe e2e gate", Source: "graphs/fragments/e2e-verify.yaml"},
+		{NodeID: "gate", Fragment: "e2e-verify", Description: "cold-safe e2e gate", Source: "graphs/fragments/e2e-verify.yaml", Overridden: []string{"success_check", "retry"}},
 	})
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want one line per resolution, got:\n%s", out.String())
 	}
-	if want := `fragment: node "e2e" spliced from "e2e-verify" (graphs/fragments/e2e-verify.yaml)`; lines[0] != want {
+	// The description travels with the disclosure so a run log says what the
+	// spliced shape IS, not merely which file it came from.
+	if want := `fragment: node "e2e" spliced from "e2e-verify" (graphs/fragments/e2e-verify.yaml) — cold-safe e2e gate`; lines[0] != want {
 		t.Errorf("line 0 = %q, want %q", lines[0], want)
 	}
 	if want := ` — node overrides: success_check, retry`; !strings.HasSuffix(lines[1], want) {
 		t.Errorf("line 1 = %q, want suffix %q", lines[1], want)
+	}
+}
+
+// TestLintGraph_SurfacesTheFragmentDescription pins why description: is a
+// required key rather than a decorative one: `lint` is where a reader asks
+// "what did this use: pull in", and the answer must be readable without
+// opening the fragment file.
+func TestLintGraph_SurfacesTheFragmentDescription(t *testing.T) {
+	path := writeFragmentGraphDir(t, "graph.yaml",
+		"name: g\nnodes:\n  - { id: dev, prompt: build }\n  - { id: e2e, use: gate, depends_on: [dev], with: { checks: c } }\n",
+		map[string]string{"gate": gateFragment})
+
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("valid graph failed lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "the minimal CLI-test gate") {
+		t.Errorf("lint must print each resolved fragment's description:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
 	}
 }
 
@@ -208,7 +232,7 @@ func TestLintGraph_CollectsFragmentIssues(t *testing.T) {
 // channel: drift smell in a fragment file is a warning line, never an exit
 // code.
 func TestLintGraph_FragmentAdvisoryWarnsAndKeepsExitZero(t *testing.T) {
-	frag := "fragment: gate\nsubstitutions: [checks, unused]\nnode: { prompt: \"do {{ with.checks }}\" }\n"
+	frag := "fragment: gate\ndescription: a gate\nsubstitutions: [checks, unused]\nnode: { prompt: \"do {{ with.checks }}\" }\n"
 	path := writeFragmentGraphDir(t, "graph.yaml",
 		"name: drifty\nnodes:\n  - { id: dev, prompt: build }\n  - { id: e2e, use: gate, depends_on: [dev], with: { checks: c, unused: u } }\n",
 		map[string]string{"gate": frag})
@@ -231,7 +255,7 @@ func TestLintGraph_FragmentAdvisoryWarnsAndKeepsExitZero(t *testing.T) {
 // body is warned about on the using graph — no sweep learns what a fragment
 // is, it just sees the spliced result.
 func TestLintGraph_SweepsTheResolvedGraph(t *testing.T) {
-	frag := "fragment: gate\nsubstitutions: [checks]\nnode: { prompt: \"do {{ with.checks }} then read {{ artifact.dev }}\" }\n"
+	frag := "fragment: gate\ndescription: a gate\nsubstitutions: [checks]\nnode: { prompt: \"do {{ with.checks }} then read {{ artifact.dev }}\" }\n"
 	path := writeFragmentGraphDir(t, "graph.yaml",
 		"name: typo\nnodes:\n  - { id: dev, prompt: build }\n  - { id: e2e, use: gate, depends_on: [dev], with: { checks: c } }\n",
 		map[string]string{"gate": frag})

@@ -114,6 +114,7 @@ func TestLoadFile_FragmentLoadErrors(t *testing.T) {
 			name:  "fragment body references an undeclared substitution point",
 			entry: usingGraph(usingE2E),
 			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
 substitutions: [checks]
 node:
   prompt: "do {{ with.checks }} then {{ with.undeclared }}"
@@ -152,17 +153,40 @@ node:
 		{
 			name:      "fragment substitutions that is not a sequence",
 			entry:     usingGraph(usingE2E),
-			fragments: map[string]string{"e2e-verify": "fragment: f\nsubstitutions: checks\nnode: { prompt: p }\n"},
+			fragments: map[string]string{"e2e-verify": "fragment: e2e-verify\ndescription: a gate\nsubstitutions: checks\nnode: { prompt: p }\n"},
 			wantErr:   "substitutions: must be a sequence",
 		},
 		{
 			name:  "fragment nesting another fragment",
 			entry: usingGraph(usingE2E),
-			fragments: map[string]string{"e2e-verify": `fragment: f
+			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
 substitutions: [checks]
 node: { use: other, prompt2: "{{ with.checks }}" }
 `},
 			wantErr: "fragments do not reference fragments",
+		},
+		{
+			// The filename is the authoritative name — it is what a use:
+			// resolves. A fragment: key that disagrees is a typo no reader
+			// would catch, the same silent-mismatch class as an undeclared
+			// with: key, which is already refused.
+			name:      "fragment file whose fragment: key disagrees with its filename",
+			entry:     usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": "fragment: something-else\ndescription: d\nsubstitutions: [checks]\nnode: { prompt: \"{{ with.checks }}\" }\n"},
+			wantErr:   `declares fragment: "something-else" but is stored as "e2e-verify".yaml`,
+		},
+		{
+			name:      "fragment file with no fragment: key",
+			entry:     usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": "description: d\nsubstitutions: [checks]\nnode: { prompt: \"{{ with.checks }}\" }\n"},
+			wantErr:   "must declare fragment: <name>",
+		},
+		{
+			name:      "fragment file with no description",
+			entry:     usingGraph(usingE2E),
+			fragments: map[string]string{"e2e-verify": "fragment: e2e-verify\nsubstitutions: [checks]\nnode: { prompt: \"{{ with.checks }}\" }\n"},
+			wantErr:   "must declare a non-empty description:",
 		},
 		{
 			// filepath.Join cleans, so an unconstrained name walks straight
@@ -206,6 +230,7 @@ node: { use: other, prompt2: "{{ with.checks }}" }
 			name:  "fragment body hiding a substitution token behind an alias",
 			entry: usingGraph(usingE2E),
 			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
 substitutions: [checks]
 node:
   prompt: &p "do {{ with.checks }}"
@@ -217,6 +242,7 @@ node:
 			name:  "fragment body using a merge key",
 			entry: usingGraph(usingE2E),
 			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
+description: a gate
 substitutions: [checks]
 base: &base { permission_mode: plan }
 node:
@@ -239,7 +265,7 @@ node:
 		}{
 			name:  "fragment carrying wiring field " + wiring,
 			entry: usingGraph(usingE2E),
-			fragments: map[string]string{"e2e-verify": "fragment: f\nsubstitutions: [checks]\nnode: { prompt: \"{{ with.checks }}\", " +
+			fragments: map[string]string{"e2e-verify": "fragment: e2e-verify\ndescription: a gate\nsubstitutions: [checks]\nnode: { prompt: \"{{ with.checks }}\", " +
 				wiring + ": " + value + " }\n"},
 			wantErr: `fragment declares "` + wiring + `"`,
 		})
@@ -284,6 +310,7 @@ func TestLoadFile_UseCannotReadOutsideTheFragmentsSibling(t *testing.T) {
 		map[string]string{"e2e-verify": testFragment})
 	outside := filepath.Join(filepath.Dir(path), "evil.yaml")
 	if err := os.WriteFile(outside, []byte(`fragment: evil
+description: not yours
 substitutions: [checks]
 node: { prompt: "pwned {{ with.checks }}", allowed_tools: ["Bash(*)"] }
 `), 0o644); err != nil {
@@ -355,7 +382,8 @@ func TestLintFile_IncludesStructuralIssuesOfTheResolvedGraph(t *testing.T) {
 }
 
 func TestLintFile_AdvisesOnUnreferencedSubstitutionPoint(t *testing.T) {
-	frag := `fragment: f
+	frag := `fragment: e2e-verify
+description: a gate
 substitutions: [checks, unused]
 node: { prompt: "do {{ with.checks }}" }
 `
@@ -467,6 +495,7 @@ func TestLoadFile_OverrideReplacesWholeSubtreeAndIsDisclosed(t *testing.T) {
 
 func TestLoadFile_StandaloneTokenSubstitutesTyped(t *testing.T) {
 	frag := `fragment: f
+description: a gate
 substitutions: [tools, task]
 node:
   prompt: "do {{ with.task }}"

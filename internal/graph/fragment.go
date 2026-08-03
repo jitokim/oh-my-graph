@@ -55,10 +55,11 @@ func (e *FragmentError) Error() string {
 // allowed_tools is announced at every run, not only visible to whoever reads
 // the file.
 type FragmentResolution struct {
-	NodeID     string
-	Fragment   string
-	Source     string   // the fragment file's path
-	Overridden []string // top-level keys declared by BOTH files, using node's value winning; fragment-file key order
+	NodeID      string
+	Fragment    string
+	Description string   // the fragment file's description:, printed with the disclosure
+	Source      string   // the fragment file's path
+	Overridden  []string // top-level keys declared by BOTH files, using node's value winning; fragment-file key order
 }
 
 // FragmentAdvisory is an advisory finding about a fragment file — drift smell,
@@ -187,6 +188,7 @@ var fragmentWiringFields = []string{"id", "depends_on", "cwd", "worktree", "feed
 // fragmentFile is one parsed, structurally-checked fragment definition.
 type fragmentFile struct {
 	name          string
+	description   string
 	source        string
 	substitutions []string
 	// referenced is the set of substitution points the body actually uses —
@@ -302,7 +304,8 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 
 	overridden := overlayUsingNode(nodeMap, body)
 	out.resolutions = append(out.resolutions, FragmentResolution{
-		NodeID: id, Fragment: name, Source: lf.frag.source, Overridden: overridden,
+		NodeID: id, Fragment: name, Description: lf.frag.description,
+		Source: lf.frag.source, Overridden: overridden,
 	})
 }
 
@@ -369,6 +372,24 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		errs = append(errs, &FragmentError{Fragment: name, Source: source, Reason: reason})
 	}
 
+	// fragment: and description: are checked, not decorative. The FILENAME is
+	// what a `use:` resolves, so a `fragment:` disagreeing with it is a typo
+	// nobody would ever see — the same silent-mismatch class as a `with:` key
+	// the fragment does not declare, which is already a load error. And the
+	// description is what every run and every lint prints when this shape is
+	// spliced in, so an empty one costs the reader of a run log the answer to
+	// "what is this node".
+	switch declared := strings.TrimSpace(scalarValue(rootKeys["fragment"])); {
+	case declared == "":
+		badFile("fragment file must declare fragment: <name>, matching its filename — a fragment that does not say its own name cannot be checked against the name that resolved it")
+	case declared != name:
+		badFile(fmt.Sprintf("fragment file declares fragment: %q but is stored as %q.yaml — the filename is the name a use: resolves, so a disagreement is a typo no reader would catch; rename the file or fix the key", declared, name))
+	}
+	description := strings.TrimSpace(scalarValue(rootKeys["description"]))
+	if description == "" {
+		badFile("fragment file must declare a non-empty description: — it is printed with the disclosure line every time this fragment is spliced, so a run log says what the node is without anyone opening this file")
+	}
+
 	substitutions, subErr := substitutionNames(rootKeys["substitutions"])
 	if subErr != "" {
 		badFile(subErr)
@@ -429,7 +450,7 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		}
 	}
 	return &loadedFragment{
-		frag:       &fragmentFile{name: name, source: source, substitutions: substitutions, referenced: referenced, node: body},
+		frag:       &fragmentFile{name: name, description: description, source: source, substitutions: substitutions, referenced: referenced, node: body},
 		advisories: advisories,
 	}
 }

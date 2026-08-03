@@ -28,7 +28,9 @@ func runLint(args []string) error {
 // agent and worktree names) — without executing anything: no node spawns, no
 // run directory is created, zero cost. Where `run` stops at the first
 // violation, lint prints them all, so a broken graph is fixable in one pass.
-// A valid graph prints one confirmation line and returns nil (exit 0); an
+// A valid graph prints one disclosure line per resolved `use:` — the same
+// line `run` prints, naming the fragment's source file and its own
+// description — then one confirmation line, and returns nil (exit 0); an
 // invalid one prints one line per issue to w and returns an error carrying
 // the count, which mainExitCode turns into exit 1. Errors first, advisories
 // after: fragment advisories (drift smell in a fragment file) print as
@@ -56,6 +58,7 @@ func lintGraph(w, warnW io.Writer, path string) error {
 		if err != nil {
 			return err
 		}
+		printFragmentResolutions(w, loaded.Resolutions)
 		warnAdvisories(warnW, path, loaded.Graph)
 		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
 		fmt.Fprintf(w, "%s: valid\n", path)

@@ -609,13 +609,15 @@ func inputKeys(inputs inputFlag) []string {
 }
 
 // printFragmentResolutions prints one line per resolved `use:` naming the
-// fragment source file and every key the using node overrides — the ADR 0013
-// disclosure posture, so a hollowed-out success_check or a widened
-// allowed_tools is announced at every run, not only visible to whoever reads
-// the file. Silent for a fragment-free graph.
+// fragment source file, what that fragment says it is, and every key the using
+// node overrides — the ADR 0013 disclosure posture, so a hollowed-out
+// success_check or a widened allowed_tools is announced at every run, not only
+// visible to whoever reads the file. The description is what makes the line
+// readable without opening the fragment, which is why an empty one is a load
+// error rather than an empty tail here. Silent for a fragment-free graph.
 func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolution) {
 	for _, r := range resolutions {
-		line := fmt.Sprintf("fragment: node %q spliced from %q (%s)", r.NodeID, r.Fragment, r.Source)
+		line := fmt.Sprintf("fragment: node %q spliced from %q (%s) — %s", r.NodeID, r.Fragment, r.Source, r.Description)
 		if len(r.Overridden) > 0 {
 			line += " — node overrides: " + strings.Join(r.Overridden, ", ")
 		}
