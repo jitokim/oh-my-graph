@@ -1,0 +1,52 @@
+# GoReleaser configuration for oh-my-graph.
+#
+# The version string is injected at link time into main.Version, which is why
+# cmd/oh-my-graph/version.go declares Version as a var: -X can only write to a
+# package-level string variable, not a constant.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: oh-my-graph
+    main: ./cmd/oh-my-graph
+    binary: oh-my-graph
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+
+archives:
+  - id: oh-my-graph
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
