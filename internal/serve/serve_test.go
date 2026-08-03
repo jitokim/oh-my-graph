@@ -195,6 +195,18 @@ func TestHandleGraph_OmitsGoalBlockOnASingleCycleRun(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var payload graphPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Goal != nil {
+		t.Errorf("single-cycle payload must not carry a goal block: %+v", payload.Goal)
+	}
+	// The raw check on top: the contract is the KEY is omitted, not
+	// serialized as null — a nil Goal alone cannot distinguish the two.
 	if strings.Contains(rec.Body.String(), `"goal"`) {
 		t.Errorf("single-cycle payload must not carry a goal key: %s", rec.Body.String())
 	}
