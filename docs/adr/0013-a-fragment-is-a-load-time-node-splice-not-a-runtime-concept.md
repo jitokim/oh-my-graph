@@ -62,7 +62,7 @@ node:
     background. Your FINAL reply is the verdict: never end the turn on an
     interim report. Report exactly PASS if everything succeeds, or FAIL
     with the failing step.
-  allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  allowed_tools: [Read, "Bash(make *)", "Bash(go build *)", "Bash(go test *)", "Bash(go vet *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: dontAsk
   budget_usd: 10.00   # runaway insurance, an order of magnitude above a plausible run
   handoff: session
@@ -81,7 +81,13 @@ implementation: the shipped fragment also carries `permission_mode` and
 the runaway-insurance `budget_usd`, shown above — a gate that must run
 non-interactively and its insurance ceiling are part of the proven shape
 too, and the budget is the "`budget_usd` on one" convergence the
-Migration section enumerates.)
+Migration section enumerates. The shipped grant is also *narrower* than
+either pre-migration template's: a gate reports, it never fixes, so it
+gets `make` plus read-only `go`/`git` verbs and not the `Bash(go *)` /
+`Bash(git *)` wildcards — which would have let a report-only node
+`go run` the tree under review and rewrite its history. A stack whose
+check verbs differ overrides `allowed_tools` on the using node, where
+the disclosure line announces it.)
 
 A using graph splices it in with `use:`, binding the substitution points
 and adding its own wiring:
@@ -315,9 +321,30 @@ contract the structural checks live under):
   `substitutions:` — **load error**, charged to the fragment file: an
   undeclared point is an authoring bug in the fragment, found the first
   time any graph resolves it.
+- a fragment-body token that *claims* the `with` namespace without
+  obeying the grammar — `{{ with.checks | inline }}` (a substitution
+  point is bound, not filtered), `{{ with. }}`, `{{ With.checks }}` —
+  **load error**, charged to the fragment file. (Amended at
+  implementation: the draft judged body tokens with the strict token
+  regex, which by construction can only see tokens that are already
+  well-formed. A malformed one is *worse* than an undeclared point: it
+  can never substitute, so it survives resolution into the spliced
+  prompt and reaches the model verbatim — the failure the load-time /
+  run-time token split exists to abolish. The body is therefore scanned
+  loosely for every `{{ … }}` and each namespace-claiming token judged
+  against the same regex `substituteWithTokens` replaces with. Tokens in
+  other namespaces — `{{ inputs.x }}`, `{{ artifacts.y | inline }}` —
+  and literal `{{ … }}` prose pass through untouched.)
 - a declared substitution point never referenced in the fragment body —
   **advisory warning**: harmless at run time, but it is drift smell (the
-  body moved and the declaration didn't).
+  body moved and the declaration didn't). (Amended at implementation:
+  `LoadResult` carries these too, not only `LintFile`, so `run` prints
+  them on the same warning channel `lint` and `--dry-run` use. `run`
+  already discloses which fragments it spliced; a file that warned under
+  `lint` and went silent under the command that spends money was the
+  disclosure contradicting itself. The two *handoff* sweeps stay
+  lint-only by contrast: those judge the whole graph and are the
+  pre-flight command's job, not a per-run disclosure.)
 - a `{{ with.x }}` token in a plain (non-`use:`) node — **advisory
   warning** via `LintPlaceholders`: the runtime will pass it through
   verbatim into a paid prompt.
@@ -512,7 +539,9 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
      deterministic — the same bytes a snapshot would store) is
      byte-identical to the parsed pre-migration file **after masking
      exactly the fields the PR converges** (`prompt` on the three
-     shapes; `allowed_tools` on three; `budget_usd` on one). Ids,
+     shapes; `allowed_tools` on four — the three review/gate shapes,
+     plus `self-dev`'s gate once the fragment's grant was narrowed;
+     `budget_usd` on one). Ids,
      edges, handoff, success_check, retry, timeouts — everything else
      is byte-for-byte, or the PR does not merge.
   2. **The converged fields: an explicitly reviewed diff.** The masked

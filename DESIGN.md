@@ -145,7 +145,7 @@ node:
   type: claude-run
   prompt: |
     Continue the work — … and {{ with.checks }} …
-  allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
+  allowed_tools: [Read, "Bash(make *)", "Bash(go build *)", "Bash(go test *)", "Bash(go vet *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)"]
   handoff: session
   success_check: { exit_zero: true, result_matches: "^PASS$", verify: { command: "{{ with.verify_command }}", timeout: 5m } }
   retry: { max: 1, on: [nonzero_exit, verify_failed] }
@@ -195,12 +195,18 @@ resolve once, at load: typed replacement when the token is the entire scalar
 value may itself carry `{{ inputs.x }}`/`{{ artifacts.y }}` — those survive
 resolution and interpolate at run time as always. Unknown `with:` keys,
 unbound declared points, undeclared body tokens, and `with:` without `use:`
-are load errors; a declared-but-unreferenced point and a stray
-`{{ with.x }}` in a plain node are advisories.
+are load errors — as is a body token that *claims* the `with` namespace
+without obeying the grammar (`{{ with.checks | inline }}`, `{{ with. }}`,
+`{{ With.checks }}`): those can never substitute, so without the refusal they
+would survive resolution into a paid prompt verbatim. A
+declared-but-unreferenced point and a stray `{{ with.x }}` in a plain node are
+advisories.
 
 Downstream of the loader **no fragment concept exists**: `run` and `lint` both
 print one disclosure line per resolved fragment (source file + the fragment's
-own description + every overridden key), the snapshot stores the re-encoded
+own description + every overridden key) plus the same fragment advisories on
+the warning channel (`run` discloses what it spliced, so it discloses the
+drift smell too; the two *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never
 re-reads a fragment; `GraphSHA256` still hashes the entry file's bytes), and
 scheduler/handoff/events/fleetops see exactly the graphs they see today.
