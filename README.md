@@ -103,11 +103,11 @@ While it runs you'll see a live line per node — `▶ write  running…`, then
 multi-node run. At the end you get a ledger: one row per node (session id,
 cost, verdict, detail) and the total cost — see [Example](#example) below.
 
-When stdout is a terminal, `run` and `auto` also serve the [web live
-view](#usage) of the starting run on an ephemeral `127.0.0.1` port and open it
-in your default browser; the server lives exactly as long as the run. In a
-script, a pipe, or CI (stdout not a terminal) — or with `--no-web` — nothing
-is served or opened and the output is unchanged.
+When stdout is a terminal, `run`, `auto` and `resume` also serve the [web live
+view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
+open it in your default browser; the server lives exactly as long as that leg.
+In a script, a pipe, or CI (stdout not a terminal) — or with `--no-web` —
+nothing is served or opened and the output is unchanged.
 
 <p align="center">
   <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
@@ -153,7 +153,7 @@ oh-my-graph <run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
-| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
 | `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |

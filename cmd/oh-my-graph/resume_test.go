@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -61,7 +65,7 @@ func TestResume_ApprovedGateContinuesToCompletion(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
 	if err != nil {
 		t.Fatalf("executeResume returned error: %v", err)
 	}
@@ -76,7 +80,7 @@ func TestResume_RejectedGatePrunesSubtree(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec, nil)
 	var runFailed *schedule.RunFailedError
 	if !errors.As(err, &runFailed) {
 		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
@@ -92,7 +96,7 @@ func TestResume_BareInvocationNamesThePendingGate(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID}), rec, nil)
 	if err == nil {
 		t.Fatal("a bare resume on a paused run must be an error")
 	}
@@ -108,7 +112,7 @@ func TestResume_MismatchedGateNameIsRejected(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "some-other-gate"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "some-other-gate"}), rec, nil)
 	if err == nil {
 		t.Fatal("resuming a gate the run is not paused at must be an error")
 	}
@@ -121,7 +125,7 @@ func TestResume_BothApproveAndRejectIsRejected(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve", "--reject", "approve"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve", "--reject", "approve"}), rec, nil)
 	if err == nil {
 		t.Fatal("--approve and --reject together must be rejected")
 	}
@@ -138,7 +142,7 @@ func TestResume_RunNotPausedErrors(t *testing.T) {
 		t.Fatalf("initial run should complete cleanly: %v", err)
 	}
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "whatever"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "whatever"}), rec, nil)
 	if err == nil || !strings.Contains(err.Error(), "not paused") {
 		t.Fatalf("expected a 'not paused' error, got %v", err)
 	}
@@ -157,7 +161,7 @@ func TestResume_LockPreventsConcurrentResume(t *testing.T) {
 	}
 	defer release()
 
-	err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+	err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
 	var held *runstate.LockHeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("expected *runstate.LockHeldError while the lock is held, got %T: %v", err, err)
@@ -171,7 +175,7 @@ func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec); err != nil {
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil); err != nil {
 		t.Fatalf("executeResume returned error: %v", err)
 	}
 
@@ -203,7 +207,7 @@ func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
 		t.Fatalf("expected the initial run to pause at gate1, got %T: %v", err, err)
 	}
 
-	err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate1"}), rec)
+	err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate1"}), rec, nil)
 	if !errors.As(err, &paused) || paused.GateID != "gate2" {
 		t.Fatalf("expected the first resume to pause at gate2, got %T: %v", err, err)
 	}
@@ -211,7 +215,7 @@ func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
 		t.Fatal("c must not run before gate2 is decided")
 	}
 
-	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate2"}), rec); err != nil {
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate2"}), rec, nil); err != nil {
 		t.Fatalf("the final resume returned error: %v", err)
 	}
 	if rec.invocationFor("c").Prompt == "" {
@@ -269,7 +273,7 @@ func TestResume_GateEventsAppearInStream(t *testing.T) {
 		t.Fatal("no approve/reject decision exists yet; the first leg must not emit one")
 	}
 
-	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec); err != nil {
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil); err != nil {
 		t.Fatalf("executeResume returned error: %v", err)
 	}
 	if !eventSeen(readRunEvents(t, runID), runfeed.EventGateApproved, "approve") {
@@ -284,7 +288,7 @@ func TestResume_GateRejectEventAppearsInStream(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec, nil)
 	var runFailed *schedule.RunFailedError
 	if !errors.As(err, &runFailed) {
 		t.Fatalf("expected *RunFailedError, got %T: %v", err, err)
@@ -317,7 +321,7 @@ func TestResume_WarnsWhenGraphSourceFileChanged(t *testing.T) {
 	}
 
 	stderr, resumeErr := captureStderr(t, func() error {
-		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
 	})
 
 	if resumeErr != nil {
@@ -388,7 +392,7 @@ func TestResume_WarnsOnBypassPermissions(t *testing.T) {
 	}
 
 	stderr, resumeErr := captureStderr(t, func() error {
-		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec)
+		return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
 	})
 
 	if resumeErr != nil {
@@ -528,7 +532,7 @@ func TestResume_ContinueOnFail_SettledFailedNodeDoesNotRerunOrDoubleRecord(t *te
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)
@@ -600,7 +604,7 @@ func TestResume_RetryFailed_ReExecutesExactlyTheNonPassedSet(t *testing.T) {
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume --retry-failed returned error: %v", resumeErr)
@@ -652,7 +656,7 @@ func TestResume_RetryFailedConflictsWithGateFlags(t *testing.T) {
 		{runID, "--retry-failed", "--approve", "approve"},
 		{runID, "--retry-failed", "--reject", "approve"},
 	} {
-		err := executeResume(parseResumeFlags(t, args), rec)
+		err := executeResume(parseResumeFlags(t, args), rec, nil)
 		if err == nil || !strings.Contains(err.Error(), "--retry-failed") {
 			t.Fatalf("args %v: expected a flag-conflict error naming --retry-failed, got %v", args, err)
 		}
@@ -675,7 +679,7 @@ func TestResume_RetryFailedFailsOnHeldRunLock(t *testing.T) {
 	}
 	defer release()
 
-	err = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	err = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	var held *runstate.LockHeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("expected *runstate.LockHeldError while the lock is held, got %T: %v", err, err)
@@ -699,7 +703,7 @@ func TestResume_RetryFailedNothingToRetryExitsCleanly(t *testing.T) {
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("retrying a fully-passed run must exit cleanly, got: %v", resumeErr)
@@ -723,7 +727,7 @@ func TestResume_RetryFailed_RejectedGateIsNotRetried(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec, nil)
 	var runFailed *schedule.RunFailedError
 	if !errors.As(err, &runFailed) {
 		t.Fatalf("expected *RunFailedError from the reject, got %T: %v", err, err)
@@ -731,7 +735,7 @@ func TestResume_RetryFailed_RejectedGateIsNotRetried(t *testing.T) {
 
 	var retryErr error
 	out := captureStdout(t, func() {
-		retryErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		retryErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if retryErr != nil {
 		t.Fatalf("retrying a run whose only FAIL is a rejected gate must exit cleanly, got: %v", retryErr)
@@ -741,5 +745,118 @@ func TestResume_RetryFailed_RejectedGateIsNotRetried(t *testing.T) {
 	}
 	if rec.invocationFor("ship").Prompt != "" {
 		t.Fatal("ship must never run — the rejected gate's subtree stays pruned across a retry")
+	}
+}
+
+// --- the live view on a resumed leg (ADR 0006, phase 2) ----------------------
+
+// resumeLiveViewLeg approves the standard gate flow's gate under the given
+// live-view opener (nil for none) and returns everything the leg wrote. Each
+// call starts from its own $OMG_HOME, so two legs execute the same graph under
+// the same run id and their outputs are directly comparable byte for byte.
+func resumeLiveViewLeg(t *testing.T, web browser.Opener) (stdout, stderr string) {
+	t.Helper()
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+
+	var resumeErr error
+	stdout = captureStdout(t, func() {
+		stderr, resumeErr = captureStderr(t, func() error {
+			return executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, web)
+		})
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+	if rec.invocationFor("ship").Prompt == "" {
+		t.Fatal("ship should have run once the gate was approved — the leg must run normally whatever the live view does")
+	}
+	return stdout, stderr
+}
+
+// durationPattern matches the progress feed's measured node durations ("6ms"),
+// the one part of a leg's output that legitimately differs between two runs of
+// the same graph — the counterpart of liveview_test's runIDPattern.
+var durationPattern = regexp.MustCompile(`\b\d+(\.\d+)?(ns|µs|ms|s|m|h)\b`)
+
+func normalizeDurations(s string) string { return durationPattern.ReplaceAllString(s, "DUR") }
+
+// TestResume_NoWebAndNonTTYYieldNoOpenerAndOutputIsByteIdentical is the
+// promise the live view makes to every scripted resume: `resume --no-web`, and
+// any resume whose stdout is a pipe, go through the SAME webOpener gate
+// `run`/`auto` use, get a nil Opener out of it, and therefore serve nothing,
+// open nothing, and print exactly what a resume printed before the live view
+// existed — proven by comparing both streams of a gated leg, byte for byte,
+// against a leg handed a literal nil.
+func TestResume_NoWebAndNonTTYYieldNoOpenerAndOutputIsByteIdentical(t *testing.T) {
+	fake := browser.NewFakeOpener()
+
+	// The gate, driven by resume's own parsed flags: --no-web on a terminal,
+	// and no flag at all on a pipe, both mean no live view.
+	pty := openPTY(t)
+	noWeb := parseResumeFlags(t, []string{"run-1", "--approve", "approve", "--no-web"})
+	gated := webOpener(noWeb.noWeb, pty, fake)
+	if gated != nil {
+		t.Fatalf("resume --no-web must yield no opener even on a terminal, got %T", gated)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+	plain := parseResumeFlags(t, []string{"run-1", "--approve", "approve"})
+	if got := webOpener(plain.noWeb, w, fake); got != nil {
+		t.Fatalf("a pipe stdout (scripts, CI) must yield no opener for a resume either, got %T", got)
+	}
+
+	gotOut, gotErrOut := resumeLiveViewLeg(t, gated)
+	// The baseline: a resumed leg with no web parameter at all is, verbatim,
+	// the path as it existed before this wiring.
+	wantOut, wantErrOut := resumeLiveViewLeg(t, nil)
+	// Net of the one value that legitimately differs between two executions of
+	// the same leg: the progress feed's measured per-node durations.
+	gotOut, wantOut = normalizeDurations(gotOut), normalizeDurations(wantOut)
+	gotErrOut, wantErrOut = normalizeDurations(gotErrOut), normalizeDurations(wantErrOut)
+
+	if gotOut != wantOut {
+		t.Errorf("a gated resume's stdout diverged from the pre-live-view baseline:\n--- got ---\n%s\n--- want ---\n%s", gotOut, wantOut)
+	}
+	if gotErrOut != wantErrOut {
+		t.Errorf("a gated resume's stderr diverged from the pre-live-view baseline:\n--- got ---\n%q\n--- want ---\n%q", gotErrOut, wantErrOut)
+	}
+	if strings.Contains(gotOut, "Serving live view") || strings.Contains(gotOut, "http://127.0.0.1:") {
+		t.Errorf("a gated resume must announce no live view, got:\n%s", gotOut)
+	}
+	if urls := fake.URLs(); len(urls) != 0 {
+		t.Fatalf("a gated resume must never reach the opener, got %v", urls)
+	}
+}
+
+// TestResume_LiveViewIsServedAndOpenedOnceThenDiesWithTheLeg is the other half:
+// handed an Opener, a resumed leg embeds the same server `run` does — announced
+// on stdout as `serve` announces it, opened exactly once — and tears it down
+// when the leg ends, so the resume never outlives its own port.
+func TestResume_LiveViewIsServedAndOpenedOnceThenDiesWithTheLeg(t *testing.T) {
+	fake := browser.NewFakeOpener()
+
+	out, _ := resumeLiveViewLeg(t, fake)
+
+	urls := fake.URLs()
+	if len(urls) != 1 || !regexp.MustCompile(`^http://127\.0\.0\.1:\d+/$`).MatchString(urls[0]) {
+		t.Fatalf("the opener must receive exactly the served loopback URL once, got %v", urls)
+	}
+	if !strings.Contains(out, "Serving live view of run") {
+		t.Errorf("the resumed leg must announce the URL exactly as `serve` does, got:\n%s", out)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urls[0], nil)
+	if err != nil {
+		t.Fatalf("building the shutdown probe request: %v", err)
+	}
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+		t.Error("the live view is still answering after the resume ended — the server outlived its leg")
 	}
 }

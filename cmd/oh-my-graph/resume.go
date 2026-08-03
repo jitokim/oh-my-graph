@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
@@ -38,14 +39,22 @@ func runResume(args []string) error {
 	if err := flags.parse(args); err != nil {
 		return err
 	}
-	return executeResume(flags, runner.NewClaudeCLIRunner())
+	// A resumed leg gets the live view on exactly the terms a first leg does:
+	// the same webOpener gate (an interactive stdout, no --no-web) over the
+	// same real launcher behind the fourth exec seam (ADR 0006). Watching the
+	// rest of a run is worth as much as watching its beginning, and the leg a
+	// human just decided a gate on is precisely one they are sitting at.
+	return executeResume(flags, runner.NewClaudeCLIRunner(), webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
 }
 
 // executeResume loads a run's snapshot and continues it in one of two modes:
 // the default gate mode applies exactly one new gate decision to a paused run,
 // while --retry-failed clears a halted run's FAILED records and re-executes
-// only the non-passed nodes (see resumeRetryLeg).
-func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
+// only the non-passed nodes (see resumeRetryLeg). web is the leg's live-view
+// Opener or nil for none, following executeGraph's convention exactly: the
+// gate is the caller's decision, and nil means no server, no browser and
+// byte-identical output.
+func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	// A pure flag contradiction fails before any state is touched: retrying
 	// failures and deciding a gate are separate resumes — a retry leg replays
 	// prior gate decisions unchanged and must never sneak a new one in.
@@ -78,9 +87,9 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 	warnIfGraphSourceChanged(snap)
 
 	if flags.retryFailed {
-		return resumeRetryLeg(flags, snap, nodeRunner)
+		return resumeRetryLeg(flags, snap, nodeRunner, web)
 	}
-	return resumeGateLeg(flags, snap, nodeRunner)
+	return resumeGateLeg(flags, snap, nodeRunner, web)
 }
 
 // resumeGateLeg is the gate mode: apply exactly one new gate decision to a
@@ -88,7 +97,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner) error {
 // carries every snapshot record forward unchanged — passed AND failed — so a
 // settled node never re-runs and the resumed ledger stays honest about the
 // whole run.
-func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
+func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	if snap.Gate.PausedAt == "" {
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
@@ -98,7 +107,7 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	}
 	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
 	banner := fmt.Sprintf("Resuming run %q (gate %q %s)", flags.runID, gateID, decisionVerb(decision))
-	return continueRun(flags, snap, snap.Nodes, decisions, banner, nodeRunner)
+	return continueRun(flags, snap, snap.Nodes, decisions, banner, nodeRunner, web)
 }
 
 // resumeRetryLeg is the --retry-failed mode: keep every PASSED node's record
@@ -117,7 +126,7 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 // and the command exits 0. A gate-paused run is redirected to its own resume
 // mode rather than run — the pending gate needs a human decision, which a
 // retry leg must never sneak past.
-func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner) error {
+func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
 		return fmt.Errorf("reconstruct graph for run %q: %w", flags.runID, err)
@@ -137,7 +146,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 		}
 		banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
 	}
-	return continueRun(flags, snap, retained, snap.Gate.Decisions, banner, nodeRunner)
+	return continueRun(flags, snap, retained, snap.Gate.Decisions, banner, nodeRunner, web)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
@@ -219,8 +228,10 @@ func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[str
 // stream, worktrees), seed the scheduler so exactly the carried records never
 // re-run, and execute the leg. records is the set of node records this leg
 // carries forward — all of snap.Nodes for a gate resume, the retained subset
-// for a retry — and decisions is the gate-decision map the leg replays.
-func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, banner string, nodeRunner runner.NodeRunner) error {
+// for a retry — and decisions is the gate-decision map the leg replays. web,
+// when non-nil, is the Opener this leg's embedded live view hands its URL to;
+// nil is no live view at all (see executeResume).
+func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	runID := flags.runID
 	runDir := runDirFor(runID)
 
@@ -358,6 +369,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	fmt.Fprintf(os.Stdout, "%s\n\n", banner)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The embedded live view lives exactly as long as this leg, on the same
+	// terms as a first leg's (executeGraph): serve's own listener, handler and
+	// lifecycle on an ephemeral port, one browser open, and a deferred stop
+	// that waits for the server to exit after the ledger print below. It reads
+	// the same run directory the first leg's view did, so the URL shows the
+	// whole run's history, not just this leg's.
+	if web != nil {
+		defer startLiveView(ctx, web, runID)()
+	}
 
 	runErr := scheduler.Run(ctx, g, h, led)
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))

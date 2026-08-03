@@ -44,7 +44,7 @@ func TestRun_FirstLegHoldsRunLockAgainstConcurrentResume(t *testing.T) {
 	}()
 	<-rec.started
 
-	err := executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+	err := executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	var held *runstate.LockHeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("resume against an in-flight first leg = %T: %v, want *runstate.LockHeldError", err, err)
@@ -59,7 +59,7 @@ func TestRun_FirstLegHoldsRunLockAgainstConcurrentResume(t *testing.T) {
 	// it — to a clean "nothing to retry" no-op, since the run passed.
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("resume after the leg released the lock: %v", resumeErr)

@@ -631,7 +631,7 @@ stop, and reporting it as a clean pause would lie.
 
 **CLI contract:**
 ```
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 ```
 - Exactly one of `--approve`/`--reject` is **required** when the run is paused at
   a gate. A bare `resume <run-id>` on a paused run is an error naming the pending
@@ -645,7 +645,9 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
 - `--input` on `resume` is **rejected**. Inputs come from the snapshot; changing
   one mid-run would make the already-persisted artifacts inconsistent with the
   prompts that produced them. `--concurrency` may be overridden — it is not
-  semantic.
+  semantic. `--no-web` is accepted with `run`/`auto`'s exact meaning: a
+  resumed leg embeds the same live view under the same TTY gate (see "Web
+  live view"), and this opts out.
 - Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
   pauses again. The decision map makes batch approval a later, additive change.
 - `--retry-failed` salvages a failed run instead of deciding a gate; combining
@@ -728,14 +730,16 @@ serve is one run, live, locally.
 - **Spawns nothing.** The server itself never shells out to
   `open`/`xdg-open`; browser-open lives behind its own seam —
   `browser.Opener`, the fourth exec seam (ADR 0006) — and only the CLI wires
-  it. A fresh `run`/`auto` whose stdout is a terminal embeds this server
-  (same `serve.Listen`/handler/`serveRun` lifecycle, ephemeral loopback
-  port) for exactly the run's duration, prints the URL as `serve` does, and
-  opens it through the injected `ExecOpener`; `--no-web` opts out, a
-  non-terminal stdout (scripts, CI) gets no server, no browser, and
-  byte-identical output. A chat graph turn and a `resume` leg stay un-wired
-  (ADR 0006), and the standalone `serve` subcommand still just prints the
-  URL.
+  it. A leg whose stdout is a terminal — a fresh `run`/`auto`, or a
+  `resume` of either — embeds this server (same
+  `serve.Listen`/handler/`serveRun` lifecycle, ephemeral loopback port) for
+  exactly that leg's duration, prints the URL as `serve` does, and opens it
+  through the injected `ExecOpener`; `--no-web` opts out, a non-terminal
+  stdout (scripts, CI) gets no server, no browser, and byte-identical
+  output. A resumed leg's view reads the same run directory the first leg's
+  did, so it shows the whole run's history, not just this leg's. A chat
+  graph turn stays un-wired (ADR 0006), and the standalone `serve`
+  subcommand still just prints the URL.
 - The graph structure appears when it is known: `state.json` is written only
   after each node's terminal verdict, so a fresh run's `/api/graph` honestly
   reports the structure unavailable until the first node completes (the UI
@@ -937,9 +941,9 @@ Scheduler as any other graph.
   fourth spawner, ADR 0006: `open`/`xdg-open`/`cmd /c start` behind build
   tags), `RefusingOpener` (injection safety — code that must hold an Opener
   without ever opening fails loudly), `FakeOpener` (tests). Wired at the
-  `run`/`auto` call sites only, behind the TTY-and-not-`--no-web` gate (see
-  "Web live view"); everywhere else the Opener is nil — the live view is off
-  entirely and no Opener is consulted.
+  `run`/`auto`/`resume` call sites only, behind the TTY-and-not-`--no-web`
+  gate (see "Web live view"); everywhere else the Opener is nil — the live
+  view is off entirely and no Opener is consulted.
 - **Handoff** — interpolate {{artifacts/inputs}}, persist outputs, pick --resume
   session. Gains `Seed(nodeID, artifactPath, sessionID)` so a resumed run can
   rehydrate a previous leg's artifacts and session ids without Handoff having to

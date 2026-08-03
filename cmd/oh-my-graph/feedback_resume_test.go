@@ -117,7 +117,7 @@ func TestResume_MidLoopMarkerReEntersTheLoop(t *testing.T) {
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)
@@ -186,7 +186,7 @@ func TestResume_RetryFailedReArmsAnExhaustedLoop(t *testing.T) {
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)
@@ -251,7 +251,7 @@ func TestResume_RetryFailedRoundZeroFailureRetriesDeclarerAlone(t *testing.T) {
 
 	var resumeErr error
 	out := captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("executeResume returned error: %v", resumeErr)

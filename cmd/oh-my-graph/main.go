@@ -138,10 +138,10 @@ func (f inputFlag) Set(pair string) error {
 // With --dry-run it stops after validation and the plan print — nothing is
 // wired and no node runs.
 func runGraph(args []string) error {
-	// One of the two sites (with runAuto) injecting the real browser launcher
-	// (browser.ExecOpener, the fourth exec seam — ADR 0006); everywhere else
-	// the Opener stays refusing or absent. webOpener still gates whether it
-	// is ever used.
+	// One of the three sites (with runAuto and runResume) injecting the real
+	// browser launcher (browser.ExecOpener, the fourth exec seam — ADR 0006);
+	// everywhere else the Opener stays refusing or absent. webOpener still
+	// gates whether it is ever used.
 	return runGraphWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
 }
 
@@ -203,8 +203,8 @@ func runAuto(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	// Same live-view gate as `run`, and the second (last) site injecting the
-	// real ExecOpener.
+	// Same live-view gate as `run` and `resume`, the other two sites injecting
+	// the real ExecOpener.
 	coord := coordinator.New(nodeRunner, agentMappingOptions(flags.noAgentMapping)...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal, nil,
 		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
@@ -299,8 +299,9 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // `auto`. web, when non-nil, is the Opener the run's embedded live view
 // hands its URL to (browser.ExecOpener behind the fourth exec seam, ADR
 // 0006); nil means no live view at all — the gate (TTY-and-not---no-web for
-// run/auto, always for a chat turn and `resume`) is the caller's decision,
-// made before this function so nothing here ever probes a terminal.
+// run/auto, and for `resume` through the same webOpener; always nil for a
+// chat turn) is the caller's decision, made before this function so nothing
+// here ever probes a terminal.
 func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener) error {
 	// The first leg holds the run's resume.lock for its whole duration — the
 	// same O_EXCL lock every `resume` takes (internal/runstate.AcquireLock).
