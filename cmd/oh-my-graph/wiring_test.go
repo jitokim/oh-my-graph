@@ -102,7 +102,7 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	rec := &capturingRunner{}
 
 	isolateRunHome(t)
-	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"), nil, nil)
+	err := executeGraph(context.Background(), "test-run", g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "handwritten.yaml", []byte("name: handwritten\n"), false, nil, nil)
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestExecuteGraph_ParallelFanOutWritesEachNodeOnceToBothWriters(t *testing.T
 	// reach it.
 	err := executeGraph(context.Background(), "fan-out-run", g, rec,
 		commonRunFlags{inputs: inputFlag{}, concurrency: len(nodes)},
-		nil, 0, "fan-out.yaml", []byte("name: fan-out\n"), nil, nil)
+		nil, 0, "fan-out.yaml", []byte("name: fan-out\n"), false, nil, nil)
 	if err != nil {
 		t.Fatalf("executeGraph returned error: %v", err)
 	}

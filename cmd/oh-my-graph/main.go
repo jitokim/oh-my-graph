@@ -167,19 +167,18 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 		return dryRunGraph(os.Stdout, os.Stderr, flags.graphPath, flags.inputs)
 	}
 
-	// Read the raw bytes ourselves (rather than graph.Load, which discards
-	// them after parsing) so executeGraph can snapshot both the graph's
-	// original source path and the SHA-256 of its original bytes — the datum
-	// `resume` uses to warn when the YAML has changed on disk since the run
-	// paused (DESIGN.md, "GraphSHA256").
-	raw, err := os.ReadFile(flags.graphPath)
-	if err != nil {
-		return fmt.Errorf("read graph file %q: %w", flags.graphPath, err)
-	}
-	g, err := graph.Parse(raw)
+	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
+	// against the graph file's own fragments/ sibling before validation.
+	// LoadFile keeps the entry file's raw bytes so executeGraph can snapshot
+	// both the graph's original source path and the SHA-256 of its original
+	// bytes — the datum `resume` uses to warn when the YAML has changed on
+	// disk since the run paused (DESIGN.md, "GraphSHA256").
+	loaded, err := graph.LoadFile(flags.graphPath)
 	if err != nil {
 		return err
 	}
+	g := loaded.Graph
+	printFragmentResolutions(os.Stdout, loaded.Resolutions)
 	warnBypassPermissions(g)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -190,8 +189,8 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
-	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, raw,
-		webOpener(flags.noWeb, stdout, opener), nil)
+	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
+		len(loaded.Resolutions) > 0, webOpener(flags.noWeb, stdout, opener), nil)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -321,7 +320,10 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // to (see buildRecorder). goal is the run's goal-lineage block for an
 // iterated auto cycle (ADR 0011 §4), nil on every single-cycle run.
 func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener, goal *runstate.GoalRef) error {
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, web, goal)
+	// false: a planned graph never resolved a fragment — the coordinator
+	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
+	// fragment-free by construction and stays reusable verbatim.
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, false, web, goal)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
@@ -340,7 +342,11 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // line and its total is unchanged. graphSourcePath and rawSource are the
 // snapshot's GraphSourcePath/GraphSHA256 material — the .yaml file (and its
 // bytes) for `run`, the saved graph.json (and the planner's JSON bytes) for
-// `auto`. web, when non-nil, is the Opener the run's embedded live view
+// `auto`. fragmentsResolved says whether any node of g resolved a `use:`
+// fragment on the way in (ADR 0013): when true the snapshot must store the
+// re-encoded resolved graph, never rawSource verbatim (see newRunRecorder);
+// `auto` passes false by construction — the coordinator refuses
+// planner-emitted fragments. web, when non-nil, is the Opener the run's embedded live view
 // hands its URL to (browser.ExecOpener behind the fourth exec seam, ADR
 // 0006); nil means no live view at all — the gate (TTY-and-not---no-web for
 // run/auto, and for `resume` through the same webOpener; always nil for a
@@ -349,7 +355,7 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // auto cycle stamps into its snapshot (ADR 0011 §4); nil — the only value
 // `run` and single-cycle auto ever pass — keeps the snapshot byte-identical
 // to today's.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, web browser.Opener, goal *runstate.GoalRef) error {
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, fragmentsResolved bool, web browser.Opener, goal *runstate.GoalRef) error {
 	// The first leg holds the run's resume.lock for its whole duration — the
 	// same O_EXCL lock every `resume` takes (internal/runstate.AcquireLock).
 	// Without it, a `resume <run-id> --retry-failed` raced against a
@@ -366,7 +372,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	led := ledger.New(runID)
 	led.RecordPlanningCost(planningCostUSD)
 
-	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, flags, toolPolicies, goal)
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, goal)
 	if err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
@@ -444,9 +450,17 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 // snapshot document (runstate.Write would fail marshaling it), so it is
 // re-encoded via json.Marshal(g) — safe because graph.Node/Graph's json tags
 // mirror their yaml tags exactly (see internal/graph, Node's doc comment).
-func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
+//
+// fragmentsResolved forces the re-encode regardless of rawSource's shape
+// (ADR 0013): JSON is valid YAML, so a JSON-authored entry file may carry
+// `use:` nodes, and reusing those bytes verbatim would snapshot an UNRESOLVED
+// graph — `resume`'s graph.Parse(snap.Graph) would then die on the
+// unresolved-fragment backstop. The rawSource-verbatim shortcut is only legal
+// for a document resolution never touched; with that, resume works on
+// fragment-free material by construction.
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
 	graphJSON := rawSource
-	if !json.Valid(rawSource) {
+	if fragmentsResolved || !json.Valid(rawSource) {
 		marshaled, err := json.Marshal(g)
 		if err != nil {
 			return nil, fmt.Errorf("encode graph for snapshot: %w", err)
@@ -592,6 +606,21 @@ func inputKeys(inputs inputFlag) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// printFragmentResolutions prints one line per resolved `use:` naming the
+// fragment source file and every key the using node overrides — the ADR 0013
+// disclosure posture, so a hollowed-out success_check or a widened
+// allowed_tools is announced at every run, not only visible to whoever reads
+// the file. Silent for a fragment-free graph.
+func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolution) {
+	for _, r := range resolutions {
+		line := fmt.Sprintf("fragment: node %q spliced from %q (%s)", r.NodeID, r.Fragment, r.Source)
+		if len(r.Overridden) > 0 {
+			line += " — node overrides: " + strings.Join(r.Overridden, ", ")
+		}
+		fmt.Fprintln(w, line)
+	}
 }
 
 // warnBypassPermissions prints a loud, per-node warning for any node that opts

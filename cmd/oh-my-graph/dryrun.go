@@ -4,40 +4,43 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 )
 
-// dryRunGraph is the `run --dry-run` path: load the graph, report every
-// structural issue via the same graph.Lint pass the `lint` subcommand uses,
-// resolve the {{ inputs.* }} references against the bound --input values,
-// print the resolved plan, and return without wiring a runner — no node
-// spawns, no run directory is created, zero cost. It differs from `lint` in
-// exactly one way: lint judges the file alone, while a dry run also holds the
-// invocation's --input bindings, so it can additionally prove every input
-// reference resolves. Exit 0 (nil) when a real run would start, exit 1 (an
-// error carrying the issue count) when it would refuse. Advisory warnings
-// (placeholders, session-handoff cold-resume risks) go to warnW through the
-// same warnAdvisories helper `lint` uses, and never affect the exit code.
+// dryRunGraph is the `run --dry-run` path: load the graph through the same
+// fragment-resolving graph.LintFile pass the `lint` subcommand uses (ADR
+// 0013), report every issue — fragment resolution failures plus the resolved
+// graph's structural problems — resolve the {{ inputs.* }} references against
+// the bound --input values, print the resolved plan, and return without
+// wiring a runner: no node spawns, no run directory is created, zero cost. It
+// differs from `lint` in exactly one way: lint judges the file alone, while a
+// dry run also holds the invocation's --input bindings, so it can
+// additionally prove every input reference resolves. Exit 0 (nil) when a real
+// run would start, exit 1 (an error carrying the issue count) when it would
+// refuse. Advisory warnings (placeholders, session-handoff cold-resume risks,
+// fragment drift smell) go to warnW through the same warnAdvisories /
+// warnFragmentAdvisories helpers `lint` uses, and never affect the exit code.
 func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read graph file %q: %w", path, err)
-	}
-
-	issues := graph.Lint(data)
-	if len(issues) > 0 {
-		return reportDryRunIssues(w, path, issues)
-	}
-
-	g, err := graph.Parse(data) // Lint found nothing, so this cannot fail
+	issues, fragmentAdvisories, err := graph.LintFile(path)
 	if err != nil {
 		return err
 	}
+	if len(issues) > 0 {
+		err := reportDryRunIssues(w, path, issues)
+		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
+		return err
+	}
+
+	loaded, err := graph.LoadFile(path) // LintFile found nothing, so this cannot fail
+	if err != nil {
+		return err
+	}
+	g := loaded.Graph
 	warnAdvisories(warnW, path, g)
+	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
 	printResolvedPlan(w, g)
 
 	if issues := inputIssues(g, inputs); len(issues) > 0 {
