@@ -78,7 +78,7 @@ func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 
 	var resumeErr error
 	out = captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec)
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
 	})
 	if resumeErr != nil {
 		t.Fatalf("the retry leg should finish the run cleanly, got: %v", resumeErr)

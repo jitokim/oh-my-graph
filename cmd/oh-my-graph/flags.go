@@ -108,18 +108,25 @@ type resumeFlags struct {
 	rejectGate  string
 	retryFailed bool
 	concurrency int
+	noWeb       bool
 
 	set *flag.FlagSet
 }
 
 // newResumeFlags builds a resumeFlags with its FlagSet configured. The run id
 // is a positional argument, mirroring `run`'s graph path and `auto`'s goal.
+// --concurrency and --no-web are declared here rather than through
+// commonRunFlags.register because resume must NOT get that set's --input (see
+// the type's doc comment); their usage strings are kept verbatim identical to
+// run/auto's, since a resumed leg's live view and concurrency ceiling behave
+// exactly as a first leg's.
 func newResumeFlags() *resumeFlags {
 	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
 	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
 	f.set.StringVar(&f.rejectGate, "reject", "", "reject the named gate, pruning its subtree")
 	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute a failed run's failed and cancelled nodes, or finish a session-limit-paused run's unfinished nodes; every passed node's result is kept")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
+	f.set.BoolVar(&f.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
 	return f
 }
 

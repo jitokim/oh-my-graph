@@ -9,7 +9,8 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
 
-// webOpener decides whether a fresh run gets the embedded live view, and with
+// webOpener decides whether a leg — a fresh `run`/`auto`, or a `resume` of an
+// earlier one — gets the embedded live view, and with
 // which Opener: the caller's opener when stdout is a terminal and --no-web was
 // not passed, nil (no server, no browser, no output change) otherwise. The
 // nil-for-none convention matches executeGraph's web parameter. Gating on
