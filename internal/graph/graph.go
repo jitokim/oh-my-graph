@@ -367,25 +367,12 @@ func Parse(data []byte) (*Graph, error) {
 	return g, nil
 }
 
-// Lint decodes a graph from raw YAML bytes and returns every structural
-// violation found — the full list whose first element is what Parse would
-// have returned, so the two can never disagree about which graphs are valid.
-// A YAML syntax error is the whole report on its own, since nothing
-// structural can be judged about a document that did not decode. An empty
-// result means the graph is valid: exactly the graphs Parse accepts.
-func Lint(data []byte) []error {
-	g, err := decode(data)
-	if err != nil {
-		return []error{err}
-	}
-	return g.Issues()
-}
-
 // decode unmarshals and normalizes raw YAML into a Graph with its by-id index
-// built, without judging validity — the shared front half of Parse (which
-// then fail-fasts via Validate) and Lint (which collects every issue). No
-// caller outside those two may use it: an unvalidated Graph must never
-// escape this package.
+// built, without judging validity — the front half of Parse, which then
+// fail-fasts via Validate. No caller outside this package may use it: an
+// unvalidated Graph must never escape. The collect-all counterpart lives on
+// the path-aware seam instead (LintFile), because a lint that cannot resolve
+// a `use:` is not linting the graph that would run.
 func decode(data []byte) (*Graph, error) {
 	var raw rawGraph
 	if err := yaml.Unmarshal(data, &raw); err != nil {
