@@ -113,6 +113,12 @@ oh-my-graph run graphs/self-dev.yaml \
   --input task="add a --dry-run flag to the run subcommand"
 ```
 
+The shipping side of that loop is a graph too: `graphs/merge-shepherd.yaml`
+takes a PR number, verifies its head locally in a throwaway worktree, marks
+it ready, waits for CI and CodeRabbit, triages the review comments, pauses
+at a human approval gate, and merges — the operator's by-hand PR-shepherding
+loop, pinned in YAML.
+
 The `auto` equivalent — no hand-written graph, just the goal:
 
 ```sh
