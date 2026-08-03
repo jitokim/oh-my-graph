@@ -825,3 +825,58 @@ nodes:
 		t.Errorf("a node timeout over the verify ceiling must still be valid: %v", err)
 	}
 }
+
+// --- unresolved fragments (the ADR 0013 backstop) ---------------------------
+
+// asUnresolvedFragmentError extracts the distinct backstop type — distinct so
+// the coordinator can recognize a fragment-naming planner reply, so the type
+// identity is part of the contract, not an implementation detail.
+func asUnresolvedFragmentError(t *testing.T, err error) *UnresolvedFragmentError {
+	t.Helper()
+	var fragErr *UnresolvedFragmentError
+	if !errors.As(err, &fragErr) {
+		t.Fatalf("expected *UnresolvedFragmentError, got %T: %v", err, err)
+	}
+	return fragErr
+}
+
+func TestParse_RefusesUnresolvedUse(t *testing.T) {
+	// Parse has no file context, so it cannot resolve a fragment — and without
+	// this refusal the node would validate with an EMPTY prompt and spend real
+	// money running garbage.
+	_, err := Parse([]byte(`
+name: frag
+nodes:
+  - { id: e2e, use: e2e-verify, with: { checks: "run make local" } }
+`))
+	fragErr := asUnresolvedFragmentError(t, err)
+	if fragErr.NodeID != "e2e" {
+		t.Fatalf("error named node %q, want e2e", fragErr.NodeID)
+	}
+	if !strings.Contains(fragErr.Reason, "file loader") {
+		t.Fatalf("reason should point at the file loader: %q", fragErr.Reason)
+	}
+}
+
+func TestParse_RefusesWithWithoutUse(t *testing.T) {
+	// A dead binding is a wiring bug: nothing would ever consume it, and the
+	// author plainly believed something would.
+	_, err := Parse([]byte(`
+name: frag
+nodes:
+  - { id: a, prompt: fine, with: { checks: "x" } }
+`))
+	fragErr := asUnresolvedFragmentError(t, err)
+	if fragErr.NodeID != "a" {
+		t.Fatalf("error named node %q, want a", fragErr.NodeID)
+	}
+}
+
+func TestParse_RefusesUseCarriedInJSON(t *testing.T) {
+	// The snapshot-resume path hands Parse JSON bytes; a JSON-authored graph
+	// carrying use: must hit the same refusal, never a silent drop.
+	_, err := Parse([]byte(`{"name":"frag","nodes":[{"id":"e2e","use":"e2e-verify"}]}`))
+	if asUnresolvedFragmentError(t, err).NodeID != "e2e" {
+		t.Fatal("JSON-authored use: must be refused naming the node")
+	}
+}

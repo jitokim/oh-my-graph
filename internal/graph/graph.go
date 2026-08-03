@@ -273,6 +273,23 @@ type Node struct {
 	// load validations above apply to a planned graph exactly as to a
 	// hand-written one.
 	Feedback *Feedback `yaml:"feedback" json:"feedback,omitempty"`
+	// Use, when non-empty, names a fragment this node splices in at LOAD time
+	// (ADR 0013): the file loader (LoadFile/LintFile) replaces the node with
+	// the fragment's node: block, substitutes the With bindings, and overlays
+	// this node's own keys — all before validation, so a VALIDATED graph
+	// always has Use and With empty. The fields exist so the keys DECODE
+	// instead of silently vanishing (decode sets no KnownFields, so an
+	// unknown `use:` would drop and the node would run with an empty prompt,
+	// spending real money on garbage), and Validate refuses any node still
+	// carrying them (validateFragmentsResolved) — the loud backstop for every
+	// path that bypasses the file loader: a snapshot resume, a planner reply
+	// (the coordinator surfaces that refusal as its own *PlanError — planned
+	// nodes may not reference fragments).
+	Use string `yaml:"use" json:"use,omitempty"`
+	// With carries Use's substitution bindings — substitution-point name to
+	// bound value, resolved away by the file loader with Use. Dead without
+	// `use:` (a load error), and empty on every validated graph; see Use.
+	With map[string]any `yaml:"with" json:"with,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate
 	// (validateNodeTimeouts). Unexported so the parsed form cannot drift from

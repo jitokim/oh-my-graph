@@ -24,6 +24,16 @@ func (e *GraphValidationError) Error() string {
 	return fmt.Sprintf("invalid graph: node %q: %s", e.NodeID, e.Reason)
 }
 
+// UnresolvedFragmentError is the structural backstop of ADR 0013: a node that
+// still carries `use:`/`with:` when it reaches Validate was never resolved by
+// the file loader (LoadFile/LintFile), because Parse operates on bytes with no
+// file context and cannot resolve fragments. A distinct type embedding
+// GraphValidationError — not a plain one — so the coordinator can recognize a
+// planner reply that tried to name a fragment and refuse it as a *PlanError
+// (planned nodes may not reference fragments: trusted code resolves local
+// files; the planner never names them).
+type UnresolvedFragmentError struct{ GraphValidationError }
+
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
 // list the allowed values.
@@ -69,7 +79,13 @@ func (g *Graph) Validate() error {
 //  10. a node-level timeout, when present, is a parseable, positive Go
 //     duration — parsed here, once, so no run ever discovers a malformed
 //     duration halfway through;
-//  11. every feedback arc has the shape ADR 0010 requires — a
+//  11. no node still carries an unresolved fragment reference (`use:` /
+//     `with:`) — fragments are resolved by the file loader before validation
+//     (ADR 0013), so a node reaching Validate with either set came through a
+//     path that cannot resolve them (a snapshot resume, a planner reply, a
+//     bytes-only Parse) and is refused loudly instead of running with a
+//     silently empty prompt;
+//  12. every feedback arc has the shape ADR 0010 requires — a
 //     proper-ancestor rerun target, a required max >= 1, a side-exit-free
 //     body with no gates and in-body session parents, disjoint bodies —
 //     and every {{ feedback.<id> }} placeholder sits inside the body of the
@@ -96,6 +112,7 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateWorktrees()...)
 	issues = append(issues, g.validateRetryCauses()...)
 	issues = append(issues, g.validateNodeTimeouts()...)
+	issues = append(issues, g.validateFragmentsResolved()...)
 	issues = append(issues, g.validateFeedback()...)
 	issues = append(issues, g.validateFeedbackPlaceholders()...)
 	return issues
@@ -451,6 +468,30 @@ func validateVerification(nodeID string, v *Verification) (time.Duration, error)
 		}
 	}
 	return timeout, nil
+}
+
+// validateFragmentsResolved refuses any node still carrying `use:` or `with:`
+// — the ADR 0013 backstop. Resolution is the FILE loader's job (LoadFile /
+// LintFile splice the fragment before this validator ever runs), so a node
+// reaching Validate with either key set came through a path with no file
+// context: bytes handed straight to Parse (a resumed snapshot, a planner
+// reply). Without this refusal such a node would validate with an empty
+// prompt and spend real money running garbage — exactly the silent smuggle
+// the decoded-but-unresolved fields exist to make loud. `with:` is refused on
+// its own too: outside a resolution it is a dead binding, a wiring bug, not a
+// style choice.
+func (g *Graph) validateFragmentsResolved() []error {
+	var issues []error
+	for _, n := range g.Nodes {
+		if n.Use == "" && len(n.With) == 0 {
+			continue
+		}
+		issues = append(issues, &UnresolvedFragmentError{GraphValidationError{
+			NodeID: n.ID,
+			Reason: "unresolved fragment reference (use:/with:) — fragments are resolved by the file loader; run or lint the graph FILE (a planned or snapshotted graph may not carry them)",
+		}})
+	}
+	return issues
 }
 
 // validateHandoffConstraints enforces that a session-handoff node has a

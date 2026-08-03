@@ -335,18 +335,26 @@ plan output pick which local file's prompt text, tool grant and verify
 command run — the same line the subagent-mapping design and the
 skill-mapping ADR (0012) refused to cross: **trusted Go code injects;
 the planner LLM never names local resources.** Enforcement is a real
-`validatePlannedNodes` case, not only the structural refusal — because
-the disposition harness demands it: `TestPlannedNodeRefusalsAreReal`
+coordinator-owned refusal, not only the structural one — because the
+disposition harness demands it: `TestPlannedNodeRefusalsAreReal`
 probes every `rejected` row and requires the probe to fail with a
-`*PlanError`, while a `graph.Parse` refusal surfaces from the
+`*PlanError`, while a bare `graph.Parse` refusal surfaces from the
 coordinator wrapped as a plain `fmt.Errorf("generated graph is
-invalid: %w", …)`, which would fail the harness, not satisfy it. So
-`Use`/`With` get explicit `validatePlannedNodes` cases returning
-`*PlanError` ("planned nodes may not reference fragments"), their rows
-in the field-disposition table read `rejected`, and `graph.Validate`'s
-unresolved-`use:` refusal remains the structural backstop *behind* the
-coordinator check — defense in depth, with the layer the tests can see
-in front. The future path stays open and is *deferred, not rejected*: a
+invalid: %w", …)`, which would fail the harness, not satisfy it.
+Mechanically that refusal cannot live in `validatePlannedNodes`
+(amended at implementation): `Plan` parses the reply through
+`graph.Parse` *first*, and `graph.Validate`'s backstop already refuses
+any unresolved `use:`/`with:` there, so no fragment-carrying graph
+ever reaches the per-node checks — a case there would be unreachable
+code masquerading as a guard. So the backstop refusal is a **distinct
+error type** (`graph.UnresolvedFragmentError`, embedding the ordinary
+validation error), and the coordinator recognizes it at its
+`graph.Parse` boundary and converts it into the `*PlanError`
+("planned nodes may not reference fragments") naming the offending
+node. The `Use`/`With` rows in the field-disposition table read
+`rejected`, probed through that conversion — defense in depth with
+the layers stated honestly: the structural backstop *is* the refusal;
+the coordinator conversion is the layer the harness can see. The future path stays open and is *deferred, not rejected*: a
 plan-time mapping pass in trusted Go code that resolves
 **shipped-embedded fragments only** (not attacker-influencable; the
 binary vouches for them) would fit the agentmap/skillmap mold exactly —
