@@ -391,7 +391,14 @@ func decode(data []byte) (*Graph, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse graph YAML: %w", err)
 	}
+	return fromRaw(raw), nil
+}
 
+// fromRaw normalizes a decoded rawGraph into a Graph with its by-id index
+// built — the back half of decode, shared with the fragment resolver's
+// decodeResolved (which decodes from a spliced *yaml.Node rather than from
+// bytes, so the two entry paths can never normalize differently).
+func fromRaw(raw rawGraph) *Graph {
 	g := &Graph{
 		Name:        raw.Name,
 		Version:     raw.Version,
@@ -404,7 +411,7 @@ func decode(data []byte) (*Graph, error) {
 	for _, n := range g.Nodes {
 		g.byID[n.ID] = n
 	}
-	return g, nil
+	return g
 }
 
 // normalizeOnFail fills in the graph-level failure-policy default, the same

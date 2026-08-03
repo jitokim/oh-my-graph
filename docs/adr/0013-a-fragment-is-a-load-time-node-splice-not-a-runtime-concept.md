@@ -218,23 +218,35 @@ commands that matter.
 So resolution is a new **path-aware load stage** that those three entry
 points are rewired onto:
 
-- `graph.LoadFile(path) (*Graph, []byte, error)` — read the entry file,
-  resolve every `use:` against the fragment location (splice,
-  substitute, overlay, all on the raw YAML document), hand the resolved
-  document to the same decode → `Validate` path as today, and return
-  the validated graph **plus the entry file's raw bytes**, which is the
-  datum `run` needs for `GraphSHA256` and the snapshot. Whether this
-  replaces the test-only `Load` or sits beside it is implementation
-  detail; the rewiring of `run`, `lint` and `--dry-run` is not.
+- `graph.LoadFile(path) (*LoadResult, error)` (amended at
+  implementation from the draft's `(*Graph, []byte, error)`: the
+  disclosure line and the snapshot re-encode decision both need the
+  per-fragment resolution record, so the three data travel as one
+  result) — read the entry file, resolve every `use:` against the
+  fragment location (splice, substitute, overlay, all on the raw YAML
+  document), hand the resolved document to the same decode →
+  `Validate` path as today, and return a `LoadResult` holding the
+  validated graph, **the entry file's raw bytes** (the datum `run`
+  needs for `GraphSHA256` and the snapshot), and one
+  `FragmentResolution` per resolved `use:` — the disclosure line's
+  input, and non-empty exactly when the snapshot must re-encode.
+  Whether this replaces the test-only `Load` or sits beside it is
+  implementation detail; the rewiring of `run`, `lint` and `--dry-run`
+  is not.
 - The fail-fast/collect-all duality is preserved, because the codebase
   already defines `Validate` as `Issues()[0]` precisely so the two can
   never disagree. `LoadFile` fail-fasts on the first resolution error; a
-  collect-all counterpart (`LintFile(path) []error`, mirroring
-  `Lint`) returns **every** fragment issue plus every structural issue
-  of the resolved graph, first element identical to what `LoadFile`
-  would have failed with. `lint` and `--dry-run` call the collect-all
-  form — a migrated `graphs/self-dev.yaml` must lint as a whole list,
-  not die on one "unresolved fragment reference".
+  collect-all counterpart (`LintFile(path) ([]error,
+  []FragmentAdvisory, error)`, mirroring `Lint` — amended at
+  implementation from the draft's `[]error`: the advisory findings this
+  ADR names need a channel that is not the issue list, because advice
+  must never affect an exit code, and an unreadable file is an I/O
+  error with no list to collect) returns **every** fragment issue plus
+  every structural issue of the resolved graph, first element identical
+  to what `LoadFile` would have failed with. `lint` and `--dry-run`
+  call the collect-all form — a migrated `graphs/self-dev.yaml` must
+  lint as a whole list, not die on one "unresolved fragment
+  reference".
 
 This also closes a hole that exists **today**: `decode` unmarshals with
 plain `yaml.Unmarshal` and no `KnownFields(true)`, so an unknown `use:`
