@@ -7,10 +7,9 @@ This is the project-level Claude Code config for **oh-my-graph** itself
 
 oh-my-graph is a graph-native multi-agent orchestrator: it runs each node of
 a YAML-defined DAG as a real `claude -p` subprocess on the user's own
-logged-in Claude subscription (never the metered Anthropic API). It
-**executes**; [fleetops](https://github.com/jitokim/fleetops) **observes**
-the same `~/.claude/projects` session transcripts — the two projects pair
-1:1 (executor + dashboard).
+logged-in Claude subscription (never the metered Anthropic API). Nodes run
+with session persistence on, so every node is also an ordinary claude session
+in `~/.claude/projects` that any external tool can read.
 
 **DESIGN.md is the spec.** Read it before touching the scheduler, the graph
 schema, the `NodeRunner` interface, or handoff. If code and DESIGN.md
@@ -50,7 +49,8 @@ let them drift apart.
   session-parent.
 - **Never the Agent SDK. Never `--bare`. Never `--no-session-persistence`.**
   The node runtime is exclusively the `claude` CLI subprocess, with OAuth
-  intact and session persistence on (so fleetops can observe every node).
+  intact and session persistence on (so every node stays observable as an
+  ordinary session transcript).
 
 See [SECURITY.md](SECURITY.md) for the full ToS/security stance and
 [CONTRIBUTING.md](CONTRIBUTING.md) for how these invariants are enforced in

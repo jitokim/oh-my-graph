@@ -21,9 +21,6 @@
 
 > A graph-native multi-agent orchestrator whose node runtime is your own
 > logged-in `claude` CLI — not the Anthropic API.
->
-> **It executes; [fleetops](https://github.com/jitokim/fleetops) observes the
-> same `~/.claude/projects` transcripts.**
 
 <p align="center">
   <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
@@ -203,8 +200,8 @@ that one run's view. Unlike the embedded live view above, `serve` is the thing
 you asked for: in a script, a pipe, or CI it still binds the port and serves —
 it just opens no browser, and its output is unchanged.
 
-More walkthroughs — auto mode in depth, dogfooding, observing with fleetops,
-ambient chat — plus per-feature recipes live in
+More walkthroughs — auto mode in depth, dogfooding, watching a run as it
+happens, ambient chat — plus per-feature recipes live in
 [docs/EXAMPLES.md](docs/EXAMPLES.md).
 
 ### Prebuilt binaries
@@ -485,8 +482,12 @@ Every run persists to `~/.oh-my-graph/runs/<run-id>/` (set `OMG_HOME` to
 relocate the base) — the same directory no matter where you invoke the tool
 from: a versioned snapshot (`state.json`) and an append-only event stream
 (`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
-a consumer like fleetops can tail. The layout is a documented, stable
+any external consumer can tail. The layout is a documented, stable
 contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md).
+
+Nodes also run with session persistence **on**, so every node is an ordinary
+claude session in `~/.claude/projects` that any tool reading those transcripts
+can pick up.
 
 ## Bring your own login
 
@@ -518,14 +519,6 @@ Windows compiles and runs, best-effort (no Windows CI): `verify` runs under
 the env scrub is case-sensitive — prefer WSL. Full platform detail, known
 limitations and the deferred list: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-## Pairs with fleetops
-
-Nodes run in real working directories with session persistence **on**, so every
-node shows up as an ordinary claude session in `~/.claude/projects`.
-[fleetops](https://github.com/jitokim/fleetops) — the fleet cockpit — observes
-those transcripts. oh-my-graph is the executor; fleetops is the dashboard. You
-get the observability integration for free.
-
 ## Development
 
 ```sh
@@ -539,6 +532,9 @@ make fmt-check  # fails if any file is not gofmt-clean (the CI gate)
 All engine logic is tested against a scripted `FakeRunner` — the test suite
 never spawns a real `claude`. The real-claude smoke (`make smoke`) is a
 **manual** step, never part of CI, so CI stays free.
+
+See also: [fleetops](https://github.com/jitokim/fleetops), a sibling project
+that reads the same `~/.claude/projects` transcripts fleet-wide.
 
 ## License
 

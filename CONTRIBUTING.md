@@ -154,8 +154,8 @@ without an explicit, discussed design change should not be merged:
 - **Never `--bare`.** That flag disables OAuth and would break subscription
   auth. Don't add it to the built argv.
 - **Never `--no-session-persistence`.** Nodes run with session persistence on
-  so every node shows up as an ordinary session in `~/.claude/projects` —
-  that's the free integration with [fleetops](https://github.com/jitokim/fleetops).
+  so every node shows up as an ordinary session in `~/.claude/projects`,
+  readable by anything that reads claude transcripts.
   Don't add a flag or option that turns it off by default.
 - **Every field on `graph.Node` has an explicit auto-mode disposition.** A
   planner reply is untrusted input, so `coordinator.validatePlannedNodes` must
