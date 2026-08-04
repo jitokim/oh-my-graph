@@ -33,7 +33,10 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
 only `AllowedTools`, so its argv is the first two lines plus `--resume` or
-`--session-id`. Every fresh-session node gets `--session-id` with a UUID the
+`--session-id`, and `--max-budget-usd` when the node declared `budget_usd`
+(that flag is not part of the ceiling — it rides on `NodeInvocation.BudgetUSD`,
+which the scheduler passes for every node, planned or hand-written).
+Every fresh-session node gets `--session-id` with a UUID the
 scheduler pre-assigned (`runner.NewSessionID`), so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
 transcript; a resuming node gets `--resume` instead — the two are mutually
@@ -1279,6 +1282,8 @@ turns that rule into a build failure. Current dispositions:
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
 | `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
+| `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
+| `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `budget_usd`, `timeout`, `retry` | allowed |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
@@ -1371,8 +1376,8 @@ ledger — so the summary never under-counts silently.
   type NodeRunner interface {
       Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error)
   }
-  type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession, Agent string; Policy ToolPolicy }
-  type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted bool }
+  type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession, SessionID, Agent string; BudgetUSD float64; Timeout time.Duration; Policy ToolPolicy }
+  type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted, SessionLimited bool }
   ```
   - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
     execs under context, parses JSON. One of the exactly four objects that
@@ -1420,7 +1425,8 @@ ledger — so the summary never under-counts silently.
   engine's tests.
 - **RunFeed** — owns `events.jsonl`: the append-only, schema-versioned stream of
   node lifecycle events (run_started/node_started/node_passed/node_failed/
-  node_retried/run_finished), one JSON line per transition, fsynced per line.
+  node_retried/gate_paused/gate_approved/gate_rejected/run_finished), one JSON
+  line per transition, fsynced per line.
   Emitted from the same scheduler hook points as the progress line and the
   snapshot, via an `EventSink` interface defaulting to a no-op — the third
   destination next to `Recorder`, same seam pattern. `node_started` and
@@ -1472,17 +1478,17 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,runs,show,watch,serve,chat,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/resume/runs/show/watch/serve/chat, print ledger
+cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), print ledger
 internal/graph/{graph,validate,feedback,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges, and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
-internal/schedule/{scheduler,errors}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors
-internal/runner/{runner,claude,fake}.go + build-tagged procgroup_{unix,windows}.go + claude_test, envelope_test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + FakeRunner
+internal/schedule/{scheduler,errors,feedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010)
+internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts exactly the four exec-seam files import os/exec (a fifth importer fails CI — ADR 0002/0005/0006)
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/coordinator/{coordinator,router}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing
-internal/handoff/handoff.go + _test            interpolation, artifact persist/resolve, session pick, Seed for resume
+internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011)
+internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
@@ -1490,7 +1496,7 @@ internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..14}-*.md
+docs/adr/00{01..15}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 

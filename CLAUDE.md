@@ -82,10 +82,14 @@ internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, Fake
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
 internal/childenv/     the shared child-env scrub policy (used by all four spawners)
-internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff
+internal/invariants/   test-only: asserts exactly the four exec-seam files import os/exec
+internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent/skill mapping; the goal loop
+internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff, the advisory lint sweeps
+internal/runstate/     state.json snapshot — atomic write, run lock, resume load
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
+internal/serve/        `serve`: 127.0.0.1-only dashboard + per-run live view, a run-feed consumer
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)
 internal/gate/         gate Decision + PauseController/RecordedController (human pause/approve)
-graphs/                shipped example graphs (haiku-smoke, dev-review-pr, self-dev)
+graphs/                shipped example graphs + graphs/fragments/, embedded with //go:embed *.yaml fragments/*.yaml
 docs/adr/              architecture decision records
 ```
