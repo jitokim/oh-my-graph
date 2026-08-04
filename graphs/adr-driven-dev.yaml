@@ -122,13 +122,17 @@ nodes:
       attribution convention in CONTRIBUTING.md). Run the tests
       SYNCHRONOUSLY and wait for them to finish — never in the background.
       Your FINAL reply is the verdict: never end the turn on an interim
-      report. Reply PASS with a one-line summary when tests are green, or
-      FAIL with what is broken.
+      report. When tests are green, START the reply with the bare word PASS —
+      those four characters FIRST, no markdown emphasis (`**PASS**` is
+      WRONG), no heading, no preamble — then a one-line summary. Otherwise
+      start it with a bare FAIL and what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 1h # hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "^PASS" }
+    # Anchored so a FAIL report mentioning the word cannot pass, and tolerant
+    # of the leading markdown emphasis a model adds unbidden.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS' }
 
   - id: localrun
     type: claude-run
@@ -142,7 +146,10 @@ nodes:
       -count=300`, or your stack's equivalent). Run every check
       SYNCHRONOUSLY and wait for it to finish — never in the background.
       Your FINAL reply is the verdict: never end the turn on an interim
-      report. Report PASS or FAIL with the failing step if any.
+      report. START it with the bare word PASS, or with a bare FAIL and the
+      failing step — the verdict word must be the very FIRST characters of
+      the reply, with no markdown emphasis (`**PASS**` is WRONG), no
+      heading, no preamble.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
     # Runaway insurance ONLY, never cost tuning — keep this an order of
@@ -152,7 +159,11 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "^PASS" # secondary: the node's own account of itself
+      # Secondary: the node's own account of itself. Anchored (prose that
+      # merely mentions the word must not pass) but tolerant of the leading
+      # markdown emphasis a model adds unbidden — `**PASS**` has halted a
+      # real run.
+      result_matches: '^[*_`\s]*PASS'
       # The evidence. The engine runs this itself and judges the exit code,
       # so a node that reports PASS without the suite passing does not pass.
       verify: { command: "make local", timeout: 5m }
@@ -197,14 +208,17 @@ nodes:
       attribution convention in CONTRIBUTING.md). Run the tests
       SYNCHRONOUSLY and wait for them to finish — never in the background.
       Your FINAL reply is the verdict: never end the turn on an interim
-      report. Reply PASS when tests are green, or FAIL with what is broken.
+      report. When tests are green, START the reply with the bare word PASS —
+      those four characters FIRST, no markdown emphasis (`**PASS**` is
+      WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
+      and what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "^PASS"
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
@@ -238,14 +252,17 @@ nodes:
       (the attribution convention in CONTRIBUTING.md). Run the tests
       SYNCHRONOUSLY and wait for them to finish — never in the background.
       Your FINAL reply is the verdict: never end the turn on an interim
-      report. Reply PASS when tests are green, or FAIL with what is broken.
+      report. When tests are green, START the reply with the bare word PASS —
+      those four characters FIRST, no markdown emphasis (`**PASS**` is
+      WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
+      and what is broken.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "^PASS"
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 

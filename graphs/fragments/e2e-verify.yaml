@@ -25,8 +25,10 @@ node:
     committed state — and {{ with.checks }}
     Run every check SYNCHRONOUSLY and wait for it to finish — never in the
     background. Your FINAL reply is the verdict: never end the turn on an
-    interim report. Report exactly PASS if everything succeeds, or FAIL
-    with the failing step.
+    interim report. If everything succeeds, your reply is exactly the four
+    bare characters PASS and nothing else — no markdown emphasis (`**PASS**`
+    is WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,
+    equally bare, as the very first characters, followed by the failing step.
   # A check gate gets the verbs a check gate runs, and nothing else. The wide
   # forms this replaced were `Bash(go *)` — which includes `go run`, i.e.
   # execute arbitrary code out of the tree under review — and `Bash(git *)`,
@@ -50,7 +52,12 @@ node:
   handoff: session
   success_check:
     exit_zero: true
-    result_matches: "^PASS$"      # secondary: the node's own account of itself
+    # Secondary: the node's own account of itself. Anchored at both ends so
+    # a FAIL report or a passing mention of the word cannot read as a pass —
+    # but tolerant of the markdown a model emits unbidden (`**PASS**` has
+    # halted a real run), because the pattern is the backstop and the prompt
+    # above is the instruction.
+    result_matches: '^[*_`\s]*PASS[*_`\s]*$'
     # The evidence. The engine runs this itself and judges the exit code,
     # so a node that reports PASS without the suite passing does not pass.
     verify: { command: "{{ with.verify_command }}", timeout: 5m }

@@ -36,7 +36,7 @@
       "depends_on": [
         "dev-a"
       ],
-      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run the project's full checks (build + test + lint). If the diff\ntouches concurrency-sensitive code, ALSO stress the affected tests\n(`go test \u003cpkgs\u003e -race -count=300`, or your stack's equivalent) —\nrule 4 in this graph's header.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. Report exactly PASS if everything succeeds, or FAIL\nwith the failing step.\n",
+      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run the project's full checks (build + test + lint). If the diff\ntouches concurrency-sensitive code, ALSO stress the affected tests\n(`go test \u003cpkgs\u003e -race -count=300`, or your stack's equivalent) —\nrule 4 in this graph's header.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. If everything succeeds, your reply is exactly the four\nbare characters PASS and nothing else — no markdown emphasis (`**PASS**`\nis WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,\nequally bare, as the very first characters, followed by the failing step.\n",
       "allowed_tools": [
         "Read",
         "Bash(make *)",
@@ -52,7 +52,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^PASS$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "{{ inputs.checks_command }}",
           "timeout": "5m"
@@ -129,7 +129,7 @@
       "depends_on": [
         "dev-b"
       ],
-      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and check the docs changes: every renamed or moved reference resolves,\nexamples still match the code they cite, and the project's checks\nstill pass — docs edits can break embedded snippets and lint gates\ntoo.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. Report exactly PASS if everything succeeds, or FAIL\nwith the failing step.\n",
+      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and check the docs changes: every renamed or moved reference resolves,\nexamples still match the code they cite, and the project's checks\nstill pass — docs edits can break embedded snippets and lint gates\ntoo.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. If everything succeeds, your reply is exactly the four\nbare characters PASS and nothing else — no markdown emphasis (`**PASS**`\nis WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,\nequally bare, as the very first characters, followed by the failing step.\n",
       "allowed_tools": [
         "Read",
         "Bash(make *)",
@@ -145,7 +145,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^PASS$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "{{ inputs.checks_command }}",
           "timeout": "5m"

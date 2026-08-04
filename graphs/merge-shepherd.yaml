@@ -60,12 +60,18 @@ nodes:
         5. ALWAYS remove the worktree before you answer, on the FAIL path
            as well as the PASS path:
            `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
-      Begin your reply with PASS, or with FAIL followed by the failing step.
+      Your reply must START with the bare word PASS — those four characters
+      as the very FIRST characters of the reply, with no markdown emphasis
+      (`**PASS**` is WRONG), no heading, no backticks, no preamble — or with
+      a bare FAIL followed by the failing step.
     allowed_tools: [Read, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 30m
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "^PASS" }
+    # Anchored so a FAIL report that merely mentions the word cannot pass,
+    # and tolerant of leading markdown emphasis, which a model adds unbidden
+    # (`**PASS**` halted a real run of this very graph).
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS' }
 
   - id: ready-and-wait
     type: claude-run
@@ -87,7 +93,10 @@ nodes:
         - coderabbitai has a COMPLETED review on the PR (a submitted review
           in the reviews list; a "review in progress" placeholder comment
           does not count).
-      When both hold, begin your reply with READY plus a one-line status.
+      When both hold, your reply must START with the bare word READY — those
+      five characters as the very FIRST characters, with no markdown emphasis
+      (`**READY**` is WRONG), no heading, no preamble — plus a one-line
+      status after it.
       You have 15 minutes: as that timeout comes near (after ~25 loops),
       stop polling and reply with the honest current state — which
       condition is still missing and what it says — as your final answer.
@@ -96,7 +105,8 @@ nodes:
     permission_mode: dontAsk
     timeout: 15m
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "^READY" }
+    # Same shape as verify's: anchored, but tolerant of leading emphasis.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*READY' }
 
   - id: triage
     type: claude-run

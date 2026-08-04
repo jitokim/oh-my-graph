@@ -250,11 +250,14 @@ nodes:
     depends_on: [dev]
     cwd: "{{ inputs.repo }}"  # a session child works in its parent's tree
     handoff: session          # e2e resumes dev's session — it already knows everything dev just did
-    prompt: Run make local and report PASS or FAIL.
+    prompt: >
+      Run make local. If it passes, your whole reply is the four bare
+      characters PASS and nothing else (`**PASS**` is WRONG); otherwise
+      start with FAIL and say what broke.
     success_check:
       exit_zero: true
-      result_matches: "PASS"          # what the node said
-      verify: { command: "make local" }  # what the engine saw
+      result_matches: '^[*_`\s]*PASS[*_`\s]*$'   # what the node said — anchored, see DESIGN.md "Verdict patterns"
+      verify: { command: "make local" }          # what the engine saw
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
   - id: review

@@ -58,15 +58,21 @@ nodes:
       `git add -A`, `git add .`, or `git add -u`. End every commit message
       with the trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
       (the attribution convention in CONTRIBUTING.md). Push the branch.
-      Reply with `APPLIED: <one-line summary of which flags you applied>`.
+      START your reply with the bare token `APPLIED:` — those characters as
+      the very FIRST of the reply, with no markdown emphasis
+      (`**APPLIED:**` is WRONG), no heading, no backticks, no preamble —
+      followed by a one-line summary of which flags you applied.
     allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     # The APPLIED prefix is load-bearing: an INVALID-BRANCH reply (or any
     # other bail-out) fails this check, so the run halts and verify never
-    # runs against a branch that was rejected or never switched to.
-    success_check: { exit_zero: true, result_matches: "^APPLIED: " }
+    # runs against a branch that was rejected or never switched to. Kept
+    # anchored for exactly that reason — but tolerant of the markdown
+    # emphasis a model adds unbidden, on either side of the colon
+    # (`**APPLIED:**` and `**APPLIED**:` both match; both have appeared).
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*APPLIED[*_`\s]*:' }
 
   - id: verify
     type: claude-run
@@ -78,10 +84,14 @@ nodes:
       Compare the branch's new diff against this flag list:
         {{ inputs.flags }}
       The diff must cover exactly the flags — every flag addressed, and
-      nothing in the diff that no flag asked for. Reply exactly COVERED if
-      both hold; otherwise reply DRIFT followed by the missed flags and/or
-      the unrequested changes.
+      nothing in the diff that no flag asked for. If both hold, your reply
+      is exactly the seven bare characters COVERED and nothing else — no
+      markdown emphasis (`**COVERED**` is WRONG), no heading, no backticks,
+      no preamble. Otherwise start the reply with a bare DRIFT followed by
+      the missed flags and/or the unrequested changes.
     allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)"]
     permission_mode: plan
     handoff: artifact
-    success_check: { exit_zero: true, result_matches: "^COVERED$" }
+    # Anchored at both ends — a DRIFT report that names the word must not
+    # read as coverage — but tolerant of leading/trailing markdown emphasis.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*COVERED[*_`\s]*$' }

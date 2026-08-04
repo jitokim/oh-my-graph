@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -716,8 +717,23 @@ func plannerPrompt(goal string, inputKeys []string) string {
 		sort.Strings(sorted)
 		keys = strings.Join(sorted, ", ")
 	}
-	return fmt.Sprintf(plannerPromptTemplate, goal, keys, strings.Join(plannedToolAllowlist, ", "))
+	return fmt.Sprintf(plannerPromptTemplate, goal, keys, strings.Join(plannedToolAllowlist, ", "), strconv.Quote(plannedVerdictPattern))
 }
+
+// plannedVerdictPattern is the verdict regex the planner is told to give its
+// branch-assertion check node — the same idiom every shipped graph follows
+// (DESIGN.md "Verdict patterns"): anchored at both ends so a FAIL reply that
+// merely names the word cannot pass, tolerant of the emphasis, code span or
+// stray newline a model wraps a bare verdict in. It matters more here than in
+// a shipped graph, because a planned node may not set success_check.verify
+// (validatePlannedNodes), so this pattern is the whole gate with no evidence
+// command behind it.
+//
+// It reaches the planner through strconv.Quote, not hand-doubled backslashes:
+// the reply is JSON, where a lone \s is not a valid string escape, so the
+// literal the planner must copy is "^[*_`\\s]*PASS[*_`\\s]*$" — one place to
+// get right, and Quote gets it right.
+const plannedVerdictPattern = "^[*_`\\s]*PASS[*_`\\s]*$"
 
 const plannerPromptTemplate = `You are the planning coordinator for oh-my-graph, an orchestrator that runs
 each node of a DAG as its own claude subprocess.
@@ -800,10 +816,15 @@ Rules:
   check node MUST verify which branch HEAD is on: its prompt runs
   'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
   output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and replies with exactly PASS only
-  when both hold, FAIL otherwise. Give that node
-  "success_check": {"result_matches": "^PASS$"} so a commit that landed on
-  the wrong branch fails the run instead of passing silently.
+  default branch (e.g. main or master), and — when both hold — instructs
+  the node that its whole reply is exactly the four bare characters PASS
+  and nothing else, with no markdown emphasis ("**PASS**" is WRONG), no
+  heading, no backticks and no preamble; FAIL otherwise. Give that node
+  "success_check": {"result_matches": %[4]s} — copy that pattern
+  character for character, doubled backslashes included, since your reply
+  is parsed as JSON. It stays anchored at both ends, so a commit that
+  landed on the wrong branch fails the run instead of passing silently,
+  while tolerating the markdown a model wraps a bare verdict in unbidden.
 `
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle

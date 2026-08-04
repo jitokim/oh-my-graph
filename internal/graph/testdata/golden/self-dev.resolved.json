@@ -33,7 +33,7 @@
       "depends_on": [
         "dev"
       ],
-      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run `make local` (build + test + vet).\nIf the diff touches concurrency-sensitive code or its tests\n(internal/schedule, internal/runner, anything spawning goroutines or\nusing channels), ALSO stress those packages —\n`go test \u003cpkgs\u003e -race -count=300` — because a flaky test passes a\nsingle run; determinism is the claim under test.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. Report exactly PASS if everything succeeds, or FAIL\nwith the failing step.\n",
+      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run `make local` (build + test + vet).\nIf the diff touches concurrency-sensitive code or its tests\n(internal/schedule, internal/runner, anything spawning goroutines or\nusing channels), ALSO stress those packages —\n`go test \u003cpkgs\u003e -race -count=300` — because a flaky test passes a\nsingle run; determinism is the claim under test.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. If everything succeeds, your reply is exactly the four\nbare characters PASS and nothing else — no markdown emphasis (`**PASS**`\nis WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,\nequally bare, as the very first characters, followed by the failing step.\n",
       "cwd": "{{ inputs.repo }}",
       "allowed_tools": [
         "Read",
@@ -50,7 +50,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^PASS$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "make local",
           "timeout": "5m"
