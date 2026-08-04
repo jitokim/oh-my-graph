@@ -97,13 +97,15 @@ open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
   by the tool it contains. Features, fixes, docs and releases are authored by
   its own graphs — a claude node implements on a branch, sibling nodes run the
   checks and the reviews, and a final node opens the draft PR. The verifiable
-  part, as of 2026-08-02: 23 of the 80 pull requests merged into `main` carry a
-  Claude co-author trailer in their squash commit — the receipt that a claude
-  session wrote them. Count them yourself:
-  `git log main --first-parent -i --grep="co-authored-by: claude"` (24 matches:
-  those 23 squash commits plus the initial commit). That trailer names the
-  model, not the pipeline, so from 2026-08-02 on, commits authored by a graph
-  lane also carry `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` — a
+  part — a snapshot taken 2026-08-05, and it only goes up: 40 of the 102 pull
+  requests merged into `main` carry a Claude co-author trailer in their squash
+  commit, the receipt that a claude session wrote them. Don't take the
+  snapshot's word for it, count today's number yourself:
+  `git log main --first-parent -i --grep="co-authored-by: claude"` (41 matches
+  at that snapshot: those 40 squash commits plus the initial commit). That
+  trailer names the model, not the pipeline, so from 2026-08-02 on, commits
+  authored by a graph lane also carry
+  `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` — a
   transparency convention, not proof of authorship; see
   [CONTRIBUTING.md](CONTRIBUTING.md#attribution). The templates in
   [`graphs/`](graphs/) are not samples: `self-dev.yaml`, `adr-driven-dev.yaml`
@@ -140,8 +142,8 @@ oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 
 `go install` copies one executable and nothing else, so `init` unpacks the
 example graphs embedded in that executable into `./graphs/` — including
-`./graphs/fragments/`, the shared node shapes two of those templates cite with
-`use:`, without which they would not load. Pass a directory
+`./graphs/fragments/`, the shared node shapes three of those templates cite
+with `use:`, without which they would not load. Pass a directory
 (`oh-my-graph init <dir>`) to write to `<dir>/graphs/` instead. It never
 overwrites: if any target file already exists it names that path and writes
 nothing at all.
@@ -226,7 +228,7 @@ from source there.
 Pick a tag from the Releases page, then:
 
 ```sh
-VERSION=0.3.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.4.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -348,7 +350,8 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `version` | Print the tool version. |
 
 `run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
-10), and `--continue-on-fail`. Both print a live per-node feed as the graph
+10), `--continue-on-fail`, and `--no-web` (do not serve or open the web live
+view for this run). Both print a live per-node feed as the graph
 executes, then a cost ledger. A graph can also declare the failure policy
 itself with graph-level `on_fail: continue` (default `halt`) — the right
 default for a batch of independent lanes, where one lane's failure should

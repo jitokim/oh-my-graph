@@ -15,15 +15,35 @@ the engine; you are the operator.
 ## The CLI surface
 
 ```
-oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-oh-my-graph auto "<goal>" [--input k=v ...] [--concurrency N] [--continue-on-fail]
+oh-my-graph init [<dir>]
+oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+                          [--max-cycles N] [--max-goal-budget-usd X]
+                          [--no-agent-mapping] [--no-skill-mapping]
 oh-my-graph lint <graph.yaml>
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id>) [--concurrency N]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 oh-my-graph runs list
 oh-my-graph show <run-id>
 oh-my-graph watch <run-id>
-oh-my-graph chat
+oh-my-graph serve [<run-id>] [--port N] [--no-open]
+oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping]
+oh-my-graph version
 ```
+
+Four of those are worth knowing precisely:
+
+- `init` unpacks the example graphs embedded in the binary into `./graphs/`
+  (including `./graphs/fragments/`). It never overwrites — if any target
+  exists it names that path and writes nothing at all.
+- `auto --plan-only` prints the planned graph with every agent/skill mapping
+  and the tool ceiling, then exits without running a node. Unlike
+  `run --dry-run` it is **not free**: it still pays for one real planner call.
+- `resume --retry-failed` re-executes a failed run's failed and cancelled
+  nodes (or finishes a session-limit-paused run's unfinished ones), keeping
+  every passed node's result. It is the non-gate way to continue a run.
+- `serve` with no run id is a dashboard of every run, each card opening that
+  run's own view at `/run/<id>/`; with an id it goes straight to that run. It
+  binds `127.0.0.1` only.
 
 Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
 a human gate and is **resumable** — a pause is not a failure. On exit 2,
@@ -41,9 +61,10 @@ surface the printed resume hint and offer
   validates and prints the execution plan without spawning any node. Use
   these before a real run of new or edited YAML — nodes cost real money.
 - **Report the ledger.** After a run, relay the run ledger: one line per
-  node (node id, session id, cost, verdict, duration) plus the total cost.
-  If a node failed, surface its failure reason. For `auto`, show the planned
-  graph (node ids and dependencies) before the ledger.
+  node — its five printed columns are node id, verdict, session id, cost and
+  a short detail — plus the total cost. If a node failed, surface its failure
+  reason. For `auto`, show the planned graph (node ids and dependencies)
+  before the ledger.
 - **Inspect, don't guess.** `runs list`, `show <run-id>`, and
   `watch <run-id>` (tails the run's event stream) answer "what happened /
   what is happening" — use them instead of speculating about run state.
@@ -75,6 +96,14 @@ when authoring or debugging:
 - **Verification.** A node's `success_check.verify` shell command is
   independent evidence that the node did what it claimed — encourage it for
   nodes whose output feeds later nodes.
+- **Fragments (`use:` / `with:`).** Instead of restating a proven node shape,
+  a node may cite a single-node fragment with `use: <name>` plus `with:`
+  bindings; the loader splices it in before validation, so the resolved graph
+  is indistinguishable from a hand-written one. Lookup is exactly one place —
+  the entry graph's own `fragments/` sibling — and `use:` must be a bare name,
+  so a fragment can never reach outside that directory. An override is judged
+  by key presence and replaces the whole top-level subtree (never a deep
+  merge). Reach for this when authoring the third copy of the same node.
 
 For anything deeper (retry semantics, schema details), read `DESIGN.md` in
 the oh-my-graph repo — it is the spec — rather than inventing behavior.

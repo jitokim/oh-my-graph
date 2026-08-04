@@ -138,16 +138,19 @@ These are the load-bearing guarantees the whole project exists to make (see
 without an explicit, discussed design change should not be merged:
 
 - **Subscription-auth env scrub.** Every child process oh-my-graph spawns —
-  a claude node, a `success_check.verify` command, AND the git commands behind
-  a node's `worktree:` — has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
-  deleted from its environment by the shared `internal/childenv.Scrub`. Those
-  variables silently switch `claude` to metered API billing;
-  `verify: { command: "claude -p ..." }` is a legal thing to write, and a
-  repo's own git hooks may invoke claude too, so every spawner must apply it.
-  It is asserted in `internal/childenv/childenv_test.go` (the policy) and at
-  each call site (`internal/runner/claude_test.go`,
-  `internal/verify/shell_test.go`, `internal/worktree/git_test.go`) — if you
-  touch env construction, make sure those tests still prove the scrub.
+  a claude node, a `success_check.verify` command, the git commands behind a
+  node's `worktree:`, AND the `open`/`xdg-open` launch of the `serve` URL —
+  has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted from its
+  environment by the shared `internal/childenv.Scrub`. Those variables
+  silently switch `claude` to metered API billing;
+  `verify: { command: "claude -p ..." }` is a legal thing to write, a repo's
+  own git hooks may invoke claude too, and the URL handler `open` dispatches
+  to is arbitrary user-configured code — so every one of the four spawners
+  must apply it. It is asserted in `internal/childenv/childenv_test.go` (the
+  policy) and at each call site (`internal/runner/claude_test.go`,
+  `internal/verify/shell_test.go`, `internal/worktree/git_test.go`,
+  `internal/browser/exec_test.go`) — if you touch env construction, make sure
+  those tests still prove the scrub.
 - **Never the Agent SDK.** The node runtime is exclusively the `claude` CLI
   subprocess (`claude -p ... --output-format json`). Don't introduce an
   Anthropic API/Agent SDK dependency as an alternate or default runtime path.
@@ -205,11 +208,12 @@ Maintainer checklist for cutting a release:
 
 ## Scope
 
-Before proposing a feature, check DESIGN.md's "MVP scope" and "Deferred"
-sections. Things like a graph DSL beyond `depends_on`, retry policies beyond
-a flat `max`, and a TUI are deliberately out of scope
-for v0.1 — that's not an oversight, it's a documented boundary. If you want to
-build one of those, open an issue to discuss the design first rather than
+Before proposing a feature, check DESIGN.md's "MVP scope (v0.1)" section (its
+IN and DEFERRED lists) and
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md#deferred-not-implemented).
+Things like a graph DSL beyond `depends_on` and a terminal TUI are deliberately
+out of scope — that's not an oversight, it's a documented boundary. If you want
+to build one of those, open an issue to discuss the design first rather than
 sending a large PR.
 
 ## Questions

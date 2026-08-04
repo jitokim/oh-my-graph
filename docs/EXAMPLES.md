@@ -148,19 +148,22 @@ has already caught two real bugs:
 
 Any of the examples above can be watched while it runs, from three angles.
 
-**The live view.** When stdout is a terminal, `run` and `auto` already serve
-the web live view of the leg they are starting on an ephemeral `127.0.0.1`
-port and open it in your browser — the node output feed on the left, the DAG
-map colored as nodes pass, cost and elapsed time in the header. A node that is
-still running shows the tail of its own transcript, so you can read what it is
-doing rather than waiting for a verdict.
+**The live view.** When stdout is a terminal, `run`, `auto` and `resume`
+already serve the web live view of the leg they are starting on an ephemeral
+`127.0.0.1` port and open it in your browser — the node output feed on the
+left, the DAG map colored as nodes pass, cost and elapsed time in the header.
+A node that is still running shows the tail of its own transcript, so you can
+read what it is doing rather than waiting for a verdict. `--no-web` turns it
+off for a run.
 
-To open it yourself — from a second terminal tab, or after the fact —
-`serve` takes a run id and defaults to the newest run:
+To open it yourself — from a second terminal tab, or after the fact — `serve`
+takes an optional run id. With no id it is a **dashboard** of every run: one
+live mini-DAG card each, and clicking a card opens that run's own view at
+`/run/<id>/`. With an id it goes straight to that run.
 
 ```sh
-oh-my-graph serve                    # newest run, http://127.0.0.1:8642
-oh-my-graph serve 20260729-101600    # a specific one, --port to move it
+oh-my-graph serve                    # dashboard of every run, http://127.0.0.1:8642
+oh-my-graph serve 20260729-101600    # straight to one run, --port to move it
 ```
 
 It binds to loopback only. It is read-only except for one thing: a run paused

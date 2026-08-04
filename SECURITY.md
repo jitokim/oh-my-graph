@@ -72,11 +72,17 @@ The layers:
 
 | layer | mechanism | closes |
 |---|---|---|
+| 0 declaration | `coordinator.plannedToolAllowlist` | what a plan may name at all — plan time, before any node runs |
 | 1 isolation | `--setting-sources ""` | your standing grants; settings hooks |
 | 2 grant | `--allowedTools` under `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<names declared>"` | tools the model can attempt at all |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` | anything the layers above got wrong |
+
+Layer 0 is the only plan-time layer: it is the fixed allowlist above, enforced
+by `validatePlannedNodeTools` before anything runs, so a plan naming `Bash`,
+`Bash(*)` or an unrestricted `WebFetch` never becomes a graph. Layers 1–5 then
+bound what the surviving declaration is worth at run time.
 
 Layer 1 is what makes the rest bind. Permission rules are matched from every
 loaded source, so a standing `Bash(*)` in your own `~/.claude/settings.json` was
@@ -137,6 +143,58 @@ prompt, tool grant and model, routing around Layers 0–3 in one word. It is
 rejected at plan time, and a reflection-driven test over `graph.Node` fails the
 build if any future schema field is added without an explicit decision like this
 one.
+
+## The web live view (`oh-my-graph serve`)
+
+`serve <run-id>` renders one run; `serve` with no id renders a **dashboard over
+every run directory** under `$OMG_HOME/runs`, with each run's own view mounted
+at `/run/<id>/` — one process, one port, all your runs. A fresh `run`/`auto`/
+`resume` whose stdout is a terminal embeds the same server for that leg's
+duration (`--no-web` opts out; a non-terminal stdout gets no server at all).
+
+Run directories hold node prompts, artifacts and session ids, so:
+
+- **Loopback only.** The listener binds `127.0.0.1` (default port 8642), and a
+  test asserts the *bound listener address*, not just the config. Additionally
+  every request's `Host` header must name `127.0.0.1` or `localhost` or it is
+  **403** — otherwise a hostile page could DNS-rebind a domain it controls onto
+  127.0.0.1 and read `/api/*` through your own browser.
+- **Paths come from listings, not from URLs.** A `/run/<id>/` id is matched
+  against the runs root's directory listing before any path is built from it,
+  and a `?node=<id>` against the snapshot's own node set; a typo and a traversal
+  probe are the same 404. The one read outside the run directory — the live
+  transcript tail into your own `~/.claude/projects` — is named by the
+  feed-published, shape-checked session UUID, never by URL input.
+- **`serve` spawns nothing.** The package imports no `os/exec`; both processes
+  its features imply belong to the exec seams above.
+
+**It is not read-only.** Since the gate routes landed (ADR 0014), two POSTs —
+`/api/gate/approve` and `/api/gate/reject` — decide the gate a run is paused at,
+which continues the run: rewriting `state.json`, appending to `events.jsonl`,
+and running the nodes the gate was blocking. They are guarded, in order, by the
+loopback bind, the `Host` check, an `Origin` check, and a per-process token:
+
+- **Token (CSRF).** 32 bytes of `crypto/rand`, minted per serving process,
+  rendered into the served page and demanded back in `X-OMG-Token` — missing is
+  400, mismatched is 403, compared in constant time. No shape of a gate POST
+  reaches the resumer without it. It is a CSRF guard, **not a login**.
+- **Origin.** A POST whose `Origin` names anything but this server's own origin
+  is 403, so a decision from a page this process did not serve is refused on its
+  provenance before its token is weighed. An **absent** `Origin` is allowed
+  through — curl and the CLI's own tests send none, and the token remains the
+  whole guard there. This narrows what a browser can do; it is hardening layered
+  in front of the token, not the closing of a hole.
+- A decision is valid only while the viewed run is genuinely paused at the named
+  gate; a held `resume.lock`, a missing snapshot, a non-pending gate id, or a
+  view with no resumer injected are each 409. Only the standalone `serve`
+  process injects a resumer.
+
+**What this does not give you:** there is no authentication. The loopback bind
+*is* the read access control, so **any process or user on the same machine can
+read every run** — prompts, artifacts, session ids and transcript tails —
+and, holding a token from a served page, decide a paused gate. This is a
+single-user local tool and is scoped accordingly; widening the bind address
+would need a real auth story first.
 
 ## Reporting
 

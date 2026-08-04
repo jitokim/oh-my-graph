@@ -1,7 +1,16 @@
 # ADR 0012 — Skill mapping for planned nodes is plan-time inlining, not prompt reference
 
 - Status: Proposed — acceptance additionally gated on the two probes in
-  "Required measurements before Accepted" below.
+  "Required measurements before Accepted" below. **Implemented and shipped
+  anyway** (#97, `internal/coordinator/skillmap.go`), while still `Proposed`:
+  the gate below was not met before the code landed and is **still owed** as of
+  2026-08-05. Neither the (a) steering probe nor the (b) misfire probe has been
+  run or recorded — DESIGN.md, "Auto mode", says so out loud ("whether that
+  helps or misfires is ADR 0012's required (a)/(b) probes, not assumed here").
+  The status stays `Proposed` deliberately: it is the accurate word for a
+  decision whose own acceptance criteria are unmet, and flipping it to
+  `Accepted` because the code exists would be the drift this line exists to
+  prevent.
 - Date: 2026-08-03 (revised the same day after design review: cap
   recalibrated against the measured corpus, nonce fence + hash provenance,
   `{{` neutralization, `allowed-tools` ceiling-skip cut, user-dir-only scan,

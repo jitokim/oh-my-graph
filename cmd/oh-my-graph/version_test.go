@@ -23,6 +23,12 @@ func TestPrintVersion(t *testing.T) {
 // 0.1.0: nothing tied the constant to the release process, so bumping the
 // changelog without the constant was invisible to CI. A release PR that
 // bumps one without the other now fails here instead of shipping stale.
+//
+// `## [Unreleased]` is skipped: Keep a Changelog's staging heading names no
+// version, so it is not the RELEASE heading this test pins against. Skipping
+// it costs the guard nothing — the first real `## [vX.Y.Z]` below it is still
+// checked, so a release PR that bumps the constant without promoting the
+// Unreleased entries into a version heading still fails here.
 func TestVersionMatchesChangelog(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
@@ -38,6 +44,9 @@ func TestVersionMatchesChangelog(t *testing.T) {
 			t.Fatalf("malformed release heading in CHANGELOG.md: %q", line)
 		}
 		got := rest[:end]
+		if got == "Unreleased" {
+			continue
+		}
 		if want := "v" + Version; got != want {
 			t.Fatalf("CHANGELOG.md topmost release heading is %q, want %q — bump cmd/oh-my-graph/version.go and the changelog entry together", got, want)
 		}
