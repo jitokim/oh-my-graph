@@ -7,7 +7,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-//	oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
 //	oh-my-graph runs list
@@ -89,7 +89,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
        oh-my-graph runs list
@@ -209,6 +209,18 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 // into bypassPermissions (the coordinator rejects them), so no warning pass is
 // needed here.
 func runAuto(args []string) error {
+	// One of the three sites (with runGraph and runResume) injecting the real
+	// browser launcher (browser.ExecOpener, the fourth exec seam — ADR 0006).
+	return runAutoWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
+}
+
+// runAutoWith is runAuto with its seams injectable, mirroring runGraphWith and
+// for the same reason: --plan-only's whole claim is that no node runs, and the
+// only way to prove that is through the real argv path with a FakeRunner that
+// must see the planner call and nothing else. The stdout parameter is what
+// gates the live view (a non-terminal one leaves it off), so a test needs no
+// real spawn on that seam either.
+func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
 	flags := newAutoFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -217,13 +229,11 @@ func runAuto(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nodeRunner := runner.NewClaudeCLIRunner()
-	// Same live-view gate as `run` and `resume`, the other two sites injecting
-	// the real ExecOpener.
+	// Same live-view gate as `run` and `resume`.
 	coord := coordinator.New(nodeRunner, mappingOptions(flags.noAgentMapping, flags.noSkillMapping)...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
-		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, nil,
-		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
+		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
+		webOpener(flags.noWeb, stdout, opener))
 }
 
 // mappingOptions wires the two auto-mappings for a production Coordinator:
@@ -275,14 +285,32 @@ var singleCycle = goalCycleOptions{maxCycles: 1}
 // passes its TTY-gated decision, chat always passes nil — a chat turn's run
 // stays un-wired (ADR 0006).
 //
+// planOnly is `auto --plan-only`: the same sequence up to and including the
+// topology print, then a stop — nothing is wired, no node runs. It sits HERE,
+// as an early return inside the one sequence, rather than in a parallel
+// plan-and-print function, because the flag's entire value is that what it
+// shows is what a real run would show; a second implementation of the print
+// would be free to drift from this one and would take a mapping line with it
+// when it did. The planner call above it is NOT skipped and cannot be: unlike
+// `run --dry-run`, which reads a file, there is no plan to inspect until one
+// has been bought. The saved spec survives the stop for the same reason —
+// it was paid for.
+//
 // cycles decides whether the sequence runs once (maxCycles 1 — this function
 // body, exactly today's) or as the bounded goal loop of ADR 0011 (maxCycles
 // ≥ 2 — planAndExecuteCycles, which re-enters coordinator.Plan per cycle and
 // runs this same save→print→confirm→execute sequence as the loop's
 // ExecuteCycle callback). It is an explicit parameter of the call so that
 // planAndExecute stays the sequence's one home for both shapes.
-func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, cycles goalCycleOptions, confirm func() (bool, error), web browser.Opener) error {
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, cycles goalCycleOptions, planOnly bool, confirm func() (bool, error), web browser.Opener) error {
 	if cycles.maxCycles > 1 {
+		if planOnly {
+			// Unreachable from the CLI — autoFlags.parse rejects the
+			// combination — and loud rather than silent so that a future
+			// caller cannot get an executing run out of a flag that promises
+			// not to execute.
+			return fmt.Errorf("plan-only is not defined for a %d-cycle goal loop: only cycle 1 can be planned ahead of any execution", cycles.maxCycles)
+		}
 		return planAndExecuteCycles(ctx, out, coord, nodeRunner, flags, goal, cycles, confirm, web)
 	}
 
@@ -298,6 +326,14 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	printPlan(out, plan, specPath)
+
+	if planOnly {
+		fmt.Fprintf(out,
+			"plan only: no node was executed. The planner call above was still paid for ($%.4f) —\n"+
+				"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n",
+			plan.CostUSD, specPath)
+		return nil
+	}
 
 	if confirm != nil {
 		ok, err := confirm()
@@ -536,7 +572,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		fmt.Fprintln(w, line)
 	}
 	noteAgentMappings(w, plan.AgentMappings)
-	noteSkillMappings(w, plan.SkillMappings)
+	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
 	noteCeiling(w)
 	fmt.Fprintln(w)
 }
@@ -571,8 +607,23 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 // hash prefix, target node and description — the printed hash is the integrity
 // link to the full inlined text in the saved spec file, which printPlan already
 // names — and a refused candidate's reason (oversize body, agent-mapped node).
-// Silence means no candidate matched and nothing changed.
-func noteSkillMappings(w io.Writer, mappings []coordinator.SkillMapping) {
+//
+// The decisions are bracketed by the SCAN they came out of, because the
+// decision list alone cannot say why it is empty. No-match is the majority
+// outcome of a name-only rule (measured: 22 of the 32 shipped node ids), so an
+// empty list used to print nothing at all and read identically to "skill
+// mapping never ran" — and identically, too, to the case a user actually hits:
+// a corpus that lives somewhere this scan deliberately does not go. Naming the
+// scanned directories and the count turns "I have skills but see none" into
+// one readable line, and the exclusion note states the limit instead of
+// letting it look like a match failure. scan is nil only when no scan
+// happened (--no-skill-mapping, or no configured directories), and then this
+// prints nothing: the user who turned it off does not need to be told twice.
+func noteSkillMappings(w io.Writer, scan *coordinator.SkillScan, mappings []coordinator.SkillMapping) {
+	if scan == nil {
+		return
+	}
+	fmt.Fprintf(w, "  skill scan: %d skill(s) from %s\n", scan.Found, strings.Join(scan.Dirs, ", "))
 	applied := false
 	for _, m := range mappings {
 		if m.SkippedReason != "" {
@@ -589,6 +640,11 @@ func noteSkillMappings(w io.Writer, mappings []coordinator.SkillMapping) {
 				"  in the saved spec file). Pass --no-skill-mapping to turn this off.\n",
 		)
 	}
+	fmt.Fprint(w,
+		"  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).\n"+
+			"  Both are out of scope in v1 (ADR 0012), so a skill you installed through a plugin maps\n"+
+			"  nothing here — that is a stated limit, not a failed match.\n",
+	)
 }
 
 // noteCeiling states what running this plan actually does to the machine. It

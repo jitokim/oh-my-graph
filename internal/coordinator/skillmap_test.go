@@ -486,6 +486,70 @@ func TestPlan_WithoutSkillMappingDisablesMapping(t *testing.T) {
 	if string(plan.Spec) != reviewSpec {
 		t.Errorf("spec must stay untouched with mapping off, got %s", plan.Spec)
 	}
+	if plan.SkillScan != nil {
+		t.Errorf("SkillScan = %+v, want nil: no scan happened, so the plan must not report one", plan.SkillScan)
+	}
+}
+
+// The scan record exists to make an EMPTY decision list readable, so it must
+// survive every case that produces one: a directory holding nothing usable, a
+// directory that is not there at all, and a corpus whose skills simply match
+// no node id. In all three the plan must still say WHERE it looked — that is
+// the whole difference between "your skills were read and none matched" and
+// "your skills were never looked at", which the mapping list alone cannot
+// express. A scan that finds nothing stays a silent no-mapping, never an
+// error: the plan below still succeeds.
+func TestPlan_SkillScanIsRecordedEvenWhenNothingMaps(t *testing.T) {
+	empty := t.TempDir()
+	missing := filepath.Join(empty, "does-not-exist")
+
+	t.Run("scanned directories yielding nothing", func(t *testing.T) {
+		plan := planWithSkills(t, WithSkillDirs(missing, empty))
+
+		if len(plan.SkillMappings) != 0 {
+			t.Fatalf("mappings = %+v, want none from an empty corpus", plan.SkillMappings)
+		}
+		if plan.SkillScan == nil {
+			t.Fatal("SkillScan = nil, but a scan ran: an empty corpus must still name where it looked")
+		}
+		if plan.SkillScan.Found != 0 {
+			t.Errorf("Found = %d, want 0", plan.SkillScan.Found)
+		}
+		if got := plan.SkillScan.Dirs; len(got) != 2 || got[0] != missing || got[1] != empty {
+			t.Errorf("Dirs = %v, want both scanned directories in order [%s %s]", got, missing, empty)
+		}
+	})
+
+	t.Run("a usable corpus that matches no node id", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkillFile(t, dir, "wowerpoint", "name: wowerpoint\ndescription: makes slide decks", "the body")
+
+		plan := planWithSkills(t, WithSkillDirs(dir))
+
+		if len(plan.SkillMappings) != 0 {
+			t.Fatalf("mappings = %+v, want none: no node id matches wowerpoint", plan.SkillMappings)
+		}
+		if plan.SkillScan == nil || plan.SkillScan.Found != 1 {
+			t.Fatalf("SkillScan = %+v, want a scan reporting the 1 skill it read", plan.SkillScan)
+		}
+	})
+}
+
+// The recorded Dirs must be the plan's own copy: a caller that mutates the
+// slice it passed to WithSkillDirs must not be able to rewrite what an
+// already-printed plan says it scanned.
+func TestPlan_SkillScanDirsAreNotAliased(t *testing.T) {
+	dirs := []string{t.TempDir()}
+	plan := planWithSkills(t, WithSkillDirs(dirs...))
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want a recorded scan")
+	}
+	recorded := plan.SkillScan.Dirs[0]
+
+	dirs[0] = "/somewhere/else"
+	if plan.SkillScan.Dirs[0] != recorded {
+		t.Errorf("Dirs[0] = %q after the caller's slice changed, want the recorded %q", plan.SkillScan.Dirs[0], recorded)
+	}
 }
 
 // A short shared token must not match by prefix: "dev" (under minMatchPrefix)

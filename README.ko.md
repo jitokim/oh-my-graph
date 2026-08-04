@@ -346,7 +346,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
-| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
+| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(플래너 호출 한 번의 비용은 그대로 듭니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |
@@ -411,8 +411,16 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 밝혀 둡니다: 매핑된 노드는 에이전트를 해석하기 위해 완전한 설정 격리
 대신 사용자의 설정을 로드합니다 — 선언된 도구 목록은 여전히 강제됩니다.
 
-당신의 Claude Code 스킬(`~/.claude/skills`만 — 프로젝트 디렉토리는 절대
-아님)도 `auto` run에 닿습니다. 다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
+실행시키기 전에 이 모든 걸 먼저 보고 싶다면, `auto --plan-only`가 플랜을
+설계해 그래프·모든 에이전트/스킬 매핑·tool ceiling을 출력한 뒤 멈춥니다 —
+노드는 하나도 실행되지 않습니다. `run --dry-run`의 `auto` 짝이지만 한 가지는
+정직하게 다릅니다: dry run은 이미 당신이 쓴 파일을 읽으므로 공짜인 반면,
+플랜은 사기 전에는 볼 것 자체가 없으므로 `--plan-only`도 플래너 호출 한 번의
+비용을 그대로 지불하고 그 금액을 출력합니다. 돈을 낸 그 플랜은 run
+디렉토리에 그대로 보관됩니다.
+
+당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다.
+다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
 플랜된 노드는 스킬을 보거나 호출할 수 없으므로(측정으로 확인), 노드 id가
 스킬 이름과 명확히 일치하면 그 스킬의 SKILL.md 본문이 플랜 시점에 **그
 노드의 프롬프트로 복사됩니다** — 펜스로 감싸고, 출처를 밝히고, 16 KiB로
@@ -422,6 +430,17 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 출력하고, 정확한 텍스트는 — 거기서 전체 해시를 다시 계산할 수 있습니다 —
 저장된 `graph.json`에 스냅샷으로 남으며(이후의 스킬 수정은 이미 플랜된 run에
 닿지 않습니다), `--no-skill-mapping`으로 끌 수 있습니다.
+
+스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 아무것도 매핑하지
+않습니다: **플러그인**이 제공하는 스킬(`~/.claude/plugins/...`)과
+**프로젝트** 스킬(`./.claude/skills`)입니다. 둘 다 매칭 실패가 아니라 명시된
+한계이므로, 플랜 출력이 매 run마다 그렇게 말합니다 — `skill scan: 35 skill(s)
+from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 그리고
+아무것도 못 찾은 스캔도 자기가 들여다본 디렉토리를 반드시 이름으로 밝히므로,
+"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다. 스킬이
+플러그인에서 왔다면 오늘은 매핑되지 않습니다. 그 판단의 근거가 된 측정과
+무엇이 바뀌어야 하는지는
+[ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md)에 있습니다.
 [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)에서
 플랜 출력, tool ceiling, 라이브 노드 피드를 차례로 다룹니다.
 

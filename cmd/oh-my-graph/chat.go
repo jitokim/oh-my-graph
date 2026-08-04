@@ -105,8 +105,10 @@ func chatLoop(ctx context.Context, in io.Reader, out io.Writer, coord *coordinat
 			// a browser (ADR 0006) — the host owns the terminal, `serve` owns
 			// the optional window. singleCycle: chat stays single-cycle in v1
 			// (ADR 0011 §1) — its confirm covers exactly the one plan it
-			// gates.
-			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, singleCycle, confirm, nil); err != nil {
+			// gates. planOnly false: chat's [y/N] already sits between the
+			// printed plan and execution, so it IS the interactive form of
+			// what --plan-only gives the non-interactive shell.
+			if err := planAndExecute(ctx, out, coord, nodeRunner, flags, route.Goal, singleCycle, false, confirm, nil); err != nil {
 				if errors.Is(err, errConfirmEOF) {
 					return scanner.Err()
 				}

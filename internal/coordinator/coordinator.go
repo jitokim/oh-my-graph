@@ -167,6 +167,12 @@ type Plan struct {
 	// disclosure contract as AgentMappings: the caller must print these with
 	// the plan. Empty when nothing matched or mapping is off.
 	SkillMappings []SkillMapping
+	// SkillScan says a skill scan ran and over which directories, so the
+	// caller can distinguish an empty SkillMappings that means "scanned, no
+	// match" from one that means "never scanned". nil when no scan happened
+	// at all — mapping off (--no-skill-mapping), or a Coordinator built with
+	// no skill directories.
+	SkillScan *SkillScan
 }
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct

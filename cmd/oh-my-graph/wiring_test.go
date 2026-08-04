@@ -363,11 +363,13 @@ func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := coordinator.Plan{Graph: g, SkillMappings: []coordinator.SkillMapping{
-		{NodeID: "impl", Skill: "coding-rules", Description: "team coding rules",
-			InlinedBytes: 6861, SHA256: strings.Repeat("ab12", 16)},
-		{NodeID: "verify", Skill: "pre-commit-checklist", SkippedReason: "body 86.6 KiB exceeds 16 KiB cap"},
-	}}
+	plan := coordinator.Plan{Graph: g,
+		SkillScan: &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 35},
+		SkillMappings: []coordinator.SkillMapping{
+			{NodeID: "impl", Skill: "coding-rules", Description: "team coding rules",
+				InlinedBytes: 6861, SHA256: strings.Repeat("ab12", 16)},
+			{NodeID: "verify", Skill: "pre-commit-checklist", SkippedReason: "body 86.6 KiB exceeds 16 KiB cap"},
+		}}
 
 	var out strings.Builder
 	printPlan(&out, plan, "/tmp/graph.json")
@@ -381,5 +383,44 @@ func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestPrintPlan_ShowsSkillScanAndItsLimits pins the other half of that
+// disclosure, the half that has to survive an EMPTY decision list: a name-only
+// rule matches nothing for most node ids, so "no lines" is the majority
+// outcome and used to be indistinguishable from "skill mapping never ran" —
+// and from the case a user actually hits, a corpus sitting somewhere this scan
+// does not go. A scan that happened must therefore say where it looked, how
+// much it found, and which skill locations are deliberately out of scope
+// (ADR 0012: plugin-provided and project skills).
+func TestPrintPlan_ShowsSkillScanAndItsLimits(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"impl","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The silent case: scanned, nothing found, nothing mapped.
+	var scanned strings.Builder
+	printPlan(&scanned, coordinator.Plan{Graph: g,
+		SkillScan: &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 0},
+	}, "/tmp/graph.json")
+	for _, want := range []string{
+		"skill scan: 0 skill(s) from /home/u/.claude/skills",
+		"plugin-provided skills",
+		".claude/plugins",
+		"project skills",
+	} {
+		if !strings.Contains(scanned.String(), want) {
+			t.Errorf("a scan that mapped nothing must still disclose %q:\n%s", want, scanned.String())
+		}
+	}
+
+	// The opted-out case: no scan happened, so there is nothing to report and
+	// the user who typed --no-skill-mapping is not told about it twice.
+	var off strings.Builder
+	printPlan(&off, coordinator.Plan{Graph: g}, "/tmp/graph.json")
+	if strings.Contains(off.String(), "skill scan") {
+		t.Errorf("no scan ran, so the printout must not claim one did:\n%s", off.String())
 	}
 }
