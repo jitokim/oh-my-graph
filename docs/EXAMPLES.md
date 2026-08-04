@@ -10,8 +10,8 @@ Walkthroughs, in order:
    headline feature.
 2. [Dogfooding](#dogfooding-developing-oh-my-graph-with-oh-my-graph) — using
    oh-my-graph to develop oh-my-graph.
-3. [Observe with fleetops](#observe-with-fleetops) — watch nodes run in a
-   sister tool.
+3. [Watch a run](#watch-a-run) — the live view, the text tail, and the
+   ledger after the fact.
 4. [Ambient chat](#ambient-chat-prototype) — talk; each turn routes to a
    reply or a graph (prototype).
 
@@ -140,20 +140,49 @@ has already caught two real bugs:
   looked like a dead shell for most of its runtime. That's exactly why the
   live `▶ / ✓ / ✗ / ↻` feed shown throughout these examples exists.
 
-## Observe with fleetops
+## Watch a run
 
-Run fleetops next to any example and watch each node appear as an ordinary
-claude session.
+Any of the examples above can be watched while it runs, from three angles.
 
-oh-my-graph executes; [fleetops](https://github.com/jitokim/fleetops) is a
-sister tool that observes the same `~/.claude/projects` transcripts — no
-coupling beyond that shared directory. Every node runs with session
-persistence on, so it shows up as an ordinary claude session the moment it
-starts.
+**The live view.** When stdout is a terminal, `run` and `auto` already serve
+the web live view of the leg they are starting on an ephemeral `127.0.0.1`
+port and open it in your browser — the node output feed on the left, the DAG
+map colored as nodes pass, cost and elapsed time in the header. A node that is
+still running shows the tail of its own transcript, so you can read what it is
+doing rather than waiting for a verdict.
 
-Run fleetops in a second terminal tab while any of the examples above is
-running, and you'll see each node appear in fleetops' fleet list as
-oh-my-graph delegates to it — live, for free, with zero integration code.
+To open it yourself — from a second terminal tab, or after the fact —
+`serve` takes a run id and defaults to the newest run:
+
+```sh
+oh-my-graph serve                    # newest run, http://127.0.0.1:8642
+oh-my-graph serve 20260729-101600    # a specific one, --port to move it
+```
+
+It binds to loopback only. It is read-only except for one thing: a run paused
+at a human gate can be approved or rejected from the page.
+
+**The text tail.** No browser, `tail -f` style — useful over ssh or piped
+into something else:
+
+```sh
+oh-my-graph watch 20260729-101600
+```
+
+**After it finishes.** `runs list` is every run newest-first with its cost and
+verdict; `show` is one run's per-node ledger:
+
+```sh
+oh-my-graph runs list
+oh-my-graph show 20260729-101600
+```
+
+All four read the same per-run artifacts under `~/.oh-my-graph/runs/<run-id>/`
+— a `state.json` snapshot and an append-only `events.jsonl` — which are a
+documented, stable contract ([docs/RUN-FEED.md](RUN-FEED.md)), so anything
+else you want to point at a run can read them too. Separately, every node runs
+with session persistence on, so it is also an ordinary claude session in
+`~/.claude/projects` from the moment it starts.
 
 ## Ambient chat (prototype)
 

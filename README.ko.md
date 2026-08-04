@@ -23,9 +23,6 @@
 
 > 노드 런타임이 Anthropic API가 아니라 — 직접 로그인한 `claude` CLI인,
 > graph-native 멀티 에이전트 오케스트레이터.
->
-> **oh-my-graph는 실행하고, [fleetops](https://github.com/jitokim/fleetops)는
-> 같은 `~/.claude/projects` transcript를 관찰합니다.**
 
 <p align="center">
   <img src="assets/live-view.png" alt="실제 oh-my-graph run의 web live view: 왼쪽은 노드 출력 피드, 오른쪽은 passed/running/pending 노드가 표시된 DAG 맵, 헤더에는 실시간 비용과 경과 시간" width="100%" />
@@ -218,7 +215,7 @@ embedded live view와 달리 `serve`는 서빙 자체가 요청받은 일입니�
 스크립트·파이프·CI에서도 포트를 그대로 열고 서빙하며, 브라우저만 열지 않고
 출력도 달라지지 않습니다.
 
-더 많은 워크스루 — auto 모드 심화, dogfooding, fleetops로 관찰하기,
+더 많은 워크스루 — auto 모드 심화, dogfooding, 실행 중인 run 지켜보기,
 ambient chat — 와 기능별 레시피는
 [docs/EXAMPLES.md](docs/EXAMPLES.md)에 있습니다.
 
@@ -513,9 +510,13 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 베이스 위치 변경 가능) — 도구를 어디서 실행하든 같은 디렉토리입니다:
 schema 버전이 명시된 snapshot(`state.json`)과 append-only 이벤트
 스트림(`events.jsonl`)이 저장되고, `runs list` / `show` / `watch` /
-`serve`가 이를 다시 읽으며 fleetops 같은 consumer가 tail 할 수 있습니다.
+`serve`가 이를 다시 읽으며 외부 consumer도 tail 할 수 있습니다.
 이 레이아웃은 문서화된 안정적 계약입니다 —
 [docs/RUN-FEED.md](docs/RUN-FEED.md) 참고.
+
+또한 노드는 session persistence가 **켜진** 채 실행되므로, 모든 노드가
+`~/.claude/projects`에 평범한 claude 세션으로 남고 그 transcript를 읽는
+어떤 도구든 그대로 집어갈 수 있습니다.
 
 <a id="bring-your-own-login"></a>
 
@@ -550,14 +551,6 @@ oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 �
 권장합니다. 전체 플랫폼 상세, 알려진 제약, 보류(deferred) 목록:
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-## fleetops와 짝을 이룹니다
-
-노드는 실제 작업 디렉토리에서 session persistence가 **켜진** 채 실행되므로,
-모든 노드가 `~/.claude/projects`에 평범한 claude 세션으로 나타납니다.
-[fleetops](https://github.com/jitokim/fleetops) — fleet 조종석 — 가 그
-transcript들을 관찰합니다. oh-my-graph는 executor이고, fleetops는
-대시보드입니다. observability 연동이 공짜로 따라옵니다.
-
 ## 개발
 
 ```sh
@@ -572,6 +565,9 @@ make fmt-check  # fails if any file is not gofmt-clean (the CI gate)
 실제 `claude`를 절대 스폰하지 않습니다. 실제 claude를 쓰는
 smoke(`make smoke`)는 **수동** 단계로, CI에는 절대 포함되지 않습니다 —
 그래서 CI는 무료로 유지됩니다.
+
+참고: [fleetops](https://github.com/jitokim/fleetops) — 같은
+`~/.claude/projects` transcript를 fleet 단위로 읽는 자매 프로젝트입니다.
 
 ## 라이선스
 

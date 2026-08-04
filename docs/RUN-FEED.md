@@ -1,11 +1,12 @@
 # The run feed — oh-my-graph's consumer contract
 
-oh-my-graph **executes**; it does not render. Everything an external consumer
-(canonically [fleetops](https://github.com/jitokim/fleetops)) needs to observe
-a run lives in that run's directory. oh-my-graph's own read-back commands —
-`runs list`, `show`, `watch`, and the `serve` web live view — are in-repo
-consumers of the very same files under the very same rules (via
-`runfeed.InFlight` and `runfeed.Follow`/`FollowWait`), with no side channel:
+`state.json` and `events.jsonl` in a run's own directory are the contract for
+run-feed views — the run's state and progress are never visible only from
+inside the process that ran it. oh-my-graph's own read-back commands — `runs
+list`, `show`, `watch`, and the `serve` web views — are in-repo consumers of
+the very same files under the very same rules (via `runfeed.InFlight` and
+`runfeed.Follow`/`FollowWait`), with no side channel. Any external consumer
+reads exactly what they read:
 
 ```
 ~/.oh-my-graph/runs/<run-id>/
@@ -18,6 +19,14 @@ consumers of the very same files under the very same rules (via
 
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
+
+One read reaches outside the run directory, and it is not part of this
+contract: `serve` tails a running node's own claude transcript from
+`~/.claude/projects` to stream its live output. That is a *supplement* to the
+feed, not a substitute — the transcript is claude's file, on claude's schema,
+and the run-feed events (`node_started`/`node_retried` publishing the
+attempt's session id) are what let any consumer locate it. Everything this
+document versions and guarantees is `state.json` and `events.jsonl`.
 
 `state.json` and `events.jsonl` together are a **stable consumer API**. The
 files answer complementary questions:

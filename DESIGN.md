@@ -2,7 +2,6 @@
 
 > A graph-native multi-agent orchestrator whose node runtime is your own
 > logged-in `claude` CLI (subscription auth), not the Anthropic API.
-> **It executes; [fleetops] observes the same `~/.claude/projects` transcripts.**
 
 ## Thesis
 Graph engineering (wiring specialized agents as a DAG) currently forces you onto
@@ -17,7 +16,7 @@ claude-squad); NOT a redistributed hosted product.
 Go 1.25+. This tool *is* a subprocess scheduler: `errgroup` + buffered-channel
 semaphore for the concurrency cap; `context` cancellation propagates to
 `exec.CommandContext` and kills in-flight children on halt-on-fail (awkward in
-Python). Single static binary (`go install`), pairs 1:1 with fleetops idioms.
+Python). Single static binary (`go install`).
 Deps: stdlib `os/exec`+`context`, `golang.org/x/sync/errgroup`, `gopkg.in/yaml.v3`,
 stdlib `flag` (cobra optional/later).
 
@@ -815,20 +814,24 @@ depending on its one optional argument:
   Watching four concurrent runs is one process, one port and one tab
   instead of four of each.
 
-It changes nothing about the visibility
-stance: oh-my-graph executes and does not render *for the fleet* — serve is
-a **consumer of the run-feed contract** (docs/RUN-FEED.md) in everything but
-one route, living
-in-repo, reading `state.json` for structure and tailing `events.jsonl` for
-progress through the same readers `runs list` and `watch` use
-(`runfeed.InFlight`, `runfeed.Follow` — serve via its `FollowWait`
-wait-for-create variant, since a viewer may connect before the stream
-exists). A stream schema newer than the
+The tool therefore renders its own runs: `serve` is the live view, `runs
+list` / `show` / `watch` the terminal ones.
+
+The structural rule is that rendering gets no privileged access to the
+engine: `serve` is a **consumer of the run-feed contract**
+(docs/RUN-FEED.md) in everything but its two gate routes, living in-repo
+but on the same footing as an out-of-repo consumer — reading `state.json`
+for structure and tailing `events.jsonl` for progress through the same
+readers `runs list` and `watch` use (`runfeed.InFlight`, `runfeed.Follow` —
+serve via its `FollowWait` wait-for-create variant, since a viewer may
+connect before the stream exists). That is also why the contract is
+documented and versioned rather than treated as an internal detail: the
+in-repo views hold themselves to it, so any other reader of a run directory
+gets the same guarantees. A stream schema newer than the
 binary takes `watch`'s posture, not `runs list`'s: one non-terminal
 warning frame, then keep forwarding (a list can skip one run; a live view
 going blank would make a routine schema bump fatal, which RUN-FEED.md's
-compatibility rule forbids). fleetops's fleet-wide role is unchanged;
-serve is one run, live, locally.
+compatibility rule forbids).
 
 **serve is deliberately no longer strictly read-only** (ADR 0014). Every
 route reads except two: `POST /api/gate/approve` and `POST /api/gate/reject`
@@ -1255,8 +1258,9 @@ ledger — so the summary never under-counts silently.
   destination next to `Recorder`, same seam pattern. `node_started` and
   `node_retried` publish the attempt's pre-assigned session id (see
   `--session-id` above), so a consumer can locate a running node's transcript
-  before the terminal event. This is the stable
-  consumer contract fleetops tails (oh-my-graph executes, never renders); the
+  before the terminal event. This is the stable consumer contract — the
+  in-repo views (`runs list`, `show`, `watch`, `serve`) read a run through it
+  like any external consumer would, which is what keeps it honest; the
   full contract, including how it versions alongside `state.json`, is
   docs/RUN-FEED.md.
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
@@ -1280,10 +1284,13 @@ claude in CI); artifact handoff (default) + session handoff (simple one→one);
 success_check (exit_zero + result_matches); RunLedger table + total cost;
 CLI `oh-my-graph run <graph.yaml> --input k=v` and `oh-my-graph auto "<goal>"`
 (planned graphs — see Auto mode); nodes run in real cwds with session
-persistence ON (fleetops-observable — do NOT pass --no-session-persistence).
+persistence ON (so every node stays an ordinary, readable claude session in
+`~/.claude/projects` — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
-any DSL; TUI/dashboard (fleetops's job); worktree auto-creation (opt-in
+any DSL; a terminal TUI (the web views shipped later — both the single-run
+live view and the multi-run dashboard; see "Web live view"); worktree
+auto-creation (opt-in
 per-node `worktree:` shipped later — see "Worktree isolation"); sub-call /
 cross-node budget accounting (per-node
 mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
@@ -1311,7 +1318,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
+internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
@@ -1324,8 +1331,8 @@ README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 haiku.txt", acceptEdits) → node `critique` (depends_on write, reads
 {{artifacts.write}}, plan). `mkdir -p /tmp/omg-smoke && oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke`.
 Proves: subscription auth (succeeds with API key unset/scrubbed), sequential edge +
-artifact handoff, JSON capture (2 session_ids + costs), RunLedger, and fleetops sees
-both sessions (free integration). CI stays free — real-claude smoke is a manual
+artifact handoff, JSON capture (2 session_ids + costs), RunLedger, and both
+sessions landing in `~/.claude/projects`. CI stays free — real-claude smoke is a manual
 `make smoke`, never in CI (all logic tested via FakeRunner).
 
 ## SECURITY / ToS stance (state honestly in SECURITY.md)
@@ -1373,9 +1380,6 @@ in "Auto mode" above.
    isolation").
 4. session-handoff + multi-parent fan-in conflict → validation rejects `handoff:
    session` on a node with 2+ session-parents; multi-parent must use artifact.
-
-Seam patterns to mirror: fleetops `internal/control/spawncmd.go` (package-var fn seam),
-`internal/control/control.go` (`runBounded`/`exec.CommandContext` bounded exec).
 
 ## Empirical verification of the tool ceiling
 `--help` prose is not ground truth. PR #5 already found the CLI's real deny/allow
