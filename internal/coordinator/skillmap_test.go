@@ -229,6 +229,61 @@ func TestPlan_LaterSkillDirShadowsEarlier(t *testing.T) {
 	if !strings.Contains(node.Prompt, "PROJECT VERSION") || strings.Contains(node.Prompt, "USER VERSION") {
 		t.Errorf("prompt must carry the later directory's body:\n%s", node.Prompt)
 	}
+
+	// Winning silently would be fine; losing silently is not. The count the
+	// printout shows is the size of the deduped set, so a collision lowers it
+	// with no explanation available anywhere unless the loser is named.
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want the scan that resolved the collision")
+	}
+	if plan.SkillScan.Found != 1 {
+		t.Errorf("Found = %d, want 1: two files, one surviving name", plan.SkillScan.Found)
+	}
+	want := filepath.Join(userDir, "pr-code-review", "SKILL.md")
+	if got := plan.SkillScan.Shadowed; len(got) != 1 || got[0] != want {
+		t.Errorf("Shadowed = %v, want the losing file [%s]", got, want)
+	}
+}
+
+// The collision available on a real machine today needs no second directory:
+// `name:` need not equal the directory it sits in, so two skill directories
+// under the one scanned tree can declare the same name, and then the winner is
+// only whichever os.ReadDir returned later. Deterministic, but not something a
+// user could ever infer from a count that quietly dropped by one.
+func TestPlan_SameNameInOneDirIsReportedShadowed(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "a-first", "name: pr-code-review", "FIRST VERSION")
+	writeSkillFile(t, dir, "b-second", "name: pr-code-review", "SECOND VERSION")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if plan.SkillScan == nil || plan.SkillScan.Found != 1 {
+		t.Fatalf("SkillScan = %+v, want one surviving definition", plan.SkillScan)
+	}
+	want := filepath.Join(dir, "a-first", "SKILL.md")
+	if got := plan.SkillScan.Shadowed; len(got) != 1 || got[0] != want {
+		t.Fatalf("Shadowed = %v, want the lexically earlier file [%s]", got, want)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if !strings.Contains(node.Prompt, "SECOND VERSION") {
+		t.Errorf("the reported winner must be the body that was actually inlined:\n%s", node.Prompt)
+	}
+}
+
+// No collision, nothing to report: the shadow line must not appear on the
+// normal plan, or it stops being a signal.
+func TestPlan_NoCollisionRecordsNoShadow(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the body")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want a recorded scan")
+	}
+	if len(plan.SkillScan.Shadowed) != 0 {
+		t.Errorf("Shadowed = %v, want empty when every skill name is unique", plan.SkillScan.Shadowed)
+	}
 }
 
 // Two skills matching the same node is ambiguity, and ambiguity is no mapping
@@ -485,6 +540,70 @@ func TestPlan_WithoutSkillMappingDisablesMapping(t *testing.T) {
 	}
 	if string(plan.Spec) != reviewSpec {
 		t.Errorf("spec must stay untouched with mapping off, got %s", plan.Spec)
+	}
+	if plan.SkillScan != nil {
+		t.Errorf("SkillScan = %+v, want nil: no scan happened, so the plan must not report one", plan.SkillScan)
+	}
+}
+
+// The scan record exists to make an EMPTY decision list readable, so it must
+// survive every case that produces one: a directory holding nothing usable, a
+// directory that is not there at all, and a corpus whose skills simply match
+// no node id. In all three the plan must still say WHERE it looked — that is
+// the whole difference between "your skills were read and none matched" and
+// "your skills were never looked at", which the mapping list alone cannot
+// express. A scan that finds nothing stays a silent no-mapping, never an
+// error: the plan below still succeeds.
+func TestPlan_SkillScanIsRecordedEvenWhenNothingMaps(t *testing.T) {
+	empty := t.TempDir()
+	missing := filepath.Join(empty, "does-not-exist")
+
+	t.Run("scanned directories yielding nothing", func(t *testing.T) {
+		plan := planWithSkills(t, WithSkillDirs(missing, empty))
+
+		if len(plan.SkillMappings) != 0 {
+			t.Fatalf("mappings = %+v, want none from an empty corpus", plan.SkillMappings)
+		}
+		if plan.SkillScan == nil {
+			t.Fatal("SkillScan = nil, but a scan ran: an empty corpus must still name where it looked")
+		}
+		if plan.SkillScan.Found != 0 {
+			t.Errorf("Found = %d, want 0", plan.SkillScan.Found)
+		}
+		if got := plan.SkillScan.Dirs; len(got) != 2 || got[0] != missing || got[1] != empty {
+			t.Errorf("Dirs = %v, want both scanned directories in order [%s %s]", got, missing, empty)
+		}
+	})
+
+	t.Run("a usable corpus that matches no node id", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkillFile(t, dir, "wowerpoint", "name: wowerpoint\ndescription: makes slide decks", "the body")
+
+		plan := planWithSkills(t, WithSkillDirs(dir))
+
+		if len(plan.SkillMappings) != 0 {
+			t.Fatalf("mappings = %+v, want none: no node id matches wowerpoint", plan.SkillMappings)
+		}
+		if plan.SkillScan == nil || plan.SkillScan.Found != 1 {
+			t.Fatalf("SkillScan = %+v, want a scan reporting the 1 skill it read", plan.SkillScan)
+		}
+	})
+}
+
+// The recorded Dirs must be the plan's own copy: a caller that mutates the
+// slice it passed to WithSkillDirs must not be able to rewrite what an
+// already-printed plan says it scanned.
+func TestPlan_SkillScanDirsAreNotAliased(t *testing.T) {
+	dirs := []string{t.TempDir()}
+	plan := planWithSkills(t, WithSkillDirs(dirs...))
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want a recorded scan")
+	}
+	recorded := plan.SkillScan.Dirs[0]
+
+	dirs[0] = "/somewhere/else"
+	if plan.SkillScan.Dirs[0] != recorded {
+		t.Errorf("Dirs[0] = %q after the caller's slice changed, want the recorded %q", plan.SkillScan.Dirs[0], recorded)
 	}
 }
 

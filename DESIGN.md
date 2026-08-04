@@ -1034,11 +1034,20 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--input k=v ...]` is the zero-config path; custom
+`oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...]` is the zero-config
+path; custom
 YAML stays the precise-control path. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
-Coordinator makes exactly that one call per `auto` run. (Interactive `chat`
+Coordinator makes exactly that one call per `auto` run. `--plan-only` stops
+the sequence immediately after the topology print, so that one call is all it
+makes and no node runs — the inspection path for the mappings and the ceiling,
+and deliberately NOT free the way `run --dry-run` is: there is no plan to
+inspect until one has been bought, which is why the stop line prints its cost
+and the paid-for spec is kept — in `$OMG_HOME/plans/<id>/graph.json`, never
+under `runs/`, since a directory there holding no `state.json` is what a
+broken run looks like to `runs list` and to `serve`'s newest-run resolution. It is rejected with `--max-cycles ≥ 2`, since
+every cycle after the first is planned from the previous cycle's run. (Interactive `chat`
 reuses the same Coordinator but adds a routing call per turn before planning;
 see "Ambient chat".) The planner asks
 claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
@@ -1076,7 +1085,9 @@ ADR 0012) — by a different mechanism, because measurement (claude 2.1.220)
 shows both model-side skill surfaces (the skills listing and the `Skill` tool)
 are absent under the planned-node argv, so a prompt reference would be dead
 text. Instead, trusted code scans `~/.claude/skills/*/SKILL.md` only (never a
-project directory — that surface is cut from v1), matches by the same
+project directory and never a plugin's — both surfaces are cut from v1, and
+the plan printout names them as out of scope on every run rather than mapping
+nothing in silence), matches by the same
 conservative name-token rule, and **appends the skill's body to the node's
 prompt** in a nonce-fenced, attributed block with `{{` neutralized until none
 remains (the prompt is a handoff template; skill prose must not become
@@ -1087,7 +1098,10 @@ skipped, never truncated; every decision prints one line — a mapping with the
 inlined size and a SHA-256 prefix, a refusal with its reason (there is no
 inlined text to measure or hash) — the full text lands in the saved
 `graph.json`, and
-`--no-skill-mapping` turns it off. Honest cost: a mapped node pays for the
+`--no-skill-mapping` turns it off. The decisions are bracketed by the scan
+that produced them (`Plan.SkillScan`: the directories read and the count),
+because a name-only rule leaves most node ids unmatched and an empty decision
+list would otherwise read the same as "mapping never ran". Honest cost: a mapped node pays for the
 body on every invocation, and inlining is unconditional where Claude Code's
 own `description`-driven activation is conditional — whether that helps or
 misfires is ADR 0012's required (a)/(b) probes, not assumed here.
@@ -1188,7 +1202,8 @@ Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 not restricted by either. The generated spec is
 saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
-Scheduler as any other graph.
+Scheduler as any other graph. A `--plan-only` plan is saved the same way but
+to `~/.oh-my-graph/plans/<id>/graph.json`, because it has no run to belong to.
 
 ### Goal cycles — `auto --max-cycles N` (ADR 0011)
 `auto` plans once by default; `--max-cycles N` (N ≥ 2) opts into the bounded

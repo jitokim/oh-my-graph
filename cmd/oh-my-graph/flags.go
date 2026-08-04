@@ -59,6 +59,7 @@ func (f *runFlags) parse(args []string) error {
 // positional argument, mirroring how `run` takes its graph path.
 type autoFlags struct {
 	goal             string
+	planOnly         bool
 	noAgentMapping   bool
 	noSkillMapping   bool
 	maxCycles        int
@@ -69,7 +70,12 @@ type autoFlags struct {
 }
 
 // newAutoFlags builds an autoFlags with its FlagSet configured. The goal is a
-// positional argument, so it is not registered as a flag. --no-agent-mapping
+// positional argument, so it is not registered as a flag. --plan-only is
+// `auto`'s counterpart to `run --dry-run` and is NOT the same bargain: a dry
+// run reads a file the user already wrote and costs nothing, while a plan has
+// to be bought before it can be shown. Its usage string says so, because a
+// flag whose name reads free next to a flag that is free would be read as
+// free. --no-agent-mapping
 // and --no-skill-mapping are `auto`'s own, not commonRunFlags members: `run`
 // executes a hand-written graph whose agent: fields and prompts are the user's
 // explicit choice, so there is nothing automatic to switch off there.
@@ -80,6 +86,7 @@ type autoFlags struct {
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
+	f.set.BoolVar(&f.planOnly, "plan-only", false, "plan the graph, print it with every agent/skill mapping and the tool ceiling, then exit without running any node — NOT free, unlike `run --dry-run`: it still pays for one real planner call")
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
 	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
 	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call")
@@ -117,6 +124,17 @@ func (f *autoFlags) parse(args []string) error {
 	// silently do nothing, which reads as a bound that isn't one.
 	if f.maxGoalBudgetUSD > 0 && f.maxCycles < 2 {
 		return fmt.Errorf("auto: --max-goal-budget-usd is a cross-cycle ceiling and needs --max-cycles of at least 2; a single-cycle run has no cycle boundary to check it at")
+	}
+	// The mirror of the check above, from the other side: --plan-only stops
+	// before execution, and every cycle after the first is planned FROM the
+	// previous cycle's execution and assessment (ADR 0011 §2). So a
+	// multi-cycle plan-only could only ever show cycle 1's plan — the later
+	// cycles it names do not exist yet and never will under this flag.
+	// Rejected at parse rather than silently showing one cycle, for the same
+	// reason as above: a bound that quietly does something other than what it
+	// says is worse than no bound.
+	if f.planOnly && f.maxCycles > 1 {
+		return fmt.Errorf("auto: --plan-only cannot be combined with --max-cycles %d; each cycle after the first is planned from the previous cycle's run, so there is nothing to show ahead of time beyond cycle 1", f.maxCycles)
 	}
 	return nil
 }

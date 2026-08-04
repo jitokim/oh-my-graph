@@ -66,7 +66,7 @@ func runPlanAndExecute(t *testing.T, fake *runner.FakeRunner, cycles goalCycleOp
 	stdout := captureStdout(t, func() {
 		coord := coordinator.New(fake)
 		err = planAndExecute(context.Background(), &out, coord, fake, commonRunFlags{inputs: inputFlag{}},
-			"add a README section", cycles, nil, web)
+			"add a README section", cycles, false, nil, web)
 	})
 	return out.String() + stdout, err
 }
@@ -552,7 +552,7 @@ func TestPlanAndExecute_DeclinedLaterCycleIsTheUnmetGoalExit(t *testing.T) {
 	captureStdout(t, func() {
 		coord := coordinator.New(fake)
 		err = planAndExecute(context.Background(), &out, coord, fake, commonRunFlags{inputs: inputFlag{}},
-			"add a README section", goalCycleOptions{maxCycles: 3}, confirm, nil)
+			"add a README section", goalCycleOptions{maxCycles: 3}, false, confirm, nil)
 	})
 	if err == nil {
 		t.Fatal("a declined cycle-2 plan must apply the unmet-goal exit, not exit 0")

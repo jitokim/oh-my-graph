@@ -70,10 +70,21 @@ import (
 )
 
 // DefaultSkillDirs is where the CLI has the coordinator scan for skill
-// definitions: the user's ~/.claude/skills only. The project directory
-// (<cwd>/.claude/skills) is deliberately absent — it is 100% of the genuinely
-// new injection surface (a cloned repository shipping instructions into
-// unattended dontAsk nodes) for 0% measured yield (ADR 0012, Alternatives).
+// definitions: the user's ~/.claude/skills only. Two other places a skill can
+// live are deliberately absent, both cut in ADR 0012's Alternatives and both
+// disclosed in the plan printout (see SkillScan) rather than left as silence:
+//
+//   - <cwd>/.claude/skills — 100% of the genuinely new injection surface (a
+//     cloned repository shipping instructions into unattended dontAsk nodes)
+//     for 0% measured yield;
+//   - ~/.claude/plugins/... — plugin-provided skills, deferred: measured on
+//     the 2026-08-04 corpus (20 live plugin skills against the 32 node ids in
+//     the shipped graphs/) they add ZERO mappings, and the same ADR's standard
+//     for cutting the project scan was "new surface for 0% measured yield".
+//     Scanning them is a decision to make with a number, once the yield is
+//     observable; the conditions it would have to meet are recorded in the
+//     ADR.
+//
 // A home that cannot be resolved just drops out (the scan is silent about
 // missing directories anyway).
 func DefaultSkillDirs() []string {
@@ -96,6 +107,33 @@ const maxInlinedSkillBytes = 16 * 1024
 // 86.6 KiB outlier included); only a pathological file is refused here, and
 // silently, like any other file the scan cannot use.
 const maxSkillFileBytes = 1 << 20
+
+// SkillScan records that a skill scan HAPPENED and over what — the datum the
+// plan printout needs to tell "your skills were read and none matched" apart
+// from "your skills were never looked at", which are indistinguishable when
+// the only output is a list of decisions and the list is empty. Silence is the
+// common case (measured: 22 of 32 shipped node ids find no candidate), so
+// silence must not also be the failure display.
+//
+// Dirs is what was scanned, in scan order — LATER WINS in scanSkillDirs, so a
+// directory further down the list shadows an earlier one holding the same
+// skill name, matching how DefaultAgentDirs describes its own order. Found is
+// how many usable skill definitions came back. Found 0 with a non-empty Dirs
+// is the diagnosable case — the directory is named, so a missing tree, an
+// empty one, or a corpus that lives somewhere the scan does not go (a plugin,
+// a project checkout) is one printed line away instead of a guess.
+//
+// Shadowed is the path of every definition that lost a name collision, in the
+// order the scan met them. It exists because Found is the size of the map
+// AFTER dedup: two skill directories declaring `name: babysit` are one
+// definition here, so without this the count silently disagrees with the
+// number of directories on disk and nothing anywhere says which file was
+// dropped. Empty is the normal case.
+type SkillScan struct {
+	Dirs     []string
+	Found    int
+	Shadowed []string
+}
 
 // SkillMapping records one skill auto-mapping decision for the plan printout:
 // a mapping made (SkippedReason empty; InlinedBytes and SHA256 describe the
@@ -138,7 +176,7 @@ type skillDef struct {
 }
 
 // scanSkillDirs reads every <dir>/*/SKILL.md under dirs, in order, later
-// directories overwriting earlier ones on a name collision (mirroring
+// definitions overwriting earlier ones on a name collision (mirroring
 // scanAgentDirs; DefaultSkillDirs passes one directory, but the precedence
 // shape is kept so tests and a future measured project scan need no new
 // mechanism). Every failure — a missing directory, an unreadable file,
@@ -146,13 +184,20 @@ type skillDef struct {
 // empty body — skips just that much and stays silent: a broken skill file
 // must not break `auto`.
 //
+// A collision is NOT one of those silences: the losing file's path is returned
+// alongside the map, because losing is invisible from the map itself and it
+// moves the count the printout shows. Two same-named skills inside a single
+// directory tree collide too — `name:` need not equal the directory name — and
+// there the winner is just whichever os.ReadDir returned later.
+//
 // Directory-ness is decided by os.Stat, not entry.IsDir(): os.ReadDir does not
 // follow symlinks, so a `~/.claude/skills/<name>` symlinked out to a dotfiles
 // checkout — how skills are commonly kept under version control — would
 // otherwise be invisible here while the equivalent symlinked agent .md already
 // scans fine (scanAgentDirs filters on suffix, not on IsDir).
-func scanSkillDirs(dirs []string) map[string]skillDef {
+func scanSkillDirs(dirs []string) (map[string]skillDef, []string) {
 	skills := make(map[string]skillDef)
+	var shadowed []string
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -167,10 +212,13 @@ func scanSkillDirs(dirs []string) map[string]skillDef {
 			if !ok {
 				continue
 			}
+			if prev, clash := skills[def.Name]; clash {
+				shadowed = append(shadowed, prev.path)
+			}
 			skills[def.Name] = def
 		}
 	}
-	return skills
+	return skills, shadowed
 }
 
 // parseSkillFile extracts the YAML frontmatter and the body of one SKILL.md.
@@ -337,7 +385,11 @@ func (c *Coordinator) applySkillMapping(plan *Plan) error {
 	if c.skillMappingOff || len(c.skillDirs) == 0 {
 		return nil
 	}
-	skills := scanSkillDirs(c.skillDirs)
+	skills, shadowed := scanSkillDirs(c.skillDirs)
+	// Recorded BEFORE the empty-corpus return, because the empty corpus is
+	// exactly the case the record exists for: a scan that found nothing must
+	// still be able to say where it looked.
+	plan.SkillScan = &SkillScan{Dirs: append([]string(nil), c.skillDirs...), Found: len(skills), Shadowed: shadowed}
 	if len(skills) == 0 {
 		return nil
 	}

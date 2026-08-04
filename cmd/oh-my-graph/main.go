@@ -7,7 +7,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-//	oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
 //	oh-my-graph runs list
@@ -89,7 +89,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf(`usage: oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph auto "<goal>" [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
        oh-my-graph runs list
@@ -209,6 +209,18 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 // into bypassPermissions (the coordinator rejects them), so no warning pass is
 // needed here.
 func runAuto(args []string) error {
+	// One of the three sites (with runGraph and runResume) injecting the real
+	// browser launcher (browser.ExecOpener, the fourth exec seam — ADR 0006).
+	return runAutoWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
+}
+
+// runAutoWith is runAuto with its seams injectable, mirroring runGraphWith and
+// for the same reason: --plan-only's whole claim is that no node runs, and the
+// only way to prove that is through the real argv path with a FakeRunner that
+// must see the planner call and nothing else. The stdout parameter is what
+// gates the live view (a non-terminal one leaves it off), so a test needs no
+// real spawn on that seam either.
+func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
 	flags := newAutoFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -217,13 +229,11 @@ func runAuto(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nodeRunner := runner.NewClaudeCLIRunner()
-	// Same live-view gate as `run` and `resume`, the other two sites injecting
-	// the real ExecOpener.
-	coord := coordinator.New(nodeRunner, mappingOptions(flags.noAgentMapping, flags.noSkillMapping)...)
+	// Same live-view gate as `run` and `resume`.
+	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping)...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
-		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, nil,
-		webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
+		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
+		webOpener(flags.noWeb, stdout, opener))
 }
 
 // mappingOptions wires the two auto-mappings for a production Coordinator:
@@ -232,7 +242,17 @@ func runAuto(args []string) error {
 // ADR 0012), each independently switchable off by its flag. This is the only
 // place the real filesystem locations enter the coordinator — tests construct
 // theirs with temp dirs instead.
-func mappingOptions(noAgentMapping, noSkillMapping bool) []coordinator.Option {
+//
+// w takes the one thing this function knows and the plan printout cannot: a
+// coordinator built with ZERO skill directories never scans, so it records no
+// SkillScan and noteSkillMappings prints nothing — correct for the library
+// default (coordinator.New with no dirs) and for --no-skill-mapping, but
+// silence here would mean skill mapping is ON, maps nothing, and says nothing
+// at all. DefaultSkillDirs returns empty in exactly one case, an unresolvable
+// home directory (no $HOME: containers, launchd, some CI), and that is a
+// misconfiguration nobody chose — the one silence this disclosure exists to
+// remove. Said here rather than by giving every library caller a non-nil scan.
+func mappingOptions(w io.Writer, noAgentMapping, noSkillMapping bool) []coordinator.Option {
 	var opts []coordinator.Option
 	if noAgentMapping {
 		opts = append(opts, coordinator.WithoutAgentMapping())
@@ -242,7 +262,15 @@ func mappingOptions(noAgentMapping, noSkillMapping bool) []coordinator.Option {
 	if noSkillMapping {
 		opts = append(opts, coordinator.WithoutSkillMapping())
 	} else {
-		opts = append(opts, coordinator.WithSkillDirs(coordinator.DefaultSkillDirs()...))
+		skillDirs := coordinator.DefaultSkillDirs()
+		if len(skillDirs) == 0 {
+			fmt.Fprint(w,
+				"skill mapping is on, but no skill directory could be resolved (your home directory is\n"+
+					"unset), so nothing will be scanned and no skill can map. Set HOME, or pass\n"+
+					"--no-skill-mapping to say so on purpose.\n",
+			)
+		}
+		opts = append(opts, coordinator.WithSkillDirs(skillDirs...))
 	}
 	return opts
 }
@@ -275,14 +303,33 @@ var singleCycle = goalCycleOptions{maxCycles: 1}
 // passes its TTY-gated decision, chat always passes nil — a chat turn's run
 // stays un-wired (ADR 0006).
 //
+// planOnly is `auto --plan-only`: the same sequence up to and including the
+// topology print, then a stop — nothing is wired, no node runs. It sits HERE,
+// as an early return inside the one sequence, rather than in a parallel
+// plan-and-print function, because the flag's entire value is that what it
+// shows is what a real run would show; a second implementation of the print
+// would be free to drift from this one and would take a mapping line with it
+// when it did. The planner call above it is NOT skipped and cannot be: unlike
+// `run --dry-run`, which reads a file, there is no plan to inspect until one
+// has been bought. The saved spec survives the stop for the same reason —
+// it was paid for — but it is saved under plans/, not runs/ (see the branch
+// below), because nothing about it ran.
+//
 // cycles decides whether the sequence runs once (maxCycles 1 — this function
 // body, exactly today's) or as the bounded goal loop of ADR 0011 (maxCycles
 // ≥ 2 — planAndExecuteCycles, which re-enters coordinator.Plan per cycle and
 // runs this same save→print→confirm→execute sequence as the loop's
 // ExecuteCycle callback). It is an explicit parameter of the call so that
 // planAndExecute stays the sequence's one home for both shapes.
-func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, cycles goalCycleOptions, confirm func() (bool, error), web browser.Opener) error {
+func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coordinator, nodeRunner runner.NodeRunner, flags commonRunFlags, goal string, cycles goalCycleOptions, planOnly bool, confirm func() (bool, error), web browser.Opener) error {
 	if cycles.maxCycles > 1 {
+		if planOnly {
+			// Unreachable from the CLI — autoFlags.parse rejects the
+			// combination — and loud rather than silent so that a future
+			// caller cannot get an executing run out of a flag that promises
+			// not to execute.
+			return fmt.Errorf("plan-only is not defined for a %d-cycle goal loop: only cycle 1 can be planned ahead of any execution", cycles.maxCycles)
+		}
 		return planAndExecuteCycles(ctx, out, coord, nodeRunner, flags, goal, cycles, confirm, web)
 	}
 
@@ -293,11 +340,31 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	}
 
 	runID := newRunID()
-	specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
+	// A plan-only preview keeps its paid-for spec OUTSIDE runs/. A directory
+	// under runs/ holding a graph.json and nothing else is, to every reader of
+	// that tree, a run whose state.json never appeared: `runs list` reports it
+	// through the same WARNING+skip channel as a corrupt snapshot, and `serve`
+	// with no --run resolves the newest directory and would show the preview
+	// instead of your last actual run. A preview never ran, so it is not a run.
+	specDir := runDirFor(runID)
+	if planOnly {
+		specDir = planDirFor(runID)
+	}
+	specPath, err := saveGeneratedSpec(specDir, plan.Spec)
 	if err != nil {
 		return err
 	}
 	printPlan(out, plan, specPath)
+
+	if planOnly {
+		fmt.Fprintf(out,
+			"plan only: no node was executed. The planner call above was still paid for ($%.4f) —\n"+
+				"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
+				"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
+				"about it. Run it with `oh-my-graph run %s`.\n",
+			plan.CostUSD, specPath, specPath)
+		return nil
+	}
 
 	if confirm != nil {
 		ok, err := confirm()
@@ -490,20 +557,26 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
 
-// saveGeneratedSpec persists the planner's JSON spec into the run directory so
-// an auto run stays inspectable and repeatable: JSON is valid YAML, so the
-// saved file can be hand-edited and re-run directly with `oh-my-graph run
-// <path>` — it is indented before writing so that editing is practical.
-func saveGeneratedSpec(runDir string, spec []byte) (string, error) {
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return "", fmt.Errorf("create run dir %q: %w", runDir, err)
+// saveGeneratedSpec persists the planner's JSON spec into dir — the run's own
+// directory for a run, plans/<id> for a `--plan-only` preview — so an auto plan
+// stays inspectable and repeatable: JSON is valid YAML, so the saved file can
+// be hand-edited and re-run directly with `oh-my-graph run <path>` — it is
+// indented before writing so that editing is practical.
+//
+// It is written owner-only (0o700 / 0o600) because a spec is not merely a
+// topology: skill mapping inlines the body of a local SKILL.md into the node
+// prompts it carries, so the saved file can hold the user's own private
+// instructions verbatim.
+func saveGeneratedSpec(dir string, spec []byte) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create spec dir %q: %w", dir, err)
 	}
 	var indented bytes.Buffer
 	if err := json.Indent(&indented, spec, "", "  "); err == nil {
 		spec = indented.Bytes()
 	}
-	path := filepath.Join(runDir, "graph.json")
-	if err := os.WriteFile(path, spec, 0o644); err != nil {
+	path := filepath.Join(dir, "graph.json")
+	if err := os.WriteFile(path, spec, 0o600); err != nil {
 		return "", fmt.Errorf("save generated graph spec: %w", err)
 	}
 	return path, nil
@@ -536,7 +609,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		fmt.Fprintln(w, line)
 	}
 	noteAgentMappings(w, plan.AgentMappings)
-	noteSkillMappings(w, plan.SkillMappings)
+	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
 	noteCeiling(w)
 	fmt.Fprintln(w)
 }
@@ -571,8 +644,30 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 // hash prefix, target node and description — the printed hash is the integrity
 // link to the full inlined text in the saved spec file, which printPlan already
 // names — and a refused candidate's reason (oversize body, agent-mapped node).
-// Silence means no candidate matched and nothing changed.
-func noteSkillMappings(w io.Writer, mappings []coordinator.SkillMapping) {
+//
+// The decisions are bracketed by the SCAN they came out of, because the
+// decision list alone cannot say why it is empty. No-match is the majority
+// outcome of a name-only rule (measured: 22 of the 32 shipped node ids), so an
+// empty list used to print nothing at all and read identically to "skill
+// mapping never ran" — and identically, too, to the case a user actually hits:
+// a corpus that lives somewhere this scan deliberately does not go. Naming the
+// scanned directories and the count turns "I have skills but see none" into
+// one readable line, and the exclusion note states the limit instead of
+// letting it look like a match failure. A shadowed definition gets its own
+// line for the same reason: the count above it is the size of the deduped set,
+// so a collision quietly lowers it, and nothing else would ever name the file
+// that lost. scan is nil only when no scan happened (--no-skill-mapping, or no
+// configured directories), and then this prints nothing: the user who turned
+// it off does not need to be told twice — and the one case where nobody turned
+// it off, an unresolvable home, is disclosed by mappingOptions instead.
+func noteSkillMappings(w io.Writer, scan *coordinator.SkillScan, mappings []coordinator.SkillMapping) {
+	if scan == nil {
+		return
+	}
+	fmt.Fprintf(w, "  skill scan: %d skill(s) from %s\n", scan.Found, strings.Join(scan.Dirs, ", "))
+	for _, path := range scan.Shadowed {
+		fmt.Fprintf(w, "  skill shadowed: %s — another definition declares the same name and wins\n", path)
+	}
 	applied := false
 	for _, m := range mappings {
 		if m.SkippedReason != "" {
@@ -589,6 +684,11 @@ func noteSkillMappings(w io.Writer, mappings []coordinator.SkillMapping) {
 				"  in the saved spec file). Pass --no-skill-mapping to turn this off.\n",
 		)
 	}
+	fmt.Fprint(w,
+		"  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).\n"+
+			"  Both are out of scope in v1 (ADR 0012), so a skill you installed through a plugin maps\n"+
+			"  nothing here — that is a stated limit, not a failed match.\n",
+	)
 }
 
 // noteCeiling states what running this plan actually does to the machine. It
@@ -674,6 +774,17 @@ func runsRoot() string {
 // generated graph spec.
 func runDirFor(runID string) string {
 	return filepath.Join(runsRoot(), runID)
+}
+
+// planDirFor is where a plan that was bought but never executed keeps its spec
+// — `auto --plan-only`. It is deliberately NOT under runsRoot(): `runs list`
+// and `serve` enumerate that tree and read a directory with no state.json as a
+// broken run, so a preview left there would be reported as damage and, being
+// the newest directory, would become the run `serve` opens by default. Its own
+// tree keeps the two kinds of artifact — what ran, and what was only planned —
+// apart for every reader, without any of them needing a special case.
+func planDirFor(planID string) string {
+	return filepath.Join(omgHome(), "plans", planID)
 }
 
 // worktreeManagerFor builds one run's worktree manager: checkouts created off

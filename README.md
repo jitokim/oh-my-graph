@@ -130,6 +130,9 @@ oh-my-graph init
 # Zero config — describe the goal and let auto plan the graph:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# See what that would do first — prints the plan, runs no node:
+oh-my-graph auto "lint this repo and summarize the findings" --plan-only
+
 # Or run a shipped graph — the cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
@@ -155,7 +158,14 @@ runs, and the generated spec is saved to
 `~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
 hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 `permission_mode: bypassPermissions`; custom YAML remains the path for precise
-control. Its knobs — goal cycles, agent mapping, skill mapping — are in
+control.
+
+Want to read that plan *before* anything executes? `--plan-only` prints it —
+the graph, every agent and skill mapping, the tool ceiling — and stops without
+running a node. Unlike `run --dry-run` it is not free: there is no plan to show
+until the one planner call has been made and paid for, so it prints what that
+cost and keeps the plan it bought. Its knobs — goal cycles, agent mapping,
+skill mapping, and what `--plan-only` does with the plan afterwards — are in
 [`auto` in depth](#auto-in-depth) below.
 
 While a graph runs you'll see a live line per node — `▶ write  running…`, then
@@ -327,7 +337,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for the one planner call — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
@@ -393,8 +403,21 @@ anything runs, and `--no-agent-mapping` turns it off. The trade, stated
 up front: a mapped node loads your settings so the agent can resolve, instead
 of running fully settings-isolated — its declared tool list still binds.
 
-Your Claude Code skills (`~/.claude/skills` only — never a project directory)
-reach `auto` runs too, by a blunter mechanism stated plainly: a planned node
+Want to see all of that before you let it run? `auto --plan-only` plans, prints
+the graph with every agent and skill mapping and the tool ceiling, and stops —
+no node is executed. It is the `auto` counterpart to `run --dry-run` with one
+honest difference: a dry run reads a file you already wrote and costs nothing,
+while there is no plan to inspect until one has been bought, so `--plan-only`
+still pays for the single planner call and prints what it cost. The plan it
+paid for is kept — under `~/.oh-my-graph/plans/<id>/graph.json`, not in
+`runs/`, because nothing ran: a preview is not a run, so `runs list` and
+`serve` never see it. Run it later with `oh-my-graph run <that path>`. It
+previews one cycle by definition — `--plan-only` with `--max-cycles` above 1 is
+rejected at parse, since every cycle after the first is planned from the
+previous cycle's run and so does not exist yet to be shown.
+
+Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, by a
+blunter mechanism stated plainly: a planned node
 cannot see or invoke skills at all (measured), so when a node's id clearly
 matches a skill's name, the skill's SKILL.md body is **copied into that node's
 prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
@@ -404,7 +427,19 @@ the skill only when relevant. Every inlining prints its size and a SHA-256
 prefix before the run, the exact text — from which the full hash is
 recomputable — is snapshotted into the saved `graph.json`
 (later skill edits don't reach an already-planned run), and
-`--no-skill-mapping` turns it off. [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
+`--no-skill-mapping` turns it off.
+
+Two places a skill can live are **out of scope** and map nothing: skills
+provided by a **plugin** (`~/.claude/plugins/...`) and **project** skills
+(`./.claude/skills`). Both are stated limits, not failed matches, so the plan
+printout says so on every run — `skill scan: 35 skill(s) from
+/home/you/.claude/skills` followed by the not-scanned note — and a scan that
+finds nothing still names the directory it looked in, so "I have skills but
+`auto` sees none" is one line to diagnose rather than a guess. If your skills
+came from a plugin, they will not map today; see
+[ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md) for the
+measurement behind that and what would change it.
+[docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
 walks through the plan output, the tool ceiling, and the live node feed.
 
 ### Handoff — what a child inherits
@@ -486,7 +521,10 @@ relocate the base) — the same directory no matter where you invoke the tool
 from: a versioned snapshot (`state.json`) and an append-only event stream
 (`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
 any external consumer can tail. The layout is a documented, stable
-contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md).
+contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md). An `auto --plan-only`
+preview is deliberately not in that tree: nothing ran, so its spec is kept
+beside it at `~/.oh-my-graph/plans/<plan-id>/graph.json` and no reader of
+`runs/` ever has to account for it.
 
 Nodes also run with session persistence **on**, so every node is an ordinary
 claude session in `~/.claude/projects` that any tool reading those transcripts

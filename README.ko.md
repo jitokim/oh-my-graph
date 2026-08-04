@@ -145,6 +145,9 @@ oh-my-graph init
 # Zero config — describe the goal and let auto plan the graph:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# See what that would do first — prints the plan, runs no node:
+oh-my-graph auto "lint this repo and summarize the findings" --plan-only
+
 # Or run a shipped graph — the cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
@@ -169,8 +172,14 @@ subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOK
 YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 있습니다.
 플래너가 만든 노드는 `permission_mode: bypassPermissions`를 절대 쓸 수
 없습니다; 정밀한 제어가 필요하다면 여전히 커스텀 YAML이 그 경로입니다.
-`auto`의 손잡이들 — goal cycle, 에이전트 매핑, 스킬 매핑 — 은 아래
-[`auto` 심화](#auto-in-depth)에 있습니다.
+
+실행되기 *전에* 그 플랜을 먼저 읽고 싶다면? `--plan-only`가 플랜을
+출력하고 — 그래프, 모든 에이전트/스킬 매핑, tool ceiling — 노드를 하나도
+실행하지 않고 멈춥니다. `run --dry-run`과 달리 공짜는 아닙니다: 플래너 호출
+한 번이 이뤄지고 그 비용이 지불되기 전에는 보여줄 플랜 자체가 없으므로,
+그 금액을 출력하고 사들인 플랜을 그대로 보관합니다. `auto`의 손잡이들 —
+goal cycle, 에이전트 매핑, 스킬 매핑, 그리고 `--plan-only`가 그 플랜을
+이후에 어떻게 다루는지 — 은 아래 [`auto` 심화](#auto-in-depth)에 있습니다.
 
 그래프가 실행되는 동안에는 노드별 라이브 라인이 보입니다 —
 `▶ write  running…`, 이어서 `✓ write  PASS  $0.0091  4.2s` — 멀티 노드 실행
@@ -349,7 +358,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
-| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
+| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(플래너 호출 한 번의 비용은 그대로 듭니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |
@@ -414,8 +423,22 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 밝혀 둡니다: 매핑된 노드는 에이전트를 해석하기 위해 완전한 설정 격리
 대신 사용자의 설정을 로드합니다 — 선언된 도구 목록은 여전히 강제됩니다.
 
-당신의 Claude Code 스킬(`~/.claude/skills`만 — 프로젝트 디렉토리는 절대
-아님)도 `auto` run에 닿습니다. 다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
+실행시키기 전에 이 모든 걸 먼저 보고 싶다면, `auto --plan-only`가 플랜을
+설계해 그래프·모든 에이전트/스킬 매핑·tool ceiling을 출력한 뒤 멈춥니다 —
+노드는 하나도 실행되지 않습니다. `run --dry-run`의 `auto` 짝이지만 한 가지는
+정직하게 다릅니다: dry run은 이미 당신이 쓴 파일을 읽으므로 공짜인 반면,
+플랜은 사기 전에는 볼 것 자체가 없으므로 `--plan-only`도 플래너 호출 한 번의
+비용을 그대로 지불하고 그 금액을 출력합니다. 돈을 낸 그 플랜은 그대로
+보관되지만 `runs/`가 아니라 `~/.oh-my-graph/plans/<id>/graph.json`에
+남습니다 — 아무것도 실행되지 않았으니 run이 아니고, 따라서 `runs list`나
+`serve`에는 절대 잡히지 않습니다. 나중에 `oh-my-graph run <그 경로>`로
+실행할 수 있습니다. 정의상 미리 보여주는 건 cycle 하나입니다 —
+`--max-cycles`가 2 이상인 `--plan-only`는 파싱 단계에서 거부됩니다. 첫
+cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므로, 미리 보여줄
+것 자체가 아직 존재하지 않기 때문입니다.
+
+당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다.
+다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
 플랜된 노드는 스킬을 보거나 호출할 수 없으므로(측정으로 확인), 노드 id가
 스킬 이름과 명확히 일치하면 그 스킬의 SKILL.md 본문이 플랜 시점에 **그
 노드의 프롬프트로 복사됩니다** — 펜스로 감싸고, 출처를 밝히고, 16 KiB로
@@ -425,6 +448,17 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 출력하고, 정확한 텍스트는 — 거기서 전체 해시를 다시 계산할 수 있습니다 —
 저장된 `graph.json`에 스냅샷으로 남으며(이후의 스킬 수정은 이미 플랜된 run에
 닿지 않습니다), `--no-skill-mapping`으로 끌 수 있습니다.
+
+스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 아무것도 매핑하지
+않습니다: **플러그인**이 제공하는 스킬(`~/.claude/plugins/...`)과
+**프로젝트** 스킬(`./.claude/skills`)입니다. 둘 다 매칭 실패가 아니라 명시된
+한계이므로, 플랜 출력이 매 run마다 그렇게 말합니다 — `skill scan: 35 skill(s)
+from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 그리고
+아무것도 못 찾은 스캔도 자기가 들여다본 디렉토리를 반드시 이름으로 밝히므로,
+"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다. 스킬이
+플러그인에서 왔다면 오늘은 매핑되지 않습니다. 그 판단의 근거가 된 측정과
+무엇이 바뀌어야 하는지는
+[ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md)에 있습니다.
 [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)에서
 플랜 출력, tool ceiling, 라이브 노드 피드를 차례로 다룹니다.
 
@@ -515,7 +549,10 @@ schema 버전이 명시된 snapshot(`state.json`)과 append-only 이벤트
 스트림(`events.jsonl`)이 저장되고, `runs list` / `show` / `watch` /
 `serve`가 이를 다시 읽으며 외부 consumer도 tail 할 수 있습니다.
 이 레이아웃은 문서화된 안정적 계약입니다 —
-[docs/RUN-FEED.md](docs/RUN-FEED.md) 참고.
+[docs/RUN-FEED.md](docs/RUN-FEED.md) 참고. `auto --plan-only` 프리뷰는
+의도적으로 이 트리에 들어가지 않습니다: 아무것도 실행되지 않았으므로 그
+스펙은 옆자리인 `~/.oh-my-graph/plans/<plan-id>/graph.json`에 보관되고,
+`runs/`를 읽는 어떤 소비자도 이를 신경 쓸 필요가 없습니다.
 
 또한 노드는 session persistence가 **켜진** 채 실행되므로, 모든 노드가
 `~/.claude/projects`에 평범한 claude 세션으로 남고 그 transcript를 읽는

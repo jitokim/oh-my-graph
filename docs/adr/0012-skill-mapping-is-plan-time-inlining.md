@@ -6,7 +6,10 @@
   recalibrated against the measured corpus, nonce fence + hash provenance,
   `{{` neutralization, `allowed-tools` ceiling-skip cut, user-dir-only scan,
   agent-mapped nodes excluded, disclosure claims corrected to what the code
-  does)
+  does); amended 2026-08-04 — plugin-provided skills measured and **deferred**,
+  with the scan's scope now disclosed in the plan printout instead of read as
+  silence (§6, Alternatives). The decision itself is unchanged: the scan is
+  still `~/.claude/skills` only.
 - Sibling of: the subagent auto-mapping design
   (`internal/coordinator/agentmap.go`, [#81]; ADR 0004 §4 update). This ADR
   reuses its matching rule, its disclosure-and-opt-out shape, and its
@@ -306,7 +309,62 @@ displays inlined text; it does not, and this ADR does not depend on it.)
 Every decision — mapping made, candidate refused (size, agent-mapped node) —
 is recorded on the Plan (`SkillMappings`) and printed before execution. An
 ambiguous match is not a decision but silence (§2): no entry, no line —
-exactly how agent mapping records it. Opt out with `--no-skill-mapping` (mirroring
+exactly how agent mapping records it.
+
+**Amendment, 2026-08-04 — the decision list is bracketed by the scan.** The
+paragraph above specifies what a *decision* prints and is silent about the
+case that turns out to be the majority one. Re-measured against the shipped
+`graphs/` (32 node ids now, corpus n=35): 7 map, 3 are ambiguous, **22 find no
+candidate at all**. A run with zero mappings therefore printed nothing — and
+"scanned your skills, none matched" is indistinguishable in that output from
+"never scanned anything", from "your `~/.claude/skills` is missing", and from
+the case a real user hits, a corpus that lives somewhere this scan
+deliberately does not go (a plugin). The user's only way to tell the
+difference was to pay for a plan AND let the graph run, since the mapping
+lines are reachable only through `printPlan`.
+
+So a scan that ran now records itself on the Plan (`SkillScan`: the
+directories read in scan order — later wins, so a later directory shadows an
+earlier one of the same name — the count of usable definitions, and the path
+of any definition that lost a name collision) and prints, above its decisions:
+
+```text
+  skill scan: 35 skill(s) from /home/you/.claude/skills
+  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).
+  Both are out of scope in v1 (ADR 0012), so a skill you installed through a plugin maps
+  nothing here — that is a stated limit, not a failed match.
+```
+
+`Found: 0` is the diagnosable case and the reason the count is printed rather
+than implied: the directory is named, so a missing tree, an empty one, or a
+corpus in an unscanned location is one line to read instead of a guess.
+
+The count is also the reason a **collision** gets its own line:
+
+```text
+  skill shadowed: /home/you/.claude/skills/old-babysit/SKILL.md — another definition declares the same name and wins
+```
+
+`Found` is the size of the deduped set, so two definitions sharing a `name:`
+print as one and take the count down with them — "35 skill(s)" against 36
+skill directories, with no explanation available anywhere. This is not the
+future plugin-namespace collision that condition (2) below addresses; it is
+available today inside a single `~/.claude/skills`, because `name:` need not
+equal the directory it sits in, and there the winner is only whichever
+`os.ReadDir` returned later. Deterministic is not the same as tellable.
+Nothing about the failure posture changes — a scan that finds nothing is still
+a silent no-mapping and never an error, and the note prints whether or not
+anything mapped. The line is absent only when no scan happened at all
+(`--no-skill-mapping`, or a Coordinator built with no skill directories):
+someone who turned the mechanism off is not told about it twice.
+
+`auto --plan-only` (same date) makes that printout reachable without executing
+anything: it plans, prints exactly this, and stops. It is not free the way
+`run --dry-run` is — there is no plan to inspect until one has been bought —
+so it prints the planner call's cost and keeps the spec it paid for, under
+`$OMG_HOME/plans/<id>/` rather than `runs/`: nothing ran, and a directory in
+`runs/` with no `state.json` reads to `runs list` and `serve` as a broken run.
+Opt out with `--no-skill-mapping` (mirroring
 `--no-agent-mapping`, including on `chat`). Scan failures — missing
 directories, unreadable files, broken frontmatter, a blank name — are silent
 no-mapping, never an error: zero-config stays zero-config. Directories are
@@ -416,7 +474,7 @@ prior E-number):
 - The user's skill investment reaches `auto` runs, zero-config, with the
   same explainable conservatism as agent mapping: name-token match,
   ambiguity is silence, every decision printed, one flag to turn it off.
-  Measured against this machine's corpus and the shipped `graphs/`, 7 of 28
+  Measured against this machine's corpus and the shipped `graphs/`, 7 of 32
   node ids map under the 16 KiB cap. Whether the inlined text actually
   *improves* those nodes is measurements (a)/(b) — required before
   Accepted, not assumed here.
@@ -446,7 +504,7 @@ prior E-number):
   task; an inlined body applies always. The misfire cost is measurement (b).
 - Name-only matching misses semantically relevant skills (`coding-rules`
   will never map onto a node named `implement-api`) and goes silent on
-  ambiguity at a measurable rate (3 of 28 shipped node ids). That is the
+  ambiguity at a measurable rate (3 of 32 shipped node ids). That is the
   price of an explainable rule, accepted knowingly.
 - Inlined text is a fork of the skill: improvements to the SKILL.md after
   plan time do not reach an already-planned run. Correct for
@@ -488,6 +546,53 @@ prior E-number):
   ever returns, it is an *advisory relevance filter* ("this skill says it
   needs tools this node lacks, so it would not work"), never a safety
   control — the ceiling does not depend on it.
+- **Scanning plugin-provided skills (`~/.claude/plugins/...`) in v1.**
+  **Deferred on measurement, 2026-08-04** (claude 2.1.221, oh-my-graph 0.4.1),
+  not on the project-scan reasoning below — which does not extend to plugins
+  and should not be cited as if it did. `/plugin install` is an explicit,
+  per-plugin, persisted act with a second `enabledPlugins` gate; a cloned
+  repository's `.claude/skills` is drive-by. Trust class is the same as
+  `~/.claude/skills`, which on the measuring machine is itself a symlink into
+  a third-party dotfiles checkout.
+
+  What decides it is yield, against this ADR's own standard for cutting the
+  project scan ("new surface for 0% measured yield"). Simulating §2's rule
+  over the 32 node ids in the shipped `graphs/`:
+
+  | pool | mapped | ambiguous | no match |
+  |---|---|---|---|
+  | user skills only (35) — today | 7 | 3 | 22 |
+  | + enabled plugin skills (54) | **7** | 3 | 22 |
+  | plugin skills only (20) | 0 | 0 | 32 |
+
+  **Zero additional mappings.** Plugin skill names are product nouns
+  (`mem-search`, `wowerpoint`, `pathfinder`); node ids are workflow verbs.
+  Shipping the scan today would add surface for the same 0% this ADR already
+  refused it for once. The measurement also found a name collision that a
+  bare-name pool would resolve *silently* (`babysit` exists in both
+  `~/.claude/skills` and a plugin, so 35+20 becomes 54 and one skill
+  disappears with no printed line) — silence being exactly what the §6
+  amendment above is repairing.
+
+  Conditions for a future yes, all three: (1) read the live set from
+  `~/.claude/plugins/installed_plugins.json` ∩ `enabledPlugins` — never a
+  glob, which on the measuring machine hits 127 `SKILL.md` files of which 20
+  are live, the rest stale cached versions and raw marketplace checkouts —
+  with the same silent-failure posture `scanSkillDirs` has, since that file
+  carries `"version": 2` and is not a documented API; (2) key the map on
+  `plugin:skill` so nothing shadows silently; (3) decide it against yield
+  measured on **planner-generated** node ids, not the shipped-graph proxy this
+  table and §3 both use. The provenance asymmetry that remains — a plugin with
+  `autoUpdate: true` can rewrite its bodies between runs, where
+  `~/.claude/skills` changes only when the user changes it — is already
+  answered by the machinery in §1 (printed SHA-256, snapshot into
+  `graph.json`, source path in the fence), since a plugin path carries plugin
+  and version. Until then the exclusion is **printed on every plan**, not
+  left as an unexplained absence of mappings (§6 amendment).
+
+  Plugin-provided *agents* are a separate and later decision: agent mapping
+  drops ceiling Layer 1, and it is blocked on an unmeasured question (whether
+  `--agent <plugin>:<name>` resolves at all), which needs a paid spawn.
 - **Scanning `<cwd>/.claude/skills` in v1.** Cut. Project scanning is 100%
   of the genuinely new injection surface — a cloned repository shipping
   repo-authored instructions into unattended `dontAsk` nodes — for 0%
