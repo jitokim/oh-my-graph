@@ -13,6 +13,8 @@ the very same files, and an external consumer reads exactly what they read:
   <node-id>.out  per-node artifact — EVERY node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
+  feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
+  worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
 
 `<node-id>.out` is written for every node that reaches a PASS, not only for
@@ -22,22 +24,33 @@ the one passing path, with no handoff branch). A consumer must not skip the
 `.out` beside a `handoff: session` node — it is there, and it holds that
 node's real result. A gate node spawns nothing and so has no `.out`.
 
+The converse does not hold: a `.out` is not proof of a PASS. `PersistOutput`
+runs *before* the post-hoc budget check, deliberately, so a node that did its
+work and then blew its `budget_usd` FAILS with its artifact already on disk.
+The verdict lives in `state.json` and in the terminal event; the file's
+existence is not a verdict. Nor is every `<node-id>.out` in the run tree an
+artifact: a feedback arc's payload is written to
+`<run-dir>/feedback/<node-id>.out` — the same basename shape, one directory
+down, and internal (ADR 0010). Artifacts are the flat ones.
+
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
 
-Two reads reach outside this contract, both in `serve`, and neither is
-something an external consumer needs:
+Two things reach outside this contract, and neither is something an external
+consumer needs:
 
 - `serve` tails a running node's own claude transcript from
   `~/.claude/projects` to stream its live output. That is a *supplement* to
   the feed, not a substitute — the transcript is claude's file, on claude's
   schema, and the run-feed events (`node_started`/`node_retried` publishing
   the attempt's session id) are what let any consumer locate it.
-- `serve`'s gate endpoint takes and releases the run's `resume.lock` before it
-  accepts a decision — holding it is how "no leg is in flight" is established.
-  The lock is an internal file with no compatibility promise (see the last
-  line of this document); it is how a *writer* coordinates, not how a reader
-  reads.
+- The run's `resume.lock` is how *writers* coordinate, not how a reader
+  reads. `executeGraph` (`cmd/oh-my-graph/main.go`) and `executeResume`
+  (`cmd/oh-my-graph/resume.go`) hold it for a whole leg, and `serve`'s gate
+  endpoint creates and unlinks the very same lock before it accepts a
+  decision (`runstate.AcquireLock`, `internal/serve/gate.go`) — holding it is
+  how "no leg is in flight" is established. The lock is an internal file with
+  no compatibility promise (see the last line of this document).
 
 Two in-repo readers also apply this contract's rules by hand instead of
 through `internal/runfeed`, so follow `internal/runfeed` rather than them:
@@ -149,17 +162,33 @@ scheduler hook points that feed the human progress lines and the snapshot, so
 the three describe the same transitions in the same terms. The Go source of
 truth is `internal/runfeed` (the `Event` type and `Schema` constant).
 
-They can still disagree in exactly one direction, and a consumer should know
-it: **a failed event write does not fail the run.** A consumer's feed must
-never kill the run it is watching, so a write error is surfaced as a `⚠`
-warning on the progress feed and the scheduler continues — and by that point
-the node's ledger row and its snapshot record are already written. The stream
-can therefore be *missing* a transition the snapshot holds; it never carries
-one the snapshot lacks. So: use `events.jsonl` for order and liveness, and
-treat `state.json` as authoritative for settled state. A consumer that must
-not miss a terminal verdict (a billing or audit reader) should reconcile
-against `state.json` rather than trusting the stream to be complete — the
-snapshot is rewritten after every terminal verdict, so a gap is recoverable.
+They can still disagree, and a consumer should know which way each hole runs.
+For a **terminal verdict** the two are meant to agree, and both writes are
+deliberately non-fatal, so either side can be the one that is missing:
+
+- **A failed event write does not fail the run.** A consumer's feed must
+  never kill the run it is watching, so the error is surfaced as a `⚠`
+  warning on the progress feed and the scheduler continues — and by that
+  point the node's ledger row and its snapshot record are already written.
+  The stream is missing a transition the snapshot holds.
+- **A failed snapshot write does not fail the run either.** It gets its own
+  non-fatal `⚠ … snapshot write failed` line and the node stays absent from
+  `state.json`, while its `node_passed`/`node_failed` still goes out. The
+  stream carries a transition the snapshot lacks.
+
+Outside terminal verdicts the two are not meant to agree at all. The snapshot
+carries settled state only, so `run_started`, `node_started` and
+`node_retried` have no snapshot counterpart by design; and the gate events
+lead the snapshot — `gate_approved` is emitted before the gate's snapshot
+write, and a `gate_paused` writes no snapshot at all (see "each pausing gate
+emits its own `gate_paused`" below).
+
+So: use `events.jsonl` for order and liveness, and treat `state.json` as
+authoritative for settled state. A consumer that must not miss a terminal
+verdict (a billing or audit reader) should reconcile the two rather than
+trust either alone — the snapshot is rewritten after every terminal verdict,
+so a dropped event is recoverable from it, and the rarer dropped snapshot
+write leaves its event on the stream and its `⚠` on the progress feed.
 
 ### Common fields (every event)
 

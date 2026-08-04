@@ -1461,7 +1461,9 @@ CLI `oh-my-graph run <graph.yaml> --input k=v` and `oh-my-graph auto "<goal>"`
 persistence ON (so every node stays an ordinary, readable claude session in
 `~/.claude/projects` — do NOT pass --no-session-persistence).
 
-DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
+DEFERRED (say so in README): retries beyond flat max:1 (the per-cause filter
+`retry.on`, over the closed cause set, shipped later — see "Execution
+engine"); parallel-group sugar /
 any DSL; a terminal TUI (the web views shipped later — both the single-run
 live view and the multi-run dashboard; see "Web live view"); worktree
 auto-creation (opt-in

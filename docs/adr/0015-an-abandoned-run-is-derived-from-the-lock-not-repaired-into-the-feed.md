@@ -268,8 +268,9 @@ hazards this design rejects `fcntl` for, and the consequences land in the
 dangerous direction:
 
 - Record locks are per-process, so the embedded live view — which runs **in the
-  same process that holds the lock** (`executeGraph` acquires, `startLiveView`
-  serves in-process, both in `cmd/oh-my-graph/main.go`; `runView`'s doc comment
+  same process that holds the lock** (`executeGraph` in
+  `cmd/oh-my-graph/main.go` acquires and calls `startLiveView`, which serves
+  in-process from `cmd/oh-my-graph/liveview.go`; `runView`'s doc comment
   in `cmd/oh-my-graph/serve.go` states the relationship) — would be granted its
   own run's lock and paint a live run ABANDONED.
 - Record locks are dropped when *any* fd on the file is closed by the process,

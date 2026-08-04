@@ -208,8 +208,9 @@ Maintainer checklist for cutting a release:
 
 ## Scope
 
-Before proposing a feature, check DESIGN.md's "MVP scope" and "Deferred"
-sections, and [docs/LIMITATIONS.md](docs/LIMITATIONS.md#deferred-not-implemented).
+Before proposing a feature, check DESIGN.md's "MVP scope (v0.1)" section (its
+IN and DEFERRED lists) and
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md#deferred-not-implemented).
 Things like a graph DSL beyond `depends_on` and a terminal TUI are deliberately
 out of scope — that's not an oversight, it's a documented boundary. If you want
 to build one of those, open an issue to discuss the design first rather than
