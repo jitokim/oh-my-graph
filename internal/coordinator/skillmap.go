@@ -55,7 +55,6 @@
 package coordinator
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -97,11 +96,6 @@ const maxInlinedSkillBytes = 16 * 1024
 // 86.6 KiB outlier included); only a pathological file is refused here, and
 // silently, like any other file the scan cannot use.
 const maxSkillFileBytes = 1 << 20
-
-// skillFenceNonceBytes sizes the per-plan fence nonce: 3 random bytes render
-// as 6 hex characters — entropy the fenced text cannot predict, which is all
-// the fence needs.
-const skillFenceNonceBytes = 3
 
 // SkillMapping records one skill auto-mapping decision for the plan printout:
 // a mapping made (SkippedReason empty; InlinedBytes and SHA256 describe the
@@ -332,17 +326,6 @@ func fencedSkillBlock(def skillDef, inlined, nonce string) string {
 	)
 }
 
-// skillFenceNonce mints the per-plan fence nonce. Failure is returned rather
-// than swallowed: unlike a scan failure, an unfenceable inline is not a
-// zero-config degradation — it would silently weaken the fence's one property.
-func skillFenceNonce() (string, error) {
-	buf := make([]byte, skillFenceNonceBytes)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("mint skill fence nonce: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
-}
-
 // applySkillMapping is the coordinator's second post-validation step, strictly
 // after applyAgentMapping's rebuild: scan, decide, append each mapped node's
 // fenced block, and rebuild the plan the same way — through json.Marshal and
@@ -368,7 +351,7 @@ func (c *Coordinator) applySkillMapping(plan *Plan) error {
 			continue
 		}
 		if nonce == "" {
-			minted, err := skillFenceNonce()
+			minted, err := fenceNonce("skill")
 			if err != nil {
 				return err
 			}

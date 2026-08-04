@@ -900,8 +900,16 @@ one, and it answers 409 like any other view that cannot resume.
   random token (`crypto/rand`, hex), minted in `serve.New`, rendered into the
   served page (the one asset not shipped byte-for-byte) and sent back as
   `X-OMG-Token`: missing is 400, mismatched is 403, compared in constant
-  time. It is a CSRF guard, not a login — a custom header also forces a
-  preflight, which a cross-origin form POST cannot satisfy.
+  time. Both are refusals — no shape of a gate POST reaches the resumer
+  without the token. It is a CSRF guard, not a login — a custom header also
+  forces a preflight, which a cross-origin form POST cannot satisfy. Layered
+  in front of it, as hardening rather than as a fix: a POST whose `Origin`
+  names anything but this server's own origin is 403 (`requireSameOrigin`),
+  so a decision from a page this process did not serve is refused on its
+  provenance before its token is weighed, and independently of the token
+  staying secret. An absent `Origin` is allowed through — curl and the CLI's
+  own tests send none, and the token remains the whole guard there — so the
+  check only narrows what a browser can do.
 - **Zero runtime network dependencies:** one static page embedded with
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).
@@ -1167,7 +1175,15 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   material: the goal, the run outcome, per-node verdict/detail/cost from the
   snapshot (the loop re-reads `state.json` after `executeGraph` returns —
   the observation seam), bounded head+tail artifact excerpts, and the one
-  cross-cycle line (the previous `remaining`). The verdict is a hard JSON
+  cross-cycle line (the previous `remaining`). All three are raw model
+  output, so every block rides in a **nonce-fenced** marker pair — one
+  6-hex-character nonce per `Assess` call, in the opening AND closing
+  marker, with the prompt telling the assessor that only markers bearing it
+  are real (the skill-inlining fence's mechanism, `internal/coordinator/fence.go`).
+  Fixed markers would be forgeable by the very material they fence: an
+  injected artifact could close its own block and speak from apparent
+  outside it. The next cycle's planner prompt fences the `remaining` it
+  quotes the same way. The verdict is a hard JSON
   contract; garbage is an `*AssessError` that stops the loop. Each verdict
   is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
   persisted as `assess.json` in that cycle's run directory (`goal_met`,
