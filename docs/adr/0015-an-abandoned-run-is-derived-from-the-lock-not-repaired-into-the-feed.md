@@ -1,6 +1,13 @@
 # ADR 0015 — An abandoned run is derived from the lock, never repaired into the feed
 
-- Status: Accepted
+- Status: Accepted — **not implemented.** Nothing in this ADR has landed as of
+  2026-08-05: `internal/runstate.AcquireLock` is still `O_EXCL` with a pid and
+  an unlinking release, no `flock(2)` is taken or probed anywhere in the tree,
+  and no surface derives `ABANDONED`. Read the Decision below as the shape the
+  code is meant to take, not as a description of it — the present tense
+  throughout ("`AcquireLock` opens the file `O_CREATE|O_RDWR` (**not**
+  `O_EXCL`)") is normative, and the body's own "when this is implemented" is
+  the correct reading of every sentence in it.
 - Date: 2026-08-04
 
 ## Context
@@ -261,10 +268,11 @@ hazards this design rejects `fcntl` for, and the consequences land in the
 dangerous direction:
 
 - Record locks are per-process, so the embedded live view — which runs **in the
-  same process that holds the lock** (`main.go:373` acquires, `startLiveView`
-  at `main.go:419` serves in-process; `cmd/oh-my-graph/serve.go:141` states the
-  relationship) — would be granted its own run's lock and paint a live run
-  ABANDONED.
+  same process that holds the lock** (`executeGraph` in
+  `cmd/oh-my-graph/main.go` acquires and calls `startLiveView`, which serves
+  in-process from `cmd/oh-my-graph/liveview.go`; `runView`'s doc comment
+  in `cmd/oh-my-graph/serve.go` states the relationship) — would be granted its
+  own run's lock and paint a live run ABANDONED.
 - Record locks are dropped when *any* fd on the file is closed by the process,
   so the probe closing its own read-only fd would **release the run's real
   lock**, letting a concurrent `resume` in.
@@ -348,10 +356,11 @@ must hold the flock before it writes its first event, and must still hold it
 after it writes its last.* Otherwise a starting run has an open leg and no
 lock — abandoned — for the milliseconds between, and a finishing one has the
 same gap at the other end. Today the code satisfies this by accident of
-arrangement rather than by statement: `executeGraph` acquires at
-`main.go:373`, opens the feed writer at `main.go:399`, and `defer` LIFO puts
-`release()` after `feed.Close()`; `executeResume` does the same
-(`resume.go:77` before the load and everything downstream). Moving the acquire
+arrangement rather than by statement: `executeGraph` calls
+`runstate.AcquireLock` before it opens the feed writer
+(`runfeed.NewStreamWriter`), and `defer` LIFO puts `release()` after
+`feed.Close()`; `executeResume` does the same, acquiring before the snapshot
+load and everything downstream. Moving the acquire
 below the feed writer would make every run in the world read abandoned for its
 first instants, and nothing would fail. The implementation states this as an
 invariant and pins it with a test that asserts the lock is held across the
@@ -632,9 +641,16 @@ No `runs prune`, no `--force-finish`, no new command or flag.
 ## Implementation notes — DESIGN.md sections to update
 
 DESIGN.md is owned by another lane right now and is deliberately untouched by
-this ADR. When this is implemented, these sections need to move with it:
+this ADR. When this is implemented, these sections need to move with it.
 
-- **"Gate nodes and `resume`"**, the `resume.lock` bullet (DESIGN.md:789) —
+> **Update (2026-08-05):** the pointers below originally carried DESIGN.md and
+> `main.go` line numbers. Every one of them had rotted — DESIGN.md and
+> `cmd/oh-my-graph/main.go` both moved in #108, and DESIGN.md moved again
+> afterwards — so they are replaced here with section and symbol names, which
+> do not rot when a file is edited above them. No target changed; only the way
+> each one is addressed.
+
+- **"Gate nodes and `resume`"**, the `resume.lock` bullet —
   `O_EXCL` → flock, the file no longer being removed on release, and the
   removal of "A stale lock is reported with the exact path to delete".
 - **`internal/runstate/lock.go`'s own doc comments** — every one of them states
@@ -643,14 +659,14 @@ this ADR. When this is implemented, these sections need to move with it:
   a human decision", "The returned release func removes the lock"). All three
   become false in the same commit, and `LockHeldError`'s doc comment carries
   the `rm` advice §4 retires.
-- **"Web live view — `oh-my-graph serve`"** (DESIGN.md:825–880) — the card
-  state vocabulary gains abandoned, and the held-`resume.lock` 409 rule
-  (DESIGN.md:844) now means a live holder rather than possibly a corpse.
-- **"Object design"** (DESIGN.md:1278) — the in-repo views read a run through
+- **"Web live view — `oh-my-graph serve`"** — the card
+  state vocabulary gains abandoned, and the held-`resume.lock` 409 rule in that
+  section now means a live holder rather than possibly a corpse.
+- **"Object design"** — the in-repo views read a run through
   `runfeed` *plus* the lock probe; name the seam that owns the probe.
-- **"Repo layout"** (DESIGN.md:1321–1344) — only if the probe lands somewhere
+- **"Repo layout"** — only if the probe lands somewhere
   new; the intent is `internal/runstate`, which needs no layout change.
-- **"Goal cycles"** (DESIGN.md:1162) mentions each cycle's own `resume.lock`;
+- **"Goal cycles — `auto --max-cycles N`"** mentions each cycle's own `resume.lock`;
   no semantic change, but it should not read as an internal detail once the
   file is contract surface.
 - **docs/RUN-FEED.md** — the new "Liveness" section of §3, and the amendment

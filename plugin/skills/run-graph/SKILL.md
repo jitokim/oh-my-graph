@@ -15,9 +15,10 @@ does not reimplement any graph logic, it just invokes the binary.
 
 1. Confirm the graph file path and any `--input k=v` values with the user if
    not already given.
-2. Run via Bash: `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail]`
-3. Report the run ledger from stdout back to the user: one row per node
-   (session id, cost, verdict, duration) and the total cost.
+2. Run via Bash: `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]`
+3. Report the run ledger from stdout back to the user: one row per node — its
+   five printed columns are node id, verdict, session id, cost, and a short
+   detail — plus the total cost.
 4. If `oh-my-graph` is not found on `$PATH`, tell the user to install it (see
    `plugin/README.md`) and stop — do not attempt to run the graph nodes
    yourself in-session.

@@ -97,6 +97,16 @@ persisted would be a lie.
 - Two concurrent `resume` invocations on the same run id would double-run nodes.
   Mitigated with an `O_EXCL` `resume.lock` holding the pid, whose stale-lock
   failure mode has to be explained to the user with the exact path to delete.
+
+  > **Update (2026-08-05):** the "delete it and retry" half of this mitigation is
+  > reversed by [ADR 0015](0015-an-abandoned-run-is-derived-from-the-lock-not-repaired-into-the-feed.md),
+  > which names it "an active double-spend footgun": under the flock semantics
+  > 0015 decides on, unlinking the file does not release a live holder's lock,
+  > so a second leg creates a fresh inode and takes an uncontended lock on it —
+  > two schedulers, one run, both spending. Do not follow the advice above.
+  > 0015 is accepted but **not yet implemented** (`internal/runstate/lock.go` is
+  > still `O_EXCL` as described here), so today's binary still behaves as this
+  > ADR records; the advice is what is retired, not the mechanism's description.
 - Resuming re-reads the graph from the snapshot, not the YAML file. That is the
   correct behaviour (artifacts already on disk were produced by the old graph),
   but it will surprise someone who edits the YAML and expects a resume to pick it

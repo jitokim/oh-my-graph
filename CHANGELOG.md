@@ -8,6 +8,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+Merged to `main` after the v0.4.1 tag, not yet released.
+
+### Added
+
+- **`auto --plan-only` — preview a plan before letting it spend (#108).** It
+  mirrors `run --dry-run` through the same argv path: plan, print the
+  topology, every agent and skill mapping decision and the tool ceiling
+  exactly as a real `auto` would, then stop before any node runs. Unlike
+  `--dry-run` it is **not free** — there is no plan to inspect until one has
+  been bought, so it still pays for the single planner call, prints that cost,
+  and keeps the spec. The spec goes to `$OMG_HOME/plans/<id>/graph.json`, not
+  `runs/`: nothing ran, so it is not a run and no reader of `runs/` needs a
+  special case for it. Written owner-only (dir `0700`, file `0600`), because
+  an inlined skill body in a node prompt is the user's own private
+  instructions. Rejected at parse with `--max-cycles >= 2`, since every cycle
+  after the first is planned from the previous cycle's run.
+- **The skill scan says what it did not scan (#108).** An `auto` run now
+  records its skill scan on the plan — the directories read, in precedence
+  order, and the count of usable definitions — and prints it above the
+  mapping decisions, followed by its limit: plugin skills
+  (`~/.claude/plugins`) and project skills (`./.claude/skills`) are out of
+  scope. `Found: 0` is now diagnosable instead of looking identical to "never
+  scanned". A `name:` collision inside one `~/.claude/skills` names its loser
+  rather than silently moving the count.
+
+### Fixed
+
+- **A verdict pattern must survive the markdown a model writes (#107).** A
+  node that got exit 0 and opened its reply with `**PASS**` failed
+  `result_matches: "^PASS"` and halted the run. Every shipped pattern now
+  tolerates leading emphasis, whitespace and a code span (`` [*_`\s] ``) while
+  **keeping** its anchor — relaxing the anchor would let a FAIL report that
+  merely names the word pass. The planner prompt that *generates* graphs
+  carries the same tolerant pattern, which matters more there: a planned node
+  may not set `success_check.verify`, so `result_matches` is the whole gate.
+- **A node that asks for a verdict must check that it got one (#110).**
+  `merge-shepherd`'s `merge` node declined to merge past an unfinished
+  re-review, ended its turn on "I'll proceed as soon as it lands", exited 0
+  under `exit_zero: true`, and passed — the ledger recorded a successful merge
+  step and nothing was merged. Swept the class: every node whose prompt names
+  the answer it must give now carries an anchored verdict token whose payload
+  only the finished work can produce (`MERGED <sha>` | `WITHHELD <reason>`,
+  `TRIAGED <count>`, `PR <url>`, `ADR <path>.md`, `DONE`, `CLEAN`). `lint` and
+  `--dry-run` now warn (`LintVerdicts`) on a prompt that demands a token with
+  no `result_matches` to read it, and on a `result_matches` that dropped its
+  exit-zero guard.
+
+### Documentation
+
+- **ADR 0015 — an abandoned run is derived from the lock, not repaired into
+  the feed (#109).** Two runs read RUNNING for over a day, because
+  `runfeed.InFlight` calls a leg open when its last `run_started` has no
+  `run_finished`, and a killed process never writes one. The pid in
+  `resume.lock` cannot fix it — measured: a dead run's lock pid read ALIVE
+  because an unrelated process had recycled it. Liveness becomes the kernel's
+  `flock(2)` on `resume.lock`, ABANDONED is derived at read time by every
+  reader, and no reader appends a terminal event on a dead run's behalf. Both
+  file schemas stay 2 and neither file changes. Accepted as an ADR; the
+  implementation has not landed.
+
 ## [v0.4.1] - 2026-08-04
 
 The composition release. Graph authoring stops restating itself: a `use:`
@@ -715,3 +777,12 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   exclusive as built. An implicit scan of `~/.claude/agents` is rejected
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
+
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...HEAD
+[v0.4.1]: https://github.com/jitokim/oh-my-graph/compare/v0.4.0...v0.4.1
+[v0.4.0]: https://github.com/jitokim/oh-my-graph/compare/v0.3.1...v0.4.0
+[v0.3.1]: https://github.com/jitokim/oh-my-graph/compare/v0.3.0...v0.3.1
+[v0.3.0]: https://github.com/jitokim/oh-my-graph/compare/v0.2.0...v0.3.0
+[v0.2.0]: https://github.com/jitokim/oh-my-graph/compare/v0.1.1...v0.2.0
+[v0.1.1]: https://github.com/jitokim/oh-my-graph/compare/v0.1.0...v0.1.1
+[v0.1.0]: https://github.com/jitokim/oh-my-graph/releases/tag/v0.1.0

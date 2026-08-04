@@ -4,29 +4,62 @@
 run-feed views — the run's state and progress are never visible only from
 inside the process that ran it. oh-my-graph's own read-back commands — `runs
 list`, `show`, `watch`, and the `serve` web views — are in-repo consumers of
-the very same files under the very same rules (via `runfeed.InFlight` and
-`runfeed.Follow`/`FollowWait`), with no side channel. Any external consumer
-reads exactly what they read:
+the very same files, and an external consumer reads exactly what they read:
 
 ```
 ~/.oh-my-graph/runs/<run-id>/
   state.json     versioned atomic SNAPSHOT  — whole-run state, overwritten after every node
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
-  <node-id>.out  per-node artifacts (handoff: artifact)
+  <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
+  feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
+  worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
+
+`<node-id>.out` is written for every non-gate node that reaches a PASS, not only for
+`handoff: artifact` nodes: `handoff` selects what a *child* inherits, not
+whether the parent's result is persisted (`Handoff.PersistOutput` is called on
+the one passing path, with no handoff branch). A consumer must not skip the
+`.out` beside a `handoff: session` node — it is there, and it holds that
+node's real result. A gate node spawns nothing and so has no `.out`.
+
+The converse does not hold: a `.out` is not proof of a PASS. `PersistOutput`
+runs *before* the post-hoc budget check, deliberately, so a node that did its
+work and then blew its `budget_usd` FAILS with its artifact already on disk.
+The verdict lives in `state.json` and in the terminal event; the file's
+existence is not a verdict. Nor is every `<node-id>.out` in the run tree an
+artifact: a feedback arc's payload is written to
+`<run-dir>/feedback/<node-id>.out` — the same basename shape, one directory
+down, and internal (ADR 0010). Artifacts are the flat ones.
 
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
 
-One read reaches outside the run directory, and it is not part of this
-contract: `serve` tails a running node's own claude transcript from
-`~/.claude/projects` to stream its live output. That is a *supplement* to the
-feed, not a substitute — the transcript is claude's file, on claude's schema,
-and the run-feed events (`node_started`/`node_retried` publishing the
-attempt's session id) are what let any consumer locate it. Everything this
-document versions and guarantees is `state.json` and `events.jsonl`.
+Two things reach outside this contract, and neither is something an external
+consumer needs:
+
+- `serve` tails a running node's own claude transcript from
+  `~/.claude/projects` to stream its live output. That is a *supplement* to
+  the feed, not a substitute — the transcript is claude's file, on claude's
+  schema, and the run-feed events (`node_started`/`node_retried` publishing
+  the attempt's session id) are what let any consumer locate it.
+- The run's `resume.lock` is how *writers* coordinate, not how a reader
+  reads. `executeGraph` (`cmd/oh-my-graph/main.go`) and `executeResume`
+  (`cmd/oh-my-graph/resume.go`) hold it for a whole leg, and `serve`'s gate
+  endpoint creates and unlinks the very same lock before it accepts a
+  decision (`runstate.AcquireLock`, `internal/serve/gate.go`) — holding it is
+  how "no leg is in flight" is established. The lock is an internal file with
+  no compatibility promise (see the last line of this document).
+
+Two in-repo readers also apply this contract's rules by hand instead of
+through `internal/runfeed`, so follow `internal/runfeed` rather than them:
+`serve`'s dashboard card re-derives `runfeed.InFlight`'s rule inline off a
+walk it already does (the two are held together by
+`TestBuildCard_InFlightAgreesWithRunfeed`), and `serve`'s `/api/transcript`
+hand-rolls its own scanner without the newer-`schema` refusal `runfeed.Walk`
+makes. Everything this document versions and guarantees is `state.json` and
+`events.jsonl`.
 
 `state.json` and `events.jsonl` together are a **stable consumer API**. The
 files answer complementary questions:
@@ -58,12 +91,18 @@ feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
 
 One record is not terminal: a feedback declarer's record mid-loop is a
-non-terminal **marker** — `round` k with **no** `verdict` — written the
-moment its arc fires, so a run stopped mid-loop resumes into the loop. A
-consumer deriving "settled" from `nodes` must treat a verdict-less record as
-still in flight. A node's recorded `cost_usd` accumulates across its rounds
-(a superseded round's spend carries into the record that replaces it), so
-the per-node figures still sum to the run's true total.
+non-terminal **marker** — `round` k with an **empty** `verdict` — written the
+moment its arc fires, so a run stopped mid-loop resumes into the loop. The
+`verdict` key is always *present*: `NodeRecord.Verdict` carries no
+`omitempty`, so a marker serializes as `"verdict": ""`, not as a record
+missing the key. A consumer deriving "settled" from `nodes` must therefore
+test the *value* (`verdict` neither `"PASS"` nor `"FAIL"` ⇒ still in flight);
+testing key-absence misclassifies every marker as terminal. (The *stream* is
+the other way round: `runfeed.Event.Verdict` does carry `omitempty`, so an
+absent `verdict` there means none — see "Event types" below.) A node's
+recorded `cost_usd` accumulates across its rounds (a superseded round's spend
+carries into the record that replaces it), so the per-node figures still sum
+to the run's true total.
 
 Guarantees:
 
@@ -73,8 +112,8 @@ Guarantees:
   one in-flight node stale.
 - It carries settled state only: a node currently running is absent from
   `nodes`. The one non-terminal record is the feedback marker above —
-  `round` with no `verdict` — which is a settled fact about the loop, not
-  live progress. Live progress is what `events.jsonl` is for.
+  `round` with an empty `verdict` — which is a settled fact about the loop,
+  not live progress. Live progress is what `events.jsonl` is for.
 
 ## Goal cycles (ADR 0011) — the `goal` block and `assess.json`
 
@@ -119,16 +158,44 @@ feeds must read the `goal` block from `state.json` to group cycles.
 ## `events.jsonl` — the stream
 
 One JSON object per line, appended at each lifecycle transition, from the same
-scheduler hook points that feed the human progress lines and the snapshot —
-the three can never disagree about a transition. The Go source of truth is
-`internal/runfeed` (the `Event` type and `Schema` constant).
+scheduler hook points that feed the human progress lines and the snapshot, so
+the three describe the same transitions in the same terms. The Go source of
+truth is `internal/runfeed` (the `Event` type and `Schema` constant).
+
+They can still disagree, and a consumer should know which way each hole runs.
+For a **terminal verdict** the two are meant to agree, and both writes are
+deliberately non-fatal, so either side can be the one that is missing:
+
+- **A failed event write does not fail the run.** A consumer's feed must
+  never kill the run it is watching, so the error is surfaced as a `⚠`
+  warning on the progress feed and the scheduler continues — and by that
+  point the node's ledger row and its snapshot record are already written.
+  The stream is missing a transition the snapshot holds.
+- **A failed snapshot write does not fail the run either.** It gets its own
+  non-fatal `⚠ … snapshot write failed` line and the node stays absent from
+  `state.json`, while its `node_passed`/`node_failed` still goes out. The
+  stream carries a transition the snapshot lacks.
+
+Outside terminal verdicts the two are not meant to agree at all. The snapshot
+carries settled state only, so `run_started`, `node_started` and
+`node_retried` have no snapshot counterpart by design; and the gate events
+lead the snapshot — `gate_approved` is emitted before the gate's snapshot
+write, and a `gate_paused` writes no snapshot at all (see "each pausing gate
+emits its own `gate_paused`" below).
+
+So: use `events.jsonl` for order and liveness, and treat `state.json` as
+authoritative for settled state. A consumer that must not miss a terminal
+verdict (a billing or audit reader) should reconcile the two rather than
+trust either alone — the snapshot is rewritten after every terminal verdict,
+so a dropped event is recoverable from it, and the rarer dropped snapshot
+write leaves its event on the stream and its `⚠` on the progress feed.
 
 ### Common fields (every event)
 
 | Field | Type | Meaning |
 |---|---|---|
 | `schema` | int | Event format version. Currently **2**. |
-| `ts` | string | Emission time, RFC 3339 UTC with nanosecond precision. |
+| `ts` | string | Emission time, RFC 3339 UTC with nanosecond precision. Not a sort key — see "Ordered per emission". |
 | `run_id` | string | The run this stream belongs to. |
 | `event` | string | One of the event types below. |
 
@@ -150,9 +217,14 @@ On terminal node events, `retries` is the number of retries that preceded the
 terminal attempt (0 for a first-attempt verdict), `cost_usd` is the node's
 reported spend, `session_id` is the claude session it ran under, and `detail`
 is the same short note the run ledger records (the failure cause on a FAIL;
-the retry/budget note, possibly empty, on a PASS). The producer caps `detail`
-at one shared bound (240 runes, keeping the tail), so a line stays tailable
-even when the underlying error was arbitrarily long. Zero/empty values are
+the retry/budget note, possibly empty, on a PASS). The producer caps the
+*cause* text at one shared bound (240 runes, keeping the tail), so a line
+stays tailable even when the underlying error was arbitrarily long. That bound
+is not a hard bound on the field: a body node inside a feedback loop gets its
+short round note (`; feedback round k/N`) appended *after* the cap, so such a
+`detail` runs a few tens of runes over 240. Size `detail` as "short, bounded
+by roughly 300 runes", never as "exactly ≤ 240" — and rely on the 1 MiB
+per-line cap below for the actual hard limit. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
@@ -203,7 +275,12 @@ to pause).
   durable. A consumer must tolerate (skip or re-poll) a partial last line.
 - **Ordered per emission.** Lines appear in the order events were emitted.
   Nodes running in parallel interleave; per node, `node_started` always
-  precedes its retries and its terminal event.
+  precedes its retries and its terminal event. **File order is the ordering —
+  `ts` is not.** The writer stamps `ts` before it takes the append lock, so
+  two events emitted concurrently by parallel nodes may land in the file in
+  the opposite order to their timestamps. `ts` is a good-enough wall clock for
+  display and for durations; never sort a stream by it, and never infer
+  "happened before" from it. Read the file in the order it is written.
 - **Legs, not just runs.** A resumed run (`oh-my-graph resume`) appends to the
   same stream, bracketed by its own `run_started`/`run_finished` — a gate
   resume and a `--retry-failed` leg alike. A run that paused at a gate

@@ -1,6 +1,9 @@
 # ADR 0011 — Plan-and-execute: goal iteration is a bounded cycle of whole runs, each replanned and revalidated
 
-- Status: Proposed
+- Status: Accepted — shipped in #91 (`--max-cycles` / `--max-goal-budget-usd` in
+  `cmd/oh-my-graph/flags.go`, the cycle loop in `internal/coordinator/goal.go`).
+  The Status line read `Proposed` until 2026-08-05; the decision itself is
+  unchanged, only the record of it.
 - Date: 2026-08-02
 
 ## Context

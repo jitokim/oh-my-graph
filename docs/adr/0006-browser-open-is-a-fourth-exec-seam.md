@@ -59,6 +59,16 @@ type Opener interface {
   as a first leg is; a chat graph turn stays un-wired; the standalone
   `serve` subcommand keeps printing the URL.)
 
+  > **Update (2026-08-05):** the last clause of that Phase 2 outcome note is no
+  > longer true, and it is a status note rather than part of the decision. The
+  > standalone `serve` subcommand was wired in #100: `serveFlags.autoOpener`
+  > (`cmd/oh-my-graph/serve.go`) hands the URL to the injected `ExecOpener`
+  > through `webOpener` — the same TTY-and-not-opted-out gate `run`, `auto` and
+  > `resume` use — and `--no-open` is `serve`'s name for `--no-web`'s opt-out.
+  > It still prints the URL; it no longer *only* prints it. The decision this
+  > ADR records (the seam, the interface, the caller-owns-the-policy split) is
+  > unaffected — this is that policy being exercised by one more caller.
+
 The invariant is **restated, not weakened**:
 
 > Exactly four objects in oh-my-graph may spawn a process —
@@ -111,6 +121,11 @@ assertion-on-the-command pattern the other seams use for their scrub tests.
   deliberately ahead of its wiring so the invariants test, the docs sweep and
   the ADR land as one reviewable unit, with the behaviour change isolated in
   its own change.
+
+  > **Update (2026-08-05):** historical — this held only until phase 2. The
+  > wiring landed: `run`, `auto`, `resume` and the standalone `serve`
+  > subcommand all hand the URL to `ExecOpener` behind the TTY gate (see the
+  > Phase 2 outcome note above). `ExecOpener` has production callers today.
 
 ## Alternatives considered
 
