@@ -92,9 +92,9 @@ func listRuns(w, warnW io.Writer, root string) error {
 		return nil
 	}
 
-	// Newest first: run ids are second-resolution UTC timestamps chosen to
-	// sort lexically (see newRunID), so a descending string sort is a
-	// descending time sort.
+	// Newest first: a run id is a nanosecond UTC timestamp plus a per-process
+	// sequence number, chosen to sort lexically (see newRunID), so a
+	// descending string sort is a descending time sort.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].runID > rows[j].runID })
 
 	printRuns(w, rows)

@@ -19,9 +19,12 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: |
       You are on a feature branch of the oh-my-graph Go repo. Implement this task,
-      keeping the diff focused and matching the existing style (DESIGN.md is the spec;
-      the NodeRunner seam is the only os/exec touch point; English-only):
+      keeping the diff focused and matching the existing style (DESIGN.md is the
+      spec; English-only):
         {{ inputs.task }}
+      os/exec belongs to the FOUR exec seams only — runner.ClaudeCLIRunner,
+      verify.ShellVerifier, worktree.GitManager, browser.ExecOpener — and a fifth
+      spawner needs an ADR before it lands; internal/invariants enforces this.
       Add or update tests. Choose a commit granularity that fits the work —
       one commit per refactoring unit for refactors, per file for sweeps, per
       feature slice for new code — and state your choice in the first commit
@@ -85,7 +88,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     with:
       diff: the current branch's diff vs main
-      focus: Also check adherence to DESIGN.md's invariants (NodeRunner seam, env scrub, no Agent SDK).
+      focus: Also check adherence to DESIGN.md's invariants (the four exec seams, env scrub, no Agent SDK).
 
   - id: pr
     type: claude-run

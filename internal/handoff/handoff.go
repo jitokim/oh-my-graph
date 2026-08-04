@@ -31,7 +31,7 @@ import (
 // type (not a bare fmt error) so the Scheduler can tell a template problem from
 // a run failure and report the exact reference at fault.
 type InterpolationError struct {
-	Kind      string // "inputs" or "artifacts"
+	Kind      string // the placeholder kind at fault: "inputs", "artifacts" or "feedback"
 	Reference string // the name/id that could not be resolved
 	Reason    string
 }

@@ -3,12 +3,23 @@
 // user's logged-in subscription (OAuth) to metered API-key billing are DELETED
 // from the child's environment.
 //
-// It is a dependency-free leaf package because there is now more than one
-// spawner — runner.ClaudeCLIRunner (a claude node) and verify.ShellVerifier (a
-// success_check.verify command) — and the two must not be able to disagree
-// about the rule. A verification command may legitimately BE a claude
-// invocation (`verify: { command: "claude -p ..." }`), so a scrub that lived
-// only in the runner would leave exactly that case billed to the API.
+// It is a dependency-free leaf package because there are FOUR spawners —
+// runner.ClaudeCLIRunner (a claude node), verify.ShellVerifier (a
+// success_check.verify command), worktree.GitManager (the git worktree
+// commands behind a node's worktree:) and browser.ExecOpener (the open/xdg-open
+// launch of the serve URL) — and they must not be able to disagree about the
+// rule. Each of the last three can reach claude without meaning to: a
+// verification command may legitimately BE a claude invocation
+// (`verify: { command: "claude -p ..." }`), a repo's git hooks may invoke it,
+// and the launcher dispatches to a user-configured URL handler that inherits
+// the child environment (ADR 0006). A scrub that lived only in the runner
+// would leave exactly those cases billed to the API.
+//
+// The set of spawners is not a matter of prose: internal/invariants/
+// exec_seam_test.go enforces it, both by refusing an os/exec import outside the
+// four seams and by requiring each seam's call site to route its child env
+// through Scrub. A fifth spawner needs its own ADR (see docs/adr/0002, 0005,
+// 0006), and that test is what will notice.
 //
 // This is the load-bearing subscription-auth guarantee of the whole project.
 // It is asserted here (the policy) and again on each spawner (the call site).

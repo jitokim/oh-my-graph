@@ -19,8 +19,16 @@ import (
 //     (runfeed.InFlight — the same leg-walking `runs list` uses to render
 //     RUNNING), because "the run happening right now" is what a live view is
 //     for.
-//  3. Otherwise the newest run directory, so `oh-my-graph serve` right after
-//     a run finishes shows that run.
+//  3. Otherwise the newest run directory.
+//
+// The CLI only ever takes branch 1: since the dashboard landed, `oh-my-graph
+// serve` with no run id serves EVERY run rather than guessing one, so runServe
+// calls this only when the user named a run. Branches 2 and 3 are the answer
+// to "which single run would a caller with no id mean", which the package
+// still owes callers that ask: they are exercised by TestResolveRun and relied
+// on by cmd/oh-my-graph's --plan-only test, which asserts that a preview left
+// nothing under runs/ for an id-less resolve to land on. Do not read them as
+// the no-argument CLI path; that path is Dashboard.
 //
 // Newest is a descending sort of directory names: run ids are UTC timestamps
 // chosen to sort lexically (see newRunID in cmd/oh-my-graph). A directory

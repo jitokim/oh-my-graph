@@ -21,11 +21,14 @@
 // 127.0.0.1. Run directories contain node prompts, artifacts and session ids
 // — and the sessions they name hold full transcripts — so the server must
 // never be reachable from off-host. Access control is that pair plus, for the
-// mutating gate routes only, a per-process random token embedded in the served
-// page and demanded back on every POST (requireGateToken) — because a loopback
-// bind and a Host check do not stop a page the user is already visiting from
-// POSTing to 127.0.0.1. Widening the bind address would still need a real auth
-// story first; the token is a CSRF guard, not a login.
+// mutating gate routes only, TWO more checks in this order (handleGateDecision):
+// requireSameOrigin refuses a decision whose Origin is not this server's own,
+// and requireGateToken demands back a per-process random token embedded in the
+// served page. Both exist because a loopback bind and a Host check do not stop
+// a page the user is already visiting from POSTing to 127.0.0.1; the origin
+// check refuses such a page on its provenance before its token is weighed at
+// all. Widening the bind address would still need a real auth story first;
+// neither of the two is a login.
 //
 // The server itself spawns no processes: it does not shell out to
 // `open`/`xdg-open` to launch a browser, and it does not run nodes. Exactly
@@ -140,9 +143,11 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 // state ABOUT THE RUN beyond the paths: every request re-reads the contract
 // files, so the view is always as fresh as the disk and the server survives
 // the run's files appearing after it started (a fresh run's state.json
-// window). The three non-path fields are this process's own: the gate token
-// it mints, the page template that carries it, and the resume machinery the
-// CLI injects.
+// window). Past the two paths (runDir, and projectsRoot for /api/transcript)
+// and the run's own id, the fields are this process's own: the poll interval,
+// the gate token it mints, and the resume machinery the CLI injects. The page
+// template that carries the token is deliberately NOT among them — it is
+// parsed once per process, not once per served run (indexTemplate above).
 type Server struct {
 	runDir string
 	runID  string
@@ -194,7 +199,11 @@ func New(runDir, runID string) *Server {
 // continue the paused run through the injected GateResumer, and they carry
 // their own CSRF guard on top of the ones every route gets. Every route sits
 // behind requireLoopbackHost, the DNS-rebinding guard; the method-scoped
-// patterns make a GET of a gate route a 405 without any code.
+// patterns mean a GET of a gate route decides nothing without any code — it
+// does not 405, because the "GET /" subtree catch-all below matches it and the
+// static file server answers 404 for an asset that does not exist. Either way
+// no leg is resumed, which is the property that matters
+// (TestGateDecision_GetDecidesNothing pins it).
 //
 // This is the whole live view of one run as a standalone site, rooted at "/":
 // what `oh-my-graph serve <run-id>` serves. The Dashboard serves the SAME

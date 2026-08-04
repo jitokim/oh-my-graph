@@ -16,31 +16,58 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
+// chatFlags holds the parsed `chat` subcommand options. Like every other
+// subcommand's flag type it is built by a constructor rather than inline, so
+// the usage-synopsis guard can check the advertised flags against the SAME
+// registration the production path makes instead of a hand-copied second list
+// (cmd/oh-my-graph/usage_test.go).
+type chatFlags struct {
+	noAgentMapping bool
+	noSkillMapping bool
+
+	set *flag.FlagSet
+}
+
+// newChatFlags builds a chatFlags with its FlagSet configured. Two flags only:
+// --no-agent-mapping and --no-skill-mapping, because a chat graph turn IS an
+// auto run and must honor the same opt-outs.
+func newChatFlags() *chatFlags {
+	f := &chatFlags{set: flag.NewFlagSet("chat", flag.ContinueOnError)}
+	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
+	return f
+}
+
+// parse reads args as flags only — `chat` takes no positional argument, so a
+// leftover one is a typo worth naming rather than silently ignoring.
+func (f *chatFlags) parse(args []string) error {
+	if err := f.set.Parse(args); err != nil {
+		return err
+	}
+	if f.set.NArg() > 0 {
+		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping])", f.set.Arg(0))
+	}
+	return nil
+}
+
 // runChat is the `chat` subcommand — a THIN PROTOTYPE of ambient mode, where
 // oh-my-graph is the host and natural language is auto-routed to graphs. Each
 // turn is classified by one router call through the same env-scrubbed
 // NodeRunner every node uses; a converse turn is answered inline, a graph turn
 // takes the exact `auto` path (coordinator.Plan → validate → scheduler.Run,
-// with the live progress feed and the run's events.jsonl). Two flags only:
-// --no-agent-mapping and --no-skill-mapping, because a chat graph turn IS an
-// auto run and must honor the same opt-outs; everything else stays prototype
-// scope — the loop and the router, nothing else.
+// with the live progress feed and the run's events.jsonl). Everything else
+// stays prototype scope — the loop and the router, nothing else.
 func runChat(args []string) error {
-	set := flag.NewFlagSet("chat", flag.ContinueOnError)
-	noAgentMapping := set.Bool("no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
-	noSkillMapping := set.Bool("no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
-	if err := set.Parse(args); err != nil {
+	flags := newChatFlags()
+	if err := flags.parse(args); err != nil {
 		return err
-	}
-	if set.NArg() > 0 {
-		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping])", set.Arg(0))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, *noAgentMapping, *noSkillMapping)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping)...)
 	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 

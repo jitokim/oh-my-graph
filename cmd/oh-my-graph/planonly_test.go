@@ -156,7 +156,7 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 		t.Errorf("a preview must not read as a broken run to `runs list`:\n%s", warned.String())
 	}
 	if _, resolveErr := serve.ResolveRun(runsRoot(), ""); resolveErr == nil {
-		t.Error("`serve` with no --run must still find no run after a preview, not resolve onto it")
+		t.Error("resolving with no explicit run id must still find no run after a preview, not resolve onto it")
 	}
 
 	for _, want := range []string{

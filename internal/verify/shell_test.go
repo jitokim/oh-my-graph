@@ -11,11 +11,16 @@ import (
 )
 
 // The Verify tests below run real `sh` commands. That is not a hole in the
-// project's "no real spawns in CI" rule — the rule exists so no test costs money
-// or needs a claude login. `sh -c 'exit 3'` is free, offline and hermetic, and
-// ShellVerifier's whole job is the exec behaviour (exit codes, timeouts,
-// cancellation), which cannot be proven without a process. Every OTHER package
-// verifies through FakeVerifier and spawns nothing.
+// project's spawn rule — the rule bans a REAL CLAUDE spawn, because that is
+// what costs money and needs a login, not a subprocess as such. `sh -c 'exit 3'`
+// is free, offline and hermetic, and ShellVerifier's whole job is the exec
+// behaviour (exit codes, timeouts, cancellation), which cannot be proven
+// without a process. The other seam packages do the same where their contract
+// IS the subprocess boundary — worktree's tests drive real git (git_test.go's
+// initRepo), and the runner's exit-code tests spawn scripted stub binaries
+// (claude_test.go's writeStub) rather than claude. Every package that is not
+// itself an exec seam goes through FakeRunner/FakeVerifier/FakeManager/
+// FakeOpener and spawns nothing at all.
 
 const echoCommand = "echo hello"
 

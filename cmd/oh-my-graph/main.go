@@ -3,18 +3,20 @@
 // the real ClaudeCLIRunner, a per-run Handoff and RunLedger — and hands them to
 // the Scheduler by constructor injection; there are no globals.
 //
-// Usage:
+// Usage (the same text run() prints; usage_test.go derives both from the
+// dispatch switch and every subcommand's FlagSet, so neither can drift):
 //
 //	oh-my-graph init [dir]
-//	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+//	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
 //	oh-my-graph lint <graph.yaml>
-//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
+//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-//	oh-my-graph chat
+//	oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping]
+//	oh-my-graph version
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
 // resumable — at a gate awaiting a human decision (ADR 0003) or because the
@@ -83,20 +85,32 @@ func mainExitCode(args []string) int {
 	return 1
 }
 
-// run parses argv and dispatches to the subcommand. It returns an error rather
-// than exiting so the exit path lives in exactly one place (mainExitCode).
-func run(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf(`usage: oh-my-graph init [dir]
-       oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail]
-       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail]
+// usageLines is the one copy of the subcommand synopsis the CLI prints. The
+// package doc comment above carries the same block — godoc's Usage: convention
+// wants it there, and a comment cannot be a constant — and usage_test.go pins
+// the two together line for line, then pins each line's flags against that
+// subcommand's real FlagSet. That second half is the one that matters: a
+// synopsis advertising a flag nobody registered is a support ticket waiting to
+// happen (this file once documented `serve --run`), and a synopsis omitting a
+// registered flag hides a feature. The continuation indent aligns each line
+// under the "usage: " prefix.
+const usageLines = `oh-my-graph init [dir]
+       oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
        oh-my-graph lint <graph.yaml>
-       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N]
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-       oh-my-graph chat`)
+       oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping]
+       oh-my-graph version`
+
+// run parses argv and dispatches to the subcommand. It returns an error rather
+// than exiting so the exit path lives in exactly one place (mainExitCode).
+func run(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: " + usageLines)
 	}
 	switch args[0] {
 	case "init":
@@ -146,10 +160,10 @@ func (f inputFlag) Set(pair string) error {
 // With --dry-run it stops after validation and the plan print — nothing is
 // wired and no node runs.
 func runGraph(args []string) error {
-	// One of the three sites (with runAuto and runResume) injecting the real
-	// browser launcher (browser.ExecOpener, the fourth exec seam — ADR 0006);
-	// everywhere else the Opener stays refusing or absent. webOpener still
-	// gates whether it is ever used.
+	// One of the four sites (with runAuto, runResume and runServe) injecting
+	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
+	// ADR 0006); everywhere else the Opener stays refusing or absent.
+	// webOpener still gates whether it is ever used.
 	return runGraphWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
 }
 
@@ -210,8 +224,9 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 // into bypassPermissions (the coordinator rejects them), so no warning pass is
 // needed here.
 func runAuto(args []string) error {
-	// One of the three sites (with runGraph and runResume) injecting the real
-	// browser launcher (browser.ExecOpener, the fourth exec seam — ADR 0006).
+	// One of the four sites (with runGraph, runResume and runServe) injecting
+	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
+	// ADR 0006).
 	return runAutoWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
 }
 
@@ -344,9 +359,10 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	// A plan-only preview keeps its paid-for spec OUTSIDE runs/. A directory
 	// under runs/ holding a graph.json and nothing else is, to every reader of
 	// that tree, a run whose state.json never appeared: `runs list` reports it
-	// through the same WARNING+skip channel as a corrupt snapshot, and `serve`
-	// with no --run resolves the newest directory and would show the preview
-	// instead of your last actual run. A preview never ran, so it is not a run.
+	// through the same WARNING+skip channel as a corrupt snapshot, and the
+	// `serve` dashboard enumerates the same tree, so the preview would show up
+	// as a card for a run that never ran. A preview never ran, so it is not a
+	// run.
 	specDir := runDirFor(runID)
 	if planOnly {
 		specDir = planDirFor(runID)
@@ -779,11 +795,12 @@ func runDirFor(runID string) string {
 
 // planDirFor is where a plan that was bought but never executed keeps its spec
 // — `auto --plan-only`. It is deliberately NOT under runsRoot(): `runs list`
-// and `serve` enumerate that tree and read a directory with no state.json as a
-// broken run, so a preview left there would be reported as damage and, being
-// the newest directory, would become the run `serve` opens by default. Its own
-// tree keeps the two kinds of artifact — what ran, and what was only planned —
-// apart for every reader, without any of them needing a special case.
+// and the `serve` dashboard both enumerate that tree and read a directory with
+// no state.json as a broken run, so a preview left there would be reported as
+// damage — and, being the newest directory, would sit at the top of both
+// listings. Its own tree keeps the two kinds of artifact — what ran, and what
+// was only planned — apart for every reader, without any of them needing a
+// special case.
 func planDirFor(planID string) string {
 	return filepath.Join(omgHome(), "plans", planID)
 }

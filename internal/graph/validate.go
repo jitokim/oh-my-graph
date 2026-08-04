@@ -11,7 +11,10 @@ import (
 // GraphValidationError names the offending node and the invariant it broke. It
 // is the single error type Load/Parse return for a structurally invalid graph,
 // so a caller can render a precise "node X: <why>" message without string
-// matching.
+// matching. Every structural issue answers errors.As for it, INCLUDING the one
+// specialization below (*UnresolvedFragmentError), which reaches it through
+// Unwrap — a caller asking the general question never has to know the
+// specializations exist.
 type GraphValidationError struct {
 	NodeID string
 	Reason string
@@ -33,6 +36,15 @@ func (e *GraphValidationError) Error() string {
 // (planned nodes may not reference fragments: trusted code resolves local
 // files; the planner never names them).
 type UnresolvedFragmentError struct{ GraphValidationError }
+
+// Unwrap exposes the embedded GraphValidationError so a fragment error answers
+// the GENERAL question too. errors.As matches on concrete type and then walks
+// Unwrap; struct embedding is invisible to it. Without this method
+// errors.As(err, &*GraphValidationError) is false for a fragment error, and a
+// caller doing exactly what GraphValidationError's doc tells it to do would
+// silently miss the one issue kind that has a specialized type — the general
+// question must not be answerable only for the issues nobody specialized.
+func (e *UnresolvedFragmentError) Unwrap() error { return &e.GraphValidationError }
 
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
