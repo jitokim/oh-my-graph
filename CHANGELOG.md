@@ -15,10 +15,13 @@ DAG path on a judgment failure (ADR-0010) and a plan → execute → assess goal
 cycle for `auto` (ADR-0011) — and learns to pause-and-resume instead of
 hard-failing: a subscription session limit becomes a pause, and
 `resume --retry-failed` salvages a halted run (ADR-0009). Planned nodes map
-onto your own Claude Code agents and skills, the live view gains gate approval
-and a running-node transcript, and the tool becomes something you install
-rather than build — prebuilt binaries and an `init` that writes the example
-graphs. Meanwhile the project starts shipping itself, and says so.
+onto your own Claude Code agents and skills, graph authoring gains fragments —
+a `use:` that splices a proven node shape in at load time (ADR-0013) — the live
+view gains gate approval and a running-node transcript, `serve` becomes one
+port for every run and opens the browser itself, and the tool becomes something
+you install rather than build — prebuilt binaries and an `init` that writes the
+example graphs and the fragments they cite. Meanwhile the project starts
+shipping itself, and says so.
 
 ### Added
 
@@ -85,6 +88,45 @@ graphs. Meanwhile the project starts shipping itself, and says so.
   ambiguity maps nothing, and `--no-skill-mapping` disables the feature
   before any filesystem access, in both `auto` and
   `chat`. ([#97](https://github.com/jitokim/oh-my-graph/pull/97))
+- **Fragments — a `use:` is a load-time node splice (ADR-0013).** A node may
+  cite a single-node fragment file with `use: <name>` plus `with:` bindings,
+  and the file loader splices it in *before* validation, so a resolved graph
+  is indistinguishable from a hand-written one to every engine consumer and
+  the runtime never learns the concept. Lookup is one location and no search
+  path — the entry file's own `fragments/` sibling, with `use:` constrained to
+  a bare name so `../evil` cannot reach out of it — overrides are judged by
+  key presence and replace the whole top-level subtree (never a deep merge),
+  a `{{ with.x }}` binding is typed when it is the entire scalar and textual
+  when embedded, and an alias-carrying fragment body is refused rather than
+  half-walked. `run` prints one disclosure line per resolved `use:` naming the
+  source, its `description:` and every key the node overrides; a fragment run
+  snapshots the *resolved* graph so resume survives; `lint` and `--dry-run`
+  judge prompts after splicing; and any node still carrying `use:`/`with:` at
+  `Parse` is refused structurally — which is also how a planner-emitted
+  fragment is rejected. Three proven shapes ship under `graphs/fragments/`
+  (`e2e-verify`, `review-security`, `review-style`), embedded in the binary
+  and unpacked by `init` alongside the templates that cite
+  them. ([#98](https://github.com/jitokim/oh-my-graph/pull/98))
+- **One port for every run, and `serve` opens the browser itself.**
+  `oh-my-graph serve` with no run id is now a dashboard: `/` renders one live
+  mini-DAG card per run — in-flight first with state, elapsed, cost and node
+  counts, settled runs collapsed below — and each run's own view is mounted at
+  `/run/<id>/`, the existing single-run route set *mounted* rather than
+  re-rooted, so every document-relative fetch and static asset is scoped with
+  zero UI changes. `/api/cards/events` subscribes to the runs root the way a
+  run view subscribes to its `events.jsonl`, re-sending only runs whose
+  contract files changed; cards are derived through the existing readers only
+  (`runfeed.InFlight`/`Walk`, `runstate.Load`, `graph.Parse`), so a card cannot
+  disagree with `runs list` or `watch`, and a run directory this binary cannot
+  read becomes an `unknown` card carrying the reason rather than being silently
+  dropped. The run id from the URL is matched against the runs root's directory
+  listing before any path is built from it, and the loopback bind, Host check
+  and gate token are unchanged and cover the mounted runs. `serve` also stops
+  merely printing a URL: when stdout is a terminal and `--no-open` was not
+  passed it hands that URL to `browser.ExecOpener` over the fourth exec seam —
+  the same gate the embedded live view takes, no new spawner — while a pipe, a
+  script or CI still binds the port and serves, with byte-identical output and
+  no browser. ([#100](https://github.com/jitokim/oh-my-graph/pull/100))
 - **Gate approve/reject from the live view (token-guarded).** `serve` gains
   `POST /api/gate/{approve,reject}`, valid only while the viewed run is paused
   at a gate and reusing the CLI resume machinery, so a human can release a
@@ -146,6 +188,32 @@ graphs. Meanwhile the project starts shipping itself, and says so.
   decomposition-by-responsibility and the same budget posture — a prompt-only
   change that keeps `budget_usd` do-not-set and widens no field
   disposition. ([#84](https://github.com/jitokim/oh-my-graph/pull/84))
+- **Three shipped templates migrate onto the fragments.** `self-dev`,
+  `dev-review-pr` and `backlog-batch` stop restating the cold-safe e2e gate and
+  the two review shapes and bind them instead — the hand-swept drift that
+  motivated ADR-0013 in the first place. The migration is gated twice: frozen
+  `testdata/pre-migration/` fixtures prove `self-dev`'s and `dev-review-pr`'s
+  resolved graphs are byte-identical to their pre-migration parse outside the
+  deliberately converged fields (the prompt wording; the e2e grant reshaped into
+  the fragment's narrowed check-gate one — `self-dev`'s `Bash(go *)` and both
+  templates' `Bash(git *)` narrow to the three `go` verbs and the three
+  read-only `git` ones, while `dev-review-pr` picks up `go build`/`go vet`;
+  `dev-review-pr`'s two reviews gaining `Bash(git log*)`; `self-dev`'s e2e
+  gaining the runaway-insurance `budget_usd`), and `testdata/golden/` captures
+  all three post-migration resolved graphs so a future fragment edit surfaces as
+  a three-template resolved diff in the PR. `backlog-batch` is the one with no
+  equivalence fixture, because it does not claim equivalence: its gates gain a
+  real engine-run
+  `success_check.verify` — fed by the new required `checks_command` input, since
+  the evidence command is what only the graph can know — where the node's own
+  "PASS" was previously the only thing judging
+  it. ([#98](https://github.com/jitokim/oh-my-graph/pull/98))
+- **`serve` with no run id no longer resolves a run.** It used to pick the
+  newest in-flight run (or just the newest) and fail with "no runs found" on a
+  machine that had never run
+  anything; it now renders the dashboard, empty at first, which fills in the
+  moment something runs. `serve <run-id>` is
+  unchanged. ([#100](https://github.com/jitokim/oh-my-graph/pull/100))
 
 ### Fixed
 
@@ -182,6 +250,19 @@ graphs. Meanwhile the project starts shipping itself, and says so.
 
 ### Documentation
 
+- **The fleetops framing retires from the docs a user reads first.** Now that
+  the tool ships its own observation surface (the `serve` live view, `runs
+  list`/`show`/`watch`), the sibling-project pairing stops carrying its weight:
+  both READMEs drop the "Pairs with fleetops" section and the masthead pairing
+  line for the durable fact underneath it — nodes run with session persistence
+  on, so every node is an ordinary claude session under `~/.claude/projects`
+  that any transcript reader can pick up — DESIGN.md states the visibility
+  stance as the run-feed contract itself (rendering gets no privileged access to
+  the engine), `docs/RUN-FEED.md` generalizes from "canonically fleetops" to any
+  external consumer, EXAMPLES.md swaps "Observe with fleetops" for "Watch a
+  run", and LIMITATIONS.md's deferred item becomes a terminal TUI rather than a
+  dashboard. fleetops survives as a one-line "See also"; ADRs and this changelog
+  are left as history. ([#101](https://github.com/jitokim/oh-my-graph/pull/101))
 - **README restructured around the gap it fills.** The front page now opens
   with what the tool is and the gap it fills that a shell script, a CI
   pipeline, or one long agent session does not — instead of leading with the
