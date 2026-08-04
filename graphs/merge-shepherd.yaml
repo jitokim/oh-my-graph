@@ -71,7 +71,7 @@ nodes:
     # Anchored so a FAIL report that merely mentions the word cannot pass,
     # and tolerant of leading markdown emphasis, which a model adds unbidden
     # (`**PASS**` halted a real run of this very graph).
-    success_check: { exit_zero: true, result_matches: '^[*_ \t]*PASS' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS' }
 
   - id: ready-and-wait
     type: claude-run
@@ -106,7 +106,7 @@ nodes:
     timeout: 15m
     handoff: artifact
     # Same shape as verify's: anchored, but tolerant of leading emphasis.
-    success_check: { exit_zero: true, result_matches: '^[*_ \t]*READY' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*READY' }
 
   - id: triage
     type: claude-run

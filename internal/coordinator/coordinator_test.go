@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,14 +131,62 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 		"git rev-parse --abbrev-ref HEAD",
 		// the assertion that the commit did not land on the default branch
 		"default branch",
-		// the gate that turns a failed assertion into a failed node —
-		// anchored at both ends so "PASS" inside a failing reply cannot match
-		`"success_check": {"result_matches": "^PASS$"}`,
+		// the instruction half of a verdict pattern (DESIGN.md "Verdict
+		// patterns"): the pattern is only the backstop
+		"is WRONG",
 	} {
 		if !strings.Contains(captured.Prompt, want) {
 			t.Errorf("planner prompt lost the branch-assertion guidance: missing %q", want)
 		}
 	}
+
+	// The gate itself is pinned by behavior rather than by literal. It travels
+	// to the planner inside a JSON string, so a hand-written expectation would
+	// pin the escaping and not the semantics — and the escaping is exactly what
+	// silently breaks (a lone \s is not a valid JSON escape). What has to hold
+	// is that the pattern the planner is handed still compiles after JSON
+	// parsing, still anchors both ends, and still tolerates the markdown a
+	// model wraps a bare verdict in.
+	re := regexp.MustCompile(plannedVerdictPatternIn(t, captured.Prompt))
+	for _, pass := range []string{"PASS", "**PASS**", "`PASS`", "PASS\n", "\nPASS\n"} {
+		if !re.MatchString(pass) {
+			t.Errorf("planner's verdict pattern rejects a passing reply %q", pass)
+		}
+	}
+	for _, fail := range []string{
+		"FAIL — HEAD is on main, so I cannot say PASS",
+		"PASS is what I would report if the branch were right, but it is not",
+		"PASSED with caveats",
+	} {
+		if re.MatchString(fail) {
+			t.Errorf("planner's verdict pattern accepts a failing reply %q", fail)
+		}
+	}
+}
+
+// plannedVerdictPatternIn extracts the result_matches regex the planner prompt
+// hands out and decodes it the way the planner's JSON reply would be decoded,
+// so the test sees the pattern the engine would end up compiling.
+func plannedVerdictPatternIn(t *testing.T, prompt string) string {
+	t.Helper()
+	const marker = `"success_check": {"result_matches": `
+	i := strings.Index(prompt, marker)
+	if i == -1 {
+		t.Fatalf("planner prompt lost the result_matches gate entirely")
+	}
+	quoted := prompt[i+len(marker):]
+	end := strings.Index(quoted[1:], `"`)
+	if !strings.HasPrefix(quoted, `"`) || end == -1 {
+		t.Fatalf("planner prompt's result_matches value is not a quoted string: %.60q", quoted)
+	}
+	pattern, err := strconv.Unquote(quoted[:end+2])
+	if err != nil {
+		t.Fatalf("planner is handed a pattern that will not survive JSON parsing: %v", err)
+	}
+	if !strings.HasPrefix(pattern, "^") || !strings.HasSuffix(pattern, "$") {
+		t.Errorf("planner's verdict pattern dropped an anchor: %q", pattern)
+	}
+	return pattern
 }
 
 // TestPlan_PromptRequiresScopedStagingInCommitNodes pins the planner guidance

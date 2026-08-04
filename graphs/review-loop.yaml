@@ -57,16 +57,17 @@ nodes:
       The implementer reported: {{ artifacts.impl | inline }}
 
       Judge correctness, tests, and scope. If the work is sound, START your
-      reply with the bare words ship it — those seven characters as the very
-      FIRST of the reply, with no markdown emphasis (`**ship it**` is
-      WRONG), no quotes, no heading, no preamble — then one sentence of
+      reply with the bare words ship it — those seven characters, lowercase
+      exactly as written, as the very FIRST of the reply, with no markdown
+      emphasis (`**ship it**` is WRONG), no quotes, no heading, no
+      backticks, no preamble — then one sentence of
       praise. Otherwise DO NOT say "ship it" — reply with a concise,
       numbered list of required fixes; that list is handed verbatim to the
       implementation re-run.
     # Anchored: a failing review that merely MENTIONS the verdict phrase
     # ("can't say ship it yet") must not read as a pass. Tolerant of leading
     # markdown emphasis, which a model adds unbidden even when told not to.
-    success_check: { result_matches: '^[*_ \t]*ship it' }
+    success_check: { result_matches: '^[*_`\s]*ship it' }
     feedback: { rerun: impl, max: 2 }
     budget_usd: 1.00
     timeout: 15m

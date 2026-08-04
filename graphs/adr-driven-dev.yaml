@@ -132,7 +132,7 @@ nodes:
     handoff: artifact
     # Anchored so a FAIL report mentioning the word cannot pass, and tolerant
     # of the leading markdown emphasis a model adds unbidden.
-    success_check: { exit_zero: true, result_matches: '^[*_ \t]*PASS' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS' }
 
   - id: localrun
     type: claude-run
@@ -163,7 +163,7 @@ nodes:
       # merely mentions the word must not pass) but tolerant of the leading
       # markdown emphasis a model adds unbidden — `**PASS**` has halted a
       # real run.
-      result_matches: '^[*_ \t]*PASS'
+      result_matches: '^[*_`\s]*PASS'
       # The evidence. The engine runs this itself and judges the exit code,
       # so a node that reports PASS without the suite passing does not pass.
       verify: { command: "make local", timeout: 5m }
@@ -218,7 +218,7 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: '^[*_ \t]*PASS' # anchored, but tolerant of `**PASS**`
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 
@@ -262,7 +262,7 @@ nodes:
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: '^[*_ \t]*PASS' # anchored, but tolerant of `**PASS**`
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
       verify: { command: "make local", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
 

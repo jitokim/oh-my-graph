@@ -57,7 +57,7 @@ node:
     # but tolerant of the markdown a model emits unbidden (`**PASS**` has
     # halted a real run), because the pattern is the backstop and the prompt
     # above is the instruction.
-    result_matches: '^[*_ \t]*PASS[*_\s]*$'
+    result_matches: '^[*_`\s]*PASS[*_`\s]*$'
     # The evidence. The engine runs this itself and judges the exit code,
     # so a node that reports PASS without the suite passing does not pass.
     verify: { command: "{{ with.verify_command }}", timeout: 5m }

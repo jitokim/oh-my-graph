@@ -50,7 +50,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_ \\t]*PASS[*_\\s]*$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "make local",
           "timeout": "5m"

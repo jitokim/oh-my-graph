@@ -6,7 +6,8 @@
 #
 # Proves, end to end: subscription auth works with the API key scrubbed,
 # a sequential edge with artifact handoff, JSON capture (two session_ids +
-# costs), the RunLedger table, that fleetops observes both sessions, and that
+# costs), the RunLedger table, that both nodes stay readable afterwards as
+# ordinary claude sessions under ~/.claude/projects, and that
 # success_check.verify really runs a command and judges it (the `write` node
 # passes only if haiku.txt actually exists — saying DONE is not enough).
 #
@@ -23,13 +24,18 @@ nodes:
     cwd: "{{ inputs.dir }}"
     prompt: |
       Write a 3-line haiku about directed graphs to a file named haiku.txt
-      in the current directory. Then reply with exactly the word DONE.
+      in the current directory. Then your reply is exactly the four bare
+      characters DONE and nothing else — no markdown emphasis (`**DONE**`
+      is WRONG), no heading, no backticks, no preamble.
     allowed_tools: [Read, Write, "Bash(cat *)"]
     permission_mode: acceptEdits
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: "DONE"        # what the node SAID
+      # What the node SAID. Anchored at both ends so "I could not write the
+      # file, so I am not DONE" cannot read as a pass — tolerant of the
+      # markdown a model adds unbidden (see DESIGN.md "Verdict patterns").
+      result_matches: '^[*_`\s]*DONE[*_`\s]*$'
       # …and what the engine SAW. The file either exists in the node's cwd or it
       # does not; no wording in the reply can satisfy this one.
       verify: { command: "test -f haiku.txt", timeout: 10s }

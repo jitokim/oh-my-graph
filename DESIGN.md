@@ -98,7 +98,7 @@ Node schema:
   handoff: artifact           # artifact(default) | session
   success_check:              # see "Success checks" — verify is the only evidence-grounded predicate
     exit_zero: true
-    result_matches: "PASS"    # self-report; never sufficient on its own
+    result_matches: '^[*_`\s]*PASS'  # self-report; never sufficient on its own — shape per "Verdict patterns"
     verify: { command: "make local PORT=8080", timeout: 5m }   # optional (v1.1)
   retry: { max: 1, on: [nonzero_exit] }   # optional
   feedback: { rerun: impl, max: 2 }       # optional (ADR 0010): on a judgment failure, re-run the depends_on path from `rerun` back to this node, at most `max` times — see "Execution engine"
@@ -146,7 +146,7 @@ node:
     Continue the work — … and {{ with.checks }} …
   allowed_tools: [Read, "Bash(make *)", "Bash(go build *)", "Bash(go test *)", "Bash(go vet *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)"]
   handoff: session
-  success_check: { exit_zero: true, result_matches: '^[*_ \t]*PASS[*_\s]*$', verify: { command: "{{ with.verify_command }}", timeout: 5m } }
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS[*_`\s]*$', verify: { command: "{{ with.verify_command }}", timeout: 5m } }
   retry: { max: 1, on: [nonzero_exit, verify_failed] }
 ```
 
@@ -517,7 +517,7 @@ what a node whose success is externally observable should carry.
 ```yaml
 success_check:
   exit_zero: true
-  result_matches: '^[*_ \t]*PASS'        # optional, secondary — see "Verdict patterns"
+  result_matches: '^[*_`\s]*PASS'        # optional, secondary — see "Verdict patterns"
   verify:
     command: "go test ./... -run TestFoo" # required; run via the platform shell (`sh -c` on unix, `cmd /c` on Windows)
     cwd: "{{ inputs.repo }}"              # optional; default = the node's own cwd
@@ -569,18 +569,32 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   characters of the reply, and say that markdown emphasis is wrong — name the
   wrong shape (`` `**PASS**` is WRONG ``) rather than only describing the right
   one.
-- **The pattern is the backstop.** Tolerate leading emphasis and whitespace
-  while keeping the anchor: `'^[*_ \t]*PASS'` for a prefix verdict,
-  `'^[*_ \t]*PASS[*_\s]*$'` when the whole reply must be the verdict and
-  nothing else, `'^[*_ \t]*APPLIED[*_ \t]*:'` when the token carries
-  punctuation a model may wrap (`**APPLIED:**` and `**APPLIED**:` both match).
+- **The pattern is the backstop.** Wrap the token in the decoration class
+  ``[*_`\s]`` — emphasis, code span, whitespace — while keeping the anchor:
+  ``'^[*_`\s]*PASS'`` for a prefix verdict, ``'^[*_`\s]*PASS[*_`\s]*$'`` when
+  the whole reply must be the verdict and nothing else,
+  ``'^[*_`\s]*APPLIED[*_`\s]*:'`` when the token carries punctuation a model
+  may wrap (`**APPLIED:**` and `**APPLIED**:` both match).
   Single-quote the YAML scalar so the regex reaches the engine byte-for-byte.
+
+The class is exactly the decoration a model wraps around a bare token it was
+told to emit alone: `**PASS**`, `` `PASS` ``, a stray leading or trailing
+newline. It deliberately stops there. Block structure that changes the *shape*
+of the reply — a `## PASS` heading, a `- PASS` list item, a sentence of
+preamble — is the prompt's job to prevent, not the pattern's to absorb; every
+character added to the class buys tolerance with a little of the anchor's
+meaning. The class is also **case-sensitive**, like the whole match: a node
+told to reply `ship it` fails on `Ship it`, so a lowercase or mixed-case token
+needs the prompt to say the casing is literal.
 
 Never relax the `^` into an unanchored match to fix a markdown failure: an
 unanchored `PASS` also passes a FAIL report that mentions the word, which turns
 a cheap filter into a check that cannot fail. The tolerance belongs in the
 character class, not in dropping the anchor. Every shipped graph and fragment
-follows this shape; a new verdict token joins it.
+follows this shape, and so does the pattern the auto-mode planner hands its
+branch-assertion check node (`coordinator.plannedVerdictPattern`, where a
+planned node may not set `verify` and the pattern is the whole gate); a new
+verdict token joins it.
 
 The engine's matching semantics stay deliberately dumb — normalizing the reply
 in Go (trim, strip emphasis, case-fold) would change what every existing

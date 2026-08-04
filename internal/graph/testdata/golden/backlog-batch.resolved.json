@@ -52,7 +52,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_ \\t]*PASS[*_\\s]*$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "{{ inputs.checks_command }}",
           "timeout": "5m"
@@ -145,7 +145,7 @@
       "handoff": "session",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_ \\t]*PASS[*_\\s]*$",
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
         "verify": {
           "command": "{{ inputs.checks_command }}",
           "timeout": "5m"

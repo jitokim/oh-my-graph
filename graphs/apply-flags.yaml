@@ -72,7 +72,7 @@ nodes:
     # anchored for exactly that reason — but tolerant of the markdown
     # emphasis a model adds unbidden, on either side of the colon
     # (`**APPLIED:**` and `**APPLIED**:` both match; both have appeared).
-    success_check: { exit_zero: true, result_matches: '^[*_ \t]*APPLIED[*_ \t]*:' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*APPLIED[*_`\s]*:' }
 
   - id: verify
     type: claude-run
@@ -94,4 +94,4 @@ nodes:
     handoff: artifact
     # Anchored at both ends — a DRIFT report that names the word must not
     # read as coverage — but tolerant of leading/trailing markdown emphasis.
-    success_check: { exit_zero: true, result_matches: '^[*_ \t]*COVERED[*_\s]*$' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*COVERED[*_`\s]*$' }
