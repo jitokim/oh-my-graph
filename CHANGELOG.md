@@ -8,6 +8,212 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [v0.4.0] - 2026-08-04
+
+The iteration release. The engine grows loops — `feedback` edges that re-run a
+DAG path on a judgment failure (ADR-0010) and a plan → execute → assess goal
+cycle for `auto` (ADR-0011) — and learns to pause-and-resume instead of
+hard-failing: a subscription session limit becomes a pause, and
+`resume --retry-failed` salvages a halted run (ADR-0009). Planned nodes map
+onto your own Claude Code agents and skills, the live view gains gate approval
+and a running-node transcript, and the tool becomes something you install
+rather than build — prebuilt binaries and an `init` that writes the example
+graphs. Meanwhile the project starts shipping itself, and says so.
+
+### Added
+
+- **`timeout:` per node, and a live transcript of the running node
+  (ADR-0007).** A node may declare an execution `timeout:`, parsed and
+  validated at load time — unparsable, zero, and negative values are all
+  rejected, and undeclared nodes keep the runner's 20-minute default, so no
+  path runs unbounded. The engine now pre-assigns each invocation a v4
+  `--session-id` (`crypto/rand`, mutually exclusive with `--resume`) and
+  publishes it on `node_started`/`node_retried`, and `serve` gains an
+  `/api/transcript` tail so the live view shows a "now doing" line on the
+  running node. `budget_turns` is documented as rejected-with-evidence rather
+  than shipped as a dead field: `claude` exposes no `--max-turns` (verified
+  against `claude --help`, 2026-08-02). ([#82](https://github.com/jitokim/oh-my-graph/pull/82))
+- **`on_fail` policy, `resume --retry-failed`, and session limits as
+  resumable pauses (ADR-0009).** Three failure-semantics promotions drawn
+  from real 20-node batch incidents: a graph may declare `on_fail: continue`
+  itself (ORed with `--continue-on-fail`, so the CLI can never *weaken* a
+  graph's declared policy); `resume <run-id> --retry-failed` salvages a
+  failed run by re-executing only its failed and cancelled nodes (an initial
+  `state.json` is written at t=0 so even a first-node failure is resumable);
+  and hitting the subscription session limit now *pauses* the run instead of
+  failing it — in-flight siblings drain to completion, the limited node is
+  recorded nowhere, the CLI exits 2 with a reset-time resume hint, and
+  `resume --retry-failed` picks it back up. ([#83](https://github.com/jitokim/oh-my-graph/pull/83))
+- **Feedback edges — bounded runtime re-runs of a DAG path (ADR-0010).** A
+  node may declare a `feedback:` arc back at a `depends_on` ancestor; when it
+  fails for a *judgment* cause (verify failed, nonzero exit, result mismatch
+  — never an infrastructure fault or a blown budget), the scheduler re-arms
+  the loop body and re-runs it up to a load-time-mandatory `max` rounds,
+  exposing the declarer's output to the re-run through a new
+  `{{ feedback.<id> }}` handoff namespace. All seven structural rules
+  (mandatory positive `max`; the arc must target a proper ancestor, so
+  self-loops, forward arcs and cross-branch arcs are rejected) are enforced
+  before any spend; the loop is pure file I/O in the run directory and adds
+  no spawner, and `graphs/review-loop.yaml` ships as a worked
+  demo. ([#86](https://github.com/jitokim/oh-my-graph/pull/86))
+- **Plan-and-execute goal iteration (ADR-0011).** `auto` gains a bounded
+  plan → validate → execute → assess cycle loop: `assess` lands as a third
+  coordinator call class with its own stricter, tool-less isolated stance,
+  and `--max-cycles` (default 1) plus an optional `--max-goal-budget-usd`
+  soft check at cycle boundaries govern it. Each cycle persists as a normal
+  run with its own `assess.json`, the snapshot gains an optional additive
+  `goal` lineage block that survives resume legs, and a single-cycle run
+  stays byte-identical to before. ([#91](https://github.com/jitokim/oh-my-graph/pull/91))
+- **Auto-map planned nodes onto your own Claude Code agents.** When the
+  coordinator plans a graph, each planned node is matched by token-based name
+  against the agents in `~/.claude/agents/` and `.claude/agents/`, and maps
+  only when the agent's frontmatter `tools` are a subset of the node's
+  allowed tools (itself under the fixed planner allowlist). Mapping runs
+  strictly *after* `validatePlannedNodes`, so a planner-emitted `agent:`
+  field stays rejected — candidates come only from your own agent files;
+  every mapping and skip is disclosed in the plan printout, and
+  `--no-agent-mapping` opts out. ([#81](https://github.com/jitokim/oh-my-graph/pull/81))
+- **Skill mapping for planned nodes — plan-time inlining (ADR-0012).** The
+  coordinator scans `~/.claude/skills/*/SKILL.md`, matches skill names
+  against planned node IDs (the same rule as agent mapping), and on an
+  unambiguous hit inlines the skill body into the node's prompt inside a
+  nonce-fenced block — with `{{`-neutralization, a SHA-256 disclosure, and a
+  16 KiB post-neutralization cap (skip, never truncate). Inlining rather than
+  referencing is grounded in a measured probe: a planned node that merely
+  *names* a skill is dead text, because the spawned `claude -p` never loads
+  it. Agent-mapped nodes are refused (the composite is unmeasured),
+  ambiguity maps nothing, and `--no-skill-mapping` disables the feature
+  before any filesystem access, in both `auto` and
+  `chat`. ([#97](https://github.com/jitokim/oh-my-graph/pull/97))
+- **Gate approve/reject from the live view (token-guarded).** `serve` gains
+  `POST /api/gate/{approve,reject}`, valid only while the viewed run is paused
+  at a gate and reusing the CLI resume machinery, so a human can release a
+  gate from the browser instead of the terminal. A per-process random token
+  embedded in the page guards it as a CSRF check on top of the loopback bind
+  and Host guard; the read-only-boundary change is documented in the handler
+  and DESIGN.md, and the embedded (non-standalone) view still refuses gate
+  decisions. ([#94](https://github.com/jitokim/oh-my-graph/pull/94))
+- **`resume` gets the web live view.** A resumed leg now embeds the live view
+  on the same terms a first leg does — `--no-web` on `resume` and TTY-gated
+  auto-open over the fourth exec seam — closing a note ADR-0006 had deferred.
+  An interactive resume serves the run on an ephemeral loopback port and opens
+  it once (a pipe, CI, or `--no-web` yields nothing and byte-identical
+  output), and the view shows the whole run's history, not just this
+  leg. ([#93](https://github.com/jitokim/oh-my-graph/pull/93))
+- **Resizable live view and a full-window layout.** The `serve` feed/map split
+  gets a draggable handle (pointer-capture, minimum widths, chosen width
+  persisted in `localStorage`), and maximizing the window now grows the map
+  instead of empty margin — the map defaults to a viewport-proportional width
+  and a debounced window-resize listener re-fits the cytoscape canvas that
+  previously never re-measured. ([#79](https://github.com/jitokim/oh-my-graph/pull/79))
+- **Prebuilt release binaries via goreleaser.** A `version: 2`
+  `.goreleaser.yaml` builds `darwin`/`linux` × `arm64`/`amd64` with
+  `CGO_ENABLED=0` and `-X main.Version={{.Version}}`, produces per-platform
+  `tar.gz` archives (bundling README/LICENSE/CHANGELOG) plus `checksums.txt`,
+  and a tag-triggered `release.yml` workflow publishes them — so users no
+  longer have to `go install` from source. `Version` moves from `const` to
+  `var` so the ldflags injection lands (the version↔changelog test still
+  passes). ([#95](https://github.com/jitokim/oh-my-graph/pull/95))
+- **`oh-my-graph init [dir]` writes the example graphs.** `go install` ships
+  only the binary, so the README's first `run` command failed
+  file-not-found on a fresh machine; the shipped graphs are now `go:embed`-ed
+  and `init` writes them out — refusing to overwrite, listing what it wrote,
+  and printing the next command. Quickstart becomes install → init →
+  run. ([#96](https://github.com/jitokim/oh-my-graph/pull/96))
+- **Two more shipped templates, plus batch idioms.**
+  `graphs/adr-driven-dev.yaml` encodes the maintainer's own methodology — an
+  eleven-node design-first ADR → implement → tests-green → three-round-review
+  pipeline, with four engine-run `verify: make local` gates and a
+  user-replaceable deep-review-agent slot
+  ([#84](https://github.com/jitokim/oh-my-graph/pull/84));
+  `graphs/merge-shepherd.yaml` turns the operator's by-hand PR-shipping loop
+  (verify → ready-and-wait → triage → gate → merge) into a graph, where the
+  merge node sits behind both a READY check and a human `type: gate` so it can
+  only run once review has completed
+  ([#88](https://github.com/jitokim/oh-my-graph/pull/88)); and
+  `graphs/apply-flags.yaml` (a reusable apply-review-flags lane) and
+  `graphs/backlog-batch.yaml` (the multi-lane batch skeleton) ship alongside
+  them. ([#80](https://github.com/jitokim/oh-my-graph/pull/80))
+
+### Changed
+
+- **Shipped templates and the planner absorb the budget-policy lessons.**
+  Across `dev-review-pr`, `self-dev`, `backlog-batch` and `apply-flags`, dev
+  nodes default to no `budget_usd` and any remaining budget is a catastrophic
+  runaway ceiling rather than a per-step limit (e.g. `dev-review-pr`'s e2e
+  relaxed 0.50 → 10.00, not removed), commit-strategy guidance is upgraded,
+  and 1-hour hang-guard timeouts are added; the planner prompt gains
+  decomposition-by-responsibility and the same budget posture — a prompt-only
+  change that keeps `budget_usd` do-not-set and widens no field
+  disposition. ([#84](https://github.com/jitokim/oh-my-graph/pull/84))
+
+### Fixed
+
+- **Three dogfood-incident engine fixes.** Worktree `Acquire` is now
+  disk-aware, so a resume leg survives a retained branch: it validates and
+  reuses an existing managed dir, attaches to the run's branch without `-b`
+  when only the branch survived, creates fresh otherwise, and refuses a
+  foreign directory rather than adopting it. A per-node `timeout:` expiry is
+  reported as `timed out after <dur> (node timeout)` instead of the raw
+  `context deadline exceeded`, still wrapping `context.DeadlineExceeded` so
+  scheduler classification is unchanged. And a node killed before it printed
+  its cost envelope now reads `cost unknown (killed before reporting)` instead
+  of an implied `$0.0000`. ([#90](https://github.com/jitokim/oh-my-graph/pull/90))
+- **Placeholder lint and template-prompt polish.** The placeholder lint's
+  leading-word gate lowercases before matching, so `{{ Inputs.repo }}`-style
+  case variants get an advisory "did you mean lowercase?" warning (the runtime
+  pattern is untouched); retried session-handoff prompts in
+  `dev-review-pr`/`self-dev` read correctly on a cold resume; and the last
+  wall-clock wait in `runfeed`'s reader test is replaced with an observed
+  `fs.ErrNotExist` signal. ([#80](https://github.com/jitokim/oh-my-graph/pull/80))
+
+### Documentation
+
+- **README restructured around the gap it fills.** The front page now opens
+  with what the tool is and the gap it fills that a shell script, a CI
+  pipeline, or one long agent session does not — instead of leading with the
+  `Marginal cost per node: $0` punchline and self-hosting trivia. Four H2s
+  fold into the flow they belong to, the "exactly four exec seams" invariant
+  is stated up front, and the subscription-auth story moves into a *Bring your
+  own login* section. Reordering, not rewriting: all seven code blocks stay
+  byte-identical. ([#99](https://github.com/jitokim/oh-my-graph/pull/99))
+- **A Korean README (`README.ko.md`) with a language switcher.** A full
+  Korean translation ships with an `English | 한국어` switcher at the top of
+  both files, byte-identical code blocks, and an English-precedence notice in
+  the translated file; CONTRIBUTING's Releasing checklist gains a bullet
+  requiring the Korean README to be kept in
+  sync. ([#77](https://github.com/jitokim/oh-my-graph/pull/77))
+- **"It ships itself" — dogfooding as identity.** A README section states
+  that the repo is built by its own graphs and backs it with a recomputable
+  number (a `git log --grep` count of the graph-lane co-author trailer), and
+  CONTRIBUTING documents that `Co-Authored-By: oh-my-graph
+  <graphs@oh-my-graph.dev>` trailer as a transparency convention — an address
+  that receives no mail and resolves to no user — with a graph-template sweep
+  baking the synchronous-verdict idiom and the trailer instruction into the
+  shipped graphs. ([#89](https://github.com/jitokim/oh-my-graph/pull/89))
+- **Recurring-pipelines narrative.** A "write it once" README section
+  (mirrored in `README.ko.md`) explains *why* a team adopts the tool for daily
+  pipelines — the pipeline lives in the YAML once, runs on the subscription
+  you already pay for, and gets consistency from pinned prompts plus
+  `success_check`/`verify` gates — stated without a $0/free claim and with the
+  run boundary in bold: runs do not remember each
+  other. ([#85](https://github.com/jitokim/oh-my-graph/pull/85))
+- **Live-view screenshot in the READMEs.** `assets/live-view.png` — a real
+  dogfood run captured mid-run — is wired into both READMEs after the
+  web-live-view paragraph, with an honest
+  caption. ([#92](https://github.com/jitokim/oh-my-graph/pull/92))
+- **The merge gate is codified in CONTRIBUTING.** A short Merging subsection
+  records the existing rule: graph lanes open PRs as drafts, a PR merges only
+  after CI is green and every CodeRabbit comment is triaged (applied within a
+  one-to-two-line threshold or answered with a reason), and admin merge is for
+  merge-queue mechanics, never for bypassing an unfinished
+  review. ([#87](https://github.com/jitokim/oh-my-graph/pull/87))
+- **ADR-0008: cross-run session reuse is deferred (Proposed).** A design
+  record for "named persistent node sessions" that would reuse a claude
+  session across runs — captured with its blockers, alternatives, and revisit
+  conditions, recommending deferral; manual ledger-based resume remains
+  available. ([#78](https://github.com/jitokim/oh-my-graph/pull/78))
+
 ## [v0.3.1] - 2026-08-01
 
 The hardening patch after the first CI flake: the test suite, CI, and the
