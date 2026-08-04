@@ -122,6 +122,11 @@ assertion-on-the-command pattern the other seams use for their scrub tests.
   the ADR land as one reviewable unit, with the behaviour change isolated in
   its own change.
 
+  > **Update (2026-08-05):** historical — this held only until phase 2. The
+  > wiring landed: `run`, `auto`, `resume` and the standalone `serve`
+  > subcommand all hand the URL to `ExecOpener` behind the TTY gate (see the
+  > Phase 2 outcome note above). `ExecOpener` has production callers today.
+
 ## Alternatives considered
 
 - **Extend `ShellVerifier` (it already runs arbitrary shell).** Rejected: it

@@ -82,7 +82,7 @@ internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, Fake
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
 internal/childenv/     the shared child-env scrub policy (used by all four spawners)
-internal/invariants/   test-only: asserts exactly the four exec-seam files import os/exec
+internal/invariants/   test-only: asserts exactly four spawner objects — only their seams' files import os/exec
 internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent/skill mapping; the goal loop
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff, the advisory lint sweeps
 internal/runstate/     state.json snapshot — atomic write, run lock, resume load

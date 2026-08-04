@@ -10,14 +10,14 @@ the very same files, and an external consumer reads exactly what they read:
 ~/.oh-my-graph/runs/<run-id>/
   state.json     versioned atomic SNAPSHOT  — whole-run state, overwritten after every node
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
-  <node-id>.out  per-node artifact — EVERY node that passes, whatever its handoff
+  <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
   feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
   worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
 
-`<node-id>.out` is written for every node that reaches a PASS, not only for
+`<node-id>.out` is written for every non-gate node that reaches a PASS, not only for
 `handoff: artifact` nodes: `handoff` selects what a *child* inherits, not
 whether the parent's result is persisted (`Handoff.PersistOutput` is called on
 the one passing path, with no handoff branch). A consumer must not skip the
