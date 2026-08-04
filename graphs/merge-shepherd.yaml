@@ -259,6 +259,13 @@ nodes:
     # — the SHA is still the gate, so `MERGED — the squash is queued` fails
     # exactly as before — and the tokens contain no dash of their own, so
     # DESIGN.md's token-choice rule is untouched.
+    #
+    # That widened class is also why WITHHELD closes on `[[:alnum:]]` rather
+    # than `\S`: a greedy separator run can always hand its own last
+    # character back to `\S`, so `WITHHELD:` and `WITHHELD —` would pass
+    # carrying no reason — the token with the blocking fact stripped out of
+    # it. An alnum cannot be a separator, and every decoration a real reason
+    # is written behind is still absorbed on the way to it.
     success_check:
       exit_zero: true
-      result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*\S)'
+      result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'

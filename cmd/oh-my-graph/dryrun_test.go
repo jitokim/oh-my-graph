@@ -152,6 +152,30 @@ nodes:
 	}
 }
 
+// TestDryRunGraph_PrintsVerdictWarnings pins the third advisory sweep on the
+// dry-run path, alongside the placeholder one above: a node whose prompt
+// demands a verdict token under a success_check that cannot read one is
+// reported through the same warnAdvisories helper, and — like every advisory
+// — does not fail the dry run.
+func TestDryRunGraph_PrintsVerdictWarnings(t *testing.T) {
+	path := writeGraphFile(t, `
+name: unchecked-verdict
+nodes:
+  - { id: dev, prompt: "Implement it, then START your reply with the bare word DONE." }
+`)
+	var out, warnings strings.Builder
+	if err := dryRunGraph(&out, &warnings, path, nil); err != nil {
+		t.Fatalf("verdict warnings must not fail a dry run: %v", err)
+	}
+	want := "warning: " + path + `: node "dev": success_check: prompt demands a verdict token`
+	if !strings.Contains(warnings.String(), want) {
+		t.Errorf("dry run should print the verdict advisory prefixed %q:\n%s", want, warnings.String())
+	}
+	if !strings.Contains(out.String(), "validation passed") {
+		t.Errorf("the dry run should still pass:\n%s", out.String())
+	}
+}
+
 // TestDryRunGraph_ToleratesArtifactReferences pins the inputs/artifacts
 // asymmetry: {{ artifacts.* }} — including `| inline` reads of files that do
 // not exist yet — resolves at run time, so a static pass must not judge it.

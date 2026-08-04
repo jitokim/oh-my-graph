@@ -616,7 +616,7 @@ the prompt says the turn ends at the reply and demands the state that is true
 *as it replies*, never a plan to continue; the token carries a **payload the
 node could not name before doing the work** — a commit SHA, a PR URL, a file
 path, a count of comments actioned.
-``MERGED[*_`\s:]*[0-9a-f]{7,40}`` is an assertion; `MERGED` alone is a word a
+``MERGED[*_`\s:]*[0-9a-f]{7,40}\b`` is an assertion; `MERGED` alone is a word a
 model writes about a merge it intends.
 
 Be precise about what that buys, because it is easy to over-read: a payload
@@ -644,9 +644,14 @@ a payload — it is a decoration on the same promise.
 `merge` either merged or deliberately did not, and refusing to merge past an
 unfinished review is the graph working, not failing. That is an anchored
 alternation, not a relaxed anchor:
-``'^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}|WITHHELD[*_`\s:]*\S)'``.
+``'^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:]*[[:alnum:]])'``.
 Both outcomes pass, everything else fails, and the anchor still means what it
-meant. Two rules keep it honest. Pick tokens where neither is a prefix of the
+meant. Note that the shaping rule binds the negative branch too: closing it
+with `\S` lets the separator class hand its own last character back as the
+reason, so `WITHHELD:` and `WITHHELD —` both pass carrying no reason at all —
+hence `[[:alnum:]]`, which the decoration a real reason is written behind
+(`**WITHHELD**: CodeRabbit has not concluded`) still reaches. Two rules keep
+it honest. Pick tokens where neither is a prefix of the
 other and neither contains a separator a model may render differently —
 `WITHHELD` over `NOT-MERGED`, because a model told to write `NOT-MERGED` will
 sometimes write `NOT MERGED` and the decoration class deliberately does not
