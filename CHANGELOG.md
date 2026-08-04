@@ -169,12 +169,16 @@ graphs. Meanwhile the project starts shipping itself, and says so.
 - **The exec-seam invariant test now asserts the call sites actually scrub.**
   `TestExecSeamCallSitesScrubEnv` parses each of the four spawn-site files and
   fails CI unless the file has exactly one `exec.Command`/`exec.CommandContext`
-  call and the function enclosing it assigns `cmd.Env = childenv.Scrub(...)` —
+  call and the function enclosing it assigns `cmd.Env = childenv.Scrub(...)` on
+  the *same* `*exec.Cmd` receiver that constructor produced, before that
+  receiver is run (`Run`/`Start`/`Output`/`CombinedOutput`) or returned —
   closing a defense-in-depth gap where the import allowlist guarded *which
   files* may spawn a process but never that they *actually scrub* the child
   environment, so a future second, unscrubbed spawn in an already-allowlisted
-  file would have stayed green. Not exploitable today (every call site already
-  scrubs); found in this release's rotating security meta-review. ([#102](https://github.com/jitokim/oh-my-graph/pull/102))
+  file would have stayed green. Pinning the receiver and the order also rejects
+  a scrub written onto an unrelated variable or placed after the process
+  already ran. Not exploitable today (every call site already scrubs); found in
+  this release's rotating security meta-review. ([#102](https://github.com/jitokim/oh-my-graph/pull/102))
 
 ### Documentation
 

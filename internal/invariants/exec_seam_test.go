@@ -142,12 +142,17 @@ func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 //   - (a) the file has EXACTLY ONE exec.Command/exec.CommandContext call — the
 //     one env-scrubbed constructor per seam, so a second (unaudited) spawn is a
 //     red test; and
-//   - (b) the function enclosing that call also assigns
-//     cmd.Env = childenv.Scrub(...), the assignment that keeps the child on
-//     subscription billing instead of a silent fallback to the metered API.
+//   - (b) the function enclosing that call assigns
+//     <recv>.Env = childenv.Scrub(...) on the SAME *exec.Cmd receiver the
+//     constructor produced (`cmd := exec.CommandContext(...)` → `cmd.Env = …`),
+//     and does so BEFORE that receiver is executed (.Run/.Start/.Output/
+//     .CombinedOutput) or returned. This is the assignment that keeps the child
+//     on subscription billing instead of a silent fallback to the metered API;
+//     pinning both the receiver AND the order stops a `.Env =` on an unrelated
+//     variable, or one placed after the process already ran, from passing.
 //
-// It matches the `.Env` selector and a call to childenv.Scrub — never a
-// particular variable name, since the *exec.Cmd receiver differs per seam.
+// The receiver identifier differs per seam (each file names its own local), so
+// the test discovers it from the constructor rather than hard-coding a name.
 func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	fset := token.NewFileSet()
@@ -211,21 +216,61 @@ func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 					rel, len(spawnFuncs))
 			}
 
-			// (b) that function assigns cmd.Env = childenv.Scrub(...).
+			// (b) that function assigns <recv>.Env = childenv.Scrub(...) on the
+			// SAME *exec.Cmd receiver the constructor produced, and does so
+			// BEFORE that receiver is executed or returned. A `.Env =` on an
+			// unrelated variable, or one placed after the process already ran,
+			// must not satisfy this — pinning the receiver and the order is the
+			// whole point of the strengthened check.
 			fn := spawnFuncs[0]
-			scrubbed := false
+
+			// Identify the receiver: the single identifier the sole
+			// exec.Command/exec.CommandContext call is assigned to.
+			recvName, constructPos, ok := execConstructReceiver(fn, execName)
+			if !ok {
+				t.Fatalf("%s: %s calls exec.Command/exec.CommandContext but not as the right-hand "+
+					"side of a simple `x := exec.Command(...)` assignment to a single identifier, so "+
+					"the test cannot pin the *exec.Cmd receiver whose .Env must be scrubbed. Assign "+
+					"the constructor to one variable and set <that>.Env = %s.Scrub(...) on it before "+
+					"running or returning it.", rel, fn.Name.Name, childenvName)
+			}
+
+			// Find the scrub assignment on that same receiver.
+			var scrubPos token.Pos
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if assign, ok := n.(*ast.AssignStmt); ok && isScrubEnvAssign(assign, childenvName) {
-					scrubbed = true
+				if assign, ok := n.(*ast.AssignStmt); ok && isScrubEnvAssign(assign, recvName, childenvName) {
+					scrubPos = assign.Pos()
 				}
 				return true
 			})
-			if !scrubbed {
-				t.Errorf("%s: %s constructs an *exec.Cmd but never assigns cmd.Env = %s.Scrub(...). "+
-					"Every exec seam's call site MUST set the scrubbed child environment before the "+
-					"process runs, or ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN leak into the child and "+
-					"it silently falls back to metered API billing — the one invariant childenv.Scrub "+
-					"exists to hold (see CLAUDE.md, docs/adr/0002, 0005, 0006).", rel, fn.Name.Name, childenvName)
+			if !scrubPos.IsValid() {
+				t.Errorf("%s: %s constructs *exec.Cmd %q but never assigns %s.Env = %s.Scrub(...) on "+
+					"that same receiver. Every exec seam's call site MUST set the scrubbed child "+
+					"environment on the constructed command before the process runs, or "+
+					"ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN leak into the child and it silently "+
+					"falls back to metered API billing — the one invariant childenv.Scrub exists to "+
+					"hold (see CLAUDE.md, docs/adr/0002, 0005, 0006).", rel, fn.Name.Name, recvName, recvName, childenvName)
+				return
+			}
+
+			// Ordering: the scrub must run on the already-built *exec.Cmd …
+			if scrubPos <= constructPos {
+				t.Errorf("%s: %s assigns %s.Env = %s.Scrub(...) at or before it constructs %q with "+
+					"exec.Command/exec.CommandContext; the scrub must run on the already-built "+
+					"*exec.Cmd. Move the scrub assignment below the constructor.", rel, fn.Name.Name, recvName, childenvName, recvName)
+			}
+
+			// … and before that receiver is first executed
+			// (.Run/.Start/.Output/.CombinedOutput) or returned. If the scrub
+			// lands after that, the process has already run — or left the
+			// function to a caller that will run it — with the parent's
+			// unscrubbed environment.
+			if usePos, used := firstReceiverExecOrReturn(fn, recvName); used && scrubPos >= usePos {
+				t.Errorf("%s: %s assigns %s.Env = %s.Scrub(...) only AFTER it runs or returns %q; by "+
+					"then the child has already been spawned (or handed to a caller that will spawn "+
+					"it) with the parent's unscrubbed environment. Set the scrubbed env before the "+
+					"first .Run()/.Start()/.Output()/.CombinedOutput() call on %q or before returning "+
+					"it.", rel, fn.Name.Name, recvName, childenvName, recvName, recvName)
 			}
 		})
 	}
@@ -268,15 +313,21 @@ func isExecCommandCall(call *ast.CallExpr, execName string) bool {
 }
 
 // isScrubEnvAssign reports whether assign is `<recv>.Env = <childenvName>.Scrub(...)`
-// — the call site's assignment of the scrubbed child environment. It matches on
-// the `.Env` selector on the left and a call to childenv.Scrub on the right, not
-// on any particular variable name, since the *exec.Cmd receiver differs per seam.
-func isScrubEnvAssign(assign *ast.AssignStmt, childenvName string) bool {
+// on the receiver identifier named recv — the call site's assignment of the
+// scrubbed child environment onto the *exec.Cmd the constructor produced. It
+// pins BOTH the `.Env` selector's receiver (so a scrub written onto some
+// unrelated *exec.Cmd variable does not count) and the childenv.Scrub call on
+// the right.
+func isScrubEnvAssign(assign *ast.AssignStmt, recv, childenvName string) bool {
 	if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 		return false
 	}
 	lhs, ok := assign.Lhs[0].(*ast.SelectorExpr)
 	if !ok || lhs.Sel.Name != "Env" {
+		return false
+	}
+	recvIdent, ok := lhs.X.(*ast.Ident)
+	if !ok || recvIdent.Name != recv {
 		return false
 	}
 	call, ok := assign.Rhs[0].(*ast.CallExpr)
@@ -289,4 +340,80 @@ func isScrubEnvAssign(assign *ast.AssignStmt, childenvName string) bool {
 	}
 	pkg, ok := scrub.X.(*ast.Ident)
 	return ok && pkg.Name == childenvName
+}
+
+// execConstructReceiver finds the `<ident> := <execName>.Command(...)` (or `=`)
+// statement inside fn and returns the receiver identifier's name and the
+// position of that construction. ok is false when the sole exec.Command call is
+// NOT the right-hand side of a simple assignment to a single identifier — an
+// inline argument, a bare expression statement, a multi-name or multi-value
+// assignment — because then there is no single receiver whose .Env the test can
+// pin the scrub to, and passing silently would defeat the check.
+func execConstructReceiver(fn *ast.FuncDecl, execName string) (name string, pos token.Pos, ok bool) {
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		assign, isAssign := n.(*ast.AssignStmt)
+		if !isAssign || len(assign.Rhs) != 1 {
+			return true
+		}
+		call, isCall := assign.Rhs[0].(*ast.CallExpr)
+		if !isCall || !isExecCommandCall(call, execName) {
+			return true
+		}
+		if len(assign.Lhs) == 1 {
+			if id, isIdent := assign.Lhs[0].(*ast.Ident); isIdent {
+				name, pos, ok = id.Name, assign.Pos(), true
+			}
+		}
+		return true
+	})
+	return name, pos, ok
+}
+
+// firstReceiverExecOrReturn returns the earliest position inside fn at which the
+// receiver named recv is either executed (a .Run/.Start/.Output/.CombinedOutput
+// call on it) or returned. used is false when the receiver is neither run nor
+// returned inside fn. The four real seam builders return the *exec.Cmd for a
+// sibling function to run, so the return statement is the ordering boundary; a
+// caller that inlined the run would hit the method-call boundary instead.
+func firstReceiverExecOrReturn(fn *ast.FuncDecl, recv string) (pos token.Pos, used bool) {
+	record := func(p token.Pos) {
+		if !used || p < pos {
+			pos, used = p, true
+		}
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			if isReceiverRunCall(node, recv) {
+				record(node.Pos())
+			}
+		case *ast.ReturnStmt:
+			for _, res := range node.Results {
+				if id, ok := res.(*ast.Ident); ok && id.Name == recv {
+					record(node.Pos())
+				}
+			}
+		}
+		return true
+	})
+	return pos, used
+}
+
+// isReceiverRunCall reports whether call executes the *exec.Cmd named recv — one
+// of recv.Run(), recv.Start(), recv.Output() or recv.CombinedOutput(), the four
+// os/exec methods that actually spawn the process.
+func isReceiverRunCall(call *ast.CallExpr, recv string) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok || id.Name != recv {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "Run", "Start", "Output", "CombinedOutput":
+		return true
+	}
+	return false
 }
