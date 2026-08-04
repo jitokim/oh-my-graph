@@ -209,10 +209,10 @@ Maintainer checklist for cutting a release:
 ## Scope
 
 Before proposing a feature, check DESIGN.md's "MVP scope" and "Deferred"
-sections. Things like a graph DSL beyond `depends_on`, retry policies beyond
-a flat `max`, and a TUI are deliberately out of scope
-for v0.1 — that's not an oversight, it's a documented boundary. If you want to
-build one of those, open an issue to discuss the design first rather than
+sections, and [docs/LIMITATIONS.md](docs/LIMITATIONS.md#deferred-not-implemented).
+Things like a graph DSL beyond `depends_on` and a terminal TUI are deliberately
+out of scope — that's not an oversight, it's a documented boundary. If you want
+to build one of those, open an issue to discuss the design first rather than
 sending a large PR.
 
 ## Questions

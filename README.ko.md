@@ -108,12 +108,14 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로
   저장소는 그 안에 담긴 도구가 만듭니다. 기능, 수정, 문서, 릴리스가 자기
   자신의 그래프로 작성됩니다 — claude 노드가 브랜치에서 구현하고, 형제
   노드들이 체크와 리뷰를 돌리고, 마지막 노드가 draft PR을 엽니다. 검증
-  가능한 부분은, 2026-08-02 기준: `main`에 머지된 80개의 pull request 중
-  23개가 squash 커밋에 Claude co-author trailer를 달고 있습니다 — claude
-  세션이 그것들을 썼다는 영수증입니다. 직접 세어 보세요:
+  가능한 부분 — 2026-08-05에 찍은 스냅샷이고, 숫자는 올라가기만 합니다:
+  `main`에 머지된 102개의 pull request 중 40개가 squash 커밋에 Claude
+  co-author trailer를 달고 있습니다. claude 세션이 그것들을 썼다는
+  영수증입니다. 스냅샷을 그대로 믿지 말고 오늘의 숫자를 직접 세어 보세요:
   `git log main --first-parent -i --grep="co-authored-by: claude"`
-  (24건: 그 23개의 squash 커밋과 최초 커밋). 이 trailer는 파이프라인이 아니라
-  모델을 가리키므로, 2026-08-02부터 그래프 레인이 작성한 커밋에는
+  (그 스냅샷 시점에 41건: 그 40개의 squash 커밋과 최초 커밋). 이 trailer는
+  파이프라인이 아니라 모델을 가리키므로, 2026-08-02부터 그래프 레인이 작성한
+  커밋에는
   `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`도 함께 붙습니다 —
   authorship의 증명이 아니라 투명성을 위한 관례입니다;
   [CONTRIBUTING.md](CONTRIBUTING.md#attribution) 참고.
@@ -242,7 +244,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.3.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.4.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -369,7 +371,8 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `version` | 도구 버전을 출력. |
 
 `run`과 `auto`는 `--input k=v`(반복 가능), `--concurrency N`(상한 10),
-`--continue-on-fail`을 공유합니다. 둘 다 그래프가 실행되는 동안 노드별
+`--continue-on-fail`, 그리고 `--no-web`(이번 run의 web live view를 띄우지도
+열지도 않음)을 공유합니다. 둘 다 그래프가 실행되는 동안 노드별
 라이브 피드를 출력하고, 이어서 비용 ledger를 출력합니다. 그래프 자신이
 그래프 레벨 `on_fail: continue`(기본값 `halt`)로 실패 정책을 선언할 수도
 있습니다 — 한 lane의 실패가 다른 lane들의 진행 중인 작업을 취소해서는 안

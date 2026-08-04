@@ -10,7 +10,7 @@ Run `oh-my-graph $ARGUMENTS` via Bash. The two subcommands are:
 - `auto "<goal>"` — let the coordinator plan a graph from the goal, then run it.
 
 When it finishes, report the run ledger back to the user: one line per node
-(node id, session id, cost, verdict, duration) and the total cost. If a node
+(node id, verdict, session id, cost, detail) and the total cost. If a node
 failed, surface its failure reason. For `auto`, also show the planned graph
 (node ids and their dependencies) before the ledger so the user can see what
 was generated. If `oh-my-graph` is not found on `$PATH`, tell the user to

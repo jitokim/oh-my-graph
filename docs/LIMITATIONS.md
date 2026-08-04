@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps in v0.1, and what is deliberately deferred.
+gaps as of **v0.4.1**, and what is deliberately deferred.
 
 ## Platform support
 
@@ -41,7 +41,7 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps in v0.1, each tracked as an issue rather than left as prose:
+Honest gaps as of v0.4.1, each tracked as an issue rather than left as prose:
 
 - **A `success_check` without `verify` is still self-report.** `success_check.verify`
   closes this for graphs that opt in: the engine runs a command of your choosing
@@ -95,13 +95,16 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   declares a tool outside the node's planned `allowed_tools`, and the node's
   `--tools` ceiling still binds — DESIGN.md, E6.)
 
-See [Deferred](#deferred-not-in-v01) below for the full out-of-scope list.
+See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
-## Deferred (not in v0.1)
+## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented yet:
+Called out honestly — these are **not** implemented as of v0.4.1:
 
-- retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
+- parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
+  list any more: a node's `retry` carries `max` **and** `on`, a per-cause
+  filter over the closed cause set `nonzero_exit` / `run_error` /
+  `output_error` / `budget_exceeded` / `verify_failed` / `result_mismatch`.)
 - a terminal TUI — the shipped views are the `serve` web ones (the live view
   of one run, and the multi-run dashboard `serve` renders with no run id) and
   the plain-text `runs list` / `show` / `watch`.
