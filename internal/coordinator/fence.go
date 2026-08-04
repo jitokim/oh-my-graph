@@ -6,7 +6,7 @@
 // what removes that prediction: the nonce is minted after the text is already
 // fixed, so no material can contain it.
 //
-// Two call sites share this: skillmap.go's inlined SKILL.md body (ADR 0012)
+// Three call sites share this: skillmap.go's inlined SKILL.md body (ADR 0012)
 // and assess.go's engine-recorded material — node details, artifact excerpts
 // and the previous cycle's `remaining` — which is raw model output by design
 // (ADR 0011 §2), plus coordinator.go's continuation quote of that same
