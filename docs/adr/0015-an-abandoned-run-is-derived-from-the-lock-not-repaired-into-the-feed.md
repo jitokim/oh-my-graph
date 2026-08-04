@@ -7,7 +7,7 @@
 
 Two runs on the maintainer's machine have read `RUNNING` for over a day:
 
-```
+```text
 t95b       20260803-125311.878285000-1   25:40 elapsed  $0.0000   1 pending
 fragments  20260803-121317.978943000-1   26:19 elapsed  $28.9871  1 pending
 ```
@@ -15,7 +15,7 @@ fragments  20260803-121317.978943000-1   26:19 elapsed  $28.9871  1 pending
 Both processes died on 2026-08-03. Their event streams end mid-leg — the last
 line of each is a `node_started` that never got a terminal event:
 
-```
+```text
 20260803-125311…  run_started 13:08:39.87 → node_started dev  (session c258b0fd…)   [nothing after]
 20260803-121317…  run_started 14:08:24.52 → node_started impl (session d990e3e0…)   [nothing after]
 ```
