@@ -38,14 +38,19 @@ var migratedTemplates = map[string]map[string][]string{
 		// NARROWED — the old grant's Bash(go *)/Bash(git *) let a report-only
 		// gate `go run` the tree and rewrite history, which the fragment now
 		// refuses (see graphs/fragments/e2e-verify.yaml).
-		"e2e":             {"prompt", "budget_usd", "allowed_tools"},
+		// success_check.result_matches is the markdown-tolerant verdict pattern
+		// (DESIGN.md, "Verdict patterns"): the frozen `^PASS$` failed a node
+		// that replied `**PASS**`, so the fragment's pattern deliberately
+		// diverges from it. Everything else under success_check — exit_zero,
+		// the whole verify block — is still byte-frozen.
+		"e2e":             {"prompt", "budget_usd", "allowed_tools", "success_check.result_matches"},
 		"review-security": {"prompt"},
 		"review-style":    {"prompt"},
 	},
 	"dev-review-pr.yaml": {
-		"e2e":             {"prompt", "allowed_tools"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant
-		"review-security": {"prompt", "allowed_tools"}, // gains Bash(git log*)
-		"review-style":    {"prompt", "allowed_tools"}, // gains Bash(git log*)
+		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
+		"review-security": {"prompt", "allowed_tools"},                                 // gains Bash(git log*)
+		"review-style":    {"prompt", "allowed_tools"},                                 // gains Bash(git log*)
 	},
 }
 
@@ -69,6 +74,12 @@ func maskConvergedFields(t *testing.T, g *Graph, masks map[string][]string) {
 					g.Nodes[i].AllowedTools = nil
 				case "budget_usd":
 					g.Nodes[i].BudgetUSD = 0
+				// Subfield-granular on purpose: the verdict pattern is the one
+				// part of success_check this project has had to change after the
+				// migration, and masking the whole struct would stop freezing
+				// exit_zero and the verify block along with it.
+				case "success_check.result_matches":
+					g.Nodes[i].SuccessCheck.ResultMatches = ""
 				default:
 					t.Fatalf("mask names unknown field %q", field)
 				}
