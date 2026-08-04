@@ -175,8 +175,11 @@ func plannedVerdictPatternIn(t *testing.T, prompt string) string {
 		t.Fatalf("planner prompt lost the result_matches gate entirely")
 	}
 	quoted := prompt[i+len(marker):]
+	if !strings.HasPrefix(quoted, `"`) {
+		t.Fatalf("planner prompt's result_matches value is not a quoted string: %.60q", quoted)
+	}
 	end := strings.Index(quoted[1:], `"`)
-	if !strings.HasPrefix(quoted, `"`) || end == -1 {
+	if end == -1 {
 		t.Fatalf("planner prompt's result_matches value is not a quoted string: %.60q", quoted)
 	}
 	pattern, err := strconv.Unquote(quoted[:end+2])
