@@ -54,6 +54,15 @@ The invariant is **restated, not weakened**:
 > `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its own
 > injected interface. No other package imports `os/exec`.
 
+> **Update (2026-08-05):** superseded in part — the count only. The invariant
+> was restated at **three** by [ADR 0005](0005-worktree-provisioning-is-a-third-exec-seam.md)
+> (`worktree.GitManager` joined) and at **four** by
+> [ADR 0006](0006-browser-open-is-a-fourth-exec-seam.md)
+> (`browser.ExecOpener` joined); four is the current count, enforced by
+> `internal/invariants`. Everything else above stands: each seam is still
+> behind its own injected interface, no other package imports `os/exec`, and a
+> fifth spawner still needs its own ADR.
+
 The child-environment scrub applies to both. `ANTHROPIC_API_KEY` and
 `ANTHROPIC_AUTH_TOKEN` are deleted from a verification command's environment too,
 because `verify: { command: "claude -p ..." }` is a legal thing to write and
