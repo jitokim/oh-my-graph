@@ -29,4 +29,4 @@ node:
   # a reply that is neither (an interim "still reviewing") fails. Anchored,
   # and tolerant of emphasis on either side of the colon, `**FINDINGS:**` and
   # `**FINDINGS**:` alike (DESIGN.md "Verdict patterns").
-  success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN)' }
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }

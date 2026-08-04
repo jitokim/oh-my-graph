@@ -26,7 +26,7 @@
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*DONE"
+        "result_matches": "^[*_`\\s]*DONE\\b"
       },
       "timeout": "1h",
       "worktree": "lane-a"
@@ -84,7 +84,7 @@
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN)"
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
       },
       "worktree": "lane-a"
     },
@@ -122,7 +122,7 @@
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*DONE"
+        "result_matches": "^[*_`\\s]*DONE\\b"
       },
       "timeout": "1h",
       "worktree": "lane-b"
@@ -180,7 +180,7 @@
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN)"
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
       },
       "worktree": "lane-b"
     },

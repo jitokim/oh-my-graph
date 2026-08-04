@@ -47,7 +47,7 @@ nodes:
     # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"): without it,
     # "I've started; I'll finish the tests next" passes as a completed dev node
     # and the reviews downstream review half a change.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
 
   # The proven gate/review shapes are fragments (ADR 0013): the prompt, the
   # grant and the evidence-grounded success_check live once, in

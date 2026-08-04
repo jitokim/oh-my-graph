@@ -61,13 +61,17 @@ nodes:
       Every flag must be applied, committed and pushed BEFORE you reply.
       Your FINAL reply IS the verdict: this node's turn ends the moment you
       reply, so a flag you promise to handle afterwards is never handled.
-      Never write APPLIED: over work still in progress — if some flags are
+      Never write APPLIED over work still in progress — if some flags are
       unfinished, start with a bare BLOCKED and say which, so the run halts
       and verify never runs against a half-applied branch.
-      START your reply with the bare token `APPLIED:` — those characters as
-      the very FIRST of the reply, with no markdown emphasis
-      (`**APPLIED:**` is WRONG), no heading, no backticks, no preamble —
-      followed by a one-line summary of which flags you applied.
+      START your reply with the bare token APPLIED followed immediately by
+      the SHA of the commit you pushed (the last one, if you made several)
+      — `APPLIED 4f2a1c9`, those characters as the very FIRST of the
+      reply, with no markdown emphasis (`**APPLIED**` is WRONG), no
+      heading, no backticks, no preamble — then a one-line summary of which
+      flags you applied. The SHA is the point: it exists only once the work
+      is committed, so "APPLIED: 3 of 5 flags, the rest to follow" is not a
+      reply this node can make.
     allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
@@ -76,9 +80,12 @@ nodes:
     # other bail-out) fails this check, so the run halts and verify never
     # runs against a branch that was rejected or never switched to. Kept
     # anchored for exactly that reason — but tolerant of the markdown
-    # emphasis a model adds unbidden, on either side of the colon
-    # (`**APPLIED:**` and `**APPLIED**:` both match; both have appeared).
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*APPLIED[*_`\s]*:' }
+    # emphasis a model adds unbidden, on either side of the separator.
+    # The commit SHA is the payload that makes the token an assertion: the
+    # token alone is a word this node can write over half-applied work
+    # ("APPLIED: 3 of 5 flags, the rest to follow"), and a commit that was
+    # never made has no SHA to name (DESIGN.md "Verdict patterns").
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*APPLIED[*_`\s:]*[0-9a-f]{7,40}\b' }
 
   - id: verify
     type: claude-run

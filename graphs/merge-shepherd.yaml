@@ -124,7 +124,7 @@ nodes:
       Triage every CodeRabbit review comment on PR #{{ inputs.pr }}. List
       them all: `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments`
       plus the review bodies from `gh pr view {{ inputs.pr }} --json
-      reviews`. If there are zero comments, say so and stop.
+      reviews`. If there are zero comments, reply `TRIAGED 0` and stop.
       For each comment, do exactly one of:
         - Mechanical and within the PR's scope → apply it. Build a fresh
           throwaway checkout of the PR head
@@ -147,23 +147,34 @@ nodes:
       reply IS the verdict: this node's turn ends the moment you reply, so
       a comment you plan to get to afterwards is a comment nobody ever
       handles. Never end on "the rest to follow".
-      START your reply with the bare token TRIAGED followed immediately by
-      the number of comments you actioned (`TRIAGED 7`, and `TRIAGED 0`
-      when the PR has none) — those characters FIRST, with no markdown
-      emphasis (`**TRIAGED**` is WRONG), no heading, no preamble — then
-      the triage table: one row per comment → the action taken (applied in
-      <commit> / replied: <reason>). If you could not finish, do NOT write
-      TRIAGED: start with a bare BLOCKED and what stopped you, so the run
-      halts before the merge gate instead of passing it.
+      The reply's FIRST LINE is the verdict and holds nothing else: the
+      bare token TRIAGED, a space, and the number of comments you actioned
+      — `TRIAGED 7`, or `TRIAGED 0` when the PR has none — then a NEWLINE.
+      Those characters FIRST, with no markdown emphasis (`**TRIAGED**` is
+      WRONG), no heading, no preamble, and nothing after the number on that
+      line: not a unit, not a qualifier, not `of`. A count you have to
+      qualify ("3 of 7 so far") is not a verdict, it is a progress report,
+      and this node has no progress to report — only an outcome. The triage
+      table starts on the SECOND line: one row per comment → the action
+      taken (applied in <commit> / replied: <reason>). If you could not
+      finish, do NOT write TRIAGED: start with a bare BLOCKED and what
+      stopped you, so the run halts before the merge gate instead of
+      passing it.
     allowed_tools: [Read, Edit, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
     handoff: artifact
-    # The count is the payload that makes the token an assertion rather
-    # than a word: a node that stopped halfway cannot name a total it
-    # actioned. Anchored, and tolerant of the emphasis a model adds
-    # unbidden (see DESIGN.md "Verdict patterns").
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]' }
+    # The count is the payload — but a count alone is NOT the assertion the
+    # node needs, because a partial count is still a count: `TRIAGED 3 of 7
+    # so far — the rest to follow` is the very promise this exists to
+    # reject, and it satisfies "TRIAGED then a digit". So the pattern pins
+    # the whole FIRST LINE to token-and-number: the number must be followed
+    # by a newline (or the end of the reply), which leaves nowhere to put
+    # the "of 7 so far" that turns an outcome back into a progress report.
+    # Hence the narrow trailing class — spaces and emphasis, deliberately
+    # NOT `\s`, which would swallow the newline the pin depends on.
+    # Anchored and markdown-tolerant (see DESIGN.md "Verdict patterns").
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)' }
 
   # The human gate: the run stops here with exit 2 after triage's table is
   # in. Read it, then `oh-my-graph resume <run-id> --approve approve-merge`
@@ -239,6 +250,15 @@ nodes:
     # 2's `git pull --ff-only` range, which is the whole reason that step is
     # inside this node's grant — narrowing it would leave the node unable to
     # produce the evidence its own verdict requires.
+    #
+    # The separator class admits `-` and `—` here and nowhere else in this
+    # repo, because this node is the one place a false FAIL is not merely a
+    # retry: `MERGED — 4f2a1c9` after a real merge would fail a node whose
+    # re-run re-enters `gh pr merge` on an already-merged PR, under a grant
+    # too narrow to even look at what happened. Dashes cost nothing to admit
+    # — the SHA is still the gate, so `MERGED — the squash is queued` fails
+    # exactly as before — and the tokens contain no dash of their own, so
+    # DESIGN.md's token-choice rule is untouched.
     success_check:
       exit_zero: true
-      result_matches: '^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}|WITHHELD[*_`\s:]*\S)'
+      result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*\S)'

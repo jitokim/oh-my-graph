@@ -52,6 +52,17 @@ Honest gaps in v0.1, each tracked as an issue rather than left as prose:
   forces a node to carry evidence, and for nodes whose work is not externally
   observable (a review, a summary) there is nothing to verify against.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
+- **A PASS row does not say *which* outcome passed.** A node whose verdict is a
+  two-valued alternation (DESIGN.md, "Verdict patterns") passes on either of
+  its legitimate answers, and the ledger has one column for both. `merge-shepherd`'s
+  `merge` node is the shipped case: `MERGED <sha>` and `WITHHELD <reason>` are
+  both correct — refusing to merge past an unfinished review is the graph
+  working — so a green run of that graph is **not** by itself evidence that
+  anything landed. The ledger prints `merge PASS` either way; only the node's
+  artifact (`<run-id>/merge.out`) says which. Read it, or `git log`. The
+  engine has no notion of a "partial" verdict to print instead, and inventing
+  one would mean the engine parsing verdict semantics out of a regex it
+  deliberately treats as opaque.
 - **`budget_usd` is enforced per node, but not sub-call or across nodes.**
   A positive budget is passed to claude as `--max-budget-usd`, so claude aborts a
   node the moment its own spend crosses the budget (a real mid-run kill), and the

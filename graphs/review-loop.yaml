@@ -55,8 +55,10 @@ nodes:
     # The loop only makes sense over finished rounds: an impl that ends on
     # "I'll continue next" would otherwise be reviewed as if it were done, and
     # the review's findings would be about a half-written change. Anchored and
-    # markdown-tolerant (DESIGN.md "Verdict patterns").
-    success_check: { result_matches: '^[*_`\s]*DONE' }
+    # markdown-tolerant (DESIGN.md "Verdict patterns"). `exit_zero` is spelled
+    # out because it is only implied by an ABSENT success_check: the moment a
+    # node declares one, every predicate it wants is a predicate it must name.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
     budget_usd: 2.00
     timeout: 30m
 
@@ -79,7 +81,8 @@ nodes:
     # Anchored: a failing review that merely MENTIONS the verdict phrase
     # ("can't say ship it yet") must not read as a pass. Tolerant of leading
     # markdown emphasis, which a model adds unbidden even when told not to.
-    success_check: { result_matches: '^[*_`\s]*ship it' }
+    # `exit_zero` spelled out for the same reason as impl's above.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*ship it\b' }
     feedback: { rerun: impl, max: 2 }
     budget_usd: 1.00
     timeout: 15m

@@ -352,7 +352,11 @@ placeholder-like `{{ ... }}` tokens that won't resolve — a typoed filter
 (`| inlin`), a singular `{{ artifact.x }}`, an undeclared input, or an
 `artifacts.<id>` naming a node that doesn't exist or isn't an ancestor —
 plus, for a `handoff: session` node, a `cwd`/`worktree` that differs from
-its session-parent's, or a `retry` block (a retried attempt starts cold).
+its session-parent's, or a `retry` block (a retried attempt starts cold) —
+plus, for any node, a verdict nothing reads: a prompt that demands a token
+(`START your reply with …`) under a `success_check` with no `result_matches`,
+or a `result_matches` written without `exit_zero` (which drops the exit-code
+guard a node has for free only while it declares no check at all).
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
 while a well-formed reference to an unbound input or unknown node fails

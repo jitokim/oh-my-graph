@@ -68,9 +68,15 @@ nodes:
     permission_mode: dontAsk
     timeout: 30m
     handoff: artifact
-    # The path is the payload: a node that only planned an ADR has no file to
-    # name. Anchored and markdown-tolerant (DESIGN.md "Verdict patterns").
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*ADR[*_`\s:]*\S' }
+    # The path is the payload — and it has to be spelled out as a path, not
+    # as "some non-space character": `ADR[*_`\s:]*\S` also accepts `ADR:
+    # pending` and `ADR — blocked, could not commit`, which are the promise
+    # this exists to reject wearing the token. Requiring the `.md` suffix on
+    # the very first word after the token restores the assertion: a node that
+    # only planned an ADR has no file to name, and `ADR: I will write
+    # docs/adr/0014.md next` cannot smuggle one in from further down the
+    # sentence. Anchored and markdown-tolerant (DESIGN.md "Verdict patterns").
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*ADR[*_`\s:]*\S+\.md\b' }
 
   - id: adr-review
     type: claude-run
@@ -100,7 +106,7 @@ nodes:
     timeout: 30m
     handoff: artifact
     # Either verdict passes; an interim "still reading the ADR" does not.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN)' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
 
   - id: adr-apply
     type: claude-run
@@ -126,7 +132,7 @@ nodes:
     handoff: artifact
     # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"): the code
     # rounds below all gate on a verdict, and the design round must too.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
 
   - id: impl
     type: claude-run
@@ -220,7 +226,7 @@ nodes:
     timeout: 30m
     handoff: artifact
     # Either verdict passes; an interim "still reviewing" does not.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN)' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
 
   - id: apply1
     type: claude-run
@@ -272,7 +278,7 @@ nodes:
     permission_mode: plan
     handoff: artifact
     # Either verdict passes; an interim "still reviewing" does not.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN)' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
 
   - id: apply2
     type: claude-run
@@ -327,7 +333,7 @@ nodes:
     timeout: 30m
     handoff: artifact
     # Either verdict passes; an interim "still reviewing" does not.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN)' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
 
   - id: finalize
     type: claude-run

@@ -88,7 +88,7 @@ nodes:
     # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"). Rule 5 makes
     # a lane's failure local, which is exactly why the lane must be able to
     # fail: an unfinished dev node that passes takes its whole lane to a PR.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
 
   # The gate and review shapes are fragments (ADR 0013): the prompt, the tool
   # grant and the evidence-grounded success_check live once in
@@ -174,7 +174,7 @@ nodes:
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
     # Same anchored, markdown-tolerant shape as lane A's dev node.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
 
   # Same fragments as lane A, same advisory warning — only the bindings differ.
   # That is the point: the two lanes' gates can no longer drift apart.
