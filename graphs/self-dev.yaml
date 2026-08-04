@@ -34,12 +34,21 @@ nodes:
       End every commit message with the trailer
       `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
       convention in CONTRIBUTING.md).
-      Reply with a one-line summary of what you changed.
+      Your FINAL reply IS the verdict: this node's turn ends the moment you
+      reply, so work you promise to do afterwards never happens. Never end on
+      a plan to continue — report the state that is TRUE AS YOU REPLY. When
+      the change is committed, START your reply with the bare word DONE —
+      those four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),
+      no heading, no preamble — then a one-line summary of what you changed.
+      If it is not finished, do NOT write DONE: start with a bare BLOCKED and
+      the current state.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
     handoff: artifact
-    success_check: { exit_zero: true }
+    # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"): without it,
+    # an unfinished dev node passes and e2e resumes a half-done session.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
 
   # The proven gate/review shapes are fragments (ADR 0013): the prompt, the
   # grant and the evidence-grounded success_check live once, in
@@ -87,8 +96,14 @@ nodes:
       Put both reviews in the PR body:
         Security review: {{ artifacts.review-security | inline }}
         Style review:    {{ artifacts.review-style | inline }}
-      Reply with the PR URL.
+      Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
+      promise to open afterwards is never opened. START your reply with the
+      bare token PR followed immediately by the pull request's URL
+      (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
+      with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
     allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
     permission_mode: dontAsk
     handoff: artifact
-    success_check: { exit_zero: true }
+    # The URL is the payload that makes this an assertion: gh prints one only
+    # once the PR exists, so a promise to open it later cannot match.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S' }

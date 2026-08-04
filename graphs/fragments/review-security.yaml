@@ -14,8 +14,19 @@ node:
   prompt: |
     Review {{ with.diff }} for security issues (injection, secrets, unsafe
     shell, unsafe exec, authz gaps). The e2e verdict was: {{ with.evidence }}.
-    Reply with a short bulleted list of findings, or "no security issues found".
+    Finish the review BEFORE you reply. Your FINAL reply IS the verdict: this
+    node's turn ends the moment you reply, so a part of the diff you promise
+    to look at afterwards is never looked at. Never end on "I'll continue" —
+    report what you have actually judged. START the reply with exactly one of
+    these two bare tokens, as the very FIRST characters, with no markdown
+    emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
+      - CLEAN — you reviewed the whole diff and found no security issues.
+      - FINDINGS: — followed by a short bulleted list, worst first.
   allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: plan
   handoff: artifact
-  success_check: { exit_zero: true }
+  # Either verdict passes — a review's job is to judge, not to be clean — but
+  # a reply that is neither (an interim "still reviewing") fails. Anchored,
+  # and tolerant of emphasis on either side of the colon, `**FINDINGS:**` and
+  # `**FINDINGS**:` alike (DESIGN.md "Verdict patterns").
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }

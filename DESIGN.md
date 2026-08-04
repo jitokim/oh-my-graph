@@ -205,7 +205,7 @@ Downstream of the loader **no fragment concept exists**: `run` and `lint` both
 print one disclosure line per resolved fragment (source file + the fragment's
 own description + every overridden key) plus the same fragment advisories on
 the warning channel (`run` discloses what it spliced, so it discloses the
-drift smell too; the two *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
+drift smell too; the three *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never
 re-reads a fragment; `GraphSHA256` still hashes the entry file's bytes), and
 scheduler, handoff, the event stream and every consumer reading it see
@@ -595,6 +595,91 @@ follows this shape, and so does the pattern the auto-mode planner hands its
 branch-assertion check node (`coordinator.plannedVerdictPattern`, where a
 planned node may not set `verify` and the pattern is the whole gate); a new
 verdict token joins it.
+
+**A verdict nothing checks is not a verdict.** A prompt that asks for one and
+a `success_check` of `{ exit_zero: true }` is the same "a prompt is not a
+mechanism" failure as the markdown one above, and it fails in the more
+expensive direction. `merge-shepherd`'s last node was asked for the merge
+commit SHA and replied "CodeRabbit's re-review is mid-flight, so I'm waiting
+… Poller armed (30s interval, 12 min cap). I'll proceed as soon as it lands."
+The claude process exited 0, nothing matched anything, the node passed, the
+ledger recorded a successful merge step, and nothing was merged; the operator
+found out because `git pull` did not move. A false FAIL costs a retry, so it
+announces itself — a false PASS writes a wrong row in the ledger and stays
+there. So: **if a node's prompt names the answer it must give, its
+`success_check` must be able to tell whether it got one.**
+
+The reply that has to be rejected is rarely a wrong answer — it is a promise
+of future work. A node's turn ends when it replies, so "I'll follow up once X
+lands" is the node reporting work that will never happen. Two halves again:
+the prompt says the turn ends at the reply and demands the state that is true
+*as it replies*, never a plan to continue; the token carries a **payload the
+node could not name before doing the work** — a commit SHA, a PR URL, a file
+path, a count of comments actioned.
+``MERGED[*_`\s:]*[0-9a-f]{7,40}\b`` is an assertion; `MERGED` alone is a word a
+model writes about a merge it intends.
+
+Be precise about what that buys, because it is easy to over-read: a payload
+bounds **promises**, not **lies**. `result_matches` still reads only the
+node's own reply (LIMITATIONS.md #7), and a determined model can copy a SHA
+out of an upstream artifact. What it removes is the *honest* failure — the
+reply a model writes when it has genuinely not finished and is telling you so
+— which is the one that actually happened, and the only one a pattern can
+catch. Bounding lies takes `success_check.verify`, where the engine runs a
+command of its own.
+
+The payload must also be **shaped**, not merely present. Three of these
+patterns first shipped with a payload that any prose satisfies, which is the
+same hole one refactor further in: ``ADR[*_`\s:]*\S`` accepts `ADR: pending`;
+``TRIAGED[*_`\s:]*[0-9]`` accepts `TRIAGED 3 of 7 so far, the rest to
+follow`, because a partial count is a count; `APPLIED:` carries no payload at
+all. Ask of the class what reply it *lets through*, not what reply it was
+written for: a path needs its extension (``\S+\.md\b``), a count needs the
+rest of its line to be empty (``[0-9]+[*_` \t]*(\n|$)``, and a prompt that
+says the first line holds the count and nothing else), a SHA needs its length
+(``[0-9a-f]{7,40}\b``). A payload that a qualifier can survive next to is not
+a payload — it is a decoration on the same promise.
+
+**Two legitimate outcomes, one pattern.** Some nodes have two right answers —
+`merge` either merged or deliberately did not, and refusing to merge past an
+unfinished review is the graph working, not failing. That is an anchored
+alternation, not a relaxed anchor:
+``'^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:]*[[:alnum:]])'``.
+Both outcomes pass, everything else fails, and the anchor still means what it
+meant. Note that the shaping rule binds the negative branch too: closing it
+with `\S` lets the separator class hand its own last character back as the
+reason, so `WITHHELD:` and `WITHHELD —` both pass carrying no reason at all —
+hence `[[:alnum:]]`, which the decoration a real reason is written behind
+(`**WITHHELD**: CodeRabbit has not concluded`) still reaches. Two rules keep
+it honest. Pick tokens where neither is a prefix of the
+other and neither contains a separator a model may render differently —
+`WITHHELD` over `NOT-MERGED`, because a model told to write `NOT-MERGED` will
+sometimes write `NOT MERGED` and the decoration class deliberately does not
+absorb that. And pick a word for the negative outcome that names a **decision**
+rather than a state (`WITHHELD`, not `PENDING`), so the token itself cannot be
+honestly used for "not yet" — otherwise the alternation re-admits the promise
+it exists to reject. A graph whose green run can mean either outcome must say
+so in its header: the ledger says the node passed, and only its artifact says
+which.
+
+Widening the separator class between a token and its payload is the one
+tolerance worth buying node by node, and the currency is what a false FAIL
+costs there. `merge` admits `-` and `—` (`MERGED — 4f2a1c9`) because its retry
+re-enters `gh pr merge` on an already-merged PR under a grant too narrow to
+look at what happened, so a false FAIL is an operator's morning, not a
+re-run; the SHA still carries the assertion, so nothing is given up. Every
+other node pays a retry, and keeps the narrow class.
+
+The rule is stated here and swept for by `lint` and `run --dry-run`
+(`handoff.LintVerdicts`), because a rule only DESIGN.md knows is the same
+"a prompt is not a mechanism" shape one level up. Two advisories, both cheap
+and both drawn from a real miss: a prompt that demands a token (`START your
+reply with…`) under a `success_check` with no `result_matches`, and a
+`result_matches` declared without `exit_zero` — which silently deletes the
+exit-code guard a node had for free while it declared no check at all
+(`SuccessCheck.IsZero`), so a "fix" that adds a predicate can remove one.
+They stay advisories: neither can judge whether a payload is shaped tightly
+enough to reject a promise, which is the part that still needs a reader.
 
 The engine's matching semantics stay deliberately dumb — normalizing the reply
 in Go (trim, strip emphasis, case-fold) would change what every existing

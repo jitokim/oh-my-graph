@@ -117,7 +117,11 @@ The shipping side of that loop is a graph too: `graphs/merge-shepherd.yaml`
 takes a PR number, verifies its head locally in a throwaway worktree, marks
 it ready, waits for CI and CodeRabbit, triages the review comments, pauses
 at a human approval gate, and merges — the operator's by-hand PR-shepherding
-loop, pinned in YAML.
+loop, pinned in YAML. Its merge verdict is deliberately two-valued: the node
+passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
+to merge past an unfinished review is the graph working. So a green run of
+this one graph is not proof that anything landed — read `merge`'s artifact
+(see [LIMITATIONS](LIMITATIONS.md#known-limitations)).
 
 The `auto` equivalent — no hand-written graph, just the goal:
 

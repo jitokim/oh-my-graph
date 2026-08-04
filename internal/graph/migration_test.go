@@ -43,14 +43,45 @@ var migratedTemplates = map[string]map[string][]string{
 		// that replied `**PASS**`, so the fragment's pattern deliberately
 		// diverges from it. Everything else under success_check — exit_zero,
 		// the whole verify block — is still byte-frozen.
-		"e2e":             {"prompt", "budget_usd", "allowed_tools", "success_check.result_matches"},
-		"review-security": {"prompt"},
-		"review-style":    {"prompt"},
+		"e2e": {"prompt", "budget_usd", "allowed_tools", "success_check.result_matches"},
+		// The two reviews gained a verdict pattern of their own: a review that
+		// replies "still reading, I'll continue" is not a review, and under the
+		// frozen `{ exit_zero: true }` it passed as one.
+		"review-security": {"prompt", "success_check.result_matches"},
+		"review-style":    {"prompt", "success_check.result_matches"},
 	},
 	"dev-review-pr.yaml": {
 		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
-		"review-security": {"prompt", "allowed_tools"},                                 // gains Bash(git log*)
-		"review-style":    {"prompt", "allowed_tools"},                                 // gains Bash(git log*)
+		"review-security": {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
+		"review-style":    {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
+	},
+}
+
+// divergedSinceMigration are (node, field) pairs on nodes the migration did
+// NOT convert to a fragment, whose values have deliberately changed since.
+// Same kind of claim as the mask above — a reviewed behavior change, not an
+// equivalence claim — but kept in its own map because the SIZE of
+// migratedTemplates is what proves every converted node is masked
+// (`len(post.Resolutions) != len(masks)` below). Listing a non-fragment node
+// there would break that derivation, and folding a hand-written node's change
+// into the fragment mask would hide it in exactly the place this test exists
+// to make changes visible.
+//
+// The verdict sweep: every node whose prompt named the answer it had to give
+// but whose success_check could not tell whether it got one — `dev` ("reply
+// with a one-line summary"), `pr` ("reply with the PR URL") — gained an
+// anchored verdict token and the prompt that demands it. The failure that
+// motivated it is in DESIGN.md, "Verdict patterns": a node that ends its turn
+// promising future work passes a bare `{ exit_zero: true }` and writes a
+// success into the ledger for work it never did.
+var divergedSinceMigration = map[string]map[string][]string{
+	"self-dev.yaml": {
+		"dev": {"prompt", "success_check.result_matches"},
+		"pr":  {"prompt", "success_check.result_matches"},
+	},
+	"dev-review-pr.yaml": {
+		"dev": {"prompt", "success_check.result_matches"},
+		"pr":  {"prompt", "success_check.result_matches"},
 	},
 }
 
@@ -123,6 +154,10 @@ func TestMigratedTemplates_ByteIdenticalOutsideConvergedFields(t *testing.T) {
 
 			maskConvergedFields(t, pre, masks)
 			maskConvergedFields(t, post.Graph, masks)
+			if diverged, ok := divergedSinceMigration[name]; ok {
+				maskConvergedFields(t, pre, diverged)
+				maskConvergedFields(t, post.Graph, diverged)
+			}
 			preJSON, err := json.MarshalIndent(pre, "", "  ")
 			if err != nil {
 				t.Fatal(err)
