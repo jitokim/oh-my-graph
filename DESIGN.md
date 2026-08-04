@@ -54,7 +54,17 @@ subscription session limit, say) instead of only "exit code 1".
   test on the built argv/env. NEVER `--bare` (disables OAuth). NEVER the Agent SDK.
 - Per-node `context.WithTimeout` (default ~20m) so a wedged child can't hang the graph.
 - Non-JSON/parse failure = node failure (`NodeOutputError`), never a silent zero result.
-- permission modes: `dontAsk` (default unattended) / `acceptEdits` / `plan` (read-only).
+- permission modes are a **closed, load-validated set** — the `claude` CLI's own
+  `--permission-mode` choices, measured from `claude --help` (claude 2.1.221,
+  2026-08-05): `acceptEdits`, `auto`, `bypassPermissions`, `dontAsk`, `manual`,
+  `plan`. `dontAsk` is the unattended default the Scheduler substitutes when a
+  node declares none; `plan` is read-only; `bypassPermissions` is the loud
+  opt-in below. Anything else is a load-time `GraphValidationError` naming the
+  node and listing the set, like an unknown `retry.on` cause — the value is
+  passed through verbatim to argv, so an unvalidated typo (`dontask`) used to
+  kill the node at spawn, mid-run, long after earlier nodes had spent money.
+  The set is oh-my-graph's transcription of a third-party CLI's enum: a mode a
+  future `claude` adds is refused until this list enumerates it.
 - **The permission model is rules + mode, and the rules come from more places
   than the argv.** A tool call is matched against every loaded permission rule;
   if nothing matches, the call resolves to *ask*, and the mode decides what an
@@ -526,7 +536,7 @@ success_check:
     cwd: "{{ inputs.repo }}"              # optional; default = the node's own cwd
     timeout: 2m                           # optional; Go duration, default 2m, ceiling 10m
     expect_exit: 0                        # optional; default 0
-    output_matches: "^ok\\s+github"       # optional; regex over combined stdout+stderr
+    output_matches: "^ok\\s+github"       # optional; regex over the FULL combined stdout+stderr — no length bound, so an anchored pattern still means what it reads as
 ```
 
 ```go
@@ -710,7 +720,7 @@ type Request struct {
 
 type Result struct {
 	ExitCode int
-	Output   string // combined stdout+stderr, truncated for the ledger
+	Output   string // the FULL combined stdout+stderr — never truncated
 }
 
 type Verifier interface {
@@ -727,6 +737,16 @@ type Verifier interface {
   a scheduler test that forgets to inject one gets a loud failure instead of a
   real spawn. `FakeVerifier` (scripted, keyed by command) is what tests inject,
   so the whole verify path stays spawn-free in CI.
+- **`Result.Output` is judged, so it is not truncated.** `output_matches` is
+  applied to everything the command printed. Truncation is a presentation
+  concern and lives where the output is retained or rendered — the ledger's
+  DETAIL column caps it (`schedule.capDetail`), and a `*TimeoutError`, which
+  can be wrapped and held, keeps only a marked tail. Bounding the judged value
+  instead would silently narrow the graph's predicate: the seam prepends
+  `…(earlier output truncated)…` when it cuts, so an anchored pattern like
+  `^ok\s+github` could never match a chatty command. Memory is not the trade it
+  looks like — `CombinedOutput` has already buffered the whole thing before any
+  cut could apply.
 - Selection is data-driven and the caller stays ignorant: the scheduler asks the
   injected `Verifier` and never learns which kind ran. A second verification kind
   (`file_exists:`, `git_clean:`) arrives as another `Verifier` behind a composite

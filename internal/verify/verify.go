@@ -40,8 +40,13 @@ type Request struct {
 type Result struct {
 	// ExitCode is the command's exit status.
 	ExitCode int
-	// Output is the combined stdout+stderr, bounded so a chatty test suite
-	// cannot balloon the run's memory or the ledger's detail column.
+	// Output is the FULL combined stdout+stderr, untruncated. output_matches is
+	// judged against it, and a bound here would silently narrow the graph's
+	// predicate to whatever survived the cut — an anchored pattern could never
+	// match a command that printed more than the cap. Truncation is a
+	// presentation concern and belongs where the output is retained or
+	// rendered (the ledger's DETAIL column caps it at schedule.maxDetailRunes),
+	// not where it is judged.
 	Output string
 }
 

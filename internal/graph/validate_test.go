@@ -653,6 +653,71 @@ nodes:
 	}
 }
 
+// TestParse_UnknownPermissionModeRejected pins the load-time guard for the one
+// enum that had none: permission_mode is passed through verbatim as
+// `claude --permission-mode <mode>`, so a wrong-case `dontask` used to reach
+// argv and kill the node at SPAWN — mid-run, after every earlier node had
+// already spent real money, and a long way from the typo. The message must
+// name the node, the bogus value, and every accepted mode.
+func TestParse_UnknownPermissionModeRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: bad-permission-mode
+nodes:
+  - { id: a, prompt: a, permission_mode: dontask }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "a" {
+		t.Fatalf("error named node %q, want a", vErr.NodeID)
+	}
+	if !strings.Contains(vErr.Reason, `"dontask"`) {
+		t.Errorf("reason should name the bogus mode: %q", vErr.Reason)
+	}
+	for _, valid := range permissionModes {
+		if !strings.Contains(vErr.Reason, valid) {
+			t.Errorf("reason should list valid mode %q: %q", valid, vErr.Reason)
+		}
+	}
+}
+
+// TestParse_ValidPermissionModesAccepted is the positive boundary: every mode
+// the `claude` CLI accepts must pass validation, or the guard would refuse a
+// graph that runs perfectly well. The set is measured from `claude --help`, not
+// transcribed from DESIGN.md — which listed three of the six.
+func TestParse_ValidPermissionModesAccepted(t *testing.T) {
+	for _, mode := range permissionModes {
+		g, err := Parse([]byte(`
+name: permission-mode-ok
+nodes:
+  - { id: a, prompt: a, permission_mode: ` + mode + ` }
+`))
+		if err != nil {
+			t.Fatalf("permission_mode: %s must be accepted: %v", mode, err)
+		}
+		if n, _ := g.NodeByID("a"); n.PermissionMode != mode {
+			t.Errorf("permission_mode did not survive parsing: %q, want %q", n.PermissionMode, mode)
+		}
+	}
+}
+
+// TestParse_UndeclaredPermissionModeStaysEmpty pins backward compatibility and
+// the reason empty is skipped by the validator: permission_mode is NOT
+// normalized at decode the way type and handoff are — an undeclared one stays
+// empty and the Scheduler substitutes its own unattended default. Rejecting
+// empty here would refuse nearly every graph in the repo.
+func TestParse_UndeclaredPermissionModeStaysEmpty(t *testing.T) {
+	g, err := Parse([]byte(`
+name: no-permission-mode
+nodes:
+  - { id: a, prompt: a }
+`))
+	if err != nil {
+		t.Fatalf("graph without permission_mode must stay valid: %v", err)
+	}
+	if n, _ := g.NodeByID("a"); n.PermissionMode != "" {
+		t.Errorf("PermissionMode = %q, want empty so the Scheduler's default applies", n.PermissionMode)
+	}
+}
+
 // TestParse_UnknownOnFailRejected pins the load-time guard for the graph-level
 // failure policy: a typoed on_fail would silently mean today's halt behaviour
 // (every lane cancelled by one failure) — the exact surprise the field exists

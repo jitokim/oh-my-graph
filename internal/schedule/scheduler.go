@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -1213,12 +1214,30 @@ func verifyFault(nodeID, detail string) error {
 	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Infrastructure: true}
 }
 
+// maxOutputScanBytes bounds how much of a verification's output outputTail even
+// looks at. verify.Result.Output is the FULL combined output — output_matches
+// has to judge all of it — so rendering 240 runes of DETAIL must not first
+// whitespace-collapse a whole `go test ./...` log. Cutting to the last few KiB
+// changes nothing the reader sees: capDetail keeps the tail regardless.
+const maxOutputScanBytes = 4096
+
 // outputTail renders the end of a verification command's output for the ledger's
 // DETAIL column: the last maxDetailRunes, whitespace-collapsed onto one
 // line so a multi-line test failure cannot break the end-of-run table. The tail
 // is what matters — a failing command explains itself last. Empty output yields
 // an empty string rather than a dangling separator.
+//
+// This is the truncation the verify seam deliberately does not do: bounding
+// output where it is RENDERED, never where it is judged.
 func outputTail(output string) string {
+	if len(output) > maxOutputScanBytes {
+		output = output[len(output)-maxOutputScanBytes:]
+		// The byte cut can land mid-rune; advance so capDetail's []rune
+		// conversion does not open the detail with a replacement character.
+		for len(output) > 0 && !utf8.RuneStart(output[0]) {
+			output = output[1:]
+		}
+	}
 	condensed := strings.Join(strings.Fields(output), " ")
 	if condensed == "" {
 		return ""
