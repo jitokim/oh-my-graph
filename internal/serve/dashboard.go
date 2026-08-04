@@ -37,8 +37,10 @@ import (
 // path is built from it, so no id that is not literally the name of a run
 // directory ever reaches the filesystem — the same rule handleResult applies
 // to node ids, one level up. Everything else the single-run view guards
-// (loopback bind, Host check, gate token) is unchanged and applies here
-// identically: requireLoopbackHost wraps the whole mux, mounted runs included.
+// (loopback bind, Host check, same-origin check, gate token) is unchanged and
+// applies here identically: requireLoopbackHost wraps the whole mux, mounted
+// runs included, and each mounted run's gate POSTs keep their own
+// requireSameOrigin + requireGateToken pair.
 type Dashboard struct {
 	runsRoot string
 	poll     time.Duration

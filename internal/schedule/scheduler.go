@@ -49,9 +49,11 @@ const (
 // verify_failed retry cause must all agree on.
 const predicateVerify = "verify"
 
-// maxDetailRunes is the one shared bound on a detail string — applied both to
-// a verification command's output tail and, in failRecord, to every cause at
-// the moment it becomes a ledger/snapshot/event Detail. Enough to see the
+// maxDetailRunes is the one shared bound on a detail string — applied at every
+// point a message becomes a ledger/snapshot/event Detail: a verification
+// command's output tail (outputTail), every cause in failRecord, a
+// session-limit pause's node list (runFinishedEvent), and both halves of a
+// feedback round's narration (recordFeedbackRound). Enough to see the
 // failing assertion, short enough not to swamp the end-of-run table or an
 // events.jsonl line (which must stay tailable even when an error is
 // arbitrarily long).
@@ -77,10 +79,17 @@ func capDetail(s string) string {
 // Recorder interface and defaults to a no-op, so nothing about persistence
 // leaks into the engine's tests").
 type Recorder interface {
-	// RecordNode is called once a node reaches a terminal verdict — pass, fail,
+	// RecordNode is called when a node reaches a terminal verdict — pass, fail,
 	// gate-approved, or gate-rejected — so the snapshot stays current after
 	// EVERY node, not only at a gate pause (DESIGN.md, "Snapshot writes happen
-	// after every node"). A non-nil error here is non-fatal to this leg (the
+	// after every node"). It is NOT called exactly once per node: a feedback
+	// declarer (ADR 0010) also records a verdict-LESS marker for every round it
+	// fires (recordFeedbackRound), so a node inside a feedback loop arrives
+	// here several times before its terminal record lands. An implementation
+	// must treat a later call as SUPERSEDING the earlier one rather than as a
+	// second node — runstate.SnapshotRecorder carries the superseded round's
+	// cost forward for exactly this reason.
+	// A non-nil error here is non-fatal to this leg (the
 	// ledger still renders this run's own summary correctly), but it is not a
 	// cosmetic gap: the node stays absent from the persisted state, so a later
 	// resume built from this file would not know it ran and would re-execute
@@ -202,8 +211,16 @@ type Options struct {
 	// relaunching.
 	CompletedNodes map[string]bool
 	// SettledNodes is the set of node ids that reached ANY terminal verdict —
-	// pass or fail — in an earlier leg, and so must never be launched again on
-	// resume. nil (the zero value) for a fresh `run`/`auto`.
+	// pass or fail — in an earlier leg, and so are not launched again on resume
+	// by the ordinary ready-set path. nil (the zero value) for a fresh
+	// `run`/`auto`.
+	//
+	// "Not again" is a default, not an absolute: a feedback arc (ADR 0010) that
+	// fires re-arms its whole loop body, and a re-armed node launches even
+	// though it is settled (see launch's `rearmed` check). That is the point of
+	// a feedback edge — the body's earlier verdict is exactly what the arc is
+	// reacting to — and the re-arm is deliberately scoped to the loop body, so
+	// nothing outside it loses this guard.
 	//
 	// This is separate from CompletedNodes on purpose. CompletedNodes (pass
 	// only) answers "whose dependents may proceed"; SettledNodes (pass or

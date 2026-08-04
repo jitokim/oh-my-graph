@@ -858,6 +858,29 @@ nodes:
 	}
 }
 
+// TestParse_UnresolvedFragmentIsAlsoAGraphValidationError pins the OTHER half
+// of the backstop's contract: the specialized type must not cost a caller the
+// general one. GraphValidationError documents itself as the single type
+// Load/Parse return for a structurally invalid graph, so a renderer that asks
+// only that question must see a fragment error too. Struct embedding alone
+// does not give it — errors.As matches concrete types and walks Unwrap, not
+// embedded fields — so without UnresolvedFragmentError.Unwrap this fails and
+// the general question quietly answers "not a validation error".
+func TestParse_UnresolvedFragmentIsAlsoAGraphValidationError(t *testing.T) {
+	_, err := Parse([]byte(`{"name":"frag","nodes":[{"id":"e2e","use":"e2e-verify"}]}`))
+
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "e2e" {
+		t.Fatalf("the general view named node %q, want e2e", vErr.NodeID)
+	}
+	// And the specialization still answers its own question, so the
+	// coordinator's ADR 0013 refusal (which asks for the narrow type) keeps
+	// working — one error must satisfy both callers, not either-or.
+	if asUnresolvedFragmentError(t, err).NodeID != "e2e" {
+		t.Fatal("the narrow view must still name the node carrying use:")
+	}
+}
+
 func TestParse_RefusesWithWithoutUse(t *testing.T) {
 	// A dead binding is a wiring bug: nothing would ever consume it, and the
 	// author plainly believed something would.

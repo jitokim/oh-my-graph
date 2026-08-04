@@ -127,7 +127,8 @@ func LoadFile(path string) (*LoadResult, error) {
 	return &LoadResult{Graph: g, Source: data, Resolutions: outcome.resolutions, Advisories: outcome.advisories}, nil
 }
 
-// LintFile is LoadFile's collect-all counterpart, mirroring Lint: every
+// LintFile is LoadFile's collect-all counterpart, standing to it exactly as
+// Graph.Issues stands to Graph.Validate one layer down: every
 // fragment issue plus every structural issue of the resolved graph, first
 // element identical to what LoadFile would have failed with — so `lint` and
 // `run --dry-run` render a whole list and the two views can never disagree
@@ -142,7 +143,8 @@ func LintFile(path string) (issues []error, advisories []FragmentAdvisory, err e
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		// A YAML syntax error is the whole report on its own, as in Lint.
+		// A YAML syntax error is the whole report on its own: nothing decoded,
+		// so there is no graph for Graph.Issues to have an opinion about.
 		return []error{fmt.Errorf("parse graph YAML: %w", err)}, nil, nil
 	}
 	outcome := resolveFragments(&doc, path)
