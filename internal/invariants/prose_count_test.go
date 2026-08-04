@@ -30,6 +30,12 @@
 //	the exclusion, never to rewrite the record. A superseded ADR is amended
 //	only in its Status line and its forward pointers.
 //
+//	This file is excluded too, for the same reason one step removed: it QUOTES
+//	those historical counts to explain why they are excluded. Scanning itself
+//	would make the guard demand that its own explanation of the drift be
+//	falsified — the one repair the paragraph above forbids. Nothing is lost by
+//	the exclusion: this file states no count of its own, it derives one.
+//
 //	README.ko.md is excluded because its claims are written in Korean
 //	("정확히 네 개") and the number grammar below only reads English cardinals.
 //	FOLLOW-UP: teach numberFromWord a Korean cardinal table, or drop the
@@ -51,6 +57,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,11 +123,26 @@ var historyExcluded = []string{
 }
 
 // scanExcluded are paths skipped for reasons other than history: build output,
-// git internals, and the Korean README whose cardinals this file cannot read.
+// git internals, the Korean README whose cardinals this file cannot read, and
+// this file itself — see the doc comment's "What is deliberately NOT scanned".
 var scanExcluded = []string{
 	".git/",
 	"bin/",
 	"README.ko.md",
+	selfRelPath(),
+}
+
+// selfRelPath is this file's own repo-relative path, taken from the compiler's
+// record of it rather than transcribed, so renaming the file cannot silently
+// turn the self-exclusion above into a dead string that excludes nothing. The
+// two-level climb mirrors the repoRoot the tests walk from.
+func selfRelPath() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	dir := filepath.Dir(file)
+	return path.Join(filepath.Base(filepath.Dir(dir)), filepath.Base(dir), filepath.Base(file))
 }
 
 // TestProseSpawnerCountsMatchTheExecSeamAllowlist walks every Go, Markdown and
@@ -151,14 +173,22 @@ func TestProseSpawnerCountsMatchTheExecSeamAllowlist(t *testing.T) {
 	for _, file := range proseFiles(t, repoRoot) {
 		for _, claim := range findSpawnerCountClaims(file) {
 			claimsByPackage[path.Dir(file.rel)]++
-			if claim.want(want) == claim.got {
+			expected := claim.want(want)
+			if expected == claim.got {
 				continue
 			}
-			t.Errorf("%s:%d says %q — a spawner count of %d, but allowedExecImporters spans %d exec seam(s) %v. "+
-				"The allowlist is the enforced truth; this sentence is a copy of it that drifted. Update the "+
-				"sentence (and its sibling copies) to match, or, if a seam really was added or removed, update "+
-				"the allowlist and its ADR first.",
-				file.rel, file.lineAt(claim.start), claim.text, claim.got, want, seamPackages)
+			// The number the sentence must carry, not the seam total: an
+			// "other" claim is right at one BELOW the total, and printing the
+			// total there would read as "4, but 4" and prove nothing.
+			form := ""
+			if claim.excludesSelf {
+				form = ", minus the speaker the word \"other\" excludes"
+			}
+			t.Errorf("%s:%d says %q — a spawner count of %d, but it must say %d: allowedExecImporters spans "+
+				"%d exec seam(s) %v%s. The allowlist is the enforced truth; this sentence is a copy of it that "+
+				"drifted. Update the sentence (and its sibling copies) to match, or, if a seam really was added "+
+				"or removed, update the allowlist and its ADR first.",
+				file.rel, file.lineAt(claim.start), claim.text, claim.got, expected, want, seamPackages, form)
 		}
 	}
 

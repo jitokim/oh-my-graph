@@ -36,22 +36,19 @@ var usageSubcommandPattern = regexp.MustCompile(`^oh-my-graph ([a-z-]+)`)
 
 // flagSetsBySubcommand maps each subcommand that parses flags to a freshly
 // built FlagSet. A subcommand absent here takes no flags at all, which the
-// synopsis must also reflect — chat is here precisely because it takes two.
+// synopsis must also reflect.
 //
-// runChat builds its FlagSet inline rather than in a constructor, so its two
-// flags are re-registered here in the same call the production path makes. If
-// that ever drifts it is a real gap, which is why the pairing is spelled out
-// rather than skipped.
+// Every entry comes from the subcommand's own constructor — the same call the
+// production path makes. None is re-registered here: a hand-copy would make
+// this guard compare the synopsis against itself, so a flag added to or
+// dropped from the real parser would pass in BOTH directions.
 func flagSetsBySubcommand() map[string]*flag.FlagSet {
-	chat := flag.NewFlagSet("chat", flag.ContinueOnError)
-	chat.Bool("no-agent-mapping", false, "")
-	chat.Bool("no-skill-mapping", false, "")
 	return map[string]*flag.FlagSet{
 		"run":    newRunFlags().set,
 		"auto":   newAutoFlags().set,
 		"resume": newResumeFlags().set,
 		"serve":  newServeFlags().set,
-		"chat":   chat,
+		"chat":   newChatFlags().set,
 	}
 }
 

@@ -53,7 +53,7 @@ const predicateVerify = "verify"
 // point a message becomes a ledger/snapshot/event Detail: a verification
 // command's output tail (outputTail), every cause in failRecord, a
 // session-limit pause's node list (runFinishedEvent), and both halves of a
-// feedback round's narration (recordFeedbackRound). Enough to see the
+// feedback round's narration (judgeFeedback). Enough to see the
 // failing assertion, short enough not to swamp the end-of-run table or an
 // events.jsonl line (which must stay tailable even when an error is
 // arbitrarily long).
@@ -84,7 +84,7 @@ type Recorder interface {
 	// EVERY node, not only at a gate pause (DESIGN.md, "Snapshot writes happen
 	// after every node"). It is NOT called exactly once per node: a feedback
 	// declarer (ADR 0010) also records a verdict-LESS marker for every round it
-	// fires (recordFeedbackRound), so a node inside a feedback loop arrives
+	// fires (judgeFeedback), so a node inside a feedback loop arrives
 	// here several times before its terminal record lands. An implementation
 	// must treat a later call as SUPERSEDING the earlier one rather than as a
 	// second node — runstate.SnapshotRecorder carries the superseded round's
