@@ -31,6 +31,7 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --disallowedTools "<comma,joined>" ] \
   [ --resume <session_id> ] [ --session-id <uuid> ]
 ```
+
 This is emission order, not just a flag inventory: `runner.buildArgs` appends
 in exactly this sequence and `claude_test.go`'s `want` argv pins it
 element-by-element, so a reordering is a test failure, not a style choice.

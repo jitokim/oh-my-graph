@@ -142,6 +142,41 @@ func TestTranscript_SettledNodeIs204(t *testing.T) {
 	}
 }
 
+// TestTranscript_PausedGateIs204 pins the third terminal. A pausing gate
+// emits no node terminal at all, so gate_paused IS the last thing the stream
+// says about that node in this leg: the reducer must settle it (running
+// false, no session) exactly like node_passed/node_failed, or the paused
+// node would read as running forever and keep serving a stale tail.
+func TestTranscript_PausedGateIs204(t *testing.T) {
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	writeEvents(t, dir, "run-1",
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a", SessionID: sessionA},
+		runfeed.Event{Type: runfeed.EventGatePaused, NodeID: "a"},
+	)
+	s, projects := newTranscriptServer(t, dir)
+	writeTranscript(t, projects, sessionA,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"waiting"}]}}`)
+
+	state, err := readNodeFeedState(filepath.Join(dir, runfeed.FileName), "a")
+	if err != nil {
+		t.Fatalf("readNodeFeedState: %v", err)
+	}
+	if !state.seen {
+		t.Error("seen = false, want true")
+	}
+	if state.running {
+		t.Error("running = true, want false after gate_paused")
+	}
+	if state.session != "" {
+		t.Errorf("session = %q, want empty after gate_paused", state.session)
+	}
+
+	if rec := getTranscript(t, s, "a"); rec.Code != 204 {
+		t.Errorf("paused gate: status = %d, want 204", rec.Code)
+	}
+}
+
 // TestTranscript_NoSessionIdIs204 pins the gate this endpoint sits behind: a
 // running node whose node_started carried no session id (a session-handoff
 // node — its transcript is the parent's session) has no tail to serve.
