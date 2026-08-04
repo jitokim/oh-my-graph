@@ -161,12 +161,33 @@ func TestProseSpawnerCountsMatchTheExecSeamAllowlist(t *testing.T) {
 	// The two lists in exec_seam_test.go must agree before either can be a
 	// source of truth for prose: execSeamCallSites is one file per seam, so a
 	// seam added to the allowlist and forgotten there would quietly shrink the
-	// derived count and let stale prose pass.
-	if len(execSeamCallSites) != want {
-		t.Fatalf("execSeamCallSites names %d file(s) but allowedExecImporters spans %d package(s) %v; "+
-			"the seam count cannot be derived while the two lists disagree. Add the new seam's spawn-site "+
-			"file to execSeamCallSites (or drop the stale entry) before trusting any prose check.",
-			len(execSeamCallSites), want, seamPackages)
+	// derived count and let stale prose pass. The comparison is set against set,
+	// not length against length — a duplicated entry keeps the tally right while
+	// some seam's call site goes unlisted, and the scrub test in
+	// exec_seam_test.go would then walk right past that seam.
+	callSitesByPackage := map[string]int{}
+	for _, file := range execSeamCallSites {
+		callSitesByPackage[path.Dir(file)]++
+	}
+	for _, pkg := range seamPackages {
+		if n := callSitesByPackage[pkg]; n != 1 {
+			t.Fatalf("execSeamCallSites names %d spawn-site file(s) under %s, want exactly one per seam; "+
+				"allowedExecImporters spans %d exec seam(s) %v. The seam count cannot be derived while the "+
+				"two lists disagree — add that seam's spawn-site file to execSeamCallSites (or drop the "+
+				"duplicate entry) before trusting any prose check.", n, pkg, want, seamPackages)
+		}
+		delete(callSitesByPackage, pkg)
+	}
+	unlisted := make([]string, 0, len(callSitesByPackage))
+	for pkg := range callSitesByPackage {
+		unlisted = append(unlisted, pkg)
+	}
+	sort.Strings(unlisted)
+	if len(unlisted) > 0 {
+		t.Fatalf("execSeamCallSites names spawn sites under %v, which allowedExecImporters does not cover; "+
+			"it spans %d exec seam(s) %v. The seam count cannot be derived while the two lists disagree — "+
+			"drop the stale entry, or allowlist the new seam (with its ADR) first.",
+			unlisted, want, seamPackages)
 	}
 
 	claimsByPackage := map[string]int{}

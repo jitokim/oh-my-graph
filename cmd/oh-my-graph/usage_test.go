@@ -22,9 +22,13 @@ import (
 //   - each line's flags come from that subcommand's real FlagSet, read by
 //     VisitAll (registeredFlags).
 //
-// Both directions are enforced. A registered flag missing from the synopsis
-// hides a feature; a synopsis flag nobody registered is worse — the user types
-// it and gets an error. This file's `serve --run` was live for two releases.
+// Both directions are enforced, for subcommands and for flags alike. A
+// registered flag missing from the synopsis hides a feature; a synopsis flag
+// nobody registered is worse — the user types it and gets an error. This file's
+// `serve --run` was live for two releases. A synopsis line for a subcommand
+// run() does not dispatch fails the same way, and fails silently in the flag
+// check: an unknown subcommand has no FlagSet, so a line carrying no flags has
+// no mismatch left to report. It gets its own test.
 
 // usageFlagPattern finds every --flag token on a synopsis line. The name stops
 // at the first character a Go flag name cannot contain, so `[--concurrency N]`
@@ -118,6 +122,27 @@ func TestUsage_DocumentsEverySubcommandTheDispatchAccepts(t *testing.T) {
 	for _, name := range subcommandsFromDispatch(t) {
 		if _, ok := usageLineFor(name); !ok {
 			t.Errorf("run() dispatches %q but the usage synopsis never mentions it:\n%s", name, usageLines)
+		}
+	}
+}
+
+// TestUsage_EverySynopsisSubcommandIsDispatched is the reverse of the test
+// above: a line the CLI prints for a command run() no longer routes anywhere
+// sends the user straight into the `unknown command` branch.
+func TestUsage_EverySynopsisSubcommandIsDispatched(t *testing.T) {
+	dispatched := map[string]bool{}
+	for _, name := range subcommandsFromDispatch(t) {
+		dispatched[name] = true
+	}
+	for _, line := range strings.Split(usageLines, "\n") {
+		line = strings.TrimSpace(line)
+		m := usageSubcommandPattern.FindStringSubmatch(line)
+		if m == nil {
+			t.Fatalf("usage line does not start with a subcommand: %q", line)
+		}
+		if !dispatched[m[1]] {
+			t.Errorf("usage documents %q, but run() dispatches no such command — a user who copies the "+
+				"synopsis gets `unknown command`:\n  %s", m[1], line)
 		}
 	}
 }
