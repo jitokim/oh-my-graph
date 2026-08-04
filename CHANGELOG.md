@@ -166,6 +166,15 @@ graphs. Meanwhile the project starts shipping itself, and says so.
   `dev-review-pr`/`self-dev` read correctly on a cold resume; and the last
   wall-clock wait in `runfeed`'s reader test is replaced with an observed
   `fs.ErrNotExist` signal. ([#80](https://github.com/jitokim/oh-my-graph/pull/80))
+- **The exec-seam invariant test now asserts the call sites actually scrub.**
+  `TestExecSeamCallSitesScrubEnv` parses each of the four spawn-site files and
+  fails CI unless the file has exactly one `exec.Command`/`exec.CommandContext`
+  call and the function enclosing it assigns `cmd.Env = childenv.Scrub(...)` —
+  closing a defense-in-depth gap where the import allowlist guarded *which
+  files* may spawn a process but never that they *actually scrub* the child
+  environment, so a future second, unscrubbed spawn in an already-allowlisted
+  file would have stayed green. Not exploitable today (every call site already
+  scrubs); found in this release's rotating security meta-review. ([#102](https://github.com/jitokim/oh-my-graph/pull/102))
 
 ### Documentation
 
