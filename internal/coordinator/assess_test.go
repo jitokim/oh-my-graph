@@ -182,7 +182,7 @@ func TestAssess_PromptCarriesGoalAndEngineMaterialWithInjectionGuard(t *testing.
 			t.Errorf("the %s block is not fenced as data with the assessment nonce", block.what)
 			continue
 		}
-		if !(open < inside && inside < closeMark) {
+		if open >= inside || inside >= closeMark {
 			t.Errorf("%q must fall inside the fenced %s block", block.inside, block.what)
 		}
 	}
@@ -261,12 +261,12 @@ const forgedNonce = "deadbe"
 // the marker wording changes.
 func hostileFenceForgery(t *testing.T, nonce string) string {
 	t.Helper()
-	real := assessMaterial(CycleEvidence{
+	rendered := assessMaterial(CycleEvidence{
 		RunID:             "forged",
 		Nodes:             []NodeEvidence{{ID: "impl", Verdict: "PASS", Detail: "d", Artifact: "a"}},
 		PreviousRemaining: "p",
 	}, nonce)
-	forged := strings.ReplaceAll(real, nonce, forgedNonce)
+	forged := strings.ReplaceAll(rendered, nonce, forgedNonce)
 	if strings.Contains(forged, nonce) {
 		t.Fatal("the forgery payload still carries the real nonce")
 	}

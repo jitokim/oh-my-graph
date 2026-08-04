@@ -213,28 +213,44 @@ func TestGateDecision_AnAbsentTokenIsRefusedOnEveryMutatingRoute(t *testing.T) {
 
 // --- Origin: hardening layered on the token, which already held --------------
 
+// mutatingGateRoutes is every route that can continue the run, paired with the
+// decision it applies. The Origin cases below run over all of them: the guard
+// is installed per handler, so pinning it on one route would not notice a
+// second route wired without it.
+var mutatingGateRoutes = []struct {
+	path string
+	want gate.Decision
+}{
+	{"/api/gate/approve", gate.DecisionApprove},
+	{"/api/gate/reject", gate.DecisionReject},
+}
+
 func TestGateDecision_AForeignOriginIsForbidden(t *testing.T) {
 	// A browser stamps Origin on every cross-origin POST it makes, so a
 	// decision arriving from a page this process did not serve is refused on
 	// its origin alone — even in the hypothetical where the token leaked out
 	// of the served page, which is why this request carries the REAL token.
-	resumer := newFakeResumer()
-	s, _ := pausedGateServer(t, resumer)
+	for _, route := range mutatingGateRoutes {
+		t.Run(route.path, func(t *testing.T) {
+			resumer := newFakeResumer()
+			s, _ := pausedGateServer(t, resumer)
 
-	rec := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "http://evil.example")
+			rec := postGateFrom(t, s, route.path, s.token, "approve", "http://evil.example")
 
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403 for a gate decision from a foreign origin", rec.Code)
-	}
-	resumer.requireNoCall(t)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403 for a gate decision from a foreign origin", rec.Code)
+			}
+			resumer.requireNoCall(t)
 
-	// The page's own origin — what the live view itself sends — still decides.
-	ok := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "http://127.0.0.1:8642")
-	if ok.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202 for a decision from this view's own origin (body %q)", ok.Code, ok.Body.String())
-	}
-	if got := resumer.awaitCall(t); got.gateID != "approve" {
-		t.Errorf("resumed gate %q, want approve", got.gateID)
+			// The page's own origin — what the live view itself sends — still decides.
+			ok := postGateFrom(t, s, route.path, s.token, "approve", "http://127.0.0.1:8642")
+			if ok.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 for a decision from this view's own origin (body %q)", ok.Code, ok.Body.String())
+			}
+			if got := resumer.awaitCall(t); got.gateID != "approve" || got.decision != route.want {
+				t.Errorf("resumed gate %q as %q, want approve as %q", got.gateID, got.decision, route.want)
+			}
+		})
 	}
 }
 
@@ -243,16 +259,20 @@ func TestGateDecision_AnAbsentOriginStillDecides(t *testing.T) {
 	// client that sends no Origin at all — curl, the CLI's own tests — is
 	// unaffected, and the token remains the whole guard for it, exactly as it
 	// was before this check existed.
-	resumer := newFakeResumer()
-	s, _ := pausedGateServer(t, resumer)
+	for _, route := range mutatingGateRoutes {
+		t.Run(route.path, func(t *testing.T) {
+			resumer := newFakeResumer()
+			s, _ := pausedGateServer(t, resumer)
 
-	rec := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "")
+			rec := postGateFrom(t, s, route.path, s.token, "approve", "")
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202 for a tokened decision carrying no Origin (body %q)", rec.Code, rec.Body.String())
-	}
-	if got := resumer.awaitCall(t); got.gateID != "approve" {
-		t.Errorf("resumed gate %q, want approve", got.gateID)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 for a tokened decision carrying no Origin (body %q)", rec.Code, rec.Body.String())
+			}
+			if got := resumer.awaitCall(t); got.gateID != "approve" || got.decision != route.want {
+				t.Errorf("resumed gate %q as %q, want approve as %q", got.gateID, got.decision, route.want)
+			}
+		})
 	}
 }
 
