@@ -360,7 +360,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
-| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(플래너 호출 한 번의 비용은 그대로 듭니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
+| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(플래너 호출 한 번의 비용은 그대로 듭니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다 — 거부된 플랜이 수정된 플래너 호출 한 번을 사므로 플래너 호출 최악은 `2 × N`입니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |
@@ -412,8 +412,10 @@ cycle별 지출을 합산한 goal summary가 나옵니다. exit 0은 goal-met �
 사이에 검사되는 선택적 soft 지출 상한을 더합니다; 단일 cycle run에는 검사할
 cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 파싱 단계에서
 거부됩니다. 정직하게 말해 둡니다: `auto`는 비대화형이므로, 지켜보는 사람
-없이 돌린 `--max-cycles 5`는 플래너 호출 다섯 번, 그래프 다섯 개, 판정 다섯
-번을 쓸 수 있습니다 — 거버넌스는 확인 프롬프트가 아니라 당신이 타이핑한
+없이 돌린 `--max-cycles 5`는 플래너 호출 **최대 열 번**(검증 거부 하나가
+수정된 플랜 한 번을 사므로 cycle당 플래너 호출 최악은 2이고, `--max-cycles`
+자체에는 상한이 없습니다), 그래프 다섯 개, 판정 다섯 번을 쓸 수 있습니다 —
+거버넌스는 확인 프롬프트가 아니라 당신이 타이핑한
 상한, cycle별 검증, 그리고 출력된 기록입니다.
 
 자신만의 Claude Code 에이전트(`~/.claude/agents`, `./.claude/agents` —

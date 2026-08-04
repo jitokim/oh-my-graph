@@ -120,9 +120,24 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// A cycle whose planning was refused paid for it like any other, so
 		// its spec is persisted here too — the loop's plan step is the same
 		// coordinator.plan call the single-cycle path makes.
-		return noteRejectedPlan(out, err)
+		return noteRejectedPlan(out, rejectedPlanID(firstRunID, len(result.Cycles)+1), err)
 	}
 	return goalExit(out, result)
+}
+
+// rejectedPlanID names the plans/ directory a refused cycle's spec goes into.
+// A fresh id carries no lineage: in a five-cycle loop, plans/<id>/rejected.json
+// would sit beside the goal's run directories with nothing linking it to the
+// goal or the cycle that bought it — invisible in the single-cycle path, and
+// exactly what a reader needs in a loop. When at least one cycle has run, the
+// id is that goal's first run id plus the refused cycle's ordinal, so the path
+// itself says where it came from. A cycle-1 refusal has no run to name yet, so
+// it falls back to a fresh id.
+func rejectedPlanID(firstRunID string, cycle int) string {
+	if firstRunID == "" {
+		return newRunID()
+	}
+	return fmt.Sprintf("%s-cycle%d", firstRunID, cycle)
 }
 
 // isRunFailure reports whether err is the scheduler saying "this run
@@ -271,10 +286,11 @@ func saveAssessment(runDir string, a coordinator.Assessment) error {
 // (ADR 0011 §4). That is why loopErr is part of the accounting: a cycle that
 // ended the loop mid-flight (a pause, a planning failure, a garbage verdict)
 // still spent, so it appears in the multiplier as an explicit incomplete
-// cycle rather than vanishing — with a failed assessment's own cost counted,
-// since the seam (AssessError.CostUSD) carries it. Silent only when there is
-// no spend story at all: no cycle completed and no error (a declined cycle-1
-// plan).
+// cycle rather than vanishing — with its own cost counted wherever the seam
+// carries it: AssessError.CostUSD for a failed assessment, PlanRejection.CostUSD
+// for a refused plan (up to two planner calls, since a refusal buys one
+// correction). Silent only when there is no spend story at all: no cycle
+// completed and no error (a declined cycle-1 plan).
 func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, loopErr error) {
 	if len(result.Cycles) == 0 && loopErr == nil {
 		return
@@ -300,11 +316,21 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	}
 	incomplete := len(result.Cycles) + 1
 	var assessErr *coordinator.AssessError
-	if errors.As(loopErr, &assessErr) {
+	var rejection *coordinator.PlanRejection
+	switch {
+	case errors.As(loopErr, &assessErr):
 		total += assessErr.CostUSD
 		fmt.Fprintf(w, "  cycle %d: incomplete — its assessment failed after spending $%.4f (counted); its run spend appears only on its own ledger above\n",
 			incomplete, assessErr.CostUSD)
-	} else {
+	case errors.As(loopErr, &rejection):
+		// A refused plan has no ledger of its own — nothing ran — so this is
+		// the only place its spend can be counted. Uncounted, a loop whose
+		// cycle-k plan was refused twice would hide two whole planner calls
+		// from the multiplier the ADR requires printed.
+		total += rejection.CostUSD
+		fmt.Fprintf(w, "  cycle %d: incomplete — its planning was refused after spending $%.4f (counted); nothing ran, so it has no ledger above\n",
+			incomplete, rejection.CostUSD)
+	default:
 		fmt.Fprintf(w, "  cycle %d: incomplete — it never reached assessment; its spend (if any) appears only in its own output above\n", incomplete)
 	}
 	fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d assessed cycle(s) + 1 incomplete cycle\n", total, len(result.Cycles))

@@ -352,7 +352,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
-		return noteRejectedPlan(out, err)
+		return noteRejectedPlan(out, newRunID(), err)
 	}
 
 	runID := newRunID()
@@ -687,10 +687,14 @@ func plannerCallsPhrase(plan coordinator.Plan) string {
 // plan-only preview's, under plans/, for the same reason that one is not under
 // runs/ — nothing ran, so it is not a run.
 //
+// planID names the directory it goes into, so a caller that knows more about
+// where the refusal came from than "a plan was bought" can say so in the path
+// (the goal loop names the goal's first run and the refused cycle).
+//
 // The refusal itself is returned unchanged; this only adds a line naming where
 // the rejected spec went. A failure to write it is reported and swallowed:
 // losing the artifact must not replace the diagnosis the user actually needs.
-func noteRejectedPlan(w io.Writer, err error) error {
+func noteRejectedPlan(w io.Writer, planID string, err error) error {
 	var rejection *coordinator.PlanRejection
 	if !errors.As(err, &rejection) {
 		return err
@@ -701,7 +705,7 @@ func noteRejectedPlan(w io.Writer, err error) error {
 	if len(rejection.Spec) == 0 {
 		return err
 	}
-	path, saveErr := saveSpecAs(planDirFor(newRunID()), rejectedSpecFileName, rejection.Spec)
+	path, saveErr := saveSpecAs(planDirFor(planID), rejectedSpecFileName, rejection.Spec)
 	if saveErr != nil {
 		fmt.Fprintf(os.Stderr, "save rejected plan spec: %v\n", saveErr)
 		return err

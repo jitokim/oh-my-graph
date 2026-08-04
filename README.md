@@ -339,7 +339,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for the planner call — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for the planner call — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
@@ -395,8 +395,10 @@ verdict and a passed final run. `--max-goal-budget-usd X` adds an optional
 soft spend ceiling checked between cycles; it requires `--max-cycles` of at
 least 2, since a single-cycle run has no cycle boundary to check it at, and
 the flag is rejected at parse otherwise. Stated honestly: `auto` is
-non-interactive, so an unattended `--max-cycles 5` may spend five planner
-calls, five graphs and five assessments with nobody watching — the
+non-interactive, so an unattended `--max-cycles 5` may spend **up to ten**
+planner calls — a validation refusal buys one corrected plan, so each cycle's
+planner-call worst case is 2, and `--max-cycles` itself has no upper bound —
+five graphs and five assessments with nobody watching — the
 governance is the bound you typed, the per-cycle validation, and the printed
 record, not a confirmation prompt.
 

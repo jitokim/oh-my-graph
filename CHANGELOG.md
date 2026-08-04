@@ -30,6 +30,14 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   spent only on refusals the reply's content caused — a runner error, a
   non-zero planner exit, a reply with no JSON in it and a reply whose JSON
   does not decode buy nothing, because re-running cannot repair them.
+  **What is measured, stated exactly:** the five-of-twenty figure above is the
+  BASELINE that motivated this, not a before/after comparison. The goals run
+  since are a different and much smaller set, and none of them drew a refusal —
+  so the re-plan path has **zero real-planner samples**, no refusal rate is
+  claimed for it, and whether it converges is answered only by
+  `TestManual_RepairPromptConvergesOnARealPlanner` (manual, real `claude`).
+  The `re-planned:` line is what makes that column measurable once a refusal
+  does happen; comparing rates needs the same twenty goals re-run.
 - **A re-plan is never silent, and a rejected plan is never destroyed.**
   `Plan.CostUSD` is the SUM of every planner call a plan took, so the ledger's
   TOTAL COST and the goal loop's `--max-goal-budget-usd` check cannot

@@ -445,14 +445,20 @@ func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, flo
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
+	//
+	// A mapping fault is infrastructure, not the planner's judgment, so it is
+	// not repairable — but the spec still travels. This spec is one validation
+	// ACCEPTED: "a paid-for plan is not destroyed by being invalid" applies all
+	// the more to a plan that was valid, and it is the planner's own reply, not
+	// a half-mapped rebuild.
 	if err := c.applyAgentMapping(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err}
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Strictly after agent mapping's rebuild: skill mapping must see which
 	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
 	// into the graph that becomes the final Spec, exactly once.
 	if err := c.applySkillMapping(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err}
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	return plan, costUSD, nil
 }

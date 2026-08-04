@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -163,6 +164,63 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	// twice with no way to tell.
 	if !strings.Contains(err.Error(), "bought twice") {
 		t.Errorf("the refusal does not say a re-plan was attempted: %v", err)
+	}
+}
+
+// A goal loop's refused cycle is in the multiplier, not below it. The whole
+// risk of a loop on a paid runtime is the multiplier, and ADR 0011 §4 requires
+// it printed rather than derivable — so a cycle that spent two planner calls
+// and produced no graph must be counted in GOAL TOTAL, exactly as a failed
+// assessment's own cost is. It has no ledger of its own to hide behind:
+// nothing ran.
+//
+// The rejected spec's directory also carries the lineage: a fresh id would
+// leave plans/<id>/rejected.json beside the goal's runs with nothing saying
+// which goal, or which cycle, bought it.
+func TestPlanAndExecute_ARefusedCyclesPlanningSpendIsInTheGoalTotal(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1":   {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"assess-1": {Result: cycleAssessNotMet, TotalCostUSD: 0.03},
+		// Cycle 2 is refused, and its one correction is refused too.
+		"plan-2": {Result: refusedCycleSpec, TotalCostUSD: 0.02},
+		"plan-3": {Result: refusedCycleSpec, TotalCostUSD: 0.04},
+	})
+
+	out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
+	var rejection *coordinator.PlanRejection
+	if !errors.As(err, &rejection) {
+		t.Fatalf("expected *PlanRejection, got %T: %v", err, err)
+	}
+	if got := fake.InvocationCount("plan-4"); got != 0 {
+		t.Errorf("a twice-refused cycle bought %d further planner call(s), want 0", got)
+	}
+	for _, want := range []string{
+		// cycle 1's own line, unchanged
+		"cycle 1: run ",
+		"run $0.6000",
+		// the refused cycle, named as a planning refusal and counted
+		"cycle 2: incomplete — its planning was refused after spending $0.0600 (counted)",
+		// 0.60 + 0.03 + 0.06 — the two refused planner calls included
+		"GOAL TOTAL: $0.6900 across 1 assessed cycle(s) + 1 incomplete cycle",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("goal summary is missing %q:\n%s", want, out)
+		}
+	}
+	// The old wording claimed the spend was reported elsewhere. It is not:
+	// nothing ran, so there is no ledger for it above.
+	if strings.Contains(out, "it never reached assessment") {
+		t.Errorf("a refused plan is still reported as an unaccounted incomplete cycle:\n%s", out)
+	}
+
+	// Lineage: the plan directory names the goal's first run and the cycle.
+	cycleOneRunID := goalSnapshots(t)[0].RunID
+	planDir := filepath.Base(solePlanDir(t))
+	if planDir != cycleOneRunID+"-cycle2" {
+		t.Errorf("rejected plan dir = %q, want %q — the path must say which goal and cycle bought it",
+			planDir, cycleOneRunID+"-cycle2")
 	}
 }
 
