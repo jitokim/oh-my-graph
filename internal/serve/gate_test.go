@@ -97,11 +97,22 @@ func pausedGateServer(t *testing.T, resumer GateResumer) (*Server, string) {
 // header at all.
 func postGate(t *testing.T, s *Server, path, token, node string) *httptest.ResponseRecorder {
 	t.Helper()
+	return postGateFrom(t, s, path, token, node, "")
+}
+
+// postGateFrom is postGate with an explicit Origin — the header a browser
+// stamps on every cross-origin POST it makes. An empty origin sends no header
+// at all, as a non-browser client (curl, the CLI's own tests) does.
+func postGateFrom(t *testing.T, s *Server, path, token, node, origin string) *httptest.ResponseRecorder {
+	t.Helper()
 	body := strings.NewReader(`{"node":"` + node + `"}`)
 	req := httptest.NewRequestWithContext(context.Background(), "POST", "http://127.0.0.1:8642"+path, body)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("X-OMG-Token", token)
+	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
 	}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -139,6 +150,110 @@ func TestGateDecision_WrongTokenIsForbidden(t *testing.T) {
 		t.Errorf("status = %d, want 403 for a gate decision carrying the wrong token", rec.Code)
 	}
 	resumer.requireNoCall(t)
+}
+
+func TestGateDecision_TheTokenlessSimpleRequestIsRefused(t *testing.T) {
+	// The exact request a hostile page can issue without a preflight: a CORS
+	// "simple request" — Content-Type text/plain, no custom header — sent from
+	// an origin this process did not serve, to a URL whose Host is the real
+	// loopback target (so the bind and requireLoopbackHost both pass it).
+	//
+	// Neither guard has ever let this through: with no X-OMG-Token the token
+	// check refuses it on its own (400, and no leg — see
+	// TestGateDecision_AnAbsentTokenIsRefusedOnEveryMutatingRoute), and
+	// requireSameOrigin now refuses it a step earlier on its Origin. The
+	// status here therefore records which guard SPEAKS FIRST, not whether the
+	// request would otherwise have been admitted; the invariant this test
+	// exists for is requireNoCall. Pinned on both mutating routes so no future
+	// edit to either guard can quietly admit the shape.
+	for _, path := range []string{"/api/gate/approve", "/api/gate/reject"} {
+		t.Run(path, func(t *testing.T) {
+			resumer := newFakeResumer()
+			s, _ := pausedGateServer(t, resumer)
+
+			body := strings.NewReader(`{"node":"approve"}`)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "http://127.0.0.1:8642"+path, body)
+			req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+			req.Header.Set("Origin", "http://evil.example")
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403 for a tokenless cross-origin simple request (body %q)", rec.Code, rec.Body.String())
+			}
+			resumer.requireNoCall(t)
+		})
+	}
+}
+
+func TestGateDecision_AnAbsentTokenIsRefusedOnEveryMutatingRoute(t *testing.T) {
+	// The behaviour a security audit has already misread once: an absent
+	// X-OMG-Token is a REFUSAL, not a shape complaint that falls through. It
+	// is answered 400 — the request is malformed for this API, which is what a
+	// non-browser client sending no header has actually done — and, decisively,
+	// nothing is resumed. Pinned on both mutating routes so the guard cannot
+	// come to hold on only one of them.
+	for _, path := range []string{"/api/gate/approve", "/api/gate/reject"} {
+		t.Run(path, func(t *testing.T) {
+			resumer := newFakeResumer()
+			s, _ := pausedGateServer(t, resumer)
+
+			rec := postGate(t, s, path, "", "approve")
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 for a gate decision with no token", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "X-OMG-Token") {
+				t.Errorf("the refusal must name the missing header, got %q", rec.Body.String())
+			}
+			resumer.requireNoCall(t)
+		})
+	}
+}
+
+// --- Origin: hardening layered on the token, which already held --------------
+
+func TestGateDecision_AForeignOriginIsForbidden(t *testing.T) {
+	// A browser stamps Origin on every cross-origin POST it makes, so a
+	// decision arriving from a page this process did not serve is refused on
+	// its origin alone — even in the hypothetical where the token leaked out
+	// of the served page, which is why this request carries the REAL token.
+	resumer := newFakeResumer()
+	s, _ := pausedGateServer(t, resumer)
+
+	rec := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "http://evil.example")
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 for a gate decision from a foreign origin", rec.Code)
+	}
+	resumer.requireNoCall(t)
+
+	// The page's own origin — what the live view itself sends — still decides.
+	ok := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "http://127.0.0.1:8642")
+	if ok.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 for a decision from this view's own origin (body %q)", ok.Code, ok.Body.String())
+	}
+	if got := resumer.awaitCall(t); got.gateID != "approve" {
+		t.Errorf("resumed gate %q, want approve", got.gateID)
+	}
+}
+
+func TestGateDecision_AnAbsentOriginStillDecides(t *testing.T) {
+	// The origin check narrows what a BROWSER can do and nothing else: a
+	// client that sends no Origin at all — curl, the CLI's own tests — is
+	// unaffected, and the token remains the whole guard for it, exactly as it
+	// was before this check existed.
+	resumer := newFakeResumer()
+	s, _ := pausedGateServer(t, resumer)
+
+	rec := postGateFrom(t, s, "/api/gate/approve", s.token, "approve", "")
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 for a tokened decision carrying no Origin (body %q)", rec.Code, rec.Body.String())
+	}
+	if got := resumer.awaitCall(t); got.gateID != "approve" {
+		t.Errorf("resumed gate %q, want approve", got.gateID)
+	}
 }
 
 func TestIndex_CarriesThisProcessesTokenAndItIsTheOneThatWorks(t *testing.T) {

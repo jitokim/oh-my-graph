@@ -80,7 +80,9 @@ const maxGateBody = 4 << 10
 // sending it as a custom header (rather than a form field) means the browser
 // must preflight the POST — which a cross-origin form cannot do at all. A
 // missing token is 400 (the request is malformed for this API), a wrong one
-// is 403; the comparison is constant-time.
+// is 403; the comparison is constant-time. Both are refusals that return
+// before any decision is applied — there is no shape of this request, absent
+// header included, that falls through to the resumer without the token.
 func (s *Server) requireGateToken(w http.ResponseWriter, r *http.Request) bool {
 	token := r.Header.Get("X-OMG-Token")
 	if token == "" {
@@ -89,6 +91,39 @@ func (s *Server) requireGateToken(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
 		http.Error(w, "forbidden: X-OMG-Token does not match this live view's token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// requireSameOrigin rejects a gate POST whose Origin header names an origin
+// other than this server's own, answering the client itself when it does.
+//
+// SECURITY: this is hardening layered on top of a guard that already held, not
+// the closing of a hole. requireGateToken refuses an absent X-OMG-Token (400)
+// and a wrong one (403) alike, and both return before the decision is applied,
+// so no tokenless request has ever reached the resumer. What Origin adds is a
+// second, independent signal that arrives earlier and does not depend on the
+// token staying secret: a browser stamps Origin on every cross-origin POST it
+// makes, so a decision issued by a page this process did not serve is visible
+// here before the token is considered at all — including in the hypothetical
+// where the token leaked out of the served page.
+//
+// An ABSENT Origin is allowed through. Non-browser clients (curl, the CLI's
+// own tests) send none, and for them the token remains the whole guard, exactly
+// as it already was. This check therefore only narrows what a browser can do;
+// it never widens anything, and it never becomes the reason another guard can
+// be relaxed.
+func (s *Server) requireSameOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	// This server is http-only and loopback-only (Listen, requireLoopbackHost),
+	// so its own origin is exactly the scheme-plus-Host a legitimate page was
+	// loaded from — 127.0.0.1 or localhost, on the port it is serving.
+	if origin != "http://"+r.Host {
+		http.Error(w, "forbidden: a gate decision must come from this live view's own origin", http.StatusForbidden)
 		return false
 	}
 	return true
@@ -103,7 +138,12 @@ func (s *Server) requireGateToken(w http.ResponseWriter, r *http.Request) bool {
 // built in cmd/) spawns the node processes the gate was blocking. That is a
 // deliberate change of what `serve` is, recorded in ADR 0014 and in DESIGN.md's
 // serve section; it is guarded by requireLoopbackHost (Host), the loopback
-// bind (reachability) and requireGateToken (CSRF), in that order.
+// bind (reachability), requireSameOrigin (browser provenance) and
+// requireGateToken (CSRF), in that order. The last two are independent: the
+// token alone already refuses every request that does not carry it, and the
+// origin check is layered in front of it so a decision from a page this
+// process did not serve is refused on its provenance, before its token is
+// weighed at all.
 //
 // A decision is valid ONLY while the viewed run is actually paused at the
 // named gate; everything else is 409, so the button can never start a leg the
@@ -124,6 +164,9 @@ func (s *Server) requireGateToken(w http.ResponseWriter, r *http.Request) bool {
 // a viewer closing the tab must not kill a leg that is spending money.
 func (s *Server) handleGateDecision(decision gate.Decision) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireSameOrigin(w, r) {
+			return
+		}
 		if !s.requireGateToken(w, r) {
 			return
 		}

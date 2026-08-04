@@ -900,8 +900,16 @@ one, and it answers 409 like any other view that cannot resume.
   random token (`crypto/rand`, hex), minted in `serve.New`, rendered into the
   served page (the one asset not shipped byte-for-byte) and sent back as
   `X-OMG-Token`: missing is 400, mismatched is 403, compared in constant
-  time. It is a CSRF guard, not a login — a custom header also forces a
-  preflight, which a cross-origin form POST cannot satisfy.
+  time. Both are refusals — no shape of a gate POST reaches the resumer
+  without the token. It is a CSRF guard, not a login — a custom header also
+  forces a preflight, which a cross-origin form POST cannot satisfy. Layered
+  in front of it, as hardening rather than as a fix: a POST whose `Origin`
+  names anything but this server's own origin is 403 (`requireSameOrigin`),
+  so a decision from a page this process did not serve is refused on its
+  provenance before its token is weighed, and independently of the token
+  staying secret. An absent `Origin` is allowed through — curl and the CLI's
+  own tests send none, and the token remains the whole guard there — so the
+  check only narrows what a browser can do.
 - **Zero runtime network dependencies:** one static page embedded with
   `go:embed` — hand-written JS/CSS plus a pinned, vendored cytoscape.js
   (`internal/serve/ui/vendor/README.md` records its version and MIT license).
