@@ -26,6 +26,51 @@ import (
 // readers can never disagree about which streams are readable.
 const maxLineBytes = 1 << 20 // 1 MiB
 
+// Walk reads a run's event stream once, oldest event first, and hands each
+// decoded event to visit. It is the ONE-SHOT reader — the counterpart to
+// Follow's endless tail — for a consumer that wants a settled answer about a
+// run right now (is it in flight? what state is each node in? when did it
+// start?) rather than a live subscription.
+//
+// It applies the contract's reading rules exactly once, so no caller has to
+// restate them: a line that does not decode is skipped (the only tolerated
+// damage is one truncated final line), a line stamped with a schema newer
+// than this binary's Schema ends the walk with an error rather than being
+// silently misread (RUN-FEED.md's compatibility rule for consumers, the same
+// loud refusal runstate.Load gives an incompatible snapshot), and a line
+// longer than maxLineBytes is an error too, same as Follow. A visit error
+// ends the walk with that error. A stream that does not exist surfaces as an
+// error wrapping fs.ErrNotExist, for the caller to translate — the missing
+// stream means different things to different consumers.
+func Walk(path string, visit func(Event) error) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open event stream %q: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	// Raise the Scanner's default 64 KiB token limit to the shared per-line
+	// cap, so Walk and Follow agree on which streams are readable.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.Schema > Schema {
+			return fmt.Errorf("event stream %q: schema %d is newer than this binary understands (max %d)", path, event.Schema, Schema)
+		}
+		if err := visit(event); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read event stream %q: %w", path, err)
+	}
+	return nil
+}
+
 // InFlight reports whether the run's event stream says it is currently
 // executing. Ground truth is the run-feed contract (docs/RUN-FEED.md): the
 // stream is a series of legs, each opened by run_started and closed by
@@ -34,50 +79,29 @@ const maxLineBytes = 1 << 20 // 1 MiB
 // not in flight. A missing stream reads as no legs at all — a settled (or
 // pre-runfeed) directory, judged by its snapshot alone.
 //
-// Lines are decoded into the Event shape the stream is written with; a line
-// that does not decode is skipped, because the contract's only tolerated
-// damage is one truncated final line. A line that DOES decode but is stamped
-// with a schema newer than this binary's Schema is surfaced as an error
-// rather than silently misread — RUN-FEED.md's compatibility rule for
-// consumers, and the same loud refusal runstate.Load gives an incompatible
-// snapshot. A line longer than maxLineBytes is an error too, same as Follow.
+// The reading itself is Walk's, so the leg-walking rule lives in exactly one
+// place and cannot drift from the other one-shot consumers of the same file.
 // Known limitation, accepted for v1: a crashed or killed process
 // leaves its last leg open, so by the stream alone such a run reads as in
 // flight until it is resumed or its directory is cleaned up — there is no
 // liveness probe here, deliberately, to keep every caller a pure reader of
 // the two contract files.
 func InFlight(path string) (bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("open event stream %q: %w", path, err)
-	}
-	defer file.Close()
-
 	open := false
-	scanner := bufio.NewScanner(file)
-	// Raise the Scanner's default 64 KiB token limit to the shared per-line
-	// cap, so InFlight and Follow agree on which streams are readable.
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		if event.Schema > Schema {
-			return false, fmt.Errorf("event stream %q: schema %d is newer than this binary understands (max %d)", path, event.Schema, Schema)
-		}
+	err := Walk(path, func(event Event) error {
 		switch event.Type {
 		case EventRunStarted:
 			open = true
 		case EventRunFinished:
 			open = false
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("read event stream %q: %w", path, err)
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	return open, nil
 }

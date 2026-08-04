@@ -33,11 +33,12 @@
 // 0002/0005/0006), and both processes this package's features imply belong to
 // them — browser-open to browser.ExecOpener behind the browser.Opener seam
 // (ADR 0006), and a resumed leg's nodes to runner.ClaudeCLIRunner, reached
-// only through the GateResumer the CLI injects (ADR 0014). The CLI decides:
-// `run`/`auto` embed this server for the run's duration and, when stdout is a
-// terminal and --no-web was not passed, hand the URL to the injected Opener;
-// the standalone `serve` subcommand just prints the URL, and is the only one
-// that injects a GateResumer.
+// only through the GateResumer the CLI injects (ADR 0014). The CLI decides
+// both: `run`/`auto` embed this server for the run's duration, and the
+// standalone `serve` subcommand serves either one run (Server) or all of them
+// (Dashboard) and is the only one that injects a GateResumer. All of them hand
+// the URL to the injected Opener under one gate — stdout is a terminal and the
+// opt-out (--no-web, or `serve`'s --no-open) was not passed.
 package serve
 
 import (
@@ -88,6 +89,12 @@ const defaultPoll = 200 * time.Millisecond
 //
 //go:embed ui
 var uiFS embed.FS
+
+// indexTemplate is the single-run page, parsed once for the process. It is the
+// ONE asset not shipped byte-for-byte (it carries the serving process's gate
+// token), and template.Must is honest about the only way it can fail: the file
+// is embedded at compile time, so a parse error is a build-time bug.
+var indexTemplate = template.Must(template.ParseFS(uiFS, "ui/index.html"))
 
 // Listen binds the live-view listener to 127.0.0.1 on the given port.
 //
@@ -149,9 +156,6 @@ type Server struct {
 	// New, rendered into the served page and demanded back on every gate POST
 	// (see requireGateToken).
 	token string
-	// index is the served page, parsed once, as a template — the ONE asset
-	// that is not shipped byte-for-byte, because it carries token.
-	index *template.Template
 	// resumer continues a run paused at a gate; nil (the default) means this
 	// view answers 409 to every gate decision. See WithGateResumer.
 	resumer GateResumer
@@ -162,18 +166,12 @@ type Server struct {
 // exists to read it from. The returned Server has no GateResumer: a live view
 // is read-only until the CLI injects one (WithGateResumer).
 func New(runDir, runID string) *Server {
-	page, err := template.ParseFS(uiFS, "ui/index.html")
-	if err != nil {
-		// Unreachable: the page is embedded at compile time.
-		panic(err)
-	}
 	return &Server{
 		runDir:       runDir,
 		runID:        runID,
 		poll:         defaultPoll,
 		projectsRoot: defaultProjectsRoot(),
 		token:        newGateToken(),
-		index:        page,
 	}
 }
 
@@ -197,7 +195,26 @@ func New(runDir, runID string) *Server {
 // their own CSRF guard on top of the ones every route gets. Every route sits
 // behind requireLoopbackHost, the DNS-rebinding guard; the method-scoped
 // patterns make a GET of a gate route a 405 without any code.
+//
+// This is the whole live view of one run as a standalone site, rooted at "/":
+// what `oh-my-graph serve <run-id>` serves. The Dashboard serves the SAME
+// route set — routes(), without the guard it re-applies once for every route
+// it owns — under /run/<id>/, which is why the page's own fetches are
+// document-relative (see routes).
 func (s *Server) Handler() http.Handler {
+	return requireLoopbackHost(s.routes())
+}
+
+// routes is Handler's route set without the loopback guard, so it can be
+// mounted: at "/" by Handler (the standalone single-run server) and under
+// /run/<id>/ by the Dashboard, which applies requireLoopbackHost once across
+// everything it serves.
+//
+// Nothing in the route set or the page knows which of the two it is under:
+// every URL the page fetches is document-relative ("api/graph", "app.js"), so
+// the same bytes address /api/graph under one mount and /run/<id>/api/graph
+// under the other.
+func (s *Server) routes() *http.ServeMux {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
 		// Unreachable: "ui" is embedded at compile time.
@@ -217,7 +234,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /index.html", s.handleIndex)
 	mux.Handle("GET /", http.FileServerFS(static))
-	return requireLoopbackHost(mux)
+	return mux
 }
 
 // handleIndex serves the live view's page with this process's gate token
@@ -227,7 +244,7 @@ func (s *Server) Handler() http.Handler {
 // open from a previous `serve` cannot decide this run's gate.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var page bytes.Buffer
-	if err := s.index.Execute(&page, struct{ Token string }{s.token}); err != nil {
+	if err := indexTemplate.Execute(&page, struct{ Token string }{s.token}); err != nil {
 		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
 		return
 	}

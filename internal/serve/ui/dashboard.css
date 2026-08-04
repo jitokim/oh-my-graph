@@ -1,0 +1,169 @@
+/* oh-my-graph serve — dashboard layout. Loaded AFTER style.css, which stays
+   the one source of truth for theme tokens and for the shared header, chip,
+   dot, status, elapsed and cost anatomy; this file adds only what a page of
+   cards needs, and overrides the two layout rules style.css writes for the
+   single-run view's two-column main. */
+
+main {
+  /* style.css makes main a flex row for the feed/map split; here it is one
+     scrolling column of sections. */
+  display: block;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.7rem;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: default;
+}
+
+.section-count {
+  font-family: ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+#settled-section { margin-top: 1.6rem; }
+#settled-section > summary { cursor: pointer; }
+#settled-section > summary::marker { color: var(--muted); }
+
+.empty { color: var(--muted); font-size: 13px; margin: 0.2rem 0 0; }
+.empty code {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+/* --- the cards -------------------------------------------------------------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.85rem;
+}
+
+/* Each card is one link to /run/<id>/ — the whole tile is the click target,
+   so there is no hunting for a title. */
+.card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  /* The state stripe: colour is never the only signal — every card also
+     carries its state as a word in the status pill. */
+  border-left: 3px solid var(--pending);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem 0.6rem;
+}
+
+.card:hover { border-color: var(--ring); box-shadow: 0 1px 6px var(--ring); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card.running { border-left-color: var(--running); }
+.card.passed { border-left-color: var(--passed); }
+.card.failed { border-left-color: var(--failed); }
+.card.gate-paused { border-left-color: var(--gate-paused); }
+.card.unknown { border-left-color: var(--muted); }
+
+/* A running card's status pill borrows the run view's own live pulse, so
+   "something is happening here" reads the same on both pages. */
+.card.running .card-state { animation: chip-pulse 2s ease-in-out infinite; }
+
+.card-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.card-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-state {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
+.card-run {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-goal {
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.45rem 0 0.1rem;
+  flex-wrap: wrap;
+}
+
+.card-error {
+  font-size: 11px;
+  color: var(--failed);
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+/* --- the mini-DAG ----------------------------------------------------------- */
+
+/* Hand-drawn SVG rather than a cytoscape instance per card: a dashboard can
+   hold dozens of cards, and this is orientation at a glance — layers left to
+   right, one dot per node, one line per depends_on edge. The full graph, with
+   layout and interaction, is one click away in the run view. */
+.mini {
+  display: block;
+  width: 100%;
+  height: 54px;
+  margin-top: 0.5rem;
+}
+
+.mini-edge { stroke: var(--hairline); stroke-width: 1; fill: none; }
+.mini-node { stroke: var(--surface); stroke-width: 1; }
+.mini-node.pending { fill: var(--pending); }
+.mini-node.running { fill: var(--running); }
+.mini-node.passed { fill: var(--passed); }
+.mini-node.failed { fill: var(--failed); }
+.mini-node.gate-paused { fill: var(--gate-paused); }
+.card.running .mini-node.running { animation: chip-pulse 2s ease-in-out infinite; }
+
+.mini-none {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 0.5rem;
+}

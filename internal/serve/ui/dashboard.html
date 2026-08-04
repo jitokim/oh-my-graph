@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- oh-my-graph serve — the dashboard: every run on one port, one page.
+     `oh-my-graph serve` with no run id lands here. Each run is a card
+     carrying its own live mini-DAG (nodes coloured by state, edges from
+     depends_on), its elapsed, its cost and its node counts; in-flight runs
+     are up top, settled runs in a collapsed list below. Cards appear and
+     settle live — the page subscribes to /api/cards/events exactly the way
+     the single-run view subscribes to its own event stream.
+     Clicking a card opens /run/<id>/ — the single-run live view, unchanged.
+     Fully self-contained, like that view: every asset is embedded in the
+     binary and served from 127.0.0.1, nothing is fetched from the network.
+     Theme tokens and the shared header/chip/dot anatomy come from the same
+     style.css the run view uses, so the two pages cannot drift on colour. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- The serving process's gate token, same one the run views mounted under
+       this dashboard are rendered with. The dashboard itself decides nothing;
+       it carries the token only so this page and /run/<id>/ agree on which
+       process served them (see serve.Dashboard.handleIndex). -->
+  <meta name="omg-token" content="{{.Token}}">
+  <title>oh-my-graph — runs</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header>
+    <span class="brand">oh-my-graph</span>
+    <span class="run-id">dashboard</span>
+    <span id="dash-status" class="status">connecting</span>
+    <span class="spacer"></span>
+    <span id="dash-counts" class="chips"></span>
+    <span id="dash-cost" class="cost">$0.0000</span>
+    <button id="theme-toggle" class="theme-toggle" type="button"
+            title="Toggle color theme" aria-label="Toggle color theme">◐</button>
+  </header>
+  <main>
+    <!-- In flight: the reason this page exists. Newest first. -->
+    <section id="live-section">
+      <h2 class="section-head">in flight <span id="live-count" class="section-count">0</span></h2>
+      <div id="live-cards" class="cards"></div>
+      <p id="live-empty" class="empty">No run is in flight. Start one with <code>oh-my-graph run</code>.</p>
+    </section>
+    <!-- Settled: everything that has finished, paused or failed. Collapsed by
+         default — it is history, not the working surface. -->
+    <details id="settled-section">
+      <summary class="section-head">settled <span id="settled-count" class="section-count">0</span></summary>
+      <div id="settled-cards" class="cards"></div>
+    </details>
+  </main>
+  <footer>
+    <span id="banner" class="banner"></span>
+  </footer>
+  <script src="dashboard.js"></script>
+</body>
+</html>
