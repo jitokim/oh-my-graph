@@ -496,9 +496,11 @@ prior E-number):
 run. The yield measurement recorded below is **not** one of them and does not
 partially discharge either — it counts which nodes get a body, where (a) and
 (b) ask what a body does to a node once it has one. What it changes is that
-both probes can now be run against ids a planner actually produced (and
-against a real mismapping, `artifacts` → `html-artifact`, which is a better
-(b) subject than a constructed one) instead of a hand-picked pairing.
+(b) now has a real mismapping to run on — `artifacts` → `html-artifact`, a
+better subject than a constructed one, and one of the few ids the probe
+preserved (see that section's closing note). It supplies (a) with nothing:
+the four ids that matched well were discarded at the cap, and the remaining
+planner-authored ids were not kept.
 
 ## Yield measurement (2026-08-05, claude 2.1.221, oh-my-graph 0.4.1)
 
@@ -543,19 +545,24 @@ that — it is never shown the inventory (§1), and it names nodes after the
 goal's own domain. Every future yield claim about this mechanism must be made
 against planner-authored ids; the shipped-graph simulation is not a
 conservative estimate of them, it is a biased one, and biased upward. The
-0-of-56 ambiguity rate is the same bias seen from the other side: §2's
-"3 of 28 go silent" was an artifact of ids drawn from the skill vocabulary,
-and on the real population the rule almost never has two candidates to choose
+0-of-56 ambiguity rate is the same bias seen from the other side: the "3
+ambiguous" of the 2026-08-04 amendment's 32 shipped ids (and the same figure
+in Consequences) was an artifact of ids drawn from the skill vocabulary, and
+on the real population the rule almost never has two candidates to choose
 between because it usually has none.
 
 **2. On the population that matches at all, the cap is doing more damage than
 the matcher — and it is killing the best matches.** Nine of the 56 ids found a
 unique candidate; **4 of those 9 died at the cap**, and they are the strongest
 matches in the whole run: `check`, `final-check`, `check-speedup` and
-`final-branch-check` each matched `pre-commit-checklist` on an exact
-`check` token — a verification checklist landing on verification nodes, which
-is the feature working exactly as designed — and every one was dropped because
-that body is 86.6 KiB against a 16 KiB cap. §3 fit the cap on the proxy corpus
+`final-branch-check` each matched `pre-commit-checklist` — a verification
+checklist landing on verification nodes, which is the feature working as
+designed — and every one was dropped because that body is 86.6 KiB against a
+16 KiB cap. (All four matched on §2's ≥4-rune **prefix** rule, `check` against
+the skill's `checklist` token, not on token equality. Worth saying plainly,
+because it is the same rule that produced the false positive in 3 below: the
+prefix relaxation is what makes this mechanism land on nodes at all, and what
+makes it land on the wrong ones.) §3 fit the cap on the proxy corpus
 and reported the 86.6 KiB outlier as safely excluded; on that proxy the outlier
 matched nothing, so the cap's expensive path never fired and its cost was never
 in the fit. On real ids that path is 44% of all matches. §3's number is not
@@ -578,8 +585,24 @@ and it belongs in the record here rather than being tuned away.
 
 What this measurement does **not** settle: it counts mappings, not their
 effect. Whether an inlined body helps or harms a node it lands on is still
-(a) and (b) below, and the 5 mappings this probe produced are a population
-those probes can now be run against instead of a synthetic one.
+(a) and (b) below, and the mappings this probe produced are the kind of
+population those probes should be run against instead of a synthetic one.
+
+**What survived the probe, and what did not.** `--plan-only` executes no node,
+so it writes nothing under `~/.oh-my-graph/runs`; the twenty goals and the
+full 56-id list were held in the planning session and are **not preserved**.
+What this record can vouch for is the aggregate table above and five ids,
+quoted in 2 and 3 because they carry the argument: `check`, `final-check`,
+`check-speedup`, `final-branch-check` (matched `pre-commit-checklist`, all
+four discarded at the cap) and `artifacts` (matched `html-artifact`, wrongly).
+The other 51 are counts only, and the run cannot be re-derived from this
+document — a re-measurement means paying the planner again.
+
+That is a defect in how the probe was run, not a caveat on its numbers, and it
+is the direct counterpart of the rule stated in 1: **a yield claim has to be
+made against planner-authored ids, so the ids have to be kept.** Any repeat of
+this measurement should write the goal list and the full id → outcome table
+into `docs/measurements/` as it goes.
 
 ## Consequences
 
@@ -696,11 +719,15 @@ those probes can now be run against instead of a synthetic one.
   carries `"version": 2` and is not a documented API; (2) key the map on
   `plugin:skill` so nothing shadows silently; (3) decide it against yield
   measured on **planner-generated** node ids, not the shipped-graph proxy this
-  table and §3 both use. *(2026-08-05: that id population now exists — 56 ids,
-  see "Yield measurement" — so condition (3) is answerable without another
-  planner spend. It has not been answered: this probe simulated the user-skill
-  pool only, and re-running it over the plugin pool is what condition (3)
-  asks for.)* The provenance asymmetry that remains — a plugin with
+  table and §3 both use. *(2026-08-05: such a population was measured once —
+  56 ids, see "Yield measurement" — but only over the user-skill pool, and the
+  ids themselves were not preserved past the planning session. Condition (3)
+  therefore still costs a fresh planner spend, and the run that discharges it
+  should record its goals and its full id list, per that section's closing
+  note. What the measurement does establish for this row is that the proxy
+  yields it argues from are biased upward, so a plugin-pool figure simulated
+  the same way should not be believed either.)* The provenance asymmetry that
+  remains — a plugin with
   `autoUpdate: true` can rewrite its bodies between runs, where
   `~/.claude/skills` changes only when the user changes it — is already
   answered by the machinery in §1 (printed SHA-256, snapshot into

@@ -51,9 +51,10 @@ func defaultProjectsRoot() string {
 
 // nodeFeedState is what the run's event stream currently says about one
 // node: whether any event named it at all, whether its latest attempt is
-// still running (a node_started/node_retried with no terminal event after
-// it), and the pre-assigned session id that attempt published ("" when none
-// was — a gate, or a session-handoff node running in its parent's session).
+// still running (a node_started/node_retried with no node_passed, node_failed
+// or gate_paused after it), and the pre-assigned session id that attempt
+// published ("" when none was — a gate, or a session-handoff node running in
+// its parent's session).
 type nodeFeedState struct {
 	seen    bool
 	running bool
@@ -91,7 +92,12 @@ func readNodeFeedState(feedPath, nodeID string) (nodeFeedState, error) {
 		switch event.Type {
 		case runfeed.EventNodeStarted, runfeed.EventNodeRetried:
 			state = nodeFeedState{seen: true, running: true, session: event.SessionID}
-		case runfeed.EventNodePassed, runfeed.EventNodeFailed:
+		case runfeed.EventNodePassed, runfeed.EventNodeFailed, runfeed.EventGatePaused:
+			// gate_paused belongs here for the same reason the two node
+			// terminals do: it is the last thing the stream says about that
+			// node in this leg (a pausing gate emits no node terminal at all),
+			// so leaving it out would read a paused gate as running forever.
+			// The published rule in docs/RUN-FEED.md names all three.
 			state = nodeFeedState{seen: true, running: false}
 		default:
 			state.seen = true

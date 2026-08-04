@@ -131,12 +131,27 @@ Guarantees:
   present in `nodes` is **not** thereby finished. **Key liveness off
   `events.jsonl`, never off presence in `state.json`:** within the current
   leg, a node is running when its latest `node_started`/`node_retried` is not
-  followed by a `node_passed`/`node_failed` for the same `node_id`. Under
-  feedback that rule needs no special case — a body node emits a full
-  `node_started` → terminal sequence per round, so the round-2 `node_started`
-  with no terminal after it is exactly the signal the snapshot cannot give
-  you. Use `state.json` for *what has settled and at what cost*, and the
-  stream for *what is happening now*.
+  followed by a `node_passed`, `node_failed` **or `gate_paused`** for the same
+  `node_id`. All three terminate the node's turn on the stream: a gate node
+  emits `node_started` and then, if it pauses, `gate_paused` and no node
+  terminal at all — read only the two node terminals and a paused gate reads
+  as running forever. (oh-my-graph's own dashboard goes one step further and
+  keeps `gate-paused` as a distinct state, because "paused, waiting on you" is
+  a different thing to show a user than "running"; a consumer that only needs
+  liveness can fold it into "not running".) Under feedback the rule needs no
+  special case — a body node emits a full `node_started` → terminal sequence
+  per round, so the round-2 `node_started` with no terminal after it is exactly
+  the signal the snapshot cannot give you.
+
+  The same caveat `runfeed.InFlight` carries at the run level applies here at
+  the node level: **the stream records intent, not process liveness.** A
+  crashed or killed oh-my-graph leaves its last `node_started` unterminated,
+  so such a node reads as running until the run is resumed or its directory is
+  cleaned up. There is no liveness probe, deliberately — every consumer stays
+  a pure reader of the two contract files.
+
+  Use `state.json` for *what has settled and at what cost*, and the stream for
+  *what is happening now*.
 
 ## Goal cycles (ADR 0011) — the `goal` block and `assess.json`
 
@@ -281,7 +296,10 @@ that session's transcript tail as the live view's "now doing" line.
 The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
 added in schema **2**) mark the decision itself; an approved/rejected gate
 still gets its terminal `node_passed`/`node_failed` immediately after, so a
-consumer that only understands node events keeps working. `gate_paused` is
+consumer that only understands node events keeps working — with the one
+exception that a **paused** gate gets no node terminal at all, which is why
+the liveness rule above counts `gate_paused` as terminating the node's turn.
+`gate_paused` is
 emitted the moment the gate decides to pause — in-flight siblings drain
 *after* it, so their node events may legally appear between it and the leg's
 `run_finished` (outcome `"paused"`). If several gates evaluate concurrently,

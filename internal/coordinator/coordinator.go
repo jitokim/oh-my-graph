@@ -30,8 +30,10 @@ import (
 
 // plannerPermissionMode is the permission mode of every coordinator-owned
 // call (the planner, the chat router). They only write a JSON reply, so they
-// run read-only.
-const plannerPermissionMode = "plan"
+// run read-only. Spelled by graph's constant rather than a literal, so the
+// coordinator's own calls are stated in the same closed vocabulary the
+// load-time validator holds every planned node to.
+const plannerPermissionMode = graph.PermissionPlan
 
 // maxOutputInError caps how much of a coordinator call's raw reply an error
 // message carries — enough to diagnose a bad reply without flooding the

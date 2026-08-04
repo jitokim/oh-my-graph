@@ -71,9 +71,16 @@ const (
 //
 // The cost of closing it is that a mode added by a future claude release is
 // refused until oh-my-graph enumerates it (`auto` and `manual` are recent
-// additions, and DESIGN.md listed neither). That is a release-note-sized fix
-// with a precise error message, traded against a silent mid-run failure — and
-// it is the same trade the other closed sets already make.
+// additions, and DESIGN.md listed neither) — and that cost is RETROACTIVE, in a
+// way the other closed sets' never was. Every graph in the repo predates them;
+// a snapshot does not. `resume`, `run --retry-failed`, `runs list` and `serve`
+// all rebuild the graph from `state.json` through this same Parse, so a run
+// recorded by an older binary with a mode this one has not enumerated stops
+// being resumable on upgrade, is skipped with a warning by `runs list`, and
+// renders in `serve` as a broken card. That is a
+// release-note-sized fix with a precise error message, traded against a silent
+// mid-run failure — and it is the same trade the other closed sets already
+// make, paid over a wider surface.
 const (
 	PermissionAcceptEdits = "acceptEdits"
 	PermissionAuto        = "auto"

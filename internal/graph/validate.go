@@ -56,10 +56,13 @@ var (
 )
 
 // permissionModes is the closed set a node's permission_mode may take, in the
-// order the error message presents them (the CLI's own order). A slice rather
-// than a map so the message is deterministic; membership is a linear scan over
-// six entries. See the constants' doc for why this set is closed at all and
-// what closing it costs.
+// order the error message presents them — alphabetical, which is ours: the CLI
+// prints its own choices as acceptEdits, auto, bypassPermissions, manual,
+// dontAsk, plan. Only the MEMBERSHIP is measured from `claude --help`; the
+// ordering is ours, so a reader can scan the message.
+// A slice rather than a map so that message is deterministic; membership is a
+// linear scan over six entries. See the constants' doc for why this set is
+// closed at all and what closing it costs.
 var permissionModes = []string{
 	PermissionAcceptEdits,
 	PermissionAuto,
