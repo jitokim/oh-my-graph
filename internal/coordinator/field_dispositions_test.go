@@ -150,6 +150,18 @@ var nodeFieldDispositions = map[string]fieldRule{
 		probeJSON:      `"worktree":"lane"`,
 		reasonContains: "worktree",
 	},
+	"Use": {
+		disposition:    rejected,
+		why:            "a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted, so a planner-emitted use: would let unreviewed plan output pick which local file's prompt text, tool grant and verify command run (ADR 0013 — trusted code resolves files; the planner never names local resources). The refusal fires at the coordinator's graph.Parse boundary, converted from graph.UnresolvedFragmentError into the *PlanError this probe requires",
+		probeJSON:      `"use":"e2e-verify"`,
+		reasonContains: "fragment",
+	},
+	"With": {
+		disposition:    rejected,
+		why:            "Use's substitution bindings, refused on the same grounds (ADR 0013): dead without use:, and a with: on a planned node means the plan tried to reference a fragment — recognized at the same graph.Parse boundary as Use",
+		probeJSON:      `"with":{"checks":"run the checks"}`,
+		reasonContains: "fragment",
+	},
 }
 
 // successCheckFieldDispositions is the same table one level down, because the

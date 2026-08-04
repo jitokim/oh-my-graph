@@ -1,0 +1,21 @@
+# review-security — the read-only security review of a diff.
+#
+# Per-graph spans stay declared: `diff` (which diff this graph reviews) and
+# `evidence` (the upstream gate's artifact reference — a graph-local node id
+# is wiring, so it binds in rather than being hardcoded here; a bound
+# {{ artifacts.<id> | inline }} survives resolution and interpolates at run
+# time as always). The shape itself — read-only plan mode, git-diff/log
+# grants, a findings-list reply — is the fragment's.
+fragment: review-security
+description: read-only security review of a diff — injection, secrets, unsafe shell/exec — grounded in the gate's verdict
+substitutions: [diff, evidence]
+node:
+  type: claude-run
+  prompt: |
+    Review {{ with.diff }} for security issues (injection, secrets, unsafe
+    shell, unsafe exec, authz gaps). The e2e verdict was: {{ with.evidence }}.
+    Reply with a short bulleted list of findings, or "no security issues found".
+  allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
+  permission_mode: plan
+  handoff: artifact
+  success_check: { exit_zero: true }

@@ -172,3 +172,72 @@ nodes:
 		t.Fatalf("a grandparent artifact reference must stay silent, got %v", warnings)
 	}
 }
+
+// TestLintPlaceholders_WithTokens covers the fragment substitution kind
+// (ADR 0013): `with` resolves at LOAD time inside a fragment body, so any
+// with-token surviving into a validated graph sits in a plain node and will
+// ship verbatim into a paid prompt — worth its own message, not the generic
+// malformed-token one. Failure (warning) cases first.
+func TestLintPlaceholders_WithTokens(t *testing.T) {
+	cases := []struct {
+		name       string
+		prompt     string
+		wantDetail string // "" = expect silence
+	}{
+		{
+			name:       "with token in a plain node warns with the load-time message",
+			prompt:     "run {{ with.checks }} now",
+			wantDetail: "resolved at load time",
+		},
+		{
+			name:       "case-variant With token is judged, not shipped silently",
+			prompt:     "run {{ With.checks }} now",
+			wantDetail: "resolved at load time",
+		},
+		{
+			name:       "standalone with token warns too",
+			prompt:     "{{ with.checks }}",
+			wantDetail: "resolved at load time",
+		},
+		{
+			name:       "a non-kind leading word stays deliberate literal text",
+			prompt:     "the {{ withering }} heights",
+			wantDetail: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := parseGraph(t, `
+name: t
+nodes:
+  - id: a
+    prompt: "`+tc.prompt+`"
+`)
+			warnings := LintPlaceholders(g)
+			if tc.wantDetail == "" {
+				if len(warnings) != 0 {
+					t.Fatalf("want silence, got %v", warnings)
+				}
+				return
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0].Detail, tc.wantDetail) {
+				t.Fatalf("want one warning containing %q, got %v", tc.wantDetail, warnings)
+			}
+		})
+	}
+}
+
+// TestInterpolate_NeverLearnsWith pins the other half of the two-table split:
+// the runtime's placeholderPattern must NOT resolve a with-token — it passes
+// through verbatim (the loader is the only resolver), never errors, never
+// substitutes.
+func TestInterpolate_NeverLearnsWith(t *testing.T) {
+	h := New(t.TempDir(), map[string]string{"checks": "should-never-appear"})
+	got, err := h.Interpolate("run {{ with.checks }} now")
+	if err != nil {
+		t.Fatalf("a with-token must pass through, not error: %v", err)
+	}
+	if got != "run {{ with.checks }} now" {
+		t.Fatalf("the runtime resolved a with-token: %q", got)
+	}
+}

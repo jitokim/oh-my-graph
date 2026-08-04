@@ -24,6 +24,9 @@
 #      AND declares retry starts cold on the retried attempt (`lint` warns,
 #      advisory) — so every session prompt here opens with the
 #      continue-or-start-from-committed-state form and survives that case.
+#      That wording is no longer restated per lane: both gates cite the
+#      `e2e-verify` fragment (ADR 0013), so the shape is fixed once, upstream,
+#      and a lane declares only what is genuinely its own.
 #   4. Stress runs for concurrency diffs. A lane whose diff touches
 #      concurrency-sensitive code must stress the affected tests
 #      (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
@@ -33,14 +36,22 @@
 #      failure must not halt the others' unrelated work. Dependency edges
 #      still hold — a failed node's own downstream nodes never run.
 #
+# `checks_command` is the command the ENGINE runs as each gate's evidence
+# (success_check.verify) — your stack's full-check target, e.g. `make local`,
+# `npm test`, `cargo test`. It is an input rather than a hardcoded string
+# because this skeleton is meant to be copied into any repo, and a gate that
+# names the wrong command is not a gate: the node's own "PASS" is only its
+# account of itself, and the verify exit code is what actually judges it.
+#
 # Run (from inside the repo, so the worktrees branch off its HEAD):
 #   oh-my-graph run graphs/backlog-batch.yaml \
 #     --input repo="$PWD" \
+#     --input checks_command="make local" \
 #     --input task_a="implement <feature>" \
 #     --input task_b="update <docs> to match"
 name: backlog-batch
 version: "0.1"
-inputs: [repo, task_a, task_b]
+inputs: [repo, checks_command, task_a, task_b]
 concurrency: 4
 on_fail: continue  # rule 5: independent lanes — one lane's failure must not halt the rest
 nodes:
@@ -69,43 +80,39 @@ nodes:
     handoff: artifact
     success_check: { exit_zero: true }
 
-  # `lint` still warns here (handoff: session + retry) — advisory and
-  # expected: a retried attempt starts cold, and the prompt is written
-  # to survive exactly that case (rule 3 above).
+  # The gate and review shapes are fragments (ADR 0013): the prompt, the tool
+  # grant and the evidence-grounded success_check live once in
+  # graphs/fragments/, and each lane binds only its own spans. `lint` still
+  # warns here (handoff: session + retry) — advisory and expected: a retried
+  # attempt starts cold, and the fragment's prompt is written to survive
+  # exactly that case (rule 3 above).
+  #
+  # The gate's tool grant is narrow on purpose (make + read-only go/git — a
+  # gate reports, it does not fix). Copying this skeleton into a non-Go repo
+  # means adding an `allowed_tools:` line to each gate node with that stack's
+  # check verbs; the override is announced in the run's disclosure line.
   - id: e2e-a
-    type: claude-run
+    use: e2e-verify
     depends_on: [dev-a]
     worktree: lane-a
-    prompt: |
-      Continue the work — or, on a retried attempt, start from the branch's
-      committed state — and run the project's full checks (build + test +
-      lint; `make local` or your stack's equivalent). If the diff touches
-      concurrency-sensitive code, ALSO stress the affected tests
-      (`go test <pkgs> -race -count=300`) — rule 4 in this graph's header.
-      Run every check SYNCHRONOUSLY and wait for it to finish — never in
-      the background. Your FINAL reply is the verdict: never end the turn
-      on an interim report. Report exactly PASS if everything succeeds, or
-      FAIL with the failing step.
-    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
-    permission_mode: dontAsk
-    handoff: session
-    success_check: { exit_zero: true, result_matches: "^PASS$" }
-    retry: { max: 1, on: [nonzero_exit] }
+    with:
+      checks: |-
+        run the project's full checks (build + test + lint). If the diff
+        touches concurrency-sensitive code, ALSO stress the affected tests
+        (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
+        rule 4 in this graph's header.
+      verify_command: "{{ inputs.checks_command }}"
 
   - id: review-a
-    type: claude-run
+    use: review-style
     depends_on: [e2e-a]
     worktree: lane-a
-    prompt: |
-      Review this worktree's diff vs its base for correctness, style, and
-      scope (the diff must serve only this lane's task — flag anything that
-      strays into files another lane could own). e2e said:
-      {{ artifacts.e2e-a | inline }}.
-      Reply with a short bulleted list, or "no issues found".
-    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
-    permission_mode: plan
-    handoff: artifact
-    success_check: { exit_zero: true }
+    with:
+      diff: this worktree's diff vs its base
+      focus: |-
+        Judge correctness as well, and scope: the diff must serve only this
+        lane's task — flag anything that strays into files another lane
+        could own. The e2e verdict was: {{ artifacts.e2e-a | inline }}
 
   - id: pr-a
     type: claude-run
@@ -145,41 +152,30 @@ nodes:
     handoff: artifact
     success_check: { exit_zero: true }
 
-  # Same advisory warning as e2e-a, same cold-safe prompt shape.
+  # Same fragments as lane A, same advisory warning — only the bindings differ.
+  # That is the point: the two lanes' gates can no longer drift apart.
   - id: e2e-b
-    type: claude-run
+    use: e2e-verify
     depends_on: [dev-b]
     worktree: lane-b
-    prompt: |
-      Continue the work — or, on a retried attempt, start from the branch's
-      committed state — and check the docs changes: every renamed or moved
-      reference resolves, examples still match the code they cite, and the
-      project's checks still pass (`make local` or equivalent — docs edits
-      can break embedded snippets and lint gates too). Run every check
-      SYNCHRONOUSLY and wait for it to finish — never in the background.
-      Your FINAL reply is the verdict: never end the turn on an interim
-      report. Report exactly PASS if everything holds, or FAIL with what
-      broke.
-    allowed_tools: [Read, "Bash(make *)", "Bash(go *)", "Bash(git *)"]
-    permission_mode: dontAsk
-    handoff: session
-    success_check: { exit_zero: true, result_matches: "^PASS$" }
-    retry: { max: 1, on: [nonzero_exit] }
+    with:
+      checks: |-
+        check the docs changes: every renamed or moved reference resolves,
+        examples still match the code they cite, and the project's checks
+        still pass — docs edits can break embedded snippets and lint gates
+        too.
+      verify_command: "{{ inputs.checks_command }}"
 
   - id: review-b
-    type: claude-run
+    use: review-style
     depends_on: [e2e-b]
     worktree: lane-b
-    prompt: |
-      Review this worktree's diff vs its base for accuracy against the code
-      it documents, tone consistency, and scope (docs files only — flag
-      anything that strays into code another lane could own). e2e said:
-      {{ artifacts.e2e-b | inline }}.
-      Reply with a short bulleted list, or "no issues found".
-    allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
-    permission_mode: plan
-    handoff: artifact
-    success_check: { exit_zero: true }
+    with:
+      diff: this worktree's diff vs its base
+      focus: |-
+        Judge accuracy against the code it documents, tone consistency, and
+        scope: docs files only — flag anything that strays into code another
+        lane could own. The e2e verdict was: {{ artifacts.e2e-b | inline }}
 
   - id: pr-b
     type: claude-run

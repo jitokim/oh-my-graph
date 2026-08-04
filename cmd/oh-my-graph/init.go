@@ -32,11 +32,18 @@ func runInit(args []string) error {
 	return initGraphs(os.Stdout, dir)
 }
 
-// initGraphs writes every graph embedded in the binary (see package graphs)
-// to <dir>/graphs/, creating the directory if needed, and prints one line per
-// file written. It exists because `go install` ships only an executable: this
-// is what turns a bare binary into the working tree the README's first command
-// assumes.
+// initGraphs writes every file embedded in the binary (see package graphs) to
+// <dir>/graphs/, creating the directory tree if needed, and prints one line
+// per file written. It exists because `go install` ships only an executable:
+// this is what turns a bare binary into the working tree the README's first
+// command assumes.
+//
+// The payload is NESTED, not flat: a template that cites `use: <name>`
+// (ADR 0013) resolves it against its own fragments/ sibling on disk, so
+// unpacking graphs/*.yaml without graphs/fragments/*.yaml would leave the user
+// with templates that fail to load. The walk therefore mirrors the embedded
+// tree verbatim, and the count reports every file it wrote, nested ones
+// included.
 //
 // It never overwrites. If any target file already exists the whole command
 // fails naming that path and nothing at all is written — the existence sweep
@@ -45,26 +52,26 @@ func runInit(args []string) error {
 // with a half-replaced set. The writes themselves use O_EXCL so a file that
 // appears between the sweep and the write is still refused rather than
 // clobbered; because that refusal happens mid-loop, a failing write also
-// removes the files this run already created, so "nothing at all is written"
-// holds for the whole command and not just for the sweep. The listing is
-// buffered for the same reason: it names files only once they are all there
-// to stay.
+// removes the files this run already created — and the subdirectories it
+// created for them — so "nothing at all is written" holds for the whole
+// command and not just for the sweep. The listing is buffered for the same
+// reason: it names files only once they are all there to stay.
 //
 // Nothing here spawns a process: unpacking is pure file I/O over bytes already
 // linked into the binary.
 func initGraphs(w io.Writer, dir string) error {
-	entries, err := fs.ReadDir(graphs.FS, ".")
+	names, err := embeddedPaths()
 	if err != nil {
-		return fmt.Errorf("init: read embedded graphs: %w", err)
+		return err
 	}
-	if len(entries) == 0 {
+	if len(names) == 0 {
 		return fmt.Errorf("init: no graphs are embedded in this binary")
 	}
 	target := filepath.Join(dir, initGraphsDir)
 
 	// Refuse first, write second: see the all-or-nothing contract above.
-	for _, entry := range entries {
-		path := filepath.Join(target, entry.Name())
+	for _, name := range names {
+		path := filepath.Join(target, filepath.FromSlash(name))
 		switch _, err := os.Stat(path); {
 		case err == nil:
 			return fmt.Errorf("init: %s already exists — nothing was written (move or delete it, or run `oh-my-graph init <dir>` somewhere else)", path)
@@ -77,54 +84,109 @@ func initGraphs(w io.Writer, dir string) error {
 		return fmt.Errorf("init: create %s: %w", target, err)
 	}
 	var listing strings.Builder
-	written := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		data, err := graphs.FS.ReadFile(entry.Name())
+	unpacked := &unpackedTree{}
+	for _, name := range names {
+		data, err := graphs.FS.ReadFile(name)
 		if err != nil {
-			return undoWrites(written, fmt.Errorf("init: read embedded graph %q: %w", entry.Name(), err))
+			return unpacked.undo(fmt.Errorf("init: read embedded graph %q: %w", name, err))
 		}
-		path := filepath.Join(target, entry.Name())
+		path := filepath.Join(target, filepath.FromSlash(name))
+		if err := unpacked.mkdirAll(filepath.Dir(path)); err != nil {
+			return unpacked.undo(fmt.Errorf("init: create %s: %w", filepath.Dir(path), err))
+		}
 		if err := writeNewFile(path, data); err != nil {
-			return undoWrites(written, fmt.Errorf("init: write %s: %w", path, err))
+			return unpacked.undo(fmt.Errorf("init: write %s: %w", path, err))
 		}
-		written = append(written, path)
+		unpacked.files = append(unpacked.files, path)
 		fmt.Fprintf(&listing, "wrote %s\n", path)
 	}
 
 	io.WriteString(w, listing.String())
-	fmt.Fprintf(w, "%d graph(s) written to %s\n", len(entries), target)
+	fmt.Fprintf(w, "%d file(s) written to %s\n", len(names), target)
 	// The cheapest real end-to-end check, quoted from the Quickstart — but only
 	// when that graph is actually part of what was just written.
-	if smoke := filepath.Join(target, smokeGraphFile); fileWasWritten(entries, smokeGraphFile) {
+	if smoke := filepath.Join(target, smokeGraphFile); fileWasWritten(names, smokeGraphFile) {
 		fmt.Fprintf(w, "next: mkdir -p /tmp/omg-smoke && oh-my-graph run %s --input dir=/tmp/omg-smoke\n", smoke)
 	}
 	return nil
+}
+
+// embeddedPaths lists every embedded file as a slash-separated path relative
+// to the graphs package directory ("haiku-smoke.yaml",
+// "fragments/e2e-verify.yaml"), in the walk's lexical order. Directories are
+// not entries of their own: they are created on the way to the files inside
+// them, so an empty directory can never be unpacked.
+func embeddedPaths() ([]string, error) {
+	var names []string
+	err := fs.WalkDir(graphs.FS, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			names = append(names, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init: read embedded graphs: %w", err)
+	}
+	return names, nil
 }
 
 // smokeGraphFile is the shipped two-node graph the Quickstart runs; `init`
 // points at it as the next step.
 const smokeGraphFile = "haiku-smoke.yaml"
 
-// fileWasWritten reports whether name is among the embedded entries, so the
+// fileWasWritten reports whether name is among the embedded paths, so the
 // next-step hint cannot name a graph this binary does not carry.
-func fileWasWritten(entries []fs.DirEntry, name string) bool {
-	for _, entry := range entries {
-		if entry.Name() == name {
+func fileWasWritten(names []string, name string) bool {
+	for _, candidate := range names {
+		if candidate == name {
 			return true
 		}
 	}
 	return false
 }
 
-// undoWrites removes the files this run created and returns cause unchanged.
-// It is the rollback half of the all-or-nothing contract: the pre-flight sweep
-// cannot see a file that appears while the loop is running, so the loop has to
-// be able to put the directory back the way it found it. Removal errors are
-// deliberately dropped — the caller's problem is cause, and reporting a failed
-// cleanup instead would hide why `init` stopped.
-func undoWrites(written []string, cause error) error {
-	for _, path := range written {
+// unpackedTree records what this run created — files, and the subdirectories
+// created to hold them — so a failure partway through can put the target
+// directory back the way it found it. It is the rollback half of the
+// all-or-nothing contract: the pre-flight sweep cannot see a file that appears
+// while the loop is running, so the loop has to be able to undo itself. A
+// nested payload makes the directories part of that promise: leaving an empty
+// graphs/fragments/ behind is still a half-unpacked tree.
+type unpackedTree struct {
+	files []string
+	dirs  []string // creation order; removed in reverse so children go first
+}
+
+// mkdirAll creates dir, recording every directory that did not already exist
+// so undo can remove exactly those and nothing else — a directory the user
+// already had is never a candidate for cleanup.
+func (u *unpackedTree) mkdirAll(dir string) error {
+	if _, err := os.Stat(dir); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	u.dirs = append(u.dirs, dir)
+	return nil
+}
+
+// undo removes what this run created and returns cause unchanged. Removal
+// errors are deliberately dropped — the caller's problem is cause, and
+// reporting a failed cleanup instead would hide why `init` stopped. The
+// directory removals use os.Remove rather than RemoveAll: a directory that
+// somehow gained a file this run did not write is left alone.
+func (u *unpackedTree) undo(cause error) error {
+	for _, path := range u.files {
 		os.Remove(path)
+	}
+	for i := len(u.dirs) - 1; i >= 0; i-- {
+		os.Remove(u.dirs[i])
 	}
 	return cause
 }

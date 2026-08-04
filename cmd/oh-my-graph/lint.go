@@ -21,15 +21,20 @@ func runLint(args []string) error {
 	return lintGraph(os.Stdout, os.Stderr, args[0])
 }
 
-// lintGraph reads path and reports every structural problem graph.Lint finds
-// — the same load-time checks `run` enforces (DAG/cycle, unknown depends_on
-// ids, the session-handoff parent rule, verify blocks, agent and worktree
-// names) — without executing anything: no node spawns, no run directory is
-// created, zero cost. Where `run` stops at the first violation, lint prints
-// them all, so a broken graph is fixable in one pass. A valid graph prints
-// one confirmation line and returns nil (exit 0); an invalid one prints one
-// line per issue to w and returns an error carrying the count, which
-// mainExitCode turns into exit 1.
+// lintGraph reports every load-time problem graph.LintFile finds — fragment
+// resolution failures (an unresolvable `use:`, a broken binding — ADR 0013)
+// plus every structural check `run` enforces on the RESOLVED graph (DAG/cycle,
+// unknown depends_on ids, the session-handoff parent rule, verify blocks,
+// agent and worktree names) — without executing anything: no node spawns, no
+// run directory is created, zero cost. Where `run` stops at the first
+// violation, lint prints them all, so a broken graph is fixable in one pass.
+// A valid graph prints one disclosure line per resolved `use:` — the same
+// line `run` prints, naming the fragment's source file and its own
+// description — then one confirmation line, and returns nil (exit 0); an
+// invalid one prints one line per issue to w and returns an error carrying
+// the count, which mainExitCode turns into exit 1. Errors first, advisories
+// after: fragment advisories (drift smell in a fragment file) print as
+// `warning:` lines either way and never touch the exit code.
 //
 // A structurally valid graph is additionally swept for advisories: for
 // placeholder-like {{ ... }} tokens that will not resolve
@@ -44,24 +49,25 @@ func runLint(args []string) error {
 // early copy of that failure. `run --dry-run` prints the same warnings
 // through the same helper (see dryRunGraph).
 func lintGraph(w, warnW io.Writer, path string) error {
-	data, err := os.ReadFile(path)
+	issues, fragmentAdvisories, err := graph.LintFile(path)
 	if err != nil {
-		return fmt.Errorf("read graph file %q: %w", path, err)
+		return err
 	}
-
-	issues := graph.Lint(data)
 	if len(issues) == 0 {
-		g, err := graph.Parse(data) // Lint found nothing, so this cannot fail
+		loaded, err := graph.LoadFile(path) // LintFile found nothing, so this cannot fail
 		if err != nil {
 			return err
 		}
-		warnAdvisories(warnW, path, g)
+		printFragmentResolutions(w, loaded.Resolutions)
+		warnAdvisories(warnW, path, loaded.Graph)
+		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
 		fmt.Fprintf(w, "%s: valid\n", path)
 		return nil
 	}
 	for _, issue := range issues {
 		fmt.Fprintf(w, "%s: %v\n", path, issue)
 	}
+	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
 	noun := "issues"
 	if len(issues) == 1 {
 		noun = "issue"
@@ -77,5 +83,15 @@ func lintGraph(w, warnW io.Writer, path string) error {
 func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 	for _, warning := range append(handoff.LintPlaceholders(g), handoff.LintSessions(g)...) {
 		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
+	}
+}
+
+// warnFragmentAdvisories prints one `warning:` line per fragment-file
+// advisory (ADR 0013 — e.g. a declared substitution point the fragment body
+// never references). Same standing as warnAdvisories: advice only, never an
+// exit code.
+func warnFragmentAdvisories(warnW io.Writer, path string, advisories []graph.FragmentAdvisory) {
+	for _, advisory := range advisories {
+		fmt.Fprintf(warnW, "warning: %s: %s\n", path, advisory)
 	}
 }

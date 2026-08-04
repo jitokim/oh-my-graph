@@ -273,6 +273,23 @@ type Node struct {
 	// load validations above apply to a planned graph exactly as to a
 	// hand-written one.
 	Feedback *Feedback `yaml:"feedback" json:"feedback,omitempty"`
+	// Use, when non-empty, names a fragment this node splices in at LOAD time
+	// (ADR 0013): the file loader (LoadFile/LintFile) replaces the node with
+	// the fragment's node: block, substitutes the With bindings, and overlays
+	// this node's own keys — all before validation, so a VALIDATED graph
+	// always has Use and With empty. The fields exist so the keys DECODE
+	// instead of silently vanishing (decode sets no KnownFields, so an
+	// unknown `use:` would drop and the node would run with an empty prompt,
+	// spending real money on garbage), and Validate refuses any node still
+	// carrying them (validateFragmentsResolved) — the loud backstop for every
+	// path that bypasses the file loader: a snapshot resume, a planner reply
+	// (the coordinator surfaces that refusal as its own *PlanError — planned
+	// nodes may not reference fragments).
+	Use string `yaml:"use" json:"use,omitempty"`
+	// With carries Use's substitution bindings — substitution-point name to
+	// bound value, resolved away by the file loader with Use. Dead without
+	// `use:` (a load error), and empty on every validated graph; see Use.
+	With map[string]any `yaml:"with" json:"with,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate
 	// (validateNodeTimeouts). Unexported so the parsed form cannot drift from
@@ -350,31 +367,25 @@ func Parse(data []byte) (*Graph, error) {
 	return g, nil
 }
 
-// Lint decodes a graph from raw YAML bytes and returns every structural
-// violation found — the full list whose first element is what Parse would
-// have returned, so the two can never disagree about which graphs are valid.
-// A YAML syntax error is the whole report on its own, since nothing
-// structural can be judged about a document that did not decode. An empty
-// result means the graph is valid: exactly the graphs Parse accepts.
-func Lint(data []byte) []error {
-	g, err := decode(data)
-	if err != nil {
-		return []error{err}
-	}
-	return g.Issues()
-}
-
 // decode unmarshals and normalizes raw YAML into a Graph with its by-id index
-// built, without judging validity — the shared front half of Parse (which
-// then fail-fasts via Validate) and Lint (which collects every issue). No
-// caller outside those two may use it: an unvalidated Graph must never
-// escape this package.
+// built, without judging validity — the front half of Parse, which then
+// fail-fasts via Validate. No caller outside this package may use it: an
+// unvalidated Graph must never escape. The collect-all counterpart lives on
+// the path-aware seam instead (LintFile), because a lint that cannot resolve
+// a `use:` is not linting the graph that would run.
 func decode(data []byte) (*Graph, error) {
 	var raw rawGraph
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse graph YAML: %w", err)
 	}
+	return fromRaw(raw), nil
+}
 
+// fromRaw normalizes a decoded rawGraph into a Graph with its by-id index
+// built — the back half of decode, shared with the fragment resolver's
+// decodeResolved (which decodes from a spliced *yaml.Node rather than from
+// bytes, so the two entry paths can never normalize differently).
+func fromRaw(raw rawGraph) *Graph {
 	g := &Graph{
 		Name:        raw.Name,
 		Version:     raw.Version,
@@ -387,7 +398,7 @@ func decode(data []byte) (*Graph, error) {
 	for _, n := range g.Nodes {
 		g.byID[n.ID] = n
 	}
-	return g, nil
+	return g
 }
 
 // normalizeOnFail fills in the graph-level failure-policy default, the same

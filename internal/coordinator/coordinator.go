@@ -18,6 +18,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -299,6 +300,22 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 
 	g, err := graph.Parse([]byte(spec))
 	if err != nil {
+		// The unresolved-fragment refusal (ADR 0013) fires HERE, not in
+		// validatePlannedNodes: graph.Validate refuses any node carrying
+		// use:/with: (Parse has no file context to resolve them), so a
+		// fragment-naming plan never survives to the per-node checks below —
+		// a validatePlannedNodes case would be unreachable. Recognized and
+		// surfaced as a *PlanError so the refusal names the planner's fault:
+		// a planner-emitted use: would let unreviewed plan output pick which
+		// local file's prompt text, tool grant and verify command run.
+		// Trusted code resolves files; the planner never names local
+		// resources (the ADR 0012 line, held).
+		var unresolved *graph.UnresolvedFragmentError
+		if errors.As(err, &unresolved) {
+			return Plan{}, &PlanError{
+				Reason: fmt.Sprintf("planned node %q references a fragment (use:/with:); planned nodes may not reference fragments — trusted code resolves local files, the planner never names them", unresolved.NodeID),
+			}
+		}
 		return Plan{}, fmt.Errorf("generated graph is invalid: %w", err)
 	}
 	if err := validatePlannedNodes(g, outcome.Result); err != nil {
@@ -459,7 +476,12 @@ func toolName(rule string) string {
 //   - no planned node may set agent (validatePlannedNodeAgent);
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
-//     maxPlannedFeedbackRounds (validatePlannedNodeFeedback).
+//     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
+//   - no planned node may reference a fragment (use:/with:) — refused before
+//     this function ever runs, at Plan's graph.Parse boundary, where
+//     graph.Validate's unresolved-fragment backstop (ADR 0013) is converted
+//     into the *PlanError naming the node; a case here would be unreachable,
+//     since no fragment-carrying graph survives Parse.
 //
 // EVERY FIELD ON graph.Node MUST HAVE AN EXPLICIT DISPOSITION HERE — allowed,
 // constrained, or rejected. This class of hole recurs every time the schema

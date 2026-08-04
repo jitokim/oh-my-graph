@@ -37,8 +37,12 @@ var leadingWordPattern = regexp.MustCompile(`^[A-Za-z0-9_]+`)
 // interpolation: the three real kinds plus their number typos (singular for
 // the plural kinds, plural for feedback), matched case-insensitively so a
 // case-variant like {{ Artifacts.x }} is judged rather than shipped
-// verbatim. A {{ ... }} whose body starts with anything else is assumed to
-// be deliberate literal text and is never warned about.
+// verbatim — plus `with`, the fragment substitution kind (ADR 0013), which
+// the RUNTIME never resolves: it lives in this table (so lint judges it) and
+// deliberately not in placeholderPattern (so Interpolate never learns it —
+// the token must be gone, resolved by the file loader, before the runtime
+// looks). A {{ ... }} whose body starts with anything else is assumed to be
+// deliberate literal text and is never warned about.
 var placeholderKinds = map[string]bool{
 	"inputs":    true,
 	"artifacts": true,
@@ -46,6 +50,7 @@ var placeholderKinds = map[string]bool{
 	"input":     true,
 	"artifact":  true,
 	"feedbacks": true,
+	"with":      true,
 }
 
 // LintPlaceholders statically inspects every templated field the Scheduler
@@ -62,7 +67,11 @@ var placeholderKinds = map[string]bool{
 //   - the token parses but names an input the graph does not declare;
 //   - the token parses but names an artifact of a node that does not exist,
 //     is the referencing node itself, or is not one of its ancestors (so the
-//     artifact cannot be guaranteed to exist when the node runs).
+//     artifact cannot be guaranteed to exist when the node runs);
+//   - the token is a {{ with.<name> }} fragment substitution token
+//     (ADR 0013) — those resolve at LOAD time, inside a fragment body, so
+//     one surviving into a validated graph sits in a plain node and will
+//     reach the paid prompt verbatim.
 //
 // It shares placeholderPattern with Interpolate, so what lint calls
 // well-formed and what the runtime resolves can never drift apart. Warnings
@@ -110,6 +119,15 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	leading := leadingWordPattern.FindString(body)
 	if !placeholderKinds[strings.ToLower(leading)] {
 		return "" // deliberate literal text — none of the runtime's business, none of lint's
+	}
+
+	// The `with` kind gets its own message, not the generic malformed-token
+	// one: the token is well-formed, but it belongs to a fragment body and is
+	// resolved AT LOAD by the file loader — a validated graph reaching this
+	// lint has already been resolved, so any surviving with-token sits in a
+	// plain node, where the runtime will pass it through verbatim (ADR 0013).
+	if strings.EqualFold(leading, "with") {
+		return fmt.Sprintf("%s is a fragment substitution token, resolved at load time — outside a fragment it ships verbatim into a paid prompt", token)
 	}
 
 	// The strict-parse judgment MUST come from placeholderPattern itself — the

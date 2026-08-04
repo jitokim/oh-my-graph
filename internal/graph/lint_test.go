@@ -1,14 +1,34 @@
 package graph
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// lintBytes runs the collect-all view over a graph written to a temp file.
+// LintFile is the only lint entry point in production — every CLI path became
+// path-aware with ADR 0013, because a `use:` resolves against the graph FILE's
+// own fragments/ sibling — so these tests drive it rather than a bytes-level
+// twin that nothing but tests would call.
+func lintBytes(t *testing.T, data []byte) []error {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "graph.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	issues, _, err := LintFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issues
+}
+
 // TestLint_ValidGraphHasNoIssues pins the exit-0 half of the contract: a graph
 // Parse accepts must lint clean.
 func TestLint_ValidGraphHasNoIssues(t *testing.T) {
-	issues := Lint([]byte(`
+	issues := lintBytes(t, []byte(`
 name: clean
 nodes:
   - { id: a, prompt: a }
@@ -24,7 +44,7 @@ nodes:
 // dependency cycle, and a session-handoff root — reports all three at once,
 // rather than one per fix-and-retry round trip.
 func TestLint_CollectsEveryViolation(t *testing.T) {
-	issues := Lint([]byte(`
+	issues := lintBytes(t, []byte(`
 name: broken
 nodes:
   - { id: a, prompt: a, depends_on: [b] }
@@ -46,7 +66,7 @@ nodes:
 // structural issue is a *GraphValidationError, so a renderer can name the
 // offending node without string matching.
 func TestLint_EveryIssueIsAValidationError(t *testing.T) {
-	issues := Lint([]byte(`
+	issues := lintBytes(t, []byte(`
 name: broken
 nodes:
   - { id: a, prompt: a, type: wizardry, handoff: telepathy }
@@ -71,7 +91,7 @@ name: broken
 nodes:
   - { id: a, prompt: a, depends_on: [ghost], handoff: session }
 `)
-	issues := Lint(spec)
+	issues := lintBytes(t, spec)
 	if len(issues) == 0 {
 		t.Fatal("expected issues for a broken graph")
 	}
@@ -87,7 +107,7 @@ nodes:
 // TestLint_YAMLSyntaxErrorIsTheWholeReport: nothing structural can be judged
 // about a document that did not decode, so the decode error stands alone.
 func TestLint_YAMLSyntaxErrorIsTheWholeReport(t *testing.T) {
-	issues := Lint([]byte("name: [unterminated"))
+	issues := lintBytes(t, []byte("name: [unterminated"))
 	if len(issues) != 1 {
 		t.Fatalf("got %d issues, want exactly the decode error: %v", len(issues), issues)
 	}

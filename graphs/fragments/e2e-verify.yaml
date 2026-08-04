@@ -1,0 +1,57 @@
+# e2e-verify — the cold-safe e2e gate (ADR 0013's founding shape).
+#
+# The first sentence is the cold-safe retry wording: a retried attempt starts
+# cold instead of resuming its session-parent, and the prompt is written to
+# survive exactly that case. It used to be hand-swept across every template;
+# it now exists once, here.
+#
+# What stays per-graph is what only the graph can know: `checks` (the checks
+# this gate asks for, in prose) and `verify_command` (the command the ENGINE
+# runs as evidence). The command is bound rather than hardcoded because this
+# fragment is meant to travel: `make local` is this repo's build, not every
+# repo's, and a gate that names the wrong command is not a gate. Everything
+# else is the proven shape: session continuation, synchronous execution, a
+# verdict-only final reply, and an evidence-grounded success_check whose
+# failure is a retry cause (the engine runs `verify` itself and judges the
+# exit code, so a node that reports PASS without the suite passing does not
+# pass).
+fragment: e2e-verify
+description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
+substitutions: [checks, verify_command]
+node:
+  type: claude-run
+  prompt: |
+    Continue the work — or, on a retried attempt, start from the branch's
+    committed state — and {{ with.checks }}
+    Run every check SYNCHRONOUSLY and wait for it to finish — never in the
+    background. Your FINAL reply is the verdict: never end the turn on an
+    interim report. Report exactly PASS if everything succeeds, or FAIL
+    with the failing step.
+  # A check gate gets the verbs a check gate runs, and nothing else. The wide
+  # forms this replaced were `Bash(go *)` — which includes `go run`, i.e.
+  # execute arbitrary code out of the tree under review — and `Bash(git *)`,
+  # which includes push, reset and history rewriting in a node whose only job
+  # is to report PASS or FAIL. Neither is reachable from anything this prompt
+  # asks for: the gate has no Edit/Write, so it cannot fix what it finds, and
+  # the evidence command is run by the ENGINE (success_check.verify), not by
+  # the node. Git is read-only here for the same reason.
+  #
+  # A non-Go repo adopting this fragment overrides `allowed_tools` on its using
+  # node — the override is announced in the disclosure line at every run, which
+  # is the point: widening a grant should be visible, not inherited silently.
+  allowed_tools: [Read, "Bash(make *)", "Bash(go build *)", "Bash(go test *)", "Bash(go vet *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)"]
+  permission_mode: dontAsk
+  # Runaway insurance ONLY, never cost tuning: a tight budget kills a
+  # nearly-done node at the threshold, and the salvage costs more than
+  # letting it finish (a real $0.02-over kill cost ~6x the remaining work).
+  # Keep this an order of magnitude above a plausible run. The hang guard
+  # is `timeout:`, not the budget.
+  budget_usd: 10.00
+  handoff: session
+  success_check:
+    exit_zero: true
+    result_matches: "^PASS$"      # secondary: the node's own account of itself
+    # The evidence. The engine runs this itself and judges the exit code,
+    # so a node that reports PASS without the suite passing does not pass.
+    verify: { command: "{{ with.verify_command }}", timeout: 5m }
+  retry: { max: 1, on: [nonzero_exit, verify_failed] }
