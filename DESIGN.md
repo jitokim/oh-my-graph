@@ -1288,8 +1288,9 @@ persistence ON (so every node stays an ordinary, readable claude session in
 `~/.claude/projects` — do NOT pass --no-session-persistence).
 
 DEFERRED (say so in README): retries beyond flat max:1; parallel-group sugar /
-any DSL; TUI/dashboard (the web live view shipped later — see "Web live
-view"); worktree auto-creation (opt-in
+any DSL; a terminal TUI (the web views shipped later — both the single-run
+live view and the multi-run dashboard; see "Web live view"); worktree
+auto-creation (opt-in
 per-node `worktree:` shipped later — see "Worktree isolation"); sub-call /
 cross-node budget accounting (per-node
 mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
@@ -1317,7 +1318,7 @@ internal/handoff/handoff.go + _test            interpolation, artifact persist/r
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a read-only consumer of the run-feed contract, plus the live transcript tail of a running node's own session, plus the one mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer, token-guarded — ADR 0014)
+internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)

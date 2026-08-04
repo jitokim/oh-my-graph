@@ -91,8 +91,9 @@ See [Deferred](#deferred-not-in-v01) below for the full out-of-scope list.
 Called out honestly — these are **not** implemented yet:
 
 - retries beyond a flat `max`; parallel-group sugar / any DSL beyond `depends_on`.
-- a terminal TUI — the shipped views are the `serve` web live view of one run
-  and the plain-text `runs list` / `show` / `watch`.
+- a terminal TUI — the shipped views are the `serve` web ones (the live view
+  of one run, and the multi-run dashboard `serve` renders with no run id) and
+  the plain-text `runs list` / `show` / `watch`.
 - **sub-call / cross-node budget accounting.** Per-node budget is now enforced
   live (`--max-budget-usd` aborts a node mid-run) *and* post-hoc, so a runaway
   node no longer spends unbounded to the wall-clock timeout. Still deferred:
