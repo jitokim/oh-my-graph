@@ -117,7 +117,10 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	// multiplier too, instead of silently vanishing from the accounting.
 	printGoalSummary(out, goal, result, err)
 	if err != nil {
-		return err
+		// A cycle whose planning was refused paid for it like any other, so
+		// its spec is persisted here too — the loop's plan step is the same
+		// coordinator.plan call the single-cycle path makes.
+		return noteRejectedPlan(out, err)
 	}
 	return goalExit(out, result)
 }

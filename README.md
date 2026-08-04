@@ -165,8 +165,8 @@ control.
 Want to read that plan *before* anything executes? `--plan-only` prints it —
 the graph, every agent and skill mapping, the tool ceiling — and stops without
 running a node. Unlike `run --dry-run` it is not free: there is no plan to show
-until the one planner call has been made and paid for, so it prints what that
-cost and keeps the plan it bought. Its knobs — goal cycles, agent mapping,
+until a planner call has been made and paid for, so it prints what that cost
+and keeps the plan it bought. Its knobs — goal cycles, agent mapping,
 skill mapping, and what `--plan-only` does with the plan afterwards — are in
 [`auto` in depth](#auto-in-depth) below.
 
@@ -339,7 +339,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for the one planner call — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for the planner call — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
@@ -415,10 +415,19 @@ the graph with every agent and skill mapping and the tool ceiling, and stops —
 no node is executed. It is the `auto` counterpart to `run --dry-run` with one
 honest difference: a dry run reads a file you already wrote and costs nothing,
 while there is no plan to inspect until one has been bought, so `--plan-only`
-still pays for the single planner call and prints what it cost. The plan it
+still pays for the planner call and prints what it cost. The plan it
 paid for is kept — under `~/.oh-my-graph/plans/<id>/graph.json`, not in
 `runs/`, because nothing ran: a preview is not a run, so `runs list` and
-`serve` never see it. Run it later with `oh-my-graph run <that path>`. It
+`serve` never see it. Run it later with `oh-my-graph run <that path>`.
+
+One planner call is the normal case, and two is the bound: if the planner's
+reply describes a graph the validator refuses, oh-my-graph hands those exact
+refusals back and buys **one** corrected attempt, held to the identical
+ceiling — no auto-editing of what the model wrote, and no third try. The
+printed price is the sum of both calls and the re-plan is disclosed on its own
+line, with the refusals that caused it. If the corrected reply is refused too,
+the rejected spec is still kept — at `~/.oh-my-graph/plans/<id>/rejected.json`
+— so a paid-for plan is never destroyed by being invalid. It
 previews one cycle by definition — `--plan-only` with `--max-cycles` above 1 is
 rejected at parse, since every cycle after the first is planned from the
 previous cycle's run and so does not exist yet to be shown.

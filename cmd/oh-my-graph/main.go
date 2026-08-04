@@ -352,7 +352,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
-		return err
+		return noteRejectedPlan(out, err)
 	}
 
 	runID := newRunID()
@@ -375,11 +375,11 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 
 	if planOnly {
 		fmt.Fprintf(out,
-			"plan only: no node was executed. The planner call above was still paid for ($%.4f) —\n"+
+			"plan only: no node was executed. The %s still paid for ($%.4f) —\n"+
 				"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
 				"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
 				"about it. Run it with `oh-my-graph run %s`.\n",
-			plan.CostUSD, specPath, specPath)
+			plannerCallsPhrase(plan), plan.CostUSD, specPath, specPath)
 		return nil
 	}
 
@@ -585,6 +585,24 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 // prompts it carries, so the saved file can hold the user's own private
 // instructions verbatim.
 func saveGeneratedSpec(dir string, spec []byte) (string, error) {
+	return saveSpecAs(dir, generatedSpecFileName, spec)
+}
+
+// generatedSpecFileName is the accepted plan's file — the one every consumer
+// of a run directory already reads.
+const generatedSpecFileName = "graph.json"
+
+// rejectedSpecFileName is a REFUSED plan's file. A distinct name, in a
+// plans/<id> directory of its own, because it is not a graph the engine would
+// run: nothing may mistake it for one, least of all a reader walking the tree
+// for graph.json.
+const rejectedSpecFileName = "rejected.json"
+
+// saveSpecAs writes one planner spec into dir under name, with the indentation
+// and the owner-only permissions saveGeneratedSpec documents. Shared so an
+// accepted plan and a rejected one cannot be persisted under two different
+// permission stances.
+func saveSpecAs(dir, name string, spec []byte) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create spec dir %q: %w", dir, err)
 	}
@@ -592,7 +610,7 @@ func saveGeneratedSpec(dir string, spec []byte) (string, error) {
 	if err := json.Indent(&indented, spec, "", "  "); err == nil {
 		spec = indented.Bytes()
 	}
-	path := filepath.Join(dir, "graph.json")
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, spec, 0o600); err != nil {
 		return "", fmt.Errorf("save generated graph spec: %w", err)
 	}
@@ -627,8 +645,69 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	}
 	noteAgentMappings(w, plan.AgentMappings)
 	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
+	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
 	fmt.Fprintln(w)
+}
+
+// noteReplan discloses that this plan was bought twice: the first planner
+// reply was refused by validation, its refusals were handed back, and the
+// corrected reply is what is printed above. Silence means the ordinary
+// first-try plan.
+//
+// It is printed for the same reason the mappings are: the price above is
+// already the sum of both calls, so without this line a repaired plan is
+// indistinguishable from an expensive one — and nobody could measure whether
+// a planner-prompt change reduced the refusal rate, because the refusals
+// would have stopped being visible.
+func noteReplan(w io.Writer, repair *coordinator.PlanRepair) {
+	if repair == nil {
+		return
+	}
+	fmt.Fprintf(w, "  re-planned: the first reply was refused by validation (cost $%.4f, included above) and a corrected one was requested:\n", repair.RejectedCostUSD)
+	for _, issue := range repair.Issues {
+		fmt.Fprintf(w, "    ! %s\n", issue)
+	}
+}
+
+// plannerCallsPhrase names how many planner calls a plan-only preview paid
+// for, so the "was still paid for" sentence cannot claim one call when a
+// bounded re-plan bought two.
+func plannerCallsPhrase(plan coordinator.Plan) string {
+	if plan.Repaired == nil {
+		return "planner call above was"
+	}
+	return "2 planner calls above (the refused first reply and its correction) were"
+}
+
+// noteRejectedPlan persists a refused plan's spec before returning the
+// refusal. A planner call is paid for whether or not its graph loads, and
+// until now a rejected one left NOTHING on disk: the user paid, saw an error,
+// and had no artifact to hand-edit or re-run. The spec is written beside a
+// plan-only preview's, under plans/, for the same reason that one is not under
+// runs/ — nothing ran, so it is not a run.
+//
+// The refusal itself is returned unchanged; this only adds a line naming where
+// the rejected spec went. A failure to write it is reported and swallowed:
+// losing the artifact must not replace the diagnosis the user actually needs.
+func noteRejectedPlan(w io.Writer, err error) error {
+	var rejection *coordinator.PlanRejection
+	if !errors.As(err, &rejection) {
+		return err
+	}
+	if rejection.CostUSD > 0 {
+		fmt.Fprintf(w, "planning failed after spending $%.4f — a planner call is paid for whether or not its graph loads.\n", rejection.CostUSD)
+	}
+	if len(rejection.Spec) == 0 {
+		return err
+	}
+	path, saveErr := saveSpecAs(planDirFor(newRunID()), rejectedSpecFileName, rejection.Spec)
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "save rejected plan spec: %v\n", saveErr)
+		return err
+	}
+	fmt.Fprintf(w, "The rejected spec is kept at %s — fix it by hand and run it with `oh-my-graph run %s`.\n", path, path)
+	return err
 }
 
 // noteAgentMappings discloses every subagent auto-mapping decision before the
