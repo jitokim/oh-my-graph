@@ -1167,7 +1167,15 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   material: the goal, the run outcome, per-node verdict/detail/cost from the
   snapshot (the loop re-reads `state.json` after `executeGraph` returns —
   the observation seam), bounded head+tail artifact excerpts, and the one
-  cross-cycle line (the previous `remaining`). The verdict is a hard JSON
+  cross-cycle line (the previous `remaining`). All three are raw model
+  output, so every block rides in a **nonce-fenced** marker pair — one
+  6-hex-character nonce per `Assess` call, in the opening AND closing
+  marker, with the prompt telling the assessor that only markers bearing it
+  are real (the skill-inlining fence's mechanism, `internal/coordinator/fence.go`).
+  Fixed markers would be forgeable by the very material they fence: an
+  injected artifact could close its own block and speak from apparent
+  outside it. The next cycle's planner prompt fences the `remaining` it
+  quotes the same way. The verdict is a hard JSON
   contract; garbage is an `*AssessError` that stops the loop. Each verdict
   is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
   persisted as `assess.json` in that cycle's run directory (`goal_met`,
