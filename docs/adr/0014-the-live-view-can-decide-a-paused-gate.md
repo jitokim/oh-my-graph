@@ -83,6 +83,20 @@ a form field also forces a CORS preflight a cross-origin form cannot satisfy.
 It is a CSRF guard, not a login; widening the bind address would still need a
 real auth story first.
 
+> **Update (2026-08-05):** the mutating route now runs **four** guards, not
+> the three this section names. `requireSameOrigin` (#105) was added *in
+> front* of the token, so the order in `handleGateDecision`
+> (`internal/serve/gate.go`) is: the loopback bind (reachability),
+> `requireLoopbackHost` (Host, against DNS rebinding), `requireSameOrigin`
+> (browser provenance — a POST whose `Origin` names another origin is 403,
+> an absent `Origin` passes so non-browser clients are unaffected), then
+> `requireGateToken` (CSRF — missing 400, wrong 403). This is additive
+> hardening and **does not falsify the decision above**: the token guard
+> held on its own and still returns before the resumer is reached; what
+> Origin adds is a second, independent signal that arrives earlier and does
+> not depend on the token staying secret. This ADR is the designated home
+> for that boundary, so it names what actually guards it.
+
 **The exec-seam invariant is untouched.** `internal/serve` imports no
 `os/exec` and starts no process; the resumed leg's nodes run through
 `runner.ClaudeCLIRunner` — seam 1 — constructed in `cmd/oh-my-graph` and
