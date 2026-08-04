@@ -110,10 +110,33 @@ Guarantees:
   always sees a complete, self-consistent document — never a partial write.
 - It is rewritten after **every** node's terminal verdict, so it is at most
   one in-flight node stale.
-- It carries settled state only: a node currently running is absent from
-  `nodes`. The one non-terminal record is the feedback marker above —
-  `round` with an empty `verdict` — which is a settled fact about the loop,
-  not live progress. Live progress is what `events.jsonl` is for.
+- It carries settled state, **not liveness** — and absence from `nodes` is
+  not the complement of "running". Two records break that reading:
+  - A node re-running inside a feedback loop (ADR 0010) keeps its
+    **previous round's terminal record** for the whole time it is re-running.
+    A fired arc re-arms and relaunches the body without clearing any member's
+    record (`internal/schedule`'s feedback re-arm), and the recorder *depends*
+    on the old record still being there — it folds the superseded round's
+    spend into its replacement
+    (`runstate.SnapshotRecorder.RecordNode`/`supersedesRound`). So while
+    `impl` executes round 2, `nodes` still reads
+    `"impl": {"verdict": "PASS", "round": 1}`: a PASS-looking record for a
+    node that is at that moment in flight. It is not stale data — it is the
+    settled truth about round 1, which is a different question from what
+    `impl` is doing now.
+  - The feedback declarer's marker (`round` k, empty `verdict`) is present
+    and non-terminal, as described above.
+
+  So: a node absent from `nodes` has certainly not settled, but a node
+  present in `nodes` is **not** thereby finished. **Key liveness off
+  `events.jsonl`, never off presence in `state.json`:** within the current
+  leg, a node is running when its latest `node_started`/`node_retried` is not
+  followed by a `node_passed`/`node_failed` for the same `node_id`. Under
+  feedback that rule needs no special case — a body node emits a full
+  `node_started` → terminal sequence per round, so the round-2 `node_started`
+  with no terminal after it is exactly the signal the snapshot cannot give
+  you. Use `state.json` for *what has settled and at what cost*, and the
+  stream for *what is happening now*.
 
 ## Goal cycles (ADR 0011) — the `goal` block and `assess.json`
 
