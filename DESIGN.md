@@ -992,7 +992,9 @@ the sequence immediately after the topology print, so that one call is all it
 makes and no node runs — the inspection path for the mappings and the ceiling,
 and deliberately NOT free the way `run --dry-run` is: there is no plan to
 inspect until one has been bought, which is why the stop line prints its cost
-and the paid-for spec is kept. It is rejected with `--max-cycles ≥ 2`, since
+and the paid-for spec is kept — in `$OMG_HOME/plans/<id>/graph.json`, never
+under `runs/`, since a directory there holding no `state.json` is what a
+broken run looks like to `runs list` and to `serve`'s newest-run resolution. It is rejected with `--max-cycles ≥ 2`, since
 every cycle after the first is planned from the previous cycle's run. (Interactive `chat`
 reuses the same Coordinator but adds a routing call per turn before planning;
 see "Ambient chat".) The planner asks
@@ -1148,7 +1150,8 @@ Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 not restricted by either. The generated spec is
 saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
-Scheduler as any other graph.
+Scheduler as any other graph. A `--plan-only` plan is saved the same way but
+to `~/.oh-my-graph/plans/<id>/graph.json`, because it has no run to belong to.
 
 ### Goal cycles — `auto --max-cycles N` (ADR 0011)
 `auto` plans once by default; `--max-cycles N` (N ≥ 2) opts into the bounded

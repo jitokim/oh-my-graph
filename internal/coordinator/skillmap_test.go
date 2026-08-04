@@ -229,6 +229,61 @@ func TestPlan_LaterSkillDirShadowsEarlier(t *testing.T) {
 	if !strings.Contains(node.Prompt, "PROJECT VERSION") || strings.Contains(node.Prompt, "USER VERSION") {
 		t.Errorf("prompt must carry the later directory's body:\n%s", node.Prompt)
 	}
+
+	// Winning silently would be fine; losing silently is not. The count the
+	// printout shows is the size of the deduped set, so a collision lowers it
+	// with no explanation available anywhere unless the loser is named.
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want the scan that resolved the collision")
+	}
+	if plan.SkillScan.Found != 1 {
+		t.Errorf("Found = %d, want 1: two files, one surviving name", plan.SkillScan.Found)
+	}
+	want := filepath.Join(userDir, "pr-code-review", "SKILL.md")
+	if got := plan.SkillScan.Shadowed; len(got) != 1 || got[0] != want {
+		t.Errorf("Shadowed = %v, want the losing file [%s]", got, want)
+	}
+}
+
+// The collision available on a real machine today needs no second directory:
+// `name:` need not equal the directory it sits in, so two skill directories
+// under the one scanned tree can declare the same name, and then the winner is
+// only whichever os.ReadDir returned later. Deterministic, but not something a
+// user could ever infer from a count that quietly dropped by one.
+func TestPlan_SameNameInOneDirIsReportedShadowed(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "a-first", "name: pr-code-review", "FIRST VERSION")
+	writeSkillFile(t, dir, "b-second", "name: pr-code-review", "SECOND VERSION")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if plan.SkillScan == nil || plan.SkillScan.Found != 1 {
+		t.Fatalf("SkillScan = %+v, want one surviving definition", plan.SkillScan)
+	}
+	want := filepath.Join(dir, "a-first", "SKILL.md")
+	if got := plan.SkillScan.Shadowed; len(got) != 1 || got[0] != want {
+		t.Fatalf("Shadowed = %v, want the lexically earlier file [%s]", got, want)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if !strings.Contains(node.Prompt, "SECOND VERSION") {
+		t.Errorf("the reported winner must be the body that was actually inlined:\n%s", node.Prompt)
+	}
+}
+
+// No collision, nothing to report: the shadow line must not appear on the
+// normal plan, or it stops being a signal.
+func TestPlan_NoCollisionRecordsNoShadow(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "pr-code-review", "name: pr-code-review", "the body")
+
+	plan := planWithSkills(t, WithSkillDirs(dir))
+
+	if plan.SkillScan == nil {
+		t.Fatal("SkillScan = nil, want a recorded scan")
+	}
+	if len(plan.SkillScan.Shadowed) != 0 {
+		t.Errorf("Shadowed = %v, want empty when every skill name is unique", plan.SkillScan.Shadowed)
+	}
 }
 
 // Two skills matching the same node is ambiguity, and ambiguity is no mapping

@@ -396,7 +396,9 @@ no node is executed. It is the `auto` counterpart to `run --dry-run` with one
 honest difference: a dry run reads a file you already wrote and costs nothing,
 while there is no plan to inspect until one has been bought, so `--plan-only`
 still pays for the single planner call and prints what it cost. The plan it
-paid for is kept in the run directory.
+paid for is kept — under `~/.oh-my-graph/plans/<id>/graph.json`, not in
+`runs/`, because nothing ran: a preview is not a run, so `runs list` and
+`serve` never see it. Run it later with `oh-my-graph run <that path>`.
 
 Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, by a
 blunter mechanism stated plainly: a planned node

@@ -40,7 +40,7 @@ func runChat(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, mappingOptions(*noAgentMapping, *noSkillMapping)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, *noAgentMapping, *noSkillMapping)...)
 	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 

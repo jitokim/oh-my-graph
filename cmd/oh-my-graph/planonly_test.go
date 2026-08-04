@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/serve"
 )
 
 // --- failure cases first ----------------------------------------------------
@@ -70,9 +73,9 @@ func TestPlanAndExecute_PlanOnlyRefusesACycleLoop(t *testing.T) {
 // The asymmetry with --dry-run is asserted in both directions, since checking
 // only for absent node invocations would pass equally for a plan that never
 // happened: the planner call MUST have been made (it is what makes a plan
-// exist, and it is billed), the printout must say what it cost, and the run
-// directory must hold that paid-for spec and none of the files execution
-// creates.
+// exist, and it is billed), the printout must say what it cost, and the paid-for
+// spec must survive — in plans/, holding none of the files execution creates,
+// and leaving runs/ untouched so no reader of that tree sees a phantom.
 //
 // Mapping is switched off here so the test reads no part of the invoking
 // user's real ~/.claude tree. That costs nothing in coverage: --plan-only is
@@ -109,15 +112,39 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 		}
 	}
 
-	// The plan was bought, so it is kept; nothing execution creates exists.
-	runDir := soleRunDir(t)
-	if _, statErr := os.Stat(filepath.Join(runDir, "graph.json")); statErr != nil {
+	// The plan was bought, so it is kept — under plans/, not runs/.
+	planDir := solePlanDir(t)
+	if _, statErr := os.Stat(filepath.Join(planDir, "graph.json")); statErr != nil {
 		t.Errorf("--plan-only must keep the spec it paid for: %v", statErr)
 	}
 	for _, gone := range []string{stateFileName, runfeed.FileName, lockFileName} {
-		if _, statErr := os.Stat(filepath.Join(runDir, gone)); statErr == nil {
+		if _, statErr := os.Stat(filepath.Join(planDir, gone)); statErr == nil {
 			t.Errorf("--plan-only created %s — that file exists only because a run started", gone)
 		}
+	}
+
+	// And nothing was left where the run readers look. A directory under runs/
+	// holding only a graph.json is not a harmless leftover: it is exactly the
+	// shape of a run whose state.json never arrived, so it would be reported
+	// through the same channel as real damage and, being newest, would become
+	// the run `serve` opens by default.
+	entries, readErr := os.ReadDir(runsRoot())
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		t.Fatalf("read runs root: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("--plan-only left %d director(ies) under runs/ — nothing ran, so nothing is a run", len(entries))
+	}
+
+	var listed, warned strings.Builder
+	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+		t.Fatalf("runs list after a preview returned error: %v", listErr)
+	}
+	if warned.Len() != 0 {
+		t.Errorf("a preview must not read as a broken run to `runs list`:\n%s", warned.String())
+	}
+	if _, resolveErr := serve.ResolveRun(runsRoot(), ""); resolveErr == nil {
+		t.Error("`serve` with no --run must still find no run after a preview, not resolve onto it")
 	}
 
 	for _, want := range []string{
@@ -125,7 +152,10 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 		"work",                       // the planned node id is on it
 		"Planned nodes run isolated", // the tool ceiling
 		"no node was executed",
-		"$0.0417", // the flag is not free, and says the number
+		"$0.0417",     // the flag is not free, and says the number
+		"not a run",   // and says it left nothing for the run readers
+		"`runs list`", // naming the one that would otherwise report it
+		filepath.Join(os.Getenv("OMG_HOME"), "plans"), // the kept spec is named by its real path
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan-only output should contain %q:\n%s", want, out)
@@ -133,19 +163,20 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 	}
 }
 
-// soleRunDir returns the one run directory the isolated OMG_HOME holds,
+// solePlanDir returns the one plan directory the isolated OMG_HOME holds,
 // failing if there is not exactly one — so the assertions above cannot be
-// satisfied by a plan-only that created no run directory at all.
-func soleRunDir(t *testing.T) string {
+// satisfied by a plan-only that kept nothing at all.
+func solePlanDir(t *testing.T) string {
 	t.Helper()
-	entries, err := os.ReadDir(runsRoot())
+	root := filepath.Join(os.Getenv("OMG_HOME"), "plans")
+	entries, err := os.ReadDir(root)
 	if err != nil {
-		t.Fatalf("read runs root: %v", err)
+		t.Fatalf("read plans root: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("want exactly one run directory, got %d", len(entries))
+		t.Fatalf("want exactly one plan directory, got %d", len(entries))
 	}
-	return filepath.Join(runsRoot(), entries[0].Name())
+	return filepath.Join(root, entries[0].Name())
 }
 
 // firstLine keeps a failure message readable when it has to quote a planner

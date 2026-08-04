@@ -115,14 +115,24 @@ const maxSkillFileBytes = 1 << 20
 // common case (measured: 22 of 32 shipped node ids find no candidate), so
 // silence must not also be the failure display.
 //
-// Dirs is what was scanned, in the same precedence order the scan used; Found
-// is how many usable skill definitions came back. Found 0 with a non-empty
-// Dirs is the diagnosable case — the directory is named, so a missing tree, an
+// Dirs is what was scanned, in scan order — LATER WINS in scanSkillDirs, so a
+// directory further down the list shadows an earlier one holding the same
+// skill name, matching how DefaultAgentDirs describes its own order. Found is
+// how many usable skill definitions came back. Found 0 with a non-empty Dirs
+// is the diagnosable case — the directory is named, so a missing tree, an
 // empty one, or a corpus that lives somewhere the scan does not go (a plugin,
 // a project checkout) is one printed line away instead of a guess.
+//
+// Shadowed is the path of every definition that lost a name collision, in the
+// order the scan met them. It exists because Found is the size of the map
+// AFTER dedup: two skill directories declaring `name: babysit` are one
+// definition here, so without this the count silently disagrees with the
+// number of directories on disk and nothing anywhere says which file was
+// dropped. Empty is the normal case.
 type SkillScan struct {
-	Dirs  []string
-	Found int
+	Dirs     []string
+	Found    int
+	Shadowed []string
 }
 
 // SkillMapping records one skill auto-mapping decision for the plan printout:
@@ -166,7 +176,7 @@ type skillDef struct {
 }
 
 // scanSkillDirs reads every <dir>/*/SKILL.md under dirs, in order, later
-// directories overwriting earlier ones on a name collision (mirroring
+// definitions overwriting earlier ones on a name collision (mirroring
 // scanAgentDirs; DefaultSkillDirs passes one directory, but the precedence
 // shape is kept so tests and a future measured project scan need no new
 // mechanism). Every failure — a missing directory, an unreadable file,
@@ -174,13 +184,20 @@ type skillDef struct {
 // empty body — skips just that much and stays silent: a broken skill file
 // must not break `auto`.
 //
+// A collision is NOT one of those silences: the losing file's path is returned
+// alongside the map, because losing is invisible from the map itself and it
+// moves the count the printout shows. Two same-named skills inside a single
+// directory tree collide too — `name:` need not equal the directory name — and
+// there the winner is just whichever os.ReadDir returned later.
+//
 // Directory-ness is decided by os.Stat, not entry.IsDir(): os.ReadDir does not
 // follow symlinks, so a `~/.claude/skills/<name>` symlinked out to a dotfiles
 // checkout — how skills are commonly kept under version control — would
 // otherwise be invisible here while the equivalent symlinked agent .md already
 // scans fine (scanAgentDirs filters on suffix, not on IsDir).
-func scanSkillDirs(dirs []string) map[string]skillDef {
+func scanSkillDirs(dirs []string) (map[string]skillDef, []string) {
 	skills := make(map[string]skillDef)
+	var shadowed []string
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -195,10 +212,13 @@ func scanSkillDirs(dirs []string) map[string]skillDef {
 			if !ok {
 				continue
 			}
+			if prev, clash := skills[def.Name]; clash {
+				shadowed = append(shadowed, prev.path)
+			}
 			skills[def.Name] = def
 		}
 	}
-	return skills
+	return skills, shadowed
 }
 
 // parseSkillFile extracts the YAML frontmatter and the body of one SKILL.md.
@@ -365,11 +385,11 @@ func (c *Coordinator) applySkillMapping(plan *Plan) error {
 	if c.skillMappingOff || len(c.skillDirs) == 0 {
 		return nil
 	}
-	skills := scanSkillDirs(c.skillDirs)
+	skills, shadowed := scanSkillDirs(c.skillDirs)
 	// Recorded BEFORE the empty-corpus return, because the empty corpus is
 	// exactly the case the record exists for: a scan that found nothing must
 	// still be able to say where it looked.
-	plan.SkillScan = &SkillScan{Dirs: append([]string(nil), c.skillDirs...), Found: len(skills)}
+	plan.SkillScan = &SkillScan{Dirs: append([]string(nil), c.skillDirs...), Found: len(skills), Shadowed: shadowed}
 	if len(skills) == 0 {
 		return nil
 	}

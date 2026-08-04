@@ -324,8 +324,9 @@ difference was to pay for a plan AND let the graph run, since the mapping
 lines are reachable only through `printPlan`.
 
 So a scan that ran now records itself on the Plan (`SkillScan`: the
-directories read, in precedence order, and the count of usable definitions)
-and prints, above its decisions:
+directories read in scan order — later wins, so a later directory shadows an
+earlier one of the same name — the count of usable definitions, and the path
+of any definition that lost a name collision) and prints, above its decisions:
 
 ```text
   skill scan: 35 skill(s) from /home/you/.claude/skills
@@ -337,6 +338,20 @@ and prints, above its decisions:
 `Found: 0` is the diagnosable case and the reason the count is printed rather
 than implied: the directory is named, so a missing tree, an empty one, or a
 corpus in an unscanned location is one line to read instead of a guess.
+
+The count is also the reason a **collision** gets its own line:
+
+```text
+  skill shadowed: /home/you/.claude/skills/old-babysit/SKILL.md — another definition declares the same name and wins
+```
+
+`Found` is the size of the deduped set, so two definitions sharing a `name:`
+print as one and take the count down with them — "35 skill(s)" against 36
+skill directories, with no explanation available anywhere. This is not the
+future plugin-namespace collision that condition (2) below addresses; it is
+available today inside a single `~/.claude/skills`, because `name:` need not
+equal the directory it sits in, and there the winner is only whichever
+`os.ReadDir` returned later. Deterministic is not the same as tellable.
 Nothing about the failure posture changes — a scan that finds nothing is still
 a silent no-mapping and never an error, and the note prints whether or not
 anything mapped. The line is absent only when no scan happened at all
@@ -346,7 +361,10 @@ someone who turned the mechanism off is not told about it twice.
 `auto --plan-only` (same date) makes that printout reachable without executing
 anything: it plans, prints exactly this, and stops. It is not free the way
 `run --dry-run` is — there is no plan to inspect until one has been bought —
-so it prints the planner call's cost and keeps the spec it paid for. Opt out with `--no-skill-mapping` (mirroring
+so it prints the planner call's cost and keeps the spec it paid for, under
+`$OMG_HOME/plans/<id>/` rather than `runs/`: nothing ran, and a directory in
+`runs/` with no `state.json` reads to `runs list` and `serve` as a broken run.
+Opt out with `--no-skill-mapping` (mirroring
 `--no-agent-mapping`, including on `chat`). Scan failures — missing
 directories, unreadable files, broken frontmatter, a blank name — are silent
 no-mapping, never an error: zero-config stays zero-config. Directories are

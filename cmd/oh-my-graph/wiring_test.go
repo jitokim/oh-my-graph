@@ -424,3 +424,106 @@ func TestPrintPlan_ShowsSkillScanAndItsLimits(t *testing.T) {
 		t.Errorf("no scan ran, so the printout must not claim one did:\n%s", off.String())
 	}
 }
+
+// TestPrintPlan_NamesAShadowedSkill: the count above the decisions is the size
+// of the deduped set, so two definitions sharing a name print as one and take
+// the count down with them. That subtraction has no explanation anywhere in the
+// output unless the file that lost is named — "35 skill(s)" against 36 skill
+// directories otherwise just looks wrong.
+func TestPrintPlan_NamesAShadowedSkill(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"impl","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g, SkillScan: &coordinator.SkillScan{
+		Dirs:     []string{"/home/u/.claude/skills"},
+		Found:    35,
+		Shadowed: []string{"/home/u/.claude/skills/old-babysit/SKILL.md"},
+	}}, "/tmp/graph.json")
+	if !strings.Contains(out.String(), "skill shadowed: /home/u/.claude/skills/old-babysit/SKILL.md") {
+		t.Errorf("a shadowed definition must be named:\n%s", out.String())
+	}
+
+	// And the line stays a signal: no collision, no line.
+	var clean strings.Builder
+	printPlan(&clean, coordinator.Plan{Graph: g, SkillScan: &coordinator.SkillScan{
+		Dirs: []string{"/home/u/.claude/skills"}, Found: 35,
+	}}, "/tmp/graph.json")
+	if strings.Contains(clean.String(), "shadowed") {
+		t.Errorf("nothing was shadowed, so nothing may say so:\n%s", clean.String())
+	}
+}
+
+// TestNoteSkillMappings_NotScannedNoteMatchesWhatIsActuallyScanned holds the
+// disclosure to the code it describes. The "Not scanned" note is prose: if
+// ADR 0012's conditions are ever met and plugin directories join
+// DefaultSkillDirs, every existing test still passes while the printout claims
+// they are out of scope — a disclosure that lies, on the one code path whose
+// entire purpose is that the disclosure is true. So each claim is paired here
+// with the absolute path it means, its presence in the note asserted first
+// (rewording the note fails here rather than quietly detaching this check),
+// and no scanned directory may fall inside any of them.
+func TestNoteSkillMappings_NotScannedNoteMatchesWhatIsActuallyScanned(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notScanned := []struct{ printed, resolved string }{
+		{"~/.claude/plugins", filepath.Join(home, ".claude", "plugins")},
+		{"./.claude/skills", filepath.Join(cwd, ".claude", "skills")},
+	}
+
+	scanned := coordinator.DefaultSkillDirs()
+	var out strings.Builder
+	noteSkillMappings(&out, &coordinator.SkillScan{Dirs: scanned}, nil)
+	note := out.String()
+
+	for _, loc := range notScanned {
+		if !strings.Contains(note, loc.printed) {
+			t.Fatalf("this test encodes the note's claims, and %q is no longer one of them:\n%s", loc.printed, note)
+		}
+		for _, dir := range scanned {
+			if dir == loc.resolved || strings.HasPrefix(dir, loc.resolved+string(os.PathSeparator)) {
+				t.Errorf("the printout calls %s out of scope, but DefaultSkillDirs scans %s", loc.printed, dir)
+			}
+		}
+	}
+}
+
+// TestMappingOptions_UnresolvableHomeIsNotSilent covers the one case where
+// skill mapping is ON, maps nothing, and the plan printout says nothing at all:
+// DefaultSkillDirs returns empty when the home directory cannot be resolved, a
+// coordinator with zero skill directories never scans, and a scan that never
+// happened records no SkillScan to print. Nobody chose that, so it cannot be
+// left to the silence the opt-out earns.
+func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
+	t.Setenv("HOME", "")
+	if dirs := coordinator.DefaultSkillDirs(); len(dirs) != 0 {
+		t.Fatalf("DefaultSkillDirs = %v with no home, want empty — this test's premise is gone", dirs)
+	}
+
+	var on strings.Builder
+	mappingOptions(&on, false, false)
+	if !strings.Contains(on.String(), "no skill directory") || !strings.Contains(on.String(), "--no-skill-mapping") {
+		t.Errorf("mapping is on and can never map: say so, and name the way to mean it:\n%s", on.String())
+	}
+
+	// Turning it off is a choice, and a choice is not a warning.
+	var off strings.Builder
+	mappingOptions(&off, false, true)
+	if off.Len() != 0 {
+		t.Errorf("--no-skill-mapping must stay silent:\n%s", off.String())
+	}
+
+	// Neither is the normal case a warning.
+	t.Setenv("HOME", t.TempDir())
+	var quiet strings.Builder
+	mappingOptions(&quiet, false, false)
+	if quiet.Len() != 0 {
+		t.Errorf("a resolvable home has nothing to report:\n%s", quiet.String())
+	}
+}
