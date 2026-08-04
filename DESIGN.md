@@ -596,6 +596,45 @@ branch-assertion check node (`coordinator.plannedVerdictPattern`, where a
 planned node may not set `verify` and the pattern is the whole gate); a new
 verdict token joins it.
 
+**A verdict nothing checks is not a verdict.** A prompt that asks for one and
+a `success_check` of `{ exit_zero: true }` is the same "a prompt is not a
+mechanism" failure as the markdown one above, and it fails in the more
+expensive direction. `merge-shepherd`'s last node was asked for the merge
+commit SHA and replied "CodeRabbit's re-review is mid-flight, so I'm waiting
+… Poller armed (30s interval, 12 min cap). I'll proceed as soon as it lands."
+The claude process exited 0, nothing matched anything, the node passed, the
+ledger recorded a successful merge step, and nothing was merged; the operator
+found out because `git pull` did not move. A false FAIL costs a retry, so it
+announces itself — a false PASS writes a wrong row in the ledger and stays
+there. So: **if a node's prompt names the answer it must give, its
+`success_check` must be able to tell whether it got one.**
+
+The reply that has to be rejected is rarely a wrong answer — it is a promise
+of future work. A node's turn ends when it replies, so "I'll follow up once X
+lands" is the node reporting work that will never happen. Two halves again:
+the prompt says the turn ends at the reply and demands the state that is true
+*as it replies*, never a plan to continue; the token carries a **payload only
+the finished work can produce** — a commit SHA, a PR URL, a count of comments
+actioned, a file path. ``MERGED[*_`\s:]*[0-9a-f]{7,40}`` is an assertion;
+`MERGED` alone is a word a model writes about a merge it intends.
+
+**Two legitimate outcomes, one pattern.** Some nodes have two right answers —
+`merge` either merged or deliberately did not, and refusing to merge past an
+unfinished review is the graph working, not failing. That is an anchored
+alternation, not a relaxed anchor:
+``'^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}|WITHHELD[*_`\s:]*\S)'``.
+Both outcomes pass, everything else fails, and the anchor still means what it
+meant. Two rules keep it honest. Pick tokens where neither is a prefix of the
+other and neither contains a separator a model may render differently —
+`WITHHELD` over `NOT-MERGED`, because a model told to write `NOT-MERGED` will
+sometimes write `NOT MERGED` and the decoration class deliberately does not
+absorb that. And pick a word for the negative outcome that names a **decision**
+rather than a state (`WITHHELD`, not `PENDING`), so the token itself cannot be
+honestly used for "not yet" — otherwise the alternation re-admits the promise
+it exists to reject. A graph whose green run can mean either outcome must say
+so in its header: the ledger says the node passed, and only its artifact says
+which.
+
 The engine's matching semantics stay deliberately dumb — normalizing the reply
 in Go (trim, strip emphasis, case-fold) would change what every existing
 `result_matches` in the wild means, so it is an ADR-scale question, not a patch.

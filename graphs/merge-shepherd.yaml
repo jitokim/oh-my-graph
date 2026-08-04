@@ -26,6 +26,14 @@
 # has not finished by the timeout, the node reports the actual state and fails
 # its READY check; the operator decides.
 #
+# The merge verdict is two-valued on purpose: MERGED <sha> or WITHHELD
+# <reason>. A deliberate refusal to merge PASSES — refusing to go past an
+# unfinished review is this graph working, not failing — so a green run is
+# not by itself proof that anything landed. Read merge's artifact. What must
+# never pass is the third thing a model writes: a promise to merge later.
+# That reply once ended a real run of this graph green with nothing merged,
+# and the only reason the operator noticed was that `git pull` did not move.
+#
 # The run pauses at the approve-merge gate (exit 2). Read triage's table,
 # then resume:
 #   oh-my-graph resume <run-id> --approve approve-merge
@@ -135,13 +143,27 @@ nodes:
       HARD limits: do NOT weaken or delete tests, and do NOT change
       behavior beyond what a comment literally asks — anything bigger is
       the operator's call, not this node's.
-      End your reply with a triage table: one row per comment → the action
-      taken (applied in <commit> / replied: <reason> ).
+      Every comment must have been actioned BEFORE you reply. Your FINAL
+      reply IS the verdict: this node's turn ends the moment you reply, so
+      a comment you plan to get to afterwards is a comment nobody ever
+      handles. Never end on "the rest to follow".
+      START your reply with the bare token TRIAGED followed immediately by
+      the number of comments you actioned (`TRIAGED 7`, and `TRIAGED 0`
+      when the PR has none) — those characters FIRST, with no markdown
+      emphasis (`**TRIAGED**` is WRONG), no heading, no preamble — then
+      the triage table: one row per comment → the action taken (applied in
+      <commit> / replied: <reason>). If you could not finish, do NOT write
+      TRIAGED: start with a bare BLOCKED and what stopped you, so the run
+      halts before the merge gate instead of passing it.
     allowed_tools: [Read, Edit, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
     handoff: artifact
-    success_check: { exit_zero: true }
+    # The count is the payload that makes the token an assertion rather
+    # than a word: a node that stopped halfway cannot name a total it
+    # actioned. Anchored, and tolerant of the emphasis a model adds
+    # unbidden (see DESIGN.md "Verdict patterns").
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]' }
 
   # The human gate: the run stops here with exit 2 after triage's table is
   # in. Read it, then `oh-my-graph resume <run-id> --approve approve-merge`
@@ -176,8 +198,26 @@ nodes:
         4. Prune stale local state for this PR: `git remote prune origin`,
            and `git branch -d` the PR's local branch if one exists.
       Run every step in the foreground and finish all four before you
-      answer: your final reply IS the verdict. Reply with the merge commit
-      SHA and a one-line ledger of what shipped.
+      answer. Your FINAL reply IS the verdict: this node's turn ends the
+      moment you reply, so anything you promise to do afterwards never
+      happens. NEVER end on a plan to continue — "I'll proceed as soon as
+      the review lands", "poller armed, 30s interval" — that is not a
+      verdict, and a reply exactly like it once ended this run green with
+      nothing merged. Report the state that is TRUE AS YOU REPLY, as
+      exactly one of these two verdicts, whose token must be the very
+      FIRST characters of the reply, with no markdown emphasis
+      (`**MERGED**` is WRONG), no heading, no backticks, no preamble:
+        - MERGED <sha> — the squash merge has landed. The merge commit SHA
+          comes immediately after the token with nothing in between
+          (`MERGED 4f2a1c9`), then a one-line ledger of what shipped.
+        - WITHHELD <reason> — you decided NOT to merge and the PR is still
+          open. The blocking fact comes immediately after the token
+          (`WITHHELD CodeRabbit's re-review has not concluded`). This is a
+          legitimate outcome and it PASSES: refusing to merge past an
+          unfinished review is this graph working as designed.
+      "Not yet" is not a third verdict. If you are tempted to wait for
+      something, the honest answer is WITHHELD naming what you are waiting
+      for — the operator decides whether to re-run.
     # Narrower than every other node's grant: this is the one irreversible
     # mutation in the pipeline, so it may run only the five commands above.
     allowed_tools:
@@ -189,4 +229,16 @@ nodes:
     permission_mode: dontAsk
     timeout: 15m
     handoff: artifact
-    success_check: { exit_zero: true }
+    # Two legitimate outcomes, one anchored alternation: it merged, or it
+    # deliberately did not. What the shape exists to reject is the reply
+    # that is NEITHER — the "re-review is mid-flight, I'll proceed as soon
+    # as it lands" promise, which under a bare `exit_zero: true` passed,
+    # recorded a successful merge step in the ledger, and merged nothing.
+    # MERGED must carry a commit SHA: a merge that really happened leaves
+    # one, a merge the node only intends does not. The SHA comes from step
+    # 2's `git pull --ff-only` range, which is the whole reason that step is
+    # inside this node's grant — narrowing it would leave the node unable to
+    # produce the evidence its own verdict requires.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*(MERGED[*_`\s:]*[0-9a-f]{7,40}|WITHHELD[*_`\s:]*\S)'
