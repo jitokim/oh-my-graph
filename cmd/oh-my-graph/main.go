@@ -562,8 +562,13 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 // stays inspectable and repeatable: JSON is valid YAML, so the saved file can
 // be hand-edited and re-run directly with `oh-my-graph run <path>` — it is
 // indented before writing so that editing is practical.
+//
+// It is written owner-only (0o700 / 0o600) because a spec is not merely a
+// topology: skill mapping inlines the body of a local SKILL.md into the node
+// prompts it carries, so the saved file can hold the user's own private
+// instructions verbatim.
 func saveGeneratedSpec(dir string, spec []byte) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create spec dir %q: %w", dir, err)
 	}
 	var indented bytes.Buffer
@@ -571,7 +576,7 @@ func saveGeneratedSpec(dir string, spec []byte) (string, error) {
 		spec = indented.Bytes()
 	}
 	path := filepath.Join(dir, "graph.json")
-	if err := os.WriteFile(path, spec, 0o644); err != nil {
+	if err := os.WriteFile(path, spec, 0o600); err != nil {
 		return "", fmt.Errorf("save generated graph spec: %w", err)
 	}
 	return path, nil

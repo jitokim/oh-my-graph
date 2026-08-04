@@ -474,7 +474,7 @@ prior E-number):
 - The user's skill investment reaches `auto` runs, zero-config, with the
   same explainable conservatism as agent mapping: name-token match,
   ambiguity is silence, every decision printed, one flag to turn it off.
-  Measured against this machine's corpus and the shipped `graphs/`, 7 of 28
+  Measured against this machine's corpus and the shipped `graphs/`, 7 of 32
   node ids map under the 16 KiB cap. Whether the inlined text actually
   *improves* those nodes is measurements (a)/(b) — required before
   Accepted, not assumed here.
@@ -504,7 +504,7 @@ prior E-number):
   task; an inlined body applies always. The misfire cost is measurement (b).
 - Name-only matching misses semantically relevant skills (`coding-rules`
   will never map onto a node named `implement-api`) and goes silent on
-  ambiguity at a measurable rate (3 of 28 shipped node ids). That is the
+  ambiguity at a measurable rate (3 of 32 shipped node ids). That is the
   price of an explainable rule, accepted knowingly.
 - Inlined text is a fork of the skill: improvements to the SKILL.md after
   plan time do not reach an already-planned run. Correct for

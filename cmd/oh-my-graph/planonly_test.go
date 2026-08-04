@@ -112,10 +112,22 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 		}
 	}
 
-	// The plan was bought, so it is kept — under plans/, not runs/.
+	// The plan was bought, so it is kept — under plans/, not runs/. Owner-only,
+	// because a saved spec can carry inlined SKILL.md bodies: the user's own
+	// private instructions, not just a topology.
 	planDir := solePlanDir(t)
-	if _, statErr := os.Stat(filepath.Join(planDir, "graph.json")); statErr != nil {
+	dirInfo, dirErr := os.Stat(planDir)
+	if dirErr != nil {
+		t.Fatalf("stat plan directory: %v", dirErr)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("plan directory mode = %#o, want 0700 — a spec dir is not world-readable", got)
+	}
+	specInfo, statErr := os.Stat(filepath.Join(planDir, "graph.json"))
+	if statErr != nil {
 		t.Errorf("--plan-only must keep the spec it paid for: %v", statErr)
+	} else if got := specInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("saved spec mode = %#o, want 0600 — it can hold inlined skill bodies", got)
 	}
 	for _, gone := range []string{stateFileName, runfeed.FileName, lockFileName} {
 		if _, statErr := os.Stat(filepath.Join(planDir, gone)); statErr == nil {
