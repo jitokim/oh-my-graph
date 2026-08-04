@@ -145,6 +145,9 @@ oh-my-graph init
 # Zero config — describe the goal and let auto plan the graph:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# See what that would do first — prints the plan, runs no node:
+oh-my-graph auto "lint this repo and summarize the findings" --plan-only
+
 # Or run a shipped graph — the cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
@@ -169,8 +172,14 @@ subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOK
 YAML이므로 손으로 수정해 `oh-my-graph run`으로 다시 실행할 수 있습니다.
 플래너가 만든 노드는 `permission_mode: bypassPermissions`를 절대 쓸 수
 없습니다; 정밀한 제어가 필요하다면 여전히 커스텀 YAML이 그 경로입니다.
-`auto`의 손잡이들 — goal cycle, 에이전트 매핑, 스킬 매핑 — 은 아래
-[`auto` 심화](#auto-in-depth)에 있습니다.
+
+실행되기 *전에* 그 플랜을 먼저 읽고 싶다면? `--plan-only`가 플랜을
+출력하고 — 그래프, 모든 에이전트/스킬 매핑, tool ceiling — 노드를 하나도
+실행하지 않고 멈춥니다. `run --dry-run`과 달리 공짜는 아닙니다: 플래너 호출
+한 번이 이뤄지고 그 비용이 지불되기 전에는 보여줄 플랜 자체가 없으므로,
+그 금액을 출력하고 사들인 플랜을 그대로 보관합니다. `auto`의 손잡이들 —
+goal cycle, 에이전트 매핑, 스킬 매핑, 그리고 `--plan-only`가 그 플랜을
+이후에 어떻게 다루는지 — 은 아래 [`auto` 심화](#auto-in-depth)에 있습니다.
 
 그래프가 실행되는 동안에는 노드별 라이브 라인이 보입니다 —
 `▶ write  running…`, 이어서 `✓ write  PASS  $0.0091  4.2s` — 멀티 노드 실행
@@ -420,7 +429,10 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 보관되지만 `runs/`가 아니라 `~/.oh-my-graph/plans/<id>/graph.json`에
 남습니다 — 아무것도 실행되지 않았으니 run이 아니고, 따라서 `runs list`나
 `serve`에는 절대 잡히지 않습니다. 나중에 `oh-my-graph run <그 경로>`로
-실행할 수 있습니다.
+실행할 수 있습니다. 정의상 미리 보여주는 건 cycle 하나입니다 —
+`--max-cycles`가 2 이상인 `--plan-only`는 파싱 단계에서 거부됩니다. 첫
+cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므로, 미리 보여줄
+것 자체가 아직 존재하지 않기 때문입니다.
 
 당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다.
 다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
@@ -534,7 +546,10 @@ schema 버전이 명시된 snapshot(`state.json`)과 append-only 이벤트
 스트림(`events.jsonl`)이 저장되고, `runs list` / `show` / `watch` /
 `serve`가 이를 다시 읽으며 외부 consumer도 tail 할 수 있습니다.
 이 레이아웃은 문서화된 안정적 계약입니다 —
-[docs/RUN-FEED.md](docs/RUN-FEED.md) 참고.
+[docs/RUN-FEED.md](docs/RUN-FEED.md) 참고. `auto --plan-only` 프리뷰는
+의도적으로 이 트리에 들어가지 않습니다: 아무것도 실행되지 않았으므로 그
+스펙은 옆자리인 `~/.oh-my-graph/plans/<plan-id>/graph.json`에 보관되고,
+`runs/`를 읽는 어떤 소비자도 이를 신경 쓸 필요가 없습니다.
 
 또한 노드는 session persistence가 **켜진** 채 실행되므로, 모든 노드가
 `~/.claude/projects`에 평범한 claude 세션으로 남고 그 transcript를 읽는

@@ -130,6 +130,9 @@ oh-my-graph init
 # Zero config — describe the goal and let auto plan the graph:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# See what that would do first — prints the plan, runs no node:
+oh-my-graph auto "lint this repo and summarize the findings" --plan-only
+
 # Or run a shipped graph — the cheapest real smoke test (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
@@ -155,7 +158,14 @@ runs, and the generated spec is saved to
 `~/.oh-my-graph/runs/<run-id>/graph.json` — since JSON is valid YAML you can
 hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 `permission_mode: bypassPermissions`; custom YAML remains the path for precise
-control. Its knobs — goal cycles, agent mapping, skill mapping — are in
+control.
+
+Want to read that plan *before* anything executes? `--plan-only` prints it —
+the graph, every agent and skill mapping, the tool ceiling — and stops without
+running a node. Unlike `run --dry-run` it is not free: there is no plan to show
+until the one planner call has been made and paid for, so it prints what that
+cost and keeps the plan it bought. Its knobs — goal cycles, agent mapping,
+skill mapping, and what `--plan-only` does with the plan afterwards — are in
 [`auto` in depth](#auto-in-depth) below.
 
 While a graph runs you'll see a live line per node — `▶ write  running…`, then
@@ -398,7 +408,10 @@ while there is no plan to inspect until one has been bought, so `--plan-only`
 still pays for the single planner call and prints what it cost. The plan it
 paid for is kept — under `~/.oh-my-graph/plans/<id>/graph.json`, not in
 `runs/`, because nothing ran: a preview is not a run, so `runs list` and
-`serve` never see it. Run it later with `oh-my-graph run <that path>`.
+`serve` never see it. Run it later with `oh-my-graph run <that path>`. It
+previews one cycle by definition — `--plan-only` with `--max-cycles` above 1 is
+rejected at parse, since every cycle after the first is planned from the
+previous cycle's run and so does not exist yet to be shown.
 
 Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, by a
 blunter mechanism stated plainly: a planned node
@@ -505,7 +518,10 @@ relocate the base) — the same directory no matter where you invoke the tool
 from: a versioned snapshot (`state.json`) and an append-only event stream
 (`events.jsonl`), which `runs list` / `show` / `watch` / `serve` read back and
 any external consumer can tail. The layout is a documented, stable
-contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md).
+contract — see [docs/RUN-FEED.md](docs/RUN-FEED.md). An `auto --plan-only`
+preview is deliberately not in that tree: nothing ran, so its spec is kept
+beside it at `~/.oh-my-graph/plans/<plan-id>/graph.json` and no reader of
+`runs/` ever has to account for it.
 
 Nodes also run with session persistence **on**, so every node is an ordinary
 claude session in `~/.claude/projects` that any tool reading those transcripts
