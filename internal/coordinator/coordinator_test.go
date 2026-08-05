@@ -278,6 +278,112 @@ func TestPlan_PromptGuidesFeedbackLoops(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptStatesTheFeedbackPlaceholderRules pins the two load rules
+// graph.Validate enforces on {{ feedback.<id> }} that the prompt used to leave
+// unsaid — measured as 5 of 20 real goals producing no graph at all, the whole
+// planner call paid for and discarded.
+//
+// Both were invited by the text rather than merely unmentioned: the prompt
+// teaches " | inline" one bullet earlier on {{ artifacts.<id> }} and never
+// says the feedback namespace refuses filters, and it shows the placeholder by
+// example ("the implementing node's prompt") without ever stating where it is
+// legal or which node <id> must name. The #107 shape is used for the filter —
+// state the rule, then show the wrong form marked WRONG — because that is what
+// worked for "**PASS**".
+//
+// This is guidance to an untrusted producer, not enforcement: graph.Validate
+// refuses the tokens regardless (TestPlan_RepairsAValidationRefusalOnce shows
+// what a refusal now costs). Pinned here so the guidance cannot quietly go
+// missing again.
+func TestPlan_PromptStatesTheFeedbackPlaceholderRules(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "implement the feature and review it until it is ready", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the rule, stated
+		"takes NO filter",
+		// the wrong form, marked wrong — the #107 shape
+		`"{{ feedback.review | inline }}" is WRONG`,
+		// where the filter DOES belong, so the rule reads as a boundary
+		// rather than as an arbitrary refusal
+		"for {{ artifacts.<id> }} only",
+		// the scope rule: legal only on a node inside the loop body
+		"legal ONLY on a node",
+		// the reference rule: <id> names the declarer, not the rerun target
+		"DECLARES the feedback block",
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt lost a feedback-placeholder rule: missing %q", want)
+		}
+	}
+}
+
+// TestPlan_PromptForbidsPlannedVerifyCommands pins that the prompt states the
+// refusal validatePlannedNodeVerify enforces. The do-not-set list named
+// permission_mode, budget_usd, type, cwd, agent and worktree — but not
+// success_check.verify — while the same prompt directs the planner toward
+// success_check for the branch check. A goal like "run the tests and check
+// they pass" makes `verify: {command: "go test ./..."}` the obvious field, and
+// nothing in the prompt said no.
+func TestPlan_PromptForbidsPlannedVerifyCommands(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "run the tests and check they pass", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		// the field, named in the do-not-set list itself
+		"success_check.verify on any node",
+		// the wrong form, and that it is refused rather than ignored
+		`"success_check": {"verify": ...} is rejected`,
+		// what to reach for instead — the same two the refusal names
+		`Use "exit_zero" or "result_matches" instead`,
+	} {
+		if !strings.Contains(captured.Prompt, want) {
+			t.Errorf("planner prompt does not forbid success_check.verify: missing %q", want)
+		}
+	}
+}
+
+// TestPlan_PromptListsOnlyAcceptedRetryCauses pins the retry guidance against
+// the thing it exists to prevent: retry.on is a closed six-token set that the
+// prompt never mentioned at all, so a planner that reached for `retry` had to
+// invent a spelling, and one wrong token kills the whole plan at load.
+//
+// The assertion is the property, not the literal list: every cause the prompt
+// ADVERTISES is round-tripped through graph.Parse in a real retry.on, so a
+// token this package advertises but graph refuses — the direction that costs a
+// rejected plan — fails here instead of in production.
+func TestPlan_PromptListsOnlyAcceptedRetryCauses(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
+
+	if _, err := New(fake).Plan(context.Background(), "build the thing", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plannerRetryCauses) == 0 {
+		t.Fatal("plannerRetryCauses is empty: the prompt would advertise no cause at all")
+	}
+	for _, cause := range plannerRetryCauses {
+		if !strings.Contains(captured.Prompt, cause) {
+			t.Errorf("planner prompt does not list retry cause %q", cause)
+		}
+		spec := fmt.Sprintf(
+			`{"name":"retry-probe","version":"1","nodes":[{"id":"n","prompt":"go","allowed_tools":["Read"],"retry":{"max":1,"on":[%q]}}]}`,
+			cause,
+		)
+		if _, err := graph.Parse([]byte(spec)); err != nil {
+			t.Errorf("the prompt advertises retry cause %q, but graph.Parse rejects it: %v", cause, err)
+		}
+	}
+	// The list is closed, and the prompt must say so — otherwise a planner
+	// reads six examples rather than the whole set.
+	if !strings.Contains(captured.Prompt, "ONLY these exact tokens") {
+		t.Error("planner prompt does not state that the retry cause set is closed")
+	}
+}
+
 // TestPlan_PromptPrefersTimeoutOverBudget pins the budget posture the shipped
 // templates converged on: a tight budget_usd kills a nearly-done node at the
 // threshold and the salvage costs more than letting it finish, so a planned
