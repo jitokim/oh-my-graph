@@ -264,7 +264,7 @@ func TestVerdictCell_AbsentProvenanceRendersBare(t *testing.T) {
 	}
 }
 
-// TestRender_ColumnsStayAlignedAcrossQualifiers is why verdictWidth is a
+// TestRender_ColumnsStayAlignedAcrossQualifiers is why VerdictWidth is a
 // constant sized to the widest cell the closed set can produce, and not a
 // per-run measurement. The ledger is read at a glance in a terminal of unknown
 // width; a column that shifts left when a run happens to contain no

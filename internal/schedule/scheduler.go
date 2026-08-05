@@ -245,29 +245,34 @@ type Options struct {
 	// concurrently with any other.
 	//
 	// It exists for the evidence command auto mode attaches to a plan's sink
-	// nodes (ADR 0016 §2), and coordinator.Plan.SerializedVerifyNodes is what
-	// fills it. The serialization is LOAD-BEARING, not a nicety, and it has
-	// two independent reasons:
+	// nodes (ADR 0016 §2), and coordinator.InjectedVerifyNodes is what fills
+	// it. The serialization is LOAD-BEARING, not a nicety, and it has two
+	// independent reasons — neither of which is the ORDERING of the checks:
 	//
 	//   - flake: two concurrent `./gradlew build` invocations in one project
 	//     directory contend for the build daemon's locks, and a flaky check is
 	//     worse than a slow one;
-	//   - soundness: verifyEvidence runs at the START of its node's settlement
-	//     — before PersistOutput and recordPass — so a check does NOT observe
-	//     the final tree by virtue of finishing last. What carries "a passing
-	//     run means the final tree passed the command" is that under run-wide
-	//     serialization the last-EXECUTED check necessarily runs after every
-	//     other node's subprocess has ended.
+	//   - a build WRITES (build/, target/, node_modules/, generated sources),
+	//     so two concurrent builds of one directory can each fail on the
+	//     other's half-written output, and neither result then describes the
+	//     tree the user has.
+	//
+	// The ordering property holds without this field and must not be attributed
+	// to it: verifyEvidence runs at the START of its node's settlement, but
+	// still after that node's own subprocess, and every non-sink is an ancestor
+	// of a sink — so the last-STARTING check begins after every node's
+	// subprocess has ended whether or not the checks are serialized.
 	//
 	// So relaxing this owes a replacement argument, not a benchmark: a
 	// measurement showing Gradle tolerates concurrency buys a faster check only
-	// together with a new argument for "some check observed the final tree".
+	// together with an argument for why one build may read another's output
+	// mid-write.
 	//
 	// It removes interference between CHECKS, not skew between a check and a
-	// still-running node: with a ready set wider than one, a particular sink's
-	// check may still observe a tree another node is writing. The RUN's verdict
-	// stays sound (every sink must pass, and the last one ran after everything);
-	// a particular node's check result is best-effort.
+	// still-running node: a node re-run by a retry or a feedback round spawns
+	// while another member's check may be running. The RUN's verdict stays
+	// sound (every sink must pass, and the last check to start ran after every
+	// subprocess); a particular node's check result is best-effort.
 	SerializedVerifyNodes map[string]bool
 	// NodeRounds seeds each node's current feedback round for a resumed leg
 	// (ADR 0010): the resume path derives it from a declarer's non-terminal

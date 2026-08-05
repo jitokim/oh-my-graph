@@ -160,15 +160,19 @@ func TestPlan_VerifyAttachmentsAreDisclosed(t *testing.T) {
 	}
 }
 
-// TestPlan_SerializedVerifyNodesCoversEveryAttachment is the link between the
+// TestInjectedVerifyNodesCoversEveryAttachment is the link between the
 // attachment and the scheduler's mutual exclusion. A sink attached but left
-// out of the set is a build that runs concurrently with another build —
-// exactly the flake the serialization exists to prevent, and the case where
-// the ADR's soundness argument stops holding.
-func TestPlan_SerializedVerifyNodesCoversEveryAttachment(t *testing.T) {
+// out of the set is a build that runs concurrently with another build — the
+// flake the serialization exists to prevent, and the case where one build
+// reads what another is still writing.
+//
+// It asserts the set derived from the GRAPH against the attachments disclosed
+// to the user, which is the property both legs depend on: the resumed leg has
+// no attachment list to consult, only the graph.
+func TestInjectedVerifyNodesCoversEveryAttachment(t *testing.T) {
 	plan := planWithVerifyCommand(t, diamondSpec, VerifyCommand{Command: buildCmd})
 
-	serialized := plan.SerializedVerifyNodes()
+	serialized := InjectedVerifyNodes(plan.Graph)
 	for _, a := range plan.VerifyAttachments {
 		if !serialized[a.NodeID] {
 			t.Errorf("node %q carries an injected check but is not serialized, so two builds could run at once", a.NodeID)
@@ -196,7 +200,7 @@ func TestPlan_WithoutVerifyCommandNothingIsAttached(t *testing.T) {
 	if len(plan.VerifyAttachments) != 0 {
 		t.Errorf("attachments disclosed with no command supplied: %+v", plan.VerifyAttachments)
 	}
-	if serialized := plan.SerializedVerifyNodes(); len(serialized) != 0 {
+	if serialized := InjectedVerifyNodes(plan.Graph); len(serialized) != 0 {
 		t.Errorf("serialized set is non-empty with no command supplied: %v", serialized)
 	}
 }
@@ -407,24 +411,50 @@ func TestReattachVerifyCommand_LeavesAVerifyFreeGraphAlone(t *testing.T) {
 // the fourth provenance member rather than a rounding-out of the table).
 // Planned graphs cannot contain gates at all, so this path is only reachable
 // for a hand-written graph — which is exactly why the guard needs a test.
+//
+// The control is the second sink: skipping the gate must not skip the graph.
 func TestReattachVerifyCommand_SkipsAGateSink(t *testing.T) {
 	spec := `{"name":"gated","nodes":[` +
 		`{"id":"work","prompt":"work","allowed_tools":["Edit"]},` +
-		`{"id":"approve","prompt":"ship it?","type":"gate","depends_on":["work"]}]}`
+		`{"id":"approve","prompt":"ship it?","type":"gate","depends_on":["work"]},` +
+		`{"id":"build","prompt":"build","allowed_tools":["Edit"]}]}`
 	g := mustParse(t, spec)
-	if sinks := sinkNodeIDs(g); len(sinks) != 1 || sinks[0] != "approve" {
-		t.Fatalf("fixture's only sink must be the gate, got %v", sinks)
+	if sinks := sinkNodeIDs(g); len(sinks) != 2 {
+		t.Fatalf("fixture must have the gate and one claude node as sinks, got %v", sinks)
 	}
 
 	reattached, attachments, err := ReattachVerifyCommand(g, VerifyCommand{Command: buildCmd})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(attachments) != 0 {
-		t.Errorf("attached a build command to a gate: %+v", attachments)
+	if len(attachments) != 1 || attachments[0].NodeID != "build" {
+		t.Errorf("attachments = %+v, want exactly the non-gate sink", attachments)
 	}
 	if _, attached := verifyOf(t, reattached, "approve"); attached {
 		t.Error("the gate carries a verification, so approving it would run a build to grade the approval")
+	}
+	if _, attached := verifyOf(t, reattached, "build"); !attached {
+		t.Error("the claude sink carries no verification, so the gate's presence silently disarmed the command")
+	}
+}
+
+// TestReattachVerifyCommand_RefusesAGraphWhoseSinksAreAllGates is the case
+// skipping gates creates: a user who supplied a command would otherwise get no
+// verification AND no warning — VerifyAdvice prints nothing once a command was
+// supplied, so silence would read as "attached". Unreachable from Plan (a
+// planned graph cannot contain a gate), reachable here.
+func TestReattachVerifyCommand_RefusesAGraphWhoseSinksAreAllGates(t *testing.T) {
+	spec := `{"name":"gated","nodes":[` +
+		`{"id":"work","prompt":"work","allowed_tools":["Edit"]},` +
+		`{"id":"approve","prompt":"ship it?","type":"gate","depends_on":["work"]}]}`
+	g := mustParse(t, spec)
+
+	_, _, err := ReattachVerifyCommand(g, VerifyCommand{Command: buildCmd})
+	if err == nil {
+		t.Fatal("a graph ending only in gates accepted a verify command and attached it nowhere")
+	}
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("error %q must say the sinks are gates, or the user cannot act on it", err)
 	}
 }
 

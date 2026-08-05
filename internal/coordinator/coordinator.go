@@ -673,6 +673,14 @@ func validatePlannedNodeFeedback(node graph.Node) error {
 // rounds of feedback on top. #119 is a cost story, so the count gets a
 // ceiling.
 //
+// It bounds one node's re-runs, not the run's total build count: Retry.Max is
+// ADDITIONAL attempts, so 3 is 4 executions of the node and of the command
+// attached to it — and maxPlannedFeedbackRounds multiplies that again, so a
+// sink inside a feedback loop reaches roughly 16 executions of the user's
+// command, each bounded only by the 10-minute verify ceiling and all of them
+// serialized. That compound is the real worst case; this constant only keeps
+// it from being unbounded.
+//
 // The same small number as maxPlannedFeedbackRounds, for the same reason: the
 // planner prompt never asks for retry at all, so anything a plan declares here
 // is already unsolicited, and leaving one round of headroom keeps a defensible

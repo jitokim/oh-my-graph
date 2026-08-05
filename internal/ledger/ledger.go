@@ -154,13 +154,13 @@ func (l *RunLedger) Render() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run %s — %d node(s)\n", l.runID, len(records))
-	fmt.Fprintf(&b, "%-16s %-*s %-24s %10s  %s\n", "NODE", verdictWidth, "VERDICT", "SESSION", "COST(USD)", "DETAIL")
+	fmt.Fprintf(&b, "%-16s %-*s %-24s %10s  %s\n", "NODE", VerdictWidth, "VERDICT", "SESSION", "COST(USD)", "DETAIL")
 	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", ruleWidth))
 
 	for _, rec := range records {
 		fmt.Fprintf(&b, "%-16s %-*s %-24s %10.4f  %s\n",
 			rec.NodeID,
-			verdictWidth, VerdictCell(rec),
+			VerdictWidth, VerdictCell(rec),
 			shortSession(rec.SessionID),
 			rec.CostUSD,
 			rec.Detail,
@@ -174,17 +174,22 @@ func (l *RunLedger) Render() string {
 	return b.String()
 }
 
-// verdictWidth sizes the VERDICT column: len("PASS (self-reported)"), the
+// VerdictWidth sizes the VERDICT column: len("PASS (self-reported)"), the
 // widest cell the closed qualifier set can produce. It is a constant rather
 // than a per-run measurement so two runs' tables line up with each other, and
 // so a run in which every node happens to be `verified` does not print a
 // narrower table than the same run one self-report later.
 //
+// It is exported because `show` renders the same column through VerdictCell
+// and must size it the same way: a literal %-20s over there is a copy of this
+// number that nothing pins, and the qualifier set is precisely the thing that
+// widened it once already.
+//
 // ruleWidth is the header line's own length (16+1+20+1+24+1+10+2+6), so the
 // rule under the header is exactly as wide as the header.
 const (
-	verdictWidth = 20
-	ruleWidth    = 81
+	VerdictWidth = 20
+	ruleWidth    = 16 + 1 + VerdictWidth + 1 + 24 + 1 + 10 + 2 + 6
 )
 
 // VerdictCell renders the VERDICT column: the verdict, qualified by HOW it was

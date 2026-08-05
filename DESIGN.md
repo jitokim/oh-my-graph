@@ -891,6 +891,18 @@ incompatible snapshot is refused rather than misread:
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
 - **gate decisions so far**, and which gate the run is paused at.
 
+**One field the snapshot holds but `resume` does not trust**: an auto graph's
+`success_check.verify`. A verification is a command the ENGINE runs, outside
+every layer of the auto ceiling — which is why `validatePlannedNodeVerify`
+refuses a planner-authored one at plan time — so a resumed leg reconstructing a
+planned graph strips any it finds and **refuses the resume**, naming the nodes
+(`coordinator.ReattachVerifyCommand`, ADR 0016 §4). The discriminator is the
+snapshot's tool policies, non-empty exactly for a planned graph: a hand-written
+graph's `verify:` is the user's own reviewed artifact and round-trips
+untouched. Today the refusal is terminal, since only `auto` will parse
+`--verify-cmd`; a `resume` that re-supplies the command is what makes such a
+run resumable.
+
 **What the snapshot deliberately does NOT hold:** in-degree counts and the
 ready set. Both are *derived* from `graph × completed`, so persisting them would
 create a second source of truth that can go stale. `resume` recomputes them:

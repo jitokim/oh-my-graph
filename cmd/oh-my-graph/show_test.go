@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
@@ -182,5 +183,39 @@ func TestShowRun_QualifiesAPassWithItsProvenance(t *testing.T) {
 	// rather than being rounded up into a claim about what was measured.
 	if legacy := lineFor(t, got, "legacy"); strings.Contains(legacy, "PASS (") {
 		t.Errorf("a row with no recorded provenance invented one: %q", legacy)
+	}
+}
+
+// TestShowRun_DividerMatchesTheHeader pins this table's rule to the header it
+// underlines, which is the only thing that stops the two from drifting apart
+// as columns change width. It also fails if the VERDICT column stops tracking
+// ledger.VerdictWidth — the drift that already happened once, when a widened
+// qualifier set moved the end-of-run table and left a literal here behind.
+func TestShowRun_DividerMatchesTheHeader(t *testing.T) {
+	dir := t.TempDir()
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID: "20260806-090000",
+		Graph: json.RawMessage(`{"name":"demo","nodes":[{"id":"apply","prompt":"a"}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			"apply": {Verdict: runstate.VerdictPass, Provenance: "self-reported"},
+		},
+	})
+
+	var out strings.Builder
+	if err := showRun(&out, dir, "20260806-090000"); err != nil {
+		t.Fatalf("showRun returned error: %v", err)
+	}
+	lines := strings.Split(out.String(), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("table is too short to have a header and a rule:\n%s", out.String())
+	}
+	header, rule := lines[1], lines[2]
+	if len(rule) != len(header) {
+		t.Errorf("rule is %d chars for a %d-char header:\n%s\n%s", len(rule), len(header), header, rule)
+	}
+	// The VERDICT cell is sized by the ledger's constant, not by a literal:
+	// the header's widest qualifier must fit exactly where VerdictCell writes it.
+	if !strings.Contains(header, "VERDICT"+strings.Repeat(" ", ledger.VerdictWidth-len("VERDICT"))+" SESSION") {
+		t.Errorf("VERDICT column is not %d wide, so it no longer tracks ledger.VerdictWidth:\n%s", ledger.VerdictWidth, header)
 	}
 }

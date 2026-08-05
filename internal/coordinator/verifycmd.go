@@ -175,8 +175,14 @@ func sinkNodeIDs(g *graph.Graph) []string {
 // after applyAgentMapping and applySkillMapping, so the command lands in the
 // graph that becomes the final Spec and is therefore SNAPSHOTTED — `run` and
 // `resume` on the saved graph.json replay the check, and `--plan-only` prints
-// it. (What that snapshot is worth on resume is a residual ADR 0016 §4 records
-// rather than closes; ReattachVerifyCommand is the mechanism that closes it.)
+// it.
+//
+// What that snapshot is worth on resume is the residual ADR 0016 §4 records.
+// Half of it is closed today: `resume` calls ReattachVerifyCommand, so a
+// snapshot-borne command on an auto graph is REFUSED rather than replayed. The
+// other half — the user re-supplying the command on the resumed leg, which is
+// what would let an auto run with build evidence be resumed at all — waits on
+// `resume` learning --verify-cmd, and is not yet in the tree.
 func (c *Coordinator) attachVerifyCommand(plan *Plan) error {
 	if !c.verifyCommand.Supplied() {
 		return nil
@@ -197,7 +203,8 @@ func (c *Coordinator) attachVerifyCommand(plan *Plan) error {
 // decided — so there is nothing for an evidence command to be evidence ABOUT,
 // and running a build to grade someone's approval would be a category error.
 // (Planned graphs cannot contain gates at all; this path is also reached from
-// ReattachVerifyCommand, where a hand-written graph can.)
+// ReattachVerifyCommand, where a hand-written graph can.) A graph whose sinks
+// are ALL gates is refused rather than silently left unverified.
 //
 // The rebuilt graph always goes back through graph.Parse rather than being
 // handed over mutated in place. Two things depend on it: Verification.Timeout
@@ -220,6 +227,12 @@ func attachVerification(g *graph.Graph, v VerifyCommand) (*graph.Graph, []byte, 
 
 	timeout := v.ResolvedTimeout()
 	attached := make([]VerifyAttachment, 0, len(sinks))
+	// Skipping a gate sink is right per-node but wrong for the graph if EVERY
+	// sink is one: attaching nothing would hand back a graph the user believes
+	// carries their command, and VerifyAdvice prints nothing once a command was
+	// supplied — no verification and no warning. Unreachable from Plan (a
+	// planned graph cannot contain a gate at all), reachable from
+	// ReattachVerifyCommand, which admits hand-written graphs.
 	out := *g
 	out.Nodes = append([]graph.Node(nil), g.Nodes...)
 	for i := range out.Nodes {
@@ -233,6 +246,9 @@ func attachVerification(g *graph.Graph, v VerifyCommand) (*graph.Graph, []byte, 
 		}
 		attached = append(attached, VerifyAttachment{NodeID: node.ID, Command: v.Command, Timeout: timeout})
 	}
+	if len(attached) == 0 {
+		return nil, nil, nil, fmt.Errorf("graph %q ends in gate node(s) only, so the verify command has nowhere to attach: a gate's PASS is a human decision with no subprocess for an evidence command to be evidence about", g.Name)
+	}
 
 	spec, err := json.Marshal(&out)
 	if err != nil {
@@ -245,29 +261,51 @@ func attachVerification(g *graph.Graph, v VerifyCommand) (*graph.Graph, []byte, 
 	return reparsed, spec, attached, nil
 }
 
-// SerializedVerifyNodes is the set of node ids whose verifications this run
-// must run one at a time — schedule.Options.SerializedVerifyNodes.
+// InjectedVerifyNodes is the set of node ids whose verifications a run must
+// execute one at a time — schedule.Options.SerializedVerifyNodes.
+//
+// It reads the GRAPH rather than a Plan's VerifyAttachments so both legs of a
+// run can ask the same question with the same answer: a fresh leg holds a Plan,
+// a resumed leg holds only a graph rebuilt from the run directory. The
+// derivation is exact for a planned graph and ONLY for one — validatePlannedNodeVerify
+// refuses a planner-authored `verify:`, so every verification a planned graph
+// carries was attached by attachVerification. A hand-written graph's
+// verifications are the user's own reviewed artifact and keep running
+// concurrently, so the caller passes a planned graph only; its discriminator is
+// the auto-mode tool ceiling, non-empty exactly for a plan.
 //
 // The serialization is LOAD-BEARING, not a nicety, and relaxing it needs a
-// replacement argument rather than a benchmark (ADR 0016 §2). The obvious
-// reason is flake: two concurrent `./gradlew build` invocations in one project
-// directory contend for the build daemon's locks. The structural reason is
-// soundness: verifyEvidence runs at the START of its node's settlement, before
-// PersistOutput and recordPass, so a check does NOT observe the final tree by
-// virtue of finishing last. What carries "a passing run means the final tree
-// passed the user's command" is that under run-wide serialization the
-// last-executed check necessarily runs after every other node's subprocess has
-// ended — plus the fact that a failed sink fails the run under EITHER failure
-// policy (a continue-on-fail failure still lands in prunedFailures, which
-// still returns *RunFailedError), so `on_fail: continue` cannot buy a plan a
-// passing run.
-func (p Plan) SerializedVerifyNodes() map[string]bool {
-	if len(p.VerifyAttachments) == 0 {
-		return nil
+// replacement argument rather than a benchmark (ADR 0016 §2). Two reasons, and
+// the ordering one is NOT among them:
+//
+//   - flake: two concurrent `./gradlew build` invocations in one project
+//     directory contend for the build daemon's locks, and a flaky check is
+//     worse than a slow one;
+//   - a check must not read a tree another check's build is WRITING. A build
+//     is not a read-only observer — it writes build/, target/, node_modules/,
+//     generated sources — so two concurrent builds of one directory can each
+//     fail on the other's half-written output, and neither result describes
+//     the tree the user has.
+//
+// What it does NOT carry is the ordering claim, which holds with or without
+// it: a node's check runs after that node's own subprocess, every non-sink is
+// an ancestor of a sink (TestSinkNodeIDs_EveryNodeReachesASink), and an
+// ancestor ends before its descendant starts — so by the time the
+// last-STARTING check begins, every node's subprocess has already ended,
+// serialized or not. That, plus the fact that a failed sink fails the run under
+// EITHER failure policy (a continue-on-fail failure still lands in
+// prunedFailures, which still returns *RunFailedError, so `on_fail: continue`
+// cannot buy a plan a passing run), is what carries "a passing run means the
+// final tree passed the user's command".
+func InjectedVerifyNodes(g *graph.Graph) map[string]bool {
+	ids := make(map[string]bool, len(g.Nodes))
+	for _, n := range g.Nodes {
+		if n.SuccessCheck.Verify != nil {
+			ids[n.ID] = true
+		}
 	}
-	ids := make(map[string]bool, len(p.VerifyAttachments))
-	for _, a := range p.VerifyAttachments {
-		ids[a.NodeID] = true
+	if len(ids) == 0 {
+		return nil
 	}
 	return ids
 }
@@ -284,8 +322,11 @@ func (p Plan) SerializedVerifyNodes() map[string]bool {
 // outsider: a planned node may hold bare Write/Edit, and validatePlannedNodeCwd
 // already concedes it "does NOT make a write-capable node safe".
 //
-// ReattachVerifyCommand restores the assertion exactly: the user re-supplies
-// the command, and a snapshot-borne one is refused.
+// ReattachVerifyCommand restores the assertion, and `resume` calls it: a
+// snapshot-borne command is refused with this error. The other half of ADR
+// 0016 §4's mechanism (i) — the user RE-SUPPLYING the command on the resumed
+// leg — needs a --verify-cmd flag on `resume`, which does not exist yet, so
+// today the refusal is the whole of it and this error is terminal.
 type SnapshotVerifyError struct {
 	NodeIDs []string
 }

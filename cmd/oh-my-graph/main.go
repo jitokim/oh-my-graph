@@ -503,15 +503,27 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		defer startLiveView(ctx, web, runID)()
 	}
 
+	// An auto run's injected evidence commands run one at a time (ADR 0016 §2).
+	// The set is derived from the graph rather than carried from the Plan so a
+	// resumed leg could ask the same question of the same material; the
+	// discriminator is the tool ceiling, which is non-empty exactly for a
+	// planned graph — a hand-written graph's own verifications are the user's
+	// reviewed artifact and keep running concurrently.
+	var serializedVerify map[string]bool
+	if len(toolPolicies) > 0 {
+		serializedVerify = coordinator.InjectedVerifyNodes(g)
+	}
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
-		Concurrency:    flags.concurrency,
-		ContinueOnFail: flags.continueOnFail,
-		Gate:           gate.NewPauseController(),
-		Verifier:       verify.NewShellVerifier(),
-		Worktrees:      worktrees,
-		ToolPolicies:   toolPolicies,
-		Recorder:       recorder,
-		EventSink:      feed,
+		Concurrency:           flags.concurrency,
+		ContinueOnFail:        flags.continueOnFail,
+		Gate:                  gate.NewPauseController(),
+		Verifier:              verify.NewShellVerifier(),
+		Worktrees:             worktrees,
+		ToolPolicies:          toolPolicies,
+		SerializedVerifyNodes: serializedVerify,
+		Recorder:              recorder,
+		EventSink:             feed,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)

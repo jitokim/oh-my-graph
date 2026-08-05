@@ -243,7 +243,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 |---|---|---|
 | `run_started` | — | A scheduler leg begins, before any node launches. |
 | `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
-| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
+| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)*, `round` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
@@ -266,6 +266,22 @@ per-line cap below for the actual hard limit. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+`node_passed` additionally carries `provenance`: **how** the PASS was reached
+(ADR 0016 §6), one of a closed set of four —
+
+| `provenance` | the PASS was reached by |
+|---|---|
+| `verified` | a `success_check.verify` command the ENGINE ran and whose exit code it judged. |
+| `self-reported` | `result_matches` — the node emitted the right words. Nothing outside the node observed anything. |
+| `exit-only` | a subprocess ran and exited 0, with no predicate over what it did. |
+| `approved` | a human approved a `type: gate` node — no subprocess, and the strongest provenance in the set. |
+
+It reports **provenance, never adequacy**: `verified` says the engine gathered
+the evidence, not that the evidence was sufficient. It is an optional additive
+field, **no schema bump** — absent means the run predates it (or, on
+`node_failed`, that it never applies: only a PASS has a provenance). A consumer
+that has never heard of it parses these events exactly as before.
 
 Node events emitted by a feedback re-execution (ADR 0010) additionally carry
 `round`, the 1-based feedback round the execution belongs to — an optional

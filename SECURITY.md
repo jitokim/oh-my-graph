@@ -76,7 +76,17 @@ after a plan has been validated, trusted Go code attaches your command to the
 graph's sink nodes, so the engine runs the build itself and judges its exit
 code. (**Not yet reachable from the CLI**: the engine side is implemented and
 tested, but `auto` does not parse `--verify-cmd` / `--verify-timeout` yet, so
-today every auto run still takes the zero-config path described below.) A planned node is granted nothing by it — no ceiling layer changes, and
+today every auto run still takes the zero-config path described below.)
+
+`resume` never takes a verification from a run directory on an auto graph: it
+refuses the resume and names the edited node. A `success_check.verify` is
+engine-run shell outside every ceiling layer, so a snapshot that carries one —
+whether from a future `--verify-cmd` run or from an edit to `graph.json` — is
+not something a resumed leg replays on trust. Hand-written graphs are
+unaffected: their `verify:` is your own reviewed artifact and round-trips
+unchanged.
+
+A planned node is granted nothing by `--verify-cmd` — no ceiling layer changes, and
 the allowlist deliberately does **not** grow an entry per ecosystem, because
 that would put this repository's toolchain inside every user's ceiling.
 `--verify-cmd` is unbounded user shell with exactly the standing a hand-written
