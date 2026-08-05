@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Verdict is a node's terminal judgement in the ledger.
@@ -150,7 +151,23 @@ func (l *RunLedger) TotalCost() float64 {
 // tableWidth is the rule under the table's header and above its footer, sized
 // for the columns without the budget annotation. A run that declares a budget
 // widens it by budgetAnnotationWidth so the rule still spans the table.
-const tableWidth = 78
+const tableWidth = 73
+
+// sessionWidth is the SESSION column. It is the annotation's funding: the
+// stub can only ever be sessionStub+1 columns wide, so the column was carrying
+// slack that a budgeted run needed more. Paying for the annotation here rather
+// than at the right edge is what keeps a budgeted run's rule at 80 columns
+// instead of 85, and DETAIL within a column of where it has always sat — the
+// graphs that actually declare budgets (adr-driven-dev, self-dev and
+// dev-review-pr, each via one node or the e2e-verify fragment) are the mixed
+// case, not the zero-budget one, so it is the case the width must fit.
+const sessionWidth = 19
+
+// sessionStub is how much of a session id survives truncation, one column
+// short of sessionWidth to leave room for the ellipsis. 18 characters still
+// spans three groups of a UUID, which is far past the point where two ids in
+// one run diverge; the full id is in the per-node record and in `show`.
+const sessionStub = 18
 
 // budgetAnnotationWidth is the constant width the "(99%)" budget annotation
 // occupies inside the COST(USD) cell, including its leading space. Constant so
@@ -167,23 +184,22 @@ const budgetAnnotationWidth = 7
 func (l *RunLedger) Render() string {
 	records := l.Records()
 	// Whether to make room for the budget annotation is a per-RUN decision, not a
-	// per-row one. A graph where no node declares budget_usd — the common case —
-	// must render byte for byte the table it rendered before the annotation
-	// existed: no widened column, no blank field, nothing to read past. One
-	// budgeted node turns the field on for every row, so the DETAIL column stays
-	// in one place whether or not a given node declared a budget.
+	// per-row one. A graph where no node declares budget_usd pays nothing for the
+	// feature: no annotation, no blank field, no widened rule — one budgeted node
+	// turns the field on for every row, so the DETAIL column stays in one place
+	// whether or not a given node declared a budget.
 	budgeted := anyBudgetDeclared(records)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run %s — %d node(s)\n", l.runID, len(records))
-	fmt.Fprintf(&b, "%-16s %-10s %-24s %s  %s\n", "NODE", "VERDICT", "SESSION", costHeader(budgeted), "DETAIL")
+	fmt.Fprintf(&b, "%-16s %-10s %-*s %s  %s\n", "NODE", "VERDICT", sessionWidth, "SESSION", costHeader(budgeted), "DETAIL")
 	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", ruleWidth(budgeted)))
 
 	for _, rec := range records {
-		fmt.Fprintf(&b, "%-16s %-10s %-24s %s  %s\n",
+		fmt.Fprintf(&b, "%-16s %-10s %s %s  %s\n",
 			rec.NodeID,
 			string(rec.Verdict),
-			shortSession(rec.SessionID),
+			sessionCell(rec.SessionID),
 			costCell(rec, budgeted),
 			rec.Detail,
 		)
@@ -264,14 +280,33 @@ func ruleWidth(budgeted bool) int {
 	return tableWidth
 }
 
+// sessionCell renders the SESSION column: the stub, padded to sessionWidth in
+// DISPLAY columns rather than bytes.
+//
+// A plain %-*s verb pads by BYTES, and the ellipsis a truncated id ends in is
+// three of them for one column. At today's constants that verb happens to come
+// out right — a truncated stub is 21 bytes, so it is never padded at all, and
+// its sessionStub+1 runes land exactly on sessionWidth. That is a coincidence
+// of two constants, not a property: shorten sessionStub without shortening
+// sessionWidth and every real run's DETAIL slides two columns left of the
+// header's, in the one column whose whole job is alignment. Counting runes
+// costs nothing and does not depend on the coincidence holding.
+func sessionCell(id string) string {
+	stub := shortSession(id)
+	if pad := sessionWidth - utf8.RuneCountInString(stub); pad > 0 {
+		return stub + strings.Repeat(" ", pad)
+	}
+	return stub
+}
+
 // shortSession trims a session id to a readable stub for the table (full id is
 // still in the per-node record for anyone who needs it). Empty stays "-".
 func shortSession(id string) string {
 	if id == "" {
 		return "-"
 	}
-	if len(id) <= 20 {
+	if utf8.RuneCountInString(id) <= sessionWidth {
 		return id
 	}
-	return id[:20] + "…"
+	return string([]rune(id)[:sessionStub]) + "…"
 }

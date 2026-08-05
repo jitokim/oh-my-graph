@@ -35,6 +35,27 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   scanned". A `name:` collision inside one `~/.claude/skills` names its loser
   rather than silently moving the count.
 
+- **A passing node's spend now reads against its budget (#115).** The
+  `COST(USD)` column annotates each row with the share of `budget_usd` that
+  spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
+  the run that fails, not only in the FAIL detail afterwards. Floored, never
+  rounded, since a node that passed must not read 100%. The share rides inside
+  the cost cell rather than in a column of its own, and the whole field is a
+  per-**run** decision: a graph where no node declares `budget_usd` pays
+  nothing for the feature. To keep a budgeted run's table on an 80-column
+  terminal — the shipped graphs that declare a budget are mixed runs, not
+  budget-less ones — the `SESSION` stub narrowed from 20 characters to 18.
+- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#118).**
+  A reviewer that fans in from several producers still names one node in
+  `rerun`, so its loop body can exclude a producer whose artifact it judges;
+  the loop then re-judges an unchanged file every round and halts with the
+  defect untouched (~$14 of a $42 run). `lint` and `run --dry-run` now warn per
+  excluded producer, naming the reviewer, the rerun target, the producer, and —
+  when one exists and still validates — the covering target to aim at instead.
+  It is **advisory only**: it never changes whether a graph is valid or what
+  any command exits with. Parents that are gates, or that are upstream of the
+  rerun target (the `spec → impl → review` shape), are not reported.
+
 ### Fixed
 
 - **`output_matches` was judged against a truncated tail.** The verify seam

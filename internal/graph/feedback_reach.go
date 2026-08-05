@@ -46,14 +46,27 @@ func (a FeedbackAdvisory) String() string {
 //
 //   - A producer may be outside the body ON PURPOSE. ADR 0010's own rule 3
 //     blesses the shape — "Parents feeding into the body from outside are
-//     fine — they ran once, their artifacts are stable" — so a reviewer that
-//     reads a settled spec, criteria or corpus node alongside the work under
-//     review is a legitimate graph this sweep warns about anyway. Refusing it
-//     would break working hand-written graphs to catch a planner's mistake.
+//     fine — they ran once, their artifacts are stable". The two skips below
+//     keep the sweep off the shapes rules 3 and 4 bless, but neither skip is
+//     a proof of intent, so a legitimate graph can still be warned about: a
+//     sibling CORPUS root, on no path to the target, is topologically
+//     identical to #118's sibling WORK. Refusing that would break working
+//     hand-written graphs to catch a planner's mistake.
 //   - Refusing would also contradict rule 4. A gate can never be in a body,
 //     so a fan-in declarer with a gate parent could satisfy neither rule; the
 //     sweep skips gate parents for the same reason rather than emitting
 //     advice no author can act on.
+//
+// The two skips are a gate parent (rule 4, above) and a parent that is an
+// ANCESTOR OF THE RERUN TARGET. The second is rule 3's carve-out stated in
+// topology: such a parent sits upstream of the whole loop, its output already
+// flows into the body, and the loop re-runs its consumers — so
+// `spec → impl → review` with `rerun: impl`, the most idiomatic "judge the
+// implementation against the acceptance criteria" graph there is, stays quiet.
+// Without that skip the sweep would warn on it and advise `rerun: spec`, which
+// re-runs the criteria every round and re-judges the implementation against
+// criteria that just moved underneath it. #118's sibling producer lies on no
+// path to the target, and still warns.
 //
 // A single-parent declarer is never reported and needs no special case: its
 // sole parent lies on every path to it, so the between-set contains it
@@ -82,9 +95,11 @@ func (g *Graph) LintFeedbackReach() []FeedbackAdvisory {
 			inBody[id] = true
 		}
 
+		upstreamOfLoop := g.ancestorSet(n.Feedback.Rerun)
+
 		var unreachable []string
 		for _, parent := range n.DependsOn {
-			if inBody[parent] {
+			if inBody[parent] || upstreamOfLoop[parent] {
 				continue
 			}
 			node, ok := g.byID[parent]
@@ -104,7 +119,7 @@ func (g *Graph) LintFeedbackReach() []FeedbackAdvisory {
 				Rerun:    n.Feedback.Rerun,
 				Producer: producer,
 				Detail: fmt.Sprintf(
-					"arc reruns %q, whose loop body {%s} excludes producer %q — a defect this node finds in %[3]q's output can never be repaired: every round re-judges an unchanged artifact until the rounds are spent. %s",
+					"arc reruns %q, whose loop body {%s} excludes producer %q, and %[3]q is not upstream of the loop either — so if this node judges %[3]q's output, a defect it finds there cannot be repaired: every round re-judges an unchanged artifact until the rounds are spent. This sweep reads `depends_on`, not which artifacts the prompt judges, so ignore it if %[3]q is only stable context. %s",
 					n.Feedback.Rerun, strings.Join(body, ", "), producer, advice(suggestion)),
 			})
 		}
@@ -126,9 +141,13 @@ func advice(target string) string {
 
 // coveringFeedbackTarget returns the rerun target the declarer SHOULD name:
 // the one whose body contains every unreachable producer and the current
-// target, and whose graph still passes validateFeedback (a wider body can
-// swallow a gate, cross another arc's body, or grow a side exit — a
-// suggestion that does not load is worse than none). Ties break on the
+// target, and whose graph still passes BOTH feedback rule sets (a wider body
+// can swallow a gate, cross another arc's body, or grow a side exit — a
+// suggestion that does not load is worse than none). Both are checked rather
+// than only validateFeedback because "and still validates" is what the printed
+// advice claims: widening a body can only make more placeholder sites legal
+// today, but the claim should not be resting on that reasoning holding for
+// every future rule. Ties break on the
 // smallest body, then on declared node order, so the advice is deterministic
 // and re-runs no more of the graph than it must. Returns "" when no candidate
 // qualifies.
@@ -155,7 +174,8 @@ func (g *Graph) coveringFeedbackTarget(declarer string, unreachable []string) st
 		if missed {
 			continue
 		}
-		if len(g.withRerun(declarer, candidate).validateFeedback()) > 0 {
+		aimed := g.withRerun(declarer, candidate)
+		if len(aimed.validateFeedback()) > 0 || len(aimed.validateFeedbackPlaceholders()) > 0 {
 			continue
 		}
 		if best == "" || len(body) < bestSize || (len(body) == bestSize && g.declarationIndex(candidate) < g.declarationIndex(best)) {

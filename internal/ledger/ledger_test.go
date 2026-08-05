@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestTotalCost_SumsRecords(t *testing.T) {
@@ -273,6 +274,61 @@ func TestRender_ShowsBudgetDetail(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(rowFor(t, out, "spendy"), " "), detail) {
 		t.Errorf("the failure detail must reach the table untouched:\n%s", out)
 	}
+}
+
+// TestRender_BudgetedRuleFitsAnEightyColumnTerminal pins the width the budget
+// annotation is allowed to cost. A mixed run — one budgeted node among several
+// that are not — is the shipped reality, not the exception: adr-driven-dev,
+// self-dev and dev-review-pr all declare exactly one budget, so the widened
+// table IS the table users see. If its rule wraps on an 80-column terminal,
+// every run prints a stray broken line, twice.
+func TestRender_BudgetedRuleFitsAnEightyColumnTerminal(t *testing.T) {
+	l := New("run-wide")
+	l.Record(Record{NodeID: "capped", SessionID: "0198a3f7-0a3b-7bd2-9c1e-4f2b6d8e1a55", CostUSD: 0.50, BudgetUSD: 1.00, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "uncapped", SessionID: "0198a3f7-0a3b-7bd2-9c1e-4f2b6d8e1a56", CostUSD: 0.50, Verdict: VerdictPass})
+
+	for _, line := range strings.Split(l.Render(), "\n") {
+		if strings.HasPrefix(line, "--") && len(line) > 80 {
+			t.Errorf("a budgeted run's rule is %d columns, past an 80-column terminal:\n%s", len(line), l.Render())
+		}
+	}
+}
+
+// TestRender_TruncatedSessionKeepsDetailAligned measures the SESSION column in
+// display columns rather than bytes, which is the only measure a terminal
+// reader has: a truncated id's ellipsis is three bytes and one column, and a
+// row with no session id at all has neither, so if the two are padded on
+// different scales they cannot both land on the header's DETAIL.
+//
+// It does not currently fail against a byte-padded %-*s — a truncated stub is
+// 21 bytes, so that verb declines to pad it and its 19 runes land on
+// sessionWidth by coincidence. This asserts the property the coincidence
+// happens to satisfy, so that changing sessionStub is caught here rather than
+// in a user's terminal.
+func TestRender_TruncatedSessionKeepsDetailAligned(t *testing.T) {
+	l := New("run-sessions")
+	l.Record(Record{NodeID: "long", SessionID: "0198a3f7-0a3b-7bd2-9c1e-4f2b6d8e1a55", CostUSD: 0.01, Verdict: VerdictPass, Detail: "long-detail"})
+	l.Record(Record{NodeID: "none", CostUSD: 0.01, Verdict: VerdictPass, Detail: "none-detail"})
+
+	out := l.Render()
+	long := columnOf(rowFor(t, out, "long"), "long-detail")
+	none := columnOf(rowFor(t, out, "none"), "none-detail")
+	header := columnOf(rowFor(t, out, "NODE"), "DETAIL")
+
+	if long != none || long != header {
+		t.Errorf("DETAIL starts at columns %d (truncated session), %d (no session), %d (header):\n%s",
+			long, none, header, out)
+	}
+}
+
+// columnOf is strings.Index in display columns rather than bytes, which is the
+// only measure the reader of a terminal table has.
+func columnOf(line, substr string) int {
+	at := strings.Index(line, substr)
+	if at < 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(line[:at])
 }
 
 // rowFor returns the rendered line beginning with prefix, failing the test if

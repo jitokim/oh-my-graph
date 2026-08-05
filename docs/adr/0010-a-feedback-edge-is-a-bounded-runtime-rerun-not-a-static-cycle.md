@@ -182,7 +182,27 @@ Load-time validation (all in `internal/graph`, all before anything spends):
 > unreachable producer and — when one exists *and still passes this
 > validation* — the covering target to aim at (`rerun: scope` on #118's
 > graph). It fires only on a fan-in declarer with an arc, which no shipped
-> graph is; a single-parent declarer is covered by construction. Note that one
+> graph is; a single-parent declarer is covered by construction.
+>
+> The first two objections above are answered in the sweep itself rather than
+> left as accepted noise, because an advisory that cries wolf on the common
+> shape is one people learn to scroll past. It skips a **gate** parent (rule 4),
+> and it skips a parent that is an **ancestor of the rerun target** — rule 3's
+> carve-out stated in topology, since such a parent is upstream of the whole
+> loop and the loop re-runs its consumers. That keeps `spec → impl → review`
+> with `rerun: impl` quiet, which matters more than the false positive it
+> removes: the target the sweep would otherwise have advised, `rerun: spec`,
+> re-runs the acceptance criteria every round and re-judges the implementation
+> against criteria that just moved underneath it. Bad advice on the most
+> idiomatic review graph there is.
+>
+> The third objection cannot be answered this way and is not: a sibling
+> *corpus* root is topologically indistinguishable from #118's sibling *work*,
+> so false positives remain by construction. That is why the emitted message
+> carries its own limits — it states that it reads `depends_on` and not which
+> artifacts the prompt judges, and says to ignore it if the producer is stable
+> context, rather than asserting that the defect can never be repaired. Note
+> that one
 > half of the bug was always a load error and remains one: a producer left
 > outside the body that *asks* for the payload via `{{ feedback.<id> }}` is
 > refused by rule 5. The advisory covers the producer that never asks.

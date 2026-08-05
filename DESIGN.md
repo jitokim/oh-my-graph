@@ -464,14 +464,25 @@ five defects, all in the excluded branch, ~$14 of re-running the healthy
 one). `lint` and `run --dry-run` warn for each `depends_on` producer outside
 the body, naming the declarer, the rerun target, the unreachable producer and
 — when one exists and still validates — the covering target to aim at
-instead. It stays an **advisory**, never an eighth load rule: an out-of-body
-parent is legitimate by rule 3's own carve-out (a settled spec or corpus node
-feeding the reviewer ran once and is stable), and a gate parent can never be
-in a body at all under rule 4, so refusing the shape would break working
-hand-written graphs to catch a planner's mistake. What the sweep sees is
-`depends_on`; which files a prompt actually judges it cannot see — the #118
-reviewer named its two artifacts by literal path, not through
-`{{ artifacts.<id> }}`. The complementary half is planner guidance
+instead. Two parents are skipped: a **gate**, which rule 4 forbids a body from
+ever containing, and a parent that is an **ancestor of the rerun target**,
+which is rule 3's carve-out in topology — it sits upstream of the whole loop,
+its output already flows into the body, and the loop re-runs its consumers.
+That second skip is what keeps `spec → impl → review` with `rerun: impl`
+quiet: warning there would advise `rerun: spec`, which re-runs the acceptance
+criteria every round and re-judges the implementation against criteria that
+just moved. #118's producer is a *sibling* of the target, on no path to it,
+and still warns.
+
+It stays an **advisory**, never an eighth load rule. The skips narrow the
+sweep to the shapes rules 3 and 4 do not bless, but neither is a proof of
+intent: a sibling *corpus* root is topologically identical to #118's sibling
+*work*, so a legitimate graph can still be warned about, and refusing it would
+break working hand-written graphs to catch a planner's mistake. What the sweep
+sees is `depends_on`; which files a prompt actually judges it cannot see — the
+#118 reviewer named its two artifacts by literal path, not through
+`{{ artifacts.<id> }}` — and the printed advisory says so itself rather than
+asserting the defect as fact. The complementary half is planner guidance
 (`internal/coordinator`), not more validation. A producer left outside the
 body that *asks* for the payload with `{{ feedback.<id> }}` is already a load
 error, not an advisory (the placeholder rule above).
