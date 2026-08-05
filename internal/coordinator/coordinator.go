@@ -810,8 +810,9 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) 
 // difference is one fact the planner cannot otherwise know: whether the ENGINE
 // will run its own evidence command after the final node.
 //
-// Both keep the branch assertion and both keep "your whole reply is exactly
-// PASS", because that instruction is not decoration — plannedVerdictPattern is
+// Both keep the branch rule (branchEvidenceRule, shared verbatim so the two
+// spellings cannot drift) and both keep "your whole reply is exactly PASS",
+// because that instruction is not decoration — plannedVerdictPattern is
 // anchored at both ends, so it IS the gate on that node whenever no verify
 // command exists, and a reply carrying anything besides the verdict fails it.
 //
@@ -820,44 +821,74 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) 
 // reading as a measurement, and §2 is what gathers evidence. This half is a
 // hope, and measurement (a) — plan the same goal with and without this wording
 // and compare what the check node claims — is what decides whether it stays.
-const finalCheckWithoutVerifyCommand = `- If the goal involves creating a branch or committing on one, the final
-  check node MUST verify which branch HEAD is on: its prompt runs
-  'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
-  output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and — when both hold — instructs
-  the node that its whole reply is exactly the four bare characters PASS
-  and nothing else, with no markdown emphasis ("**PASS**" is WRONG), no
-  heading, no backticks and no preamble; FAIL otherwise. Give that node
-  "success_check": {"result_matches": %s} — copy that pattern
-  character for character, doubled backslashes included, since your reply
-  is parsed as JSON. It stays anchored at both ends, so a commit that
-  landed on the wrong branch fails the run instead of passing silently,
-  while tolerating the markdown a model wraps a bare verdict in unbidden.
-- Nothing in this graph can compile, build or test the code: no build
+const (
+	finalCheckWithoutVerifyCommand = branchEvidenceRule + `- Nothing in this graph can compile, build or test the code: no build
   command is available to any node. A check node's prompt must therefore
   only assert things it can actually observe with the tools it declared,
   and must never be written as though its PASS meant the code works.
 `
 
-const finalCheckWithVerifyCommand = `- oh-my-graph itself runs an independent build verification after the final
+	finalCheckWithVerifyCommand = `- oh-my-graph itself runs an independent build verification after the final
   node — a command the user supplied at invocation, which the ENGINE
   executes and judges on its exit code. It is not a node, it is not in this
   graph, and no node can run it or influence it. That check is what
   establishes the code builds.
 - So the final check node must NOT try to prove the code is correct, and
   must not be written as though its verdict covered the build. Keep it to
-  what it can observe with the tools it declared: if the goal involves
-  creating a branch or committing on one, it MUST verify which branch HEAD
-  is on — its prompt runs 'git rev-parse --abbrev-ref HEAD' (declare
-  "Bash(git *)"), asserts the output equals the intended feature branch AND
-  is not the repository's default branch (e.g. main or master), and — when
-  both hold — instructs the node that its whole reply is exactly the four
-  bare characters PASS and nothing else, with no markdown emphasis
-  ("**PASS**" is WRONG), no heading, no backticks and no preamble; FAIL
-  otherwise. Give that node "success_check": {"result_matches": %s} —
+  what it can observe with the tools it declared, and its PASS is a
+  statement about those specific checks and nothing wider.
+` + branchEvidenceRule
+)
+
+// branchEvidenceRule is the branch half of the final-check paragraph, shared
+// by both spellings because it is one prompt and the rule does not depend on
+// who gathers build evidence. It carries the single %s the verdict pattern
+// renders into, so it must appear exactly once per rendered paragraph.
+//
+// It asks for evidence that belongs to the REPOSITORY — a pull request, a
+// branch ref — never to a checkout. The rule used to mandate
+// 'git rev-parse --abbrev-ref HEAD', which quietly assumed something the
+// engine does not guarantee: WHERE the work happened. auto plans no worktrees
+// (validatePlannedNodeWorktree) but a node holding Bash(git *) may make one
+// itself, and auto's isolation reaches no repository but the invocation one
+// (SECURITY.md, "Auto-planned graphs"). In the run that reported this (#103) a
+// check node asserted HEAD in a second local repository that no node had ever
+// switched, so the assertion was unsatisfiable the moment it was written and a
+// run whose PRs both existed and were correct reported FAIL — while the same
+// node's 'gh pr list --head' checks were correct and sufficient.
+//
+// It still closes the bug the branch assertion was added for (a node that
+// commits on the default branch and PASSes anyway), and closes it wider: work
+// committed on the right branch but never pushed has no pull request either.
+const branchEvidenceRule = `- If the goal involves creating a branch or committing on one, the final
+  check node MUST verify that the work landed on the intended feature
+  branch and not on the repository's default branch (e.g. main or master).
+  Assert that against state belonging to the REPOSITORY, never against what
+  some working directory currently has checked out:
+  - Prefer what the remote says: 'gh pr list --head <branch> --state open'
+    (declare "Bash(gh pr *)"), asserting an open pull request exists for the
+    feature branch. For a branch in a repository other than the one
+    oh-my-graph was invoked from, read that repository's slug first
+    ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
+    it: 'gh pr list --repo <slug> --head <branch> --state open'.
+  - If the goal never reaches a pull request, assert the branch REF instead:
+    'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
+    (declare "Bash(git *)"). Every worktree of a repository shares its refs;
+    a checked-out HEAD belongs to one directory only.
+  - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
+    '-C <path>'. A node is free to do its work in a git worktree it made
+    itself, which leaves every other checkout's HEAD untouched, and
+    oh-my-graph isolates no repository but the one it was invoked from — so
+    a HEAD assertion reports FAIL on work that in fact succeeded.
+  When the assertion holds, instruct the node that its whole reply is
+  exactly the four bare characters PASS and nothing else, with no markdown
+  emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
+  FAIL otherwise. Give that node "success_check": {"result_matches": %s} —
   copy that pattern character for character, doubled backslashes included,
-  since your reply is parsed as JSON. Its PASS is a statement about those
-  specific checks and nothing wider.
+  since your reply is parsed as JSON. It stays anchored at both ends, so a
+  commit that never reached the intended branch fails the run instead of
+  passing silently, while tolerating the markdown a model wraps a bare
+  verdict in unbidden.
 `
 
 // plannedVerdictPattern is the verdict regex the planner is told to give its

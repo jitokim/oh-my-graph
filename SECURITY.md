@@ -149,6 +149,40 @@ Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would
 any unattended agent: run it in a directory you are willing to have modified.
 
+### Isolation stops at the invocation repository
+
+Everything above bounds what a planned node may *call*. It says nothing about
+*where* the node works, and the answer there is narrower than people assume:
+
+- **Every planned node runs in the directory you invoked `oh-my-graph` from**,
+  in the checkout you had open. `cwd:` and `worktree:` are both rejected at
+  plan time (`validatePlannedNodeCwd`, `validatePlannedNodeWorktree`), so
+  `auto` provisions **no** managed worktree of its own — a planned node edits
+  and commits in your working tree unless it arranges otherwise itself.
+- **Managed worktrees (`worktree:`, [ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md))
+  are a hand-written-graph feature, and they only ever branch from the
+  invocation repository.** `worktree.GitManager` holds a single repo directory
+  (the process's own), and every checkout it creates lives under
+  `$OMG_HOME/runs/<run-id>/worktrees`.
+
+So **any other local repository gets no isolation from oh-my-graph at all** —
+including one your goal names by absolute path. If a node `cd`s there, switches
+that checkout's HEAD, or creates a worktree of its own, that is the node's
+improvisation, not a guarantee the engine offers or can undo. A shared checkout
+is the concrete hazard: a node changing HEAD in a repository some other process
+is working in will collide with it, and the run's feed records the node's
+result, not the git commands it chose to run.
+
+Two consequences worth planning around: keep a goal that spans repositories to
+one that expects each node to isolate *itself* in the repositories it does not
+own, and never verify such work by asserting a local HEAD — an assertion like
+`git -C <other-repo> rev-parse --abbrev-ref HEAD` encodes an assumption about
+where the work happened and fails on work that succeeded. The planner is told
+to assert remote state (`gh pr list --head <branch>`) for exactly this reason.
+Managed multi-repository worktrees are not implemented and would need their own
+ADR; the surface they need is the one `validatePlannedNodeCwd` closed
+deliberately.
+
 ## Subagents (`agent:`)
 
 A hand-written node may run as one of your own Claude Code subagents
