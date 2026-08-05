@@ -174,6 +174,32 @@ func isJudgmentFailure(cause error) bool {
 	return isJudgmentCause(causeFromCheck(cause))
 }
 
+// feedbackPayload is what the re-run node reads through
+// {{ feedback.<declarer> }}: the best available account of what is wrong.
+//
+// The ordinary case is the declarer's own words — a reviewing node's prose is
+// exactly the feedback a fixing node needs. A FAILED VERIFICATION is the one
+// case where those words are the wrong answer, and it is the case ADR 0016 §2
+// creates: a node whose evidence command failed still has `PASS` as its result
+// text, because result_matches passed and the verification is what did not.
+// Handing the fixer node the word `PASS` back — the narration the engine just
+// contradicted — is worse than useless: it is a payload that says the opposite
+// of the failure it is reporting. So when the engine gathered evidence, the
+// evidence IS the payload.
+//
+// The fallbacks are unchanged: a blank result falls back to the failure cause,
+// so a node that produced nothing still tells the re-run why it is running.
+func feedbackPayload(outcome runner.NodeOutcome, cause error) string {
+	var checkErr *NodeCheckError
+	if asErr(cause, &checkErr) && checkErr.Evidence != "" {
+		return checkErr.Evidence
+	}
+	if payload := outcome.Result; strings.TrimSpace(payload) != "" {
+		return payload
+	}
+	return cause.Error()
+}
+
 // judgeFeedback is consulted exactly where recordFail would otherwise be
 // reached with a verdict failure — after the declarer's own retries are
 // spent — and decides what the failure means for the node's feedback arc:
@@ -207,12 +233,7 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 			spent, roundWord, f.Rerun, node.ID, cause)
 	}
 
-	// The payload is the declarer's own account of what is wrong: its result
-	// text when the failing execution produced one, else its failure detail.
-	payload := outcome.Result
-	if strings.TrimSpace(payload) == "" {
-		payload = cause.Error()
-	}
+	payload := feedbackPayload(outcome, cause)
 	if err := h.SetFeedback(node.ID, payload); err != nil {
 		return nil, fmt.Errorf("feedback arc could not fire: %w", err)
 	}

@@ -59,14 +59,37 @@ line is.
 
 A planned graph is untrusted LLM output executed unattended, so it gets bounds a
 hand-written graph does not. Beyond the plan-time rejections (no
-`bypassPermissions`, no `cwd`, no `success_check.verify`, no `agent`, no tool
-outside a fixed allowlist), auto mode runs each planned node under a layered
-execution ceiling.
+`bypassPermissions`, no `cwd`, no planner-authored `success_check.verify`, no
+`agent`, no tool outside a fixed allowlist, and a capped `retry.max` and
+`feedback.max`), auto mode runs each planned node under a layered execution
+ceiling.
 
-`success_check.verify` is refused outright rather than constrained: it is a
-shell command the *engine* runs, not a tool call, so no permission mode, tool
-allowlist, deny list or `cwd` restriction applies to it. It is available to
-hand-written graphs, which are your own reviewed artifact, and to nothing else.
+A **planner-authored** `success_check.verify` is refused outright rather than
+constrained: it is a shell command the *engine* runs, not a tool call, so no
+permission mode, tool allowlist, deny list or `cwd` restriction applies to it.
+It is available to hand-written graphs, which are your own reviewed artifact,
+and to a command **you** supplied at invocation (`--verify-cmd`) — never to one
+a plan authored.
+
+That flag is [ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md):
+after a plan has been validated, trusted Go code attaches your command to the
+graph's sink nodes, so the engine runs the build itself and judges its exit
+code. (**Not yet reachable from the CLI**: the engine side is implemented and
+tested, but `auto` does not parse `--verify-cmd` / `--verify-timeout` yet, so
+today every auto run still takes the zero-config path described below.) A planned node is granted nothing by it — no ceiling layer changes, and
+the allowlist deliberately does **not** grow an entry per ecosystem, because
+that would put this repository's toolchain inside every user's ceiling.
+`--verify-cmd` is unbounded user shell with exactly the standing a hand-written
+graph's `verify:` has had since ADR 0002, running on the same seam and
+executing repo-authored code (`gradlew`, `Makefile`, `npm`) the way your own
+terminal does. Stated, not closed: the difference from a repo-file-derived
+grant is that you chose it.
+
+Relatedly, oh-my-graph may *detect* build markers (`gradlew`, `package.json`,
+`Cargo.toml`, …) in the invocation directory. Detection only ever prints a
+suggested command. It never derives a grant, because a write-capable planned
+node can create those files itself — a plan bootstrapping its own capability
+with no attacker anywhere.
 
 The layers:
 

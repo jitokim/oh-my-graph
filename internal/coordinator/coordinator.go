@@ -170,6 +170,13 @@ type Plan struct {
 	// disclosure contract as AgentMappings: the caller must print these with
 	// the plan. Empty when nothing matched or mapping is off.
 	SkillMappings []SkillMapping
+	// VerifyAttachments are the sink nodes trusted code attached the user's
+	// --verify-cmd to (ADR 0016 §2, verifycmd.go) — empty when no command was
+	// supplied. Same disclosure contract as AgentMappings and SkillMappings,
+	// and for a sharper reason: this one adds an ENGINE-run shell command to
+	// the graph, so a human approving a plan must be shown what will run and
+	// where. Every entry names a node in Graph.
+	VerifyAttachments []VerifyAttachment
 	// SkillScan says a skill scan ran and over which directories, so the
 	// caller can distinguish an empty SkillMappings that means "scanned, no
 	// match" from one that means "never scanned". nil when no scan happened
@@ -198,6 +205,10 @@ type Coordinator struct {
 	// DefaultSkillDirs, tests point it at temp dirs. Empty means no scanning
 	// and no mapping, ever, exactly like agentDirs.
 	skillDirs []string
+	// verifyCommand is the user-supplied build evidence command attached to
+	// every plan's sink nodes after validation (ADR 0016 §2, verifycmd.go).
+	// Zero means none was supplied — the zero-config path.
+	verifyCommand VerifyCommand
 }
 
 // Option configures a Coordinator at construction.
@@ -270,6 +281,13 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	if strings.TrimSpace(goal) == "" {
 		return Plan{}, &PlanError{Reason: "goal is empty"}
 	}
+	// Checked BEFORE the planner call, so an unusable --verify-cmd costs
+	// nothing. Discovering it after the paid planning call — and after a plan
+	// the user then has to re-approve — would be a worse error than the same
+	// one raised a second earlier.
+	if err := c.verifyCommand.Validate(); err != nil {
+		return Plan{}, err
+	}
 
 	// The planner decides the whole graph, so it must not be the least
 	// constrained call in an auto run. It only emits a JSON object, declares no
@@ -284,7 +302,7 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	// call whose job is to understand this repository. Widening the ceiling here
 	// is a product decision about plan quality, not a safety fix, so it is not
 	// made silently as part of one.
-	prompt := plannerPrompt(goal, inputKeys)
+	prompt := plannerPrompt(goal, inputKeys, c.verifyCommand.Supplied())
 	if remaining != "" {
 		// `remaining` is the assessor's own words — model output quoted into
 		// oh-my-graph's own prompt — so it is fenced with a per-call nonce
@@ -355,6 +373,14 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
 	// into the graph that becomes the final Spec, exactly once.
 	if err := c.applySkillMapping(&plan); err != nil {
+		return Plan{}, err
+	}
+	// Last of the post-validation mutations, so the command lands in the graph
+	// that becomes the final Spec — the artifact `--plan-only` prints and
+	// `run`/`resume` replay. The plan the validator saw carried no verify:
+	// validatePlannedNodeVerify still refuses a planner-authored one, and this
+	// string came from the user's own command line (ADR 0016 §2).
+	if err := c.attachVerifyCommand(&plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
@@ -496,6 +522,8 @@ func toolName(rule string) string {
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
 //     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
+//   - no planned node may declare a retry max above maxPlannedRetries
+//     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
 //     this function ever runs, at Plan's graph.Parse boundary, where
 //     graph.Validate's unresolved-fragment backstop (ADR 0013) is converted
@@ -539,6 +567,9 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 			return err
 		}
 		if err := validatePlannedNodeFeedback(node); err != nil {
+			return err
+		}
+		if err := validatePlannedNodeRetry(node); err != nil {
 			return err
 		}
 		if err := validatePlannedNodeTools(node); err != nil {
@@ -623,6 +654,43 @@ func validatePlannedNodeFeedback(node graph.Node) error {
 		Reason: fmt.Sprintf(
 			"planned node %q declared feedback max %d; auto mode caps a planned loop at %d rounds — every round re-runs the whole loop body at full cost",
 			node.ID, node.Feedback.Max, maxPlannedFeedbackRounds,
+		),
+	}
+}
+
+// maxPlannedRetries is the ceiling on a planned node's retry max — the bound
+// feedback.max already had, which retry never did (internal/graph's
+// validateRetryCauses checks only the cause TOKENS; nothing anywhere bounds
+// Retry.Max).
+//
+// It became load-bearing with ADR 0016 §2. `verify_failed` is a legal retry
+// cause and the retry decision is taken on the verify verdict, so once a sink
+// carries the user's build command, retry count is the ONE lever a planner
+// still has on that command's execution — its count, never its content. A
+// planned sink declaring `retry: {max: 40, on: [verify_failed]}` would have
+// the engine run `./gradlew build` 41 times, each bounded only by the
+// 10-minute verify ceiling, serialized, with up to maxPlannedFeedbackRounds
+// rounds of feedback on top. #119 is a cost story, so the count gets a
+// ceiling.
+//
+// The same small number as maxPlannedFeedbackRounds, for the same reason: the
+// planner prompt never asks for retry at all, so anything a plan declares here
+// is already unsolicited, and leaving one round of headroom keeps a defensible
+// value from failing a plan the user has already paid for. Rejected rather
+// than clamped, exactly like feedback: a plan that asked for 40 and silently
+// ran 3 is a different plan from the one that was validated.
+const maxPlannedRetries = 3
+
+// validatePlannedNodeRetry bounds a planned node's re-run count. See
+// maxPlannedRetries for why this is not merely tidiness.
+func validatePlannedNodeRetry(node graph.Node) error {
+	if node.Retry == nil || node.Retry.Max <= maxPlannedRetries {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf(
+			"planned node %q declared retry max %d; auto mode caps a planned node at %d re-runs — each one re-runs the node at full cost, and re-runs any evidence command attached to it",
+			node.ID, node.Retry.Max, maxPlannedRetries,
 		),
 	}
 }
@@ -718,15 +786,79 @@ func extractJSON(result string) string {
 // the planner the exact set validatePlannedNodes enforces so a well-behaved
 // plan validates on the first try. Enforcement does not depend on the
 // planner reading or following this text.
-func plannerPrompt(goal string, inputKeys []string) string {
+func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) string {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
 		sort.Strings(sorted)
 		keys = strings.Join(sorted, ", ")
 	}
-	return fmt.Sprintf(plannerPromptTemplate, goal, keys, strings.Join(plannedToolAllowlist, ", "), strconv.Quote(plannedVerdictPattern))
+	paragraph := finalCheckWithoutVerifyCommand
+	if verifyCommandSupplied {
+		paragraph = finalCheckWithVerifyCommand
+	}
+	// Rendered in two steps, not one: the verdict pattern lives inside the
+	// chosen paragraph, and a placeholder substituted INTO a format string is
+	// never expanded again — a single Sprintf would ship the planner a literal
+	// "%!s" where the pattern it must copy character-for-character belongs.
+	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern))
+	return fmt.Sprintf(plannerPromptTemplate, goal, keys, strings.Join(plannedToolAllowlist, ", "), finalCheck)
 }
+
+// finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
+// spellings of the planner's final-check paragraph (ADR 0016 §5). The
+// difference is one fact the planner cannot otherwise know: whether the ENGINE
+// will run its own evidence command after the final node.
+//
+// Both keep the branch assertion and both keep "your whole reply is exactly
+// PASS", because that instruction is not decoration — plannedVerdictPattern is
+// anchored at both ends, so it IS the gate on that node whenever no verify
+// command exists, and a reply carrying anything besides the verdict fails it.
+//
+// A prompt is not a mechanism, and this repository has learned that
+// repeatedly: §6's provenance qualifier is what stops a self-report from
+// reading as a measurement, and §2 is what gathers evidence. This half is a
+// hope, and measurement (a) — plan the same goal with and without this wording
+// and compare what the check node claims — is what decides whether it stays.
+const finalCheckWithoutVerifyCommand = `- If the goal involves creating a branch or committing on one, the final
+  check node MUST verify which branch HEAD is on: its prompt runs
+  'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
+  output equals the intended feature branch AND is not the repository's
+  default branch (e.g. main or master), and — when both hold — instructs
+  the node that its whole reply is exactly the four bare characters PASS
+  and nothing else, with no markdown emphasis ("**PASS**" is WRONG), no
+  heading, no backticks and no preamble; FAIL otherwise. Give that node
+  "success_check": {"result_matches": %s} — copy that pattern
+  character for character, doubled backslashes included, since your reply
+  is parsed as JSON. It stays anchored at both ends, so a commit that
+  landed on the wrong branch fails the run instead of passing silently,
+  while tolerating the markdown a model wraps a bare verdict in unbidden.
+- Nothing in this graph can compile, build or test the code: no build
+  command is available to any node. A check node's prompt must therefore
+  only assert things it can actually observe with the tools it declared,
+  and must never be written as though its PASS meant the code works.
+`
+
+const finalCheckWithVerifyCommand = `- oh-my-graph itself runs an independent build verification after the final
+  node — a command the user supplied at invocation, which the ENGINE
+  executes and judges on its exit code. It is not a node, it is not in this
+  graph, and no node can run it or influence it. That check is what
+  establishes the code builds.
+- So the final check node must NOT try to prove the code is correct, and
+  must not be written as though its verdict covered the build. Keep it to
+  what it can observe with the tools it declared: if the goal involves
+  creating a branch or committing on one, it MUST verify which branch HEAD
+  is on — its prompt runs 'git rev-parse --abbrev-ref HEAD' (declare
+  "Bash(git *)"), asserts the output equals the intended feature branch AND
+  is not the repository's default branch (e.g. main or master), and — when
+  both hold — instructs the node that its whole reply is exactly the four
+  bare characters PASS and nothing else, with no markdown emphasis
+  ("**PASS**" is WRONG), no heading, no backticks and no preamble; FAIL
+  otherwise. Give that node "success_check": {"result_matches": %s} —
+  copy that pattern character for character, doubled backslashes included,
+  since your reply is parsed as JSON. Its PASS is a statement about those
+  specific checks and nothing wider.
+`
 
 // plannedVerdictPattern is the verdict regex the planner is told to give its
 // branch-assertion check node — the same idiom every shipped graph follows
@@ -820,20 +952,7 @@ Rules:
   'git add -A', 'git add .', or 'git add -u': the working tree may hold
   untracked files that are not part of the task, and sweeping them into
   the commit is a bug.
-- If the goal involves creating a branch or committing on one, the final
-  check node MUST verify which branch HEAD is on: its prompt runs
-  'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
-  output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and — when both hold — instructs
-  the node that its whole reply is exactly the four bare characters PASS
-  and nothing else, with no markdown emphasis ("**PASS**" is WRONG), no
-  heading, no backticks and no preamble; FAIL otherwise. Give that node
-  "success_check": {"result_matches": %[4]s} — copy that pattern
-  character for character, doubled backslashes included, since your reply
-  is parsed as JSON. It stays anchored at both ends, so a commit that
-  landed on the wrong branch fails the run instead of passing silently,
-  while tolerating the markdown a model wraps a bare verdict in unbidden.
-`
+%[4]s`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt
