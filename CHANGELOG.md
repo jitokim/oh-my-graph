@@ -102,8 +102,35 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   any command exits with. Parents that are gates, or that are upstream of the
   rerun target (the `spec → impl → review` shape), are not reported.
 
+### Changed
+
+- **A negative `retry.max` is refused at load instead of discarded.** The
+  scheduler adds `retry.max` to a node's attempt count only when it is
+  positive, so `max: -1` was silently dropped and the node ran once — the exact
+  quiet non-retry that `retry.on`'s closed cause set already exists to prevent,
+  from a value no author can have meant. `Validate` now rejects it, naming the
+  node and the bound (`validateRetryCauses` is renamed `validateRetry` to say
+  it judges more than the causes). `max: 0` is untouched: it IS the
+  extra-attempt count a node declaring no retry already has. **Behaviour
+  change** — a graph carrying a negative `max` loads and runs today and stops
+  loading now, and the refusal is retroactive the same way
+  `permission_mode`'s is: `resume` and `run --retry-failed` re-parse the run
+  snapshot, so an in-flight run authored with a negative bound becomes
+  unresumable. No shipped graph, fragment or testdata graph uses one.
+
 ### Fixed
 
+- **A typo'd `result_matches` cost a node before it was diagnosed.**
+  `success_check.result_matches` had no load-time validation: its first and
+  only compile happened inside the scheduler's success-check evaluation, which
+  runs *after* the node has been spawned and paid for. Its sibling
+  `verify.output_matches` has been rejected at load, naming the node, since the
+  field existed. `Validate` now compiles both, so an uncompilable verdict
+  pattern is a `GraphValidationError` that `lint` and `run --dry-run` refuse
+  the graph on — quoting the pattern and wrapping `regexp`'s own message — and
+  no node is spawned. Every shipped graph, fragment and testdata graph already
+  passes; the pattern the repo ships (`` ^[*_`\s]*PASS[*_`\s]*$ ``, also the
+  planner's) is pinned by name in the test table.
 - **`output_matches` was judged against a truncated tail.** The verify seam
   handed the scheduler only the last 4 KiB of a command's output, prefixed with
   `…(earlier output truncated)…` — so an anchored pattern could **never** match

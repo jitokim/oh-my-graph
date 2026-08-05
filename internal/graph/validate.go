@@ -100,13 +100,14 @@ func (g *Graph) Validate() error {
 //  5. a session-handoff node has exactly one parent — the session it resumes
 //     (a root has no session to resume; more than one can't be merged) — and
 //     that parent is not a gate, which never records a session at all;
-//  6. every success_check.verify is runnable: a command, a parseable timeout
-//     within the ceiling, a compilable output_matches regex;
+//  6. every success_check is judgeable: a compilable result_matches regex, and
+//     a verify that is runnable — a command, a parseable timeout within the
+//     ceiling, a compilable output_matches regex;
 //  7. an agent name, when present, carries no surrounding whitespace;
 //  8. a worktree name, when present, is a single safe path element, and the
 //     node declares no cwd alongside it;
-//  9. every retry.on cause is a known token — a typoed cause would match
-//     nothing and silently mean "never retry";
+//  9. every retry.on cause is a known token and retry.max is not negative —
+//     either would silently mean "never retry";
 //  10. a node-level timeout, when present, is a parseable, positive Go
 //     duration — parsed here, once, so no run ever discovers a malformed
 //     duration halfway through;
@@ -141,7 +142,7 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateSuccessChecks()...)
 	issues = append(issues, g.validateAgentNames()...)
 	issues = append(issues, g.validateWorktrees()...)
-	issues = append(issues, g.validateRetryCauses()...)
+	issues = append(issues, g.validateRetry()...)
 	issues = append(issues, g.validateNodeTimeouts()...)
 	issues = append(issues, g.validateFragmentsResolved()...)
 	issues = append(issues, g.validateFeedback()...)
@@ -188,7 +189,7 @@ func (g *Graph) validateNodeTimeouts() []error {
 }
 
 // validateOnFail rejects a graph-level on_fail outside the closed policy set —
-// the graph analogue of validateRetryCauses. A typo like `on_fail: contnue`
+// the graph analogue of validateRetry. A typo like `on_fail: contnue`
 // would otherwise normalize to "not continue" and silently mean today's halt
 // behaviour: exactly the quiet mid-run surprise (every lane cancelled by one
 // failure) the field exists to prevent. The message names both valid values so
@@ -215,17 +216,33 @@ var retryCauses = []string{
 	CauseResultMismatch,
 }
 
-// validateRetryCauses rejects any retry.on entry outside the closed cause set.
-// The scheduler matches causes by string equality, so an unknown entry — a
-// typo like `nonzero-exit` — would never match a real failure and the node
-// would silently never retry: exactly the quiet mid-run surprise load-time
-// validation exists to move earlier. The message lists every valid token so
-// the fix needs no trip to the docs.
-func (g *Graph) validateRetryCauses() []error {
+// validateRetry rejects a retry block the scheduler could only read as "never
+// retry". Two shapes reach that reading, and both are silent:
+//
+//   - an entry in retry.on outside the closed cause set. The scheduler matches
+//     causes by string equality, so a typo like `nonzero-exit` would never
+//     match a real failure. The message lists every valid token so the fix
+//     needs no trip to the docs.
+//   - a negative retry.max. The scheduler adds Max to the attempt count only
+//     when it is positive, so `max: -1` is discarded and the node runs once —
+//     the same quiet non-retry a typoed cause produces, from a value no author
+//     can have meant. `max: 0` is left alone: it IS the count of extra
+//     attempts a node declaring no retry already has.
+//
+// Either way the graph asks for a re-run it will never get, and finds out only
+// by not getting it — exactly the quiet mid-run surprise load-time validation
+// exists to move earlier.
+func (g *Graph) validateRetry() []error {
 	var issues []error
 	for _, n := range g.Nodes {
 		if n.Retry == nil {
 			continue
+		}
+		if n.Retry.Max < 0 {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("retry.max %d must not be negative — a negative bound is discarded and the node would silently never retry", n.Retry.Max),
+			})
 		}
 		for _, cause := range n.Retry.On {
 			if !slices.Contains(retryCauses, cause) {
@@ -444,19 +461,37 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 	return "", false
 }
 
-// validateSuccessChecks proves every declared verification can actually be run
-// before a single node starts. Everything it checks is knowable from the file
-// alone, so discovering it mid-run — after paying for the nodes that ran first —
-// would be a pure waste of the user's money and time.
+// validateSuccessChecks proves every declared success check can actually be
+// judged before a single node starts. Everything it checks is knowable from the
+// file alone, so discovering it mid-run — after paying for the nodes that ran
+// first — would be a pure waste of the user's money and time. That applies to
+// BOTH regexes a check can carry: result_matches used to compile for the first
+// time inside the scheduler's evaluation, which happens after its own node has
+// already been spawned and paid for, so a typo cost a full node before it was
+// diagnosed.
 //
 // It is also where the timeout string becomes a time.Duration: judging it
 // against the ceiling requires parsing it, and throwing that result away would
 // mean parsing the same string again on the critical path of every attempt.
 // Verify is a pointer, so the parsed value reaches the copy of the Node held in
 // byID and the one the Scheduler reads.
+//
+// The compiled result_matches IS thrown away, and the asymmetry is forced, not
+// an oversight: SuccessCheck is a plain value on a Node that is copied into
+// byID, so a compiled *regexp.Regexp parked on it would not travel the way the
+// *Verification pointer's contents do. Here the compile is only the assertion;
+// the scheduler recompiles a pattern this pass has already proved compilable.
 func (g *Graph) validateSuccessChecks() []error {
 	var issues []error
 	for _, n := range g.Nodes {
+		if pattern := n.SuccessCheck.ResultMatches; pattern != "" {
+			if _, err := regexp.Compile(pattern); err != nil {
+				issues = append(issues, &GraphValidationError{
+					NodeID: n.ID,
+					Reason: fmt.Sprintf("success_check has an invalid result_matches regex %q: %v", pattern, err),
+				})
+			}
+		}
 		verification := n.SuccessCheck.Verify
 		if verification == nil {
 			continue
