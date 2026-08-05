@@ -509,7 +509,11 @@ from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 
 - **`handoff`** — 위의 [Handoff — 자식이 무엇을 물려받는가](#handoff--what-a-child-inherits)
   참고 ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — 근거 기반 게이팅(`exit_zero`,
-  `result_matches`, 그리고 엔진이 실행하는 `verify` 명령)과 원인별 retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
+  `result_matches`, 그리고 엔진이 실행하는 `verify` 명령)과 원인별 retry.
+  재시도된 attempt는 더 이상 눈먼 재실행이 아닙니다: 이전 attempt를 체크가
+  **판정**했다면, 재시도의 프롬프트가 그 attempt 자신의 답변을 싣습니다 —
+  딱 한 단계, 누적 없음, nonce로 펜싱되고 바이트 상한이 있으며, 체크 자체는
+  절대 인용하지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — 노드별 비용 상한, 라이브(`--max-budget-usd`)와 사후
   모두 적용 ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — 20분 기본값을 대체하는 노드별 wall-clock 상한, 정당하게

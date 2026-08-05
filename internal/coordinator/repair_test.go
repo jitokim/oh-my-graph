@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -308,8 +309,8 @@ func TestPlan_RepairPromptFencesTheRefusalsWithANonce(t *testing.T) {
 	}
 
 	nonce := repairNonceOf(t, repairPrompt.Prompt)
-	if len(nonce) != 2*fenceNonceBytes {
-		t.Fatalf("fence nonce = %q, want %d hex characters", nonce, 2*fenceNonceBytes)
+	if len(nonce) != 2*fence.NonceBytes {
+		t.Fatalf("fence nonce = %q, want %d hex characters", nonce, 2*fence.NonceBytes)
 	}
 	if _, err := hex.DecodeString(nonce); err != nil {
 		t.Fatalf("fence nonce = %q does not decode as hex: %v", nonce, err)

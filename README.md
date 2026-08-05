@@ -488,7 +488,11 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 - **`handoff`** — see [Handoff — what a child inherits](#handoff--what-a-child-inherits)
   above ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — evidence-grounded gating (`exit_zero`,
-  `result_matches`, and the engine-run `verify` command) plus per-cause retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
+  `result_matches`, and the engine-run `verify` command) plus per-cause retry.
+  A retried attempt is not a blind re-spawn: when a check judged the previous
+  attempt, the retry's prompt carries that attempt's own reply — one attempt
+  deep, never accumulating, nonce-fenced and byte-bounded, and never quoting
+  the check itself ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — a per-node wall-clock bound replacing the 20-minute default,

@@ -418,52 +418,85 @@ func excludedFromProseScan(rel string, isDir bool) bool {
 	return false
 }
 
-// fenceCallSiteClaim matches internal/coordinator/fence.go's statement of how
-// many callers share the nonce fence: "Three call sites share this: ...".
+// fenceCallSiteClaim matches internal/fence/fence.go's statement of how many
+// callers share the nonce fence: "Three call sites share Nonce: ...".
 var fenceCallSiteClaim = claimPattern(`\b%s\s+call[ -]sites\b`)
 
 // TestFenceCallSiteCountMatchesTheCode is the same idea as the spawner-count
-// check, one package down and much smaller in scope. fence.go's doc comment
-// counts the callers of fenceNonce, and that sentence had drifted too — it said
-// "Two" until a human happened to notice a third. So count the real calls and
-// hold the sentence to them.
+// check, much smaller in scope. fence.go's package doc counts the callers of
+// fence.Nonce, and that sentence had drifted too — it said "Two" until a human
+// happened to notice a third. So count the real calls and hold the sentence to
+// them.
 //
-// Scoped to fence.go alone: "call sites" is ordinary English that other files
-// use about entirely different sets, and the claim being guarded is the one
-// fence.go makes about its own helper.
+// The count is taken REPO-WIDE, not over one package. It used to be scoped to
+// internal/coordinator, which was right while the fence lived there and every
+// caller was a sibling; internal/schedule quotes a rejected attempt back to the
+// node that produced it (ADR 0016), so a package-scoped count would now miss a
+// caller and let the sentence quietly go stale by one.
+//
+// Callers are matched syntactically as `fence.Nonce(...)`, which is what every
+// caller in this repo writes. An import alias would slip past — noted rather
+// than solved, because resolving imports for the whole repo to catch a spelling
+// nobody uses is a lot of machinery for a guard whose whole value is that it is
+// cheap enough to keep.
+//
+// The claim is read from fence.go alone: "call sites" is ordinary English that
+// other files use about entirely different sets, and the claim being guarded is
+// the one fence.go makes about its own helper.
 func TestFenceCallSiteCountMatchesTheCode(t *testing.T) {
 	const (
-		pkgDir  = "internal/coordinator"
-		helper  = "fenceNonce"
+		pkgDir  = "internal/fence"
+		helper  = "fence.Nonce"
 		docFile = "fence.go"
 	)
 	repoRoot := filepath.Join("..", "..")
 
 	callers := 0
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(filepath.Join(repoRoot, filepath.FromSlash(pkgDir)))
-	if err != nil {
-		t.Fatalf("reading %s: %v", pkgDir, err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, filepath.Join(repoRoot, filepath.FromSlash(pkgDir), name), nil, 0)
+	err := filepath.WalkDir(repoRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("parsing %s/%s: %v", pkgDir, name, err)
+			return err
+		}
+		rel, relErr := filepath.Rel(repoRoot, p)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		if excludedFromProseScan(rel, d.IsDir()) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		// Test files are excluded on purpose: a fixture minting its own nonce
+		// is not a place the engine fences untrusted text, and the doc comment
+		// names production call sites.
+		if d.IsDir() || filepath.Ext(p) != ".go" || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		file, parseErr := parser.ParseFile(fset, p, nil, 0)
+		if parseErr != nil {
+			return fmt.Errorf("parsing %s: %w", rel, parseErr)
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == helper {
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name+"."+sel.Sel.Name == helper {
 				callers++
 			}
 			return true
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the repo for %s callers: %v", helper, err)
 	}
 
 	src, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(pkgDir), docFile))
@@ -484,8 +517,8 @@ func TestFenceCallSiteCountMatchesTheCode(t *testing.T) {
 		t.Fatalf("%s: cannot read %q as a number.", flat.rel, flat.text[loc[2*numGroup]:loc[2*numGroup+1]])
 	}
 	if got != callers {
-		t.Errorf("%s:%d says %q, but %s is called from %d place(s) in %s. Every caller has to mint its own "+
-			"nonce for the fence to be unforgeable, so the doc comment naming them is the map a reader uses "+
-			"to check that; update it.", flat.rel, flat.lineAt(loc[0]), flat.text[loc[0]:loc[1]], helper, callers, pkgDir)
+		t.Errorf("%s:%d says %q, but %s is called from %d place(s) in the repo. Every caller has to mint its "+
+			"own nonce for the fence to be unforgeable, so the doc comment naming them is the map a reader "+
+			"uses to check that; update it.", flat.rel, flat.lineAt(loc[0]), flat.text[loc[0]:loc[1]], helper, callers)
 	}
 }

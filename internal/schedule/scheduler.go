@@ -656,7 +656,9 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 // error, a *NodeCheckError — including a failed verification — or a
 // *NodeBudgetError) after retries are exhausted. A failure the node actually
 // spoke into — a judged verdict, or a result that could not be persisted —
-// keeps that reply at failed/<node-id>.out on the way out (keepFailedReply).
+// keeps that reply at failed/<node-id>.out on the way out (keepFailedReply),
+// and — when a check judged it — hands that same reply to the attempt that
+// retries it, quoted as fenced data (retryfeedback.go, ADR 0016).
 // A feedback declarer's
 // judgment failure with rounds remaining returns a *feedbackSignal instead
 // (see judgeFeedback), which Run() intercepts and turns into the body's
@@ -689,6 +691,21 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
 	}
 
+	// basePrompt is the interpolated node prompt with nothing appended, kept
+	// because every retry is rebuilt FROM it rather than on top of whatever the
+	// last attempt ran (retryfeedback.go). That is what makes "one prior attempt
+	// per prompt" a property of the code and not of anyone's discipline.
+	basePrompt := invocation.Prompt
+
+	// A previous LEG's reply, if the resume path seeded one — a
+	// `resume --retry-failed` re-running a node that already failed in an
+	// earlier process. Taken (not read), so it is quoted into this execution
+	// only; from the second attempt on, the prompt carries the attempt this leg
+	// watched fail instead.
+	if prior, seeded := h.TakePriorReply(node.ID); seeded {
+		s.quotePriorAttempt(&invocation, node, basePrompt, prior)
+	}
+
 	attempts := 1
 	if node.Retry != nil && node.Retry.Max > 0 {
 		attempts += node.Retry.Max
@@ -710,7 +727,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			runErr = halt.explain(runErr)
 			lastErr = runErr
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
-				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
+				// No outcome, so no reply: the attempt being repeated said
+				// nothing. Rebuilding from basePrompt is not a no-op here — it
+				// DROPS a quote an earlier attempt may have carried, because
+				// the attempt immediately before this one is the one that died
+				// mid-spawn, and it is the only one a prompt may quote.
+				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, ""))
 				continue
 			}
 			if killedBeforeReporting {
@@ -772,7 +794,17 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 		lastErr = verdictErr
 		if s.shouldRetry(node, attempt, attempts, causeFromCheck(verdictErr)) {
-			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
+			// The next attempt is handed this one's reply, but only when a
+			// check actually JUDGED the work — isJudgmentFailure, the same
+			// split ADR 0010 draws for a feedback arc, and for the same reason
+			// (feedback.go). A blown budget or a verification that could not be
+			// completed rendered no verdict on the reply, so quoting it back
+			// would ask the node to repair something nothing found fault with.
+			prior := ""
+			if isJudgmentFailure(verdictErr) {
+				prior = outcome.Result
+			}
+			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, prior))
 			continue
 		}
 		// The feedback arc is consulted exactly where the failure would
@@ -848,7 +880,10 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 	rec := failRecord(node, sessionID, cost, duration, cause)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	// isJudgmentFailure here, at the one place a terminal failure is recorded,
+	// so the snapshot carries the same split the in-leg retry quote is gated on
+	// and a later process never has to re-derive it (ADR 0016).
+	s.recordSnapshot(node, rec, h, isJudgmentFailure(cause))
 	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
 }
@@ -889,7 +924,7 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 	rec := passRecord(node, outcome, duration, attempt)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	s.recordSnapshot(node, rec, h, false)
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return nil
 }
@@ -918,7 +953,7 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 	s.emitEvent(runfeed.Event{Type: runfeed.EventGateApproved, NodeID: node.ID})
 	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	s.recordSnapshot(node, rec, h, false)
 	s.recordGateDecision(node, runstate.GateApprove)
 	// A gate is never in a feedback body (validated), so its round is 0.
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0, 0))
@@ -934,10 +969,38 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 // that id already names a real session the failed child wrote — so it gets a
 // new one, which recordRetry publishes on node_retried for the same
 // live-view reason node_started publishes the first.
-func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation) string {
+//
+// The cold start is why the prompt is rebuilt here rather than mutated in
+// place: the retried attempt inherits no conversation, so everything it is to
+// know has to be in its prompt, and everything it is NOT to know — including
+// every attempt before the last — has to be absent from it. Rebuilding from
+// basePrompt each time is what guarantees both (retryfeedback.go). priorReply
+// is the reply of the attempt just finished, or "" when that attempt produced
+// none or produced one no check judged.
+func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) string {
+	s.quotePriorAttempt(invocation, node, basePrompt, priorReply)
 	invocation.ResumeSession = ""
 	invocation.SessionID = s.sessionIDs()
 	return invocation.SessionID
+}
+
+// quotePriorAttempt sets invocation.Prompt to basePrompt plus the fenced quote
+// of priorReply, or to basePrompt alone when there is nothing to quote.
+//
+// A nonce that cannot be minted DROPS the quote and says so on the progress
+// feed; it never falls back to fixed markers, which would be a fence in name
+// only. Degrading here rather than failing the node is a different judgement
+// from the coordinator's, and the difference is what is left to fall back on: a
+// planner call whose material cannot be fenced has no un-fenced version worth
+// making, while a retry without the quote is exactly the retry this engine ran
+// for every release before ADR 0016 — complete, valid, and merely less informed.
+func (s *Scheduler) quotePriorAttempt(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
+	prompt, err := retryPrompt(basePrompt, priorReply)
+	if err != nil {
+		s.logProgress("⚠ %s  previous attempt not quoted to the retry: %v\n", node.ID, err)
+		prompt = basePrompt
+	}
+	invocation.Prompt = prompt
 }
 
 // recordRetry writes the node's live "↻ retry" progress line and the matching
@@ -957,9 +1020,13 @@ func (s *Scheduler) recordRetry(node graph.Node, retryNumber int, sessionID stri
 // not know it ran and would re-execute it, a real cost — which is why it is
 // surfaced on the progress feed rather than silently swallowed (DESIGN.md,
 // "Gate nodes and resume").
-func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff) {
+//
+// judged is meaningful only on a FAIL, where it is isJudgmentFailure's answer
+// about that failure's cause; every other caller passes false, because a PASS
+// and a mid-loop marker have no verdict to have been rendered on them.
+func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff, judged bool) {
 	artifactPath, _ := h.ArtifactPath(node.ID)
-	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID))); err != nil {
+	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID), judged)); err != nil {
 		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
 	}
 }
@@ -976,7 +1043,7 @@ func (s *Scheduler) recordGateDecision(node graph.Node, decision runstate.GateDe
 // Scheduler already built for the same node, so the two never carry different
 // cost/verdict/detail for the same event — one accounting computation, two
 // destinations (the ledger for this leg's table, the snapshot for a resume).
-func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.NodeRecord {
+func toNodeRecord(rec ledger.Record, artifactPath string, round int, judged bool) runstate.NodeRecord {
 	verdict := runstate.VerdictFail
 	if rec.Verdict == ledger.VerdictPass {
 		verdict = runstate.VerdictPass
@@ -990,6 +1057,7 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.No
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
 		Round:        round,
+		Judged:       judged,
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -130,15 +131,7 @@ func (e *PlanError) Error() string {
 	if e.Output == "" {
 		return fmt.Sprintf("graph planning failed: %s", e.Reason)
 	}
-	return fmt.Sprintf("graph planning failed: %s\nplanner replied:\n%s", e.Reason, truncate(e.Output, maxOutputInError))
-}
-
-// truncate shortens s to at most n bytes, marking the cut.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "… (truncated)"
+	return fmt.Sprintf("graph planning failed: %s\nplanner replied:\n%s", e.Reason, fence.Truncate(e.Output, maxOutputInError))
 }
 
 // Plan is the coordinator's product: the validated graph, the raw JSON spec it
@@ -343,15 +336,15 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string) (string
 	}
 	// `remaining` is the assessor's own words — model output quoted into
 	// oh-my-graph's own prompt — so it is fenced with a per-call nonce
-	// like every other untrusted quote in this package (fence.go). Bare
+	// like every other untrusted quote in this package (internal/fence). Bare
 	// prose around it was forgeable: the assessor is itself fed
 	// prompt-injectable artifacts, so a `remaining` that emits a plain
 	// end-marker could otherwise appear to speak as the engine here.
-	nonce, err := fenceNonce("planner continuation")
+	nonce, err := fence.Nonce("planner continuation")
 	if err != nil {
 		return "", err
 	}
-	return prompt + fmt.Sprintf(plannerContinuationTemplate, nonce, truncate(remaining, maxRemainingInPrompt)), nil
+	return prompt + fmt.Sprintf(plannerContinuationTemplate, nonce, fence.Truncate(remaining, maxRemainingInPrompt)), nil
 }
 
 // attemptPlan makes exactly ONE planner call with the given prompt and turns

@@ -46,6 +46,19 @@ func newHarness(t *testing.T, nodeRunner runner.NodeRunner, opts Options) (*Sche
 	return NewScheduler(nodeRunner, opts), h, led
 }
 
+// nodePromptKey keys a FakeRunner by the node's OWN prompt, dropping the quote
+// of a previous attempt the engine appends to a retry (retryfeedback.go). Any
+// test that scripts an outcome for a node the scheduler will RETRY needs it:
+// without it the retry's prompt is a key the fixture never scripted, and the
+// test fails claiming the retry never happened when what actually happened is
+// that it happened and looked different.
+//
+// It splits on RetryQuoteHeader rather than on a transcribed copy of it, so
+// rewording the quote cannot silently turn this into an identity function.
+func nodePromptKey(spec runner.NodeInvocation) string {
+	return strings.SplitN(spec.Prompt, RetryQuoteHeader, 2)[0]
+}
+
 // pass is a scripted successful outcome carrying a session id and cost.
 func pass(sessionID string, cost float64) runner.NodeOutcome {
 	return runner.NodeOutcome{SessionID: sessionID, Result: "PASS", TotalCostUSD: cost, ExitCode: 0}
@@ -164,6 +177,7 @@ nodes:
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
 		"flaky": {Result: "NOPE", ExitCode: 0},
 	})
+	fake.KeyFn = nodePromptKey
 	s, h, led := newHarness(t, fake, Options{})
 
 	err := s.Run(context.Background(), g, h, led)

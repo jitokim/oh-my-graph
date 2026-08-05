@@ -9,7 +9,9 @@
 //     declarer's failing payload to feedback/<node-id>.out so a feedback
 //     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
 //     contract), and a FAILED node's own reply to failed/<node-id>.out so the
-//     work a failed node already paid for survives it;
+//     work a failed node already paid for survives it — and, from that same
+//     file, hand the reply back to a later leg's retry of the node that wrote
+//     it (SeedPriorReply/TakePriorReply, ADR 0016);
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
@@ -70,6 +72,7 @@ type Handoff struct {
 	artifactPaths map[string]string // node id -> persisted .out path
 	sessions      map[string]string // node id -> claude session id
 	feedback      map[string]string // declarer id -> latest feedback payload (ADR 0010)
+	priorReplies  map[string]string // node id -> a PREVIOUS LEG's failed reply, to hand back once (ADR 0016)
 }
 
 // New builds a Handoff bound to a run directory and the invocation's inputs. The
@@ -85,6 +88,7 @@ func New(runDir string, inputs map[string]string) *Handoff {
 		artifactPaths: make(map[string]string),
 		sessions:      make(map[string]string),
 		feedback:      make(map[string]string),
+		priorReplies:  make(map[string]string),
 	}
 }
 
@@ -394,6 +398,56 @@ func excerptFailedReply(reply string) string {
 	head := keep / 2
 	tail := keep - head
 	return reply[:head] + marker + reply[len(reply)-tail:]
+}
+
+// SeedPriorReply rehydrates one node's failed reply from the failed/<id>.out
+// file PersistFailure wrote, so a `resume --retry-failed` leg can quote the
+// previous leg's attempt back to the node it is re-running (ADR 0016). It is
+// the cross-process half of that quote: an in-leg retry still has the reply in
+// memory, but a resume is a different process and the file is the only thing
+// that survived it — which is why the reply is written at all.
+//
+// A missing file is a clean no-op, not an error, exactly as SeedFeedback's is:
+// it means that node left no reply to quote (it never ran, it spawned badly, it
+// said nothing), and running the retry with no quote is the pre-ADR-0016
+// behaviour, which is correct rather than degraded. Any other read failure is
+// returned so the resume path can warn.
+//
+// Nothing here decides WHETHER the reply should be quoted: the caller does,
+// from runstate.NodeRecord.Judged, which is the same isJudgmentFailure verdict
+// the in-leg retry is gated on, recorded by the leg that rendered it. Handoff
+// reads the file it wrote and nothing more.
+func (h *Handoff) SeedPriorReply(nodeID string) error {
+	reply, err := os.ReadFile(FailedOutputPath(h.runDir, nodeID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("re-read failed reply for node %q: %w", nodeID, err)
+	}
+	h.mu.Lock()
+	h.priorReplies[nodeID] = string(reply)
+	h.mu.Unlock()
+	return nil
+}
+
+// TakePriorReply hands over a seeded prior reply and FORGETS it, so one seeded
+// reply is quoted into exactly one execution of the node.
+//
+// Taking rather than reading is what keeps it honest across the two ways a node
+// can run more than once in a leg. A retry supersedes it immediately (the next
+// attempt quotes the attempt this leg just watched fail, not a previous leg's),
+// and a feedback re-run of the same node — a whole new round, against new
+// artifacts — would otherwise keep being handed a reply from before the loop
+// re-armed, which is not the attempt it is repeating.
+func (h *Handoff) TakePriorReply(nodeID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	reply, ok := h.priorReplies[nodeID]
+	if ok {
+		delete(h.priorReplies, nodeID)
+	}
+	return reply, ok
 }
 
 // ResumeSessionFor returns the claude session id a session-handoff node must

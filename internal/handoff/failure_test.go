@@ -257,3 +257,100 @@ func TestPersistFailure_LatestWins(t *testing.T) {
 		t.Fatalf("failed/ holds %v, want exactly the one reply file", names)
 	}
 }
+
+// --- handing the reply back to the leg that repeats the attempt (ADR 0016) ---
+
+// TestSeedPriorReply_RoundTripsWhatPersistFailureWrote is the cross-process
+// half of the retry quote: a second process, holding only the run directory,
+// recovers the reply the first one persisted.
+func TestSeedPriorReply_RoundTripsWhatPersistFailureWrote(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := New(dir, nil).PersistFailure("dev", "what the failed attempt said"); err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+
+	// A fresh Handoff over the same directory — this is what `resume` builds.
+	next := New(dir, nil)
+	if err := next.SeedPriorReply("dev"); err != nil {
+		t.Fatalf("SeedPriorReply: %v", err)
+	}
+	reply, ok := next.TakePriorReply("dev")
+	if !ok || reply != "what the failed attempt said" {
+		t.Fatalf("TakePriorReply = %q, %v; want the persisted reply", reply, ok)
+	}
+}
+
+// TestTakePriorReply_HandsItOverExactlyOnce: one seeded reply belongs to one
+// execution. A node that runs again in the same leg — a feedback round, a
+// retry — is repeating a DIFFERENT attempt, and must not be handed a reply from
+// before that.
+func TestTakePriorReply_HandsItOverExactlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+	if _, err := h.PersistFailure("dev", "prior"); err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+	if err := h.SeedPriorReply("dev"); err != nil {
+		t.Fatalf("SeedPriorReply: %v", err)
+	}
+
+	if reply, ok := h.TakePriorReply("dev"); !ok || reply != "prior" {
+		t.Fatalf("first TakePriorReply = %q, %v; want the seeded reply", reply, ok)
+	}
+	if reply, ok := h.TakePriorReply("dev"); ok {
+		t.Fatalf("second TakePriorReply returned %q; the reply must be handed over once", reply)
+	}
+}
+
+// TestSeedPriorReply_MissingFileIsACleanNoOp: a node that left no reply (it
+// never ran, it failed to spawn, it said nothing) seeds nothing and errors
+// about nothing — running the retry without a quote is the pre-ADR-0016
+// behaviour, which is correct rather than degraded.
+func TestSeedPriorReply_MissingFileIsACleanNoOp(t *testing.T) {
+	h := New(t.TempDir(), nil)
+	if err := h.SeedPriorReply("never-ran"); err != nil {
+		t.Fatalf("SeedPriorReply on a missing file = %v, want nil", err)
+	}
+	if reply, ok := h.TakePriorReply("never-ran"); ok {
+		t.Fatalf("TakePriorReply = %q, want nothing seeded", reply)
+	}
+}
+
+// TestSeedPriorReply_UnreadableFileIsReported: any failure that is NOT "no such
+// file" comes back, so the caller warns instead of silently retrying without a
+// quote it was told existed.
+func TestSeedPriorReply_UnreadableFileIsReported(t *testing.T) {
+	dir := t.TempDir()
+	// A directory where the reply file should be: readable as an entry,
+	// unreadable as a file, and not an IsNotExist.
+	if err := os.MkdirAll(FailedOutputPath(dir, "dev"), 0o755); err != nil {
+		t.Fatalf("stage an unreadable reply: %v", err)
+	}
+	err := New(dir, nil).SeedPriorReply("dev")
+	if err == nil {
+		t.Fatal("SeedPriorReply on an unreadable path = nil, want the failure reported")
+	}
+	if !strings.Contains(err.Error(), "dev") {
+		t.Errorf("error %q does not name the node it is about", err)
+	}
+}
+
+// TestPersistFailure_RegistersNothing_PriorReplyIsNotAnArtifact re-states the
+// boundary now that a second reader exists: keeping a reply for the retry that
+// repeats it still does not make it an artifact or a resumable session.
+func TestPersistFailure_RegistersNothing_PriorReplyIsNotAnArtifact(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+	if _, err := h.PersistFailure("dev", "a reply that failed"); err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+	if err := h.SeedPriorReply("dev"); err != nil {
+		t.Fatalf("SeedPriorReply: %v", err)
+	}
+	if _, err := h.Interpolate("{{ artifacts.dev }}"); err == nil {
+		t.Error("{{ artifacts.dev }} resolved for a failed node — an artifact means the node PASSED")
+	}
+	if path, ok := h.ArtifactPath("dev"); ok {
+		t.Errorf("ArtifactPath(dev) = %q; a kept failure reply is not an artifact path", path)
+	}
+}

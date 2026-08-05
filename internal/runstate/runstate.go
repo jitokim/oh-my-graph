@@ -178,6 +178,23 @@ type NodeRecord struct {
 	// at it are retained, and max − round rounds remain — no separate
 	// rounds-spent counter exists to drift from it.
 	Round int `json:"round,omitempty"`
+	// Judged marks a FAIL that a check rendered a verdict ON, as opposed to
+	// one the machinery caused: a failed success_check or a verification that
+	// ran and said no, never a spawn error, an interpolation error, a blown
+	// budget, or a verification that could not be completed. It is ADR 0010's
+	// judgment-vs-infrastructure split (schedule.isJudgmentFailure) made
+	// durable, and absent (false) on every PASS and on every marker record —
+	// an additive field, no schema bump.
+	//
+	// It exists because that split is the gate on quoting a failed node's own
+	// reply back into the prompt that retries it (ADR 0016), and a
+	// `resume --retry-failed` decides that in a different PROCESS from the one
+	// that judged it. The alternative was re-deriving the cause by parsing
+	// Detail's prose, which would make a wording change silently move a trust
+	// boundary. Consumers get the same thing for free: "the work was wrong"
+	// and "the machinery broke" stop being distinguishable only by reading
+	// English.
+	Judged bool `json:"judged,omitempty"`
 }
 
 // GoalRef links an iterated auto run — one cycle of a goal loop (ADR 0011) —

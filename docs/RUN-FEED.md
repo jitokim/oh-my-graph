@@ -86,9 +86,19 @@ Top-level fields: `schema`, `run_id`, `graph_source_path`, `graph_sha256`,
 `continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
 runs only — see "Goal cycles" below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `budget_usd`, `duration`
-in nanoseconds, `artifact_path`, `detail`, and — for executions inside a
+in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
+
+`judged` (additive, ADR 0016 — no schema bump) marks a FAIL a check rendered a
+verdict **on**, as opposed to one the machinery caused: a failed `success_check`
+or a verification that ran and said no, never a spawn error, an interpolation
+error, a blown budget, or a verification that could not be completed. It is
+absent (false) on every PASS and on every marker record. It is the engine's own
+answer to "was the work wrong, or did the machinery break?" — a question that
+otherwise requires reading `detail` as English — and it is what a
+`resume --retry-failed` reads to decide whether to quote a failed node's reply
+back into the prompt that retries it.
 
 One record is not terminal: a feedback declarer's record mid-loop is a
 non-terminal **marker** — `round` k with an **empty** `verdict` — written the

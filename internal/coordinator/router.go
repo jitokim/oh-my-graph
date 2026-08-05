@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/jitokim/oh-my-graph/internal/fence"
 )
 
 // Route modes: a chat turn is either answered directly (converse) or handed to
@@ -51,7 +53,7 @@ func (c *Coordinator) Route(ctx context.Context, message string) (Route, error) 
 	}
 	if outcome.ExitCode != 0 {
 		return Route{}, fmt.Errorf("chat router exited with code %d\nrouter replied:\n%s",
-			outcome.ExitCode, truncate(outcome.Result, maxOutputInError))
+			outcome.ExitCode, fence.Truncate(outcome.Result, maxOutputInError))
 	}
 	return parseRoute(outcome.Result), nil
 }

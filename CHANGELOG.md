@@ -14,6 +14,56 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 
 ### Added
 
+- **A failed node's own reply survives it, and the retry that repeats the
+  attempt is told what it said.** A node that failed its `success_check` used
+  to leave behind only the engine's account of the failure — a 240-rune
+  `Detail` — and for the largest single class of failure, a `result_matches`
+  miss, that detail is `result did not match /<re>/`: **zero bytes** of what
+  the node actually said. Across 133 local runs, 11 of 36 `node_failed` events
+  were exactly that, carrying $21.33 of spend and no reply at all. The reply is
+  now persisted to `<run-dir>/failed/<node-id>.out` (atomic temp+rename, capped
+  at 256 KiB head-and-tail with the cut stated in the file). It is deliberately
+  **not** an artifact: no `{{ artifacts.<id> }}` resolves for a failed node and
+  no `handoff: session` child can resume one — the file is the node's own
+  account, in its own subdirectory, out of the flat artifact glob.
+
+  On top of that record, a **retry now carries the attempt it is repeating**
+  (ADR 0016). When a check judged the previous attempt, the retried attempt's
+  prompt quotes that attempt's own reply as nonce-fenced data — the same
+  per-call `crypto/rand` fence the planner's re-plan and the goal assessor use,
+  now shared as `internal/fence` rather than hand-rolled twice. **Exactly one**
+  prior attempt is carried and it never accumulates: every attempt's prompt is
+  rebuilt from the interpolated node prompt, so the added cost is flat in the
+  attempt index rather than triangular, and the quoted reply is bounded at 8000
+  bytes. The success check is **not** quoted — not its expression, not the
+  detail that embeds it — because feeding back a `result_matches` regex teaches
+  the cheapest possible pass, which is to print whatever it matches; the node
+  is told its attempt did not pass, told not to argue the verdict, and pointed
+  back at its own instructions. Causes that rendered no verdict on the reply
+  carry nothing: a spawn error, an interpolation error, `budget_exceeded`, and
+  a verification that could not be *completed*. A `handoff: session` retry
+  still starts **cold** — unchanged — and the quote now says so out loud.
+  `resume --retry-failed` re-reads the reply off disk for each node it clears,
+  which is why the file is written by one process and read by another.
+
+  **This is on by default and it costs money:** up to roughly 2k tokens of
+  quoted reply per retry attempt of a judged failure. It is bounded and flat,
+  never compounding. Whether it raises retry pass rates is **unmeasured** —
+  this repo has no harness for that, and the claim made is only the narrower
+  one, that re-running a node with no knowledge of its own rejected attempt is
+  strictly less informed than re-running it with one.
+
+  `state.json` gains one additive optional field, `judged` (**no schema
+  bump**): whether a FAIL was a verdict on the work or a fault in the
+  machinery. It is what carries that distinction across the `resume` process
+  boundary, and it answers a question that previously required reading `detail`
+  as English.
+
+  Not fixed here, and named rather than left silent: `{{ feedback.<id> }}`
+  still inlines a full model reply into a body node's prompt with no fence and
+  no length bound. That defect predates this change; fencing it alters what
+  body nodes are shown, which is its own change.
+
 - **A validation refusal buys one corrected plan, not a dead end.** Five of
   twenty measured `auto --plan-only` goals produced no graph at all: the
   planner emitted a spec the validator refuses, the call was paid for, and the
