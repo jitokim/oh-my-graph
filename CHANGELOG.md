@@ -14,13 +14,58 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 
 ### Added
 
+- **A validation refusal buys one corrected plan, not a dead end.** Five of
+  twenty measured `auto --plan-only` goals produced no graph at all: the
+  planner emitted a spec the validator refuses, the call was paid for, and the
+  user got nothing — not even the rejected spec, which was discarded before it
+  ever reached disk. A refusal the planner's own output caused now hands the
+  validator's exact refusals back to **one** fresh planner call. That reply is
+  UNTRUSTED exactly like the first: same `graph.Parse`, same
+  `validatePlannedNodes`, no shortcut for "it already failed once". The engine
+  never rewrites the model's JSON into something legal — the plan that runs is
+  one the model authored and the ceiling accepted. Every planned-node refusal
+  is handed back, not just the first, so a repair cannot fix one rule and trip
+  the next with its single retry spent. The bound is exactly one extra call
+  per plan (so a goal loop's worst case is `2 × --max-cycles`), and it is
+  spent only on refusals the reply's content caused — a runner error, a
+  non-zero planner exit, a reply with no JSON in it and a reply whose JSON
+  does not decode buy nothing, because re-running cannot repair them.
+  **What is measured, stated exactly:** the five-of-twenty figure above is the
+  BASELINE that motivated this, not a before/after comparison. The goals run
+  since are a different and much smaller set, and none of them drew a refusal —
+  so the re-plan path has **zero real-planner samples**, no refusal rate is
+  claimed for it, and whether it converges is answered only by
+  `TestManual_RepairPromptConvergesOnARealPlanner` (manual, real `claude`).
+  The `re-planned:` line is what makes that column measurable once a refusal
+  does happen; comparing rates needs the same twenty goals re-run.
+- **A re-plan is never silent, and a rejected plan is never destroyed.**
+  `Plan.CostUSD` is the SUM of every planner call a plan took, so the ledger's
+  TOTAL COST and the goal loop's `--max-goal-budget-usd` check cannot
+  undercount a repaired plan; `--plan-only`'s cost sentence names how many
+  calls it is talking about; and the plan printout carries a `re-planned:`
+  line with the refusals that caused it, so a doubled price is visible and the
+  refusal rate stays measurable. A plan refused twice now keeps its spec at
+  `$OMG_HOME/plans/<id>/rejected.json` (owner-only, under its own name so
+  nothing mistakes it for a graph that was going to run) and the error names
+  the path and the total spend — hand-edit it and `oh-my-graph run` it.
+- **The planner prompt states three rules it was enforcing in silence.** Every
+  measured refusal above was a rule `graph.Validate` enforces and the prompt
+  never mentioned. `{{ feedback.<id> }}` now says it takes NO filter — with
+  the wrong form marked WRONG, the shape that worked for `**PASS**` — where
+  the placeholder is legal, and that `<id>` names the node DECLARING the
+  feedback block; the do-not-set list now includes `success_check.verify`,
+  which the same prompt was actively steering planners toward; and `retry.on`'s
+  closed cause set is listed, rendered from `graph`'s own cause constants so
+  the advertised set cannot drift from the enforced one. Guidance to an
+  untrusted producer, never a replacement for enforcement.
 - **`auto --plan-only` — preview a plan before letting it spend (#108).** It
   mirrors `run --dry-run` through the same argv path: plan, print the
   topology, every agent and skill mapping decision and the tool ceiling
   exactly as a real `auto` would, then stop before any node runs. Unlike
   `--dry-run` it is **not free** — there is no plan to inspect until one has
-  been bought, so it still pays for the single planner call, prints that cost,
-  and keeps the spec. The spec goes to `$OMG_HOME/plans/<id>/graph.json`, not
+  been bought, so it still pays for the planner calls, prints what they cost
+  — the sum of every call, the validation-repair call included — and keeps the
+  spec. The spec goes to `$OMG_HOME/plans/<id>/graph.json`, not
   `runs/`: nothing ran, so it is not a run and no reader of `runs/` needs a
   special case for it. Written owner-only (dir `0700`, file `0600`), because
   an inlined skill body in a node prompt is the user's own private
