@@ -35,6 +35,37 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   scanned". A `name:` collision inside one `~/.claude/skills` names its loser
   rather than silently moving the count.
 
+### Changed
+
+- **The run lock is the kernel's `flock(2)`, not the lock file's existence
+  (ADR 0015 §1).** `runstate.AcquireLock` opens `resume.lock`
+  `O_CREATE|O_RDWR` and takes `LOCK_EX|LOCK_NB`; only once the lock is held
+  does it truncate and write its two lines — a format marker
+  (`oh-my-graph-lock 1`) and the holder's pid. The kernel releases the lock
+  when the holder dies, however it dies, so a held lock now means a live leg
+  rather than possibly a corpse: `LockHeldError` on that arm says "a leg of
+  this run is in flight (started by pid N); wait for it, or stop it" and
+  **drops the old "delete it and retry: rm …" advice**, which under `flock`
+  is an active double-spend footgun (unlinking does not release the live
+  holder's lock, while the next leg takes an uncontended one on a fresh
+  inode). For the same reason **release no longer unlinks** — a `resume.lock`
+  is now a permanent, inert resident of every run directory, and nothing may
+  read its existence as a state. A lock file with no marker was written by a
+  pre-`flock` binary whose live leg holds no lock at all, so it keeps the old
+  semantics — existence is the lock, a human decides, and the message names
+  the exact path to delete — an arm that self-expires the moment such a lock
+  is cleared. New: `runstate.ProbeLock` answers `held` / `free` / `unknown`
+  for a reader, via a **shared** (`LOCK_SH`) lock on a read-only fd that
+  creates, writes and removes nothing, gated on the run directory being on a
+  known-local filesystem (on linux, `flock()` over NFS silently degrades to
+  per-process record locks). A missing file, an unmarked one, a non-local
+  filesystem and any error alike answer `unknown`, which means the answer this
+  tool gave before — a false *dead* would authorise a second scheduler over a
+  live run, so nothing is ever called dead because a probe failed. Off darwin
+  and linux a build-tagged stub reports `unknown` and `AcquireLock` keeps the
+  pre-ADR `O_EXCL` behaviour in full. **No surface derives `ABANDONED` yet**;
+  the two zombie runs still read `RUNNING` until §2 and §4 land.
+
 ### Fixed
 
 - **`output_matches` was judged against a truncated tail.** The verify seam
@@ -98,8 +129,9 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   because an unrelated process had recycled it. Liveness becomes the kernel's
   `flock(2)` on `resume.lock`, ABANDONED is derived at read time by every
   reader, and no reader appends a terminal event on a dead run's behalf. Both
-  file schemas stay 2 and neither file changes. Accepted as an ADR; the
-  implementation has not landed.
+  file schemas stay 2 and neither file changes. Accepted as an ADR; its lock
+  half (§1) has since landed — see Changed above — while the read-time
+  derivation and the surfaces that render it have not.
 
 ## [v0.4.1] - 2026-08-04
 

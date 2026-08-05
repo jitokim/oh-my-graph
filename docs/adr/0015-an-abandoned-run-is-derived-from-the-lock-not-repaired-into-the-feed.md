@@ -1,13 +1,16 @@
 # ADR 0015 — An abandoned run is derived from the lock, never repaired into the feed
 
-- Status: Accepted — **not implemented.** Nothing in this ADR has landed as of
-  2026-08-05: `internal/runstate.AcquireLock` is still `O_EXCL` with a pid and
-  an unlinking release, no `flock(2)` is taken or probed anywhere in the tree,
-  and no surface derives `ABANDONED`. Read the Decision below as the shape the
-  code is meant to take, not as a description of it — the present tense
-  throughout ("`AcquireLock` opens the file `O_CREATE|O_RDWR` (**not**
-  `O_EXCL`)") is normative, and the body's own "when this is implemented" is
-  the correct reading of every sentence in it.
+- Status: Accepted — **partly implemented.** §1 has landed as of 2026-08-06:
+  `internal/runstate.AcquireLock` takes `LOCK_EX|LOCK_NB` on an
+  `O_CREATE|O_RDWR` fd, writes the marker line, releases without unlinking,
+  and branches to legacy semantics on an unmarked file; `runstate.ProbeLock`
+  answers held/free/unknown behind the local-filesystem gate, with a
+  build-tagged stub reporting unknown where there is no `flock(2)`.
+  **No surface derives `ABANDONED` yet** — §2's shared derivation and §4's
+  `runs list`, dashboard, `ResolveRun`, `watch` and `resume` wording are still
+  outstanding, and so is §3's "Liveness" section in docs/RUN-FEED.md. Read
+  those parts of the Decision below as the shape the code is meant to take,
+  not as a description of it.
 - Date: 2026-08-04
 
 ## Context

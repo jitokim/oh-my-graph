@@ -74,7 +74,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	// id double-running nodes"). The first `run`/`auto` leg holds the same
 	// lock (executeGraph), so a resume against a still-in-flight run fails
 	// here too.
-	release, err := runstate.AcquireLock(lockPath)
+	release, err := acquireRunLock(lockPath)
 	if err != nil {
 		return err
 	}

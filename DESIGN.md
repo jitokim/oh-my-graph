@@ -974,12 +974,27 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   lane's surviving dir or re-attaches the branch a paused leg retained, so
   the lane continues its committed state instead of dying on the ref
   collision (see "Worktree isolation").
-- A `resume.lock` (`O_EXCL`, holding the pid) guards against two concurrent
-  legs of the same run id double-running nodes: the `run`/`auto` first leg
-  holds it for its whole duration, and every `resume` takes the same lock — so
-  a `resume --retry-failed` raced against a still-in-flight run fails on the
-  lock instead of double-spawning. A stale lock is reported with the exact
-  path to delete.
+- A `resume.lock` guards against two concurrent legs of the same run id
+  double-running nodes: the `run`/`auto` first leg holds it for its whole
+  duration, and every `resume` takes the same lock — so a
+  `resume --retry-failed` raced against a still-in-flight run fails on the
+  lock instead of double-spawning. **The lock is the kernel's exclusive
+  `flock(2)` on that file, not the file's existence** (ADR 0015): the kernel
+  releases it when the holder dies, however it dies, so a held lock means a
+  live leg and there is nothing stale to report. The file's first line is a
+  format marker (`oh-my-graph-lock 1`) and its second is the holder's pid —
+  informational, a label on an already-established liveness, never a liveness
+  test (a pid was measured being recycled by an unrelated process). Release
+  unlocks and closes but does **not** unlink: acquiring is open-then-flock,
+  and an unlink between those steps would let one leg hold the lock on an
+  orphaned inode while another took it uncontended on a fresh one. A lock file
+  with no marker was written by a pre-`flock` binary, whose live leg holds no
+  flock at all; it keeps the old semantics, where existence is the lock and
+  the refusal names the exact path to delete. A reader can ask the same file
+  whether a leg is still alive without creating, writing or removing anything
+  (`runstate.ProbeLock`, a shared-lock probe on a read-only fd); a missing
+  file, an unmarked one, a non-local filesystem and any error alike answer
+  *unknown*, which means the answer this tool gave before ADR 0015.
 
 **Auto-planned graphs still may not contain gates.** `validatePlannedNodes`
 already rejects `type: gate` and continues to: an unattended run whose planner

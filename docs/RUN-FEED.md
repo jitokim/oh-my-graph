@@ -47,10 +47,12 @@ consumer needs:
 - The run's `resume.lock` is how *writers* coordinate, not how a reader
   reads. `executeGraph` (`cmd/oh-my-graph/main.go`) and `executeResume`
   (`cmd/oh-my-graph/resume.go`) hold it for a whole leg, and `serve`'s gate
-  endpoint creates and unlinks the very same lock before it accepts a
+  endpoint takes and gives back the very same lock before it accepts a
   decision (`runstate.AcquireLock`, `internal/serve/gate.go`) — holding it is
-  how "no leg is in flight" is established. The lock is an internal file with
-  no compatibility promise (see the last line of this document).
+  how "no leg is in flight" is established. The lock is the kernel's exclusive
+  `flock(2)` on that file rather than the file's existence, so the file itself
+  is never removed and its presence means nothing. The lock is an internal
+  file with no compatibility promise (see the last line of this document).
 
 Two in-repo readers also apply this contract's rules by hand instead of
 through `internal/runfeed`, so follow `internal/runfeed` rather than them:
