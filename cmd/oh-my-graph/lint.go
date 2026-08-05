@@ -43,7 +43,10 @@ func runLint(args []string) error {
 // the session-parent's, a retry on a session node), and for verdicts nothing
 // checks (handoff.LintVerdicts — a prompt demanding a token with no
 // `result_matches` to read it, or a `result_matches` that silently dropped
-// the node's implied exit-zero guard). Those are printed to
+// the node's implied exit-zero guard), and for a feedback arc that cannot
+// reach a producer its declarer fans in from (graph.LintFeedbackReach — the
+// loop would re-judge an unchanged artifact until its rounds are spent).
+// Those are printed to
 // warnW as `warning:` lines and never touch the exit code. At run time the
 // warned placeholder classes diverge: a MALFORMED token passes through
 // verbatim (a prompt may legitimately contain literal {{ }} text), while a
@@ -80,14 +83,18 @@ func lintGraph(w, warnW io.Writer, path string) error {
 
 // warnAdvisories prints one `warning:` line per advisory finding in an
 // already-validated graph — the shared reporting half of `lint` and
-// `run --dry-run`, covering all three handoff sweeps: unresolvable
+// `run --dry-run`, covering the three handoff sweeps (unresolvable
 // placeholder-like tokens, session-handoff resumes that may start cold, and
-// verdicts a node's own success_check cannot read.
+// verdicts a node's own success_check cannot read) plus the graph-topology
+// one (a feedback arc that cannot reach one of its declarer's producers).
 // Warnings are advice only: they never affect any exit code.
 func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 	advisories := append(handoff.LintPlaceholders(g), handoff.LintSessions(g)...)
 	for _, warning := range append(advisories, handoff.LintVerdicts(g)...) {
 		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
+	}
+	for _, advisory := range g.LintFeedbackReach() {
+		fmt.Fprintf(warnW, "warning: %s: %s\n", path, advisory)
 	}
 }
 

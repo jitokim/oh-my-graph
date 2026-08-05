@@ -53,17 +53,27 @@ func (g *Graph) FeedbackBody(id string) []string {
 	if _, ok := g.byID[target]; !ok {
 		return nil
 	}
-	ancestorsOfDeclarer := g.ancestorSet(id)
-	if !ancestorsOfDeclarer[target] {
+	if !g.ancestorSet(id)[target] {
 		return nil
 	}
+	return g.betweenSet(target, id)
+}
+
+// betweenSet returns every node on any depends_on path from target up to and
+// including declarer, in declared node order — the body computation itself,
+// with none of FeedbackBody's checks that the pair is a declared arc at all.
+// Split out so a sweep may ask what the body WOULD be for a target the node
+// does not currently name (LintFeedbackReach's suggestion) without a second
+// definition of "the loop" appearing in the package.
+func (g *Graph) betweenSet(target, declarer string) []string {
+	ancestorsOfDeclarer := g.ancestorSet(declarer)
 	// A node lies on a target→declarer path exactly when it is the target or
 	// the declarer itself, or both an ancestor of the declarer and a
 	// descendant of the target.
 	body := make([]string, 0)
 	for _, n := range g.Nodes {
 		switch {
-		case n.ID == id || n.ID == target:
+		case n.ID == declarer || n.ID == target:
 			body = append(body, n.ID)
 		case ancestorsOfDeclarer[n.ID] && g.ancestorSet(n.ID)[target]:
 			body = append(body, n.ID)
