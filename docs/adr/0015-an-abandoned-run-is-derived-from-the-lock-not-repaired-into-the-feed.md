@@ -5,7 +5,10 @@
   `O_CREATE|O_RDWR` fd, writes the marker line, releases without unlinking,
   and branches to legacy semantics on an unmarked file; `runstate.ProbeLock`
   answers held/free/unknown behind the local-filesystem gate, with a
-  build-tagged stub reporting unknown where there is no `flock(2)`.
+  build-tagged stub reporting unknown where there is no `flock(2)`. The one
+  place the implementation goes **beyond** this decision — an unmarked lock
+  file whose pid is affirmatively gone reads *free*, not *unknown* — is
+  recorded in the dated note under §1's "Absence is not evidence".
   §2: the derivation is `internal/runstatus` — `Derive`/`Probe`/`Of` — and the
   ordering invariant is stated at `acquireRunLock` and pinned by
   `TestRunLeg_LockBracketsTheEventStream`.
@@ -273,6 +276,43 @@ it), a run directory belonging to a post-ADR binary always has one. So:
   path as well as the read path** — §4's `resume` bullet works that out, and it
   is the half that actually prevents the double-spend rather than merely
   declining to render it.
+
+> **Update (2026-08-06):** implemented with one extension to the paragraph
+> above, recorded here rather than by editing it. As decided, an unmarked lock
+> file is *unknown*; as built, the reader first puts to it the one question such
+> a file **can** answer — its pid line — and reads that in a single direction:
+> a pid naming no process at all (`kill(pid, 0)` → `ESRCH`) is *free*; a pid
+> naming something, and an unreadable pid, are both *unknown*
+> (`legacyLiveness`/`pidGone` in `internal/runstate/lock.go`).
+>
+> The reason is a case this ADR's own Context is made of, and which the decision
+> as written closes off: **both zombie runs it was written about carry unmarked
+> locks.** Under "unmarked ⇒ unknown" they — and every run abandoned before the
+> upgrade — read `RUNNING` permanently, with no later moment at which they
+> become readable, since the only thing that can change is a pid and the marker
+> will never appear. That is a wrong answer forever, in the direction this ADR
+> spends itself avoiding everywhere else.
+>
+> The asymmetry the decision rests on is not weakened, on three counts. The
+> conclusion is an affirmative kernel fact (`ESRCH`), not the absence of one —
+> the same shape as a succeeding `LOCK_SH`, not the shape of a missing file. The
+> failure the Context measures is a false *alive* produced by pid-alive
+> reasoning, and pid-alive is never read as evidence here, so the
+> non-determinism it demonstrated can only move an answer to *unknown*, never
+> onto a live run. And §4's acquire path is deliberately unchanged — an unmarked
+> lock is still refused under legacy semantics with a human deciding — so no
+> answer derived this way can start a second leg on its own.
+>
+> The residual false-dead, stated because it is real and cannot be mechanised
+> away: a pid is only meaningful inside the PID namespace of the process that
+> wrote it, so a pre-`flock` leg running inside a container and read from
+> outside it through a shared runs directory could have its namespace-local pid
+> read as gone while it is alive. The pre-`flock` format records no namespace,
+> so there is no check to make; what bounds it is that the case needs an old
+> binary running right now beside a new one reading, that §1's filesystem gate
+> already refuses a runs root on a network mount, and that the human still
+> stands on the acquire path. Like the legacy acquire arm, this rule
+> self-expires.
 
 **Not every `flock` is this `flock`.** On linux, `flock()` over NFS is
 emulated as whole-file POSIX record locks. That silently restores *both*

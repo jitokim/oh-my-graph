@@ -365,19 +365,35 @@ channel.
   the run is in flight; a *succeeding* probe means the writer is gone — the
   run is **abandoned**, and no event will ever be appended to it. Beside a
   closed leg the lock says nothing and is not worth probing.
-- **A missing file, a file whose first line is not the format marker
-  `oh-my-graph-lock 1`, a filesystem whose `flock` is not the kernel's own
-  (linux emulates it over NFS as POSIX record locks), and any probe error all
-  mean *unknown*, and unknown means the open-leg rule** — the answer this tool
-  gave before ADR 0015, and a safe one. It is also what a consumer that cannot
-  or will not `flock` should use unconditionally. Nothing is ever concluded
+- **A missing file, a filesystem whose `flock` is not the kernel's own (linux
+  emulates it over NFS as POSIX record locks), and any probe error all mean
+  *unknown*, and unknown means the open-leg rule** — the answer this tool gave
+  before ADR 0015, and a safe one. It is also what a consumer that cannot or
+  will not `flock` should use unconditionally. Nothing is ever concluded
   abandoned from the absence of evidence.
+- **A lock file whose first line is not the marker predates this contract, and
+  resolves under a different, weaker rule.** It was written by a binary that
+  took no `flock` at all, so probing it says nothing about its writer. What it
+  does carry is one line holding that writer's pid, and oh-my-graph reads that
+  pid in **one direction only**: a pid that names no process at all
+  (`kill(pid, 0)` → `ESRCH`) means the leg has exited, so beside an open leg
+  the run reads **abandoned**; a pid that names some process proves nothing (it
+  may be the holder, it may be an unrelated process that inherited a recycled
+  pid — exactly what was measured) and is *unknown*; an unreadable or
+  malformed pid is *unknown*. This rule exists only so runs abandoned before
+  the upgrade are diagnosable at all, and it self-expires — the next leg to
+  take such a run's lock writes a marked file, after which the `flock` alone
+  decides forever. **A consumer is free not to implement it:** treating every
+  unmarked file as *unknown* is always safe, and differs only in reporting a
+  pre-upgrade corpse as in flight.
 
-The file's *contents* carry exactly one promise: the marker line. Everything
-after it — the holder's pid — is explicitly informational and explicitly **not
-a liveness test**: a pid in a lock file was measured being recycled by an
-unrelated process, reading "alive" for hours. The file is **never removed**,
-so its presence carries no information either; it is a handle, not a flag.
+The file's *contents* carry exactly one promise: the marker line. In a file
+that **has** it, everything after — the holder's pid — is explicitly
+informational and explicitly **not a liveness test**: a pid in a lock file was
+measured being recycled by an unrelated process, reading "alive" for hours.
+That measurement is also why the pre-marker rule above reads a pid only in the
+one direction recycling cannot corrupt. The file is **never removed**, so its
+presence carries no information either; it is a handle, not a flag.
 
 Two things this deliberately does not do: no reader ever repairs the stream by
 appending a terminal event on a dead writer's behalf (the history stays exactly
@@ -418,4 +434,7 @@ Anything in the run directory not listed here (temp files) is internal and
 carries no compatibility promise. `resume.lock` is listed here — see
 "Liveness" — and carries exactly the two promises stated there (an exclusive
 `flock` for a leg's duration, and the format marker as its first line);
-everything else about it, its pid line included, remains internal.
+everything else about it, its pid line included, remains internal. The
+pre-marker rule under "Liveness" is not a third promise: it describes lock
+files already on disk, written before this contract existed, and promises
+nothing about the ones this binary writes.

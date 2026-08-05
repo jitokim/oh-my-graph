@@ -62,10 +62,22 @@ func (s Status) String() string {
 }
 
 // Derive is the rule itself, over the two facts and nothing else. Abandoned
-// requires TWO affirmative facts — an open leg in the stream, and a lock probe
-// that actually succeeded against a marked lock file on a filesystem whose
-// flock means what ADR 0015 §1 assumes. Every doubt runstate folds into
-// LivenessUnknown lands in the in-flight arm here, never in the abandoned one.
+// requires TWO affirmative facts, never the absence of one: an open leg in the
+// stream, and a LivenessFree that runstate actually established.
+//
+// There are two ways runstate can establish it, and a reader of an old run
+// directory needs to know which one answered, because they are not equally
+// strong. A MARKED lock file — one a post-ADR-0015 binary wrote — that nothing
+// flocks, on a filesystem whose flock means what §1 assumes, is the primary
+// rule. An UNMARKED, pre-flock lock file has no flock to read at all, so it is
+// answered by the one question it can answer: its recorded pid naming no
+// process (runstate.legacyLiveness). A run whose lock predates the upgrade
+// therefore resolves under that second rule, and that is the only reason such a
+// run can read abandoned here rather than in flight forever.
+//
+// Every doubt runstate folds into LivenessUnknown — including an unmarked file
+// whose pid still names something — lands in the in-flight arm here, never in
+// the abandoned one.
 func Derive(openLeg bool, lock runstate.Liveness) Status {
 	switch {
 	case !openLeg:

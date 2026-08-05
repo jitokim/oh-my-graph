@@ -989,12 +989,33 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   and an unlink between those steps would let one leg hold the lock on an
   orphaned inode while another took it uncontended on a fresh one. A lock file
   with no marker was written by a pre-`flock` binary, whose live leg holds no
-  flock at all; it keeps the old semantics, where existence is the lock and
-  the refusal names the exact path to delete. A reader can ask the same file
-  whether a leg is still alive without creating, writing or removing anything
-  (`runstate.ProbeLock`, a shared-lock probe on a read-only fd); a missing
-  file, an unmarked one, a non-local filesystem and any error alike answer
-  *unknown*, which means the answer this tool gave before ADR 0015.
+  flock at all; on the **acquire** path it keeps the old semantics, where
+  existence is the lock, a human decides, and the refusal names the exact path
+  to delete. A reader can ask the same file whether a leg is still alive
+  without creating, writing or removing anything (`runstate.ProbeLock`, a
+  shared-lock probe on a read-only fd); a missing file, a non-local filesystem
+  and any error alike answer *unknown*, which means the answer this tool gave
+  before ADR 0015.
+- **A pre-`flock` lock file is read under a second, weaker liveness rule**, and
+  it is the reason an old run resolves differently from a new one. The flock is
+  silent about a file whose writer never took one, so folding "unmarked" into
+  *unknown* would leave every run abandoned before the upgrade reading
+  `RUNNING` for the rest of time — there is no later moment at which such a
+  file becomes readable, because the only thing that can change is a pid and
+  the marker will never appear. Its single pid line is the only signal it
+  carries, and it is read in **one direction only**: a pid that names no
+  process at all (`kill(pid, 0)` → `ESRCH`) means the leg that wrote the file
+  has exited — *free*; a pid that names something is a holder or a recycled
+  stranger, indistinguishable — *unknown*; an unreadable pid — *unknown*. This
+  does not reopen the pid recycling ADR 0015 refutes, which produced a false
+  *alive*: pid-alive is never read as evidence here, so recycling can only move
+  an answer to *unknown*, never onto a live run. And the acquire path is
+  deliberately unchanged, so no answer derived this way can start a second leg
+  by itself. The residual false-dead that cannot be mechanised away is a
+  pre-`flock` leg inside a container read from outside it, where a
+  namespace-local pid means nothing and the format records no namespace to
+  check. The arm self-expires: the next acquire on a cleared lock writes a
+  marked one, after which the flock alone decides forever.
 - **An abandoned run is derived from that probe, never repaired into the feed
   (ADR 0015 §2).** One rule, stated once in `internal/runstatus` and shared by
   every surface: *in flight = an open leg AND a held lock; abandoned = an open

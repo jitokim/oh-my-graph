@@ -58,12 +58,26 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   for a reader, via a **shared** (`LOCK_SH`) lock on a read-only fd that
   creates, writes and removes nothing, gated on the run directory being on a
   known-local filesystem (on linux, `flock()` over NFS silently degrades to
-  per-process record locks). A missing file, an unmarked one, a non-local
-  filesystem and any error alike answer `unknown`, which means the answer this
-  tool gave before — a false *dead* would authorise a second scheduler over a
-  live run, so nothing is ever called dead because a probe failed. Off darwin
-  and linux a build-tagged stub reports `unknown` and `AcquireLock` keeps the
-  pre-ADR `O_EXCL` behaviour in full.
+  per-process record locks). A missing file, a non-local filesystem and any
+  error alike answer `unknown`, which means the answer this tool gave before —
+  a false *dead* would authorise a second scheduler over a live run, so nothing
+  is ever called dead because a probe failed. Off darwin and linux a
+  build-tagged stub reports `unknown` and `AcquireLock` keeps the pre-ADR
+  `O_EXCL` behaviour in full.
+- **A lock file written before the marker existed is read under a second,
+  weaker rule (ADR 0015 §1, dated note).** Its writer took no `flock`, so the
+  probe reads the only signal such a file carries — its pid line — in **one
+  direction only**: a pid naming no process at all (`kill(pid, 0)` → `ESRCH`)
+  is `free`, while a pid naming something (holder or recycled stranger,
+  indistinguishable) and an unreadable pid are both `unknown`. Without it every
+  run abandoned *before* this release would read `RUNNING` for the rest of
+  time, since the marker will never appear on a file already on disk. It does
+  not reopen the pid recycling the ADR refutes — that produced a false *alive*,
+  and pid-alive is never read as evidence here — and the acquire path is
+  unchanged, so an unmarked lock is still refused with a human deciding. The
+  arm self-expires once such a lock is cleared, and docs/RUN-FEED.md's
+  "Liveness" section states it for external consumers, who may skip it and
+  treat every unmarked file as `unknown`.
 - **A run whose process died now reads `ABANDONED` instead of `RUNNING`
   forever (ADR 0015 §2, §4).** The rule — *an open leg AND a held lock is in
   flight; an open leg AND an affirmatively free lock is abandoned; every doubt
