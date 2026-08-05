@@ -455,6 +455,27 @@ artifacts). Worst case is legible from the file: `(1 + max) × |body|` runs
 per arc, each under its own timeout/budget/tool ceiling; the ledger prices
 every execution with a `feedback round k/N` note.
 
+**A fan-in reviewer's arc reaches one branch — `lint` says which
+(`graph.LintFeedbackReach`, advisory).** When the declarer fans in from
+several producers, `rerun` still names one node, so the body may exclude a
+producer whose artifact the declarer judges: the loop then re-judges an
+unchanged file every round and halts with the defect untouched (issue #118 —
+five defects, all in the excluded branch, ~$14 of re-running the healthy
+one). `lint` and `run --dry-run` warn for each `depends_on` producer outside
+the body, naming the declarer, the rerun target, the unreachable producer and
+— when one exists and still validates — the covering target to aim at
+instead. It stays an **advisory**, never an eighth load rule: an out-of-body
+parent is legitimate by rule 3's own carve-out (a settled spec or corpus node
+feeding the reviewer ran once and is stable), and a gate parent can never be
+in a body at all under rule 4, so refusing the shape would break working
+hand-written graphs to catch a planner's mistake. What the sweep sees is
+`depends_on`; which files a prompt actually judges it cannot see — the #118
+reviewer named its two artifacts by literal path, not through
+`{{ artifacts.<id> }}`. The complementary half is planner guidance
+(`internal/coordinator`), not more validation. A producer left outside the
+body that *asks* for the payload with `{{ feedback.<id> }}` is already a load
+error, not an advisory (the placeholder rule above).
+
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
 attempt does not resume the parent session either — it starts cold, which
@@ -1545,7 +1566,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ## Repo layout
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), print ledger
-internal/graph/{graph,validate,feedback,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges, and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
+internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go), and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
 internal/schedule/{scheduler,errors,feedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
