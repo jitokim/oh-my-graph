@@ -63,8 +63,9 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   topology, every agent and skill mapping decision and the tool ceiling
   exactly as a real `auto` would, then stop before any node runs. Unlike
   `--dry-run` it is **not free** — there is no plan to inspect until one has
-  been bought, so it still pays for the planner call, prints that cost,
-  and keeps the spec. The spec goes to `$OMG_HOME/plans/<id>/graph.json`, not
+  been bought, so it still pays for the planner calls, prints what they cost
+  — the sum of every call, the validation-repair call included — and keeps the
+  spec. The spec goes to `$OMG_HOME/plans/<id>/graph.json`, not
   `runs/`: nothing ran, so it is not a run and no reader of `runs/` needs a
   special case for it. Written owner-only (dir `0700`, file `0600`), because
   an inlined skill body in a node prompt is the user's own private

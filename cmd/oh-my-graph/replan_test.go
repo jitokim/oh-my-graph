@@ -101,9 +101,15 @@ func TestRunAutoWith_PlanOnlyIsSilentWhenNoRePlanHappened(t *testing.T) {
 // tree for graph.json mistakes it for a graph the engine would run.
 func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	isolateRunHome(t)
+	// The two replies differ, so "the saved spec is the LAST rejected one"
+	// is actually asserted: with both calls returning the same bytes, saving
+	// the first reply would pass a test that means to pin PlanRejection.Spec
+	// to the final refusal.
+	finalRefusedSpec := strings.Replace(
+		refusedCycleSpec, `"name":"cycle-work"`, `"name":"final-refused-cycle"`, 1)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
 		"plan-1": {Result: refusedCycleSpec, TotalCostUSD: 0.02},
-		"plan-2": {Result: refusedCycleSpec, TotalCostUSD: 0.03},
+		"plan-2": {Result: finalRefusedSpec, TotalCostUSD: 0.03},
 	})
 
 	var err error
@@ -133,6 +139,9 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	}
 	if !strings.Contains(string(saved), "Bash(rm -rf *)") {
 		t.Errorf("the saved spec is not the rejected one:\n%s", saved)
+	}
+	if !strings.Contains(string(saved), "final-refused-cycle") {
+		t.Errorf("the saved spec is the FIRST rejection, not the last one that was paid for:\n%s", saved)
 	}
 	// It is NOT the accepted plan's name: a reader of the tree must not be
 	// able to load it as a graph that was going to run.

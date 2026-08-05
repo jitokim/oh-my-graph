@@ -1223,7 +1223,8 @@ path; custom
 YAML stays the precise-control path. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
-Coordinator makes exactly that one call per `auto` run, plus at most one more:
+Coordinator makes exactly that one call per PLAN — per cycle, not per `auto`
+run — plus at most one more for that same plan:
 a plan refused by validation buys ONE corrected call (`maxPlanRepairAttempts`,
 `internal/coordinator/repair.go`), so the planner-call ceiling is 2 per plan
 and `2 × N` for `--max-cycles N`. `--plan-only` stops
@@ -1239,14 +1240,20 @@ reuses the same Coordinator but adds a routing call per turn before planning;
 see "Ambient chat".) The planner asks
 claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
 prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
-loaded through the existing parser, normalization, and DAG validation — an
-invalid plan buys the one corrected call above, and if that reply is refused
-too the whole step fails before anything runs, with what it paid for kept at
+loaded through the existing parser, normalization, and DAG validation — a
+VALIDATION-REFUSED plan buys the one corrected call above, and if that reply is
+refused too the whole step fails before anything runs, with what it paid for
+kept at
 `$OMG_HOME/plans/<id>/rejected.json` (its own name, so nothing walking the
 tree for `graph.json` mistakes it for a graph the engine would run). The
 corrected reply is UNTRUSTED exactly like the first: same `graph.Parse`, same
 `validatePlannedNodes`, same mapping order — there is no shortcut for "it
-already failed once". Auto-specific guards, enforced in
+already failed once". Only a refusal the reply's own CONTENT caused is
+retryable: a runner error, a non-zero planner exit, a reply with no JSON
+object, a reply whose JSON does not decode, and any other non-content failure
+stop the step with no second planner call, because there is nothing precise to
+hand back and a blind retry on a paid runtime is not a repair.
+Auto-specific guards, enforced in
 `coordinator.validatePlannedNodes` (not just requested in the planner prompt):
 a planned node may NOT request `permission_mode: bypassPermissions`
 (hand-written YAML may opt in per node because the user reviewed it; an

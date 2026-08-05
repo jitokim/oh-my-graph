@@ -5,7 +5,7 @@
 // Three properties make this a repair rather than a loophole:
 //
 //   - The second reply is UNTRUSTED exactly like the first. It goes through
-//     graph.Parse and plannedNodeIssues verbatim; there is no shortcut for
+//     graph.Parse and validatePlannedNodes verbatim; there is no shortcut for
 //     "it already failed once", and no path by which a twice-rejected plan
 //     reaches the caller.
 //   - The engine never edits what the model wrote. A refusal is handed back

@@ -319,7 +319,12 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		}
 		section, err := repairSection(refusal.issues)
 		if err != nil {
-			return Plan{}, err
+			// The refused attempt was paid for, and the fence failing to mint
+			// a nonce does not unspend it. Returning the bare error here would
+			// report $0 planning cost for a call the user was charged for, and
+			// would destroy the rejected spec — the two things PlanRejection
+			// exists to carry.
+			return Plan{}, &PlanRejection{Err: err, Spec: refusal.spec, CostUSD: spentUSD, Repaired: repaired}
 		}
 		// base, not prompt: the corrected attempt answers the refusals of the
 		// reply it is correcting, not a growing pile of every earlier one.
