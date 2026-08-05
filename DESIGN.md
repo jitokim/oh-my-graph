@@ -1014,8 +1014,13 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   by itself. The residual false-dead that cannot be mechanised away is a
   pre-`flock` leg inside a container read from outside it, where a
   namespace-local pid means nothing and the format records no namespace to
-  check. The arm self-expires: the next acquire on a cleared lock writes a
-  marked one, after which the flock alone decides forever.
+  check. The arm self-expires, but **not by itself**: the acquire path still
+  refuses an unmarked lock under legacy semantics, so recovering such a run is
+  two steps — the surfaces derive `ABANDONED` and print `resume … --retry-failed`,
+  that resume is refused with the exact `rm` for the stale file, and only then
+  does the retry take (and write) a marked lock, after which the flock alone
+  decides forever. The human on that path is ADR 0015 §4's deliberate choice,
+  not an oversight; what the hint cannot do is promise the second step away.
 - **An abandoned run is derived from that probe, never repaired into the feed
   (ADR 0015 §2).** One rule, stated once in `internal/runstatus` and shared by
   every surface: *in flight = an open leg AND a held lock; abandoned = an open
@@ -1025,7 +1030,14 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   `RUNNING` (never `FAIL`: a FAIL is a verdict about the work, which never got
   one), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
   right now", `watch` refuses to tail a stream that will never get another
-  line, and the dashboard paints the card abandoned. The leg that opens a run
+  line, the dashboard paints the card abandoned, and the single-run live view —
+  the surface that carries the gate button — reads the same answer off
+  `/api/graph` (additive `abandoned`/`hint` keys, absent on every other run):
+  its header says `ABANDONED`, the nodes its dead leg left open stop spinning
+  and stop tailing that leg's transcript, and the hint sits above the feed the
+  button lives in. That page's own stream reducer applies the same leg boundary
+  the two Go reducers do — every `run_started` ends the previous leg's running
+  nodes. The leg that opens a run
   must hold the lock **before** its first event and **after** its last, or a
   starting run would read abandoned for its first instants; that ordering is
   stated at `acquireRunLock` and pinned by
@@ -1034,10 +1046,11 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   wording.** Every child is spawned with `Setpgid`, so a death that took the
   engine alone (SIGHUP, `kill -9`, a panic, an OOM kill) leaves a subprocess
   still running and still spending while the run reads abandoned. There are two
-  deliberate spenders on such a run — `resume` and the dashboard's gate button
-  — so the recovery hint reaches four surfaces: the `ABANDONED` row, `watch`'s
-  refusal, `resume`'s own stderr, and the card, which must say what the button
-  would allow *before* it is pressed. ADR 0015 rejects probing for the orphan;
+  deliberate spenders on such a run — `resume` and the gate button — so the
+  recovery hint reaches every surface either is reachable from: the `ABANDONED`
+  row, `watch`'s refusal, `resume`'s own stderr, the card, and the run page the
+  card links to, which is where the button actually is. Both must say what the
+  click would allow *before* it is pressed. ADR 0015 rejects probing for the orphan;
   that would be a fifth exec seam.
 - **Recovery is `resume --retry-failed`, and nothing new** — except for a run
   killed before its first node settled, which has no `state.json` and therefore
@@ -1129,8 +1142,8 @@ one, and it answers 409 like any other view that cannot resume.
   `buildCard` therefore reads the leg state (`started != "" && ended == ""`)
   off its own walk, and then hands it to the SHARED derivation
   (`runstatus.Probe`), which composes it with the lock exactly as `runs
-  list`, `ResolveRun` and `watch` do — the composition is stated once, not
-  four times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
+  list`, `ResolveRun`, `watch` and the single-run view's `/api/graph` do — the
+  composition is stated once, not five times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
   held by an enforced agreement rather than a structural one:
   `TestBuildCard_AgreesWithTheSharedRule` judges the inline leg derivation
   against `runfeed.InFlight`, and the card's state and `ResolveRun`'s
@@ -1579,7 +1592,7 @@ ledger — so the summary never under-counts silently.
   those views need and neither owner has: the stream's leg state (RunFeed's
   `InFlight`) and the run's liveness (RunState's `ProbeLock`). It answers
   settled / in flight / abandoned, spawns nothing and writes nothing, and it
-  owns the recovery wording the four surfaces print. RunFeed stays a pure
+  owns the recovery wording every surface prints. RunFeed stays a pure
   stdlib reader of the stream and RunState keeps the lock file it already
   owned; this is only their meeting point (ADR 0015 §2).
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
@@ -1639,7 +1652,7 @@ internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun and `watch`, plus the recovery wording those surfaces print
+internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created

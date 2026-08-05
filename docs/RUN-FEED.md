@@ -352,7 +352,12 @@ channel.
 
 - **A leg holds an exclusive `flock(2)` on `resume.lock` for its whole
   duration**, taken before it writes its first event and still held after its
-  last. The kernel releases it when the holder dies, however it dies.
+  last. The kernel releases it when the holder dies, however it dies. (True on
+  darwin and linux, the platforms with `flock(2)` — the only ones the two
+  promises below hold on. Elsewhere a build-tagged fallback keeps the pre-ADR-0015
+  scheme, where the file's *existence* is the lock and release removes it; a
+  consumer there gets nothing from this section and should use the open-leg rule
+  unconditionally, which is what the "unknown" arm below already prescribes.)
 - **A consumer probes with a SHARED lock (`LOCK_SH|LOCK_NB`) on a read-only
   fd**, and unlocks immediately. A shared probe conflicts with the holder's
   exclusive lock — which is the question — but not with other probes, so
@@ -371,6 +376,15 @@ channel.
   before ADR 0015, and a safe one. It is also what a consumer that cannot or
   will not `flock` should use unconditionally. Nothing is ever concluded
   abandoned from the absence of evidence.
+- **The marker is the file's first line, and it is exactly
+  `oh-my-graph-lock 1`** — a bare version-tagged token, no trailing fields,
+  terminated by a newline. It is stated here as a literal because the whole
+  section forks on it: a consumer that cannot tell a marked file from an
+  unmarked one cannot implement either rule. Everything after that line is
+  internal (see below). The `1` is the *lock file's* own format version, not
+  either file schema, and it is what a future format would bump; a first line
+  that is neither this literal nor absent is not a marked file, and takes the
+  unmarked arm.
 - **A lock file whose first line is not the marker predates this contract, and
   resolves under a different, weaker rule.** It was written by a binary that
   took no `flock` at all, so probing it says nothing about its writer. What it
@@ -383,7 +397,13 @@ channel.
   malformed pid is *unknown*. This rule exists only so runs abandoned before
   the upgrade are diagnosable at all, and it self-expires — the next leg to
   take such a run's lock writes a marked file, after which the `flock` alone
-  decides forever. **A consumer is free not to implement it:** treating every
+  decides forever. **That next leg needs a human, though**: oh-my-graph's own
+  acquire path still refuses an unmarked lock under pre-`flock` semantics
+  (existence is the lock), naming the file to delete, so the sequence on such a
+  run is *derive abandoned → the offered `resume` is refused → delete the named
+  file → resume again*. Nothing expires on its own timer, and a consumer must
+  not read "self-expires" as "will eventually stop being unmarked without
+  anyone acting". **A consumer is free not to implement it:** treating every
   unmarked file as *unknown* is always safe, and differs only in reporting a
   pre-upgrade corpse as in flight.
 
@@ -392,8 +412,10 @@ that **has** it, everything after — the holder's pid — is explicitly
 informational and explicitly **not a liveness test**: a pid in a lock file was
 measured being recycled by an unrelated process, reading "alive" for hours.
 That measurement is also why the pre-marker rule above reads a pid only in the
-one direction recycling cannot corrupt. The file is **never removed**, so its
-presence carries no information either; it is a handle, not a flag.
+one direction recycling cannot corrupt. The file is **never removed** (on the
+`flock` platforms; the fallback noted above is the exception, and there its
+presence is the whole signal), so its presence carries no information either; it
+is a handle, not a flag.
 
 Two things this deliberately does not do: no reader ever repairs the stream by
 appending a terminal event on a dead writer's behalf (the history stays exactly

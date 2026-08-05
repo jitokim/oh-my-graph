@@ -82,7 +82,7 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   forever (ADR 0015 §2, §4).** The rule — *an open leg AND a held lock is in
   flight; an open leg AND an affirmatively free lock is abandoned; every doubt
   is in flight* — is stated once in the new `internal/runstatus` and shared by
-  all four surfaces, so they cannot drift: `runs list` gains the verdict word
+  every surface that asks, so they cannot drift: `runs list` gains the verdict word
   `ABANDONED` beside `RUNNING` (deliberately not `FAIL` — the work never got a
   verdict) and its snapshot-less row widened from "in flight" to "in flight or
   abandoned", so a run killed before its first node settled is *labelled*
@@ -105,15 +105,32 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 ### Fixed
 
 - **A node left running by a leg that died spun forever in `serve` (ADR 0015).**
-  Both of `serve`'s stream reducers switched only on node events, so they never
+  All THREE of `serve`'s stream reducers — the dashboard card's,
+  `/api/transcript`'s, and the single-run page's own `apply()` in
+  `ui/app.js` — switched only on node events, so they never
   saw `run_started` — and a node whose leg crashed mid-run has a `node_started`
   with no terminal after it. `/api/transcript` therefore kept serving that dead
   leg's session transcript as "what it is doing right now", and the dashboard
-  card kept its dot spinning, across every later resume that did not happen to
-  re-run that node. Both reducers now treat **every `run_started` as a leg
-  boundary**: a node the previous leg left open stops being running (and stops
-  carrying its session id) the moment a new leg opens, and the new leg's own
+  card and the run page kept the dot spinning, across every later resume that
+  did not happen to re-run that node. All three now treat **every `run_started`
+  as a leg boundary**: a node the previous leg left open stops being running (and
+  stops carrying its session id) the moment a new leg opens, and the new leg's own
   `node_started` is what makes it running again.
+- **The single-run live view — the page the gate button is on — claimed a dead
+  run was still running (ADR 0015 §4).** The ADR named four surfaces and missed
+  the fifth: the dashboard card said `abandoned` and carried the recovery hint,
+  while the page that card links to said `running`, spun its nodes, tailed the
+  dead leg's transcript as "now doing", and offered the gate's approve button
+  with nothing said — the exact inversion of the ADR's own rule that a button
+  must say what it will allow *before* it is clicked. `/api/graph` now carries
+  the answer as two additive keys, `abandoned` and `hint`, composed through
+  `internal/runstatus` like every other surface and absent on every other run
+  (the page cannot derive it — the answer needs the lock, and probing is
+  server-side). The header says `ABANDONED`, the nodes stop spinning and drop
+  their live tails, and the hint sits above the feed the button lives in. Still
+  no new event type, field or verdict, and still no poll: the page re-asks on
+  every leg boundary, so a run that dies while the page is already open keeps
+  painting until then — `watch`'s accepted gap, for the same reason.
 - **`output_matches` was judged against a truncated tail.** The verify seam
   handed the scheduler only the last 4 KiB of a command's output, prefixed with
   `…(earlier output truncated)…` — so an anchored pattern could **never** match
@@ -175,9 +192,11 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   because an unrelated process had recycled it. Liveness becomes the kernel's
   `flock(2)` on `resume.lock`, ABANDONED is derived at read time by every
   reader, and no reader appends a terminal event on a dead run's behalf. Both
-  file schemas stay 2 and neither file changes. Accepted as an ADR; its lock
-  half (§1) has since landed — see Changed above — while the read-time
-  derivation and the surfaces that render it have not.
+  file schemas stay 2 and neither file changes. Accepted as an ADR and since
+  **implemented in full** — the lock (§1), the read-time derivation (§2) and
+  every surface that renders it (§4) are all in Changed and Fixed above, and the
+  two gaps the ADR accepts by design remain gaps: `watch` gains no idle-time
+  probe, and nothing probes for an orphaned `claude`.
 
 ## [v0.4.1] - 2026-08-04
 

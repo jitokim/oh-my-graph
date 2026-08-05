@@ -143,6 +143,19 @@ header {
 
 main { flex: 1; display: flex; min-height: 0; }
 
+/* The abandoned run's recovery hint: full-width prose under the header, in the
+   same anatomy the dashboard card's hint uses (muted rule, never red — nothing
+   failed). It sits above the feed on purpose; the gate button it warns about is
+   down in the feed (ADR 0015 §4). */
+.run-hint {
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 0.4rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid var(--abandoned);
+}
+
 /* --- feed (the main surface) ------------------------------------------------ */
 
 #feed-col {

@@ -139,7 +139,7 @@ func TestOf_UnreadableStreamIsTheCallersProblem(t *testing.T) {
 	}
 }
 
-// --- the wording ADR 0015 §4 requires on four surfaces -----------------------
+// --- the wording ADR 0015 §4 requires on every surface a spender is on -------
 
 func TestHint_SplitsOnWhetherThereIsAnythingToResumeFrom(t *testing.T) {
 	withSnapshot := Hint("run-7", true)

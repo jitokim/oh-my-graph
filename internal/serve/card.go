@@ -127,8 +127,8 @@ func buildCard(runsRoot, runID string) runCard {
 	// every run_finished), and the dashboard rebuilds a card for every changed
 	// run on every tick, so the second read was doubling the I/O on the hot
 	// path. The composition with the lock is NOT re-implemented here, though:
-	// that half goes through runstatus.Probe, the one rule all four surfaces
-	// share. TestBuildCard_AgreesWithTheSharedRule judges both halves against
+	// that half goes through runstatus.Probe, the one rule every surface
+	// shares. TestBuildCard_AgreesWithTheSharedRule judges both halves against
 	// runfeed.InFlight and runstatus.Of themselves.
 	status := runstatus.Probe(runDir, started != "" && ended == "")
 	if status == runstatus.Abandoned {

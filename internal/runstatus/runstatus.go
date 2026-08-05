@@ -5,9 +5,10 @@
 //	free lock; anything else is settled or, where the lock cannot answer,
 //	today's answer.
 //
-// It exists because FOUR surfaces ask that question — `runs list`, the
-// dashboard card, `serve`'s ResolveRun and `watch` — and a rule composed by
-// hand four times is a rule that will be composed four different ways. The two
+// It exists because FIVE surfaces ask that question — `runs list`, the
+// dashboard card, `serve`'s ResolveRun, `serve`'s single-run view (via
+// /api/graph) and `watch` — and a rule composed by hand five times is a rule
+// that will be composed five different ways. The two
 // facts stay where they belong: runfeed keeps its pure, stdlib-only reading of
 // the stream (runfeed.InFlight means exactly "the last leg is open", as it
 // always did), runstate keeps the lock it owns (runstate.ProbeLock), and this
@@ -15,7 +16,10 @@
 // holds no state.
 //
 // The recovery wording lives here too, for the same reason: ADR 0015 §4
-// requires the hint to reach four surfaces, and the residual hazard it warns
+// requires the hint to reach every surface a spender is reachable from — the
+// `ABANDONED` row, `watch`'s refusal, `resume`'s own stderr, the dashboard card,
+// and the run page that card links to, which is where the gate button actually
+// is (the fifth surface, recorded in the ADR's dated note) — and the hazard it warns
 // about (an orphaned `claude` still spending after the engine died) is
 // mitigated by that wording and by nothing else.
 package runstatus
@@ -125,7 +129,7 @@ func Of(runDir string) (Status, error) {
 // orphaned subprocess still running and still spending while the run reads
 // abandoned. Resuming then runs that node alongside its own orphan. The ADR
 // rejects probing for it — that would be a fifth exec seam — so this warning is
-// what stands between the operator and a double spend, on all four surfaces.
+// what stands between the operator and a double spend, on every surface.
 const OrphanWarning = "a `claude` subprocess started by the dead leg may still be running and spending, so check for one before you spend again"
 
 // Recovery is what an operator can actually do about an abandoned run, and it
@@ -145,9 +149,18 @@ func Recovery(runID string, hasSnapshot bool) string {
 }
 
 // Hint is the one-line recovery hint ADR 0015 §4 requires beside every
-// abandoned run: on the `runs list` row, in `watch`'s refusal and on the
-// dashboard card, whose gate button is one click and spends money. `resume`
+// abandoned run: on the `runs list` row, in `watch`'s refusal, on the dashboard
+// card, and on the single-run page that card links to — the two web surfaces
+// because the gate button between them is one click that spends money. `resume`
 // prints OrphanWarning directly instead, because it IS the recovery.
+//
+// What it does NOT say, deliberately, is that a run whose lock predates the
+// marker takes two steps to recover: the resume it offers is refused by the
+// acquire path's legacy arm, which names the stale file to delete (ADR 0015 §4
+// keeps a human there on purpose). Teaching this wording about lock formats
+// would leak runstate's file layout into the composition layer; the sequence is
+// written down in docs/RUN-FEED.md's "Liveness" section and in DESIGN.md
+// instead, and the refusal itself carries the exact command.
 func Hint(runID string, hasSnapshot bool) string {
 	return fmt.Sprintf("run %s is ABANDONED — a leg started and never reported an end: %s. WARNING: %s.",
 		runID, Recovery(runID, hasSnapshot), OrphanWarning)

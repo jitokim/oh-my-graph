@@ -8,7 +8,10 @@
 // transition). Four read sources, mirroring the run-feed contract
 // (docs/RUN-FEED.md), and — on a paused gate's entry only — one write:
 //   /api/graph   the DAG structure (polled until the snapshot exists — a
-//                fresh run has no state.json until its first node completes)
+//                fresh run has no state.json until its first node completes),
+//                plus the one fact no stream carries: whether this run's open
+//                leg still has a process behind it (ADR 0015 — the answer
+//                needs the run lock, which only the server can probe)
 //   /api/events  the event stream over SSE (replay, then follow)
 //   /api/result  one node's handoff artifact, fetched lazily for that
 //                node's settled feed entries (200 body / 204 none / 404
@@ -45,7 +48,11 @@ const GATE_TOKEN = document.querySelector('meta[name="omg-token"]')?.content || 
 // no status hex lives in this file. Same hexes in both themes; status is
 // never color alone — every status surface pairs the color with a text
 // label, and "running" gets motion as its primary signal.
-const STATES = ["pending", "running", "passed", "failed", "gate-paused"];
+// "abandoned" is here for the same reason the other five are: it is a state a
+// node is painted in — one left running by a leg whose process is gone (ADR
+// 0015). It is derived by this page (see markAbandonedNodes), never carried by
+// an event; no run-feed event type or field was added for it.
+const STATES = ["pending", "running", "passed", "failed", "gate-paused", "abandoned"];
 
 function statusColor(state) {
   return cssVar(`--${state}`);
@@ -60,6 +67,11 @@ let cy = null;
 let totalCost = 0;
 let runStartedMs = null;
 let runEndedMs = null;
+// Whether this page currently believes the run's open leg has no process behind
+// it (ADR 0015). Set only from /api/graph's answer — the page cannot derive it,
+// the lock can only be probed server-side — and cleared by the next leg's
+// run_started. See applyRunStatus.
+let runAbandoned = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -298,8 +310,14 @@ function layoutOptions() {
 
 // --- graph structure ---------------------------------------------------------
 
+// Every /api/graph read — the structure load below and the leg-boundary
+// re-asks — is numbered, so a slow response can never overwrite a newer
+// answer about the run's liveness with a staler one.
+let statusGen = 0;
+
 async function loadGraph() {
   let payload;
+  const gen = ++statusGen;
   try {
     const resp = await fetch("api/graph");
     if (!resp.ok) {
@@ -318,14 +336,57 @@ async function loadGraph() {
   }
   $("run-id").textContent = payload.run_id;
   renderGoal(payload.goal);
+  if (gen === statusGen) applyRunStatus(payload);
   if (!payload.available) {
     // Honest window: structure is unknown until the first node's terminal
     // verdict writes state.json. Keep polling; events still stream meanwhile.
-    setStatus("waiting for structure", false);
+    // An abandoned snapshot-less run keeps the status applyRunStatus set: it
+    // will never write a state.json, so "waiting for structure" would be a
+    // promise nothing is going to keep.
+    if (!runAbandoned) setStatus("waiting for structure", false);
     setTimeout(loadGraph, 2000);
     return;
   }
   render(payload);
+}
+
+// applyRunStatus renders the run-level answer /api/graph carries: an open leg
+// whose process is gone reads ABANDONED here exactly as it does in `runs list`,
+// in `watch`'s refusal and on the dashboard card that links to this page — one
+// rule, derived server-side in internal/runstatus (ADR 0015 §2).
+//
+// The hint is the page's half of the ADR's residual-hazard mitigation: a gate
+// this run is paused at carries approve/reject buttons in the feed, and pressing
+// one starts a leg that spends money beside a `claude` the dead leg may have
+// orphaned. The card that links here says so; the page it links to has to say
+// so too, because that is where the button is.
+//
+// A "not abandoned" answer never resurrects anything: only the abandoned arm
+// paints. A live leg's own events are what say it is running.
+function applyRunStatus(payload) {
+  runAbandoned = !!payload.abandoned;
+  const hint = $("run-hint");
+  hint.textContent = payload.hint || "";
+  hint.hidden = !payload.hint;
+  if (!runAbandoned) return;
+  setStatus("abandoned", false);
+  markAbandonedNodes();
+  paint();
+}
+
+// refreshRunStatus re-asks /api/graph for the liveness answer alone, on every
+// leg boundary the stream shows this page. It is deliberately not a poll: the
+// probe is a question a reader asks, and a run that dies while this page is
+// already open keeps painting until something asks again — the same accepted
+// gap ADR 0015 §4 states for `watch`.
+function refreshRunStatus() {
+  const gen = ++statusGen;
+  fetch("api/graph")
+    .then((resp) => (resp.ok ? resp.json() : null))
+    .then((payload) => {
+      if (payload && gen === statusGen) applyRunStatus(payload);
+    })
+    .catch(() => {}); // transient failure: the next leg boundary re-asks
 }
 
 // renderGoal shows the header's goal-lineage chip when this run is one cycle
@@ -416,6 +477,17 @@ function apply(event) {
   const ts = event.ts ? Date.parse(event.ts) : NaN;
   switch (event.event) {
     case "run_started":
+      // EVERY run_started is a LEG BOUNDARY — the same rule the two Go
+      // reducers apply (card.go's walkNodeStates, transcript.go's
+      // readNodeFeedState). A node the previous leg left running was left that
+      // way by a leg that never closed it, so it is not running now; the new
+      // leg's own node_started is what makes it running again.
+      markAbandonedNodes();
+      // A leg beginning also invalidates the run-level answer below: the
+      // server probed the lock before this leg existed, so re-ask rather than
+      // keep painting a verdict about the previous one.
+      runAbandoned = false;
+      refreshRunStatus();
       runStartedMs = Number.isNaN(ts) ? Date.now() : ts;
       runEndedMs = null;
       setStatus("running", true);
@@ -471,8 +543,39 @@ function apply(event) {
       break;
   }
   appendFeed(event, ts);
+  // While this page knows the current leg's process is gone, no node may read
+  // as running: every node_started still arriving is that dead leg's, replayed,
+  // and nothing will ever terminate it. Enforced per event rather than once,
+  // because the graph fetch that establishes the fact and the SSE replay that
+  // carries those lines race — and AFTER appendFeed, so the line this event
+  // just added is corrected too rather than left claiming to be live. The
+  // run_started case above clears the belief, so a leg that really does resume
+  // paints normally.
+  if (runAbandoned) markAbandonedNodes();
   paint();
   tick();
+}
+
+// markAbandonedNodes converts every node that currently reads as running into
+// abandoned — the browser's copy of card.go's markAbandoned, applied at the
+// same two boundaries: a later run_started, and a leg whose death wrote no
+// event at all. Only running is converted; a gate-paused node waits on a human,
+// not on a process that is gone.
+//
+// It also retires what the dead line was claiming: its live transcript tail is
+// that leg's session doing nothing at all, and its dot stops saying running.
+// Its elapsed simply stops advancing — nothing on the feed says when the leg
+// died, so the page freezes the number where it was rather than inventing a
+// span (a still-ticking one would be counting a process that is not there).
+function markAbandonedNodes() {
+  for (const [id, info] of nodes) {
+    if (info.state !== "running") continue;
+    info.state = "abandoned";
+    removeLiveTail(id);
+    liveElapsed.delete(id);
+    const dot = latestEntryByNode.get(id)?.querySelector(".dot");
+    if (dot) dot.className = "dot abandoned";
+  }
 }
 
 // --- feed --------------------------------------------------------------------

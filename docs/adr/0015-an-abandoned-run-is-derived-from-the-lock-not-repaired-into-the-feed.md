@@ -17,7 +17,9 @@
   §4: `runs list` renders `ABANDONED` (snapshot-less arm widened), the
   dashboard card gains `abandoned` plus the hint, `ResolveRun` stops preferring
   an abandoned run, `watch` refuses to tail one, and `resume` warns about the
-  orphaned child before it takes the lock.
+  orphaned child before it takes the lock. The single-run live view — the
+  surface the gate button is on, and one §4 did not name — reads the same
+  answer off `/api/graph`; the dated note under §4 records it.
   §5: no new command or flag; the recovery hint and the snapshot-less
   "run the graph again" wording live in `runstatus`.
   The two surfaces the ADR names as accepted gaps are still gaps by design:
@@ -537,6 +539,32 @@ informational and explicitly not a liveness test.
   one deliberate crossing of the live view's read-only boundary), so it is a
   second spender, not a reader.
 
+> **Update (2026-08-06):** the surface list above is one short — and it is the
+> one holding that button. The four surfaces named are the dashboard's, the
+> CLI's and `watch`'s; the **single-run live view** (`/run/<id>/`, and
+> `oh-my-graph serve <run-id>` standalone) is where the approve/reject buttons
+> actually are, and it derived nothing. It has a stream reducer of its own —
+> `apply()` in `internal/serve/ui/app.js`, a third one beside `card.go`'s
+> `walkNodeStates` and `transcript.go`'s `readNodeFeedState` — which likewise
+> switched only on node events, so a dead leg's nodes spun there forever, and it
+> had no run-level notion of abandoned at all. The card said `abandoned` and
+> carried the hint; the page that card links to said `running` and carried
+> none, which is the exact inversion of the paragraph below.
+>
+> Implemented as: the same leg boundary in `apply()` (every `run_started` ends
+> the previous leg's running nodes, and the dead line's live transcript tail
+> goes with them), and the run-level answer served to the page by `/api/graph`
+> as two additive keys — `abandoned` and `hint` — composed through
+> `internal/runstatus` like every other surface, absent on every other run. The
+> page cannot derive it: the answer needs the lock, and probing is server-side.
+>
+> Two properties of the decision are unchanged. No run-feed event type, field or
+> verdict was added — the page derives abandoned exactly as the card does. And
+> the answer is still a question a reader asks, not a push: the page re-asks on
+> every leg boundary it sees, so a run that dies while the page is already open
+> keeps painting until then. That is `watch`'s accepted gap in this ADR's §4,
+> reached here for the same reason.
+
 **The residual hazard, named — and it is the common case, not the exotic one.**
 The measurements show the lock fd is `O_CLOEXEC`, so a `claude` child does not
 keep it alive. That is what makes the probe truthful about *oh-my-graph*, and
@@ -678,6 +706,16 @@ No `runs prune`, no `--force-finish`, no new command or flag.
    before the default-to-unknown arm stops firing on ordinary setups (overlayfs
    in a container, ZFS, a FUSE home). An over-strict list costs precision, not
    safety: it reads as "in flight", which is today's answer.
+
+   **One direction the gate structurally cannot cover, since it inspects the
+   *reader's* filesystem, not the writer's:** a runs root exported over NFS and
+   read **on the export server itself**. There `statfs` reports the local type
+   and the probe proceeds, but an NFS *client* leg's lock is an NLM/POSIX record
+   lock, which does not conflict with a local `flock()` on the server — so a
+   live leg could read free. It is the mirror image of the case §1 handles
+   (reader on the client), it needs a shared runs root across two hosts with the
+   reader on the serving one, and there is no fact on the reading side that
+   distinguishes it. Stated rather than guarded.
 3. **pid recycling speed on linux was not measured.** The observed trap was on
    darwin; linux `pid_max` defaults are typically smaller, so the direction is
    worse, not better. This only reinforces the rejection of pid-based designs.

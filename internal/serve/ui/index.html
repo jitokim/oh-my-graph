@@ -41,6 +41,12 @@
     <button id="theme-toggle" class="theme-toggle" type="button"
             title="Toggle color theme" aria-label="Toggle color theme">◐</button>
   </header>
+  <!-- An abandoned run's recovery hint (ADR 0015 §4): above the feed, not in
+       the footer, because a gate this run is paused at carries approve/reject
+       buttons down in the feed and pressing one starts a leg that spends
+       money. What that click would allow has to be readable before it is
+       pressed. Filled from /api/graph's answer; hidden on every other run. -->
+  <div id="run-hint" class="run-hint" hidden></div>
   <main>
     <!-- The feed: the main surface. Chronological, top to bottom; sticks to
          the bottom only while the reader is already there. Entries are built
@@ -74,6 +80,7 @@
           <span class="chip"><i class="dot passed"></i>passed</span>
           <span class="chip"><i class="dot failed"></i>failed</span>
           <span class="chip"><i class="dot gate-paused"></i>⏸ gate-paused</span>
+          <span class="chip"><i class="dot abandoned"></i>abandoned</span>
         </div>
       </div>
     </aside>
