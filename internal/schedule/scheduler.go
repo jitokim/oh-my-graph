@@ -654,7 +654,10 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 //
 // It returns nil on success, or the failure (an interpolation error, a runner
 // error, a *NodeCheckError — including a failed verification — or a
-// *NodeBudgetError) after retries are exhausted. A feedback declarer's
+// *NodeBudgetError) after retries are exhausted. A failure the node actually
+// spoke into — a judged verdict, or a result that could not be persisted —
+// keeps that reply at failed/<node-id>.out on the way out (keepFailedReply).
+// A feedback declarer's
 // judgment failure with rounds remaining returns a *feedbackSignal instead
 // (see judgeFeedback), which Run() intercepts and turns into the body's
 // re-arm rather than a failure. A gate node never reaches this general path
@@ -754,6 +757,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		}
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
+				s.keepFailedReply(h, node, outcome.Result)
 				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
@@ -780,6 +784,11 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if signal != nil {
 			return signal
 		}
+		// This is where the run paid for a reply and then judged it
+		// unacceptable. Keep the reply BEFORE recordFail, so a consumer
+		// reacting to node_failed on the event stream never beats the file
+		// onto disk.
+		s.keepFailedReply(h, node, outcome.Result)
 		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, finalErr)
 	}
 
@@ -842,6 +851,34 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 	s.recordSnapshot(node, rec, h)
 	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
+}
+
+// keepFailedReply persists a failing node's own reply to failed/<node-id>.out
+// and points the progress feed at it. Everything else a failure leaves behind —
+// the ledger row, the snapshot record, the node_failed detail — is the ENGINE's
+// account of the failure, capped at maxDetailRunes, and for the largest single
+// class of failure (a result_matches miss) it carries none of the reply's bytes
+// at all. This is the node's own account, kept whole enough to read.
+//
+// It is called only on paths that have an outcome: an interpolation error or a
+// spawn failure never produced a reply, and a gate never speaks. An empty reply
+// writes nothing (see Handoff.PersistFailure).
+//
+// A write failure is NON-fatal and warns exactly like a failed snapshot write:
+// the node has already failed, and losing its reply must not change the verdict
+// or invent a second failure mode. (Contrast SetFeedback, whose failure IS
+// fatal — a feedback re-run without its payload is a paid lie about what the
+// body was told. Different claim, different policy.)
+func (s *Scheduler) keepFailedReply(h *handoff.Handoff, node graph.Node, reply string) {
+	path, err := h.PersistFailure(node.ID, reply)
+	if err != nil {
+		s.logProgress("⚠ %s  failed reply not saved: %v\n", node.ID, err)
+		return
+	}
+	if path == "" {
+		return
+	}
+	s.logProgress("✎ %s  reply saved: %s\n", node.ID, path)
 }
 
 // recordPass writes the node's live "✓ PASS" progress line, its ledger row,

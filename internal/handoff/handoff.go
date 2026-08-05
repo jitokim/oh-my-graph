@@ -5,10 +5,11 @@
 //   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }} and
 //     {{ feedback.<id> }} into a node's prompt and cwd before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
-//     so dependents can read it (the artifact-default handoff), and a feedback
+//     so dependents can read it (the artifact-default handoff), a feedback
 //     declarer's failing payload to feedback/<node-id>.out so a feedback
 //     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
-//     contract);
+//     contract), and a FAILED node's own reply to failed/<node-id>.out so the
+//     work a failed node already paid for survives it;
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
@@ -241,15 +242,30 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 func (h *Handoff) SetFeedback(nodeID, payload string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	path := h.feedbackPath(nodeID)
+	if err := writeUnderRunDir(h.feedbackPath(nodeID), payload, "feedback payload", nodeID); err != nil {
+		return err
+	}
+	h.feedback[nodeID] = payload
+	return nil
+}
+
+// writeUnderRunDir writes payload to a file inside the run directory with the
+// temp+rename discipline runstate.Write uses: the payload lands in a temp file
+// in the SAME directory, is synced and closed, then renamed over the final
+// path. A rename within one directory is atomic on POSIX, so a reader that
+// races a crash sees either the previous complete file or the new one, never a
+// torn one. what names the kind of file in error messages ("feedback payload",
+// "failed reply"), so one discipline serves both writers and neither can drift
+// from the other.
+func writeUnderRunDir(path, payload, what, nodeID string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create feedback dir for node %q: %w", nodeID, err)
+		return fmt.Errorf("create %s dir for node %q: %w", what, nodeID, err)
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temp feedback payload for node %q: %w", nodeID, err)
+		return fmt.Errorf("create temp %s for node %q: %w", what, nodeID, err)
 	}
 	tmpName := tmp.Name()
 	// Best-effort cleanup of the temp file on any failure before the rename;
@@ -258,20 +274,18 @@ func (h *Handoff) SetFeedback(nodeID, payload string) error {
 
 	if _, err := tmp.Write([]byte(payload)); err != nil {
 		tmp.Close()
-		return fmt.Errorf("write temp feedback payload for node %q: %w", nodeID, err)
+		return fmt.Errorf("write temp %s for node %q: %w", what, nodeID, err)
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
-		return fmt.Errorf("sync temp feedback payload for node %q: %w", nodeID, err)
+		return fmt.Errorf("sync temp %s for node %q: %w", what, nodeID, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp feedback payload for node %q: %w", nodeID, err)
+		return fmt.Errorf("close temp %s for node %q: %w", what, nodeID, err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("persist feedback payload for node %q: %w", nodeID, err)
+		return fmt.Errorf("persist %s for node %q: %w", what, nodeID, err)
 	}
-
-	h.feedback[nodeID] = payload
 	return nil
 }
 
@@ -304,6 +318,82 @@ func (h *Handoff) SeedFeedback(nodeID string) error {
 // artifact at node "x"'s payload path.
 func (h *Handoff) feedbackPath(nodeID string) string {
 	return filepath.Join(h.runDir, "feedback", sanitizeNodeID(nodeID)+".out")
+}
+
+// failedDir holds one file per FAILED node, holding that node's own reply. It
+// is its own subdirectory for exactly the reasons feedback/ is: a flat
+// <id>.failed.out would collide with an artifact of a node literally named
+// "x.failed" (node ids allow dots), and a consumer globbing the run directory
+// flat for artifacts — the pattern docs/RUN-FEED.md teaches — must not pick up
+// a reply that failed as though it were a result that passed.
+const failedDir = "failed"
+
+// maxFailedReplyBytes bounds ONE failed reply on disk. The reply is
+// model-produced and has no length limit of its own, and a node fails at most
+// once per leg, so the run directory's worst case is (nodes × this). The bound
+// is applied at the WRITE (excerptFailedReply, called by PersistFailure), not
+// at a read: the alternative is a run directory that a single runaway node can
+// grow without limit, and unlike a ledger Detail — which is bounded where it
+// is RENDERED because the full cause is still on disk — there is no other copy
+// of this text to fall back to. The cut keeps head and tail and says out loud
+// how much it dropped, so a reader is never told a truncated reply is whole.
+const maxFailedReplyBytes = 256 * 1024
+
+// PersistFailure writes a FAILED node's own reply to
+// <run-dir>/failed/<node-id>.out and returns the path it wrote, so a caller can
+// point a human at it. A reply that is empty or all whitespace is NOT written
+// and comes back as ("", nil): the existence of the file means "this node said
+// something", so an empty file would be a claim the engine cannot make.
+//
+// This is deliberately not PersistOutput, and it is not a near-miss of it. It
+// registers NOTHING: not artifactPaths, so {{ artifacts.<id> }} keeps failing
+// for a failed node exactly as it did before (an artifact means "this node
+// produced this AND passed"), and not sessions, so a handoff: session child
+// cannot resume the conversation of a parent that failed. The only trace it
+// leaves is the file — the reply reaches a human, never another node's prompt.
+//
+// It holds no lock because it shares no state; the atomic rename below makes
+// the file itself safe regardless, and a node reaches its terminal failure
+// once per leg.
+//
+// The reply is bounded on the way in (see maxFailedReplyBytes).
+func (h *Handoff) PersistFailure(nodeID, reply string) (string, error) {
+	if strings.TrimSpace(reply) == "" {
+		return "", nil
+	}
+	path := FailedOutputPath(h.runDir, nodeID)
+	if err := writeUnderRunDir(path, excerptFailedReply(reply), "failed reply", nodeID); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// FailedOutputPath reports where PersistFailure writes nodeID's reply under
+// runDir, touching no filesystem. It is exported because the file exists to be
+// found: a read-back surface locates it by the same computation that wrote it
+// rather than by re-spelling the layout somewhere else.
+func FailedOutputPath(runDir, nodeID string) string {
+	return filepath.Join(runDir, failedDir, sanitizeNodeID(nodeID)+".out")
+}
+
+// failedExcerptMarker is the line excerptFailedReply leaves in place of what it
+// dropped. It is engine-written text inside model-written text and is NOT a
+// trust boundary: anything that later feeds this file to a model must fence it
+// with its own per-call nonce, the way the assessor fences artifacts.
+const failedExcerptMarker = "\n\n… oh-my-graph excerpted %d bytes here: this reply exceeded the %d-byte cap on failed/<node-id>.out …\n\n"
+
+// excerptFailedReply bounds reply to roughly maxFailedReplyBytes, keeping head
+// and tail — a reply's opening frames the problem and its closing usually
+// carries the conclusion, which is the half a head-only cut would throw away.
+func excerptFailedReply(reply string) string {
+	if len(reply) <= maxFailedReplyBytes {
+		return reply
+	}
+	marker := fmt.Sprintf(failedExcerptMarker, len(reply)-maxFailedReplyBytes, maxFailedReplyBytes)
+	keep := maxFailedReplyBytes - len(marker)
+	head := keep / 2
+	tail := keep - head
+	return reply[:head] + marker + reply[len(reply)-tail:]
 }
 
 // ResumeSessionFor returns the claude session id a session-handoff node must
