@@ -3,6 +3,7 @@ package runstatus
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 	cases := []struct {
 		name   string
 		events []runfeed.Event
-		lock   string // "none", "held", "free"
+		lock   string // "none", "held", "free", "legacy-gone", "legacy-alive"
 		want   Status
 	}{
 		{"no stream at all", nil, "none", Settled},
@@ -79,6 +80,14 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 		{"open leg, no lock file", openLeg, "none", InFlight},
 		{"open leg, lock held", openLeg, "held", InFlight},
 		{"open leg, lock free", openLeg, "free", Abandoned},
+		// The shape both preserved specimens of ADR 0015's Context are on disk.
+		// It reads exactly like a released marked lock here, and it has to: a
+		// run abandoned before the upgrade has no other route to a verdict,
+		// because no live binary will ever write the marker into its file.
+		{"open leg, a pre-flock lock whose pid is gone", openLeg, "legacy-gone", Abandoned},
+		// The same file with a pid that still names something is the in-flight
+		// arm, because alive is inconclusive on a pre-flock lock.
+		{"open leg, a pre-flock lock whose pid still names a process", openLeg, "legacy-alive", InFlight},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,6 +100,10 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 				holdLock(t, runDir)
 			case "free":
 				freeLock(t, runDir)
+			case "legacy-gone":
+				legacyLock(t, runDir, deadPID, runstate.LivenessFree)
+			case "legacy-alive":
+				legacyLock(t, runDir, os.Getpid(), runstate.LivenessUnknown)
 			}
 
 			got, err := Of(runDir)
@@ -214,5 +227,25 @@ func freeLock(t *testing.T, runDir string) {
 	}
 	if got := runstate.ProbeLock(path); got != runstate.LivenessFree {
 		t.Skipf("the lock probe cannot answer here (%v): no flock(2), or a filesystem outside the known-local set", got)
+	}
+}
+
+// deadPID is a pid no process can bear — above pid_max on both platforms this
+// project ships to — so the "gone" branch is assertable without spawning
+// anything (the design forbids a fifth exec seam for exactly this question).
+const deadPID = 2147483647
+
+// legacyLock leaves behind what a leg from BEFORE the flock upgrade leaves
+// behind: a bare `<pid>\n` with no marker, its writer having taken no flock at
+// all. Both preserved zombie runs are byte-for-byte this. It skips rather than
+// fails where the probe is gated off, for the same reason freeLock does.
+func legacyLock(t *testing.T, runDir string, pid int, want runstate.Liveness) {
+	t.Helper()
+	path := filepath.Join(runDir, runstate.LockFileName)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+		t.Fatalf("write a pre-flock fixture lock: %v", err)
+	}
+	if got := runstate.ProbeLock(path); got != want {
+		t.Skipf("the lock probe cannot answer here (%v, want %v): no flock(2), or a filesystem outside the known-local set", got, want)
 	}
 }

@@ -25,15 +25,20 @@ const LockFileName = "resume.lock"
 //     exclusive flock(2) on it for the leg's whole duration — so a *free* lock
 //     beside an open leg means the writer is gone. A file without this line
 //     was written by a pre-flock binary whose live leg holds no flock at all,
-//     which is indistinguishable from a released one: unknown, never "free".
+//     so its flock says nothing and a different, weaker question has to be put
+//     to it instead (see legacyLiveness).
 //   - to AcquireLock, which semantics this lock file was written under
 //     (see the "marked ⇒ flock, unmarked ⇒ legacy" branch there).
 //
-// Everything after this line — the pid — is explicitly informational and
-// explicitly not a liveness test: the pid in a lock file was measured being
-// recycled by an unrelated process (ADR 0015, "The pid in resume.lock is not a
-// liveness test — measured"). Never write this marker on a platform or path
-// where the flock is not actually taken.
+// In a file that HAS this line, everything after it — the pid — is explicitly
+// informational and explicitly not a liveness test: the pid in a lock file was
+// measured being recycled by an unrelated process (ADR 0015, "The pid in
+// resume.lock is not a liveness test — measured"). The marker is what draws
+// that boundary: a marked lock is decided by the flock alone and its pid line
+// is never consulted, and only an unmarked one — where the flock cannot answer
+// at all — is read for its pid, in the single direction pidGone documents.
+// Never write this marker on a platform or path where the flock is not
+// actually taken.
 const LockFormatMarker = "oh-my-graph-lock 1"
 
 // lockHeadBytes is how much of a lock file the marker/pid check reads. The
@@ -45,10 +50,11 @@ const lockHeadBytes = 128
 // Liveness is the three-valued answer to "is a leg of this run still alive?",
 // derived from the run's resume.lock (ADR 0015 §1). It is deliberately not a
 // bool: a false *dead* authorises a second scheduler to re-run paid nodes over
-// a live run, so every ambiguous case — a missing lock file, an unmarked one,
-// a filesystem whose flock is not this flock, any probe error — folds into
-// LivenessUnknown, whose meaning is "answer exactly as this tool did before
-// ADR 0015" (an open leg reads as in flight).
+// a live run, so every ambiguous case — a missing lock file, an unmarked one
+// this package cannot read a pid out of, an unmarked one whose pid still names
+// some process, a filesystem whose flock is not this flock, any probe error —
+// folds into LivenessUnknown, whose meaning is "answer exactly as this tool did
+// before ADR 0015" (an open leg reads as in flight).
 //
 // The zero value is LivenessUnknown, so a Liveness nobody set can never claim
 // a run is dead.
@@ -62,10 +68,17 @@ const (
 	// alive. Immune to pid recycling — the kernel releases the flock when the
 	// holder dies, however it dies, and there is no name to recycle.
 	LivenessHeld
-	// LivenessFree means the lock file is one this binary wrote (it carries
-	// LockFormatMarker) and nothing holds it: the leg that wrote it is gone.
-	// This is the only value that may be composed into a verdict of
-	// ABANDONED, and only beside a leg the event stream left open.
+	// LivenessFree means the leg that wrote this lock file is affirmatively
+	// gone. Two facts can establish that, and nothing else may:
+	//
+	//   - a MARKED lock file (one this binary wrote) that nothing flocks — the
+	//     kernel released it, however its holder died;
+	//   - an UNMARKED, pre-flock lock file whose recorded pid names no process
+	//     at all, which is the only question such a file can answer and the
+	//     only direction it answers in (legacyLiveness, pidGone).
+	//
+	// This is the only value that may be composed into a verdict of ABANDONED,
+	// and only beside a leg the event stream left open.
 	LivenessFree
 )
 
@@ -100,17 +113,38 @@ func (l Liveness) String() string {
 // the new inode: two schedulers, one run, both spending (ADR 0015 §4).
 //
 // On the legacy arm (Legacy true) the file's existence IS the lock, because
-// that is the only semantics its writer knew, so the old message stands
-// unchanged — a human decides, and the exact path to delete is the useful
-// thing to print.
+// that is the only semantics its writer knew, so the DECISION stands unchanged
+// — the acquire is refused, a human decides, and the exact path to delete is
+// printed. What changes is the evidence handed to that human. Since ProbeLock
+// now reports such a run ABANDONED when its pid names no process
+// (legacyLiveness), a bare "another `resume` appears to be running" would have
+// the tool contradicting its own `runs list` on the adjacent line. So PIDGone
+// records that finding, and it is set in one direction only: a pid that is gone
+// is evidence worth showing, while a pid that is alive says nothing here (it
+// may be a recycled stranger — ADR 0015, Context) and is left out of both the
+// struct and the message rather than shown as a false reassurance.
 type LockHeldError struct {
-	Path   string
-	PID    int
+	Path string
+	PID  int
+	// Legacy marks a refusal over a pre-flock lock file: existence semantics,
+	// human decides.
 	Legacy bool
+	// PIDGone is set only on the legacy arm, and only when PID names no
+	// process at all. It never authorises anything on its own — it is the
+	// evidence, not the decision.
+	PIDGone bool
 }
 
 func (e *LockHeldError) Error() string {
 	if e.Legacy {
+		if e.PIDGone {
+			return fmt.Sprintf(
+				"this run's lock predates the flock format, so the lock itself cannot say whether a leg is running (lock: %q); "+
+					"the pid it names, %d, no longer exists, so it is very likely stale — "+
+					"if you're sure no other resume is running, delete it and retry: rm %q",
+				e.Path, e.PID, e.Path,
+			)
+		}
 		return fmt.Sprintf(
 			"another `resume` appears to be running for this run (lock held at %q); "+
 				"if you're sure no other resume is running, delete it and retry: rm %q",
@@ -226,7 +260,7 @@ func acquireLock(path string) (*heldLock, error) {
 	}
 	if len(head) > 0 && !hasLockMarker(head) {
 		f.Close()
-		return nil, &LockHeldError{Path: path, Legacy: true}
+		return nil, legacyLockHeldError(path, head)
 	}
 
 	if lockErr := flockExclusiveNB(f); lockErr != nil {
@@ -247,6 +281,19 @@ func acquireLock(path string) (*heldLock, error) {
 		return nil, fmt.Errorf("write lock %q: %w", path, writeErr)
 	}
 	return &heldLock{path: path, file: f}, nil
+}
+
+// legacyLockHeldError is the refusal over a pre-flock lock file. The refusal
+// itself never depends on the pid — an unmarked lock is refused whatever it
+// says, because a live pre-flock leg holds no flock and only a human can rule
+// one out. The pid only decides which evidence the message carries, and only
+// when it is affirmatively gone.
+func legacyLockHeldError(path string, head []byte) *LockHeldError {
+	e := &LockHeldError{Path: path, Legacy: true}
+	if pid, ok := legacyLockPID(head); ok && pidGone(pid) {
+		e.PID, e.PIDGone = pid, true
+	}
+	return e
 }
 
 // acquireLegacyLock is the pre-ADR-0015 lock, kept verbatim for platforms with
@@ -291,9 +338,13 @@ func acquireLegacyLock(path string) (*heldLock, error) {
 //     there;
 //   - the file is missing — a directory predating this change, or a lock a
 //     human deleted;
-//   - the first line is not LockFormatMarker — a pre-flock binary's lock,
-//     whose live leg holds no flock;
 //   - any error at all.
+//
+// A lock file whose first line is not LockFormatMarker takes a different route
+// entirely: its writer holds no flock, so the flock is silent about it and
+// asking would be meaningless. legacyLiveness puts the only question such a
+// file can answer to it instead, and folds every ambiguity in that answer into
+// unknown as well.
 //
 // A run is declared abandoned only on an affirmative LivenessFree beside a leg
 // the stream left open. Nothing is ever abandoned because a probe failed.
@@ -311,8 +362,11 @@ func ProbeLock(path string) Liveness {
 	defer f.Close()
 
 	head, err := lockHead(f)
-	if err != nil || !hasLockMarker(head) {
+	if err != nil {
 		return LivenessUnknown
+	}
+	if !hasLockMarker(head) {
+		return legacyLiveness(head)
 	}
 
 	switch lockErr := flockSharedNB(f); {
@@ -324,6 +378,54 @@ func ProbeLock(path string) Liveness {
 	default:
 		return LivenessUnknown
 	}
+}
+
+// legacyLiveness answers for a lock file written before LockFormatMarker
+// existed — a bare `<pid>\n`, all either specimen of the two zombie runs in
+// ADR 0015's Context contains.
+//
+// Without it those runs are undiagnosable forever. The flock is silent about an
+// unmarked file (its writer never took one), so folding "unmarked" into unknown
+// means every run abandoned before the upgrade reads RUNNING for the rest of
+// time — there is no later moment at which it becomes readable, because the
+// only thing that could change is a pid, and the marker will never appear.
+// That is a permanent wrong answer, and it is wrong in the direction the ADR
+// spent itself avoiding everywhere else.
+//
+// The pid is the only signal such a file carries, and it is trustworthy in
+// exactly one direction (pidGone documents why):
+//
+//	pid names no process → the leg that wrote this file has exited. Free.
+//	pid names something  → holder or recycled stranger, indistinguishable.
+//	                       Unknown, i.e. today's answer.
+//	no readable pid      → nothing was said. Unknown.
+//
+// This does NOT weaken the asymmetry ADR 0015 is built on, on three counts.
+// First, the conclusion rests on an affirmative kernel fact (ESRCH), not on the
+// absence of one — the same shape as a succeeding LOCK_SH, not the shape of a
+// missing file. Second, the failure the ADR measured is a false ALIVE produced
+// by pid-alive reasoning, and pid-alive is never read as evidence here; the
+// non-determinism it demonstrated (the same directory reading alive at 08:00
+// and dead at 23:35) can only move this answer from free to unknown, never onto
+// a live run. Third, the acquire path is deliberately not changed: an unmarked
+// lock is still refused under legacy semantics with a human deciding, so no
+// answer produced here can by itself start a second leg over a live one.
+//
+// The residual false-dead, stated because it is real and cannot be mechanised
+// away: a pid is only meaningful inside the PID namespace of the process that
+// wrote it. A pre-flock leg running inside a container, read by a binary
+// outside it through a shared runs directory, could have its namespace-local
+// pid read as gone while it is alive. Nothing in the pre-flock format records a
+// namespace, so there is no check to make; what bounds the risk is that the
+// case needs an OLD binary running right now beside a new one reading, that the
+// filesystem gate above already refuses a runs root on a network mount, and
+// that the human still stands on the acquire path.
+func legacyLiveness(head []byte) Liveness {
+	pid, ok := legacyLockPID(head)
+	if !ok || !pidGone(pid) {
+		return LivenessUnknown
+	}
+	return LivenessFree
 }
 
 // writeLockBody rewrites the lock file as marker line + pid line. It truncates
@@ -357,6 +459,36 @@ func lockHead(f *os.File) ([]byte, error) {
 func hasLockMarker(head []byte) bool {
 	line, _, _ := bytes.Cut(head, []byte("\n"))
 	return string(bytes.TrimRight(line, "\r")) == LockFormatMarker
+}
+
+// legacyLockPID reads the pid out of a pre-flock lock file, and refuses
+// anything that is not exactly what acquireLegacyLock writes — one decimal
+// line, positive, and nothing else in the file.
+//
+// The strictness is the point, because this pid is the one place in the design
+// where a file's contents decide a run is gone. A second line means some other
+// writer's file, not a pre-flock lock; a non-number means the same; a zero or
+// negative pid means the same, and must additionally never reach kill(2), where
+// those values name process GROUPS. An empty head is refused by the same rule
+// and needs to be, because a marked lock file is momentarily empty while
+// writeLockBody rewrites it under a held flock — reading that instant as an
+// unreadable legacy file (unknown) is correct; reading it as anything else
+// would call a live leg abandoned.
+//
+// The head is a bounded 128-byte prefix, so a longer file is refused by its
+// unread remainder rather than judged on its first line: a run of digits past
+// the buffer fails Atoi's range check, and anything else fails the one-line
+// rule.
+func legacyLockPID(head []byte) (int, bool) {
+	line, rest, _ := bytes.Cut(head, []byte("\n"))
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(line)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 // lockPID reads the informational pid line of a marked lock file, or 0 if

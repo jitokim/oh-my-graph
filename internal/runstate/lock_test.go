@@ -20,6 +20,28 @@ func requireFlock(t *testing.T) {
 	}
 }
 
+// requireProbe skips a test that asserts an affirmative probe answer where the
+// probe is designed not to give one. ADR 0015's gates — no flock(2), or a
+// filesystem outside the known-local allowlist — both report unknown by
+// design, and asserting past them would be asserting against the safety they
+// exist to provide. It establishes the capability the same way a real caller
+// would: a real lock, taken and released in the very directory under test.
+func requireProbe(t *testing.T, dir string) {
+	t.Helper()
+	requireFlock(t)
+	probe := filepath.Join(dir, "probe-capability.lock")
+	release, err := AcquireLock(probe)
+	if err != nil {
+		t.Fatalf("acquire a capability-probe lock: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release a capability-probe lock: %v", err)
+	}
+	if got := ProbeLock(probe); got != LivenessFree {
+		t.Skipf("the lock probe cannot answer here (%v): a filesystem outside the known-local set", got)
+	}
+}
+
 // --- a second acquire while the lock is held is refused -----------------------
 
 // TestAcquireLock_SecondAcquireInSameProcessFails proves that acquiring an
@@ -267,9 +289,17 @@ func TestAcquireLock_CreatesParentDirectory(t *testing.T) {
 func TestProbeLock_AmbiguityIsUnknown(t *testing.T) {
 	dir := t.TempDir()
 
-	unmarked := filepath.Join(dir, "unmarked.lock")
-	if err := os.WriteFile(unmarked, []byte("4321\n"), 0o644); err != nil {
+	// A pre-ADR lock file naming a pid that DOES exist. This process's own pid
+	// is the only one a test can be sure about, and it is the shape that
+	// matters: alive is inconclusive (holder, or a stranger that recycled the
+	// number — ADR 0015, Context), and inconclusive is unknown.
+	unmarkedAlive := filepath.Join(dir, "unmarked-alive.lock")
+	if err := os.WriteFile(unmarkedAlive, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		t.Fatalf("write a pre-ADR lock file: %v", err)
+	}
+	unmarkedGarbage := filepath.Join(dir, "unmarked-garbage.lock")
+	if err := os.WriteFile(unmarkedGarbage, []byte("not-a-pid\n"), 0o644); err != nil {
+		t.Fatalf("write a malformed pre-ADR lock file: %v", err)
 	}
 	empty := filepath.Join(dir, "empty.lock")
 	if err := os.WriteFile(empty, nil, 0o644); err != nil {
@@ -286,7 +316,8 @@ func TestProbeLock_AmbiguityIsUnknown(t *testing.T) {
 	}{
 		{"a missing lock file — a pre-ADR run directory, or one a human cleaned", filepath.Join(dir, "absent.lock")},
 		{"a missing run directory entirely", filepath.Join(dir, "no-such-run", "resume.lock")},
-		{"a pre-ADR lock file, whose live leg holds no flock", unmarked},
+		{"a pre-ADR lock file whose pid still names a process", unmarkedAlive},
+		{"a pre-ADR lock file this package cannot read a pid out of", unmarkedGarbage},
 		{"an empty lock file", empty},
 		{"a lock file written in a format this binary does not know", wrongMarker},
 	}
@@ -294,6 +325,141 @@ func TestProbeLock_AmbiguityIsUnknown(t *testing.T) {
 		if got := ProbeLock(tc.path); got != LivenessUnknown {
 			t.Errorf("ProbeLock(%s) = %v, want %v", tc.name, got, LivenessUnknown)
 		}
+	}
+}
+
+// --- the legacy path: an unmarked lock, decided in one direction only --------
+
+// deadPID is a pid no process can bear. linux caps pid_max at 2^22 and darwin
+// at 99999, so kill(2) answers ESRCH for this on both — which is what lets a
+// test assert the "gone" branch without spawning anything (a spawn here would
+// be a fifth exec seam in test clothing, and the design forbids one for exactly
+// this question).
+const deadPID = 2147483647
+
+// TestProbeLock_LegacyLockWithAGonePIDIsFree is the case both preserved
+// specimens of ADR 0015's Context are: `<pid>\n`, no marker, and the pid long
+// since gone. Folding it into unknown made those runs read RUNNING forever,
+// with no later moment at which they could become diagnosable, because the
+// marker will never appear in a file no live binary writes.
+func TestProbeLock_LegacyLockWithAGonePIDIsFree(t *testing.T) {
+	dir := t.TempDir()
+	requireProbe(t, dir)
+	path := filepath.Join(dir, "resume.lock")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(deadPID)+"\n"), 0o644); err != nil {
+		t.Fatalf("write a pre-ADR lock file: %v", err)
+	}
+	if got := ProbeLock(path); got != LivenessFree {
+		t.Fatalf("ProbeLock over a pre-ADR lock naming a gone pid = %v, want %v", got, LivenessFree)
+	}
+}
+
+// TestPIDGone_OnlyESRCHIsEvidence pins the asymmetry the legacy path rests on.
+// Everything except "no process bears this pid" is inconclusive, and pid <= 0
+// must never reach kill(2), where 0 addresses the caller's own process group
+// and a negative value addresses group n — either would answer a question
+// nobody asked, and the first would answer it by finding this test process.
+func TestPIDGone_OnlyESRCHIsEvidence(t *testing.T) {
+	cases := []struct {
+		name string
+		pid  int
+		want bool
+	}{
+		{"a pid no process bears", deadPID, true},
+		{"this very process", os.Getpid(), false},
+		{"pid 0 — the caller's own process group, never asked", 0, false},
+		{"a negative pid — a process group, never asked", -os.Getpid(), false},
+	}
+	for _, tc := range cases {
+		if got := pidGone(tc.pid); got != tc.want {
+			t.Errorf("pidGone(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestLegacyLockPID_AcceptsOnlyAPreFlockBody guards the one place in this
+// design where a file's CONTENTS decide that a run is gone. Anything that is
+// not exactly what acquireLegacyLock writes must be refused, so that a file
+// some other writer left behind — or a marked lock caught mid-rewrite, which is
+// momentarily empty — can never be read as a dead leg.
+func TestLegacyLockPID_AcceptsOnlyAPreFlockBody(t *testing.T) {
+	cases := []struct {
+		head    string
+		wantPID int
+		wantOK  bool
+	}{
+		{"99429\n", 99429, true},
+		{"99429", 99429, true},     // no trailing newline
+		{"99429\r\n", 99429, true}, // a CRLF-ish tail
+		{"", 0, false},             // a marked lock caught between Truncate and Write
+		{"not-a-pid\n", 0, false},
+		{"0\n", 0, false},
+		{"-1\n", 0, false},
+		{"99429\n80834\n", 0, false},         // a second line: not this format
+		{"99429 extra\n", 0, false},          // junk on the pid line
+		{strings.Repeat("9", 200), 0, false}, // longer than the bounded head
+	}
+	for _, tc := range cases {
+		pid, ok := legacyLockPID([]byte(tc.head))
+		if pid != tc.wantPID || ok != tc.wantOK {
+			t.Errorf("legacyLockPID(%q) = (%d, %v), want (%d, %v)", tc.head, pid, ok, tc.wantPID, tc.wantOK)
+		}
+	}
+}
+
+// TestAcquireLock_LegacyRefusalShowsAGonePIDButStillRefuses is the half of this
+// that deliberately did NOT change. A reader may call such a run abandoned; the
+// acquire path may not act on that, because a false "gone" here would start a
+// second leg over a live one and spend money. So the refusal stands, and the
+// pid only improves the evidence the human deciding about `rm` is given.
+func TestAcquireLock_LegacyRefusalShowsAGonePIDButStillRefuses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume.lock")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(deadPID)+"\n"), 0o644); err != nil {
+		t.Fatalf("write a pre-ADR lock file: %v", err)
+	}
+
+	_, err := AcquireLock(path)
+	var held *LockHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("AcquireLock over a pre-ADR lock file = %T: %v, want *LockHeldError", err, err)
+	}
+	if !held.Legacy {
+		t.Fatal("an unmarked lock file must still be refused under legacy semantics")
+	}
+	if !strings.Contains(err.Error(), "rm "+strconv.Quote(path)) {
+		t.Fatalf("the legacy refusal must keep the exact path to delete: %v", err)
+	}
+	if !pidGone(deadPID) {
+		return // no kill(2) here; the evidence half of this test does not apply
+	}
+	if !held.PIDGone || held.PID != deadPID {
+		t.Fatalf("LockHeldError = %+v, want PID %d reported gone", held, deadPID)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(deadPID)) {
+		t.Fatalf("the refusal must show the gone pid as evidence: %v", err)
+	}
+}
+
+// TestAcquireLock_LegacyRefusalHidesALivePID is the other direction. A pid that
+// still names a process proves nothing about a pre-flock lock — it may be a
+// stranger that recycled the number — so it must not be printed as though it
+// did, and the message stays the one this tool has always given.
+func TestAcquireLock_LegacyRefusalHidesALivePID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume.lock")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatalf("write a pre-ADR lock file: %v", err)
+	}
+
+	_, err := AcquireLock(path)
+	var held *LockHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("AcquireLock over a pre-ADR lock file = %T: %v, want *LockHeldError", err, err)
+	}
+	if held.PIDGone || held.PID != 0 {
+		t.Fatalf("LockHeldError = %+v, want a live pid left out entirely", held)
+	}
+	if strings.Contains(err.Error(), strconv.Itoa(os.Getpid())) {
+		t.Fatalf("a live pid is not evidence on the legacy arm and must not be shown: %v", err)
 	}
 }
 
