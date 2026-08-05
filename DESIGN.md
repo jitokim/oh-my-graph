@@ -479,13 +479,15 @@ sweep to the shapes rules 3 and 4 do not bless, but neither is a proof of
 intent: a sibling *corpus* root is topologically identical to #118's sibling
 *work*, so a legitimate graph can still be warned about, and refusing it would
 break working hand-written graphs to catch a planner's mistake. What the sweep
-sees is `depends_on`; which files a prompt actually judges it cannot see — the
-#118 reviewer named its two artifacts by literal path, not through
+sees is `depends_on`; which files a prompt actually judges it cannot see —
+issue #118's reviewer named its two artifacts by literal path, not through
 `{{ artifacts.<id> }}` — and the printed advisory says so itself rather than
 asserting the defect as fact. The complementary half is planner guidance
-(`internal/coordinator`), not more validation. A producer left outside the
-body that *asks* for the payload with `{{ feedback.<id> }}` is already a load
-error, not an advisory (the placeholder rule above).
+(`internal/coordinator`), not more validation — a planned follow-up, not
+shipped: the planner prompt still describes only the linear implement→review
+shape. A producer left outside the body that *asks* for the payload with
+`{{ feedback.<id> }}` is already a load error, not an advisory (the
+placeholder rule above).
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried

@@ -38,10 +38,11 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 - **A passing node's spend now reads against its budget (#115).** The
   `COST(USD)` column annotates each row with the share of `budget_usd` that
   spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
-  the run that fails, not only in the FAIL detail afterwards. Floored, never
-  rounded, since a node that passed must not read 100%. The share rides inside
-  the cost cell rather than in a column of its own, and the whole field is a
-  per-**run** decision: a graph where no node declares `budget_usd` pays
+  the run that fails, not only in the FAIL detail afterward. Floored, never
+  rounded, since a node that spent under its budget must not read 100% — a node
+  that landed exactly on its budget passes and does read 100%. The share rides
+  inside the cost cell rather than in a column of its own, and the whole field
+  is a per-**run** decision: a graph where no node declares `budget_usd` pays
   nothing for the feature. To keep a budgeted run's table on an 80-column
   terminal — the shipped graphs that declare a budget are mixed runs, not
   budget-less ones — the `SESSION` stub narrowed from 20 characters to 18.

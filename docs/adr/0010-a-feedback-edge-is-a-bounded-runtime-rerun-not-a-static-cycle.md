@@ -212,7 +212,8 @@ Load-time validation (all in `internal/graph`, all before anything spends):
 > so with several implementing nodes it picks one and the arc silently loses
 > the rest; teaching it to aim at the nearest common ancestor when the
 > reviewer fans in is where a mis-aimed arc stops being written in the first
-> place.
+> place. That teaching is a planned follow-up and is NOT shipped here — this
+> ADR's change is the advisory alone.
 
 ### Semantics
 
