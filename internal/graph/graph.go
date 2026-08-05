@@ -57,12 +57,42 @@ const (
 	OnFailContinue = "continue"
 )
 
-// PermissionBypass is the permission mode that lets a node act without
-// prompting. It is never a default: the CLI warns loudly when a hand-written
-// graph opts in, and auto mode refuses planned nodes that request it. One
-// exported constant so the warning and the refusal can never disagree on the
-// spelling.
-const PermissionBypass = "bypassPermissions"
+// Permission-mode constants — the closed set a node's permission_mode may take.
+//
+// Unlike type/handoff/on_fail, this vocabulary is not oh-my-graph's own: the
+// value is passed through verbatim as `claude --permission-mode <mode>`, so the
+// set is exactly the CLI's own `choices` list, MEASURED (`claude --help`,
+// claude 2.1.221, 2026-08-05) rather than transcribed from a doc. It is still
+// closed here, because the alternative is what it replaced: a typo like
+// `dontask` travelled all the way to argv and the node died at spawn — mid-run,
+// after every earlier node had already spent real money on the user's
+// subscription. Load-time validation moves that to `run`/`lint`, before
+// anything is paid for.
+//
+// The cost of closing it is that a mode added by a future claude release is
+// refused until oh-my-graph enumerates it (`auto` and `manual` are recent
+// additions, and DESIGN.md listed neither) — and that cost is RETROACTIVE, in a
+// way the other closed sets' never was. Every graph in the repo predates them;
+// a snapshot does not. `resume`, `run --retry-failed`, `runs list` and `serve`
+// all rebuild the graph from `state.json` through this same Parse, so a run
+// recorded by an older binary with a mode this one has not enumerated stops
+// being resumable on upgrade, is skipped with a warning by `runs list`, and
+// renders in `serve` as a broken card. That is a
+// release-note-sized fix with a precise error message, traded against a silent
+// mid-run failure — and it is the same trade the other closed sets already
+// make, paid over a wider surface.
+const (
+	PermissionAcceptEdits = "acceptEdits"
+	PermissionAuto        = "auto"
+	// PermissionBypass lets a node act without prompting. It is never a
+	// default: the CLI warns loudly when a hand-written graph opts in, and auto
+	// mode refuses planned nodes that request it. One exported constant so the
+	// warning and the refusal can never disagree on the spelling.
+	PermissionBypass  = "bypassPermissions"
+	PermissionDontAsk = "dontAsk"
+	PermissionManual  = "manual"
+	PermissionPlan    = "plan"
+)
 
 // Verification timeout policy for success_check.verify. The default keeps an
 // undeclared verification from wedging a node for the runner's full 20 minutes;
@@ -100,8 +130,10 @@ type Verification struct {
 	// means the default, which is also 0.
 	ExpectExit *int `yaml:"expect_exit" json:"expect_exit,omitempty"`
 	// OutputMatches, when non-empty, is a regular expression that must match
-	// somewhere in the command's combined stdout+stderr. Compiled at load time
-	// by Validate, so a bad regex is a load error, not a mid-run surprise.
+	// somewhere in the command's combined stdout+stderr — ALL of it, however
+	// long, so an anchored pattern like `^ok\s+github` means what it reads as
+	// even when the command printed megabytes. Compiled at load time by
+	// Validate, so a bad regex is a load error, not a mid-run surprise.
 	OutputMatches string `yaml:"output_matches" json:"output_matches,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate. Unexported so the

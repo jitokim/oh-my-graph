@@ -79,8 +79,61 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   scanned". A `name:` collision inside one `~/.claude/skills` names its loser
   rather than silently moving the count.
 
+- **A passing node's spend now reads against its budget (#115).** The
+  `COST(USD)` column annotates each row with the share of `budget_usd` that
+  spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
+  the run that fails, not only in the FAIL detail afterward. Floored, never
+  rounded, since a node that spent under its budget must not read 100% — a node
+  that landed exactly on its budget passes and does read 100%. The share rides
+  inside the cost cell rather than in a column of its own, and the whole field
+  is a per-**run** decision: a graph where no node declares `budget_usd` pays
+  nothing for the feature. To keep a budgeted run's table on an 80-column
+  terminal — the shipped graphs that declare a budget are mixed runs, not
+  budget-less ones — the `SESSION` stub narrowed from 20 characters to 18.
+- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#118).**
+  A reviewer that fans in from several producers still names one node in
+  `rerun`, so its loop body can exclude a producer whose artifact it judges;
+  the loop then re-judges an unchanged file every round and halts with the
+  defect untouched (~$14 of a $42 run). `lint` and `run --dry-run` now warn per
+  excluded producer, naming the reviewer, the rerun target, the producer, and —
+  when one exists and still validates — the covering target to aim at instead.
+  It is **advisory only**: it never changes whether a graph is valid or what
+  any command exits with. Parents that are gates, or that are upstream of the
+  rerun target (the `spec → impl → review` shape), are not reported.
+
 ### Fixed
 
+- **`output_matches` was judged against a truncated tail.** The verify seam
+  handed the scheduler only the last 4 KiB of a command's output, prefixed with
+  `…(earlier output truncated)…` — so an anchored pattern could **never** match
+  a chatty command, and a `go test ./...` whose `ok  github…` summary scrolled
+  past the cap failed a check its own evidence had passed. `verify.Result.Output`
+  is now the FULL combined stdout+stderr; truncation moved to where output is
+  rendered (the ledger's DETAIL column, already capped) and to `*TimeoutError`,
+  which can outlive the call. No extra memory: `CombinedOutput` had already
+  buffered the whole thing before any cut could apply. **Behaviour change** — a
+  check that fails today only because its match sat beyond the cap starts
+  passing. The reverse needs a pattern that matched something the cut
+  manufactured — the `…(earlier output truncated)…` marker itself, or a `(?m)^`
+  anchor that the marker's inserted newline created a line start for. Absent
+  that, a longer subject can only add matches: these are unanchored RE2
+  searches, with no lookbehind or backreference that could make more input
+  remove one.
+- **`permission_mode` was the one enum with no validation.** `type`, `handoff`,
+  `on_fail` and `retry.on` are each rejected at load against a closed set;
+  `permission_mode` was passed through to argv unchecked, so `dontask` (wrong
+  case) killed the node at spawn — mid-run, after earlier nodes had already
+  spent real money, and a long way from the typo. It is now validated at load
+  like the other four, against the `claude` CLI's own choices measured from
+  `claude --help` (2.1.221): `acceptEdits`, `auto`, `bypassPermissions`,
+  `dontAsk`, `manual`, `plan`. DESIGN.md listed three of those six. **Behaviour
+  change** — a graph carrying a mode outside that set is now refused by `run`
+  and `lint` instead of failing one node; a mode a future `claude` adds is
+  refused until oh-my-graph enumerates it. That refusal is **retroactive**:
+  `resume`, `run --retry-failed`, `runs list` and `serve` rebuild the graph from
+  the run snapshot through the same parser, so a run recorded by an earlier
+  binary under a mode this one does not know stops being resumable, is skipped
+  with a warning by `runs list`, and shows as a broken card in `serve`.
 - **A verdict pattern must survive the markdown a model writes (#107).** A
   node that got exit 0 and opened its reply with `**PASS**` failed
   `result_matches: "^PASS"` and halted the run. Every shipped pattern now

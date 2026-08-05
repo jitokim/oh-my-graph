@@ -73,6 +73,32 @@ node:
   retry: { max: 1, on: [nonzero_exit, verify_failed] }
 ```
 
+> **Update (2026-08-05):** the block above is the fragment **as drafted**, and
+> the shipped `graphs/fragments/e2e-verify.yaml` has diverged from it in four
+> places. It is left as drafted (this is the record of what was decided) with
+> the divergences named here, because a quoted example that no file matches is
+> worse than no example:
+>
+> | drafted above | shipped at v0.4.1 | why |
+> |---|---|---|
+> | `substitutions: [checks]` | `substitutions: [checks, verify_command]` | the Migration section below, *in this same ADR* |
+> | `verify: { command: "make local" }` | `verify: { command: "{{ with.verify_command }}" }` | same |
+> | `result_matches: "^PASS$"` | ``result_matches: '^[*_`\s]*PASS[*_`\s]*$'`` | #107 |
+> | prompt: "Report exactly PASS … or FAIL with the failing step" | the bare-four-characters wording, naming `**PASS**` as wrong | #107 |
+>
+> The first two are not drift against a later decision — they contradict
+> **this ADR's own Migration section**, which already records that
+> backlog-batch's conversion made the command "join `checks` as a declared
+> substitution point (`verify_command`)". The example was simply never swept
+> when the section below was written. A reader who trusted the example over
+> the prose would conclude the shipped fragment had regressed.
+>
+> The other two are #107: a model emitting `**PASS**` halted a real run, so
+> the verdict pattern became markdown-tolerant and the prompt began saying
+> so explicitly. Neither touches this ADR's decision — the merge rules, the
+> resolution stage and the trust boundary are unaffected by what a proven
+> shape's own `success_check` happens to contain.
+
 Note what is *not* a substitution point: `allowed_tools` is the
 fragment's own, because the grant is part of the proven shape (Semantics,
 below). A using graph that needs a different grant overrides the key
