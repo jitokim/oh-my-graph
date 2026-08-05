@@ -117,14 +117,148 @@ func TestBudgetDeltaUSD(t *testing.T) {
 	}
 }
 
+func TestBudgetUsedPercent(t *testing.T) {
+	cases := []struct {
+		name         string
+		rec          Record
+		wantPercent  int
+		wantDeclared bool
+	}{
+		{
+			name:         "a node one bad run from failing reads 99%",
+			rec:          Record{BudgetUSD: 2.00, CostUSD: 1.98},
+			wantPercent:  99,
+			wantDeclared: true,
+		},
+		{
+			name:         "the same spend against a roomy budget reads far lower",
+			rec:          Record{BudgetUSD: 2.00, CostUSD: 0.12},
+			wantPercent:  6,
+			wantDeclared: true,
+		},
+		{
+			name:         "floored, so a hair under budget never reads 100%",
+			rec:          Record{BudgetUSD: 2.00, CostUSD: 1.9999},
+			wantPercent:  99,
+			wantDeclared: true,
+		},
+		{
+			name:         "exactly at budget reads 100% — that spend passes",
+			rec:          Record{BudgetUSD: 2.00, CostUSD: 2.00},
+			wantPercent:  100,
+			wantDeclared: true,
+		},
+		{
+			name:         "over budget reads past 100%",
+			rec:          Record{BudgetUSD: 0.10, CostUSD: 0.25},
+			wantPercent:  250,
+			wantDeclared: true,
+		},
+		{
+			name:         "a negligible spend against a big budget reads 0%",
+			rec:          Record{BudgetUSD: 5.00, CostUSD: 0.0001},
+			wantPercent:  0,
+			wantDeclared: true,
+		},
+		{
+			name:         "no budget declared has no share to report",
+			rec:          Record{CostUSD: 99},
+			wantDeclared: false,
+		},
+		{
+			name:         "a negative budget counts as undeclared",
+			rec:          Record{BudgetUSD: -1, CostUSD: 99},
+			wantDeclared: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			percent, declared := tc.rec.BudgetUsedPercent()
+			if declared != tc.wantDeclared {
+				t.Fatalf("declared = %v, want %v", declared, tc.wantDeclared)
+			}
+			if !declared {
+				return
+			}
+			if percent != tc.wantPercent {
+				t.Fatalf("percent = %d, want %d", percent, tc.wantPercent)
+			}
+		})
+	}
+}
+
+// TestRender_HeadroomDistinguishesTightFromRoomy is issue #115 stated as an
+// assertion: two nodes under the same budget, one 99% spent and one with 15x
+// headroom, must not look alike in the table. Both rows report their own share
+// of budget, and they differ.
+func TestRender_HeadroomDistinguishesTightFromRoomy(t *testing.T) {
+	l := New("run-headroom")
+	l.Record(Record{NodeID: "tight", CostUSD: 1.98, BudgetUSD: 2.00, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "roomy", CostUSD: 0.12, BudgetUSD: 2.00, Verdict: VerdictPass})
+
+	tight := rowFor(t, l.Render(), "tight")
+	roomy := rowFor(t, l.Render(), "roomy")
+
+	if !strings.Contains(tight, "(99%)") {
+		t.Errorf("the 99%%-spent row must say so:\n%s", tight)
+	}
+	if !strings.Contains(roomy, "(6%)") {
+		t.Errorf("the row with headroom must say so:\n%s", roomy)
+	}
+	if strings.TrimPrefix(tight, "tight") == strings.TrimPrefix(roomy, "roomy") {
+		t.Errorf("the two rows are still indistinguishable:\n%s\n%s", tight, roomy)
+	}
+}
+
+// TestRender_NoBudgetDeclaredCostsTheTableNothing pins the constraint that pays
+// for this design: budget-less nodes are the common case, so a run without a
+// single declared budget must render exactly the table it always did — no
+// annotation, no widened rule, nothing extra to read past.
+func TestRender_NoBudgetDeclaredCostsTheTableNothing(t *testing.T) {
+	l := New("run-plain")
+	l.Record(Record{NodeID: "write", CostUSD: 0.02, Verdict: VerdictPass})
+	l.Record(Record{NodeID: "critique", CostUSD: 0.03, Verdict: VerdictPass})
+
+	out := l.Render()
+	if strings.Contains(out, "%") {
+		t.Errorf("a budget-less run must carry no budget annotation:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "--") && len(line) != tableWidth {
+			t.Errorf("rule widened to %d without a budget to annotate:\n%s", len(line), out)
+		}
+	}
+}
+
+// TestRender_BudgetlessRowKeepsDetailAligned covers the mixed run: one node
+// declares a budget and another does not, and the annotation must not knock the
+// budget-less node's DETAIL out of the column.
+func TestRender_BudgetlessRowKeepsDetailAligned(t *testing.T) {
+	l := New("run-mixed")
+	l.Record(Record{NodeID: "capped", CostUSD: 0.50, BudgetUSD: 1.00, Verdict: VerdictPass, Detail: "capped-detail"})
+	l.Record(Record{NodeID: "uncapped", CostUSD: 0.50, Verdict: VerdictPass, Detail: "uncapped-detail"})
+
+	out := l.Render()
+	capped := strings.Index(rowFor(t, out, "capped"), "capped-detail")
+	uncapped := strings.Index(rowFor(t, out, "uncapped"), "uncapped-detail")
+	header := strings.Index(rowFor(t, out, "NODE"), "DETAIL")
+
+	if capped != uncapped || capped != header {
+		t.Errorf("DETAIL starts at columns %d (budgeted), %d (budget-less), %d (header):\n%s",
+			capped, uncapped, header, out)
+	}
+}
+
 func TestRender_ShowsBudgetDetail(t *testing.T) {
 	l := New("run-budget")
+	detail := `node "spendy" exceeded budget_usd: $0.2500 actual vs $0.1000 budgeted (over by $0.1500)`
 	l.Record(Record{
 		NodeID:    "spendy",
 		CostUSD:   0.25,
 		BudgetUSD: 0.10,
 		Verdict:   VerdictFail,
-		Detail:    `node "spendy" exceeded budget_usd: $0.2500 actual vs $0.1000 budgeted (over by $0.1500)`,
+		Detail:    detail,
 	})
 
 	out := l.Render()
@@ -133,6 +267,25 @@ func TestRender_ShowsBudgetDetail(t *testing.T) {
 			t.Errorf("render missing %q:\n%s", want, out)
 		}
 	}
+	// The failing path is the one the issue says already works: the annotation
+	// added for passing nodes must leave the failure's own account of the
+	// overspend verbatim, not summarize or replace it.
+	if !strings.HasSuffix(strings.TrimRight(rowFor(t, out, "spendy"), " "), detail) {
+		t.Errorf("the failure detail must reach the table untouched:\n%s", out)
+	}
+}
+
+// rowFor returns the rendered line beginning with prefix, failing the test if
+// the table has no such row.
+func rowFor(t *testing.T, rendered, prefix string) string {
+	t.Helper()
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	t.Fatalf("no row for %q in:\n%s", prefix, rendered)
+	return ""
 }
 
 func TestRender_EmptyLedger(t *testing.T) {
