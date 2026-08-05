@@ -152,6 +152,69 @@ Load-time validation (all in `internal/graph`, all before anything spends):
    `(1 + max₁) × (1 + max₂)` and give the re-arming path two owners for
    one node; v1 rejects the shape at load. Lifting this later is additive.
 
+> **Update (2026-08-06) — there is no rule 8 for fan-in coverage; it is an
+> advisory.** These seven rules all judge a *fan-in* declarer's arc valid even
+> when its body excludes a producer the declarer judges. Issue #118 is that
+> gap paid for: a reviewer fanning in from `qa-plan` and `load-script` with
+> `rerun: load-script` found five defects, all in `QA-PLAN.md`, and re-ran the
+> healthy branch to exhaustion — the file it needed to repair was not in the
+> body, so the loop was structurally incapable of converging (~$14 of a $42
+> run).
+>
+> The obvious eighth rule — *every producer the declarer depends on must be in
+> the body* — was considered and **rejected as a load error**, because it is
+> not sound:
+>
+> - It contradicts rule 3's own carve-out. "Parents feeding into the body from
+>   outside are fine — they ran once, their artifacts are stable" describes a
+>   legitimate and common shape: a reviewer reading a settled spec, criteria or
+>   corpus node alongside the work under review. Rule 8 would refuse it.
+> - It contradicts rule 4. A gate may never be in a body, so a fan-in declarer
+>   with a gate parent could satisfy neither rule — an unsatisfiable pair, not
+>   a safeguard.
+> - It is not decidable in the direction that matters. The engine sees
+>   `depends_on`; it cannot see which artifacts a prompt will judge. The #118
+>   reviewer named both files by literal path (`stg-canary/QA-PLAN.md`), so
+>   even a `{{ artifacts.<id> }}` scan would have stayed silent.
+>
+> What ships instead is `graph.LintFeedbackReach`: an advisory sweep, printed
+> by `lint` and `run --dry-run`, that names the declarer, the rerun target, the
+> unreachable producer and — when one exists *and still passes this
+> validation* — the covering target to aim at (`rerun: scope` on #118's
+> graph). It fires only on a fan-in declarer with an arc, which no shipped
+> graph is; a single-parent declarer is covered by construction.
+>
+> The first two objections above are answered in the sweep itself rather than
+> left as accepted noise, because an advisory that cries wolf on the common
+> shape is one people learn to scroll past. It skips a **gate** parent (rule 4),
+> and it skips a parent that is an **ancestor of the rerun target** — rule 3's
+> carve-out stated in topology, since such a parent is upstream of the whole
+> loop and the loop re-runs its consumers. That keeps `spec → impl → review`
+> with `rerun: impl` quiet, which matters more than the false positive it
+> removes: the target the sweep would otherwise have advised, `rerun: spec`,
+> re-runs the acceptance criteria every round and re-judges the implementation
+> against criteria that just moved underneath it. Bad advice on the most
+> idiomatic review graph there is.
+>
+> The third objection cannot be answered this way and is not: a sibling
+> *corpus* root is topologically indistinguishable from #118's sibling *work*,
+> so false positives remain by construction. That is why the emitted message
+> carries its own limits — it states that it reads `depends_on` and not which
+> artifacts the prompt judges, and says to ignore it if the producer is stable
+> context, rather than asserting that the defect can never be repaired. Note
+> that one
+> half of the bug was always a load error and remains one: a producer left
+> outside the body that *asks* for the payload via `{{ feedback.<id> }}` is
+> refused by rule 5. The advisory covers the producer that never asks.
+>
+> The other half of the fix is not validation at all. The planner prompt
+> (`internal/coordinator`) describes only the linear implement→review shape,
+> so with several implementing nodes it picks one and the arc silently loses
+> the rest; teaching it to aim at the nearest common ancestor when the
+> reviewer fans in is where a mis-aimed arc stops being written in the first
+> place. That teaching is a planned follow-up and is NOT shipped here — this
+> ADR's change is the advisory alone.
+
 ### Semantics
 
 **What re-runs: the path, not just the target.** When the arc fires, every
