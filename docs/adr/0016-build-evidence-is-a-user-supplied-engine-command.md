@@ -5,7 +5,9 @@
   2026-08-06; read the Decision as the shape the code is meant to take. It
   needs no measurement gate: unlike ADR 0004 and ADR 0012, nothing here
   changes a node's argv, its tool set or any ceiling layer, so there is no
-  CLI-behaviour premise to probe. What it does owe before Accepted is stated
+  CLI-behaviour premise to probe. (§2's `retry.max` cap tightens what a plan
+  may declare; it grants nothing and loosens nothing, so it is a validation
+  change, not a ceiling change.) What it does owe before Accepted is stated
   under "Required measurements".
 - Date: 2026-08-06
 - Issues: [#119](https://github.com/jitokim/oh-my-graph/issues/119)
@@ -136,13 +138,52 @@ decision:
   typed. The plan the validator saw never contained it.
 - **Attachment: every sink node** — every node no other node depends on. A
   DAG always has at least one; all sinks get the check; every mutating node is
-  a sink or an ancestor of one; and the **last** sink to complete observes the
-  final tree. Since the run fails if any sink's check fails (halt-on-fail),
-  a run's PASS implies the final tree passed the user's command. This is
-  chosen over per-node attachment deliberately — see Alternatives.
-- **The injected checks are serialized run-wide.** Two concurrent
+  a sink or an ancestor of one. `graph.Graph` has no `Sinks()` helper today
+  (only `Roots()` and `DependentsOf`, `graph.go:491`/`:538`), so this is a
+  derivation the implementation lane writes, not a call to something existing.
+
+  The soundness argument has to be stated precisely, because the obvious
+  version is false. A check does **not** observe the final tree by virtue of
+  finishing last: `verifyEvidence` runs at the *start* of its node's
+  settlement, before `PersistOutput` and `recordPass` (`scheduler.go:749-753`,
+  `756-766`), so a concurrent node may still be writing while a check reads.
+  What carries the claim is the next bullet — under run-wide serialization the
+  last-*executed* check necessarily runs after every other node's subprocess
+  has ended.
+
+  The failure half does not rest on halt-on-fail either. `on_fail: continue`
+  is a graph-level field a plan may set, and `effectiveContinueOnFail` ORs it
+  with the CLI flag — its own comment says "the flag cannot force a halt onto
+  a graph that declared continue" (`scheduler.go:1308-1310`). The conclusion
+  survives on a different mechanism: a continue-on-fail failure is still
+  appended to `prunedFailures` (`scheduler.go:551-554`), which still returns
+  `RunFailedError` (`:642-644`). So a run's PASS implies the final tree passed
+  the user's command **because a failed sink fails the run under either
+  failure policy**, not because the scheduler halts. Sink attachment over
+  per-node is deliberate — see Alternatives.
+- **The injected checks are serialized run-wide, and that is load-bearing,
+  not a nicety.** The immediate reason is flake: two concurrent
   `./gradlew build` invocations in one project directory contend for the
-  build daemon's locks; a flaky check is worse than a slow one.
+  build daemon's locks, and a flaky check is worse than a slow one. But per
+  the bullet above it is also what makes the last-executed check observe the
+  final tree, so relaxing it silently drops this section's central claim —
+  anyone relaxing it owes a replacement argument, not just a benchmark. There
+  is no serialization primitive for verifications today, so this is new
+  scheduler concurrency machinery rather than a knob.
+- **A planned node's `retry.max` gains the bound `feedback.max` already has.**
+  Nothing bounds `Retry.Max` anywhere today: `internal/graph/validate.go`
+  checks only the cause tokens (`validateRetryCauses`, `:218-232`), and the
+  sole planned cap is `maxPlannedFeedbackRounds = 3` (`coordinator.go:607`).
+  `verify_failed` is a legal retry cause (`graph.go:204`) and the retry
+  decision is taken on the verify verdict (`scheduler.go:769-772`), so a
+  planned sink declaring `retry: {max: 40, on: [verify_failed]}` would have
+  the engine run the user's `./gradlew build` 41 times, each bounded only by
+  the 10-minute verify ceiling, serialized, with up to 3 feedback rounds on
+  top. This is the one way planner output influences the user-supplied
+  command's execution — its *count*, never its content — and #119 is a cost
+  story, so the count gets a ceiling: a small fixed cap in the same place and
+  shape as `validatePlannedNodeFeedback`. It changes `retry`'s recorded
+  disposition; see Compatibility.
 - **Timeout: `maxVerifyTimeout` (10 minutes), not the 2-minute default**
   (`graph.go:103-104`). A cold Gradle or Cargo build is precisely the case
   the 2-minute default was not sized for. `--verify-timeout` overrides,
@@ -151,8 +192,11 @@ decision:
   verify", no feedback arc — which is the correct reading and is already how
   the seam classifies a timeout.
 - **The command is snapshotted into the saved spec**, like ADR 0012's inlined
-  skill text, so `run`/`resume` on a saved `graph.json` keeps the check the
-  user approved, and `--plan-only` prints it.
+  skill text, so `run`/`resume` on a saved `graph.json` replays the check the
+  user approved, and `--plan-only` prints it. **"The check the user approved"
+  is an assumption about that artifact, not a property the tree provides** —
+  §4 names the assumption, states why v1 takes it, and lists the two
+  mechanisms that would close it.
 - **It runs through `verify.ShellVerifier`** — the second exec seam, already
   `childenv.Scrub`ed. **No new spawner, no fifth seam, no new ADR owed.**
 
@@ -171,8 +215,10 @@ verification just contradicted. The fixer node would be re-run and handed the
 word `PASS` as its feedback. So: **when the cause is a verify failure, the
 payload is the verification's evidence, not the node's narration.** The
 payload's size bound is the implementation lane's to pick, and it is
-explicitly *not* the ledger's 240-rune `outputTail` cap — that bound exists to
-keep a table readable, and a compiler error list is the payload's whole point.
+explicitly *not* the 240-rune `maxDetailRunes`/`outputTail` cap
+(`internal/schedule/scheduler.go:63`, `:1228-1236` — the scheduler's, not the
+ledger's) — that bound exists to keep a table readable, and a compiler error
+list is the payload's whole point.
 
 ### 3. Repo detection is a suggestion to the human, never a grant
 
@@ -194,10 +240,24 @@ Detection informs; the human authorizes. The line prints whether or not a
 signal was found — "detected nothing" is the diagnosable case, the same
 reasoning ADR 0012 §6 used to print `Found: 0` rather than imply it.
 
-**Reading a file to decide a grant is refused, and the report's own question
-answers it.** Yes, a cloned repository could plant a `package.json` to unlock
-`Bash(npm *)`. And yes, that matters even though the node already runs in that
-repo, for three reasons:
+**Reading a file to decide a grant is refused, and the sharpest form of the
+argument needs no attacker at all.** `Write` and `Edit` are in the allowlist,
+so node 1 of the *same run* can create `package.json`, `Cargo.toml` or a
+`Makefile` as entirely legitimate work — "initialize a Node project" is a
+normal goal — and a per-node detector would then widen node 2's set. That is a
+plan bootstrapping its own grant, with no untrusted checkout and no malice
+anywhere. Restricting detection to plan time does not close it either: under
+`--max-cycles` (ADR 0011) each cycle re-plans against a tree the previous
+cycle wrote. ADR 0004's own Context already names this exact shape — *"a
+write-capable planned node can drop a `.claude/settings.local.json` for a
+later node to load"*
+(`0004-auto-mode-tool-ceiling-by-settings-isolation.md:20-22`) — which layer 1
+closes by isolating settings sources, and for which a repo-signal detector has
+**no analogue**: there is no `--detect-sources ""`.
+
+The cloned-repo case is the weaker argument, and it also holds: a repository
+could plant a `package.json` to unlock `Bash(npm *)`, and that matters even
+though the node already runs in that repo, for three reasons:
 
 - **Write is auditable; exec is not.** The node's existing grant lets it
   change files, and every change is a diff the user can read afterwards.
@@ -222,9 +282,12 @@ stacks leaks into your ceiling"*. Better; still the wrong axis.
 
 ### 4. The load-bearing property, restated
 
-ADR 0004's guarantee was: **the set a planned node is validated against is
-never influenced by the planner.** A fixed constant guarantees it trivially,
-and §1 keeps that constant, so it holds here by construction.
+The guarantee layer 0 provided was: **the set a planned node is validated
+against is never influenced by the planner.** (That is a reconstruction, not a
+quotation — the sentence does not appear in ADR 0004; the only match in that
+file is the note this ADR added to it. It is what a fixed constant buys.) A
+fixed constant guarantees it trivially, and §1 keeps that constant, so it
+holds here by construction.
 
 But the property as worded is too narrow, and §3 is why: repo detection
 satisfies its letter — the planner does not write `package.json` — while
@@ -236,8 +299,41 @@ every future proposal:
 > and not the repository the run was invoked in. Only trusted code and the
 > user are admissible sources.
 
-Under this wording, §2 is clean: the source is a string the user typed at
-invocation. §3's detector is clean because it produces prose, not policy.
+Under this wording, §2 is clean at plan time: the source is a string the user
+typed at invocation. §3's detector is clean because it produces prose, not
+policy.
+
+**§2 nevertheless admits a source the wording does not name: the persisted
+snapshot.** Today *"an auto snapshot contains no `success_check.verify`"* is a
+true, cheap, checkable assertion. `resume` does not make it — it reconstructs
+with `graph.Parse(snap.Graph)` (`resume.go:130`, `:238`), never re-runs
+`validatePlannedNodes`, and hands the result a real `ShellVerifier` (`:352`)
+— but it could, and any future hardening pass would. §2 makes a verify
+legitimate in a planned snapshot and so **forecloses that assertion**. The
+consequence is a change of kind, not degree: tampering with a run directory
+goes from "confuse the scheduler" to "engine-run shell outside every ceiling"
+— precisely what `validatePlannedNodeVerify` exists to prevent.
+
+The windows are narrow but real. `graph.json` is written once
+(`cmd/oh-my-graph/main.go:595`) and never rewritten; `state.json` is rewritten
+at every terminal verdict (`runstate` `RecordNode`), so an intra-leg edit there
+loses the race — an accident of write cadence, not a guard. And the writer need
+not be an outsider: a planned node may hold bare `Write`/`Edit`
+(`coordinator.go:61-64`), rendered unscoped by `toolPolicyFor` (`:403-411`),
+and `validatePlannedNodeCwd`'s own comment already concedes it "does NOT make a
+write-capable node safe" (`:551-563`).
+
+**Disposition — recorded, not closed**, in the manner of ADR 0004's residuals:
+v1 trusts `$OMG_HOME/runs/<id>/` for the injected command exactly as it already
+trusts it for every other field it round-trips, and this ADR states that rather
+than letting §2 quietly enlarge what that trust covers. Two mechanisms are
+available if the residual is judged too large, in preference order: (i)
+`resume` re-supplies `--verify-cmd` and **refuses** a snapshot-borne one on an
+auto graph, which restores the checkable assertion exactly; (ii) the command
+lives in a separately-keyed snapshot field `resume` validates against the plan
+it accompanies. Neither is v1 scope. Whichever ships, the invariant above gains
+"the persisted artifact" as a named admissible source, with the reason it is
+trusted stated there.
 
 ### 5. What the planner prompt must say
 
@@ -274,7 +370,18 @@ code from the predicates that actually ran, over a closed set:
 |---|---|
 | `verified` | a `success_check.verify` command ran and the engine judged its exit code (and `output_matches`, when declared) |
 | `self-reported` | the strongest predicate was `result_matches` — the node passed by emitting the right words |
-| `exit-only` | no predicate beyond the subprocess exiting 0 |
+| `exit-only` | a subprocess ran and exited 0, with no predicate beyond that |
+| `approved` | a human approved a `type: gate` node — no subprocess ran and no predicate was evaluated |
+
+`approved` is not a rounding-out of the table; without it the set is not
+closed. An approved gate records a ledger `PASS` with no cost and no session
+(`evaluateGate`, `internal/schedule/scheduler.go`) and emits a terminal
+`node_passed` (`docs/RUN-FEED.md:251`), so under a three-member set it would
+land on `exit-only` — wrong twice over, because no subprocess ran and because a
+person deciding is the *strongest* provenance the system has, not the weakest.
+Gates exist only in hand-written graphs (`validatePlannedNodes` rejects
+`type: gate`), which is exactly why §6's reach beyond the auto path forces the
+fourth member.
 
 Rendered in the ledger's summary and emitted on `node_passed` as an additive
 field, per `docs/RUN-FEED.md`'s additive rule (no schema bump; absent means a
@@ -318,18 +425,29 @@ it. Record each with cost and CLI version, as every prior E-number is.
   met (the branch is not certified), the attribution is not. Accepted; the
   ledger's failing row carries the command's output tail, and the diff is
   still there to read.
-- **Concurrency skew.** Under `--concurrency > 1` a sink's check may observe
-  a tree another branch is still writing. The run's verdict is still sound
-  (the last sink to finish sees the final tree, and all sinks must pass), but
-  a *particular* node's check result is best-effort. Serialization (§2)
-  removes the interference, not the skew.
+- **Concurrency skew.** With a ready set wider than one, a sink's check may
+  observe a tree another node is still writing — `verifyEvidence` runs before
+  its own node's `PersistOutput`, so this is not an edge case of the check
+  running late. It is also not only an operator's choice: `concurrency:` is a
+  graph-level field a plan may set, resolved by `effectiveConcurrency`
+  (`scheduler.go:401`, `1285-1297`), so the skew is reachable on a default
+  invocation with no flag passed. The run's verdict stays sound (§2's
+  serialization puts the last-executed check after every subprocess has ended,
+  and all sinks must pass), but a *particular* node's check result is
+  best-effort. Serialization removes interference between checks, not skew
+  between a check and a still-running node.
+- **A planned graph can multiply the injected build's cost, and §2 bounds it.**
+  Retry count is the one planner-reachable lever on a user-supplied command;
+  the cap in §2 is what keeps `retry: {max: 40, on: [verify_failed]}` from
+  turning one flag into forty cold builds. Un-capped, that is the worst case.
 - **`--verify-cmd` is unbounded user shell.** It has exactly the standing a
   hand-written graph's `verify:` has had since ADR 0002, runs on the same
   seam, and executes repo-authored code (`gradlew`, `Makefile`, `npm`) the
   same way the user's own terminal does. Stated, not closed. The provenance
   difference from §3 is the whole point: the user chose it.
 - **The command is interpolated**, like every verification
-  (`scheduler.go:1159`). A user who writes `{{ artifacts.x | inline }}` into
+  (`resolveVerification`, `scheduler.go:1158-1161`). A user who writes
+  `{{ artifacts.x | inline }}` into
   it is splicing model output into a shell command — available to
   hand-written graphs already, and on the user either way.
 - **`verified` is not `correct`.** The qualifier means a command the user
@@ -347,7 +465,17 @@ it. Record each with cost and CLI version, as every prior E-number is.
   nodes" and becomes "rejected when planner-authored; may be set by trusted
   code after validation from a user-supplied string". The recorded `why` in
   `field_dispositions_test.go` must be updated in the same PR, exactly as
-  ADR 0012 §5 owed for `Prompt`.
+  ADR 0012 §5 owed for `Prompt`. `retry`'s disposition changes in the same
+  file for the same PR: **allowed → constrained**, per §2's cap.
+- **DESIGN.md is the spec, and drift in it is a bug** (CLAUDE.md). Three
+  places contradict this ADR the moment §2 lands: the disposition table row
+  `| success_check.verify | **rejected** |` (`DESIGN.md:1348`) and the `retry`
+  row beneath it (`:1349`); the deny-by-default prose at `:1325-1329`
+  (*"`success_check.verify:` would let it run arbitrary shell outside every
+  guard. Both are **rejected**"*); and the ceiling summary at `:1585-1590`
+  (*"rejects a planned node whose … or that sets `cwd`, `agent`, or
+  `success_check.verify`"*). All three take the same qualifier: rejected when
+  planner-authored, settable by trusted code from a user-supplied string.
 - **A run with no `--verify-cmd` behaves as it does today**, plus §3's printed
   line and §6's qualifier. No existing graph, plan or saved `graph.json`
   changes meaning.
@@ -359,11 +487,13 @@ it. Record each with cost and CLI version, as every prior E-number is.
   but it is the classification any future per-node attachment rule would
   stand on, and it is one line per entry now versus an archaeology exercise
   later.
-- **SECURITY.md** needs the auto-mode section amended: planned nodes may now
-  carry a `success_check.verify`, which that document currently states is
-  "available to hand-written graphs … and to nothing else". The sentence
-  becomes: available to hand-written graphs and to a command the user supplied
-  at invocation, never to one a plan authored.
+- **SECURITY.md** needs the auto-mode section amended in **two** places, not
+  one: the sentence at `:66-69` ("available to hand-written graphs … and to
+  nothing else"), which becomes *available to hand-written graphs and to a
+  command the user supplied at invocation, never to one a plan authored*; and
+  the parenthetical list of plan-time rejections at `:61-62` ("no `cwd`, no
+  `success_check.verify`, no `agent`"), which sits outside that sentence and
+  would otherwise stay flatly wrong.
 
 ## Alternatives considered
 
@@ -469,6 +599,30 @@ it. Record each with cost and CLI version, as every prior E-number is.
   authors think they are. That is the point, and it will still read as a
   regression to someone.
 
+## Review findings not adopted
+
+Recorded here rather than in a commit message, so a later reader sees what was
+considered and refused as well as what was taken.
+
+- **"Graph-level fields are planner-authored policy inputs with no recorded
+  disposition; a `graph.Graph` disposition table is owed alongside the
+  read-only/mutating one."** Half accepted, half rejected. The half that was
+  right is fixed above: §2's *reason* was wrong (it cited halt-on-fail, which
+  a plan can flip with `on_fail: continue`), and the Failure-modes framing of
+  concurrency as an operator choice was wrong. The claim that no disposition
+  exists is not: `internal/coordinator/field_dispositions_test.go:30-39`
+  already records graph-level scope as data with its rationale — the walk
+  covers `graph.Node`/`graph.SuccessCheck` *deliberately*, because that is
+  where capability-granting fields live, and it names the two fields with any
+  teeth: `concurrency` is clamped by `effectiveConcurrency` to the same global
+  cap a hand-written graph gets, and `on_fail` only picks between two failure
+  policies the operator can already select, with unknown values rejected by
+  `graph.Validate`. §2 does not weaken either statement: a failed sink lands in
+  `prunedFailures` under *both* policies, so `on_fail: continue` cannot buy a
+  plan a passing run. A second disposition table would therefore restate an
+  existing one, and this ADR does not owe it. The read-only/mutating table
+  under Compatibility stands on its own grounds.
+
 ## What could not be determined
 
 - **Whether `./gradlew build` would have caught #119's specific failure.**
@@ -483,10 +637,13 @@ it. Record each with cost and CLI version, as every prior E-number is.
   re-run.** Enough compiler output to fix a build, against argv-borne prompt
   cost, is an empirical question nobody has asked. The ledger's 240-rune cap
   is ruled out; the replacement is not derived.
-- **Whether serializing the injected checks is necessary or merely
-  conservative.** Concurrent `go build` is safe; concurrent Gradle contends
-  for a daemon lock. Neither was measured; serialization is chosen as the
-  cautious default and can be relaxed on evidence.
+- **Whether serializing the injected checks is necessary for flake-freedom or
+  merely conservative.** Concurrent `go build` is safe; concurrent Gradle
+  contends for a daemon lock. Neither was measured. This is *not* an open
+  question about whether serialization may simply be dropped on evidence:
+  §2's soundness argument now rests on it, so a measurement showing Gradle
+  tolerates concurrency buys a faster check only together with a replacement
+  argument for "some check observed the final tree".
 - **Whether the planner reliably produces a sink where a human would put
   one.** Sink attachment assumes the graph's terminal node is a sensible
   place for a final gate. Unmeasured over planner output.
