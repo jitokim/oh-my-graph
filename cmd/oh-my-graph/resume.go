@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
@@ -27,8 +30,23 @@ import (
 // guard.
 const (
 	stateFileName = "state.json"
-	lockFileName  = "resume.lock"
+	// lockFileName is runstate's, not this package's: since ADR 0015 §3 the
+	// lock file is contract surface, and the package that takes and probes it
+	// owns its name.
+	lockFileName = runstate.LockFileName
 )
+
+// hasSnapshot reports whether a run directory has a state.json at all. It is
+// the one fact the recovery hint splits on (runstatus.Recovery): a run killed
+// before its first node settled has no snapshot, so there is nothing to resume
+// FROM and the honest advice is to run the graph again rather than to resume
+// (ADR 0015 §5). Anything other than a clean stat reads as "no snapshot", which
+// is the conservative half — it advises re-running rather than promising a
+// resume that would then fail.
+func hasSnapshot(runDir string) bool {
+	info, err := os.Stat(filepath.Join(runDir, stateFileName))
+	return err == nil && info.Mode().IsRegular()
+}
 
 // runResume is the `resume` subcommand: parse argv and wire the production
 // ClaudeCLIRunner. Split from executeResume the same way runGraph/runAuto are
@@ -67,6 +85,17 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	statePath := filepath.Join(runDir, stateFileName)
 	lockPath := filepath.Join(runDir, lockFileName)
 
+	// Derived BEFORE the lock is taken, because taking it is what makes the
+	// answer "held": this leg would otherwise read its own lock and never see
+	// the corpse it is about to resume. The warning is the whole mitigation ADR
+	// 0015 accepts for its largest cost — the engine's children are in their own
+	// process groups, so a death that took the engine alone (SIGHUP, kill -9, a
+	// panic, an OOM kill) leaves a `claude` still spending, and this leg is
+	// about to run that node again beside it.
+	if status, statusErr := runstatus.Of(runDir); statusErr == nil && status == runstatus.Abandoned {
+		fmt.Fprintf(os.Stderr, "WARNING: run %q reads as abandoned — a leg started and never reported an end; %s.\n", runID, runstatus.OrphanWarning)
+	}
+
 	// The lock guards the whole resume, not just the scheduler run: two
 	// concurrent legs racing to load and rewrite the same snapshot would
 	// double-run nodes even before either scheduler starts (DESIGN.md,
@@ -82,6 +111,14 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 
 	snap, err := runstate.Load(statePath)
 	if err != nil {
+		// A run killed before its first node settled has no snapshot at all,
+		// and `resume` loads it before it branches — --retry-failed included.
+		// That is not a regression this ADR opens, but it IS the death shape
+		// most likely to need recovery, so it says why rather than surfacing a
+		// bare "no such file" (ADR 0015 §5).
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("cannot resume run %q: %s (%s)", runID, runstatus.Recovery(runID, false), statePath)
+		}
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
 	warnIfGraphSourceChanged(snap)

@@ -10,6 +10,13 @@ import (
 	"strconv"
 )
 
+// LockFileName is the run directory's lock file, named here because this
+// package owns it: it is the file AcquireLock takes and ProbeLock reads, and
+// since ADR 0015 §3 promoted it out of the internal set it is contract surface
+// (docs/RUN-FEED.md, "Liveness") rather than a detail each caller may spell
+// for itself.
+const LockFileName = "resume.lock"
+
 // LockFormatMarker is the first line of every resume.lock this binary writes,
 // and the only promise the file's contents carry (ADR 0015 §3). It says two
 // things at once, and both are load-bearing:

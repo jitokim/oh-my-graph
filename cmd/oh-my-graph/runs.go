@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
-	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // runRuns is the `runs` subcommand group. Its only action today is `list`;
@@ -46,20 +46,28 @@ type runSummary struct {
 	// snapshot does not persist an auto run's one-time planning cost, so that
 	// call is not included here (unlike the end-of-run ledger total).
 	costUSD float64
-	// verdict is verdictRunning for an in-flight run (see runfeed.InFlight), else
-	// PASS only when every node in the graph reached VerdictPass — a failed,
-	// paused, or interrupted run all render as FAIL.
+	// status is the shared derivation's answer for this run (runstatus.Of): an
+	// open leg plus a held lock is in flight, an open leg plus a free lock is
+	// abandoned. It is kept beside verdict because the abandoned rows also
+	// carry a recovery hint under the table.
+	status runstatus.Status
+	// verdict is verdictRunning or verdictAbandoned for a run that is not
+	// settled, else PASS only when every node in the graph reached VerdictPass
+	// — a failed, paused, or interrupted run all render as FAIL.
 	verdict string
-	// hasSnapshot is false for the one legitimate snapshot-less row: a live
+	// hasSnapshot is false for the two legitimate snapshot-less rows: a live
 	// run whose first node has not completed yet (state.json is written only
-	// after each node's terminal verdict), where graph name, node count and
-	// cost are simply not known yet and render as placeholders.
+	// after each node's terminal verdict), and one that was abandoned before it
+	// ever got that far. Graph name, node count and cost are simply not known
+	// for either, and render as placeholders.
 	hasSnapshot bool
 }
 
 // listRuns renders one row per run directory under root, newest first, plus a
-// total across the listed runs. An in-flight run — one whose event stream's
-// last leg is still open (runfeed.InFlight) — is listed with verdict RUNNING, even
+// total across the listed runs. A run that is not settled — one whose event
+// stream's last leg is still open — is listed with verdict RUNNING or
+// ABANDONED depending on the shared derivation (runstatus.Of: an open leg whose
+// lock is affirmatively free means the process that opened it is gone), even
 // before its first completed node has produced a state.json. listRuns is
 // read-only over the run directories: a directory whose snapshot cannot be
 // loaded (corrupt, or written by an incompatible schema) is reported as a
@@ -102,23 +110,26 @@ func listRuns(w, warnW io.Writer, root string) error {
 }
 
 // summarizeRun builds one run's row from its persisted files. It reuses the
-// real readers rather than re-parsing anything by hand: runfeed.InFlight over
-// the event stream (which refuses a stream schema newer than this binary,
-// surfaced here as the WARNING+skip path) to tell a live run from a settled
-// one, runstate.Load (which refuses an incompatible schema loudly) for the
-// snapshot, and graph.Parse on the snapshot's own Graph bytes for the graph's
-// name and node count — the same reconstruction path `resume` trusts.
+// real readers rather than re-parsing anything by hand: runstatus.Of over the
+// event stream and the run's lock (the shared derivation the dashboard card,
+// ResolveRun and `watch` also go through; its stream walk refuses a schema
+// newer than this binary, surfaced here as the WARNING+skip path) to tell a
+// live run from an abandoned or settled one, runstate.Load (which refuses an
+// incompatible schema loudly) for the snapshot, and graph.Parse on the
+// snapshot's own Graph bytes for the graph's name and node count — the same
+// reconstruction path `resume` trusts.
 //
-// A live run whose first node has not completed yet has an open leg but no
+// A run whose first node has not completed yet has an open leg but no
 // state.json at all (the snapshot is written only after each node's terminal
-// verdict). That is a healthy run, not a broken directory, so it renders as a
-// RUNNING row with only what is honestly known — the run id — rather than
-// being skipped with a warning. Rendering placeholders was chosen over
+// verdict). That is a healthy run — or, if its leg died there, exactly the run
+// an operator most needs to see — not a broken directory, so it renders as a
+// RUNNING or ABANDONED row with only what is honestly known, the run id, rather
+// than being skipped with a warning. Rendering placeholders was chosen over
 // persisting a seeded snapshot at run start because it keeps `runs list`
 // strictly read-only and leaves the snapshot's "written after every node"
 // write discipline (DESIGN.md, docs/RUN-FEED.md) untouched.
 func summarizeRun(root, runID string) (runSummary, error) {
-	inFlight, err := runfeed.InFlight(filepath.Join(root, runID, runfeed.FileName))
+	status, err := runstatus.Of(filepath.Join(root, runID))
 	if err != nil {
 		return runSummary{}, err
 	}
@@ -126,12 +137,17 @@ func summarizeRun(root, runID string) (runSummary, error) {
 	snap, err := runstate.Load(filepath.Join(root, runID, stateFileName))
 	if err != nil {
 		// Only a snapshot that is legitimately not written yet is excused, and
-		// only for an in-flight run. A corrupt or incompatible snapshot is a
-		// genuinely broken directory whether or not a leg is open — state.json
-		// is written atomically, so a live run never has a half-written one —
-		// and keeps the WARNING+skip path.
-		if inFlight && errors.Is(err, fs.ErrNotExist) {
-			return runSummary{runID: runID, verdict: verdictRunning}, nil
+		// only for a run that has not settled — in flight OR abandoned. The
+		// abandoned arm is load-bearing: the moment such a run derives
+		// abandoned it stops being in flight, and without it the excuse would
+		// lapse and the directory would vanish from the listing behind a
+		// WARNING — hiding the very runs this derivation exists to reveal (ADR
+		// 0015 §4). A corrupt or incompatible snapshot is a genuinely broken
+		// directory whether or not a leg is open — state.json is written
+		// atomically, so a live run never has a half-written one — and keeps the
+		// WARNING+skip path.
+		if status != runstatus.Settled && errors.Is(err, fs.ErrNotExist) {
+			return runSummary{runID: runID, status: status, verdict: unsettledVerdict(status)}, nil
 		}
 		return runSummary{}, err
 	}
@@ -145,11 +161,12 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		cost += rec.CostUSD
 	}
 	verdict := verdictWord(len(snap.CompletedNodes()) == len(g.Nodes))
-	if inFlight {
+	if status != runstatus.Settled {
 		// Mid-run the snapshot holds only the nodes completed so far, so the
 		// completed==all test above would read a healthy in-flight run as
-		// FAIL. The open leg is the ground truth that it simply isn't done.
-		verdict = verdictRunning
+		// FAIL. The open leg is the ground truth that it simply isn't done —
+		// and, when its lock is free, that nothing is going to finish it.
+		verdict = unsettledVerdict(status)
 	}
 	return runSummary{
 		// The directory name, not snap.RunID: the directory name is the handle
@@ -159,17 +176,19 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		graphName:   g.Name,
 		nodeCount:   len(g.Nodes),
 		costUSD:     cost,
+		status:      status,
 		verdict:     verdict,
 		hasSnapshot: true,
 	}, nil
 }
 
 // printRuns writes the table: a header, one aligned row per run, and a footer
-// with the run count and the cost total across every listed run. The column
-// style mirrors the end-of-run ledger table so the two read as one tool. A
-// snapshot-less RUNNING row keeps the same column widths with "-" in place of
-// the values it cannot know yet, and counts toward the run count (its cost so
-// far is zero by definition, so the total stays honest).
+// with the run count and the cost total across every listed run, and then one
+// recovery hint per abandoned run. The column style mirrors the end-of-run
+// ledger table so the two read as one tool. A snapshot-less RUNNING or
+// ABANDONED row keeps the same column widths with "-" in place of the values it
+// cannot know yet, and counts toward the run count (its cost so far is zero by
+// definition, so the total stays honest).
 func printRuns(w io.Writer, rows []runSummary) {
 	fmt.Fprintf(w, "%-17s %-24s %6s %10s  %s\n", "RUN", "GRAPH", "NODES", "COST(USD)", "VERDICT")
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 70))
@@ -194,12 +213,40 @@ func printRuns(w io.Writer, rows []runSummary) {
 	}
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 70))
 	fmt.Fprintf(w, "%d run(s), TOTAL COST: $%.4f\n", len(rows), total)
+
+	// The recovery hint for every abandoned run, under the table rather than
+	// interleaved between rows: an ABANDONED row is the one row a reader cannot
+	// act on without being told how, and the hint is a sentence, not a column.
+	// Keeping the table itself uniform is also what lets a human — or the
+	// `awk`-shaped script ADR 0015 declines to promise anything to — keep
+	// reading it as a table.
+	for _, row := range rows {
+		if row.status != runstatus.Abandoned {
+			continue
+		}
+		fmt.Fprintf(w, "\n%s\n", runstatus.Hint(row.runID, row.hasSnapshot))
+	}
 }
 
-// verdictRunning is the verdict rendered for an in-flight run — deliberately
-// outside the per-node PASS/FAIL vocabulary, because it describes a run that
-// has no terminal judgement yet.
-const verdictRunning = "RUNNING"
+// verdictRunning and verdictAbandoned are the verdicts rendered for a run whose
+// last leg is still open — deliberately outside the per-node PASS/FAIL
+// vocabulary, because they describe a run that has no terminal judgement yet.
+// ABANDONED especially is not FAIL: a FAIL is a verdict about the work, and the
+// work never got one; this is a statement about the process (ADR 0015 §4).
+const (
+	verdictRunning   = "RUNNING"
+	verdictAbandoned = "ABANDONED"
+)
+
+// unsettledVerdict is the verdict word for a run the shared derivation says has
+// not settled. Settled never reaches here — its verdict comes from the snapshot
+// (verdictWord) — so the in-flight arm is the default.
+func unsettledVerdict(status runstatus.Status) string {
+	if status == runstatus.Abandoned {
+		return verdictAbandoned
+	}
+	return verdictRunning
+}
 
 // verdictWord renders a settled run's overall verdict in the same vocabulary
 // as the per-node ledger: PASS only when the whole graph completed

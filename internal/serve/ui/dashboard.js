@@ -137,9 +137,11 @@ function setBanner(text) {
 
 // --- rendering ---------------------------------------------------------------
 
-// In flight first, settled below: the dashboard's whole premise is that the
-// runs happening now are the working surface. Within each group, newest
-// first — run ids are timestamps that sort lexically.
+// In flight first, everything else below: the dashboard's whole premise is
+// that the runs happening now are the working surface. An abandoned run is not
+// one of them — its leg is open only because the process that opened it died —
+// so it groups with the settled runs, carrying its hint. Within each group,
+// newest first: run ids are timestamps that sort lexically.
 function render() {
   const all = [...cards.values()].sort((a, b) => (a.run_id < b.run_id ? 1 : -1));
   const live = all.filter((c) => c.state === "running");
@@ -163,7 +165,7 @@ function paintCounts(all) {
   for (const card of all) by.set(card.state, (by.get(card.state) || 0) + 1);
   const host = $("dash-counts");
   host.replaceChildren();
-  for (const state of ["running", "gate-paused", "passed", "failed", "unknown"]) {
+  for (const state of ["running", "gate-paused", "abandoned", "passed", "failed", "unknown"]) {
     const n = by.get(state) || 0;
     if (!n) continue;
     const chip = el("span", "chip");
@@ -207,6 +209,13 @@ function cardEl(card) {
     meta.append(chip);
   }
   a.append(meta);
+
+  // An abandoned run's recovery hint, above the mini-DAG rather than below it:
+  // this tile leads to a page with a gate button, and that button starts a leg
+  // that spends money, so the hint has to be read before the click, not after.
+  if (card.hint) {
+    a.append(withText(el("div", "card-hint"), card.hint));
+  }
 
   if (card.error) {
     a.append(withText(el("div", "card-error"), card.error));

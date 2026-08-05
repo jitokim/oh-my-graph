@@ -22,6 +22,9 @@
   --passed: #0ca30c;
   --failed: #d03b3b;
   --gate-paused: #ec835a;
+  /* A leg whose process is gone (ADR 0015): muted, never red — nothing failed,
+     the work simply never got a verdict. */
+  --abandoned: #7d8894;
 }
 
 /* Dark tokens twice — once for the OS preference (only when no explicit
@@ -118,6 +121,7 @@ header {
 .dot.passed { background: var(--passed); }
 .dot.failed { background: var(--failed); }
 .dot.gate-paused { background: var(--gate-paused); }
+.dot.abandoned { background: var(--abandoned); }
 
 .elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
 .cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }

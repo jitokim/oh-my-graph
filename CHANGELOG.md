@@ -63,11 +63,43 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   tool gave before — a false *dead* would authorise a second scheduler over a
   live run, so nothing is ever called dead because a probe failed. Off darwin
   and linux a build-tagged stub reports `unknown` and `AcquireLock` keeps the
-  pre-ADR `O_EXCL` behaviour in full. **No surface derives `ABANDONED` yet**;
-  the two zombie runs still read `RUNNING` until §2 and §4 land.
+  pre-ADR `O_EXCL` behaviour in full.
+- **A run whose process died now reads `ABANDONED` instead of `RUNNING`
+  forever (ADR 0015 §2, §4).** The rule — *an open leg AND a held lock is in
+  flight; an open leg AND an affirmatively free lock is abandoned; every doubt
+  is in flight* — is stated once in the new `internal/runstatus` and shared by
+  all four surfaces, so they cannot drift: `runs list` gains the verdict word
+  `ABANDONED` beside `RUNNING` (deliberately not `FAIL` — the work never got a
+  verdict) and its snapshot-less row widened from "in flight" to "in flight or
+  abandoned", so a run killed before its first node settled is *labelled*
+  rather than vanishing behind a `WARNING`; the dashboard card gains an
+  `abandoned` state with its own muted token, stops spinning the nodes the dead
+  leg left open (they tally as pending) and carries the recovery hint;
+  `serve`'s `ResolveRun` no longer parks a live view on a corpse; and `watch`
+  refuses to tail a stream that will never get another line. Nothing in either
+  versioned file changed — no reader ever repairs the feed — but `resume.lock`
+  leaves the internal set and gains a documented "Liveness" section in
+  docs/RUN-FEED.md. `resume` on such a run warns first: the engine spawns each
+  `claude` in its own process group, so the death that abandoned the run may
+  have left a subprocess still spending, and that warning (on the row, in
+  `watch`'s refusal, on `resume`'s stderr and on the card, whose gate button is
+  one money-spending click) is the mitigation — ADR 0015 rejects probing for
+  the orphan. A run that never wrote a snapshot has nothing to resume from, so
+  its hint says "run the graph again" and `resume` fails on it with that
+  sentence instead of a bare "no such file".
 
 ### Fixed
 
+- **A node left running by a leg that died spun forever in `serve` (ADR 0015).**
+  Both of `serve`'s stream reducers switched only on node events, so they never
+  saw `run_started` — and a node whose leg crashed mid-run has a `node_started`
+  with no terminal after it. `/api/transcript` therefore kept serving that dead
+  leg's session transcript as "what it is doing right now", and the dashboard
+  card kept its dot spinning, across every later resume that did not happen to
+  re-run that node. Both reducers now treat **every `run_started` as a leg
+  boundary**: a node the previous leg left open stops being running (and stops
+  carrying its session id) the moment a new leg opens, and the new leg's own
+  `node_started` is what makes it running again.
 - **`output_matches` was judged against a truncated tail.** The verify seam
   handed the scheduler only the last 4 KiB of a command's output, prefixed with
   `…(earlier output truncated)…` — so an anchored pattern could **never** match

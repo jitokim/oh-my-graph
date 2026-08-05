@@ -995,6 +995,33 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   (`runstate.ProbeLock`, a shared-lock probe on a read-only fd); a missing
   file, an unmarked one, a non-local filesystem and any error alike answer
   *unknown*, which means the answer this tool gave before ADR 0015.
+- **An abandoned run is derived from that probe, never repaired into the feed
+  (ADR 0015 §2).** One rule, stated once in `internal/runstatus` and shared by
+  every surface: *in flight = an open leg AND a held lock; abandoned = an open
+  leg AND an affirmatively free lock; everything else is settled, and every
+  doubt reads as in flight.* No reader writes anything — `events.jsonl` keeps
+  only lines a scheduler emitted. `runs list` renders `ABANDONED` beside
+  `RUNNING` (never `FAIL`: a FAIL is a verdict about the work, which never got
+  one), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
+  right now", `watch` refuses to tail a stream that will never get another
+  line, and the dashboard paints the card abandoned. The leg that opens a run
+  must hold the lock **before** its first event and **after** its last, or a
+  starting run would read abandoned for its first instants; that ordering is
+  stated at `acquireRunLock` and pinned by
+  `TestRunLeg_LockBracketsTheEventStream`.
+- **The residual hazard is an orphaned `claude`, and the mitigation is
+  wording.** Every child is spawned with `Setpgid`, so a death that took the
+  engine alone (SIGHUP, `kill -9`, a panic, an OOM kill) leaves a subprocess
+  still running and still spending while the run reads abandoned. There are two
+  deliberate spenders on such a run — `resume` and the dashboard's gate button
+  — so the recovery hint reaches four surfaces: the `ABANDONED` row, `watch`'s
+  refusal, `resume`'s own stderr, and the card, which must say what the button
+  would allow *before* it is pressed. ADR 0015 rejects probing for the orphan;
+  that would be a fifth exec seam.
+- **Recovery is `resume --retry-failed`, and nothing new** — except for a run
+  killed before its first node settled, which has no `state.json` and therefore
+  nothing to resume from: its hint says "run the graph again", and `resume`
+  itself fails on it with that sentence instead of a bare "no such file".
 
 **Auto-planned graphs still may not contain gates.** `validatePlannedNodes`
 already rejects `type: gate` and continues to: an unattended run whose planner
@@ -1078,12 +1105,23 @@ one, and it answers 409 like any other view that cannot resume.
   It does **not** call `runfeed.InFlight`: one walk already carries the leg
   state, and a card is rebuilt for every changed run on every tick, so a
   second read of the same stream was doubling the I/O on the hot path.
-  `buildCard` therefore *re-implements* `InFlight`'s rule (`started != "" &&
-  ended == ""`) inline. That is a duplicated rule, so the agreement is
-  enforced rather than structural: `TestBuildCard_InFlightAgreesWithRunfeed`
-  judges the inline derivation against `runfeed.InFlight` itself, which is
-  what keeps a card from disagreeing with `runs list`, `watch` or the run's
-  own view about the same run. Cost is the snapshot's
+  `buildCard` therefore reads the leg state (`started != "" && ended == ""`)
+  off its own walk, and then hands it to the SHARED derivation
+  (`runstatus.Probe`), which composes it with the lock exactly as `runs
+  list`, `ResolveRun` and `watch` do — the composition is stated once, not
+  four times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
+  held by an enforced agreement rather than a structural one:
+  `TestBuildCard_AgreesWithTheSharedRule` judges the inline leg derivation
+  against `runfeed.InFlight`, and the card's state and `ResolveRun`'s
+  preference against `runstatus.Of`, which is what keeps a card from
+  disagreeing with `runs list`, `watch` or the run's own view about the same
+  run. A card's state vocabulary is the node vocabulary plus two:
+  `gate-paused`, and **`abandoned`** — a leg the stream left open whose lock
+  is free, i.e. whose process is gone (muted, never red: nothing failed, the
+  work simply has no verdict). Nodes that leg left running render abandoned
+  rather than spinning forever and tally as pending, and the card carries the
+  recovery hint, because the page it links to has a gate button that starts a
+  leg with one click. Cost is the snapshot's
   per-node total, the same accounting `runs list` prints. A run directory
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
@@ -1516,6 +1554,13 @@ ledger — so the summary never under-counts silently.
   like any external consumer would, which is what keeps it honest; the
   full contract, including how it versions alongside `state.json`, is
   docs/RUN-FEED.md.
+- **RunStatus** (`internal/runstatus`) — the one composition of the two facts
+  those views need and neither owner has: the stream's leg state (RunFeed's
+  `InFlight`) and the run's liveness (RunState's `ProbeLock`). It answers
+  settled / in flight / abandoned, spawns nothing and writes nothing, and it
+  owns the recovery wording the four surfaces print. RunFeed stays a pure
+  stdlib reader of the stream and RunState keeps the lock file it already
+  owned; this is only their meeting point (ADR 0015 §2).
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
@@ -1571,8 +1616,9 @@ internal/childenv/childenv.go + _test          the shared "delete billing-switch
 internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
-internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
+internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
+internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created

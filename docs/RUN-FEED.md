@@ -36,32 +36,26 @@ down, and internal (ADR 0010). Artifacts are the flat ones.
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
 
-Two things reach outside this contract, and neither is something an external
-consumer needs:
+One thing reaches outside this contract, and it is not something an external
+consumer needs: `serve` tails a running node's own claude transcript from
+`~/.claude/projects` to stream its live output. That is a *supplement* to the
+feed, not a substitute — the transcript is claude's file, on claude's schema,
+and the run-feed events (`node_started`/`node_retried` publishing the attempt's
+session id) are what let any consumer locate it.
 
-- `serve` tails a running node's own claude transcript from
-  `~/.claude/projects` to stream its live output. That is a *supplement* to
-  the feed, not a substitute — the transcript is claude's file, on claude's
-  schema, and the run-feed events (`node_started`/`node_retried` publishing
-  the attempt's session id) are what let any consumer locate it.
-- The run's `resume.lock` is how *writers* coordinate, not how a reader
-  reads. `executeGraph` (`cmd/oh-my-graph/main.go`) and `executeResume`
-  (`cmd/oh-my-graph/resume.go`) hold it for a whole leg, and `serve`'s gate
-  endpoint takes and gives back the very same lock before it accepts a
-  decision (`runstate.AcquireLock`, `internal/serve/gate.go`) — holding it is
-  how "no leg is in flight" is established. The lock is the kernel's exclusive
-  `flock(2)` on that file rather than the file's existence, so the file itself
-  is never removed and its presence means nothing. The lock is an internal
-  file with no compatibility promise (see the last line of this document).
+A third file, `resume.lock`, is **not** internal any more: it is how a reader
+tells a run that is thinking from one whose process is gone. See "Liveness —
+`resume.lock`" below.
 
 Two in-repo readers also apply this contract's rules by hand instead of
 through `internal/runfeed`, so follow `internal/runfeed` rather than them:
-`serve`'s dashboard card re-derives `runfeed.InFlight`'s rule inline off a
+`serve`'s dashboard card re-derives `runfeed.InFlight`'s leg rule inline off a
 walk it already does (the two are held together by
-`TestBuildCard_InFlightAgreesWithRunfeed`), and `serve`'s `/api/transcript`
-hand-rolls its own scanner without the newer-`schema` refusal `runfeed.Walk`
-makes. Everything this document versions and guarantees is `state.json` and
-`events.jsonl`.
+`TestBuildCard_AgreesWithTheSharedRule`; the *composition* with the lock is not
+duplicated — every in-repo surface goes through `internal/runstatus`), and
+`serve`'s `/api/transcript` hand-rolls its own scanner without the
+newer-`schema` refusal `runfeed.Walk` makes. Everything this document versions
+and guarantees is `state.json` and `events.jsonl`.
 
 `state.json` and `events.jsonl` together are a **stable consumer API**. The
 files answer complementary questions:
@@ -148,9 +142,13 @@ Guarantees:
   The same caveat `runfeed.InFlight` carries at the run level applies here at
   the node level: **the stream records intent, not process liveness.** A
   crashed or killed oh-my-graph leaves its last `node_started` unterminated,
-  so such a node reads as running until the run is resumed or its directory is
-  cleaned up. There is no liveness probe, deliberately — every consumer stays
-  a pure reader of the two contract files.
+  so by the stream alone such a node reads as running forever. Two things
+  bound that, and a consumer wanting to match oh-my-graph's own views should
+  apply both: **every `run_started` is a leg boundary** — a node left running
+  by an earlier leg is not running, whatever the current leg does — and the
+  lock answers whether the *current* leg's writer is alive at all (see
+  "Liveness" below). The stream itself stays free of process liveness: no
+  reader ever appends to it, and nothing in these two files changed.
 
   Use `state.json` for *what has settled and at what cost*, and the stream for
   *what is happening now*.
@@ -343,6 +341,58 @@ to pause).
   error, never a silent truncation — a stream whose line exceeds it, treating
   it as corrupt or foreign; an external consumer may assume the same bound.
 
+## Liveness — `resume.lock` (ADR 0015)
+
+`events.jsonl` says a leg *started*; it cannot say whether that leg's process
+is still alive, because a killed process writes no `run_finished`. The run
+directory's `resume.lock` answers that, and it is documented here — rather than
+left internal — because oh-my-graph's own read-back commands consult it, and
+this document promises they read what any consumer can read, with no side
+channel.
+
+- **A leg holds an exclusive `flock(2)` on `resume.lock` for its whole
+  duration**, taken before it writes its first event and still held after its
+  last. The kernel releases it when the holder dies, however it dies.
+- **A consumer probes with a SHARED lock (`LOCK_SH|LOCK_NB`) on a read-only
+  fd**, and unlocks immediately. A shared probe conflicts with the holder's
+  exclusive lock — which is the question — but not with other probes, so
+  observers never block each other or flicker one another into a false
+  "alive". **Never probe with an exclusive lock**: that would briefly block
+  the very leg you are observing. A reader creates, writes and removes
+  nothing.
+- **Beside an OPEN leg** (the stream's last `run_started` has no
+  `run_finished` after it): a *contended* probe means the writer is alive —
+  the run is in flight; a *succeeding* probe means the writer is gone — the
+  run is **abandoned**, and no event will ever be appended to it. Beside a
+  closed leg the lock says nothing and is not worth probing.
+- **A missing file, a file whose first line is not the format marker
+  `oh-my-graph-lock 1`, a filesystem whose `flock` is not the kernel's own
+  (linux emulates it over NFS as POSIX record locks), and any probe error all
+  mean *unknown*, and unknown means the open-leg rule** — the answer this tool
+  gave before ADR 0015, and a safe one. It is also what a consumer that cannot
+  or will not `flock` should use unconditionally. Nothing is ever concluded
+  abandoned from the absence of evidence.
+
+The file's *contents* carry exactly one promise: the marker line. Everything
+after it — the holder's pid — is explicitly informational and explicitly **not
+a liveness test**: a pid in a lock file was measured being recycled by an
+unrelated process, reading "alive" for hours. The file is **never removed**,
+so its presence carries no information either; it is a handle, not a flag.
+
+Two things this deliberately does not do: no reader ever repairs the stream by
+appending a terminal event on a dead writer's behalf (the history stays exactly
+what the schedulers wrote), and no new event type, field or verdict is
+introduced anywhere. A consumer that has never heard of "abandoned" reads the
+same bytes and derives what it always did.
+
+Finally, the honest caveat about what a free lock does and does not prove: it
+proves the *oh-my-graph* leg is gone, not that its children are. The engine
+spawns each `claude` in its own process group, so a death that took only the
+engine can leave a subprocess still running and still spending. Recovering such
+a run (`oh-my-graph resume <run-id> --retry-failed`) may therefore run a node
+alongside its own orphan; oh-my-graph's surfaces warn about this rather than
+probing for it.
+
 ## Version / compatibility rule
 
 Both files follow the same rule:
@@ -364,5 +414,8 @@ Both files follow the same rule:
   `schema` per event and surface (not silently misread) a version they do not
   understand.
 
-Anything in the run directory not listed here (lock files, temp files) is
-internal and carries no compatibility promise.
+Anything in the run directory not listed here (temp files) is internal and
+carries no compatibility promise. `resume.lock` is listed here — see
+"Liveness" — and carries exactly the two promises stated there (an exclusive
+`flock` for a leg's duration, and the format marker as its first line);
+everything else about it, its pid line included, remains internal.

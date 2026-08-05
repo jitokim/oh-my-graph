@@ -71,7 +71,9 @@ import (
 // guard the gate routes take before deciding anything.
 const (
 	stateFileName = "state.json"
-	lockFileName  = "resume.lock"
+	// The lock's name is runstate's, not this package's: since ADR 0015 §3 it
+	// is contract surface, and the package that takes and probes it owns it.
+	lockFileName = runstate.LockFileName
 )
 
 // DefaultPort is the port `serve` binds when --port is not given. It is an

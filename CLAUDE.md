@@ -85,8 +85,9 @@ internal/childenv/     the shared child-env scrub policy (used by all four spawn
 internal/invariants/   test-only: asserts exactly four spawner objects — only their seams' files import os/exec
 internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent/skill mapping; the goal loop
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff, the advisory lint sweeps
-internal/runstate/     state.json snapshot — atomic write, run lock, resume load
+internal/runstate/     state.json snapshot — atomic write, resume load, and the run lock (an flock a leg holds; ProbeLock reads it — ADR 0015)
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)
+internal/runstatus/    the ONE settled/in-flight/abandoned rule — open leg AND held lock (ADR 0015); runs list, the dashboard card, ResolveRun and watch all go through it
 internal/serve/        `serve`: 127.0.0.1-only dashboard + per-run live view, a run-feed consumer
 internal/ledger/       RunLedger (per-node + total cost/verdict summary)
 internal/gate/         gate Decision + PauseController/RecordedController (human pause/approve)

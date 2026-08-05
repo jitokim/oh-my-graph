@@ -1,16 +1,25 @@
 # ADR 0015 — An abandoned run is derived from the lock, never repaired into the feed
 
-- Status: Accepted — **partly implemented.** §1 has landed as of 2026-08-06:
-  `internal/runstate.AcquireLock` takes `LOCK_EX|LOCK_NB` on an
+- Status: Accepted — **implemented** as of 2026-08-06.
+  §1: `internal/runstate.AcquireLock` takes `LOCK_EX|LOCK_NB` on an
   `O_CREATE|O_RDWR` fd, writes the marker line, releases without unlinking,
   and branches to legacy semantics on an unmarked file; `runstate.ProbeLock`
   answers held/free/unknown behind the local-filesystem gate, with a
   build-tagged stub reporting unknown where there is no `flock(2)`.
-  **No surface derives `ABANDONED` yet** — §2's shared derivation and §4's
-  `runs list`, dashboard, `ResolveRun`, `watch` and `resume` wording are still
-  outstanding, and so is §3's "Liveness" section in docs/RUN-FEED.md. Read
-  those parts of the Decision below as the shape the code is meant to take,
-  not as a description of it.
+  §2: the derivation is `internal/runstatus` — `Derive`/`Probe`/`Of` — and the
+  ordering invariant is stated at `acquireRunLock` and pinned by
+  `TestRunLeg_LockBracketsTheEventStream`.
+  §3: docs/RUN-FEED.md has its "Liveness — `resume.lock`" section, and the
+  closing "lock files … are internal" sentence is amended.
+  §4: `runs list` renders `ABANDONED` (snapshot-less arm widened), the
+  dashboard card gains `abandoned` plus the hint, `ResolveRun` stops preferring
+  an abandoned run, `watch` refuses to tail one, and `resume` warns about the
+  orphaned child before it takes the lock.
+  §5: no new command or flag; the recovery hint and the snapshot-less
+  "run the graph again" wording live in `runstatus`.
+  The two surfaces the ADR names as accepted gaps are still gaps by design:
+  `watch` gains no idle-time probe, and no surface probes for an orphaned
+  `claude`.
 - Date: 2026-08-04
 
 ## Context
