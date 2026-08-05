@@ -37,6 +37,37 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 
 ### Fixed
 
+- **`output_matches` was judged against a truncated tail.** The verify seam
+  handed the scheduler only the last 4 KiB of a command's output, prefixed with
+  `…(earlier output truncated)…` — so an anchored pattern could **never** match
+  a chatty command, and a `go test ./...` whose `ok  github…` summary scrolled
+  past the cap failed a check its own evidence had passed. `verify.Result.Output`
+  is now the FULL combined stdout+stderr; truncation moved to where output is
+  rendered (the ledger's DETAIL column, already capped) and to `*TimeoutError`,
+  which can outlive the call. No extra memory: `CombinedOutput` had already
+  buffered the whole thing before any cut could apply. **Behaviour change** — a
+  check that fails today only because its match sat beyond the cap starts
+  passing. The reverse needs a pattern that matched something the cut
+  manufactured — the `…(earlier output truncated)…` marker itself, or a `(?m)^`
+  anchor that the marker's inserted newline created a line start for. Absent
+  that, a longer subject can only add matches: these are unanchored RE2
+  searches, with no lookbehind or backreference that could make more input
+  remove one.
+- **`permission_mode` was the one enum with no validation.** `type`, `handoff`,
+  `on_fail` and `retry.on` are each rejected at load against a closed set;
+  `permission_mode` was passed through to argv unchecked, so `dontask` (wrong
+  case) killed the node at spawn — mid-run, after earlier nodes had already
+  spent real money, and a long way from the typo. It is now validated at load
+  like the other four, against the `claude` CLI's own choices measured from
+  `claude --help` (2.1.221): `acceptEdits`, `auto`, `bypassPermissions`,
+  `dontAsk`, `manual`, `plan`. DESIGN.md listed three of those six. **Behaviour
+  change** — a graph carrying a mode outside that set is now refused by `run`
+  and `lint` instead of failing one node; a mode a future `claude` adds is
+  refused until oh-my-graph enumerates it. That refusal is **retroactive**:
+  `resume`, `run --retry-failed`, `runs list` and `serve` rebuild the graph from
+  the run snapshot through the same parser, so a run recorded by an earlier
+  binary under a mode this one does not know stops being resumable, is skipped
+  with a warning by `runs list`, and shows as a broken card in `serve`.
 - **A verdict pattern must survive the markdown a model writes (#107).** A
   node that got exit 0 and opened its reply with `**PASS**` failed
   `result_matches: "^PASS"` and halted the run. Every shipped pattern now

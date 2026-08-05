@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -232,15 +233,81 @@ func TestVerify_ZeroTimeoutFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// --- output truncation -------------------------------------------------------
+// --- output completeness and truncation --------------------------------------
+
+// TestVerify_ResultCarriesTheWholeOutput is the regression test for a
+// verification that passed its own evidence check and failed anyway. A Result
+// was once handed back as a tailBytes tail, so the caller's output_matches was
+// judged against the last 4 KiB with "…(earlier output truncated)…" glued to
+// the front — and an anchored pattern (DESIGN.md's own `^ok\s+github` example)
+// could never match a command that printed more than the cap. The full output
+// is already in memory when CombinedOutput returns; truncating it before the
+// judgement bought nothing and changed the predicate's meaning.
+func TestVerify_ResultCarriesTheWholeOutput(t *testing.T) {
+	// The matching line comes FIRST and the noise pushes it well past the old
+	// cap — exactly the shape of a `go test ./...` whose `ok github…` summary
+	// scrolls off the top.
+	payload := "ok  github.com/jitokim/oh-my-graph/internal/verify\t0.312s\n" +
+		strings.Repeat("=== RUN   TestSomethingChatty\n--- PASS: TestSomethingChatty\n", 200)
+	if len(payload) <= maxRetainedOutputBytes {
+		t.Fatalf("test payload is %d bytes, too small to prove anything", len(payload))
+	}
+	log := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(log, []byte(payload), 0o600); err != nil {
+		t.Fatalf("could not stage the command's output: %v", err)
+	}
+
+	result, err := NewShellVerifier().Verify(context.Background(), Request{
+		Command: "cat '" + log + "'",
+	})
+	if err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+
+	if result.Output != payload {
+		t.Errorf("Result.Output is %d bytes, want the whole %d-byte output",
+			len(result.Output), len(payload))
+	}
+	if !regexp.MustCompile(`^ok\s+github`).MatchString(result.Output) {
+		t.Errorf("an anchored output_matches cannot match this output; it starts %q",
+			result.Output[:min(60, len(result.Output))])
+	}
+}
+
+// TestVerify_TimeoutOutputIsTruncated pins the other half of that split: an
+// error can be wrapped and held for the rest of the run, so what IT retains
+// stays bounded. Nothing judges a timed-out command's output — it reached no
+// verdict — so the tail costs no correctness there.
+func TestVerify_TimeoutOutputIsTruncated(t *testing.T) {
+	v := NewShellVerifier()
+
+	_, err := v.Verify(context.Background(), Request{
+		// Print well past the cap, then outlive the timeout.
+		Command: "awk 'BEGIN { while (i++ < 500) print \"chatty line of output\" }'; sleep 30",
+		Timeout: 500 * time.Millisecond,
+	})
+
+	var timeoutErr *TimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("expected *TimeoutError, got %T: %v", err, err)
+	}
+	if len(timeoutErr.Output) > maxRetainedOutputBytes+len(truncationMarker) {
+		t.Errorf("timeout error retains %d bytes, want at most the bounded tail",
+			len(timeoutErr.Output))
+	}
+	if !strings.HasPrefix(timeoutErr.Output, truncationMarker) {
+		t.Errorf("a cut output must be marked as such, got prefix %q",
+			timeoutErr.Output[:min(40, len(timeoutErr.Output))])
+	}
+}
 
 // TestTailBytes_KeepsTheTailAndMarksTheCut pins which end survives: a failing
 // command explains itself at the END, so the head is what gets dropped, and the
 // cut is marked so nobody reads a fragment as the whole output.
 func TestTailBytes_KeepsTheTailAndMarksTheCut(t *testing.T) {
-	long := strings.Repeat("a", maxOutputBytes) + "FAIL: the last line"
+	long := strings.Repeat("a", maxRetainedOutputBytes) + "FAIL: the last line"
 
-	got := tailBytes(long, maxOutputBytes)
+	got := tailBytes(long, maxRetainedOutputBytes)
 
 	if !strings.HasSuffix(got, "FAIL: the last line") {
 		t.Errorf("truncation dropped the tail: %q", got[max(0, len(got)-40):])
@@ -253,7 +320,7 @@ func TestTailBytes_KeepsTheTailAndMarksTheCut(t *testing.T) {
 // TestTailBytes_ShortOutputIsUntouched keeps the common case honest: nothing is
 // marked as truncated when nothing was cut.
 func TestTailBytes_ShortOutputIsUntouched(t *testing.T) {
-	if got := tailBytes("ok\n", maxOutputBytes); got != "ok\n" {
+	if got := tailBytes("ok\n", maxRetainedOutputBytes); got != "ok\n" {
 		t.Errorf("short output was altered: %q", got)
 	}
 }

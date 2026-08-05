@@ -81,6 +81,21 @@ four — it adds exactly `internal/browser/exec.go` and must still fail on a
 fifth — and every "exactly three" claim in the docs and doc comments is swept
 to four, citing this ADR.
 
+> **Update (2026-08-05):** "three allowed importers to four" is the wrong
+> denominator for what that test actually holds. Its `allowedExecImporters`
+> map is keyed by **file**, not by seam, and the runner and verify seams each
+> carry two build-tagged `procgroup_*.go` files that import `os/exec` only to
+> mutate an already-built `*exec.Cmd`. The map therefore went from **seven
+> entries to eight** — it gained exactly one, `internal/browser/exec.go`, which
+> is the part of the sentence that was right.
+>
+> The decision is unaffected: the invariant is over **spawner objects**, and
+> that count is three → four exactly as written. The file count is an
+> implementation detail of how the invariant is enforced, and the two were
+> conflated here. The sentence is left standing rather than rewritten, for the
+> same reason as in ADR 0010: a reader checking this ADR against
+> `internal/invariants` should find the discrepancy explained, not erased.
+
 The child-environment scrub applies to the launcher too. The URL handler it
 dispatches to is arbitrary user-configured code (a `.desktop` entry, a
 registry association) that inherits the child environment and may

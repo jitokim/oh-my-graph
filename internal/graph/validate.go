@@ -55,6 +55,23 @@ var (
 	validOnFail   = map[string]bool{OnFailHalt: true, OnFailContinue: true}
 )
 
+// permissionModes is the closed set a node's permission_mode may take, in the
+// order the error message presents them — alphabetical, which is ours: the CLI
+// prints its own choices as acceptEdits, auto, bypassPermissions, manual,
+// dontAsk, plan. Only the MEMBERSHIP is measured from `claude --help`; the
+// ordering is ours, so a reader can scan the message.
+// A slice rather than a map so that message is deterministic; membership is a
+// linear scan over six entries. See the constants' doc for why this set is
+// closed at all and what closing it costs.
+var permissionModes = []string{
+	PermissionAcceptEdits,
+	PermissionAuto,
+	PermissionBypass,
+	PermissionDontAsk,
+	PermissionManual,
+	PermissionPlan,
+}
+
 // Validate enforces the graph's structural invariants and returns the first
 // violation as a *GraphValidationError. It is the fail-fast view of Issues —
 // `run` needs one precise reason to refuse a graph, while `lint` renders the
@@ -75,7 +92,9 @@ func (g *Graph) Validate() error {
 // per-node checks:
 //
 //  1. every node id is non-empty, unique, and a single safe path element;
-//  2. every type/handoff is a known value;
+//  2. every type/handoff is a known value, and a declared permission_mode is
+//     one the `claude` CLI accepts — an unvalidated typo reached argv and
+//     failed the node at spawn, mid-run, a long way from the typo;
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
@@ -327,6 +346,11 @@ func (g *Graph) validateNodesUnique() []error {
 	return issues
 }
 
+// validateEnums rejects every node-level enum outside its closed set. type and
+// handoff are normalized by decode, so an undeclared one arrives as the default
+// and never reaches here empty; permission_mode is NOT normalized — an
+// undeclared one stays empty and the Scheduler substitutes its own unattended
+// default — so empty is skipped rather than rejected.
 func (g *Graph) validateEnums() []error {
 	var issues []error
 	for _, n := range g.Nodes {
@@ -340,6 +364,13 @@ func (g *Graph) validateEnums() []error {
 			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
 				Reason: fmt.Sprintf("unknown handoff %q (want %s or %s)", n.Handoff, HandoffArtifact, HandoffSession),
+			})
+		}
+		if n.PermissionMode != "" && !slices.Contains(permissionModes, n.PermissionMode) {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("unknown permission_mode %q (want one of: %s)",
+					n.PermissionMode, strings.Join(permissionModes, ", ")),
 			})
 		}
 	}

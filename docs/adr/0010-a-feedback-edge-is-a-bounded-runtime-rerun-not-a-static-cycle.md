@@ -82,6 +82,12 @@ folding into `impl`'s own prompt via the feedback placeholder — same maximum
 depth, but a clean first round now costs one review session instead of five
 nodes, and a graph reader sees the loop instead of reconstructing it.
 
+> **Update (2026-08-05):** that collapse describes what the construct *can*
+> express, not a conversion that was performed. `graphs/adr-driven-dev.yaml`
+> at v0.4.1 still declares eleven node ids with `round1/apply1/round2/apply2/
+> round3` intact and carries no `feedback:` block at all. See the note in
+> Consequences for what shipped instead.
+
 Why this shape over the alternatives (argued in full below):
 
 - The declaration is **inline on a node**, like every other edge in this
@@ -360,6 +366,26 @@ into an ordinary failure on resume. Instead:
   clean first round stops early, and every round's findings actually flow
   into the re-implementation instead of only rounds the unrolling
   anticipated.
+
+  > **Update (2026-08-05):** this consequence is written in the accomplished
+  > tense and the conversion it describes **was never performed.** At v0.4.1
+  > `graphs/adr-driven-dev.yaml` still has all eleven node ids — the
+  > `round1 → apply1 → round2 → apply2 → round3` unrolling this ADR's Context
+  > names as its founding complaint is intact — and the file contains no
+  > `feedback:` block. Nothing reduced to seven.
+  >
+  > What actually shipped is the arc itself, in a **new** template:
+  > `graphs/review-loop.yaml` declares `feedback: { rerun: impl, max: 2 }` on
+  > its review node, which is the shape this bullet predicted, demonstrated on
+  > a graph written for it rather than migrated to it. The mechanism is
+  > therefore proven; the migration of the pre-existing template is
+  > outstanding work, not a delivered consequence.
+  >
+  > The prediction is left standing rather than rewritten — it is the
+  > decision's reasoning, and it may still be carried out. But a reader
+  > comparing this ADR against the repo would otherwise conclude the ADR or
+  > the template had silently regressed, when neither did: the conversion was
+  > simply never done.
 - The static graph remains a DAG and every existing consumer —
   validation, `ReadyGiven`, resume, the snapshot round-trip, fleetops —
   is untouched or extended only by optional fields. No schema bumps.

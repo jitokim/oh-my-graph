@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -37,11 +38,13 @@ import (
 )
 
 // Concurrency bounds: the default ready-set width and the hard ceiling no graph
-// may exceed. The default permission mode is unattended.
+// may exceed. The default permission mode is unattended, and is spelled by
+// graph's constant rather than a literal — the same set the load-time validator
+// enforces, so the default can never be a mode a graph would be refused for.
 const (
 	defaultConcurrency    = 4
 	globalConcurrencyCap  = 10
-	defaultPermissionMode = "dontAsk"
+	defaultPermissionMode = graph.PermissionDontAsk
 )
 
 // predicateVerify is the success_check predicate name carried by a failed
@@ -1213,17 +1216,51 @@ func verifyFault(nodeID, detail string) error {
 	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Infrastructure: true}
 }
 
+// maxOutputScanBytes bounds how much of a verification's output outputTail
+// normally looks at. verify.Result.Output is the FULL combined output —
+// output_matches has to judge all of it — so rendering 240 runes of DETAIL
+// should not first whitespace-collapse a whole `go test ./...` log. It is a
+// fast path, not a policy: whitespace collapses AFTER the byte cut, so a tail
+// that is mostly blank lines would yield less detail than the reader is owed,
+// and condenseTail falls back to the whole output in exactly that case.
+const maxOutputScanBytes = 4096
+
 // outputTail renders the end of a verification command's output for the ledger's
 // DETAIL column: the last maxDetailRunes, whitespace-collapsed onto one
 // line so a multi-line test failure cannot break the end-of-run table. The tail
 // is what matters — a failing command explains itself last. Empty output yields
 // an empty string rather than a dangling separator.
+//
+// This is the truncation the verify seam deliberately does not do: bounding
+// output where it is RENDERED, never where it is judged.
 func outputTail(output string) string {
-	condensed := strings.Join(strings.Fields(output), " ")
+	condensed := condenseTail(output)
 	if condensed == "" {
 		return ""
 	}
 	return "; output: " + capDetail(condensed)
+}
+
+// condenseTail whitespace-collapses enough of output's end to fill a capped
+// detail. The last maxOutputScanBytes are collapsed first — cheap, and enough
+// for any real command — and the whole output is collapsed only when that
+// window did not yield maxDetailRunes of actual content, which is the one case
+// where the cut would cost the reader a line capDetail would have kept (a
+// command whose last words are followed by thousands of blank lines).
+func condenseTail(output string) string {
+	if len(output) <= maxOutputScanBytes {
+		return strings.Join(strings.Fields(output), " ")
+	}
+	tail := output[len(output)-maxOutputScanBytes:]
+	// The byte cut can land mid-rune; advance so capDetail's []rune
+	// conversion does not open the detail with a replacement character.
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	if condensed := strings.Join(strings.Fields(tail), " "); utf8.RuneCountInString(condensed) >= maxDetailRunes {
+		return condensed
+	}
+	return strings.Join(strings.Fields(output), " ")
 }
 
 // shouldRetry reports whether a failed attempt should be retried: there must be

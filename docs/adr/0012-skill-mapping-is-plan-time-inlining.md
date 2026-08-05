@@ -10,7 +10,14 @@
   The status stays `Proposed` deliberately: it is the accurate word for a
   decision whose own acceptance criteria are unmet, and flipping it to
   `Accepted` because the code exists would be the drift this line exists to
-  prevent.
+  prevent. **Still `Proposed` after the 2026-08-05 yield measurement** ("Yield
+  measurement", below): that probe paid off a different debt — the plugin
+  alternative's condition (3), real planner-authored ids instead of the
+  shipped-graph proxy — and it was never the gate. The gate is (a) and (b),
+  which measure whether an inlined body *helps*, and neither has been run. A
+  number existing is not the number the gate asks for; and this one argues
+  against promotion rather than for it, at 5 of 56 ids mapped with one of the
+  5 mapped wrongly.
 - Date: 2026-08-03 (revised the same day after design review: cap
   recalibrated against the measured corpus, nonce fence + hash provenance,
   `{{` neutralization, `allowed-tools` ceiling-skip cut, user-dir-only scan,
@@ -178,6 +185,15 @@ against an assumed "typical 1–4 KiB" body — false on this very corpus (2 of
 35) — which would have delivered ~3.5% coverage on the exact setup that
 motivates the feature. A cap must be recalibrated if the corpus changes
 character; the number is an empirical fit, not a principle.
+
+> **Update (2026-08-05):** every figure in this section is a **proxy** — it
+> simulates the rule over shipped-graph node ids, which were named by someone
+> who knew the skill names. Measured against 56 planner-authored ids the yield
+> is 5 of 56, not the 7-of-28 rate implied here, and the cap is the *dominant*
+> loss among ids that match at all (4 of 9), not the harmless exclusion of an
+> unmatched outlier this fit assumed. See "Yield measurement (2026-08-05)".
+> The 16 KiB number itself is not revised here; what changes is what is known
+> about its cost, and revising it is a separate decision this record informs.
 
 The body is paid for on every invocation of every mapped node (including
 retries and feedback-edge re-runs), and `-p` is an argv, not a file — the cap
@@ -476,6 +492,118 @@ prior E-number):
   failure mode of converting a conditionally-activated skill into
   unconditional instructions, and its cost lands on every mapped invocation.
 
+**Status of this gate, 2026-08-05.** Unchanged: neither (a) nor (b) has been
+run. The yield measurement recorded below is **not** one of them and does not
+partially discharge either — it counts which nodes get a body, where (a) and
+(b) ask what a body does to a node once it has one. What it changes is that
+(b) now has a real mismapping to run on — `artifacts` → `html-artifact`, a
+better subject than a constructed one, and one of the few ids the probe
+preserved (see that section's closing note). It supplies (a) with nothing:
+the four ids that matched well were discarded at the cap, and the remaining
+planner-authored ids were not kept.
+
+## Yield measurement (2026-08-05, claude 2.1.221, oh-my-graph 0.4.1)
+
+Every yield figure this ADR has cited — §3's "7 of 28", the #108 amendment's
+"7 of 32", the plugin table's three rows — is a **proxy**. All of them
+simulate §2's rule over node ids taken from the shipped `graphs/`, and those
+ids were written by an author who knew the skill names. The plugin
+alternative's own condition (3) says so and demands the real thing: *decide
+it against yield measured on planner-generated node ids, not the shipped-graph
+proxy this table and §3 both use.*
+
+That measurement was taken. Twenty goals unrelated to this repo, planned with
+`auto --plan-only` (no node executed; the planner calls cost **$6.05** in
+total), against this machine's unchanged 35-skill corpus. They produced **56
+distinct planner-authored node ids** — the population the feature actually
+faces:
+
+| outcome | count | share |
+|---|---|---|
+| skill **mapped** | 5 | 9% |
+| matched, then **discarded at the 16 KiB cap** | 4 | 7% |
+| **no candidate at all** | 47 | 84% |
+| ambiguous (two-plus matches → silence) | 0 | 0% |
+
+For comparison, agent mapping over the same 56 ids mapped 6 (`test-coder` ×5,
+`doc-writer` ×1).
+
+| | proxy (#108, 32 shipped ids) | real (56 planner ids) |
+|---|---|---|
+| mapped | 7 (22%) | 5 (9%) |
+| ambiguous | 3 (9%) | 0 |
+| no candidate | 22 (69%) | 47 (84%) |
+
+Three things this record has to be honest about.
+
+**1. The real yield is less than half the proxy figure, and the gap is
+structural, not noise.** 9% against 22%. The proxy ids and the skill names
+came out of the same head: a maintainer naming a node `review-a` in a repo
+whose skill directory contains `pr-code-review` is, without intending to,
+measuring their own vocabulary against itself. The planner shares none of
+that — it is never shown the inventory (§1), and it names nodes after the
+goal's own domain. Every future yield claim about this mechanism must be made
+against planner-authored ids; the shipped-graph simulation is not a
+conservative estimate of them, it is a biased one, and biased upward. The
+0-of-56 ambiguity rate is the same bias seen from the other side: the "3
+ambiguous" of the 2026-08-04 amendment's 32 shipped ids (and the same figure
+in Consequences) was an artifact of ids drawn from the skill vocabulary, and
+on the real population the rule almost never has two candidates to choose
+between because it usually has none.
+
+**2. On the population that matches at all, the cap is doing more damage than
+the matcher — and it is killing the best matches.** Nine of the 56 ids found a
+unique candidate; **4 of those 9 died at the cap**, and they are the strongest
+matches in the whole run: `check`, `final-check`, `check-speedup` and
+`final-branch-check` each matched `pre-commit-checklist` — a verification
+checklist landing on verification nodes, which is the feature working as
+designed — and every one was dropped because that body is 86.6 KiB against a
+16 KiB cap. (All four matched on §2's ≥4-rune **prefix** rule, `check` against
+the skill's `checklist` token, not on token equality. Worth saying plainly,
+because it is the same rule that produced the false positive in 3 below: the
+prefix relaxation is what makes this mechanism land on nodes at all, and what
+makes it land on the wrong ones.) §3 fit the cap on the proxy corpus
+and reported the 86.6 KiB outlier as safely excluded; on that proxy the outlier
+matched nothing, so the cap's expensive path never fired and its cost was never
+in the fit. On real ids that path is 44% of all matches. §3's number is not
+wrong for the corpus it was measured on; it was measured on a corpus that could
+not exercise it.
+
+**3. Name matching cannot tell `artifacts` from `html-artifact`.** One of the
+5 mappings is wrong: a node id `artifacts` matched the `html-artifact` skill on
+the 4-rune prefix rule (`artifact`), while meaning something else entirely — a
+node collecting a run's outputs, mapped a skill about generating standalone
+HTML documents. Corrected for it the real yield is **4 of 56 (7%)**. This is
+not a tuning defect: no prefix length distinguishes these two strings, because
+they are genuinely lexically related and semantically unrelated. §2 accepted
+name-only matching as the price of an explainable rule and predicted misses
+("`coding-rules` will never map onto a node named `implement-api`"); it did not
+predict false *positives*, and the residual in §5 covers a skill steering a
+node wrongly only as a user's own misfire. A misfire the mechanism itself
+manufactures is a different claim. It is a limit of the mechanism as specified,
+and it belongs in the record here rather than being tuned away.
+
+What this measurement does **not** settle: it counts mappings, not their
+effect. Whether an inlined body helps or harms a node it lands on is still
+(a) and (b) below, and the mappings this probe produced are the kind of
+population those probes should be run against instead of a synthetic one.
+
+**What survived the probe, and what did not.** `--plan-only` executes no node,
+so it writes nothing under `~/.oh-my-graph/runs`; the twenty goals and the
+full 56-id list were held in the planning session and are **not preserved**.
+What this record can vouch for is the aggregate table above and five ids,
+quoted in 2 and 3 because they carry the argument: `check`, `final-check`,
+`check-speedup`, `final-branch-check` (matched `pre-commit-checklist`, all
+four discarded at the cap) and `artifacts` (matched `html-artifact`, wrongly).
+The other 51 are counts only, and the run cannot be re-derived from this
+document — a re-measurement means paying the planner again.
+
+That is a defect in how the probe was run, not a caveat on its numbers, and it
+is the direct counterpart of the rule stated in 1: **a yield claim has to be
+made against planner-authored ids, so the ids have to be kept.** Any repeat of
+this measurement should write the goal list and the full id → outcome table
+into `docs/measurements/` as it goes.
+
 ## Consequences
 
 **Positive**
@@ -591,7 +719,15 @@ prior E-number):
   carries `"version": 2` and is not a documented API; (2) key the map on
   `plugin:skill` so nothing shadows silently; (3) decide it against yield
   measured on **planner-generated** node ids, not the shipped-graph proxy this
-  table and §3 both use. The provenance asymmetry that remains — a plugin with
+  table and §3 both use. *(2026-08-05: such a population was measured once —
+  56 ids, see "Yield measurement" — but only over the user-skill pool, and the
+  ids themselves were not preserved past the planning session. Condition (3)
+  therefore still costs a fresh planner spend, and the run that discharges it
+  should record its goals and its full id list, per that section's closing
+  note. What the measurement does establish for this row is that the proxy
+  yields it argues from are biased upward, so a plugin-pool figure simulated
+  the same way should not be believed either.)* The provenance asymmetry that
+  remains — a plugin with
   `autoUpdate: true` can rewrite its bodies between runs, where
   `~/.claude/skills` changes only when the user changes it — is already
   answered by the machinery in §1 (printed SHA-256, snapshot into

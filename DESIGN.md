@@ -24,18 +24,27 @@ stdlib `flag` (cobra optional/later).
 A node = one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
+  [ --max-budget-usd <amount> ] \
   [ --setting-sources "" ] [ --agent <name> ] \
-  --allowedTools "<comma,joined>" \
+  [ --allowedTools "<comma,joined>" ] \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
-  [ --disallowedTools "<comma,joined>" ] [ --resume <session_id> ] \
-  [ --session-id <uuid> ] [ --max-budget-usd <amount> ]
+  [ --disallowedTools "<comma,joined>" ] \
+  [ --resume <session_id> ] [ --session-id <uuid> ]
 ```
+
+This is emission order, not just a flag inventory: `runner.buildArgs` appends
+in exactly this sequence and `claude_test.go`'s `want` argv pins it
+element-by-element, so a reordering is a test failure, not a style choice.
+Note where `--max-budget-usd` sits — immediately after `--permission-mode`,
+*before* the ceiling flags, because it is not one of them.
+
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
-only `AllowedTools`, so its argv is the first two lines plus `--resume` or
-`--session-id`, and `--max-budget-usd` when the node declared `budget_usd`
-(that flag is not part of the ceiling — it rides on `NodeInvocation.BudgetUSD`,
-which the scheduler passes for every node, planned or hand-written).
+only `AllowedTools`, so its argv is the first line plus `--allowedTools`, then
+`--resume` or `--session-id`, and `--max-budget-usd` when the node declared
+`budget_usd` (that flag is not part of the ceiling — it rides on
+`NodeInvocation.BudgetUSD`, which the scheduler passes for every node, planned
+or hand-written).
 Every fresh-session node gets `--session-id` with a UUID the
 scheduler pre-assigned (`runner.NewSessionID`), so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
@@ -54,7 +63,17 @@ subscription session limit, say) instead of only "exit code 1".
   test on the built argv/env. NEVER `--bare` (disables OAuth). NEVER the Agent SDK.
 - Per-node `context.WithTimeout` (default ~20m) so a wedged child can't hang the graph.
 - Non-JSON/parse failure = node failure (`NodeOutputError`), never a silent zero result.
-- permission modes: `dontAsk` (default unattended) / `acceptEdits` / `plan` (read-only).
+- permission modes are a **closed, load-validated set** — the `claude` CLI's own
+  `--permission-mode` choices, measured from `claude --help` (claude 2.1.221,
+  2026-08-05): `acceptEdits`, `auto`, `bypassPermissions`, `dontAsk`, `manual`,
+  `plan`. `dontAsk` is the unattended default the Scheduler substitutes when a
+  node declares none; `plan` is read-only; `bypassPermissions` is the loud
+  opt-in below. Anything else is a load-time `GraphValidationError` naming the
+  node and listing the set, like an unknown `retry.on` cause — the value is
+  passed through verbatim to argv, so an unvalidated typo (`dontask`) used to
+  kill the node at spawn, mid-run, long after earlier nodes had spent money.
+  The set is oh-my-graph's transcription of a third-party CLI's enum: a mode a
+  future `claude` adds is refused until this list enumerates it.
 - **The permission model is rules + mode, and the rules come from more places
   than the argv.** A tool call is matched against every loaded permission rule;
   if nothing matches, the call resolves to *ask*, and the mode decides what an
@@ -258,9 +277,13 @@ resolves against the existing `~/.claude/agents` and `<cwd>/.claude/agents`.
 There is no oh-my-graph-side agent registry, and there must never be one: the
 user's definitions are the single source of truth.
 
-**Load-time validation rejects only a blank/whitespace-only name.** Whether a
-name resolves depends on the machine and the checkout, not on the graph file, so
-a graph valid on one machine would otherwise be invalid on another.
+**Load-time validation rejects only surrounding whitespace** — both the
+whitespace-only `agent: "  "` and the padded `agent: " reviewer "`, which would
+otherwise be handed to `claude` verbatim and fail to resolve for a reason the
+YAML does not show (`validateAgentNames`). Nothing else about the name is
+checked: whether it *resolves* depends on the machine and the checkout, not on
+the graph file, so a graph valid on one machine would otherwise be invalid on
+another.
 
 **An unresolvable name is a node FAILURE, not a fallback.** An earlier draft of
 this section claimed a missing agent degrades to plain claude. That was measured
@@ -526,26 +549,37 @@ success_check:
     cwd: "{{ inputs.repo }}"              # optional; default = the node's own cwd
     timeout: 2m                           # optional; Go duration, default 2m, ceiling 10m
     expect_exit: 0                        # optional; default 0
-    output_matches: "^ok\\s+github"       # optional; regex over combined stdout+stderr
+    output_matches: "^ok\\s+github"       # optional; regex over the FULL combined stdout+stderr — no length bound, so an anchored pattern still means what it reads as
 ```
 
 ```go
 type SuccessCheck struct {
-	ExitZero      bool          `yaml:"exit_zero"`
-	ResultMatches string        `yaml:"result_matches"`
-	Verify        *Verification `yaml:"verify"` // nil = no evidence check
+	ExitZero      bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
+	ResultMatches string        `yaml:"result_matches" json:"result_matches,omitempty"`
+	Verify        *Verification `yaml:"verify" json:"verify,omitempty"` // nil = no evidence check
 }
 
 // Verification is a pointer field so "absent" and "zero" are distinguishable,
 // and ExpectExit is a *int so an explicit 0 is expressible.
 type Verification struct {
-	Command       string `yaml:"command"`
-	Cwd           string `yaml:"cwd"`
-	Timeout       string `yaml:"timeout"` // parsed with time.ParseDuration at LOAD time
-	ExpectExit    *int   `yaml:"expect_exit"`
-	OutputMatches string `yaml:"output_matches"`
+	Command       string `yaml:"command" json:"command,omitempty"`
+	Cwd           string `yaml:"cwd" json:"cwd,omitempty"`
+	Timeout       string `yaml:"timeout" json:"timeout,omitempty"` // parsed with time.ParseDuration at LOAD time
+	ExpectExit    *int   `yaml:"expect_exit" json:"expect_exit,omitempty"`
+	OutputMatches string `yaml:"output_matches" json:"output_matches,omitempty"`
+
+	timeout time.Duration // Timeout parsed once at load; read via TimeoutDuration
 }
 ```
+
+**Both tag sets are load-bearing, and a new field needs both.** The `yaml` tag
+is how the field is authored; the `json` tag is how it survives a run. The
+snapshot stores the normalized graph as re-parseable JSON (`Snapshot.Graph`),
+so a field with no `json` tag round-trips under Go's default key name at best,
+and a field tagged `json:"-"` would silently vanish from every resumed run —
+the graph the second leg executes would quietly differ from the one the first
+leg did. `graph.go` states this at the struct itself; copy the pair, not just
+the `yaml` half.
 
 `SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
 reject an empty `command`, an unparseable `timeout`, a timeout over the ceiling,
@@ -691,7 +725,9 @@ Until such an ADR exists, the idiom above is the fix.
 
 **Where it runs in the node lifecycle** (`schedule.runNode`):
 `Handoff.ResolveInputs → NodeRunner.Run → exit_zero → result_matches → verify →
-Handoff.PersistOutput → RunLedger.Record → enqueue dependents`. Ordering is
+Handoff.PersistOutput → budget_usd → RunState.RecordNode + RunLedger.Record →
+enqueue dependents` (the same order `schedule.runNode`'s own doc comment
+fixes). Ordering is
 deliberate: the in-memory predicates are free, the verification command is not,
 and a node that crashed should not have a command run against the wreckage.
 
@@ -710,7 +746,7 @@ type Request struct {
 
 type Result struct {
 	ExitCode int
-	Output   string // combined stdout+stderr, truncated for the ledger
+	Output   string // the FULL combined stdout+stderr — never truncated
 }
 
 type Verifier interface {
@@ -727,6 +763,16 @@ type Verifier interface {
   a scheduler test that forgets to inject one gets a loud failure instead of a
   real spawn. `FakeVerifier` (scripted, keyed by command) is what tests inject,
   so the whole verify path stays spawn-free in CI.
+- **`Result.Output` is judged, so it is not truncated.** `output_matches` is
+  applied to everything the command printed. Truncation is a presentation
+  concern and lives where the output is retained or rendered — the ledger's
+  DETAIL column caps it (`schedule.capDetail`), and a `*TimeoutError`, which
+  can be wrapped and held, keeps only a marked tail. Bounding the judged value
+  instead would silently narrow the graph's predicate: the seam prepends
+  `…(earlier output truncated)…` when it cuts, so an anchored pattern like
+  `^ok\s+github` could never match a chatty command. Memory is not the trade it
+  looks like — `CombinedOutput` has already buffered the whole thing before any
+  cut could apply.
 - Selection is data-driven and the caller stays ignorant: the scheduler asks the
   injected `Verifier` and never learns which kind ran. A second verification kind
   (`file_exists:`, `git_clean:`) arrives as another `Verifier` behind a composite
@@ -752,7 +798,9 @@ uses (`internal/childenv`), asserted by its own unit test.
 `Predicate: "verify"` and a detail carrying the exit code and a truncated tail of
 the command's output — so the ledger says *why*, not just *that*. The retry
 cause token is `verify_failed`, joining `nonzero_exit` / `result_mismatch` /
-`output_error` / `run_error`, so `retry: { max: 1, on: [verify_failed] }` works.
+`output_error` / `run_error` / `budget_exceeded` — the full closed set of
+`graph.Cause*` constants `retry.on` accepts — so
+`retry: { max: 1, on: [verify_failed] }` works.
 A verification that times out or cannot spawn is a node failure, never a silent
 pass. Cancellation propagates: the shared run context reaches the verification
 child, so halt-on-fail kills it like any claude child.
@@ -993,8 +1041,15 @@ one, and it answers 409 like any other view that cannot resume.
   id there is nothing to resolve — the dashboard is the view of *every* run,
   including the ones that do not exist yet, so an empty (or absent) runs
   root is an empty dashboard that fills in when something runs, not an
-  error. `ResolveRun`'s in-flight-then-newest preference remains for the
-  embedded views.
+  error. **No production caller reaches `ResolveRun`'s in-flight-then-newest
+  branches**: `runServe` calls it only inside `if flags.runID != ""`, and the
+  embedded live view already owns the id it was mounted under, so it never
+  asks. Those branches are kept, not dead-stripped — they are the package's
+  answer to "which single run would a caller with no id mean", exercised by
+  `TestResolveRun` and depended on by `cmd/oh-my-graph`'s `--plan-only` test
+  (which asserts a preview left nothing under `runs/` for an id-less resolve
+  to land on). `ResolveRun`'s own doc comment says the same; do not read them
+  as the no-argument CLI path, which is the dashboard.
 - **The dashboard subscribes to the runs ROOT** the way a run view
   subscribes to its `events.jsonl`: `/api/cards/events` sweeps the root at
   the same poll cadence and streams one `card` frame per run that is new or
@@ -1002,11 +1057,18 @@ one, and it answers 409 like any other view that cannot resume.
   the first sweep; `/api/cards` is the same data in one read. "Changed" is
   the size-and-modtime of the two contract files, so an idle dashboard with
   forty settled runs costs two stats per run per tick and re-sends nothing.
-  A card is derived through the EXISTING readers only — `runfeed.InFlight`
-  for the open leg, `runfeed.Walk` (the one-shot counterpart to `Follow`)
-  for per-node state and the leg boundaries, `runstate.Load` + `graph.Parse`
-  for structure and cost — so a card can never disagree with `runs list`,
-  `watch` or the run's own view about the same run. Cost is the snapshot's
+  A card is derived through the existing readers — ONE `runfeed.Walk` (the
+  one-shot counterpart to `Follow`) for per-node state and the leg
+  boundaries, plus `runstate.Load` + `graph.Parse` for structure and cost.
+  It does **not** call `runfeed.InFlight`: one walk already carries the leg
+  state, and a card is rebuilt for every changed run on every tick, so a
+  second read of the same stream was doubling the I/O on the hot path.
+  `buildCard` therefore *re-implements* `InFlight`'s rule (`started != "" &&
+  ended == ""`) inline. That is a duplicated rule, so the agreement is
+  enforced rather than structural: `TestBuildCard_InFlightAgreesWithRunfeed`
+  judges the inline derivation against `runfeed.InFlight` itself, which is
+  what keeps a card from disagreeing with `runs list`, `watch` or the run's
+  own view about the same run. Cost is the snapshot's
   per-node total, the same accounting `runs list` prints. A run directory
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
@@ -1187,7 +1249,9 @@ inlined size and a SHA-256 prefix, a refusal with its reason (there is no
 inlined text to measure or hash) — the full text lands in the saved
 `graph.json`, and
 `--no-skill-mapping` turns it off. The decisions are bracketed by the scan
-that produced them (`Plan.SkillScan`: the directories read and the count),
+that produced them (`Plan.SkillScan`: the directories read, the count, and
+`Shadowed` — every definition that lost a name collision, which gets its own
+printed disclosure line so a shadowed skill is never silently the loser),
 because a name-only rule leaves most node ids unmatched and an empty decision
 list would otherwise read the same as "mapping never ran". Honest cost: a mapped node pays for the
 body on every invocation, and inlining is unconditional where Claude Code's
@@ -1487,7 +1551,7 @@ internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged proc
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
-internal/invariants/exec_seam_test.go          test-only: asserts exactly the four exec-seam files import os/exec (a fifth importer fails CI — ADR 0002/0005/0006)
+internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)

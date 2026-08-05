@@ -304,6 +304,67 @@ func TestJudgeVerification_InvalidRegexIsAnInfrastructureFault(t *testing.T) {
 	}
 }
 
+// TestJudgeVerification_MatchesTheWholeOutput is the judgement half of the
+// verify seam's untruncated Result. A chatty test suite puts its `ok github…`
+// summary at the TOP and megabytes of per-test noise after it; an anchored
+// output_matches must still match, because the pattern is judged against
+// everything the command printed and not against a retained tail.
+func TestJudgeVerification_MatchesTheWholeOutput(t *testing.T) {
+	output := "ok  github.com/jitokim/oh-my-graph/internal/schedule\t0.4s\n" +
+		strings.Repeat("--- PASS: TestChatty\n", 5000)
+
+	err := judgeVerification("dev", graph.Verification{OutputMatches: `^ok\s+github`},
+		"go test ./...", verify.Result{ExitCode: 0, Output: output})
+
+	if err != nil {
+		t.Fatalf("an anchored match against the full output must pass, got %v", err)
+	}
+}
+
+// TestJudgeVerification_DetailStaysBoundedForAHugeOutput pins where truncation
+// moved TO. The Result is unbounded so the predicate can be judged honestly;
+// the ledger's DETAIL column, which is what an events.jsonl line and the
+// end-of-run table have to stay readable with, is bounded here instead.
+func TestJudgeVerification_DetailStaysBoundedForAHugeOutput(t *testing.T) {
+	output := strings.Repeat("failing line of output\n", 50_000)
+
+	err := judgeVerification("dev", graph.Verification{OutputMatches: "never matches this"},
+		"go test ./...", verify.Result{ExitCode: 0, Output: output})
+
+	var checkErr *NodeCheckError
+	if !errors.As(err, &checkErr) {
+		t.Fatalf("expected a verify check error, got %T: %v", err, err)
+	}
+	_, quoted, found := strings.Cut(checkErr.Detail, "; output: ")
+	if !found {
+		t.Fatalf("detail should quote what the command printed, got %q", checkErr.Detail)
+	}
+	if got := len([]rune(quoted)); got > maxDetailRunes+1 { // +1 for the "…" cut marker
+		t.Errorf("quoted output is %d runes, want at most %d", got, maxDetailRunes+1)
+	}
+}
+
+// TestJudgeVerification_DetailSurvivesAWhitespaceTail pins the fallback in
+// condenseTail. The bounded scan window is a fast path over a big log, not a
+// second truncation policy: a command whose only explanatory line is followed
+// by thousands of blank lines has nothing but whitespace in its last few KiB,
+// and cutting there before collapsing would hand the reader an empty DETAIL —
+// losing the one line that says why the check failed.
+func TestJudgeVerification_DetailSurvivesAWhitespaceTail(t *testing.T) {
+	output := "FAIL: the real reason\n" + strings.Repeat("\n", 2*maxOutputScanBytes)
+
+	err := judgeVerification("dev", graph.Verification{OutputMatches: "never matches this"},
+		"./check.sh", verify.Result{ExitCode: 0, Output: output})
+
+	var checkErr *NodeCheckError
+	if !errors.As(err, &checkErr) {
+		t.Fatalf("expected a verify check error, got %T: %v", err, err)
+	}
+	if !strings.Contains(checkErr.Detail, "FAIL: the real reason") {
+		t.Errorf("detail lost the only explanatory line: %q", checkErr.Detail)
+	}
+}
+
 // TestScheduler_UnexpectedExitCodeFailsTheNode proves expect_exit is judged as
 // declared, not as "zero": a graph that expects a command to FAIL (grep finding
 // nothing, a should-not-compile check) fails when it unexpectedly succeeds.

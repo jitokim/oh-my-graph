@@ -20,11 +20,19 @@ import (
 // its 20m runner timeout.
 const defaultTimeout = 2 * time.Minute
 
-// maxOutputBytes bounds what a verification hands back. A verification command
-// is often a test suite, and its full output is neither useful in the ledger nor
-// worth retaining for the rest of the run — the tail is where a failure explains
-// itself, so the tail is what survives.
-const maxOutputBytes = 4096
+// maxRetainedOutputBytes bounds the output carried by a *TimeoutError. An error
+// can be wrapped and held for the rest of the run, so what it retains must be
+// bounded; the tail is where a command explains itself, so the tail is what
+// survives.
+//
+// It deliberately does NOT bound Result.Output. A Result is the FACT the caller
+// judges — output_matches is applied to it — and judging a regex against a tail
+// would silently answer a different question than the graph asked (an anchored
+// pattern could never match once the marker below was prepended). The full
+// output already exists in memory the instant CombinedOutput returns, so
+// handing it back costs no extra peak memory; what the run retains afterwards
+// is bounded where it is retained (schedule.capDetail).
+const maxRetainedOutputBytes = 4096
 
 // truncationMarker prefixes an output that was cut, so nobody reads a partial
 // tail as the whole story.
@@ -46,7 +54,10 @@ const waitDelay = 2 * time.Second
 type TimeoutError struct {
 	Command string
 	Timeout time.Duration
-	// Output is whatever the command had printed before it was killed.
+	// Output is whatever the command had printed before it was killed, kept as
+	// a bounded tail (maxRetainedOutputBytes) because an error can be held for
+	// the rest of the run. Nothing judges it — a timed-out command reached no
+	// verdict — so unlike Result.Output it needs no completeness.
 	Output string
 }
 
@@ -152,8 +163,12 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// The FULL combined output is what a Result carries: output_matches is
+	// judged against it, so a tail here would quietly narrow the graph's
+	// predicate to the last few kilobytes. Only the no-verdict error path below
+	// truncates, because only an error outlives this call.
 	combined, runErr := v.buildCmd(cmdCtx, req).CombinedOutput()
-	output := tailBytes(string(combined), maxOutputBytes)
+	output := string(combined)
 	if runErr == nil {
 		return Result{ExitCode: 0, Output: output}, nil
 	}
@@ -166,7 +181,11 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 		return Result{}, fmt.Errorf("verification command %q cancelled: %w", req.Command, err)
 	}
 	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
-		return Result{}, &TimeoutError{Command: req.Command, Timeout: timeout, Output: output}
+		return Result{}, &TimeoutError{
+			Command: req.Command,
+			Timeout: timeout,
+			Output:  tailBytes(output, maxRetainedOutputBytes),
+		}
 	}
 
 	var exitErr *exec.ExitError
@@ -180,6 +199,10 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 // rather than the head because a failing command explains itself at the end.
 // The cut is moved forward to the next rune boundary so the result is always
 // valid UTF-8.
+//
+// It is applied only to what an ERROR retains. Never to a Result: the marker it
+// prepends would sit in front of any anchored output_matches, so a predicate
+// judged against a tailBytes result could never match a truncated output.
 func tailBytes(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
