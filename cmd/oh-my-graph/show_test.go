@@ -146,3 +146,41 @@ func TestMainExitCode_ShowUnknownRunIsNonZero(t *testing.T) {
 		t.Errorf("show of an unknown run must exit 1, got %d", code)
 	}
 }
+
+// TestShowRun_QualifiesAPassWithItsProvenance — `show` is the surface someone
+// opens to re-read a finished run, which is exactly what #119's reporter would
+// have done after the fact. The snapshot carries the qualifier (ADR 0016 §6)
+// and this table renders it through the same ledger.VerdictCell the end-of-run
+// summary uses, so a self-reported PASS cannot read as a verified one on the
+// one screen a user goes back to.
+func TestShowRun_QualifiesAPassWithItsProvenance(t *testing.T) {
+	dir := t.TempDir()
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID: "20260806-081500",
+		Graph: json.RawMessage(`{"name":"demo","nodes":[{"id":"apply","prompt":"a"},{"id":"legacy","prompt":"l"},{"id":"verify","prompt":"v"}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			"apply":  {Verdict: runstate.VerdictPass, CostUSD: 11.01, Provenance: "self-reported"},
+			"verify": {Verdict: runstate.VerdictPass, CostUSD: 0.13, Provenance: "verified"},
+			// A row from a snapshot written before the field existed.
+			"legacy": {Verdict: runstate.VerdictPass, CostUSD: 0.02},
+		},
+	})
+
+	var out strings.Builder
+	if err := showRun(&out, dir, "20260806-081500"); err != nil {
+		t.Fatalf("showRun returned error: %v", err)
+	}
+	got := out.String()
+
+	if apply := lineFor(t, got, "apply"); !strings.Contains(apply, "PASS (self-reported)") {
+		t.Errorf("apply row does not qualify its PASS: %q", apply)
+	}
+	if verify := lineFor(t, got, "verify"); !strings.Contains(verify, "PASS (verified)") {
+		t.Errorf("verify row does not qualify its PASS: %q", verify)
+	}
+	// Absent is not a qualifier: a pre-ADR-0016 row renders exactly as before
+	// rather than being rounded up into a claim about what was measured.
+	if legacy := lineFor(t, got, "legacy"); strings.Contains(legacy, "PASS (") {
+		t.Errorf("a row with no recorded provenance invented one: %q", legacy)
+	}
+}

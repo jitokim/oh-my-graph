@@ -860,3 +860,59 @@ func TestResume_LiveViewIsServedAndOpenedOnceThenDiesWithTheLeg(t *testing.T) {
 		t.Error("the live view is still answering after the resume ended — the server outlived its leg")
 	}
 }
+
+// TestResume_CarriesTheProvenanceQualifierAcrossLegs — the resumed leg's
+// end-of-run table mixes rows this leg produced with rows carried forward from
+// the snapshot, and both kinds must qualify their PASS the same way (ADR 0016
+// §6). If the snapshot did not persist the qualifier, leg 1's self-reported
+// node would come back as a bare `PASS` sitting next to this leg's qualified
+// rows, and a reader would have to know that the blank meant "written by an
+// earlier leg" rather than "nothing was measured" — which is #119's confusion
+// rebuilt inside a single table.
+func TestResume_CarriesTheProvenanceQualifierAcrossLegs(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"prov","nodes":[
+		{"id":"narrated","prompt":"narrated","success_check":{"result_matches":"^PASS$"}},
+		{"id":"gate","type":"gate","depends_on":["narrated"]},
+		{"id":"unchecked","prompt":"unchecked","depends_on":["gate"]}]}`)
+	rec := &scriptedRunner{}
+	runID := "run-provenance-legs"
+
+	err := executeGraph(context.Background(), runID, g, rec,
+		commonRunFlags{inputs: inputFlag{}},
+		nil, 0, "prov.yaml", []byte("name: prov\n"), false, nil, nil)
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) || paused.GateID != "gate" {
+		t.Fatalf("expected the initial run to pause at gate, got %T: %v", err, err)
+	}
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate"}), rec, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+
+	for _, tc := range []struct{ nodeID, want string }{
+		// Carried forward from leg 1's snapshot.
+		{"narrated", "PASS (self-reported)"},
+		{"gate", "PASS (approved)"},
+		// Produced by this leg.
+		{"unchecked", "PASS (exit-only)"},
+	} {
+		line := ""
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, tc.nodeID+" ") {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Fatalf("no ledger row for %q in the resumed leg's table:\n%s", tc.nodeID, out)
+		}
+		if !strings.Contains(line, tc.want) {
+			t.Errorf("row %q = %q, want it to carry %q", tc.nodeID, line, tc.want)
+		}
+	}
+}

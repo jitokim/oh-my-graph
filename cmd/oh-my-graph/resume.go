@@ -283,13 +283,14 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	led := ledger.New(runID)
 	for nodeID, rec := range records {
 		led.Record(ledger.Record{
-			NodeID:    nodeID,
-			SessionID: rec.SessionID,
-			CostUSD:   rec.CostUSD,
-			BudgetUSD: rec.BudgetUSD,
-			Verdict:   ledger.Verdict(rec.Verdict),
-			Duration:  rec.Duration,
-			Detail:    rec.Detail,
+			NodeID:     nodeID,
+			SessionID:  rec.SessionID,
+			CostUSD:    rec.CostUSD,
+			BudgetUSD:  rec.BudgetUSD,
+			Verdict:    ledger.Verdict(rec.Verdict),
+			Duration:   rec.Duration,
+			Detail:     rec.Detail,
+			Provenance: rec.Provenance,
 		})
 	}
 

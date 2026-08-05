@@ -1,5 +1,6 @@
 // Package ledger records what happened in a run and renders the end-of-run
-// summary: one row per node EXECUTION (session id, cost, verdict, duration),
+// summary: one row per node EXECUTION (session id, cost, verdict — qualified by
+// how that verdict was reached, ADR 0016 §6 — and duration),
 // the coordinator's one-time planning cost (auto mode only — zero and hidden
 // for a hand-written `run`), and the total cost across the graph including
 // that planning call. Most nodes execute once and get one row; a feedback
@@ -46,6 +47,20 @@ type Record struct {
 	// budget declared. Always one line, and capped by the scheduler at one
 	// shared bound (240 runes) so the table stays readable.
 	Detail string
+	// Provenance is HOW a PASS was reached — one of runfeed's four qualifiers
+	// (verified / self-reported / exit-only / approved), derived by the
+	// scheduler from the predicates it actually evaluated (ADR 0016 §6). It
+	// qualifies Verdict; it does not replace it, so nothing that tests for
+	// PASS/FAIL changes.
+	//
+	// Empty means "not known", and the two ways to get there are different:
+	// a FAIL never carries one (a failure states its cause in Detail, and a
+	// strength word on a failure would invite reading it as how sure we are
+	// it failed), and a row carried forward from a snapshot written before
+	// this field existed has none to carry. Render leaves both bare rather
+	// than guessing — the whole point of the qualifier is that an unmeasured
+	// verdict must not be printed as a measured one.
+	Provenance string
 }
 
 // BudgetDeltaUSD reports how far the node's actual cost landed from its declared
@@ -139,24 +154,63 @@ func (l *RunLedger) Render() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run %s — %d node(s)\n", l.runID, len(records))
-	fmt.Fprintf(&b, "%-16s %-10s %-24s %10s  %s\n", "NODE", "VERDICT", "SESSION", "COST(USD)", "DETAIL")
-	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", 78))
+	fmt.Fprintf(&b, "%-16s %-*s %-24s %10s  %s\n", "NODE", verdictWidth, "VERDICT", "SESSION", "COST(USD)", "DETAIL")
+	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", ruleWidth))
 
 	for _, rec := range records {
-		fmt.Fprintf(&b, "%-16s %-10s %-24s %10.4f  %s\n",
+		fmt.Fprintf(&b, "%-16s %-*s %-24s %10.4f  %s\n",
 			rec.NodeID,
-			string(rec.Verdict),
+			verdictWidth, VerdictCell(rec),
 			shortSession(rec.SessionID),
 			rec.CostUSD,
 			rec.Detail,
 		)
 	}
-	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", 78))
+	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", ruleWidth))
 	if planning := l.planningCost(); planning != 0 {
 		fmt.Fprintf(&b, "PLANNING COST: $%.4f\n", planning)
 	}
 	fmt.Fprintf(&b, "TOTAL COST: $%.4f\n", l.TotalCost())
 	return b.String()
+}
+
+// verdictWidth sizes the VERDICT column: len("PASS (self-reported)"), the
+// widest cell the closed qualifier set can produce. It is a constant rather
+// than a per-run measurement so two runs' tables line up with each other, and
+// so a run in which every node happens to be `verified` does not print a
+// narrower table than the same run one self-report later.
+//
+// ruleWidth is the header line's own length (16+1+20+1+24+1+10+2+6), so the
+// rule under the header is exactly as wide as the header.
+const (
+	verdictWidth = 20
+	ruleWidth    = 81
+)
+
+// VerdictCell renders the VERDICT column: the verdict, qualified by HOW it was
+// reached when the engine knows (ADR 0016 §6).
+//
+//	PASS (verified)       PASS (self-reported)      FAIL
+//
+// The qualifier is printed on EVERY qualified row, not only on the weak ones,
+// and that is the whole design decision. Marking only self-reported and
+// exit-only would be narrower and would still have flagged #119 — but it would
+// encode "the engine gathered evidence" as the ABSENCE of a mark, and #119 is
+// a story about a reader who read absence as assurance. It would also silently
+// drop the one positive signal a user who supplied --verify-cmd is owed:
+// confirmation that their command actually ran. So a reader never has to know
+// what an unmarked row would have meant. Where every row reads
+// `PASS (exit-only)` the column is uniform, and that uniformity is the finding,
+// not noise: nothing in that run was checked.
+//
+// A row with no qualifier — every FAIL, and any row carried forward from a
+// pre-ADR-0016 snapshot — renders as the bare verdict, exactly as it did
+// before. Absent stays absent; it is never rounded up to a claim.
+func VerdictCell(rec Record) string {
+	if rec.Provenance == "" {
+		return string(rec.Verdict)
+	}
+	return string(rec.Verdict) + " (" + rec.Provenance + ")"
 }
 
 // Print writes the rendered table to w.

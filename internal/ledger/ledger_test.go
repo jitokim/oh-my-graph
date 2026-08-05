@@ -187,3 +187,113 @@ func TestRender_NoPlanningLineWhenZero(t *testing.T) {
 		t.Errorf("total must equal the node-cost sum $0.3500:\n%s", out)
 	}
 }
+
+// The provenance qualifier (ADR 0016 §6). #119's run printed four rows of the
+// word PASS, one of which was a 17-second self-report certifying a branch that
+// did not compile. These tests pin the rendering that stops the ledger from
+// spelling a self-report and a measurement the same way.
+
+// mixedProvenanceLedger is #119's run as it would render today: a self-reported
+// $11.01 node, a self-reported check beside it — here upgraded to `verified`
+// because --verify-cmd was supplied — a human gate, an unchecked node, and a
+// failure. One run touching all four qualifiers plus the unqualified case.
+func mixedProvenanceLedger() *RunLedger {
+	l := New("run-119")
+	l.Record(Record{NodeID: "plan-branch", SessionID: "sess-plan", CostUSD: 0.0134, Verdict: VerdictPass, Provenance: "exit-only"})
+	l.Record(Record{NodeID: "apply-fix", SessionID: "sess-apply", CostUSD: 11.01, Verdict: VerdictPass, Provenance: "self-reported"})
+	l.Record(Record{NodeID: "review-gate", Verdict: VerdictPass, Detail: "gate approved", Provenance: "approved"})
+	l.Record(Record{NodeID: "verify-branch", SessionID: "sess-verify", CostUSD: 0.13, Verdict: VerdictPass, Provenance: "verified"})
+	l.Record(Record{NodeID: "publish", SessionID: "sess-pub", CostUSD: 0.09, Verdict: VerdictFail, Detail: "verify: exit 1 (want 0)"})
+	return l
+}
+
+// TestRender_QualifiesEveryPassNotOnlyTheWeakOnes is the rendering decision
+// itself, asserted rather than left to taste. Marking only `self-reported` and
+// `exit-only` would be narrower and would still have caught #119 — but it
+// would encode "the engine gathered evidence" as the ABSENCE of a mark, and
+// #119 is a story about a reader who read absence as assurance. `verified` in
+// particular is the confirmation a user who paid for --verify-cmd is owed.
+func TestRender_QualifiesEveryPassNotOnlyTheWeakOnes(t *testing.T) {
+	out := mixedProvenanceLedger().Render()
+
+	for _, want := range []string{
+		"PASS (exit-only)",
+		"PASS (self-reported)",
+		"PASS (approved)",
+		"PASS (verified)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q — every PASS carries its qualifier:\n%s", want, out)
+		}
+	}
+}
+
+// TestRender_FailCarriesNoQualifier — the qualifier qualifies a PASS. A FAIL
+// already states its cause in DETAIL, and a strength word on a failure invites
+// reading it as "how sure we are it failed".
+func TestRender_FailCarriesNoQualifier(t *testing.T) {
+	out := mixedProvenanceLedger().Render()
+
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "publish") {
+			continue
+		}
+		// Match on the verdict cell, not the whole line: this row's DETAIL
+		// legitimately contains parentheses ("exit 1 (want 0)").
+		if strings.Contains(line, "FAIL (") {
+			t.Errorf("the FAIL row carries a qualifier: %q", line)
+		}
+		if !strings.Contains(line, "FAIL") {
+			t.Errorf("the FAIL row lost its verdict: %q", line)
+		}
+		return
+	}
+	t.Fatal("no publish row in the table, so this asserted nothing")
+}
+
+// TestVerdictCell_AbsentProvenanceRendersBare covers the row a resume carries
+// forward from a snapshot written before ADR 0016. Absent is not a qualifier
+// and must never be rounded up into one — a row the engine knows nothing about
+// renders exactly as it always did.
+func TestVerdictCell_AbsentProvenanceRendersBare(t *testing.T) {
+	if got := VerdictCell(Record{Verdict: VerdictPass}); got != "PASS" {
+		t.Errorf("VerdictCell with no provenance = %q, want %q", got, "PASS")
+	}
+	if got := VerdictCell(Record{Verdict: VerdictPass, Provenance: "verified"}); got != "PASS (verified)" {
+		t.Errorf("VerdictCell = %q, want %q", got, "PASS (verified)")
+	}
+}
+
+// TestRender_ColumnsStayAlignedAcrossQualifiers is why verdictWidth is a
+// constant sized to the widest cell the closed set can produce, and not a
+// per-run measurement. The ledger is read at a glance in a terminal of unknown
+// width; a column that shifts left when a run happens to contain no
+// self-report would make two runs' tables incomparable, and a ragged table
+// unreadable at any width.
+func TestRender_ColumnsStayAlignedAcrossQualifiers(t *testing.T) {
+	lines := strings.Split(strings.TrimRight(mixedProvenanceLedger().Render(), "\n"), "\n")
+	// Row lines only: skip the "Run …" line, the header, and both rules; stop
+	// before the total footer.
+	want := -1
+	for _, line := range lines {
+		nodeID, _, ok := strings.Cut(line, " ")
+		if !ok || !strings.Contains(line, "PASS") && !strings.Contains(line, "FAIL") {
+			continue
+		}
+		at := strings.Index(line, "sess-")
+		if at < 0 {
+			at = strings.Index(line, "-  ") // the gate's dashed session cell
+		}
+		if at < 0 {
+			t.Fatalf("row %q has no session cell to align on", line)
+		}
+		if want < 0 {
+			want = at
+		} else if at != want {
+			t.Errorf("row %q starts its SESSION cell at column %d, want %d — the table is ragged", nodeID, at, want)
+		}
+	}
+	if want < 0 {
+		t.Fatal("no rows found, so this asserted nothing")
+	}
+}

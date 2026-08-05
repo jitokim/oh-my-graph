@@ -893,9 +893,7 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
-	event := terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID))
-	event.Provenance = passProvenance(node)
-	s.emitEvent(event)
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return nil
 }
 
@@ -904,6 +902,12 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 // evaluated, so it needs no cooperation from the node: nothing can force a
 // planned node to build, but the engine always knows whether anything but the
 // node's own narration was consulted.
+//
+// It is called once per terminal PASS and stored on the ledger.Record, which
+// the snapshot and the event are then derived from — the same one-computation,
+// three-destinations rule the cost and verdict already follow. A qualifier
+// computed separately per surface is a qualifier that can disagree with
+// itself, which is the exact failure this whole section exists to end.
 //
 // The order is the strength order. A node carrying both a verification and a
 // result_matches is `verified`, because the verification is what was judged
@@ -944,14 +948,18 @@ func appendRoundNote(rec *ledger.Record, note string) {
 func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
 	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
 	s.emitEvent(runfeed.Event{Type: runfeed.EventGateApproved, NodeID: node.ID})
-	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
+	rec := ledger.Record{
+		NodeID:     node.ID,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Detail:     "gate approved",
+		Provenance: passProvenance(node),
+	}
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
 	s.recordGateDecision(node, runstate.GateApprove)
 	// A gate is never in a feedback body (validated), so its round is 0.
-	event := terminalEvent(runfeed.EventNodePassed, rec, 0, 0)
-	event.Provenance = passProvenance(node)
-	s.emitEvent(event)
+	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0, 0))
 	return nil
 }
 
@@ -1020,6 +1028,7 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.No
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
 		Round:        round,
+		Provenance:   rec.Provenance,
 	}
 }
 
@@ -1039,6 +1048,9 @@ func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, roun
 		Retries:   retries,
 		Detail:    rec.Detail,
 		Round:     round,
+		// Only a PASS record carries one, so node_failed emits none without
+		// this needing to know which event type it is building.
+		Provenance: rec.Provenance,
 	}
 }
 
@@ -1525,12 +1537,13 @@ func causeFromCheck(err error) string {
 // result, keeping the record shape in one place.
 func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
 	rec := ledger.Record{
-		NodeID:    node.ID,
-		SessionID: outcome.SessionID,
-		CostUSD:   outcome.TotalCostUSD,
-		BudgetUSD: node.BudgetUSD,
-		Verdict:   ledger.VerdictPass,
-		Duration:  duration,
+		NodeID:     node.ID,
+		SessionID:  outcome.SessionID,
+		CostUSD:    outcome.TotalCostUSD,
+		BudgetUSD:  node.BudgetUSD,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Provenance: passProvenance(node),
 	}
 
 	var notes []string

@@ -1504,6 +1504,13 @@ ledger — so the summary never under-counts silently.
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
+  Every PASS row is qualified by **how** the verdict was reached — `verified` /
+  `self-reported` / `exit-only` / `approved`, a closed set derived in trusted
+  code from the predicates the engine actually evaluated (ADR 0016 §6). The
+  qualifier sits beside `Verdict`, never replacing it, so nothing that tests for
+  PASS/FAIL changes; it is carried into `state.json` and onto `node_passed` from
+  the same `ledger.Record`, so the table, the snapshot and the feed cannot
+  disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
 exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →

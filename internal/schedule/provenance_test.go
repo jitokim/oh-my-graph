@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/gate"
+	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/verify"
@@ -153,5 +154,98 @@ func TestScheduler_FailedNodesCarryNoProvenance(t *testing.T) {
 	}
 	if !saw {
 		t.Fatal("the run emitted no node_failed event, so this asserted nothing")
+	}
+}
+
+// TestScheduler_ProvenanceIsOneComputationForThreeSurfaces is the structural
+// half of §6. The ledger table, the resumable snapshot and the event stream all
+// have to say the same thing about how a PASS was reached, and the way to
+// guarantee that is not three careful derivations but one: passProvenance is
+// called once, onto the ledger.Record, and the snapshot and the event are
+// derived from that record — the rule cost and verdict already follow. A
+// qualifier computed per surface is a qualifier that can disagree with itself,
+// which is precisely the failure §6 exists to end.
+func TestScheduler_ProvenanceIsOneComputationForThreeSurfaces(t *testing.T) {
+	// One run touching three of the four qualifiers. `approved` needs a gate
+	// controller and is covered above; what matters here is that whatever the
+	// derivation produced, all three surfaces carry it.
+	g := mustGraph(t, "name: p\nnodes:\n"+
+		"  - { id: unchecked, prompt: unchecked }\n"+
+		"  - { id: narrated, prompt: narrated, depends_on: [unchecked], success_check: { result_matches: \"^PASS$\" } }\n"+
+		"  - { id: measured, prompt: measured, depends_on: [narrated], success_check: { verify: { command: build } } }\n")
+
+	feed, path := newEventStream(t, "run-provenance-surfaces")
+	recorder := &historyRecorder{}
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"unchecked": pass("s-1", 0.01), "narrated": pass("s-2", 11.01), "measured": pass("s-3", 0.13),
+	})
+	s, h, led := newHarness(t, fake, Options{
+		EventSink: feed,
+		Recorder:  recorder,
+		Verifier:  verify.NewFakeVerifier(map[string]verify.Result{"build": {ExitCode: 0}}),
+	})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if err := feed.Close(); err != nil {
+		t.Fatalf("close feed: %v", err)
+	}
+
+	want := map[string]string{
+		"unchecked": runfeed.ProvenanceExitOnly,
+		"narrated":  runfeed.ProvenanceSelfReported,
+		"measured":  runfeed.ProvenanceVerified,
+	}
+
+	for _, rec := range led.Records() {
+		if rec.Provenance != want[rec.NodeID] {
+			t.Errorf("ledger row %s provenance = %q, want %q", rec.NodeID, rec.Provenance, want[rec.NodeID])
+		}
+	}
+	for _, e := range readEventStream(t, path) {
+		if e.Type != runfeed.EventNodePassed {
+			continue
+		}
+		if e.Provenance != want[e.NodeID] {
+			t.Errorf("node_passed %s provenance = %q, want %q", e.NodeID, e.Provenance, want[e.NodeID])
+		}
+	}
+	for nodeID, qualifier := range want {
+		recs := recorder.recordsFor(nodeID)
+		if len(recs) != 1 {
+			t.Fatalf("snapshot records for %s = %d, want 1", nodeID, len(recs))
+		}
+		if recs[0].Provenance != qualifier {
+			t.Errorf("snapshot record %s provenance = %q, want %q — a resumed leg would print a blank qualifier for it",
+				nodeID, recs[0].Provenance, qualifier)
+		}
+	}
+}
+
+// TestScheduler_FailedNodeRecordsCarryNoProvenance is the node_failed assertion
+// above, extended to the other two surfaces: a FAIL states its cause in Detail,
+// and neither the ledger row nor the snapshot record may stamp a strength word
+// on it.
+func TestScheduler_FailedNodeRecordsCarryNoProvenance(t *testing.T) {
+	g := mustGraph(t, "name: p\nnodes:\n  - { id: work, prompt: work, success_check: { result_matches: \"^SHIPPED$\" } }\n")
+	recorder := &historyRecorder{}
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"work": pass("s1", 0.5)})
+	s, h, led := newHarness(t, fake, Options{Recorder: recorder})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the run to fail: the node replied PASS against a ^SHIPPED$ predicate")
+	}
+
+	rows := led.Records()
+	if len(rows) != 1 || rows[0].Verdict != ledger.VerdictFail {
+		t.Fatalf("ledger rows = %+v, want one FAIL", rows)
+	}
+	if rows[0].Provenance != "" {
+		t.Errorf("the FAIL ledger row carries provenance %q", rows[0].Provenance)
+	}
+	recs := recorder.recordsFor("work")
+	if len(recs) != 1 || recs[0].Provenance != "" {
+		t.Errorf("the FAIL snapshot record carries provenance: %+v", recs)
 	}
 }
