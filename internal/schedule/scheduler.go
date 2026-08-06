@@ -238,6 +238,42 @@ type Options struct {
 	// `resume` passes runstate.Snapshot.SettledNodes(); CompletedNodes keeps
 	// deciding topology, SettledNodes only gates re-launch.
 	SettledNodes map[string]bool
+	// SerializedVerifyNodes is the set of node ids whose success_check.verify
+	// must run one at a time, run-wide: while one of them is verifying, no
+	// other member may start its own verification. nil (the zero value) is
+	// today's behaviour — every verification runs as soon as its node settles,
+	// concurrently with any other.
+	//
+	// It exists for the evidence command auto mode attaches to a plan's sink
+	// nodes (ADR 0016 §2), and coordinator.InjectedVerifyNodes is what fills
+	// it. The serialization is LOAD-BEARING, not a nicety, and it has two
+	// independent reasons — neither of which is the ORDERING of the checks:
+	//
+	//   - flake: two concurrent `./gradlew build` invocations in one project
+	//     directory contend for the build daemon's locks, and a flaky check is
+	//     worse than a slow one;
+	//   - a build WRITES (build/, target/, node_modules/, generated sources),
+	//     so two concurrent builds of one directory can each fail on the
+	//     other's half-written output, and neither result then describes the
+	//     tree the user has.
+	//
+	// The ordering property holds without this field and must not be attributed
+	// to it: verifyEvidence runs at the START of its node's settlement, but
+	// still after that node's own subprocess, and every non-sink is an ancestor
+	// of a sink — so the last-STARTING check begins after every node's
+	// subprocess has ended whether or not the checks are serialized.
+	//
+	// So relaxing this owes a replacement argument, not a benchmark: a
+	// measurement showing Gradle tolerates concurrency buys a faster check only
+	// together with an argument for why one build may read another's output
+	// mid-write.
+	//
+	// It removes interference between CHECKS, not skew between a check and a
+	// still-running node: a node re-run by a retry or a feedback round spawns
+	// while another member's check may be running. The RUN's verdict stays
+	// sound (every sink must pass, and the last check to start ran after every
+	// subprocess); a particular node's check result is best-effort.
+	SerializedVerifyNodes map[string]bool
 	// NodeRounds seeds each node's current feedback round for a resumed leg
 	// (ADR 0010): the resume path derives it from a declarer's non-terminal
 	// marker record (round k → every body node resumes at round k), so the
@@ -271,6 +307,14 @@ type Scheduler struct {
 	settledNodes map[string]bool
 	// nodeRounds seeds the feedback state per Run — see Options.NodeRounds.
 	nodeRounds map[string]int
+	// serializedVerify is the set of node ids whose verifications are mutually
+	// exclusive run-wide — see Options.SerializedVerifyNodes.
+	serializedVerify map[string]bool
+	// verifyMu is that mutual exclusion. It is held ONLY across a member's
+	// verify.Verifier call, never across a node's subprocess or a snapshot
+	// write, so a serialized check cannot stall anything but another
+	// serialized check.
+	verifyMu sync.Mutex
 	// feedback is this Run's view of every feedback arc: rounds, bodies,
 	// re-arming in-degrees (ADR 0010). Built by execute() from the graph it
 	// is handed — the one piece of per-run state the Scheduler holds, which
@@ -319,20 +363,21 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		eventSink = noopEventSink{}
 	}
 	return &Scheduler{
-		runner:         nodeRunner,
-		continueOnFail: opts.ContinueOnFail,
-		concurrency:    opts.Concurrency,
-		gate:           gateController,
-		verifier:       verifier,
-		worktrees:      worktrees,
-		progress:       progressWriter,
-		recorder:       recorder,
-		events:         eventSink,
-		toolPolicies:   opts.ToolPolicies,
-		completedNodes: opts.CompletedNodes,
-		settledNodes:   opts.SettledNodes,
-		nodeRounds:     opts.NodeRounds,
-		sessionIDs:     runner.NewSessionID,
+		runner:           nodeRunner,
+		continueOnFail:   opts.ContinueOnFail,
+		concurrency:      opts.Concurrency,
+		gate:             gateController,
+		verifier:         verifier,
+		worktrees:        worktrees,
+		progress:         progressWriter,
+		recorder:         recorder,
+		events:           eventSink,
+		toolPolicies:     opts.ToolPolicies,
+		completedNodes:   opts.CompletedNodes,
+		settledNodes:     opts.SettledNodes,
+		nodeRounds:       opts.NodeRounds,
+		serializedVerify: opts.SerializedVerifyNodes,
+		sessionIDs:       runner.NewSessionID,
 	}
 }
 
@@ -857,6 +902,35 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 	return nil
 }
 
+// passProvenance says HOW this node's PASS was reached, over runfeed's closed
+// set (ADR 0016 §6). It is derived from the predicates the engine actually
+// evaluated, so it needs no cooperation from the node: nothing can force a
+// planned node to build, but the engine always knows whether anything but the
+// node's own narration was consulted.
+//
+// It is called once per terminal PASS and stored on the ledger.Record, which
+// the snapshot and the event are then derived from — the same one-computation,
+// three-destinations rule the cost and verdict already follow. A qualifier
+// computed separately per surface is a qualifier that can disagree with
+// itself, which is the exact failure this whole section exists to end.
+//
+// The order is the strength order. A node carrying both a verification and a
+// result_matches is `verified`, because the verification is what was judged
+// from observed facts; result_matches is a cheap secondary filter over what
+// the node SAID, and never evidence on its own (graph.SuccessCheck says so).
+func passProvenance(node graph.Node) string {
+	switch {
+	case node.Type == graph.TypeGate:
+		return runfeed.ProvenanceApproved
+	case node.SuccessCheck.Verify != nil:
+		return runfeed.ProvenanceVerified
+	case node.SuccessCheck.ResultMatches != "":
+		return runfeed.ProvenanceSelfReported
+	default:
+		return runfeed.ProvenanceExitOnly
+	}
+}
+
 // appendRoundNote joins a body node's "feedback round k/N" note onto its
 // ledger detail, so every execution's row says which round it priced
 // (ADR 0010, "the ledger prices every execution"). A no-op outside a round.
@@ -879,7 +953,13 @@ func appendRoundNote(rec *ledger.Record, note string) {
 func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
 	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
 	s.emitEvent(runfeed.Event{Type: runfeed.EventGateApproved, NodeID: node.ID})
-	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
+	rec := ledger.Record{
+		NodeID:     node.ID,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Detail:     "gate approved",
+		Provenance: passProvenance(node),
+	}
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h)
 	s.recordGateDecision(node, runstate.GateApprove)
@@ -953,6 +1033,7 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.No
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
 		Round:        round,
+		Provenance:   rec.Provenance,
 	}
 }
 
@@ -972,6 +1053,9 @@ func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, roun
 		Retries:   retries,
 		Detail:    rec.Detail,
 		Round:     round,
+		// Only a PASS record carries one, so node_failed emits none without
+		// this needing to know which event type it is building.
+		Provenance: rec.Provenance,
 	}
 }
 
@@ -1145,6 +1229,14 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 		return verifyFault(node.ID, err.Error())
 	}
 
+	if s.serializedVerify[node.ID] {
+		// Held across this node's Verify call only (see Scheduler.verifyMu).
+		// The wait is deliberately not logged: a sink queuing behind another
+		// sink's build is the mechanism working, not an event.
+		s.verifyMu.Lock()
+		defer s.verifyMu.Unlock()
+	}
+
 	s.logProgress("… %s  verifying: %s\n", node.ID, request.Command)
 	result, err := s.verifier.Verify(ctx, request)
 	if err != nil {
@@ -1190,22 +1282,54 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 
 	if expected := v.ExpectedExitCode(); result.ExitCode != expected {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` exited %d, want %d%s",
-			command, result.ExitCode, expected, outputTail(result.Output)))
+			command, result.ExitCode, expected, outputTail(result.Output)),
+			evidenceOf(command, result.Output))
 	}
 	if pattern == nil {
 		return nil
 	}
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
-			command, v.OutputMatches, outputTail(result.Output)))
+			command, v.OutputMatches, outputTail(result.Output)),
+			evidenceOf(command, result.Output))
 	}
 	return nil
 }
 
+// maxEvidenceRunes bounds the verification output a feedback re-run is handed.
+// It is deliberately NOT maxDetailRunes: that bound exists to keep a table
+// readable, and 240 runes of a build log is the compiler's last sentence with
+// the error list cut off — the payload's whole point (ADR 0016 §2).
+//
+// 4000 runes is the lane's pick, and it is a trade, not a derivation: it is
+// roughly a thousand tokens of argv-borne prompt on every feedback round, and
+// enough for the error list of a build that failed for a handful of reasons. A
+// build that failed for a hundred reasons is not diagnosable from any bound.
+// Nobody has measured "enough compiler output to fix a build" against prompt
+// cost; when someone does, this is the number to move.
+const maxEvidenceRunes = 4000
+
+// evidenceOf renders what a failed verification actually printed, for the
+// payload a feedback re-run reads. The TAIL is kept, like every other
+// truncation in this file, because a failing command explains itself last —
+// and unlike outputTail, newlines are preserved: the reader is a model looking
+// at a compiler's error list, not a one-line table cell.
+func evidenceOf(command, output string) string {
+	body := strings.TrimSpace(output)
+	if body == "" {
+		body = "(no output)"
+	}
+	if runes := []rune(body); len(runes) > maxEvidenceRunes {
+		body = "…" + string(runes[len(runes)-maxEvidenceRunes:])
+	}
+	return fmt.Sprintf("`%s` failed. Its output:\n\n%s", command, body)
+}
+
 // verifyFailure builds the error shape for evidence that was gathered and
-// judged insufficient — a verdict on the work.
-func verifyFailure(nodeID, detail string) error {
-	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail}
+// judged insufficient — a verdict on the work. detail is the table-sized
+// summary; evidence is the model-sized payload a feedback re-run reads.
+func verifyFailure(nodeID, detail, evidence string) error {
+	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Evidence: evidence}
 }
 
 // verifyFault builds the error shape for a verification that could not be
@@ -1418,12 +1542,13 @@ func causeFromCheck(err error) string {
 // result, keeping the record shape in one place.
 func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
 	rec := ledger.Record{
-		NodeID:    node.ID,
-		SessionID: outcome.SessionID,
-		CostUSD:   outcome.TotalCostUSD,
-		BudgetUSD: node.BudgetUSD,
-		Verdict:   ledger.VerdictPass,
-		Duration:  duration,
+		NodeID:     node.ID,
+		SessionID:  outcome.SessionID,
+		CostUSD:    outcome.TotalCostUSD,
+		BudgetUSD:  node.BudgetUSD,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Provenance: passProvenance(node),
 	}
 
 	var notes []string

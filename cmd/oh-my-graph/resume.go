@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
@@ -276,6 +277,27 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	if err != nil {
 		return fmt.Errorf("reconstruct graph for run %q: %w", runID, err)
 	}
+	// A resumed leg does not take an auto graph's success_check.verify from
+	// disk (ADR 0016 §4). graph.Parse re-parses whatever the run directory
+	// holds, and a verification is engine-run shell outside every ceiling
+	// layer — precisely what validatePlannedNodeVerify refuses at plan time —
+	// so a snapshot-borne one is refused here rather than replayed. The
+	// discriminator is the snapshot's ToolPolicies, non-empty exactly for a
+	// planned graph: a hand-written graph's `verify:` is the user's own
+	// reviewed artifact and must keep round-tripping untouched.
+	//
+	// The zero VerifyCommand is not a placeholder for a flag: `resume` has no
+	// --verify-cmd yet, so re-supplying is not possible and the refusal is
+	// terminal. It also means no injected check can reach this leg at all,
+	// which is why the scheduler below is handed no SerializedVerifyNodes —
+	// the set would be empty by construction.
+	if len(snap.ToolPolicies) > 0 {
+		reattached, _, err := coordinator.ReattachVerifyCommand(g, coordinator.VerifyCommand{})
+		if err != nil {
+			return fmt.Errorf("resume run %q: %w", runID, err)
+		}
+		g = reattached
+	}
 	// A resumed leg re-warns exactly as `run` did at load: the warning is
 	// promised to be loud and never silent (DESIGN.md), and a resume may be
 	// far from the terminal session that saw the first one.
@@ -320,13 +342,14 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	led := ledger.New(runID)
 	for nodeID, rec := range records {
 		led.Record(ledger.Record{
-			NodeID:    nodeID,
-			SessionID: rec.SessionID,
-			CostUSD:   rec.CostUSD,
-			BudgetUSD: rec.BudgetUSD,
-			Verdict:   ledger.Verdict(rec.Verdict),
-			Duration:  rec.Duration,
-			Detail:    rec.Detail,
+			NodeID:     nodeID,
+			SessionID:  rec.SessionID,
+			CostUSD:    rec.CostUSD,
+			BudgetUSD:  rec.BudgetUSD,
+			Verdict:    ledger.Verdict(rec.Verdict),
+			Duration:   rec.Duration,
+			Detail:     rec.Detail,
+			Provenance: rec.Provenance,
 		})
 	}
 

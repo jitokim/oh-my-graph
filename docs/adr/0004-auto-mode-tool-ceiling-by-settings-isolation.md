@@ -79,6 +79,25 @@ still rendered as `--allowedTools` — and **none** of layers 1, 3, 4 and 5. The
 are the user's own reviewed artifact and are *meant* to run under the user's
 settings, hooks and MCP servers.
 
+> **Update (2026-08-06):** amended in part by ADR 0016. Layer 0's
+> `plannedToolAllowlist` is **unchanged**, and the decision above stands — but
+> what that list is *for* is now narrowed and stated out loud: it answers only
+> "what class of tool is safe for unattended planner output at all", never
+> "which build command this repository needs". [#119] is the cost of the
+> conflation: on a Kotlin repo no planned node can name `./gradlew`, so `auto`
+> planned a verify node that checked branch and commits, replied PASS, and
+> certified a branch that did not compile. ADR 0016 **rejects extending this
+> list** (the entries are this repository's own toolchain, a fixed list is
+> never complete, and a superset loosens the ceiling for every user) and
+> routes build evidence elsewhere: a user-supplied command the ENGINE runs,
+> injected after validation, granting the node nothing and leaving layers 0–5
+> byte-for-byte as they are. It also restates §1's load-bearing property in
+> wider terms — the validated set must be influenced by **no untrusted
+> producer**, the repository included, not merely by the planner — which is
+> why repo detection is admitted as a printed suggestion and refused as a
+> grant. See
+> `0016-build-evidence-is-a-user-supplied-engine-command.md`.
+
 ### 2. Every `graph.Node` field has an explicit planned-node disposition
 
 `agent:` and `success_check.verify:` are **rejected** in `validatePlannedNodes`,
@@ -91,6 +110,15 @@ without adding a case is a review-blocking defect. A table-driven test over
 `reflect.VisibleFields(reflect.TypeOf(graph.Node{}))` that fails on any field
 name the coordinator has no recorded disposition for turns that from a
 convention into a build failure.
+
+> **Update (2026-08-06):** ADR 0016 changes one recorded disposition in
+> substance without changing this rule or the rejection itself.
+> `success_check.verify` stays **rejected** when it is planner-authored —
+> `validatePlannedNodeVerify` is untouched — and gains a second clause: it may
+> be set by trusted code *after* validation, from a command string the user
+> supplied at invocation, the same posture `agentmap.go` and ADR 0012's skill
+> inlining already take. The `why` recorded in `field_dispositions_test.go`
+> must say so, exactly as ADR 0012 §5 owed for `Prompt`.
 
 ### 3. `agent:` is not reconciled, and that non-claim is stated
 

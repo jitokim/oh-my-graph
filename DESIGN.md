@@ -937,6 +937,18 @@ incompatible snapshot is refused rather than misread:
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
 - **gate decisions so far**, and which gate the run is paused at.
 
+**One field the snapshot holds but `resume` does not trust**: an auto graph's
+`success_check.verify`. A verification is a command the ENGINE runs, outside
+every layer of the auto ceiling — which is why `validatePlannedNodeVerify`
+refuses a planner-authored one at plan time — so a resumed leg reconstructing a
+planned graph strips any it finds and **refuses the resume**, naming the nodes
+(`coordinator.ReattachVerifyCommand`, ADR 0016 §4). The discriminator is the
+snapshot's tool policies, non-empty exactly for a planned graph: a hand-written
+graph's `verify:` is the user's own reviewed artifact and round-trips
+untouched. Today the refusal is terminal, since only `auto` will parse
+`--verify-cmd`; a `resume` that re-supplies the command is what makes such a
+run resumable.
+
 **What the snapshot deliberately does NOT hold:** in-degree counts and the
 ready set. Both are *derived* from `graph × completed`, so persisting them would
 create a second source of truth that can go stale. `resume` recomputes them:
@@ -1473,9 +1485,13 @@ the README rather than discovered.
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
 user's subagents — and therefore which system prompt, tool grant and model —
-runs the node, routing around Layers 0–3 entirely. `success_check.verify:` would
-let it run arbitrary shell outside every guard. Both are **rejected** in
-`validatePlannedNodes`, alongside `bypassPermissions`, `cwd` and `type: gate`.
+runs the node, routing around Layers 0–3 entirely. A **planner-authored**
+`success_check.verify:` would let it run arbitrary shell outside every guard.
+Both are **rejected** in `validatePlannedNodes`, alongside `bypassPermissions`,
+`cwd` and `type: gate`. What is rejected there is the planner's authorship, not
+the field: trusted code may attach a `verify:` strictly *after* validation, from
+the user-supplied `--verify-cmd` string, and does
+(`coordinator.attachVerifyCommand`, ADR 0016 §2).
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -1494,10 +1510,11 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `budget_usd`, `timeout`, `retry` | allowed |
+| `budget_usd`, `timeout` | allowed |
+| `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
@@ -1660,6 +1677,13 @@ ledger — so the summary never under-counts silently.
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
+  Every PASS row is qualified by **how** the verdict was reached — `verified` /
+  `self-reported` / `exit-only` / `approved`, a closed set derived in trusted
+  code from the predicates the engine actually evaluated (ADR 0016 §6). The
+  qualifier sits beside `Verdict`, never replacing it, so nothing that tests for
+  PASS/FAIL changes; it is carried into `state.json` and onto `node_passed` from
+  the same `ledger.Record`, so the table, the snapshot and the feed cannot
+  disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
 exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →
@@ -1744,7 +1768,9 @@ opt-in per node with a loud warning, never a default. For auto-planned graphs
 just a prompt convention and not just a declaration check:
 `coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
 is empty or names a tool outside the fixed allowlist, or that sets `cwd`,
-`agent`, or `success_check.verify`; and `Plan.ToolPolicies` imposes a per-node
+`agent`, or a planner-authored `success_check.verify` (trusted code attaches the
+user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
+imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
 grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are

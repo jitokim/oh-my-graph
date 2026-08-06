@@ -106,6 +106,40 @@ const (
 	OutcomePaused = "paused"
 )
 
+// Provenance strings for node_passed: HOW a terminal PASS was reached, derived
+// in trusted code from the predicates that actually ran (ADR 0016 §6).
+//
+// The set is closed and it is ordered by strength. It exists because a ledger
+// that prints a self-report and a measurement as the same word cannot be read:
+// in the run behind #119 a check node replied `PASS` in 17 seconds, was graded
+// on having replied `PASS`, and certified a branch that did not compile — next
+// to a $11.01 node whose row said `PASS` too. Nothing can force a planned node
+// to build; this stops the record from claiming it did.
+//
+// It is a property of the PREDICATE, not of auto mode, so a hand-written
+// graph's nodes carry it as well — a hand-written check node that self-reports
+// has told its reader exactly as much as #119's did.
+const (
+	// ProvenanceVerified: a success_check.verify command ran and the engine
+	// judged its exit code (and output_matches, when declared). Note that
+	// `verified` is not `correct`: `--verify-cmd true` yields it. The feed
+	// reports provenance, never adequacy.
+	ProvenanceVerified = "verified"
+	// ProvenanceSelfReported: the strongest predicate was result_matches — the
+	// node passed by emitting the right words.
+	ProvenanceSelfReported = "self-reported"
+	// ProvenanceExitOnly: a subprocess ran and exited 0, with no predicate
+	// beyond that.
+	ProvenanceExitOnly = "exit-only"
+	// ProvenanceApproved: a human approved a type: gate node — no subprocess
+	// ran and no predicate was evaluated. Without it the set is not closed: an
+	// approved gate records a PASS with no cost and no session, so under a
+	// three-member set it would land on exit-only, which is wrong twice over —
+	// no subprocess ran, and a person deciding is the STRONGEST provenance the
+	// system has, not the weakest.
+	ProvenanceApproved = "approved"
+)
+
 // Event is one line of events.jsonl. Schema, Timestamp and RunID are stamped
 // by StreamWriter.Emit, so the engine only fills the transition-specific
 // fields. Fields that do not apply to an event type are omitted from its JSON
@@ -154,6 +188,12 @@ type Event struct {
 	// rounds included (docs/RUN-FEED.md). An additive optional field — no
 	// schema bump.
 	Round int `json:"round,omitempty"`
+	// Provenance is how a terminal PASS was reached, on node_passed only —
+	// one of the Provenance* constants above. An additive optional field, no
+	// schema bump: absent means a producer that predates ADR 0016 (or a
+	// node_failed, which has no verdict to qualify). Verdict stays PASS/FAIL,
+	// so no consumer's verdict test changes.
+	Provenance string `json:"provenance,omitempty"`
 	// Outcome is how the leg ended, on run_finished only.
 	Outcome string `json:"outcome,omitempty"`
 }

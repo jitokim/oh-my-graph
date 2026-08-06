@@ -59,14 +59,47 @@ line is.
 
 A planned graph is untrusted LLM output executed unattended, so it gets bounds a
 hand-written graph does not. Beyond the plan-time rejections (no
-`bypassPermissions`, no `cwd`, no `success_check.verify`, no `agent`, no tool
-outside a fixed allowlist), auto mode runs each planned node under a layered
-execution ceiling.
+`bypassPermissions`, no `cwd`, no planner-authored `success_check.verify`, no
+`agent`, no tool outside a fixed allowlist, and a capped `retry.max` and
+`feedback.max`), auto mode runs each planned node under a layered execution
+ceiling.
 
-`success_check.verify` is refused outright rather than constrained: it is a
-shell command the *engine* runs, not a tool call, so no permission mode, tool
-allowlist, deny list or `cwd` restriction applies to it. It is available to
-hand-written graphs, which are your own reviewed artifact, and to nothing else.
+A **planner-authored** `success_check.verify` is refused outright rather than
+constrained: it is a shell command the *engine* runs, not a tool call, so no
+permission mode, tool allowlist, deny list or `cwd` restriction applies to it.
+It is available to hand-written graphs, which are your own reviewed artifact,
+and to a command **you** supplied at invocation (`--verify-cmd`) — never to one
+a plan authored.
+
+That flag is [ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md):
+after a plan has been validated, trusted Go code attaches your command to the
+graph's sink nodes, so the engine runs the build itself and judges its exit
+code. (**Not yet reachable from the CLI**: the engine side is implemented and
+tested, but `auto` does not parse `--verify-cmd` / `--verify-timeout` yet, so
+today every auto run still takes the zero-config path described below.)
+
+`resume` never takes a verification from a run directory on an auto graph: it
+refuses the resume and names the edited node. A `success_check.verify` is
+engine-run shell outside every ceiling layer, so a snapshot that carries one —
+whether from a future `--verify-cmd` run or from an edit to `graph.json` — is
+not something a resumed leg replays on trust. Hand-written graphs are
+unaffected: their `verify:` is your own reviewed artifact and round-trips
+unchanged.
+
+A planned node is granted nothing by `--verify-cmd` — no ceiling layer changes, and
+the allowlist deliberately does **not** grow an entry per ecosystem, because
+that would put this repository's toolchain inside every user's ceiling.
+`--verify-cmd` is unbounded user shell with exactly the standing a hand-written
+graph's `verify:` has had since ADR 0002, running on the same seam and
+executing repo-authored code (`gradlew`, `Makefile`, `npm`) the way your own
+terminal does. Stated, not closed: the difference from a repo-file-derived
+grant is that you chose it.
+
+Relatedly, oh-my-graph may *detect* build markers (`gradlew`, `package.json`,
+`Cargo.toml`, …) in the invocation directory. Detection only ever prints a
+suggested command. It never derives a grant, because a write-capable planned
+node can create those files itself — a plan bootstrapping its own capability
+with no attacker anywhere.
 
 The layers:
 
@@ -125,6 +158,40 @@ behaviour change: if your `auto` runs depended on an MCP server, they will stop.
 Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would
 any unattended agent: run it in a directory you are willing to have modified.
+
+### Isolation stops at the invocation repository
+
+Everything above bounds what a planned node may *call*. It says nothing about
+*where* the node works, and the answer there is narrower than people assume:
+
+- **Every planned node runs in the directory you invoked `oh-my-graph` from**,
+  in the checkout you had open. `cwd:` and `worktree:` are both rejected at
+  plan time (`validatePlannedNodeCwd`, `validatePlannedNodeWorktree`), so
+  `auto` provisions **no** managed worktree of its own — a planned node edits
+  and commits in your working tree unless it arranges otherwise itself.
+- **Managed worktrees (`worktree:`, [ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md))
+  are a hand-written-graph feature, and they only ever branch from the
+  invocation repository.** `worktree.GitManager` holds a single repo directory
+  (the process's own), and every checkout it creates lives under
+  `$OMG_HOME/runs/<run-id>/worktrees`.
+
+So **any other local repository gets no isolation from oh-my-graph at all** —
+including one your goal names by absolute path. If a node `cd`s there, switches
+that checkout's HEAD, or creates a worktree of its own, that is the node's
+improvisation, not a guarantee the engine offers or can undo. A shared checkout
+is the concrete hazard: a node changing HEAD in a repository some other process
+is working in will collide with it, and the run's feed records the node's
+result, not the git commands it chose to run.
+
+Two consequences worth planning around: keep a goal that spans repositories to
+one that expects each node to isolate *itself* in the repositories it does not
+own, and never verify such work by asserting a local HEAD — an assertion like
+`git -C <other-repo> rev-parse --abbrev-ref HEAD` encodes an assumption about
+where the work happened and fails on work that succeeded. The planner is told
+to assert remote state (`gh pr list --head <branch>`) for exactly this reason.
+Managed multi-repository worktrees are not implemented and would need their own
+ADR; the surface they need is the one `validatePlannedNodeCwd` closed
+deliberately.
 
 ## Subagents (`agent:`)
 

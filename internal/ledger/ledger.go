@@ -1,5 +1,6 @@
 // Package ledger records what happened in a run and renders the end-of-run
-// summary: one row per node EXECUTION (session id, cost, verdict, duration),
+// summary: one row per node EXECUTION (session id, cost, verdict — qualified by
+// how that verdict was reached, ADR 0016 §6 — and duration),
 // the coordinator's one-time planning cost (auto mode only — zero and hidden
 // for a hand-written `run`), and the total cost across the graph including
 // that planning call. Most nodes execute once and get one row; a feedback
@@ -48,6 +49,20 @@ type Record struct {
 	// budget declared. Always one line, and capped by the scheduler at one
 	// shared bound (240 runes) so the table stays readable.
 	Detail string
+	// Provenance is HOW a PASS was reached — one of runfeed's four qualifiers
+	// (verified / self-reported / exit-only / approved), derived by the
+	// scheduler from the predicates it actually evaluated (ADR 0016 §6). It
+	// qualifies Verdict; it does not replace it, so nothing that tests for
+	// PASS/FAIL changes.
+	//
+	// Empty means "not known", and the two ways to get there are different:
+	// a FAIL never carries one (a failure states its cause in Detail, and a
+	// strength word on a failure would invite reading it as how sure we are
+	// it failed), and a row carried forward from a snapshot written before
+	// this field existed has none to carry. Render leaves both bare rather
+	// than guessing — the whole point of the qualifier is that an unmeasured
+	// verdict must not be printed as a measured one.
+	Provenance string
 }
 
 // BudgetDeltaUSD reports how far the node's actual cost landed from its declared
@@ -148,26 +163,63 @@ func (l *RunLedger) TotalCost() float64 {
 	return total
 }
 
-// tableWidth is the rule under the table's header and above its footer, sized
-// for the columns without the budget annotation. A run that declares a budget
-// widens it by budgetAnnotationWidth so the rule still spans the table.
-const tableWidth = 73
+// The column widths, and tableWidth: the rule under the table's header and
+// above its footer. The rule is the header line's OWN length, summed from the
+// columns rather than restated as a number, so a column that changes width
+// cannot leave the rule behind. A run that declares a budget widens it by
+// budgetAnnotationWidth so the rule still spans the table.
+//
+// 16 + 1 + 20 + 1 + 16 + 1 + 10 + 2 + 6 = 73, and + 7 = 80 with the budget
+// annotation. 80 is the whole budget and a budgeted run now spends every
+// column of it, because two shipped features write into this sum and NEITHER
+// of them can give anything back:
+//
+//   - VerdictWidth is len("PASS (self-reported)"). Shortening it truncates the
+//     qualifier, and a truncated qualifier is a self-report that reads like a
+//     measurement — the one thing #119 exists to prevent.
+//   - budgetAnnotationWidth is len(" (100%)"). Dropping it takes the run's
+//     headroom back out of the row, which is the one thing #115 exists to put
+//     there.
+//
+// Each is a fixed phrase whose whole point is that it reads unambiguously, so
+// trimming either is deleting a feature rather than tuning a table. The column
+// that gave way instead is SESSION; see sessionWidth for why it could.
+//
+// detailWidth is only the header word. DETAIL is the ragged column by design —
+// a detail runs to the scheduler's 240-rune cap — so no rule was ever going to
+// contain it, and pretending otherwise would spend columns the two features
+// need on a promise the table cannot keep.
+const (
+	nodeWidth   = 16
+	costWidth   = 10
+	detailWidth = 6 // len("DETAIL"), the header's last cell
 
-// sessionWidth is the SESSION column. It is the annotation's funding: the
-// stub can only ever be sessionStub+1 columns wide, so the column was carrying
-// slack that a budgeted run needed more. Paying for the annotation here rather
-// than at the right edge is what keeps a budgeted run's rule at 80 columns
-// instead of 85, and DETAIL within a column of where it has always sat — the
-// graphs that actually declare budgets (adr-driven-dev, self-dev and
-// dev-review-pr, each via one node or the e2e-verify fragment) are the mixed
-// case, not the zero-budget one, so it is the case the width must fit.
-const sessionWidth = 19
+	tableWidth = nodeWidth + 1 + VerdictWidth + 1 + sessionWidth + 1 + costWidth + 2 + detailWidth
+)
+
+// sessionWidth is the SESSION column, and it is where both of the table's
+// recent features were funded from. #115 took it from 20 to 19 to pay for the
+// budget annotation; seating #119's qualifier beside that annotation costs
+// three more columns, and this is again the only column that can pay them.
+//
+// It can pay because of WHAT IT IS: a stub of a value the run keeps in full
+// elsewhere — in the per-node record, in `show`, and in the session transcript
+// itself. Every other column in the row is the only place its fact appears at
+// all. NODE is the row's identity, and 16 already only just holds the longest
+// id a shipped graph declares ("review-security", 15). VERDICT and the cost
+// annotation are the two fixed phrases above. A shorter stub still answers
+// both questions the column is asked — which of this run's sessions is this,
+// and what do I paste into `show` — whereas a clipped qualifier or a dropped
+// percentage answers nothing.
+const sessionWidth = 16
 
 // sessionStub is how much of a session id survives truncation, one column
-// short of sessionWidth to leave room for the ellipsis. 18 characters still
-// spans three groups of a UUID, which is far past the point where two ids in
-// one run diverge; the full id is in the per-node record and in `show`.
-const sessionStub = 18
+// short of sessionWidth to leave room for the ellipsis. 15 characters is a
+// UUID's first two groups plus one — 13 hex digits, some 52 bits, so two
+// sessions in one run cannot plausibly collide on it. It no longer spans three
+// groups, as it did at 18; the full id is in the per-node record and in `show`,
+// which is where anyone who needs the rest of it reads it.
+const sessionStub = 15
 
 // budgetAnnotationWidth is the constant width the "(99%)" budget annotation
 // occupies inside the COST(USD) cell, including its leading space. Constant so
@@ -192,13 +244,18 @@ func (l *RunLedger) Render() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run %s — %d node(s)\n", l.runID, len(records))
-	fmt.Fprintf(&b, "%-16s %-10s %-*s %s  %s\n", "NODE", "VERDICT", sessionWidth, "SESSION", costHeader(budgeted), "DETAIL")
+	fmt.Fprintf(&b, "%-*s %-*s %-*s %s  %s\n",
+		nodeWidth, "NODE",
+		VerdictWidth, "VERDICT",
+		sessionWidth, "SESSION",
+		costHeader(budgeted),
+		"DETAIL")
 	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", ruleWidth(budgeted)))
 
 	for _, rec := range records {
-		fmt.Fprintf(&b, "%-16s %-10s %s %s  %s\n",
-			rec.NodeID,
-			string(rec.Verdict),
+		fmt.Fprintf(&b, "%-*s %-*s %s %s  %s\n",
+			nodeWidth, rec.NodeID,
+			VerdictWidth, VerdictCell(rec),
 			sessionCell(rec.SessionID),
 			costCell(rec, budgeted),
 			rec.Detail,
@@ -210,6 +267,47 @@ func (l *RunLedger) Render() string {
 	}
 	fmt.Fprintf(&b, "TOTAL COST: $%.4f\n", l.TotalCost())
 	return b.String()
+}
+
+// VerdictWidth sizes the VERDICT column: len("PASS (self-reported)"), the
+// widest cell the closed qualifier set can produce. It is a constant rather
+// than a per-run measurement so two runs' tables line up with each other, and
+// so a run in which every node happens to be `verified` does not print a
+// narrower table than the same run one self-report later.
+//
+// It is exported because `show` renders the same column through VerdictCell
+// and must size it the same way: a literal %-20s over there is a copy of this
+// number that nothing pins, and the qualifier set is precisely the thing that
+// widened it once already.
+//
+// It is also the largest single item in tableWidth's 80-column budget, and the
+// one item there that must not be traded — see tableWidth.
+const VerdictWidth = 20
+
+// VerdictCell renders the VERDICT column: the verdict, qualified by HOW it was
+// reached when the engine knows (ADR 0016 §6).
+//
+//	PASS (verified)       PASS (self-reported)      FAIL
+//
+// The qualifier is printed on EVERY qualified row, not only on the weak ones,
+// and that is the whole design decision. Marking only self-reported and
+// exit-only would be narrower and would still have flagged #119 — but it would
+// encode "the engine gathered evidence" as the ABSENCE of a mark, and #119 is
+// a story about a reader who read absence as assurance. It would also silently
+// drop the one positive signal a user who supplied --verify-cmd is owed:
+// confirmation that their command actually ran. So a reader never has to know
+// what an unmarked row would have meant. Where every row reads
+// `PASS (exit-only)` the column is uniform, and that uniformity is the finding,
+// not noise: nothing in that run was checked.
+//
+// A row with no qualifier — every FAIL, and any row carried forward from a
+// pre-ADR-0016 snapshot — renders as the bare verdict, exactly as it did
+// before. Absent stays absent; it is never rounded up to a claim.
+func VerdictCell(rec Record) string {
+	if rec.Provenance == "" {
+		return string(rec.Verdict)
+	}
+	return string(rec.Verdict) + " (" + rec.Provenance + ")"
 }
 
 // Print writes the rendered table to w.
@@ -285,12 +383,14 @@ func ruleWidth(budgeted bool) int {
 //
 // A plain %-*s verb pads by BYTES, and the ellipsis a truncated id ends in is
 // three of them for one column. At today's constants that verb happens to come
-// out right — a truncated stub is 21 bytes, so it is never padded at all, and
-// its sessionStub+1 runes land exactly on sessionWidth. That is a coincidence
-// of two constants, not a property: shorten sessionStub without shortening
-// sessionWidth and every real run's DETAIL slides two columns left of the
-// header's, in the one column whose whole job is alignment. Counting runes
-// costs nothing and does not depend on the coincidence holding.
+// out right — a truncated stub is 18 bytes against a width of 16, so it is
+// never padded at all, and its sessionStub+1 runes land exactly on
+// sessionWidth. That is a coincidence of two constants, not a property:
+// shorten sessionStub without shortening sessionWidth and every real run's
+// DETAIL slides two columns left of the header's, in the one column whose
+// whole job is alignment. Counting runes costs nothing and does not depend on
+// the coincidence holding — and this column has now been narrowed twice, each
+// time by a feature that had nowhere else to take the space from.
 func sessionCell(id string) string {
 	stub := shortSession(id)
 	if pad := sessionWidth - utf8.RuneCountInString(stub); pad > 0 {

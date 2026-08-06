@@ -178,6 +178,19 @@ type NodeRecord struct {
 	// at it are retained, and max − round rounds remain — no separate
 	// rounds-spent counter exists to drift from it.
 	Round int `json:"round,omitempty"`
+	// Provenance is HOW this node's PASS was reached — one of runfeed's four
+	// qualifiers (ADR 0016 §6) — carried forward so a resumed leg's end-of-run
+	// table qualifies an earlier leg's rows the same way it qualifies its own.
+	// Without it a resume would print a table whose earlier rows read a bare
+	// `PASS` beside this leg's `PASS (self-reported)`, and a reader would have
+	// to know that the blank means "written by an earlier leg" rather than
+	// "nothing was measured".
+	//
+	// Additive and optional, exactly like Round: absent on every FAIL (which
+	// has no verdict to qualify) and on any snapshot written before this
+	// field existed, so today's snapshots stay readable and there is NO
+	// schema bump.
+	Provenance string `json:"provenance,omitempty"`
 }
 
 // GoalRef links an iterated auto run — one cycle of a goal loop (ADR 0011) —

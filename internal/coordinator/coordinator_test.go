@@ -113,13 +113,16 @@ func TestPlan_MakesExactlyOneReadOnlyCallCarryingGoalAndInputs(t *testing.T) {
 // TestPlan_PromptRequiresBranchAssertionInCheckNodes pins the planner guidance
 // that closes a real PASS-on-wrong-branch bug: a planned write node ran
 // 'git checkout -b X', switched back to the default branch, and committed
-// there — and the check node still PASSed, because nothing ever asserted which
-// branch HEAD was on. A planned node may not use success_check.verify
-// (TestPlan_RejectsNodeThatSetsVerify), so the assertion has to live in the
-// check node's own prompt gated by result_matches, and the planner prompt is
-// the seam that demands it. This is guidance to an untrusted producer, not
-// enforcement — but dropping it silently reintroduces the bug, so its
-// load-bearing pieces are pinned here.
+// there — and the check node still PASSed, because nothing ever asserted the
+// work had reached the feature branch. A planned node may not use
+// success_check.verify (TestPlan_RejectsNodeThatSetsVerify), so the assertion
+// has to live in the check node's own prompt gated by result_matches, and the
+// planner prompt is the seam that demands it. This is guidance to an untrusted
+// producer, not enforcement — but dropping it silently reintroduces the bug, so
+// its load-bearing pieces are pinned here.
+//
+// What the assertion may be MADE of is pinned by
+// TestPlannerPromptAsksForRepositoryStateNotCheckoutState (#103).
 func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
 
@@ -127,8 +130,10 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, want := range []string{
-		// the command that proves which branch HEAD is actually on
-		"git rev-parse --abbrev-ref HEAD",
+		// the command that proves the work reached the feature branch on the
+		// remote, in a repository other than the invocation one too
+		"gh pr list --head <branch> --state open",
+		"gh pr list --repo <slug> --head <branch> --state open",
 		// the assertion that the commit did not land on the default branch
 		"default branch",
 		// the instruction half of a verdict pattern (DESIGN.md "Verdict
@@ -160,6 +165,47 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 	} {
 		if re.MatchString(fail) {
 			t.Errorf("planner's verdict pattern accepts a failing reply %q", fail)
+		}
+	}
+}
+
+// TestPlannerPromptAsksForRepositoryStateNotCheckoutState pins the #103 half of
+// the branch rule, in BOTH spellings of the final-check paragraph — it is one
+// prompt, and a rule that holds only when --verify-cmd was omitted is a rule
+// that will be reintroduced by whoever edits the other spelling.
+//
+// The reported run's check node asserted 'git -C <repo B> rev-parse
+// --abbrev-ref HEAD' against a repository no node had ever switched (auto
+// isolates nothing outside the invocation repo, and the node that worked there
+// made its own worktree), so the check was unsatisfiable from the moment it was
+// written and a run whose PRs both existed reported FAIL. A pull request is a
+// property of the repository and survives that; a checked-out HEAD is not.
+func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
+	for _, supplied := range []bool{true, false} {
+		prompt := plannerPrompt("fix the bug and open a PR", nil, supplied)
+
+		for _, want := range []string{
+			// remote state first, then the ref — both repository-scoped
+			"gh pr list --head <branch> --state open",
+			"git rev-parse --verify <branch>",
+			// and the prohibition stated as a prohibition, since the planner
+			// has seen a great deal of prose that reaches for HEAD
+			"NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without\n    '-C <path>'",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd supplied=%v: prompt lost the repository-state rule: missing %q", supplied, want)
+			}
+		}
+
+		// The old mandate, in either of its two spellings. Its absence is the
+		// assertion: the prompt may name the command only to forbid it.
+		for _, gone := range []string{
+			"MUST verify which branch HEAD is on",
+			"runs 'git rev-parse --abbrev-ref HEAD'",
+		} {
+			if strings.Contains(prompt, gone) {
+				t.Errorf("verify-cmd supplied=%v: prompt still mandates a checkout-scoped assertion: %q", supplied, gone)
+			}
 		}
 	}
 }
