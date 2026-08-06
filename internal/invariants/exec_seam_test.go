@@ -190,7 +190,7 @@ func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 	}
 }
 
-// directSpawnSelectors are the package-qualified calls that start a process
+// directSpawnSelectors are the package-qualified symbols that start a process
 // WITHOUT going through os/exec — the bypass the import allowlist above cannot
 // see, because a file using one of them need not import os/exec at all.
 //
@@ -212,12 +212,16 @@ var directSpawnSelectors = map[string][]string{
 // TestNoDirectProcessSpawns closes the gap under TestOnlyTheFourExecSeamsImportOsExec:
 // that test proves only four files import os/exec, but os/exec is not the only
 // way to spawn. os.StartProcess and syscall.ForkExec are the same capability one
-// layer down, and a file calling them would sail past an import allowlist.
+// layer down, and a file naming them would sail past an import allowlist.
 //
 // The rule is absolute rather than allowlisted: even the four seams route their
 // spawns through os/exec (which is what TestExecSeamCallSitesScrubEnv can then
 // verify scrubs the child env). A direct fork/exec anywhere — seam or not — would
-// be a spawn with no scrub check over it, so there is nobody to exempt.
+// be a spawn with no scrub check over it, so there is nobody to exempt. What a
+// seam may still do freely is everything the scan does not name: exec.Command,
+// the SysProcAttr its procgroup files reach into syscall for, any other syscall
+// symbol. Those are matched by nothing here, so an approved seam's own code goes
+// through untouched.
 func TestNoDirectProcessSpawns(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 
@@ -237,71 +241,103 @@ func TestNoDirectProcessSpawns(t *testing.T) {
 		return found[i].call < found[j].call
 	})
 	for _, f := range found {
-		t.Errorf("%s calls %s, which spawns a process without going through os/exec — so "+
+		t.Errorf("%s references %s, which spawns a process without going through os/exec — so "+
 			"the import allowlist in TestOnlyTheFourExecSeamsImportOsExec cannot see it and "+
-			"TestExecSeamCallSitesScrubEnv cannot prove its child environment is scrubbed. "+
-			"Route the spawn through one of the four exec seams, or write the ADR for a new "+
-			"one (docs/adr/0002, 0005, 0006).", f.file, f.call)
+			"TestExecSeamCallSitesScrubEnv cannot prove its child environment is scrubbed, which "+
+			"is what keeps ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN out of the child and the tool "+
+			"on subscription billing. Naming it at all is the finding: a spawn primitive stored in "+
+			"a variable, a field or an argument is called somewhere. Route the spawn through one of "+
+			"the four exec seams, or write the ADR for a new one (docs/adr/0002, 0005, 0006).",
+			f.file, f.call)
 	}
 }
 
-// directSpawnsIn reports every directSpawnSelectors call file makes, as
-// "<import path>.<name>". Each selector is matched against the file's OWN local
-// name for that package, so an aliased — or dot — import is followed rather
-// than assumed.
+// directSpawnsIn reports every directSpawnSelectors symbol file REFERENCES, as
+// a sorted, deduplicated list of "<import path>.<name>". Each symbol is matched
+// against the file's OWN local name for that package, so an aliased — or dot —
+// import is followed rather than assumed.
+//
+// References, not calls. `spawn := os.StartProcess` followed by `spawn(...)` is
+// a spawn whose call site names nothing the scan could match, and so are the
+// same primitive passed as an argument, stored in a struct field or returned.
+// Chasing those by their call sites means tracking values through assignments;
+// naming them costs one AST case, because `os.StartProcess` is a selector
+// expression whether it is called or merely mentioned. The trade is deliberate
+// and one-directional: mentioning a fork/exec primitive without spawning is
+// vanishingly rare and easy to argue about in review, while a guard nobody can
+// read is its own risk.
 //
 // TestNoDirectProcessSpawns runs this over the repo; TestDirectSpawnScanFollowsTheImport
 // runs it over sources that deliberately do spawn, which is the only way to
 // prove the scan would see one, since a green repo scan is also what a scan
 // that matches nothing produces.
 func directSpawnsIn(file *ast.File) []string {
-	var found []string
+	type imported struct {
+		local, importPath string
+		names             []string
+	}
+	var imports []imported
 	for importPath, names := range directSpawnSelectors {
-		local, ok := importLocalName(file, importPath)
-		if !ok {
-			continue
-		}
-		for _, name := range names {
-			ast.Inspect(file, func(n ast.Node) bool {
-				call, isCall := n.(*ast.CallExpr)
-				if !isCall {
-					return true
-				}
-				if isPkgCall(call, local, name) {
-					found = append(found, importPath+"."+name)
-				}
-				return true
-			})
+		if local, ok := importLocalName(file, importPath); ok {
+			imports = append(imports, imported{local, importPath, names})
 		}
 	}
-	return found
-}
+	if len(imports) == 0 {
+		return nil
+	}
 
-// isPkgCall reports whether call is `<pkg>.<name>(...)`.
-//
-// pkg is the file's local name for the import, which importLocalName reports as
-// "." for a dot import. A dot import puts the package's exported names into the
-// file's own scope, so `os.StartProcess(...)` is written `StartProcess(...)`:
-// there is no selector to match, and matching only selectors would let a dot
-// import walk straight past the direct-spawn scan.
-func isPkgCall(call *ast.CallExpr, pkg, name string) bool {
-	if pkg == "." {
-		id, ok := call.Fun.(*ast.Ident)
-		return ok && id.Name == name
+	seen := map[string]bool{}
+	// match records a reference written as `<qualifier>.<name>`, with the
+	// qualifier "." standing for the file's scope itself — where a dot import
+	// puts the package's exported names.
+	match := func(qualifier, name string) {
+		for _, imp := range imports {
+			if imp.local != qualifier {
+				continue
+			}
+			for _, want := range imp.names {
+				if name == want {
+					seen[imp.importPath+"."+want] = true
+				}
+			}
+		}
 	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != name {
-		return false
+
+	// The walk splits identifiers by position rather than shape: the Sel of a
+	// qualified reference is NOT a bare identifier, and treating it as one would
+	// let `anything.Exec` match under a dot-imported syscall. So a selector
+	// consumes its own Sel and re-scans only its left-hand side.
+	var scan func(ast.Node) bool
+	scan = func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.SelectorExpr:
+			if id, ok := node.X.(*ast.Ident); ok {
+				match(id.Name, node.Sel.Name)
+			} else {
+				ast.Inspect(node.X, scan)
+			}
+			return false
+		case *ast.Ident:
+			match(".", node.Name)
+		}
+		return true
 	}
-	id, ok := sel.X.(*ast.Ident)
-	return ok && id.Name == pkg
+	ast.Inspect(file, scan)
+
+	found := make([]string, 0, len(seen))
+	for call := range seen {
+		found = append(found, call)
+	}
+	sort.Strings(found)
+	return found
 }
 
 // TestDirectSpawnScanFollowsTheImport feeds the scan sources that DO spawn, so
 // that TestNoDirectProcessSpawns' green means "nothing spawns" rather than "the
-// scan matches nothing". The dot-import cases are the ones that motivated it:
-// a bare `StartProcess(...)` under `import . "os"` is the same capability with
-// no selector on it.
+// scan matches nothing". Two shapes motivated it: a bare `StartProcess(...)`
+// under `import . "os"`, which is the capability with no selector on it, and the
+// function-value escape `spawn := os.StartProcess`, which is the capability with
+// no call on it.
 func TestDirectSpawnScanFollowsTheImport(t *testing.T) {
 	cases := []struct {
 		name string
@@ -335,6 +371,55 @@ func f() { sys.Exec("/bin/sh", nil, nil) }`,
 import "os"
 func f() { os.StartProcess("/bin/sh", nil, nil) }`,
 			want: []string{"os.StartProcess"},
+		},
+		{
+			name: "os.StartProcess taken as a function value, then called",
+			src: `package p
+import "os"
+func f() {
+	spawn := os.StartProcess
+	spawn("/bin/sh", nil, nil)
+}`,
+			want: []string{"os.StartProcess"},
+		},
+		{
+			name: "syscall.ForkExec passed as an argument",
+			src: `package p
+import "syscall"
+func run(fn func(string, []string, *syscall.ProcAttr) (int, error)) {}
+func f() { run(syscall.ForkExec) }`,
+			want: []string{"syscall.ForkExec"},
+		},
+		{
+			name: "a dot-imported spawn stored in a struct field",
+			src: `package p
+import . "os"
+type launcher struct{ start func(string, []string, *ProcAttr) (*Process, error) }
+func f() launcher { return launcher{start: StartProcess} }`,
+			want: []string{"os.StartProcess"},
+		},
+		{
+			name: "an approved seam's own os/exec spawn",
+			src: `package p
+import (
+	"os/exec"
+	"syscall"
+)
+func f() *exec.Cmd {
+	cmd := exec.Command("git", "worktree", "add")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
+}`,
+			want: nil,
+		},
+		{
+			name: "a same-named method on an unrelated value",
+			src: `package p
+import "syscall"
+type conn struct{}
+func (conn) Exec(string) {}
+func f(c conn) { c.Exec("/bin/sh"); _ = syscall.Getpid() }`,
+			want: nil,
 		},
 		{
 			name: "a dot import that spawns nothing",
