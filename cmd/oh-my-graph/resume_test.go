@@ -946,7 +946,10 @@ func tamperGraphVerify(t *testing.T, runID, nodeID, command string) {
 	}
 	tampered := false
 	for _, n := range nodes {
-		node := n.(map[string]any)
+		node, ok := n.(map[string]any)
+		if !ok {
+			t.Fatalf("snapshot graph node is not an object: %v", n)
+		}
 		if node["id"] != nodeID {
 			continue
 		}

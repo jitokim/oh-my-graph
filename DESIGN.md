@@ -1398,9 +1398,13 @@ the README rather than discovered.
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
 user's subagents — and therefore which system prompt, tool grant and model —
-runs the node, routing around Layers 0–3 entirely. `success_check.verify:` would
-let it run arbitrary shell outside every guard. Both are **rejected** in
-`validatePlannedNodes`, alongside `bypassPermissions`, `cwd` and `type: gate`.
+runs the node, routing around Layers 0–3 entirely. A **planner-authored**
+`success_check.verify:` would let it run arbitrary shell outside every guard.
+Both are **rejected** in `validatePlannedNodes`, alongside `bypassPermissions`,
+`cwd` and `type: gate`. What is rejected there is the planner's authorship, not
+the field: trusted code may attach a `verify:` strictly *after* validation, from
+the user-supplied `--verify-cmd` string, and does
+(`coordinator.attachVerifyCommand`, ADR 0016 §2).
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -1419,10 +1423,11 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `budget_usd`, `timeout`, `retry` | allowed |
+| `budget_usd`, `timeout` | allowed |
+| `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
@@ -1668,7 +1673,9 @@ opt-in per node with a loud warning, never a default. For auto-planned graphs
 just a prompt convention and not just a declaration check:
 `coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
 is empty or names a tool outside the fixed allowlist, or that sets `cwd`,
-`agent`, or `success_check.verify`; and `Plan.ToolPolicies` imposes a per-node
+`agent`, or a planner-authored `success_check.verify` (trusted code attaches the
+user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
+imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
 grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are

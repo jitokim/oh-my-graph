@@ -272,7 +272,7 @@ absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 
 | `provenance` | the PASS was reached by |
 |---|---|
-| `verified` | a `success_check.verify` command the ENGINE ran and whose exit code it judged. |
+| `verified` | a `success_check.verify` command the ENGINE ran and whose exit code — and `output_matches`, when declared — it judged. |
 | `self-reported` | `result_matches` — the node emitted the right words. Nothing outside the node observed anything. |
 | `exit-only` | a subprocess ran and exited 0, with no predicate over what it did. |
 | `approved` | a human approved a `type: gate` node — no subprocess, and the strongest provenance in the set. |
