@@ -2,13 +2,18 @@
 // asking claude itself to plan the DAG — the engine behind `oh-my-graph auto`.
 // It also classifies chat turns (Route, router.go) for the `chat` prototype.
 //
-// Each Plan call makes exactly ONE planner call through the same NodeRunner
-// seam every node uses (ClaudeCLIRunner in production: env-scrubbed,
-// subscription-auth, never the Agent SDK), asking for a graph spec as a JSON
-// object. JSON is a YAML subset, so the reply is loaded through the existing
-// graph parser, normalization, and DAG validation — an invalid plan fails
-// before anything runs. The coordinator never executes the graph; the caller
-// hands the result to the same Scheduler that runs hand-written YAML.
+// Each Plan call makes a planner call through the same NodeRunner seam every
+// node uses (ClaudeCLIRunner in production: env-scrubbed, subscription-auth,
+// never the Agent SDK), asking for a graph spec as a JSON object. JSON is a
+// YAML subset, so the reply is loaded through the existing graph parser,
+// normalization, and DAG validation — an invalid plan fails before anything
+// runs. The coordinator never executes the graph; the caller hands the result
+// to the same Scheduler that runs hand-written YAML.
+//
+// One planner call per Plan is the normal case, and the bound is exactly one
+// more: a reply refused by validation buys a single corrected attempt
+// (repair.go), held to the identical ceiling, with the total cost and the fact
+// of the repair reported on the Plan.
 //
 // It also owns goal iteration (RunGoal, goal.go — ADR 0011): a bounded cycle
 // of plan → validate → hand off to the caller for execution → assess (Assess,
@@ -148,9 +153,22 @@ func truncate(s string, n int) string {
 // ToolPolicies to the Scheduler, or the graph runs with the user's own
 // (possibly wide-open) standing grants.
 type Plan struct {
-	Graph   *graph.Graph
-	Spec    []byte
+	Graph *graph.Graph
+	Spec  []byte
+	// CostUSD is what this planning step spent in TOTAL — every planner call
+	// it made, including a rejected first attempt a bounded re-plan replaced
+	// (repair.go). It is the sum and never the last call alone, because it
+	// flows on into the run ledger's TOTAL COST and the goal loop's
+	// MaxGoalBudgetUSD check: reporting only the surviving call would make
+	// both undercount silently.
 	CostUSD float64
+	// Repaired is non-nil when this plan cost two planner calls instead of
+	// one: the first reply was refused by validation and a corrected one was
+	// bought. Nil on the ordinary first-try plan. The caller must print it
+	// with the plan, for the same reason it must print AgentMappings — a
+	// decision (and a doubled price) the human never saw before execution
+	// defeats the reason it lives in trusted code.
+	Repaired *PlanRepair
 	// ToolPolicies maps each planned node's id to the COMPLETE tool policy its
 	// subprocess must run under — including that node's own --allowedTools, so
 	// the scheduler never has to merge two half-policies. Never nil for a
@@ -277,6 +295,13 @@ func (c *Coordinator) Plan(ctx context.Context, goal string, inputKeys []string)
 // truncated to maxRemainingInPrompt first, since it quotes an untrusted
 // judge's words. Nothing else about planning changes: same call, same
 // validation, no cycle ordinal anywhere in validation logic.
+//
+// It is also where the bounded re-plan lives (repair.go): a refusal the
+// planner's own output caused buys at most maxPlanRepairAttempts further
+// calls, each one a FRESH call carrying the same prompt plus the validator's
+// refusals, and each reply held to the identical ceiling. The loop is the only
+// place attempts are counted and costs are summed, so no path can spend a
+// second call without the sum and the disclosure travelling with the result.
 func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string, remaining string) (Plan, error) {
 	if strings.TrimSpace(goal) == "" {
 		return Plan{}, &PlanError{Reason: "goal is empty"}
@@ -284,55 +309,120 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	// Checked BEFORE the planner call, so an unusable --verify-cmd costs
 	// nothing. Discovering it after the paid planning call — and after a plan
 	// the user then has to re-approve — would be a worse error than the same
-	// one raised a second earlier.
+	// one raised a second earlier. It is also checked before the REPAIR loop,
+	// which would otherwise multiply that wasted call by maxPlanRepairAttempts.
 	if err := c.verifyCommand.Validate(); err != nil {
 		return Plan{}, err
 	}
 
-	// The planner decides the whole graph, so it must not be the least
-	// constrained call in an auto run. It only emits a JSON object, declares no
-	// tools, and runs read-only — but "read-only permission mode" is not a tool
-	// ceiling, and without a deny list it would inherit the user's full standing
-	// grants. A node declaring nothing denies everything deniable.
-	//
-	// It deliberately gets the deny list ONLY, not toolPolicyFor's full ceiling.
-	// The layered policy is scoped to planned NODES — the untrusted artifact the
-	// planner produces — while the planner call itself is oh-my-graph's own
-	// prompt, and isolating it would also drop the user's CLAUDE.md from the one
-	// call whose job is to understand this repository. Widening the ceiling here
-	// is a product decision about plan quality, not a safety fix, so it is not
-	// made silently as part of one.
-	prompt := plannerPrompt(goal, inputKeys, c.verifyCommand.Supplied())
-	if remaining != "" {
-		// `remaining` is the assessor's own words — model output quoted into
-		// oh-my-graph's own prompt — so it is fenced with a per-call nonce
-		// like every other untrusted quote in this package (fence.go). Bare
-		// prose around it was forgeable: the assessor is itself fed
-		// prompt-injectable artifacts, so a `remaining` that emits a plain
-		// end-marker could otherwise appear to speak as the engine here.
-		nonce, err := fenceNonce("planner continuation")
-		if err != nil {
-			return Plan{}, err
-		}
-		prompt += fmt.Sprintf(plannerContinuationTemplate, nonce, truncate(remaining, maxRemainingInPrompt))
+	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
+	if err != nil {
+		return Plan{}, err
 	}
+
+	prompt := base
+	spentUSD := 0.0
+	var repaired *PlanRepair
+	for attempt := 0; ; attempt++ {
+		plan, costUSD, refusal := c.attemptPlan(ctx, prompt)
+		spentUSD += costUSD
+		if refusal == nil {
+			// The sum, never the last call alone: three ADRs claim planning
+			// cost stays honest, and this figure flows on into the run
+			// ledger and the goal loop's budget check.
+			plan.CostUSD = spentUSD
+			plan.Repaired = repaired
+			return plan, nil
+		}
+		if !refusal.repairable || attempt >= maxPlanRepairAttempts {
+			return Plan{}, &PlanRejection{Err: refusal.err, Spec: refusal.spec, CostUSD: spentUSD, Repaired: repaired}
+		}
+		section, err := repairSection(refusal.issues)
+		if err != nil {
+			// The refused attempt was paid for, and the fence failing to mint
+			// a nonce does not unspend it. Returning the bare error here would
+			// report $0 planning cost for a call the user was charged for, and
+			// would destroy the rejected spec — the two things PlanRejection
+			// exists to carry.
+			return Plan{}, &PlanRejection{Err: err, Spec: refusal.spec, CostUSD: spentUSD, Repaired: repaired}
+		}
+		// base, not prompt: the corrected attempt answers the refusals of the
+		// reply it is correcting, not a growing pile of every earlier one.
+		prompt = base + section
+		repaired = &PlanRepair{Issues: refusal.issues, RejectedCostUSD: spentUSD}
+	}
+}
+
+// plannerPromptFor renders one planning attempt's base prompt: the planner
+// instruction for the goal, plus the goal loop's continuation section when a
+// previous cycle left work remaining.
+//
+// verifyCommandSupplied travels through to plannerPrompt because it picks
+// which final-check paragraph the planner is given (ADR 0016 §5), and a repair
+// attempt must be given the same one the first attempt was — a repair that
+// re-planned against the other paragraph would be answering a different
+// question than the one that was refused.
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool) (string, error) {
+	prompt := plannerPrompt(goal, inputKeys, verifyCommandSupplied)
+	if remaining == "" {
+		return prompt, nil
+	}
+	// `remaining` is the assessor's own words — model output quoted into
+	// oh-my-graph's own prompt — so it is fenced with a per-call nonce
+	// like every other untrusted quote in this package (fence.go). Bare
+	// prose around it was forgeable: the assessor is itself fed
+	// prompt-injectable artifacts, so a `remaining` that emits a plain
+	// end-marker could otherwise appear to speak as the engine here.
+	nonce, err := fenceNonce("planner continuation")
+	if err != nil {
+		return "", err
+	}
+	return prompt + fmt.Sprintf(plannerContinuationTemplate, nonce, truncate(remaining, maxRemainingInPrompt)), nil
+}
+
+// attemptPlan makes exactly ONE planner call with the given prompt and turns
+// its reply into either a validated Plan or a planRefusal. Every reply reaches
+// here through the same path — there is no "second attempt" branch, so a
+// repaired plan clears the identical ceiling the first one had to.
+//
+// The call's cost is returned separately from the Plan because a REFUSED
+// attempt still spent it: the caller sums across attempts, which is what keeps
+// a repaired plan's price honest and a rejected one's price reportable.
+//
+// The planner decides the whole graph, so it must not be the least constrained
+// call in an auto run. It only emits a JSON object, declares no tools, and
+// runs read-only — but "read-only permission mode" is not a tool ceiling, and
+// without a deny list it would inherit the user's full standing grants. A node
+// declaring nothing denies everything deniable.
+//
+// It deliberately gets the deny list ONLY, not toolPolicyFor's full ceiling.
+// The layered policy is scoped to planned NODES — the untrusted artifact the
+// planner produces — while the planner call itself is oh-my-graph's own
+// prompt, and isolating it would also drop the user's CLAUDE.md from the one
+// call whose job is to understand this repository. Widening the ceiling here
+// is a product decision about plan quality, not a safety fix, so it is not
+// made silently as part of one.
+func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, float64, *planRefusal) {
 	outcome, err := c.runner.Run(ctx, coordinatorInvocation(prompt))
 	if err != nil {
-		return Plan{}, fmt.Errorf("planner run: %w", err)
+		// No reply, so nothing was produced and nothing is repairable: this
+		// is the spawn/transport fault, not the planner's judgment.
+		return Plan{}, 0, &planRefusal{err: fmt.Errorf("planner run: %w", err)}
 	}
+	costUSD := outcome.TotalCostUSD
 	if outcome.ExitCode != 0 {
-		return Plan{}, &PlanError{
+		return Plan{}, costUSD, &planRefusal{err: &PlanError{
 			Reason: fmt.Sprintf("planner exited with code %d", outcome.ExitCode),
 			Output: outcome.Result,
-		}
+		}}
 	}
 
 	spec := extractJSON(outcome.Result)
 	if spec == "" {
-		return Plan{}, &PlanError{
+		return Plan{}, costUSD, &planRefusal{err: &PlanError{
 			Reason: "planner reply contained no JSON object",
 			Output: outcome.Result,
-		}
+		}}
 	}
 
 	g, err := graph.Parse([]byte(spec))
@@ -349,41 +439,86 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		// resources (the ADR 0012 line, held).
 		var unresolved *graph.UnresolvedFragmentError
 		if errors.As(err, &unresolved) {
-			return Plan{}, &PlanError{
+			planErr := &PlanError{
 				Reason: fmt.Sprintf("planned node %q references a fragment (use:/with:); planned nodes may not reference fragments — trusted code resolves local files, the planner never names them", unresolved.NodeID),
 			}
+			return Plan{}, costUSD, &planRefusal{err: planErr, spec: []byte(spec), issues: []string{planErr.Reason}, repairable: true}
 		}
-		return Plan{}, fmt.Errorf("generated graph is invalid: %w", err)
+		// A structural refusal carries a precise, machine-generated
+		// diagnosis, so it is worth handing back. It carries only ONE:
+		// graph.Validate is Issues()[0], and this package cannot reach the
+		// collect-all view from a *failed* Parse — see plannerRepairTemplate,
+		// which tells the planner the list is not exhaustive.
+		var invalid *graph.GraphValidationError
+		if errors.As(err, &invalid) {
+			return Plan{}, costUSD, &planRefusal{
+				err:        fmt.Errorf("generated graph is invalid: %w", err),
+				spec:       []byte(spec),
+				issues:     []string{invalid.Error()},
+				repairable: true,
+			}
+		}
+		// A decode failure: the reply was not loadable as YAML/JSON at all.
+		// There is no per-node diagnosis to hand back, so re-planning would
+		// be a blind retry on a paid runtime rather than a repair.
+		return Plan{}, costUSD, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
 	}
-	if err := validatePlannedNodes(g, outcome.Result); err != nil {
-		return Plan{}, err
+	if issues := validatePlannedNodes(g, outcome.Result); len(issues) > 0 {
+		return Plan{}, costUSD, &planRefusal{
+			err:        issues[0],
+			spec:       []byte(spec),
+			issues:     planIssueReasons(issues),
+			repairable: true,
+		}
 	}
 	plan := Plan{
 		Graph:        g,
 		Spec:         []byte(spec),
-		CostUSD:      outcome.TotalCostUSD,
 		ToolPolicies: toolPoliciesByNode(g),
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
+	//
+	// A mapping fault is infrastructure, not the planner's judgment, so it is
+	// not repairable — but the spec still travels. This spec is one validation
+	// ACCEPTED: "a paid-for plan is not destroyed by being invalid" applies all
+	// the more to a plan that was valid, and it is the planner's own reply, not
+	// a half-mapped rebuild.
 	if err := c.applyAgentMapping(&plan); err != nil {
-		return Plan{}, err
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Strictly after agent mapping's rebuild: skill mapping must see which
 	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
 	// into the graph that becomes the final Spec, exactly once.
 	if err := c.applySkillMapping(&plan); err != nil {
-		return Plan{}, err
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Last of the post-validation mutations, so the command lands in the graph
 	// that becomes the final Spec — the artifact `--plan-only` prints and
 	// `run`/`resume` replay. The plan the validator saw carried no verify:
 	// validatePlannedNodeVerify still refuses a planner-authored one, and this
 	// string came from the user's own command line (ADR 0016 §2).
+	//
+	// Not repairable, for the same reason the two mappings above are not: the
+	// command is the USER's, so no further paid planner call can fix it — and
+	// plan() already validated it before spending the first one. The spec still
+	// travels, because this plan was one validation ACCEPTED.
 	if err := c.attachVerifyCommand(&plan); err != nil {
-		return Plan{}, err
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
-	return plan, nil
+	return plan, costUSD, nil
+}
+
+// planIssueReasons is the text a repair prompt hands back: each refusal's
+// Reason, never its Error(). A *PlanError's Error() appends the planner's
+// whole raw reply, which would quote the model's previous output back at it —
+// bulk, not diagnosis.
+func planIssueReasons(issues []*PlanError) []string {
+	reasons := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		reasons = append(reasons, issue.Reason)
+	}
+	return reasons
 }
 
 // toolPoliciesByNode derives the run's execution ceiling: one complete policy
@@ -538,45 +673,44 @@ func toolName(rule string) string {
 // graph.SuccessCheck by reflection and fails on any field with no recorded
 // disposition, which turns that rule from a convention a reviewer has to
 // remember into a red test.
-func validatePlannedNodes(g *graph.Graph, reply string) error {
+//
+// It returns EVERY refusal, not the first: the first is what the caller
+// surfaces (attemptPlan takes issues[0], the same "fail-fast view of the
+// collect-all" contract graph.Validate has with graph.Issues), while the whole
+// list is what the bounded re-plan hands back. A repair that fixed one
+// refusal and tripped the next would have burned its single retry, so
+// collecting all of them here is what decides whether one retry converges.
+func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	if len(g.Nodes) == 0 {
-		return &PlanError{Reason: "planner produced a graph with no nodes", Output: reply}
+		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
+	}
+	var issues []*PlanError
+	add := func(err *PlanError) {
+		if err != nil {
+			issues = append(issues, err)
+		}
 	}
 	for _, node := range g.Nodes {
 		if strings.TrimSpace(node.Prompt) == "" {
-			return &PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)}
+			add(&PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)})
 		}
 		if node.Type == graph.TypeGate {
-			return &PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)}
+			add(&PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)})
 		}
 		if node.PermissionMode == graph.PermissionBypass {
-			return &PlanError{
+			add(&PlanError{
 				Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
-			}
+			})
 		}
-		if err := validatePlannedNodeCwd(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeVerify(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeAgent(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeWorktree(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeFeedback(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeRetry(node); err != nil {
-			return err
-		}
-		if err := validatePlannedNodeTools(node); err != nil {
-			return err
-		}
+		add(validatePlannedNodeCwd(node))
+		add(validatePlannedNodeVerify(node))
+		add(validatePlannedNodeAgent(node))
+		add(validatePlannedNodeWorktree(node))
+		add(validatePlannedNodeFeedback(node))
+		add(validatePlannedNodeRetry(node))
+		add(validatePlannedNodeTools(node))
 	}
-	return nil
+	return issues
 }
 
 // validatePlannedNodeCwd rejects a planned node that redirects its working
@@ -600,7 +734,7 @@ func validatePlannedNodes(g *graph.Graph, reply string) error {
 // reaches exec as a non-empty cmd.Dir, which fails the spawn with "chdir: no
 // such file or directory". Accepting it would let a plan validate and then halt
 // the run on its first node.
-func validatePlannedNodeCwd(node graph.Node) error {
+func validatePlannedNodeCwd(node graph.Node) *PlanError {
 	if node.Cwd == "" {
 		return nil
 	}
@@ -620,7 +754,7 @@ func validatePlannedNodeCwd(node graph.Node) error {
 // Only the field itself is refused, not the whole check: exit_zero and
 // result_matches are inert predicates over an outcome the engine already holds,
 // so a planned node may still use them.
-func validatePlannedNodeVerify(node graph.Node) error {
+func validatePlannedNodeVerify(node graph.Node) *PlanError {
 	if node.SuccessCheck.Verify == nil {
 		return nil
 	}
@@ -646,7 +780,7 @@ const maxPlannedFeedbackRounds = 3
 // otherwise multiply the loop body's subprocess spend by an arbitrary round
 // count. Rejected rather than clamped: a plan that asked for 50 rounds and
 // silently ran 3 is a different plan from the one that was validated.
-func validatePlannedNodeFeedback(node graph.Node) error {
+func validatePlannedNodeFeedback(node graph.Node) *PlanError {
 	if node.Feedback == nil || node.Feedback.Max <= maxPlannedFeedbackRounds {
 		return nil
 	}
@@ -690,8 +824,10 @@ func validatePlannedNodeFeedback(node graph.Node) error {
 const maxPlannedRetries = 3
 
 // validatePlannedNodeRetry bounds a planned node's re-run count. See
-// maxPlannedRetries for why this is not merely tidiness.
-func validatePlannedNodeRetry(node graph.Node) error {
+// maxPlannedRetries for why this is not merely tidiness. It returns a
+// *PlanError like every sibling check, so an over-retrying node is collected
+// into the repair prompt with the rest rather than fired one at a time.
+func validatePlannedNodeRetry(node graph.Node) *PlanError {
 	if node.Retry == nil || node.Retry.Max <= maxPlannedRetries {
 		return nil
 	}
@@ -727,7 +863,7 @@ func validatePlannedNodeRetry(node graph.Node) error {
 // validation, from its own conservative scan of the user's agent files
 // (agentmap.go); that path deliberately trades layer 1 for agent resolution
 // and reports every mapping on the Plan.
-func validatePlannedNodeAgent(node graph.Node) error {
+func validatePlannedNodeAgent(node graph.Node) *PlanError {
 	if node.Agent == "" {
 		return nil
 	}
@@ -746,7 +882,7 @@ func validatePlannedNodeAgent(node graph.Node) error {
 // state nobody sanctioned. Rejected outright, like cwd — and for the same
 // locality reason: a planned node always runs in the invocation's working
 // directory, never in a checkout of its own making.
-func validatePlannedNodeWorktree(node graph.Node) error {
+func validatePlannedNodeWorktree(node graph.Node) *PlanError {
 	if node.Worktree == "" {
 		return nil
 	}
@@ -759,7 +895,7 @@ func validatePlannedNodeWorktree(node graph.Node) error {
 // empty or names anything outside plannedToolAllowlist. See
 // validatePlannedNodes for why an empty list is rejected rather than passed
 // through.
-func validatePlannedNodeTools(node graph.Node) error {
+func validatePlannedNodeTools(node graph.Node) *PlanError {
 	if len(node.AllowedTools) == 0 {
 		return &PlanError{
 			Reason: fmt.Sprintf("planned node %q has no allowed_tools; auto mode requires an explicit least-privilege tool list", node.ID),
@@ -788,12 +924,30 @@ func extractJSON(result string) string {
 	return result[start : end+1]
 }
 
+// plannerRetryCauses is the closed retry.on cause set, rendered into the
+// planner prompt. Built from graph's own exported cause constants rather than
+// retyped, for the same reason the tool list is rendered from
+// plannedToolAllowlist: a set the prompt ADVERTISES and the validator ENFORCES
+// must have one spelling. graph keeps its ordered slice unexported, so the
+// order here is this package's; TestPlan_PromptListsOnlyAcceptedRetryCauses
+// pins that every token advertised is one graph.Parse actually accepts, which
+// is the direction that costs a rejected plan.
+var plannerRetryCauses = []string{
+	graph.CauseNonzeroExit,
+	graph.CauseRunError,
+	graph.CauseOutputError,
+	graph.CauseBudgetExceeded,
+	graph.CauseVerifyFailed,
+	graph.CauseResultMismatch,
+}
+
 // plannerPrompt renders the coordinator instruction for one goal. Input keys
 // are sorted so the prompt is deterministic for a given goal + inputs. The
-// tool list rendered into the prompt is plannedToolAllowlist itself — telling
-// the planner the exact set validatePlannedNodes enforces so a well-behaved
-// plan validates on the first try. Enforcement does not depend on the
-// planner reading or following this text.
+// tool list and the retry cause list rendered into the prompt are
+// plannedToolAllowlist and plannerRetryCauses themselves — telling the planner
+// the exact sets validation enforces so a well-behaved plan validates on the
+// first try. Enforcement does not depend on the planner reading or following
+// this text.
 func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) string {
 	keys := "none"
 	if len(inputKeys) > 0 {
@@ -809,8 +963,17 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) 
 	// chosen paragraph, and a placeholder substituted INTO a format string is
 	// never expanded again — a single Sprintf would ship the planner a literal
 	// "%!s" where the pattern it must copy character-for-character belongs.
+	// That is also why the pattern is no longer an argument of the outer
+	// template: the template's %[4]s takes the RENDERED paragraph, and the
+	// retry causes keep %[5]s.
 	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern))
-	return fmt.Sprintf(plannerPromptTemplate, goal, keys, strings.Join(plannedToolAllowlist, ", "), finalCheck)
+	return fmt.Sprintf(plannerPromptTemplate,
+		goal,
+		keys,
+		strings.Join(plannedToolAllowlist, ", "),
+		finalCheck,
+		strings.Join(plannerRetryCauses, ", "),
+	)
 }
 
 // finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
@@ -957,10 +1120,18 @@ Rules:
   there is no other Bash pattern available, so a node needing a different
   shell command cannot be planned; break it into steps that fit the list
   above instead.
-- Do not set permission_mode, budget_usd, type, cwd, agent, or worktree on
-  any node.
+- Do not set permission_mode, budget_usd, type, cwd, agent, worktree, or
+  success_check.verify on any node.
   Every node runs in the directory oh-my-graph was invoked from, as plain
-  claude — never as one of the user's subagents.
+  claude — never as one of the user's subagents. success_check.verify is a
+  shell command the ENGINE runs, outside every guard above, so a planned
+  node may never declare one: "success_check": {"verify": ...} is rejected
+  outright. Use "exit_zero" or "result_matches" instead and put the command
+  the node should run in that node's own prompt, with the matching Bash
+  pattern in its allowed_tools.
+- "retry" is optional and rarely worth setting. If you do set it, its "on"
+  list may contain ONLY these exact tokens: %[5]s. Any other
+  spelling is rejected outright.
 - Never bound a node's work with a budget: budget_usd stays unset (see
   above) because a tight budget kills a nearly-done node at the threshold
   and loses its finished work. If a node doing substantial implementation
@@ -978,6 +1149,13 @@ Rules:
   backward along depends_on, no node outside the loop may depend on a
   loop node other than the reviewer, and one node belongs to at most one
   loop.
+  {{ feedback.<id> }} takes NO filter — it always inlines the payload, so
+  "{{ feedback.review | inline }}" is WRONG; the " | inline" filter exists
+  for {{ artifacts.<id> }} only. The placeholder is legal ONLY on a node
+  inside that loop — the rerun target, the reviewer, and anything between
+  them — and <id> must name the node that DECLARES the feedback block (the
+  reviewer), never the node being re-run. A token breaking any of those
+  three rules is rejected outright.
 - If the goal involves substantial implementation, decompose it into work
   units sized so each node's output is a reviewable, committable slice —
   prefer more, smaller nodes (within the node cap) over one node that does

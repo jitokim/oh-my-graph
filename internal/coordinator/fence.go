@@ -6,11 +6,16 @@
 // what removes that prediction: the nonce is minted after the text is already
 // fixed, so no material can contain it.
 //
-// Three call sites share this: skillmap.go's inlined SKILL.md body (ADR 0012)
+// Four call sites share this: skillmap.go's inlined SKILL.md body (ADR 0012)
 // and assess.go's engine-recorded material — node details, artifact excerpts
 // and the previous cycle's `remaining` — which is raw model output by design
 // (ADR 0011 §2), plus coordinator.go's continuation quote of that same
-// `remaining` into the next cycle's planner prompt.
+// `remaining` into the next cycle's planner prompt, and repair.go's quote of
+// the validator's refusals into a re-plan prompt. The last one is the least
+// obvious and no less necessary: a refusal is an engine-authored sentence, but
+// it interpolates model-authored fragments — a placeholder token, a node id —
+// and at least one validator does so without escaping them, so the planner can
+// place newlines and forged marker lines inside the text being quoted back.
 
 package coordinator
 

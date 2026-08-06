@@ -455,6 +455,40 @@ artifacts). Worst case is legible from the file: `(1 + max) × |body|` runs
 per arc, each under its own timeout/budget/tool ceiling; the ledger prices
 every execution with a `feedback round k/N` note.
 
+**A fan-in reviewer's arc reaches one branch — `lint` says which
+(`graph.LintFeedbackReach`, advisory).** When the declarer fans in from
+several producers, `rerun` still names one node, so the body may exclude a
+producer whose artifact the declarer judges: the loop then re-judges an
+unchanged file every round and halts with the defect untouched (issue #118 —
+five defects, all in the excluded branch, ~$14 of re-running the healthy
+one). `lint` and `run --dry-run` warn for each `depends_on` producer outside
+the body, naming the declarer, the rerun target, the unreachable producer and
+— when one exists and still validates — the covering target to aim at
+instead. Two parents are skipped: a **gate**, which rule 4 forbids a body from
+ever containing, and a parent that is an **ancestor of the rerun target**,
+which is rule 3's carve-out in topology — it sits upstream of the whole loop,
+its output already flows into the body, and the loop re-runs its consumers.
+That second skip is what keeps `spec → impl → review` with `rerun: impl`
+quiet: warning there would advise `rerun: spec`, which re-runs the acceptance
+criteria every round and re-judges the implementation against criteria that
+just moved. #118's producer is a *sibling* of the target, on no path to it,
+and still warns.
+
+It stays an **advisory**, never an eighth load rule. The skips narrow the
+sweep to the shapes rules 3 and 4 do not bless, but neither is a proof of
+intent: a sibling *corpus* root is topologically identical to #118's sibling
+*work*, so a legitimate graph can still be warned about, and refusing it would
+break working hand-written graphs to catch a planner's mistake. What the sweep
+sees is `depends_on`; which files a prompt actually judges it cannot see —
+issue #118's reviewer named its two artifacts by literal path, not through
+`{{ artifacts.<id> }}` — and the printed advisory says so itself rather than
+asserting the defect as fact. The complementary half is planner guidance
+(`internal/coordinator`), not more validation — a planned follow-up, not
+shipped: the planner prompt still describes only the linear implement→review
+shape. A producer left outside the body that *asks* for the payload with
+`{{ feedback.<id> }}` is already a load error, not an advisory (the
+placeholder rule above).
+
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
 attempt does not resume the parent session either — it starts cold, which
@@ -462,7 +496,12 @@ attempt does not resume the parent session either — it starts cold, which
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
-produces and silently mean "never retry".
+produces and silently mean "never retry". A **negative `max`** is refused at
+load for the same reason: the scheduler adds `max` to the attempt count only
+when it is positive, so `max: -1` is discarded and the node runs once — the
+identical quiet non-retry, from a value no author can have meant. `max: 0` is
+legal and untouched: it IS the extra-attempt count a node declaring no retry
+already has.
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
@@ -582,10 +621,10 @@ leg did. `graph.go` states this at the struct itself; copy the pair, not just
 the `yaml` half.
 
 `SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
-reject an empty `command`, an unparseable `timeout`, a timeout over the ceiling,
-and an uncompilable `output_matches` — at load, naming the node
-(`GraphValidationError`), never mid-run. Changing this struct touches loader,
-validator, shipped example graphs and tests together.
+reject an uncompilable `result_matches`, an empty `command`, an unparseable
+`timeout`, a timeout over the ceiling, and an uncompilable `output_matches` — at
+load, naming the node (`GraphValidationError`), never mid-run. Changing this
+struct touches loader, validator, shipped example graphs and tests together.
 
 ### Verdict patterns — `result_matches` reads raw markdown
 
@@ -593,6 +632,13 @@ validator, shipped example graphs and tests together.
 (`outcome.Result`, the CLI's `result` field), with no normalization whatsoever:
 no trimming, no markdown stripping, no case folding, no `(?m)`. `^` and `$`
 therefore anchor to the start and end of the whole reply text.
+
+The pattern is **compiled at load**, exactly like `verify.output_matches`: a
+pattern that does not compile is a `GraphValidationError` naming the node and
+quoting the pattern, so `lint` and `run --dry-run` refuse the graph and no node
+is spawned. A verdict pattern is a declaration, and a broken declaration is
+knowable from the file alone — it used to be diagnosed only inside the
+scheduler's evaluation, which runs after its own node has been paid for.
 
 Models emit markdown. A prompt that says "begin your reply with PASS" leaves
 the model free to write `**PASS**`, and it does — that exact reply has failed
@@ -1201,7 +1247,11 @@ path; custom
 YAML stays the precise-control path. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
-Coordinator makes exactly that one call per `auto` run. `--plan-only` stops
+Coordinator makes exactly that one call per PLAN — per cycle, not per `auto`
+run — plus at most one more for that same plan:
+a plan refused by validation buys ONE corrected call (`maxPlanRepairAttempts`,
+`internal/coordinator/repair.go`), so the planner-call ceiling is 2 per plan
+and `2 × N` for `--max-cycles N`. `--plan-only` stops
 the sequence immediately after the topology print, so that one call is all it
 makes and no node runs — the inspection path for the mappings and the ceiling,
 and deliberately NOT free the way `run --dry-run` is: there is no plan to
@@ -1214,8 +1264,20 @@ reuses the same Coordinator but adds a routing call per turn before planning;
 see "Ambient chat".) The planner asks
 claude to reply with a graph spec as a JSON object (name / nodes / depends_on /
 prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
-loaded through the existing parser, normalization, and DAG validation — an
-invalid plan fails before anything runs. Auto-specific guards, enforced in
+loaded through the existing parser, normalization, and DAG validation — a
+VALIDATION-REFUSED plan buys the one corrected call above, and if that reply is
+refused too the whole step fails before anything runs, with what it paid for
+kept at
+`$OMG_HOME/plans/<id>/rejected.json` (its own name, so nothing walking the
+tree for `graph.json` mistakes it for a graph the engine would run). The
+corrected reply is UNTRUSTED exactly like the first: same `graph.Parse`, same
+`validatePlannedNodes`, same mapping order — there is no shortcut for "it
+already failed once". Only a refusal the reply's own CONTENT caused is
+retryable: a runner error, a non-zero planner exit, a reply with no JSON
+object, a reply whose JSON does not decode, and any other non-content failure
+stop the step with no second planner call, because there is nothing precise to
+hand back and a blind retry on a paid runtime is not a repair.
+Auto-specific guards, enforced in
 `coordinator.validatePlannedNodes` (not just requested in the planner prompt):
 a planned node may NOT request `permission_mode: bypassPermissions`
 (hand-written YAML may opt in per node because the user reviewed it; an
@@ -1564,7 +1626,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ## Repo layout
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), print ledger
-internal/graph/{graph,validate,feedback,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges, and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
+internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go), and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
 internal/schedule/{scheduler,errors,feedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
@@ -1572,7 +1634,7 @@ internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — Git
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011)
+internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load

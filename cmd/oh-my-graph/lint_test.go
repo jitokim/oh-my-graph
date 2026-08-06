@@ -245,3 +245,49 @@ nodes:
 		t.Errorf("a clean lint should say so:\n%s", out.String())
 	}
 }
+
+// --- feedback-reach warnings -------------------------------------------------
+
+// TestLintGraph_FeedbackReachWarningNamesAllThreeIds is issue #118 at the CLI
+// boundary: the graph is valid — it lints clean and exits 0 — but its
+// reviewer's feedback arc cannot repair one of the two producers it judges.
+// The warning must name the reviewer, the rerun target and the unreachable
+// producer, and offer the target that would cover both, because working that
+// out by hand from graph.json is what the reporter had to do.
+func TestLintGraph_FeedbackReachWarningNamesAllThreeIds(t *testing.T) {
+	path := writeGraphFile(t, `
+name: fan-in
+nodes:
+  - { id: scope, prompt: scope }
+  - { id: qa-plan, prompt: write the plan, depends_on: [scope] }
+  - id: load-script
+    prompt: "write the script: {{ feedback.review }}"
+    depends_on: [scope]
+  - id: review
+    prompt: judge both files on disk
+    depends_on: [qa-plan, load-script]
+    success_check: { exit_zero: true, result_matches: "^PASS$" }
+    feedback: { rerun: load-script, max: 2 }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("a feedback-reach advisory must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	if !strings.Contains(warnings.String(), "warning: "+path+`: node "review": feedback: `) {
+		t.Errorf("warning writer should carry the reviewer-scoped line:\n%s", warnings.String())
+	}
+	for _, want := range []string{`"load-script"`, `"qa-plan"`, "rerun: scope"} {
+		if !strings.Contains(warnings.String(), want) {
+			t.Errorf("warning should name %s:\n%s", want, warnings.String())
+		}
+	}
+	if strings.Contains(out.String(), "warning:") {
+		t.Errorf("warnings must not leak to stdout:\n%s", out.String())
+	}
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only a feedback-reach warning exited %d, want 0", code)
+	}
+}

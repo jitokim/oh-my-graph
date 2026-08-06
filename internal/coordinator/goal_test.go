@@ -107,6 +107,12 @@ func TestRunGoal_AssessRefusalStopsTheLoop(t *testing.T) {
 // A mid-cycle planning/validation failure ends the loop with the *PlanError,
 // keeping the cycles that did complete (ADR 0011 §2: validation is a property
 // of the only entry point, every cycle, no exceptions).
+//
+// The cycle-2 plan is refused twice here, because the re-plan budget is
+// per-cycle (repair.go): cycle 2 buys its one corrected attempt, that reply is
+// refused by the identical ceiling, and only then does the loop end. The
+// scripted plan-4 absence is what pins the bound — a third planner call in one
+// cycle would hit the fake's "no scripted outcome" error instead.
 func TestRunGoal_ValidationFailureMidCycleStopsTheLoop(t *testing.T) {
 	badSpec := `{"name":"bad","version":"1","nodes":[` +
 		`{"id":"nuke","prompt":"clean up","allowed_tools":["Bash(rm -rf *)"]}]}`
@@ -114,6 +120,7 @@ func TestRunGoal_ValidationFailureMidCycleStopsTheLoop(t *testing.T) {
 		"plan-1":   {Result: validSpec},
 		"assess-1": {Result: assessNotMetReply},
 		"plan-2":   {Result: badSpec},
+		"plan-3":   {Result: badSpec},
 	})
 	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: passingEvidence("r1", 0.1)}}
 
@@ -124,6 +131,12 @@ func TestRunGoal_ValidationFailureMidCycleStopsTheLoop(t *testing.T) {
 	}
 	if !strings.Contains(planErr.Reason, "outside auto mode's tool allowlist") {
 		t.Errorf("reason = %q, want the allowlist rejection", planErr.Reason)
+	}
+	if got := fake.InvocationCount("plan-3"); got != 1 {
+		t.Errorf("cycle 2's repair attempt ran %d times, want exactly 1", got)
+	}
+	if got := fake.InvocationCount("plan-4"); got != 0 {
+		t.Errorf("a third planner call was made in one cycle: %d — the repair budget is one", got)
 	}
 	if len(result.Cycles) != 1 {
 		t.Fatalf("%d completed cycles reported, want the 1 that finished", len(result.Cycles))
