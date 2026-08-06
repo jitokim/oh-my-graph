@@ -670,14 +670,36 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 
+	// A previous LEG's reply, if the resume path seeded one — a
+	// `resume --retry-failed` re-running a node that already failed in an
+	// earlier process. Taken (not read), so it is quoted into this execution
+	// only; from the second attempt on, the prompt carries the attempt this leg
+	// watched fail instead.
+	//
+	// It is taken HERE, before the session id is minted, because a seeded reply
+	// makes this execution a RETRY of the attempt that produced it — and a
+	// retry starts cold (prepareRetry, ADR 0016 §6). Without that, a
+	// `handoff: session` node would resume its parent's conversation while the
+	// quote appended to its prompt told it "You are a FRESH claude session […]
+	// neither is any conversation it belonged to": the two halves of one
+	// feature disagreeing across the process boundary, which is exactly what
+	// NodeRecord.Judged exists to prevent on the verdict axis. Cold means this
+	// execution needs a session id of its own, like every retried attempt.
+	priorLegReply, retryingPriorLeg := "", false
+	if node.Type != graph.TypeGate {
+		priorLegReply, retryingPriorLeg = h.TakePriorReply(node.ID)
+	}
+
 	// A fresh-session claude node has its session id minted HERE, before
 	// anything spawns, so node_started can publish it and a live view can
 	// locate the transcript of a node that is still RUNNING — the terminal
 	// events used to be the id's first appearance. A gate spawns no subprocess
 	// and a session-handoff node continues its parent's session (whose id the
-	// parent's own terminal event already published), so neither carries one.
+	// parent's own terminal event already published), so neither carries one —
+	// unless this is the retry of a prior leg, where the session node resumes
+	// nothing and so needs its own id after all.
 	sessionID := ""
-	if node.Type != graph.TypeGate && node.Handoff != graph.HandoffSession {
+	if node.Type != graph.TypeGate && (node.Handoff != graph.HandoffSession || retryingPriorLeg) {
 		sessionID = s.sessionIDs()
 	}
 	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
@@ -697,13 +719,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	// per prompt" a property of the code and not of anyone's discipline.
 	basePrompt := invocation.Prompt
 
-	// A previous LEG's reply, if the resume path seeded one — a
-	// `resume --retry-failed` re-running a node that already failed in an
-	// earlier process. Taken (not read), so it is quoted into this execution
-	// only; from the second attempt on, the prompt carries the attempt this leg
-	// watched fail instead.
-	if prior, seeded := h.TakePriorReply(node.ID); seeded {
-		s.quotePriorAttempt(&invocation, node, basePrompt, prior)
+	// The seeded reply taken above is quoted here, and this execution starts
+	// cold with it — startCold without the session id prepareRetry mints,
+	// because this execution's id was minted above so node_started could
+	// publish it.
+	if retryingPriorLeg {
+		s.startCold(&invocation, node, basePrompt, priorLegReply)
 	}
 
 	attempts := 1
@@ -788,7 +809,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// semantics are untouched here — only the pass/fail verdict is.
 			verdictErr = evaluateBudget(node, outcome)
 			if verdictErr == nil {
-				return s.recordPass(led, h, node, outcome, time.Since(start), attempt)
+				return s.recordPass(led, h, node, outcome, time.Since(start), attempt, retryingPriorLeg)
 			}
 		}
 
@@ -916,12 +937,31 @@ func (s *Scheduler) keepFailedReply(h *handoff.Handoff, node graph.Node, reply s
 	s.logProgress("✎ %s  reply saved: %s\n", node.ID, path)
 }
 
+// dropFailedReply removes a failed/<node-id>.out an EARLIER LEG left behind,
+// once this leg's execution of that node has passed. The file's whole meaning
+// is "this node failed and these were its words" — the same claim
+// TestScheduler_PassingNodeKeepsNoFailedReply pins for a node that never failed
+// — and a run directory holding the losing reply beside the winning artifact,
+// with a PASS verdict in state.json, makes the directory a statement about
+// nothing.
+//
+// Best-effort exactly as keepFailedReply is, and for the same reason: the node
+// has passed, and a filesystem that will not take the removal must not rewrite
+// that. Only a resume leg can have such a file to drop — an in-leg retry never
+// wrote one, because only a TERMINAL failure does.
+func (s *Scheduler) dropFailedReply(h *handoff.Handoff, node graph.Node) {
+	if err := h.DropFailure(node.ID); err != nil {
+		s.logProgress("⚠ %s  stale failed reply not removed: %v\n", node.ID, err)
+	}
+}
+
 // recordPass writes the node's live "✓ PASS" progress line, its ledger row,
 // the same record into the resumable snapshot, and the matching node_passed
 // event, then returns nil so callers can `return s.recordPass(...)` directly.
-func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
+func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) error {
 	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
-	rec := passRecord(node, outcome, duration, attempt)
+	s.dropFailedReply(h, node)
+	rec := passRecord(node, outcome, duration, attempt, coldStart)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
 	s.recordSnapshot(node, rec, h, false)
@@ -978,10 +1018,24 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 // is the reply of the attempt just finished, or "" when that attempt produced
 // none or produced one no check judged.
 func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) string {
-	s.quotePriorAttempt(invocation, node, basePrompt, priorReply)
-	invocation.ResumeSession = ""
+	s.startCold(invocation, node, basePrompt, priorReply)
 	invocation.SessionID = s.sessionIDs()
 	return invocation.SessionID
+}
+
+// startCold is what "a retry starts cold" MEANS to an invocation: the prompt is
+// rebuilt from basePrompt with at most the one prior reply quoted into it, and
+// the invocation resumes nothing.
+//
+// It is separate from prepareRetry because a retry does not always mint a
+// session id here: an in-leg retry does (prepareRetry), while the retry of a
+// node that failed in an EARLIER PROCESS is the first execution of this leg and
+// already had its id minted where node_started published it (runNode). Both are
+// retries and both must be cold — a `handoff: session` node that resumed its
+// parent here would be handed the quote's FRESH-SESSION paragraph as a lie.
+func (s *Scheduler) startCold(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
+	s.quotePriorAttempt(invocation, node, basePrompt, priorReply)
+	invocation.ResumeSession = ""
 }
 
 // quotePriorAttempt sets invocation.Prompt to basePrompt plus the fenced quote
@@ -1521,7 +1575,7 @@ func causeFromCheck(err error) string {
 
 // passRecord / failRecord build the single ledger row for a node's terminal
 // result, keeping the record shape in one place.
-func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
+func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) ledger.Record {
 	rec := ledger.Record{
 		NodeID:    node.ID,
 		SessionID: outcome.SessionID,
@@ -1534,12 +1588,14 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 	var notes []string
 	if attempt > 0 {
 		notes = append(notes, fmt.Sprintf("passed after %d retr%s", attempt, plural(attempt)))
-		// runNode clears ResumeSession on every retry, so a session-handoff
-		// node's passing attempt ran without its parent's conversation — a
-		// fact the surfaces reading this Detail would otherwise never show.
-		if node.Handoff == graph.HandoffSession {
-			notes = append(notes, "retry started fresh — parent session not resumed")
-		}
+	}
+	// runNode starts every retry cold — an in-leg one (attempt > 0) and the
+	// re-execution of a node that failed in an EARLIER PROCESS (coldStart,
+	// where the leg's first attempt is already a retry) — so a session-handoff
+	// node's passing attempt ran without its parent's conversation, a fact the
+	// surfaces reading this Detail would otherwise never show.
+	if (attempt > 0 || coldStart) && node.Handoff == graph.HandoffSession {
+		notes = append(notes, "retry started fresh — parent session not resumed")
 	}
 	// A passing node is by definition within budget, so the delta is <= 0 here;
 	// reporting the headroom is what makes "ran at 99% of budget" visible in the

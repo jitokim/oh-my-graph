@@ -3,10 +3,15 @@ package schedule
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
@@ -159,6 +164,15 @@ nodes:
 // TestRetry_BoundsTheQuotedReply proves the prompt's own cap applies, and that
 // the cut is announced rather than silent.
 func TestRetry_BoundsTheQuotedReply(t *testing.T) {
+	// The number itself, not just the code's agreement with itself: DESIGN.md,
+	// ADR 0016 §3 and the CHANGELOG all publish 8000 bytes as a cost promise,
+	// and every other assertion here derives BOTH its input and its ceiling
+	// from the constant, so raising it could never fail one of them.
+	if maxPriorReplyInPrompt != 8000 {
+		t.Fatalf("maxPriorReplyInPrompt = %d, want 8000 — the bound is published as a per-attempt cost "+
+			"promise; moving it means moving DESIGN.md, ADR 0016 §3 and the CHANGELOG with it",
+			maxPriorReplyInPrompt)
+	}
 	huge := strings.Repeat("x", maxPriorReplyInPrompt*3)
 	g := mustGraph(t, `
 name: retry-bound-bytes
@@ -180,8 +194,12 @@ nodes:
 			len(second), maxPriorReplyInPrompt)
 	}
 	if !strings.Contains(second, "excerpted") {
+		// Bounded by len(second), not by 200: a mutation that empties the quote
+		// makes this the failing branch, and a panic here takes the rest of the
+		// file's tests down with it — reporting a suite as smaller than it is,
+		// which is the worst way to be wrong about a test suite.
 		t.Errorf("the quote was cut without saying so — a node must never be handed a truncated reply "+
-			"as though it were whole:\n%s", second[:200])
+			"as though it were whole:\n%s", second[:min(len(second), 200)])
 	}
 }
 
@@ -325,6 +343,89 @@ nodes:
 	if !strings.Contains(rec.prompts[2], "FRESH claude session") {
 		t.Errorf("the quote does not tell the node the attempt is not in its context, which for a "+
 			"session node is the difference between notes and an impossible instruction:\n%s", rec.prompts[2])
+	}
+}
+
+// seedPriorLegReply stages what a `resume --retry-failed` leg finds: the reply
+// an EARLIER PROCESS left at failed/<node-id>.out, re-read into the handoff the
+// way resume.go re-reads it for every cleared node whose failure was Judged.
+func seedPriorLegReply(t *testing.T, runDir string, h *handoff.Handoff, nodeID, reply string) {
+	t.Helper()
+	path := handoff.FailedOutputPath(runDir, nodeID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("stage failed/: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(reply), 0o644); err != nil {
+		t.Fatalf("stage the previous leg's reply: %v", err)
+	}
+	if err := h.SeedPriorReply(nodeID); err != nil {
+		t.Fatalf("SeedPriorReply: %v", err)
+	}
+}
+
+// TestRetry_PriorLegExecutionOfASessionNodeIsCold is the cross-process half of
+// TestRetry_SessionHandoffNodeStaysColdAndStillCarriesTheQuote, and it is the
+// case that made the FRESH-SESSION paragraph a lie: a `resume --retry-failed`
+// leg quotes the previous leg's reply into the node's FIRST execution of this
+// leg, where nothing had cleared the session it resumes.
+//
+// A node re-run with the attempt it is repeating in its prompt is a retry, in
+// this process or the last one, and a retry is cold. Note the graph declares no
+// `retry:` at all — `--retry-failed` needs none, which is why LintSessions'
+// retry-shaped warning never fires here.
+func TestRetry_PriorLegExecutionOfASessionNodeIsCold(t *testing.T) {
+	g := mustGraph(t, `
+name: prior-leg-session
+nodes:
+  - id: parent
+    prompt: parent
+  - id: child
+    prompt: child work
+    depends_on: [parent]
+    handoff: session
+    success_check: { result_matches: "PASS" }
+`)
+	rec := &recordingSequenceRunner{outcomes: []runner.NodeOutcome{
+		{Result: "PASS", SessionID: "s-parent", ExitCode: 0},
+		{Result: "PASS", SessionID: "s-child-2", ExitCode: 0},
+	}}
+	runDir := t.TempDir()
+	h := handoff.New(runDir, nil)
+	led := ledger.New("test")
+	s := NewScheduler(rec, Options{ProgressWriter: io.Discard})
+	seedPriorLegReply(t, runDir, h, "child", "LEG-ONE-WRONG-ANSWER")
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(rec.prompts) != 2 {
+		t.Fatalf("invocations = %d, want 2 (parent + the child's retry leg)", len(rec.prompts))
+	}
+	if !strings.Contains(rec.prompts[1], "LEG-ONE-WRONG-ANSWER") {
+		t.Fatalf("the retry leg was not handed the reply the previous leg left on disk:\n%s", rec.prompts[1])
+	}
+	if rec.resumes[1] != "" {
+		t.Errorf("the child resumed session %q while its own prompt told it it is a FRESH session with "+
+			"no conversation behind it; a retry is cold in this process or the last one", rec.resumes[1])
+	}
+	if rec.sessions[1] == "" {
+		t.Error("the child resumed nothing and was given no session id of its own either; a cold " +
+			"execution needs one, and node_started has to publish it")
+	}
+	if !strings.Contains(rec.prompts[1], "FRESH claude session") {
+		t.Errorf("the quote dropped the paragraph that makes it readable as notes:\n%s", rec.prompts[1])
+	}
+
+	// The surfaces have to say it too — the ledger detail is where ADR 0016 §6
+	// rests the claim that a session node's retry not resuming its parent is
+	// visible rather than silent.
+	row, ok := findRecord(led, "child")
+	if !ok {
+		t.Fatal("child was never recorded in the ledger")
+	}
+	if !strings.Contains(row.Detail, "parent session not resumed") {
+		t.Errorf("ledger detail = %q; a session node that ran without its parent's conversation must "+
+			"say so on the row that priced it", row.Detail)
 	}
 }
 

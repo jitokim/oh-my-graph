@@ -514,7 +514,11 @@ longer open. Across processes, `resume --retry-failed` re-reads the reply from
 `<run-dir>/failed/<node-id>.out` for each node it clears, gated on the
 snapshot's `judged` flag: the FAIL record (and with it the ledger row and the
 capped detail) is dropped by the retry leg, so that file is the only account of
-the attempt that survives the boundary. The causes are a closed set — `nonzero_exit`,
+the attempt that survives the boundary. A seeded execution is a retry like any
+other and starts cold on the same terms — a `handoff: session` node does not
+resume its parent there either, and the row that prices it says so — and the
+`failed/` file it was seeded from is removed once that execution passes, so the
+directory never holds a losing reply beside a winning artifact. The causes are a closed set — `nonzero_exit`,
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever

@@ -3,6 +3,7 @@ package fence
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestNonce_IsFreshPerCall is the fence's whole property in one assertion: two
@@ -78,6 +79,47 @@ func TestExcerpt_BudgetSmallerThanTheMarkerFallsBackToTruncate(t *testing.T) {
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Errorf("Excerpt with a tiny budget cut silently: %q", got)
+	}
+}
+
+// TestCutsLandOnRuneBoundaries: every bound in this package cuts text at a byte
+// offset, and a byte offset lands inside a multi-byte rune the moment the
+// material is not ASCII. Half a rune is invalid UTF-8 — mojibake handed to a
+// model at exactly the seam it is reading. Sweeping the budget walks the cut
+// across every offset within a rune, so no single lucky alignment can hide it.
+func TestCutsLandOnRuneBoundaries(t *testing.T) {
+	body := strings.Repeat("긴 답장", 200) // 3-byte runes, ASCII spaces between
+	for n := 1; n < 80; n++ {
+		if got := Excerpt(body, len(ExcerptMarker)+n); !utf8.ValidString(got) {
+			t.Fatalf("Excerpt(…, marker+%d) returned invalid UTF-8", n)
+		}
+		if got := Truncate(body, n); !utf8.ValidString(got) {
+			t.Fatalf("Truncate(…, %d) returned invalid UTF-8", n)
+		}
+		head, tail := HeadAndTail(body, n)
+		if !utf8.ValidString(head) || !utf8.ValidString(tail) {
+			t.Fatalf("HeadAndTail(…, %d) cut inside a rune: head valid=%v tail valid=%v",
+				n, utf8.ValidString(head), utf8.ValidString(tail))
+		}
+		if len(head)+len(tail) > n {
+			t.Fatalf("HeadAndTail(…, %d) kept %d bytes; trimming may only shorten", n, len(head)+len(tail))
+		}
+	}
+}
+
+// TestHeadAndTail_KeepsBothEnds pins what the pieces are for: a caller joining
+// them with its own marker gets the opening AND the closing of the material,
+// which is the half a head-only bound throws away.
+func TestHeadAndTail_KeepsBothEnds(t *testing.T) {
+	head, tail := HeadAndTail("OPENING"+strings.Repeat("x", 500)+"CLOSING", 20)
+	if !strings.HasPrefix(head, "OPENING") {
+		t.Errorf("head = %q, want the opening of the material", head)
+	}
+	if !strings.HasSuffix(tail, "CLOSING") {
+		t.Errorf("tail = %q, want the closing of the material", tail)
+	}
+	if h, tl := HeadAndTail("short", 100); h != "short" || tl != "" {
+		t.Errorf("HeadAndTail(%q, 100) = (%q, %q), want the material whole in the head", "short", h, tl)
 	}
 }
 

@@ -133,6 +133,43 @@ nodes:
 	}
 }
 
+// TestScheduler_PassingRetryLegDropsTheStaleFailedReply is the same claim
+// across the process boundary: a node that failed in an earlier leg and passed
+// in this one must not leave the losing reply beside the winning artifact.
+// Otherwise the run directory holds failed/dev.out saying one thing and
+// state.json saying PASS, and failed/ stops being a statement about anything.
+func TestScheduler_PassingRetryLegDropsTheStaleFailedReply(t *testing.T) {
+	g := mustGraph(t, `
+name: retry-leg
+nodes:
+  - { id: dev, prompt: dev }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"dev": pass("s-dev", 0.02)})
+	runDir := t.TempDir()
+	h := handoff.New(runDir, nil)
+	stale := handoff.FailedOutputPath(runDir, "dev")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatalf("stage failed/: %v", err)
+	}
+	if err := os.WriteFile(stale, []byte("LEG-ONE-WRONG-ANSWER"), 0o644); err != nil {
+		t.Fatalf("stage the previous leg's reply: %v", err)
+	}
+	led := ledger.New("test")
+	s := NewScheduler(fake, Options{ProgressWriter: io.Discard})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("the previous leg's failed reply outlived the PASS that superseded it (stat err = %v)", err)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(runDir, "dev.out"))
+	if err != nil || string(onDisk) != "PASS" {
+		t.Errorf("the passing artifact = %q, %v; dropping the stale reply must not touch it", onDisk, err)
+	}
+}
+
 // TestScheduler_SpawnFailureHasNoReplyToKeep: a node whose subprocess never
 // produced an outcome said nothing, so there is nothing to keep and no file to
 // mislead a reader into thinking there was.

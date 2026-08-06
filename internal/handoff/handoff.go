@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
@@ -372,6 +373,22 @@ func (h *Handoff) PersistFailure(nodeID, reply string) (string, error) {
 	return path, nil
 }
 
+// DropFailure removes the failed/<node-id>.out an earlier leg wrote, for a node
+// that has since PASSED. A missing file is success, not an error: the common
+// case is a node that never failed at all.
+//
+// It is the counterpart of PersistFailure and exists for the same reason the
+// write does — the file is a claim about the node, and a claim that has stopped
+// being true is worse than no claim. Nothing else about the node changes here:
+// its artifact was already persisted by PersistOutput, which is where a passing
+// node's result lives.
+func (h *Handoff) DropFailure(nodeID string) error {
+	if err := os.Remove(FailedOutputPath(h.runDir, nodeID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale failed reply for node %q: %w", nodeID, err)
+	}
+	return nil
+}
+
 // FailedOutputPath reports where PersistFailure writes nodeID's reply under
 // runDir, touching no filesystem. It is exported because the file exists to be
 // found: a read-back surface locates it by the same computation that wrote it
@@ -389,15 +406,27 @@ const failedExcerptMarker = "\n\n… oh-my-graph excerpted %d bytes here: this r
 // excerptFailedReply bounds reply to roughly maxFailedReplyBytes, keeping head
 // and tail — a reply's opening frames the problem and its closing usually
 // carries the conclusion, which is the half a head-only cut would throw away.
+// The cut is fence.HeadAndTail's, shared rather than hand-rolled a second time;
+// the marker is this file's own, because it names the figures.
+//
+// The dropped count is measured from what was actually kept, never from the cap
+// that motivated the cut. Deriving it from the cap would report the marker's own
+// length (and the rune-boundary trim) as though it were reply text that survived
+// — an under-report in the one file whose stated purpose is never to present a
+// cut reply as whole.
+//
+// That makes the marker's own length depend on the figure it has yet to carry,
+// so the space for it is RESERVED at the widest that figure can be: the whole
+// reply's length, which cannot have fewer digits than the part of it that was
+// dropped. One cut, an exact figure, and a file still inside the cap.
 func excerptFailedReply(reply string) string {
 	if len(reply) <= maxFailedReplyBytes {
 		return reply
 	}
-	marker := fmt.Sprintf(failedExcerptMarker, len(reply)-maxFailedReplyBytes, maxFailedReplyBytes)
-	keep := maxFailedReplyBytes - len(marker)
-	head := keep / 2
-	tail := keep - head
-	return reply[:head] + marker + reply[len(reply)-tail:]
+	reserve := len(fmt.Sprintf(failedExcerptMarker, len(reply), maxFailedReplyBytes))
+	head, tail := fence.HeadAndTail(reply, maxFailedReplyBytes-reserve)
+	marker := fmt.Sprintf(failedExcerptMarker, len(reply)-len(head)-len(tail), maxFailedReplyBytes)
+	return head + marker + tail
 }
 
 // SeedPriorReply rehydrates one node's failed reply from the failed/<id>.out

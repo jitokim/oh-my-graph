@@ -22,6 +22,13 @@
 // escaping them, so the planner can place newlines and forged marker lines
 // inside the text being quoted back.
 //
+// The BOUND half has one caller that is not quoting into a prompt at all:
+// internal/handoff cuts a failed node's reply down to what a run directory may
+// hold. It shares the cut (HeadAndTail) rather than hand-rolling a second one,
+// because the discipline is the same wherever text is cut — keep both ends,
+// land the seams on whole runes — while the marker that announces the cut
+// belongs to the caller, which is the one that knows what to say about it.
+//
 // This is its own package rather than a file inside internal/coordinator
 // because the newest caller is not a coordinator: internal/schedule quotes a
 // failed attempt back to the node that produced it, and a second hand-rolled
@@ -32,6 +39,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"unicode/utf8"
 )
 
 // NonceBytes sizes a fence nonce: 3 random bytes render as 6 hex characters —
@@ -58,7 +66,7 @@ func Nonce(purpose string) (string, error) {
 // without transcribing the sentence that announces it.
 const ExcerptMarker = "\n… (middle excerpted) …\n"
 
-// Excerpt bounds s to roughly n bytes keeping head and tail — quoted material's
+// Excerpt bounds s to at most n bytes keeping head and tail — quoted material's
 // opening context and its final result usually carry the content worth quoting,
 // and a head-only cut would hide exactly the "PASS"/"FAIL" tail a check node
 // prints last.
@@ -69,10 +77,33 @@ func Excerpt(s string, n int) string {
 	if n <= len(ExcerptMarker) {
 		return Truncate(s, n)
 	}
-	keep := n - len(ExcerptMarker)
-	head := keep / 2
-	tail := keep - head
-	return s[:head] + ExcerptMarker + s[len(s)-tail:]
+	head, tail := HeadAndTail(s, n-len(ExcerptMarker))
+	return head + ExcerptMarker + tail
+}
+
+// HeadAndTail is the cut itself: the first and last pieces of s, keep bytes of
+// it between them at most, for a caller to join with whatever marker it wants
+// in the gap. Excerpt is that caller with a fixed marker; a caller whose marker
+// STATES how much was dropped is why the pieces are returned instead of a
+// joined string — only what was actually cut can say how much that was, and a
+// figure derived from the budget instead of from the cut is an under-report in
+// exactly the sentence whose job is to prevent one.
+//
+// The seams land on whole runes. An arbitrary byte offset lands inside a
+// multi-byte rune the moment the material is not ASCII, and half a rune is
+// invalid UTF-8 — mojibake at precisely the seam a reader is looking at, in
+// text this package exists to hand to a model. Trimming only ever shortens, so
+// the keep bound still holds. Callers pass keep < len(s); a keep that is not
+// smaller is returned whole in the head.
+func HeadAndTail(s string, keep int) (head, tail string) {
+	if keep >= len(s) {
+		return s, ""
+	}
+	if keep <= 0 {
+		return "", ""
+	}
+	n := keep / 2
+	return trimPartialRuneSuffix(s[:n]), trimPartialRunePrefix(s[len(s)-(keep-n):])
 }
 
 // Truncate shortens s to at most n bytes, marking the cut. It is the head-only
@@ -82,5 +113,28 @@ func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "… (truncated)"
+	return trimPartialRuneSuffix(s[:n]) + "… (truncated)"
+}
+
+// trimPartialRuneSuffix drops the fragment of a multi-byte rune a cut leaves at
+// the end of a piece. At most utf8.UTFMax-1 bytes can be such a fragment, which
+// is also the bound on what material that genuinely ends in invalid bytes can
+// lose here.
+func trimPartialRuneSuffix(s string) string {
+	for i := 0; i < utf8.UTFMax-1 && len(s) > 0; i++ {
+		if r, size := utf8.DecodeLastRuneInString(s); r != utf8.RuneError || size > 1 {
+			break
+		}
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// trimPartialRunePrefix is the mirror: a continuation byte at the start of a
+// piece is the remainder of a rune whose leading byte the cut dropped.
+func trimPartialRunePrefix(s string) string {
+	for i := 0; i < utf8.UTFMax-1 && len(s) > 0 && !utf8.RuneStart(s[0]); i++ {
+		s = s[1:]
+	}
+	return s
 }

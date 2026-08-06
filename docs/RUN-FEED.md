@@ -13,6 +13,7 @@ the very same files, and an external consumer reads exactly what they read:
   <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
+  failed/        per-node reply of a node that FAILED (ADR 0016) — never an artifact
   feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
   worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
@@ -30,8 +31,21 @@ work and then blew its `budget_usd` FAILS with its artifact already on disk.
 The verdict lives in `state.json` and in the terminal event; the file's
 existence is not a verdict. Nor is every `<node-id>.out` in the run tree an
 artifact: a feedback arc's payload is written to
-`<run-dir>/feedback/<node-id>.out` — the same basename shape, one directory
-down, and internal (ADR 0010). Artifacts are the flat ones.
+`<run-dir>/feedback/<node-id>.out`, and a FAILED node's own reply to
+`<run-dir>/failed/<node-id>.out` — the same basename shape, one directory
+down (ADR 0010, ADR 0016). Artifacts are the flat ones.
+
+`failed/<node-id>.out` holds the words of a node that failed, bounded at
+256 KiB with any cut announced in the file, and is part of this contract:
+`Handoff.FailedOutputPath` computes it, a `resume --retry-failed` leg re-reads
+it to quote a `judged` failure back into the retry, and a consumer may read it
+for the analysis the ledger's capped `detail` does not carry. Its existence is
+a claim about *this* node's *last* outcome and is kept true in both directions:
+a node that passes has no such file (one an earlier leg wrote is removed when
+this leg's execution passes), and a node whose reply was empty leaves none.
+One node can hold both a flat artifact and a `failed/` reply — a post-hoc
+`budget_usd` failure persists its output first, as above — and there the
+verdict in `state.json` is FAIL and `judged` is absent.
 
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).

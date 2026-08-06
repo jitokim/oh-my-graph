@@ -2,10 +2,14 @@ package handoff
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
@@ -100,6 +104,16 @@ func TestPersistFailure_SilenceWritesNothing(t *testing.T) {
 // frames the problem, the closing usually carries the conclusion — with the
 // size of the cut stated in the file rather than left for a reader to guess.
 func TestPersistFailure_BoundsAnUnboundedReply(t *testing.T) {
+	// The number, not just the code's agreement with itself: every other
+	// assertion below derives its input and its ceiling from the constant, so a
+	// hundredfold cap would satisfy all of them while quietly letting one
+	// runaway node fill a user's disk. 256 KiB is what the CHANGELOG and ADR
+	// 0016 §3 publish.
+	if maxFailedReplyBytes != 256*1024 {
+		t.Fatalf("maxFailedReplyBytes = %d, want 256 KiB — the cap on what one node's reply may cost a "+
+			"run directory is published; moving it means moving ADR 0016 §3 and the CHANGELOG with it",
+			maxFailedReplyBytes)
+	}
 	dir := t.TempDir()
 	h := New(dir, nil)
 	head := "OPENING: the run pauses because "
@@ -132,6 +146,94 @@ func TestPersistFailure_BoundsAnUnboundedReply(t *testing.T) {
 	}
 	if !strings.Contains(string(onDisk), "excerpted") {
 		t.Error("the excerpt is silent about the cut it made")
+	}
+}
+
+// TestPersistFailure_AnnouncesExactlyWhatItDropped: the marker states a figure,
+// so the figure has to be the truth. Measuring it against the CAP rather than
+// against the cut reports the marker's own length as though it were reply text
+// that survived — an under-report in the one file whose stated purpose is never
+// to present a cut reply as whole.
+func TestPersistFailure_AnnouncesExactlyWhatItDropped(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+	reply := strings.Repeat("x", 4*maxFailedReplyBytes)
+
+	path, err := h.PersistFailure("windy", reply)
+	if err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed reply not persisted: %v", err)
+	}
+
+	m := regexp.MustCompile(`excerpted (\d+) bytes here`).FindStringSubmatch(string(onDisk))
+	if m == nil {
+		t.Fatalf("the file names no figure for what it dropped: %q", string(onDisk[:min(len(onDisk), 400)]))
+	}
+	announced, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("unreadable figure %q: %v", m[1], err)
+	}
+	marker := fmt.Sprintf(failedExcerptMarker, announced, maxFailedReplyBytes)
+	if !strings.Contains(string(onDisk), marker) {
+		t.Fatalf("the marker is not the one this file writes: %q", m[0])
+	}
+	if dropped := len(reply) - (len(onDisk) - len(marker)); announced != dropped {
+		t.Errorf("the file says it dropped %d bytes of the reply; it dropped %d", announced, dropped)
+	}
+}
+
+// TestPersistFailure_CutLandsOnRuneBoundaries: a reply is text, and a cut at an
+// arbitrary byte offset lands inside a multi-byte rune. Half a rune is invalid
+// UTF-8 — mojibake at exactly the seam a reader looks at first, in a file whose
+// whole job is to be read. The three offsets shift the rune grid against the
+// fixed cut so one of them must land mid-rune.
+func TestPersistFailure_CutLandsOnRuneBoundaries(t *testing.T) {
+	for shift := 0; shift < 3; shift++ {
+		reply := strings.Repeat("x", shift) + strings.Repeat("긴 답장을 남긴 노드 ", 20000)
+		if len(reply) <= maxFailedReplyBytes {
+			t.Fatalf("this test needs a reply over the cap; got %d bytes", len(reply))
+		}
+		dir := t.TempDir()
+		h := New(dir, nil)
+
+		path, err := h.PersistFailure("windy", reply)
+		if err != nil {
+			t.Fatalf("PersistFailure: %v", err)
+		}
+		onDisk, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed reply not persisted: %v", err)
+		}
+		if !utf8.Valid(onDisk) {
+			t.Errorf("shift %d: the cut left invalid UTF-8 on disk", shift)
+		}
+		if len(onDisk) > maxFailedReplyBytes {
+			t.Errorf("shift %d: persisted %d bytes, over the %d-byte cap", shift, len(onDisk), maxFailedReplyBytes)
+		}
+	}
+}
+
+// TestDropFailure removes the claim once it stops being true: a node that
+// failed in an earlier leg and PASSED in this one must not leave the losing
+// reply beside the winning artifact. A node that never failed is the common
+// case and must not be an error.
+func TestDropFailure(t *testing.T) {
+	dir := t.TempDir()
+	h := New(dir, nil)
+	if _, err := h.PersistFailure("dev", "LEG-ONE-WRONG-ANSWER"); err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+	if err := h.DropFailure("dev"); err != nil {
+		t.Fatalf("DropFailure: %v", err)
+	}
+	if _, err := os.Stat(FailedOutputPath(dir, "dev")); !os.IsNotExist(err) {
+		t.Errorf("the stale failed reply survived (stat err = %v)", err)
+	}
+	if err := h.DropFailure("never-failed"); err != nil {
+		t.Errorf("DropFailure on a node that never failed = %v, want nil", err)
 	}
 }
 

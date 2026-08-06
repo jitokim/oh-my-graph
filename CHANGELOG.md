@@ -44,7 +44,10 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   a verification that could not be *completed*. A `handoff: session` retry
   still starts **cold** — unchanged — and the quote now says so out loud.
   `resume --retry-failed` re-reads the reply off disk for each node it clears,
-  which is why the file is written by one process and read by another.
+  which is why the file is written by one process and read by another; that
+  re-execution is a retry too, so it starts cold on the same terms — a session
+  node does not resume its parent there either, and the file it was seeded from
+  is removed once this leg's execution passes.
 
   **This is on by default and it costs money:** up to roughly 2k tokens of
   quoted reply per retry attempt of a judged failure. It is bounded and flat,

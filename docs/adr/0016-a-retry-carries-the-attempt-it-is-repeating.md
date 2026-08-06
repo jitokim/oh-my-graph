@@ -143,6 +143,18 @@ not before this ADR (`prepareRetry` clears `ResumeSession`; `lint` warns about
 it up front and the passing attempt's ledger detail states it), and it does not
 now. Nothing here is special-cased for session handoff.
 
+"Retried" includes the cross-process case of §7, which is the one this ADR
+had to *make* true rather than inherit. A `resume --retry-failed` leg quotes the
+previous leg's reply into the node's **first** execution of that leg, where
+nothing had yet cleared the session it resumes — so the node would have resumed
+its parent's conversation while the very quote appended to its prompt told it
+that it was a fresh session with no conversation behind it. Both halves are now
+`startCold`: quote rebuilt from the base prompt, `ResumeSession` cleared, and a
+session id of its own (the leg's first execution mints it where `node_started`
+publishes it, rather than in `prepareRetry`). The ledger detail says
+"retry started fresh — parent session not resumed" there too, on a row whose
+attempt count is zero, because the leg *is* the retry.
+
 What changes is that the cold start is no longer empty-handed. The quoted text
 is the node's own words torn out of a conversation it can no longer see, which
 is a strange thing to hand someone without saying so — so the prompt says it
@@ -165,7 +177,17 @@ another.
 `Handoff.SeedPriorReply` re-reads `failed/<node-id>.out` for each cleared node;
 `TakePriorReply` hands it to that node's first execution in the new leg and
 forgets it, so a later feedback round in the same leg is not handed a reply from
-before the loop re-armed. A read failure is a **warning**, matching the write
+before the loop re-armed. Taking it is also what tells `runNode` that this
+execution is a retry at all — hence the cold start of §6, decided before the
+session id is minted rather than after.
+
+The file's claim is retired when it stops being true: an execution that PASSES
+removes the `failed/<node-id>.out` an earlier leg wrote (`Handoff.DropFailure`,
+best-effort like the write). Otherwise the run directory would hold the losing
+reply beside the winning artifact with a PASS in `state.json`, and `failed/`
+would stop being a statement about anything. `docs/RUN-FEED.md` carries the
+directory as part of the consumer contract, which is what the read side has
+depended on since the reply became machine-readable. A read failure is a **warning**, matching the write
 side (`keepFailedReply`): the leg's job is to re-run the node, and losing the
 quote costs context, not correctness. (Contrast `SetFeedback`, whose failure is
 fatal — a feedback re-run without its payload is a paid lie about what the body
