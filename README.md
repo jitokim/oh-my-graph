@@ -430,9 +430,13 @@ group, so **the death that abandoned the run may have left a subprocess still
 running and still spending**. Check for one before you resume, or you will pay
 for the same node twice. A run that died before its first node settled wrote no
 snapshot, so there is nothing to resume from and its hint says to run the graph
-again instead. Any doubt — an unreadable lock, a network filesystem, a lock file
-written by a pre-`flock` binary — reads as in-flight, never as abandoned: a false
-"dead" would authorise a second scheduler over a live run.
+again instead. Any doubt — an unreadable lock, a network filesystem, a
+pre-`flock` lock file whose pid still names some process or cannot be read at
+all — reads as in-flight, never as abandoned: a false "dead" would authorise a
+second scheduler over a live run. A pre-`flock` file is the one carrying no
+`flock` to ask, so its pid line is read in a single direction instead: a pid
+naming no process at all is free, and only that — beside an open leg — reads as
+abandoned.
 
 <a id="auto-in-depth"></a>
 
