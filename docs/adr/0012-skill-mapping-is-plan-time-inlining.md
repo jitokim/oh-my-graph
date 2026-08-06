@@ -33,6 +33,59 @@
   trust surface — inlining copies file content where agent mapping only
   names a file; §5 states the difference instead of papering over it.
 
+> **Update (2026-08-07) — superseded in whole by ADR 0017, contingent on that
+> ADR's acceptance test.** The decision text below is unchanged and, until
+> ADR 0017's gate passes and its implementation lands, **this is still what
+> ships**. What changed is the premise. The 2026-08-03 measurement recorded
+> here established that a planned node has neither a skills listing nor a
+> `Skill` tool, and its own attribution-nuance paragraph flagged the
+> decomposition it could not make: *"if a future proposal ever adds `Skill` to
+> `plannedToolAllowlist`, the listing-vs-tool question must be measured
+> separately first."* It was, on claude 2.1.223 (#130), with a probe that
+> makes the model **actually invoke** a planted skill instead of reporting on
+> its own visibility — the same self-reported-versus-verified distinction
+> v0.5.0's provenance qualifier draws, and the self-report form returned
+> contradictory answers to identical argv. The result: ceiling layer 1
+> withholds the **definitions** and layer 3 withholds the **tool**,
+> independently; relaxing both restores Claude Code's own description-driven
+> activation over the whole corpus; and — the finding that decides it — the
+> capability ceiling **survives** the relaxation, because `--tools` replaces
+> the built-in set (E4), so a `settings.json` granting `Bash(*)` still yields
+> `NO-BASH-TOOL`. This ADR's third Alternative rejected that path as requiring
+> *"weakening or decomposing Layer 1 and/or Layer 3… on an unmeasured
+> listing-vs-tool attribution"*; the attribution is now measured, and the
+> decomposition costs the user's CLAUDE.md rather than the ceiling.
+>
+> Against the 7% this mechanism actually delivers (§"Yield measurement", 9.9%
+> raw, ~7% corrected for the `artifacts` → `html-artifact` false positive),
+> activation sees all 35 skills, is conditional where inlining is
+> unconditional, has no size cap — so `pre-commit-checklist`, the skill that
+> matched the four **best** planner-authored ids and was discarded from every
+> one of them, becomes reachable — and needs neither the matcher, the 16 KiB
+> cap, the `{{` neutralization nor the nonce fence, all of which exist only to
+> make inlining safe. ADR 0017 removes them with it, in one PR, because a node
+> holding both mechanisms would receive the same skill twice and become
+> unattributable.
+>
+> Two things survive: **§6's scan** (`scanSkillDirs`/`SkillScan` and its
+> printed directories-and-count disclosure), reused to decide whether
+> activation is enabled at all and to seal the corpus for a run; and **§5's
+> honesty about the surface**, re-derived there for CLAUDE.md rather than for
+> skill bodies. Two things are lost and named as losses: per-node prospective
+> disclosure (nothing can know before the model does which skill a node will
+> use), and the snapshot property (§6's *"a skill edited after planning does
+> not silently change an in-flight run"*), for which ADR 0017 substitutes a
+> plan-time seal that halts a run whose instruction sources changed under it.
+>
+> The gate below is **voided, not discharged**. (a) is superseded by
+> ADR 0017's measurement (e), which asks the same question of the mechanism
+> that replaces this one. (b) is voided because the mechanism it measures is
+> gone — the misfire it was written to characterize, `artifacts` →
+> `html-artifact`, is precisely the class of error activation is *expected* to
+> avoid, and "expected to" has never been the standard this record holds
+> itself to. See
+> `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
+
 ## Context
 
 Users invest heavily in local Claude Code skills — this machine carries 35

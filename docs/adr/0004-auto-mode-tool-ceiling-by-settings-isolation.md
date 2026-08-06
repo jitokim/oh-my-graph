@@ -98,6 +98,36 @@ settings, hooks and MCP servers.
 > grant. See
 > `0016-build-evidence-is-a-user-supplied-engine-command.md`.
 
+> **Update (2026-08-07):** amended in part by ADR 0017, for layers **1** and
+> **3**, on coordinator-planned nodes only, and only when the user has a skill
+> corpus at all. The decision above stands and layers 0, 4 and 5 are
+> untouched — what moves is the *value* of two rows in the table. #130
+> decomposed for the first time what this ADR's E-series measured only as a
+> composite: layer 1 withholds the skill **definitions** and layer 3 withholds
+> the `Skill` **tool**, independently, so restoring Claude Code's own skill
+> activation needs both (measured, claude 2.1.223, with a probe that makes the
+> model actually invoke a planted skill rather than report on its own
+> visibility). ADR 0017 relaxes layer 1 from `""` to the explicit value
+> `"user"` and appends `Skill` to layer 3. Three claims of this ADR survive
+> that, and one does not. **E4 survives and is re-confirmed:** with the
+> measuring machine's `settings.json` granting `Bash(*)`, a node whose
+> `--tools` omits `Bash` still reports `NO-BASH-TOOL` — an allow-rule approves
+> a tool that exists, it does not create one, so layer 3 absorbs layer 1's
+> relaxation and the capability ceiling holds. **Layer 0 survives untouched:**
+> `Skill` is injected into the *policy* after validation by trusted code,
+> never into `plannedToolAllowlist`, so a planner still cannot name it — the
+> ADR 0016 §2 posture. **The hooks-gap closure in Consequences survives**,
+> because `"user"` is not `nil`: the `project` and `local` sources stay
+> unloaded, so a write-capable node still cannot plant a
+> `.claude/settings.local.json` for a later node to load. What does **not**
+> survive is the first bullet of "Negative / trade-offs": a planned node no
+> longer loses the user's CLAUDE.md, and user hooks now load (whether they
+> *fire* is unmeasured and is ADR 0017's measurement (a)). MCP stays closed —
+> `--strict-mcp-config` was measured to hold under `--setting-sources user`.
+> Reversible with one flag: `--no-skill-activation` restores this ceiling
+> bit-for-bit. See
+> `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
+
 ### 2. Every `graph.Node` field has an explicit planned-node disposition
 
 `agent:` and `success_check.verify:` are **rejected** in `validatePlannedNodes`,
