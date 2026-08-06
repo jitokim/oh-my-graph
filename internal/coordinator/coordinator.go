@@ -174,16 +174,24 @@ type Plan struct {
 	// execution would defeat the reason the mapping lives in trusted code.
 	// Empty when nothing matched or mapping is off.
 	AgentMappings []AgentMapping
-	// SkillMappings are the skill auto-mapping decisions (skillmap.go): every
-	// node whose prompt got one of the user's own SKILL.md bodies inlined —
-	// with the source path, byte count and SHA-256 of the exact inlined text —
-	// plus every candidate refused (oversize body, agent-mapped node). Same
-	// disclosure contract as AgentMappings: the caller must print these with
-	// the plan. Empty when nothing matched or mapping is off.
-	SkillMappings []SkillMapping
+	// SkillActivation is the skill-activation decision (skillstage.go,
+	// ADR 0017): whether this run's planned nodes get the Skill tool and a
+	// staged plugin directory of the user's own skills, over which corpus, on
+	// which nodes, and — when it is off — why. Same disclosure contract as
+	// AgentMappings: the caller must print it with the plan. nil when no scan
+	// happened at all (activation off, or a Coordinator built with no skill
+	// directories).
+	//
+	// It replaced Plan.SkillMappings, which named which skill was inlined into
+	// which node. That per-node prospective account is gone permanently: under
+	// activation the choice happens at run time, inside the model, by
+	// description, and nothing knows it before the model does (ADR 0017 §7).
+	// What is disclosed instead is the whole corpus, with each skill's size and
+	// hash — strictly more than the 7% inlining named.
+	SkillActivation *SkillActivation
 	// VerifyAttachments are the sink nodes trusted code attached the user's
 	// --verify-cmd to (ADR 0016 §2, verifycmd.go) — empty when no command was
-	// supplied. Same disclosure contract as AgentMappings and SkillMappings,
+	// supplied. Same disclosure contract as AgentMappings and SkillActivation,
 	// and for a sharper reason: this one adds an ENGINE-run shell command to
 	// the graph, so a human approving a plan must be shown what will run and
 	// where. Every entry names a node in Graph.
@@ -193,15 +201,16 @@ type Plan struct {
 	// provisions no worktree in and takes no lock on (unisolated.go, and
 	// SECURITY.md "Isolation stops at the invocation repository"). nil when
 	// the plan names none, which is the common case. Same disclosure contract
-	// as AgentMappings and SkillMappings: the caller must print it with the
+	// as AgentMappings and SkillActivation: the caller must print it with the
 	// plan, since the entire point is that the user learns it BEFORE a node
 	// spends anything working in a checkout someone else may be standing in.
 	Unisolated *UnisolatedScan
 	// SkillScan says a skill scan ran and over which directories, so the
-	// caller can distinguish an empty SkillMappings that means "scanned, no
-	// match" from one that means "never scanned". nil when no scan happened
-	// at all — mapping off (--no-skill-mapping), or a Coordinator built with
-	// no skill directories.
+	// caller can distinguish "scanned, found nothing" from "never scanned",
+	// which are indistinguishable when the only output is a corpus and the
+	// corpus is empty. nil when no scan happened at all — activation off
+	// (--no-skill-activation), or a Coordinator built with no skill
+	// directories.
 	SkillScan *SkillScan
 }
 
@@ -218,12 +227,12 @@ type Coordinator struct {
 	// and no mapping, ever: a Coordinator only reads the filesystem when its
 	// constructor was explicitly told where.
 	agentDirs []string
-	// skillMappingOff disables skill auto-mapping (skillmap.go) — the
-	// --no-skill-mapping opt-out, set via WithoutSkillMapping.
-	skillMappingOff bool
+	// skillActivationOff disables skill activation (skillstage.go) — the
+	// --no-skill-activation opt-out, set via WithoutSkillActivation.
+	skillActivationOff bool
 	// skillDirs is where skill definitions are scanned from — the CLI passes
 	// DefaultSkillDirs, tests point it at temp dirs. Empty means no scanning
-	// and no mapping, ever, exactly like agentDirs.
+	// and no activation, ever, exactly like agentDirs.
 	skillDirs []string
 	// verifyCommand is the user-supplied build evidence command attached to
 	// every plan's sink nodes after validation (ADR 0016 §2, verifycmd.go).
@@ -252,10 +261,13 @@ func WithAgentDirs(dirs ...string) Option {
 	return func(c *Coordinator) { c.agentDirs = dirs }
 }
 
-// WithoutSkillMapping turns off skill auto-mapping for every Plan call — the
-// `--no-skill-mapping` flag's implementation.
-func WithoutSkillMapping() Option {
-	return func(c *Coordinator) { c.skillMappingOff = true }
+// WithoutSkillActivation turns off skill activation for every Plan call — the
+// `--no-skill-activation` flag's implementation. It is de-escalation only:
+// there is no option that turns activation ON for a plan that did not choose
+// it, which is what keeps `resume`'s own copy of this flag unable to widen a
+// run's ceiling.
+func WithoutSkillActivation() Option {
+	return func(c *Coordinator) { c.skillActivationOff = true }
 }
 
 // WithSkillDirs sets the directories scanned for skill definitions, lowest
@@ -498,10 +510,8 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		ToolPolicies: toolPoliciesByNode(g),
 	}
 	// Computed HERE, on the planner's own prompts, and deliberately before the
-	// two mappings below: skill mapping inlines the user's local SKILL.md
-	// bodies into these prompts, and those bodies name absolute paths of their
-	// own that the plan never chose. An advisory that reported those would be
-	// noise attributed to the planner.
+	// post-validation steps below, so what it reads is what the planner
+	// actually wrote and every path it reports is one the plan chose.
 	//
 	// A boundary that cannot be resolved leaves the plan unwarned rather than
 	// failing it: this is a disclosure, and a paid, valid plan must not be
@@ -520,10 +530,10 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	if err := c.applyAgentMapping(&plan); err != nil {
 		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
-	// Strictly after agent mapping's rebuild: skill mapping must see which
-	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
-	// into the graph that becomes the final Spec, exactly once.
-	if err := c.applySkillMapping(&plan); err != nil {
+	// Strictly after agent mapping's rebuild: activation must see which nodes
+	// carry agent: (those are excluded — ADR 0017 §Compatibility) and it
+	// adjusts plan.ToolPolicies, which agent mapping also writes to.
+	if err := c.applySkillActivation(&plan); err != nil {
 		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Last of the post-validation mutations, so the command lands in the graph
@@ -597,7 +607,7 @@ func toolPoliciesByNode(g *graph.Graph) map[string]runner.ToolPolicy {
 func toolPolicyFor(node graph.Node) runner.ToolPolicy {
 	return runner.ToolPolicy{
 		AllowedTools:    node.AllowedTools,
-		Tools:           narrowedToolsFor(node),
+		Tools:           narrowedToolsFor(node, false),
 		SettingSources:  isolatedSettingSources(),
 		StrictMCPConfig: true,
 		DisallowedTools: disallowedToolsFor(node),
@@ -626,9 +636,20 @@ func isolatedSettingSources() *string {
 // the scoped pattern still binds, as layer 2's --allowedTools rule. Order
 // follows the declaration and duplicates collapse, so a node declaring two
 // Bash patterns yields one "Bash" and the argv stays deterministic.
-func narrowedToolsFor(node graph.Node) []string {
-	tools := make([]string, 0, len(node.AllowedTools))
-	seen := make(map[string]bool, len(node.AllowedTools))
+//
+// skillActivated appends "Skill" — the ONLY route by which that name enters a
+// planned node's tool set, and the only ceiling layer ADR 0017 moves. It is
+// layer 3 and not layer 0: plannedToolAllowlist bounds what a PLAN MAY
+// DECLARE, and a planner that could name `Skill` in allowed_tools would be a
+// planner selecting which of the user's local files loads into a node it
+// authored — the hole validatePlannedNodeAgent closes, which stays closed. So
+// the grant is made here, by trusted code, after validation, and never appears
+// in node.AllowedTools or in the saved graph.json. Measured (ADR 0017 (f)):
+// without the name in --tools the definitions load and the skill cannot run,
+// so this append is load-bearing and not decoration.
+func narrowedToolsFor(node graph.Node, skillActivated bool) []string {
+	tools := make([]string, 0, len(node.AllowedTools)+1)
+	seen := make(map[string]bool, len(node.AllowedTools)+1)
 	for _, rule := range node.AllowedTools {
 		name := toolName(rule)
 		if seen[name] {
@@ -636,6 +657,9 @@ func narrowedToolsFor(node graph.Node) []string {
 		}
 		seen[name] = true
 		tools = append(tools, name)
+	}
+	if skillActivated && !seen[SkillToolName] {
+		tools = append(tools, SkillToolName)
 	}
 	return tools
 }

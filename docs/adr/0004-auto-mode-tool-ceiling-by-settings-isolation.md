@@ -193,6 +193,13 @@ settings, hooks and MCP servers.
 > `plannedToolAllowlist`, so a planner still cannot name it. Reversible with one
 > flag on `auto` **and on `resume`**: `--no-skill-activation`.
 >
+> **Landed 2026-08-07.** `runner.ToolPolicy` gained `PluginDirs`, rendered as
+> `--plugin-dir` between `--setting-sources` and `--agent`. It is **not a sixth
+> layer** and the table above does not grow a row: it supplies instruction
+> material and grants no capability, and everything a skill body does is still
+> bounded by the five. The one layer that moved is 3, inside
+> `narrowedToolsFor`, which is the only function that builds that list.
+>
 > One thing this ADR should carry forward rather than leave to ADR 0017: (g)
 > gives `applyAgentMapping`'s `SettingSources = nil` a measured number instead
 > of a suspicion. An **agent-mapped** node declaring `Bash(git *)` is the exact

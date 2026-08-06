@@ -163,11 +163,11 @@ hand-edit it and re-run it with `oh-my-graph run`. A planned node can never use
 control.
 
 Want to read that plan *before* anything executes? `--plan-only` prints it —
-the graph, every agent and skill mapping, the tool ceiling — and stops without
+the graph, every agent mapping, the staged skill corpus, the tool ceiling — and stops without
 running a node. Unlike `run --dry-run` it is not free: there is no plan to show
 until a planner call has been made and paid for, so it prints what that cost
 and keeps the plan it bought. Its knobs — goal cycles, agent mapping,
-skill mapping, and what `--plan-only` does with the plan afterwards — are in
+skill activation, and what `--plan-only` does with the plan afterwards — are in
 [`auto` in depth](#auto-in-depth) below.
 
 While a graph runs you'll see a live line per node — `▶ write  running…`, then
@@ -392,7 +392,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` cannot be resumed. |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` cannot be resumed. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
@@ -489,7 +489,7 @@ up front: a mapped node loads your settings so the agent can resolve, instead
 of running fully settings-isolated — its declared tool list still binds.
 
 Want to see all of that before you let it run? `auto --plan-only` plans, prints
-the graph with every agent and skill mapping and the tool ceiling, and stops —
+the graph with every agent mapping, the staged skill corpus and the tool ceiling, and stops —
 no node is executed. It is the `auto` counterpart to `run --dry-run` with one
 honest difference: a dry run reads a file you already wrote and costs nothing,
 while there is no plan to inspect until one has been bought, so `--plan-only`
@@ -510,29 +510,41 @@ previews one cycle by definition — `--plan-only` with `--max-cycles` above 1 i
 rejected at parse, since every cycle after the first is planned from the
 previous cycle's run and so does not exist yet to be shown.
 
-Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, by a
-blunter mechanism stated plainly: a planned node
-cannot see or invoke skills at all (measured), so when a node's id clearly
-matches a skill's name, the skill's SKILL.md body is **copied into that node's
-prompt** at plan time — fenced, attributed, capped at 16 KiB (oversize skills
-are skipped with a note, never truncated), paid for on every invocation of
-that node, and applied unconditionally where Claude Code itself would activate
-the skill only when relevant. Every inlining prints its size and a SHA-256
-prefix before the run, the exact text — from which the full hash is
-recomputable — is snapshotted into the saved `graph.json`
-(later skill edits don't reach an already-planned run), and
-`--no-skill-mapping` turns it off.
+Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, and
+they reach them through Claude Code's own activation rather than through a
+guess made for the node: `auto` copies your whole skill corpus into a plugin
+directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
+planned node `--plugin-dir <that>` and adds `Skill` to its tool list, and the
+node's own model then picks the skill its task calls for, by description, at
+run time.
 
-Two places a skill can live are **out of scope** and map nothing: skills
+The tool ceiling does not move for it. Planned nodes still load none of your
+settings, CLAUDE.md, hooks or MCP servers, and a declared scope like
+`Bash(git *)` is still enforced — the only change is that the `Skill` tool now
+exists for them. What that costs is printed before the run: every staged skill
+with its size and SHA-256, and the prompt tokens the corpus adds to **every**
+node invocation, including retries and feedback re-runs.
+
+What the plan can no longer tell you is *which* skill a node will use — nothing
+knows that before the model does. The printout says so, and each invocation is
+recorded in that node's ordinary session transcript. The staged directory is
+re-created and verified from a manifest before every node spawn, so a node
+cannot leave a skill behind for a later one, and a source skill you edit
+mid-run halts the run rather than silently changing it. `--no-skill-activation`
+turns the whole thing off — on `auto` and on `resume` — and the old
+`--no-skill-mapping` still works, with a notice.
+
+Two places a skill can live are **out of scope** and are not staged: skills
 provided by a **plugin** (`~/.claude/plugins/...`) and **project** skills
-(`./.claude/skills`). Both are stated limits, not failed matches, so the plan
+(`./.claude/skills`). Both are stated limits, not failures, so the plan
 printout says so on every run — `skill scan: 35 skill(s) from
 /home/you/.claude/skills` followed by the not-scanned note — and a scan that
 finds nothing still names the directory it looked in, so "I have skills but
-`auto` sees none" is one line to diagnose rather than a guess. If your skills
-came from a plugin, they will not map today; see
+`auto` sees none" is one line to diagnose rather than a guess. See
+[ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
+for the measurements behind all of this, and
 [ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md) for the
-measurement behind that and what would change it.
+plan-time inlining it replaced.
 [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)
 walks through the plan output, the tool ceiling, and the live node feed.
 

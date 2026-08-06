@@ -1,21 +1,21 @@
 # ADR 0017 — A planned node gets Claude Code's own skill activation, from a plugin directory oh-my-graph stages
 
-- Status: **Proposed — implementation authorized as of 2026-08-07.** Both
-  blocking measurements named by the 2026-08-07 review have been taken and
-  independently re-run: **(g)** confirms the retraction — relaxing ceiling
-  layer 1 forfeits the scope ceiling — and **(f)** shows `--plugin-dir`
-  supplies the skill definitions with layer 1 left at `""`. The decision below
-  is therefore rewritten around `--plugin-dir`, which is the mechanism that
-  survived. **Layer 1 is not touched by this ADR.** What still gates
-  `Accepted` is the acceptance test plus measurements (b) and (e); unlike
-  ADR 0012, this record does not permit the code to ship ahead of them, only
-  to be written. ADR 0012 shipped while `Proposed` with its own acceptance
-  probes unrun, was measured at 7% two days later, and nobody had ever
-  established that an inlined body helps a node at all. Every number here is
-  **claude 2.1.223, macOS, one machine**.
+- Status: **Proposed — implemented as of 2026-08-07; still `Proposed`, and
+  deliberately so.** Both blocking measurements named by the 2026-08-07 review
+  were taken and independently re-run: **(g)** confirms the retraction —
+  relaxing ceiling layer 1 forfeits the scope ceiling — and **(f)** shows
+  `--plugin-dir` supplies the skill definitions with layer 1 left at `""`. The
+  decision below is written around `--plugin-dir`, which is the mechanism that
+  survived. **Layer 1 is not touched by this ADR.** What still gates `Accepted`
+  is the acceptance test plus measurements (b) and (e), none of which the code
+  landing changes: unlike ADR 0012, this record permits the code to be written
+  and shipped behind its printed disclosure, not to be called done. ADR 0012
+  shipped while `Proposed` with its own acceptance probes unrun, was measured at
+  7% two days later, and nobody had ever established that an inlined body helps
+  a node at all. Every number here is **claude 2.1.223, macOS, one machine**.
 - Date: 2026-08-07
 - Issues: [#130](https://github.com/jitokim/oh-my-graph/issues/130)
-- Supersedes, contingent on that gate:
+- Supersedes, **in code as of 2026-08-07**:
   `0012-skill-mapping-is-plan-time-inlining.md` in whole (§1–§5; §6's scan and
   its printed disclosure survive, re-pointed — see Decision §8). ADR 0012's
   decision text is unchanged; it carries a dated pointer here.
@@ -520,6 +520,78 @@ once by activation — pay for it twice, and become unattributable. One PR,
 mutually exclusive.
 
 Until that PR lands, ADR 0012 is what ships, and its record says so.
+
+## What was implemented, and the three places the code differs from this text
+
+Landed 2026-08-07. Where the code and this record disagree, the record is
+wrong and is corrected here rather than quietly: an ADR whose §-numbers no
+longer name anything is worse than one that says which of its own sentences
+did not survive contact.
+
+- **`internal/coordinator/skillstage.go`** — `applySkillActivation` (the
+  post-validation step §1 specifies, ordered after `applyAgentMapping`'s
+  rebuild so `node.Agent` is authoritative), `SkillStaging` (the manifest and
+  `Materialize`), `GuardStaging` (the `NodeRunner` decorator that
+  re-materializes before every spawn), and `Plan.BindSkillStaging`.
+- **`internal/coordinator/skillscan.go`** — what survives of `skillmap.go`:
+  `scanSkillDirs`, `parseSkillFile`, `SkillScan`, `DefaultSkillDirs`. §8's
+  deletions are done: the matcher, the 16 KiB cap, the `{{` neutralization, the
+  fence usage and `SkillMapping` are gone, `internal/fence` itself is untouched
+  (its call-site count drops from five to four), and
+  `field_dispositions_test.go`'s `Prompt` disposition reverts.
+- **Layer 3** moves inside `narrowedToolsFor`, which gains a
+  `skillActivated bool` and stays the one function that builds that list.
+  `plannedToolAllowlist` is unchanged.
+- **`runner.ToolPolicy.PluginDirs`** renders as `--plugin-dir`, emitted
+  between `--setting-sources` and `--agent`. `runstate.NodeToolPolicy` mirrors
+  it, as §Compatibility said it must.
+
+**Difference 1 — the directory is populated when the RUN ID exists, not at
+plan time.** §5 says "at plan time, trusted code populates the directory". The
+run id does not exist then: `auto` mints it after `Plan` returns, and the goal
+loop mints one per cycle. So plan time takes the **manifest** — every source
+path with its SHA-256, from the scan, after validation, by trusted Go code —
+and `Plan.BindSkillStaging(runDir)` writes the bytes once the run directory is
+known. Every property §5 claims is a property of the manifest, not of when the
+copy happened: the corpus is fixed at plan time, a source that changed since
+then halts, and `--plan-only` stages nothing, which is correct because a
+preview never ran and gets no run directory. One visible consequence: §7's
+sample printout names the staged path, and the real one cannot — `printPlan`
+runs before the run id exists. It names the corpus, the count, the per-skill
+size and hash, the nodes reached and the per-invocation cost, which is every
+part of that disclosure that is knowable when the plan is printed.
+
+**Difference 2 — the manifest is a sidecar in the run directory, not a field
+of `state.json`.** §5 says the manifest is recorded in `state.json`.
+`<run-dir>/skills-plugin.manifest.json` is written instead — beside the staged
+directory, never inside it, since `Materialize` deletes everything the manifest
+does not name and a manifest that deletes itself is a bad manifest. Two
+reasons. The snapshot is a persisted consumer contract (`runstate`'s doc
+comment) and a per-file hash list of the user's private instruction corpus does
+not belong in the document `runs list`, `show`, `watch` and `serve` all parse.
+And for the live leg the manifest is held **in memory** and never re-read, so
+the guard cannot be steered by a node that rewrites a file — strictly stronger
+than reading it back from disk each time. `state.json` still carries
+`plugin_dirs`, which is what tells a resumed leg there is a corpus to verify.
+
+**Difference 3 — `--no-skill-mapping` is rewritten at parse, not registered.**
+§Compatibility says it is "accepted as a deprecated alias with a one-line
+notice". Registering it would advertise a deleted mechanism in `--help` and in
+the usage synopsis (which `usage_test.go` holds to the registered FlagSets), so
+`rewriteDeprecatedSkillFlag` translates the spelling before `flag.Parse` and
+prints the notice. Accepted, loud, and not advertised.
+
+Two things §5 and §6 promise that are **not** implemented, named rather than
+left to be discovered:
+
+- **`resume --accept-changed-skills`** (§6). A resumed leg whose source corpus
+  changed halts and names the paths; the release valve is
+  `--no-skill-activation`, which the halt's own message names. Adding a second
+  flag that re-seals a corpus a run did not plan against is a decision with its
+  own hazard, and it is not made here.
+- **Cleanup of the staged directory at terminal settled state** (§5). It is
+  swept by whatever sweeps run directories today, like every other run
+  artifact. Nothing depends on it being removed sooner.
 
 ## The acceptance test
 

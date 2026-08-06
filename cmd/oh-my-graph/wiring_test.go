@@ -442,14 +442,14 @@ func TestPrintPlan_UnisolatedWarningNamesTheMentionAndTheMissingRepository(t *te
 	}
 }
 
-// TestPrintPlan_ShowsSkillMappingsAndSkips pins skill mapping's disclosure
-// contract (ADR 0012 §6): one line per decision — an applied mapping prints
-// its name, inlined size, hash prefix (the integrity link to the full text in
-// the saved spec file), target node and description; a refused candidate
-// prints its reason; and the opt-out flag is stated. Inlined text the human
-// never saw before execution would defeat the reason the mapping lives in
-// trusted code.
-func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
+// TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts pins skill activation's
+// disclosure contract (ADR 0017 §7). Two halves, and the second is the one
+// that is easy to lose: the corpus is named skill by skill with size and hash,
+// AND the printout says out loud that WHICH skill a node uses is not knowable
+// here. A plan that listed a corpus and stopped would read exactly like a plan
+// that activates nothing, and silent absence is this mechanism's signature
+// failure mode.
+func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
 		`{"id":"impl","prompt":"p"},` +
 		`{"id":"verify","prompt":"p"}]}`))
@@ -457,11 +457,17 @@ func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := coordinator.Plan{Graph: g,
-		SkillScan: &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 35},
-		SkillMappings: []coordinator.SkillMapping{
-			{NodeID: "impl", Skill: "coding-rules", Description: "team coding rules",
-				InlinedBytes: 6861, SHA256: strings.Repeat("ab12", 16)},
-			{NodeID: "verify", Skill: "pre-commit-checklist", SkippedReason: "body 86.6 KiB exceeds 16 KiB cap"},
+		SkillScan: &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 2},
+		SkillActivation: &coordinator.SkillActivation{
+			Enabled: true,
+			Skills: []coordinator.StagedSkill{
+				{Name: "coding-rules", Description: "team coding rules", Bytes: 6861, SHA256: strings.Repeat("ab12", 16)},
+				{Name: "pre-commit-checklist", Description: "the checklist", Bytes: 88678, SHA256: strings.Repeat("cd34", 16)},
+			},
+			NodeIDs:               []string{"impl"},
+			ExcludedNodeIDs:       []string{"verify"},
+			PluginDir:             "/runs/r1/skills-plugin",
+			EstimatedPromptTokens: 344,
 		}}
 
 	var out strings.Builder
@@ -469,24 +475,53 @@ func TestPrintPlan_ShowsSkillMappingsAndSkips(t *testing.T) {
 	got := out.String()
 
 	for _, want := range []string{
-		`skill mapped: coding-rules (6.7 KiB, sha256:ab12ab12ab12…) -> impl — "team coding rules"`,
-		"skill skipped: pre-commit-checklist -> verify: body 86.6 KiB exceeds 16 KiB cap",
-		"--no-skill-mapping",
+		"skill activation: ENABLED on 1 of 2 planned node(s)",
+		`coding-rules (6.7 KiB, sha256:ab12ab12ab12…) — "team coding rules"`,
+		`pre-commit-checklist (86.6 KiB, sha256:cd34cd34cd34…)`,
+		"344 tokens",
+		"excluded: verify is agent-mapped",
+		"NOT knowable here",
+		"session transcript",
+		"re-materialized and verified before every node spawn",
+		"--no-skill-activation",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)
 		}
 	}
+	// The ceiling claim is the other half of the contract: this printout must
+	// not let a reader think activation relaxed the isolation.
+	if !strings.Contains(got, "ceiling: UNCHANGED") {
+		t.Errorf("the printout must state that the ceiling did not move:\n%s", got)
+	}
 }
 
-// TestPrintPlan_ShowsSkillScanAndItsLimits pins the other half of that
-// disclosure, the half that has to survive an EMPTY decision list: a name-only
+// An activation that is OFF despite a scan having run must say why. "Scanned,
+// staged nothing" and "never scanned" are the same silence otherwise.
+func TestPrintPlan_SaysWhyActivationIsOff(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"impl","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g,
+		SkillScan:       &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 0},
+		SkillActivation: &coordinator.SkillActivation{DisabledReason: "the scan found no usable skill definition"},
+	}, "/tmp/graph.json")
+	if !strings.Contains(out.String(), "skill activation: OFF — the scan found no usable skill definition") {
+		t.Errorf("an OFF activation must name its reason:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "ENABLED") {
+		t.Errorf("nothing was staged, so nothing may claim otherwise:\n%s", out.String())
+	}
+}
+
 // rule matches nothing for most node ids, so "no lines" is the majority
 // outcome and used to be indistinguishable from "skill mapping never ran" —
 // and from the case a user actually hits, a corpus sitting somewhere this scan
 // does not go. A scan that happened must therefore say where it looked, how
 // much it found, and which skill locations are deliberately out of scope
-// (ADR 0012: plugin-provided and project skills).
+// (ADR 0012's cuts, held by ADR 0017: plugin-provided and project skills).
 func TestPrintPlan_ShowsSkillScanAndItsLimits(t *testing.T) {
 	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"impl","prompt":"p"}]}`))
 	if err != nil {
@@ -510,7 +545,7 @@ func TestPrintPlan_ShowsSkillScanAndItsLimits(t *testing.T) {
 	}
 
 	// The opted-out case: no scan happened, so there is nothing to report and
-	// the user who typed --no-skill-mapping is not told about it twice.
+	// the user who typed --no-skill-activation is not told about it twice.
 	var off strings.Builder
 	printPlan(&off, coordinator.Plan{Graph: g}, "/tmp/graph.json")
 	if strings.Contains(off.String(), "skill scan") {
@@ -558,7 +593,7 @@ func TestPrintPlan_NamesAShadowedSkill(t *testing.T) {
 // with the absolute path it means, its presence in the note asserted first
 // (rewording the note fails here rather than quietly detaching this check),
 // and no scanned directory may fall inside any of them.
-func TestNoteSkillMappings_NotScannedNoteMatchesWhatIsActuallyScanned(t *testing.T) {
+func TestNoteSkillActivation_NotScannedNoteMatchesWhatIsActuallyScanned(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cwd, err := os.Getwd()
@@ -572,7 +607,7 @@ func TestNoteSkillMappings_NotScannedNoteMatchesWhatIsActuallyScanned(t *testing
 
 	scanned := coordinator.DefaultSkillDirs()
 	var out strings.Builder
-	noteSkillMappings(&out, &coordinator.SkillScan{Dirs: scanned}, nil)
+	noteSkillActivation(&out, &coordinator.SkillScan{Dirs: scanned}, nil)
 	note := out.String()
 
 	for _, loc := range notScanned {
@@ -601,15 +636,15 @@ func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
 
 	var on strings.Builder
 	mappingOptions(&on, false, false)
-	if !strings.Contains(on.String(), "no skill directory") || !strings.Contains(on.String(), "--no-skill-mapping") {
-		t.Errorf("mapping is on and can never map: say so, and name the way to mean it:\n%s", on.String())
+	if !strings.Contains(on.String(), "no skill directory") || !strings.Contains(on.String(), "--no-skill-activation") {
+		t.Errorf("activation is on and can never stage: say so, and name the way to mean it:\n%s", on.String())
 	}
 
 	// Turning it off is a choice, and a choice is not a warning.
 	var off strings.Builder
 	mappingOptions(&off, false, true)
 	if off.Len() != 0 {
-		t.Errorf("--no-skill-mapping must stay silent:\n%s", off.String())
+		t.Errorf("--no-skill-activation must stay silent:\n%s", off.String())
 	}
 
 	// Neither is the normal case a warning.

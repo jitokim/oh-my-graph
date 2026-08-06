@@ -1,6 +1,18 @@
 # ADR 0012 — Skill mapping for planned nodes is plan-time inlining, not prompt reference
 
-- Status: Proposed — acceptance additionally gated on the two probes in
+- Status: **Superseded in code by ADR 0017 on 2026-08-07.** The mechanism this
+  record decided — the name-token matcher, the 16 KiB cap, the `{{`
+  neutralization, the nonce-fenced inlined body, `SkillMapping` and the
+  `skill mapped:` / `skill skipped:` printout — no longer exists in the tree.
+  What survives, re-pointed at activation, is §6's scan (`scanSkillDirs`,
+  `SkillScan`) and its printed disclosure. Its required measurements (a) and
+  (b) are **voided, not discharged**: the mechanism they were written to
+  measure is gone, and the misfire (b) existed to catch — `artifacts` →
+  `html-artifact` — is exactly the class of error activation is *expected* to
+  avoid, which is not the same as *measured* to. The record below is left
+  unedited, because a record that edits away what it decided teaches a future
+  reader nothing.
+- Former status: Proposed — acceptance additionally gated on the two probes in
   "Required measurements before Accepted" below. **Implemented and shipped
   anyway** (#97, `internal/coordinator/skillmap.go`), while still `Proposed`:
   the gate below was not met before the code landed and is **still owed** as of
@@ -33,10 +45,10 @@
   trust surface — inlining copies file content where agent mapping only
   names a file; §5 states the difference instead of papering over it.
 
-> **Update (2026-08-07) — superseded in whole by ADR 0017, contingent on that
-> ADR's acceptance test.** The decision text below is unchanged and, until
-> ADR 0017's gate passes and its implementation lands, **this is still what
-> ships**. What changed is the premise. The 2026-08-03 measurement recorded
+> **Update (2026-08-07) — superseded in whole by ADR 0017, whose
+> implementation landed the same day.** The decision text below is unchanged
+> and **no longer ships**: the two mechanisms may never coexist in a build, so
+> the deletion rode with the replacement. What changed is the premise. The 2026-08-03 measurement recorded
 > here established that a planned node has neither a skills listing nor a
 > `Skill` tool, and its own attribution-nuance paragraph flagged the
 > decomposition it could not make: *"if a future proposal ever adds `Skill` to
@@ -121,8 +133,9 @@
 > node spawn, so a node cannot plant instructions for its successors — a
 > prevention rather than the halt-after-the-fact this note first recorded.
 >
-> **This mechanism still ships until ADR 0017's implementation lands**, and its
-> gate is still voided rather than discharged. What is no longer true is that
+> **This mechanism no longer ships** — ADR 0017's implementation landed on
+> 2026-08-07 — and its gate is voided rather than discharged. What is no longer
+> true is that
 > it ships *for want of an admissible replacement*: there is one, it is
 > measured, and the cost is now a printed number rather than an open question —
 > ~6,008 prompt tokens per node invocation to stage 35 skill descriptions,

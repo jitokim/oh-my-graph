@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -61,9 +63,15 @@ func (f *runFlags) parse(args []string) error {
 // autoFlags holds the parsed `auto` subcommand options. The goal is a
 // positional argument, mirroring how `run` takes its graph path.
 type autoFlags struct {
-	goal             string
-	planOnly         bool
-	noAgentMapping   bool
+	goal              string
+	planOnly          bool
+	noAgentMapping    bool
+	noSkillActivation bool
+	// noSkillMapping is the DEPRECATED spelling of noSkillActivation. The
+	// user intent behind it — "keep my skills out of my auto runs" — is
+	// unchanged by ADR 0017; only the mechanism it switches off is, and the
+	// effect is now stronger rather than weaker, so the old flag keeps working
+	// with a notice instead of failing a script that already passes it.
 	noSkillMapping   bool
 	maxCycles        int
 	maxGoalBudgetUSD float64
@@ -102,7 +110,7 @@ func newAutoFlags() *autoFlags {
 	f.register(f.set)
 	f.set.BoolVar(&f.planOnly, "plan-only", false, "plan the graph, print it with every agent/skill mapping and the tool ceiling, then exit without running any node — NOT free, unlike `run --dry-run`: it still pays for at least one real planner call, and a validation refusal buys one corrected call on top of it")
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
-	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
+	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "do not stage your Claude Code skills (~/.claude/skills) for planned nodes — they then get no Skill tool and no --plugin-dir, exactly as before ADR 0017")
 	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call. N has no upper bound, and a validation-refused plan buys one corrected planner call, so the planner-call worst case is 2 × N")
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
 	f.set.StringVar(&f.verifyCmd, "verify-cmd", "", "shell command the ENGINE runs at every sink node of the plan, as build evidence (ADR 0016) — e.g. './gradlew build'. No node is granted anything: the command is yours, it is attached by trusted code after the plan validates, and the engine judges its exit code itself, so a check node can no longer certify a branch that does not build. Every cycle of --max-cycles plans afresh and every cycle's sinks get it")
@@ -127,7 +135,7 @@ func (f *autoFlags) parse(args []string) error {
 		return fmt.Errorf(`auto: missing goal (usage: oh-my-graph auto "<goal>" [--input k=v ...] — the quoted goal comes first)`)
 	}
 	f.goal = args[0]
-	if err := f.set.Parse(args[1:]); err != nil {
+	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, args[1:])); err != nil {
 		return err
 	}
 	if f.set.NArg() > 0 {
@@ -187,6 +195,11 @@ type resumeFlags struct {
 	retryFailed bool
 	concurrency int
 	noWeb       bool
+	// noSkillActivation drops skill activation from a resumed leg (ADR 0017
+	// §6). It is the ONLY direction this flag has: a resume can turn a run's
+	// activation off, and nothing on `resume` can turn it on, so no resumed
+	// leg can ever run wider than the leg that started it.
+	noSkillActivation bool
 
 	set *flag.FlagSet
 }
@@ -205,6 +218,7 @@ func newResumeFlags() *resumeFlags {
 	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute a failed run's failed and cancelled nodes, or finish a session-limit-paused run's unfinished nodes; every passed node's result is kept")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	f.set.BoolVar(&f.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
+	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "drop skill activation from this leg: the staged skill plugin is not re-created and the Skill tool is withheld (ADR 0017). De-escalation only — there is no flag that turns activation on for a run that was planned without it")
 	return f
 }
 
@@ -220,4 +234,45 @@ func (f *resumeFlags) parse(args []string) error {
 	}
 	f.runID = args[0]
 	return f.set.Parse(args[1:])
+}
+
+// deprecatedSkillFlagSpellings are the ways `--no-skill-mapping` can be typed.
+// It is the ADR 0012 name for what ADR 0017 replaced, and it is rewritten
+// rather than registered: registering it would advertise a dead mechanism in
+// `--help` and in the usage synopsis, and dropping it would break a script
+// that already passes it. The user intent behind it — "keep my skills out of
+// my auto runs" — is unchanged; only the mechanism is, and the effect is now
+// stronger rather than weaker.
+var deprecatedSkillFlagSpellings = map[string]string{
+	"-no-skill-mapping":  "-no-skill-activation",
+	"--no-skill-mapping": "--no-skill-activation",
+}
+
+// rewriteDeprecatedSkillFlag translates the deprecated spelling in place and
+// says so once on w. It never rewrites SILENTLY: the flag names a mechanism
+// that no longer exists, so a user who typed it is owed the sentence.
+func rewriteDeprecatedSkillFlag(w io.Writer, args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	noticed := false
+	for i, arg := range out {
+		name, value, hasValue := strings.Cut(arg, "=")
+		replacement, deprecated := deprecatedSkillFlagSpellings[name]
+		if !deprecated {
+			continue
+		}
+		if hasValue {
+			out[i] = replacement + "=" + value
+		} else {
+			out[i] = replacement
+		}
+		if !noticed {
+			fmt.Fprint(w,
+				"--no-skill-mapping is deprecated: the plan-time inlining it named is gone (ADR 0017).\n"+
+					"Read as --no-skill-activation, which is what it now does.\n",
+			)
+			noticed = true
+		}
+	}
+	return out
 }

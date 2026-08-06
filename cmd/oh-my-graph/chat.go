@@ -22,30 +22,31 @@ import (
 // registration the production path makes instead of a hand-copied second list
 // (cmd/oh-my-graph/usage_test.go).
 type chatFlags struct {
-	noAgentMapping bool
-	noSkillMapping bool
+	noAgentMapping    bool
+	noSkillActivation bool
 
 	set *flag.FlagSet
 }
 
 // newChatFlags builds a chatFlags with its FlagSet configured. Two flags only:
-// --no-agent-mapping and --no-skill-mapping, because a chat graph turn IS an
-// auto run and must honor the same opt-outs.
+// --no-agent-mapping and --no-skill-activation (whose deprecated alias parse
+// rewrites), because a chat graph turn IS an auto run and must honor the same
+// opt-outs.
 func newChatFlags() *chatFlags {
 	f := &chatFlags{set: flag.NewFlagSet("chat", flag.ContinueOnError)}
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
-	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
+	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "do not stage your Claude Code skills (~/.claude/skills) for planned nodes")
 	return f
 }
 
 // parse reads args as flags only — `chat` takes no positional argument, so a
 // leftover one is a typo worth naming rather than silently ignoring.
 func (f *chatFlags) parse(args []string) error {
-	if err := f.set.Parse(args); err != nil {
+	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, args)); err != nil {
 		return err
 	}
 	if f.set.NArg() > 0 {
-		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping])", f.set.Arg(0))
+		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-activation])", f.set.Arg(0))
 	}
 	return nil
 }
@@ -67,7 +68,7 @@ func runChat(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillActivation)...)
 	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 

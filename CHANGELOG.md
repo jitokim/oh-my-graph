@@ -12,6 +12,38 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **Planned nodes get Claude Code's own skill activation (ADR 0017, #130).**
+  `auto` now stages your whole `~/.claude/skills` corpus into a plugin
+  directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
+  planned node `--plugin-dir <that>`, and adds `Skill` to its tool list. Which
+  skill a node uses is then chosen by the node's own model at run time, by
+  description — where the mechanism this replaces picked one at plan time by
+  name and reached 7% of planner-authored node ids, one of its five matches
+  being semantically wrong.
+
+  **The tool ceiling does not move.** Layer 1 stays `--setting-sources ""`:
+  measurement (g) showed that relaxing it lets a node that declared
+  `Bash(git *)` run an out-of-scope command, because `--tools` bounds tool
+  names and not scopes. Your settings, CLAUDE.md, hooks and MCP servers still
+  do not load. `--plugin-dir` is not a ceiling layer — it supplies definitions
+  and grants nothing — and `plannedToolAllowlist` is unchanged, so a plan still
+  may not DECLARE `Skill`.
+
+  The staged directory is re-created and verified from a manifest before every
+  node spawn, so a node cannot leave a skill behind for a later one; a source
+  skill that changed or vanished since planning halts the run with the path
+  named. `resume` verifies rather than trusting the recorded path, since a
+  `--plugin-dir` pointing at nothing is accepted by the CLI with exit 0.
+
+  The plan printout names every staged skill with its size and SHA-256, the
+  nodes reached, the agent-mapped nodes excluded (that composite is
+  unmeasured), and what the corpus adds to every node invocation — including
+  retries and feedback re-runs. What it can no longer name is *which* skill a
+  node will use; nothing knows that before the model does.
+
+  `--no-skill-activation` turns it off, on `auto` and on `resume` alike
+  (de-escalation only, so no resumed leg can widen a run's ceiling).
+
 - **`auto --verify-cmd` / `--verify-timeout` — build evidence becomes reachable
   (ADR 0016 §2, #119).** v0.5.0 shipped the whole engine for this and no way to
   reach it: the attachment, the serialization, the `retry.max` cap and the
@@ -67,6 +99,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   — not even the one it was invoked from, where planned nodes work directly in
   your tree — because a heuristic that reads as complete, or a boundary that
   reads as protection, is worse than none.
+
+### Removed
+
+- **ADR 0012's plan-time skill inlining, in the same change that replaced it
+  (ADR 0017 §8).** The name-token matcher, the 16 KiB body cap, the `{{`
+  neutralization, the nonce fence around inlined skill bodies, `SkillMapping`
+  and the `skill mapped:` / `skill skipped:` printout lines are gone. The two
+  mechanisms must never coexist in a shipped build: a node holding both would
+  receive the same skill twice, pay for it twice, and become unattributable.
+  The scan (`scanSkillDirs`, `Plan.SkillScan`) and its printed disclosure
+  survive, re-pointed at activation. `--no-skill-mapping` still works as a
+  deprecated alias for `--no-skill-activation`, with a printed notice.
+  ADR 0012's required measurements (a) and (b) are voided, not discharged.
 
 ### Changed
 

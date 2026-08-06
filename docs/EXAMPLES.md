@@ -84,7 +84,8 @@ Two things that come with it, both real:
   your CLAUDE.md, your hooks, or your configured MCP servers. If an `auto` run
   of yours depended on an MCP server, it will stop working.
 - **It is still not a sandbox.** MCP closure is unverified (the flag is passed
-  because it is free, not because it was measured); skill and slash-command
+  because it is free, not because it was measured); which skill a node actually
+  activates is not knowable before the model chooses it, and slash-command
   surfaces remain unenumerable; and the whole thing is coupled to one CLI
   version's behaviour.
 

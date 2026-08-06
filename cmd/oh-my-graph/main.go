@@ -8,14 +8,14 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
-//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
+//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-//	oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping]
+//	oh-my-graph chat [--no-agent-mapping] [--no-skill-activation]
 //	oh-my-graph version
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
@@ -96,14 +96,14 @@ func mainExitCode(args []string) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
-       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-       oh-my-graph chat [--no-agent-mapping] [--no-skill-mapping]
+       oh-my-graph chat [--no-agent-mapping] [--no-skill-activation]
        oh-my-graph version`
 
 // run parses argv and dispatches to the subcommand. It returns an error rather
@@ -257,7 +257,7 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
 	// re-enters the same coordinator and plans afresh, so every cycle's sinks
 	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
-	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping),
+	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillActivation),
 		coordinator.WithVerifyCommand(verifyCommand))
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
@@ -265,38 +265,38 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 		webOpener(flags.noWeb, stdout, opener))
 }
 
-// mappingOptions wires the two auto-mappings for a production Coordinator:
+// mappingOptions wires the two auto-decisions for a production Coordinator:
 // subagent mapping over the default user-then-project agent directories, and
-// skill mapping over the default user skill directory (never a project one —
-// ADR 0012), each independently switchable off by its flag. This is the only
-// place the real filesystem locations enter the coordinator — tests construct
-// theirs with temp dirs instead.
+// skill activation over the default user skill directory (never a project one
+// — ADR 0012's cut, held by ADR 0017), each independently switchable off by
+// its flag. This is the only place the real filesystem locations enter the
+// coordinator — tests construct theirs with temp dirs instead.
 //
 // w takes the one thing this function knows and the plan printout cannot: a
 // coordinator built with ZERO skill directories never scans, so it records no
-// SkillScan and noteSkillMappings prints nothing — correct for the library
-// default (coordinator.New with no dirs) and for --no-skill-mapping, but
-// silence here would mean skill mapping is ON, maps nothing, and says nothing
+// SkillScan and noteSkillActivation prints nothing — correct for the library
+// default (coordinator.New with no dirs) and for --no-skill-activation, but
+// silence here would mean activation is ON, stages nothing, and says nothing
 // at all. DefaultSkillDirs returns empty in exactly one case, an unresolvable
 // home directory (no $HOME: containers, launchd, some CI), and that is a
 // misconfiguration nobody chose — the one silence this disclosure exists to
 // remove. Said here rather than by giving every library caller a non-nil scan.
-func mappingOptions(w io.Writer, noAgentMapping, noSkillMapping bool) []coordinator.Option {
+func mappingOptions(w io.Writer, noAgentMapping, noSkillActivation bool) []coordinator.Option {
 	var opts []coordinator.Option
 	if noAgentMapping {
 		opts = append(opts, coordinator.WithoutAgentMapping())
 	} else {
 		opts = append(opts, coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...))
 	}
-	if noSkillMapping {
-		opts = append(opts, coordinator.WithoutSkillMapping())
+	if noSkillActivation {
+		opts = append(opts, coordinator.WithoutSkillActivation())
 	} else {
 		skillDirs := coordinator.DefaultSkillDirs()
 		if len(skillDirs) == 0 {
 			fmt.Fprint(w,
-				"skill mapping is on, but no skill directory could be resolved (your home directory is\n"+
-					"unset), so nothing will be scanned and no skill can map. Set HOME, or pass\n"+
-					"--no-skill-mapping to say so on purpose.\n",
+				"skill activation is on, but no skill directory could be resolved (your home directory\n"+
+					"is unset), so nothing will be scanned and no skill can be staged. Set HOME, or pass\n"+
+					"--no-skill-activation to say so on purpose.\n",
 			)
 		}
 		opts = append(opts, coordinator.WithSkillDirs(skillDirs...))
@@ -425,6 +425,21 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // to (see buildRecorder). goal is the run's goal-lineage block for an
 // iterated auto cycle (ADR 0011 §4), nil on every single-cycle run.
 func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener, goal *runstate.GoalRef) error {
+	// The staged skill corpus is bound to THIS run's directory here, and not
+	// in the coordinator, because the run id does not exist until the plan has
+	// been bought (ADR 0017 §5). Binding is what puts --plugin-dir into
+	// plan.ToolPolicies, so it must happen before the policies are handed to
+	// the scheduler and snapshotted — and it is an error, not a downgrade: the
+	// policies already carry `Skill`, and running them against a directory
+	// that is not there would give every node a tool with no definitions
+	// behind it, which is exactly the silent absence this mechanism is most
+	// exposed to.
+	if err := plan.BindSkillStaging(runDirFor(runID)); err != nil {
+		return err
+	}
+	if plan.SkillActivation != nil {
+		nodeRunner = coordinator.GuardStaging(nodeRunner, plan.SkillActivation.Staging)
+	}
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
 	// fragment-free by construction and stays reusable verbatim.
@@ -681,7 +696,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		fmt.Fprintln(w, line)
 	}
 	noteAgentMappings(w, plan.AgentMappings)
-	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
+	noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
@@ -874,28 +889,32 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 	}
 }
 
-// noteSkillMappings discloses every skill auto-mapping decision before the run
-// starts, one line per decision (ADR 0012 §6): a mapping's name, inlined size,
-// hash prefix, target node and description — the printed hash is the integrity
-// link to the full inlined text in the saved spec file, which printPlan already
-// names — and a refused candidate's reason (oversize body, agent-mapped node).
+// noteSkillActivation discloses skill activation before the run starts
+// (ADR 0017 §7): the whole staged corpus with each skill's size and hash, the
+// nodes it reaches, what it costs every invocation, and — when activation is
+// off despite a scan having run — why.
 //
-// The decisions are bracketed by the SCAN they came out of, because the
-// decision list alone cannot say why it is empty. No-match is the majority
-// outcome of a name-only rule (measured: 22 of the 32 shipped node ids), so an
-// empty list used to print nothing at all and read identically to "skill
-// mapping never ran" — and identically, too, to the case a user actually hits:
-// a corpus that lives somewhere this scan deliberately does not go. Naming the
-// scanned directories and the count turns "I have skills but see none" into
-// one readable line, and the exclusion note states the limit instead of
-// letting it look like a match failure. A shadowed definition gets its own
-// line for the same reason: the count above it is the size of the deduped set,
-// so a collision quietly lowers it, and nothing else would ever name the file
-// that lost. scan is nil only when no scan happened (--no-skill-mapping, or no
+// What this can NO LONGER say is which skill a node will use. Under ADR 0012's
+// inlining that was printable, because trusted code chose it; under activation
+// the node's own model chooses at run time, by description, and no amount of
+// printing recovers it. Saying so out loud is the point: a plan that listed
+// nothing would otherwise read as a plan that activates nothing, and silent
+// absence is this mechanism's signature failure. The retrospective account is
+// the node's session transcript, which exists already — every node runs with
+// session persistence on — and the printout says where to look.
+//
+// The corpus is bracketed by the SCAN it came out of, because the corpus alone
+// cannot say why it is empty: a user with skills that live somewhere this scan
+// deliberately does not go sees "0 skill(s) from <dir>" rather than silence. A
+// shadowed definition gets its own line for the same reason — the count is the
+// size of the deduped set, so a collision quietly lowers it and nothing else
+// would ever name the file that lost.
+//
+// scan is nil only when no scan happened (--no-skill-activation, or no
 // configured directories), and then this prints nothing: the user who turned
 // it off does not need to be told twice — and the one case where nobody turned
 // it off, an unresolvable home, is disclosed by mappingOptions instead.
-func noteSkillMappings(w io.Writer, scan *coordinator.SkillScan, mappings []coordinator.SkillMapping) {
+func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *coordinator.SkillActivation) {
 	if scan == nil {
 		return
 	}
@@ -903,26 +922,35 @@ func noteSkillMappings(w io.Writer, scan *coordinator.SkillScan, mappings []coor
 	for _, path := range scan.Shadowed {
 		fmt.Fprintf(w, "  skill shadowed: %s — another definition declares the same name and wins\n", path)
 	}
-	applied := false
-	for _, m := range mappings {
-		if m.SkippedReason != "" {
-			fmt.Fprintf(w, "  skill skipped: %s -> %s: %s\n", m.Skill, m.NodeID, m.SkippedReason)
-			continue
+	if activation != nil && activation.Enabled {
+		fmt.Fprintf(w, "  skill activation: ENABLED on %d of %d planned node(s)\n",
+			len(activation.NodeIDs), len(activation.NodeIDs)+len(activation.ExcludedNodeIDs))
+		fmt.Fprintf(w, "    %d skill(s) staged (adds ~%d tokens to EVERY node invocation, including retries\n"+
+			"    and feedback re-runs)\n", len(activation.Skills), activation.EstimatedPromptTokens)
+		for _, sk := range activation.Skills {
+			fmt.Fprintf(w, "    %s (%.1f KiB, sha256:%.12s…) — %q\n",
+				sk.Name, float64(sk.Bytes)/1024, sk.SHA256, sk.Description)
 		}
-		fmt.Fprintf(w, "  skill mapped: %s (%.1f KiB, sha256:%.12s…) -> %s — %q\n",
-			m.Skill, float64(m.InlinedBytes)/1024, m.SHA256, m.NodeID, m.Description)
-		applied = true
-	}
-	if applied {
+		for _, id := range activation.ExcludedNodeIDs {
+			fmt.Fprintf(w, "    excluded: %s is agent-mapped (that composite is unmeasured; it already sees your real skills)\n", id)
+		}
 		fmt.Fprint(w,
-			"  Nodes marked above got that skill's SKILL.md body appended to their prompt (full text\n"+
-				"  in the saved spec file). Pass --no-skill-mapping to turn this off.\n",
+			"  Which skill a node uses is chosen by the model at run time from those descriptions.\n"+
+				"  It is NOT knowable here; each invocation is recorded in that node's session transcript.\n"+
+				"  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load\n"+
+				"    (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still enforced.\n"+
+				"    The only change is that the Skill tool now exists for these nodes.\n"+
+				"  The staged corpus is re-materialized and verified before every node spawn; a source\n"+
+				"    skill that changed or vanished halts the run.\n"+
+				"  Turn it off with --no-skill-activation.\n",
 		)
+	} else if activation != nil && activation.DisabledReason != "" {
+		fmt.Fprintf(w, "  skill activation: OFF — %s\n", activation.DisabledReason)
 	}
 	fmt.Fprint(w,
 		"  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).\n"+
-			"  Both are out of scope in v1 (ADR 0012), so a skill you installed through a plugin maps\n"+
-			"  nothing here — that is a stated limit, not a failed match.\n",
+			"  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a\n"+
+			"  plugin is not staged — that is a stated limit, not a failure.\n",
 	)
 }
 
@@ -1081,6 +1109,11 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 			Tools:           p.Tools,
 			SettingSources:  p.SettingSources,
 			StrictMCPConfig: p.StrictMCPConfig,
+			// Not a ceiling layer, and persisted anyway: it is the ONLY
+			// durable record that this run was skill-activated (the grant is
+			// invisible in graph.json by design, ADR 0017 §2), so a resumed
+			// leg reads it to know there is a staged corpus to verify.
+			PluginDirs: p.PluginDirs,
 		}
 	}
 	return out

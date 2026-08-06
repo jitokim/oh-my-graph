@@ -62,6 +62,25 @@ type ToolPolicy struct {
 	// explicit --mcp-config are used. oh-my-graph never passes --mcp-config, so
 	// for a planned node this means no MCP servers at all.
 	StrictMCPConfig bool
+	// PluginDirs renders as one --plugin-dir <dir> per entry. It is NOT a sixth
+	// ceiling layer and must not be read as one: it ADDS instruction material
+	// (a staged Claude Code plugin holding skill definitions) and grants no
+	// capability at all. A skill's body can only reach tools this policy's
+	// other five layers already permit, and the Skill tool itself exists only
+	// when layer 3's Tools names it — measured in ADR 0017 (f): --plugin-dir
+	// with --tools Read and no Skill loads the definitions and cannot run them.
+	//
+	// It exists because layer 1 stays "": --setting-sources "" withholds the
+	// skill DEFINITIONS along with the user's settings, and a plugin directory
+	// is the one source of definitions that does not reopen layer 1 (ADR 0017,
+	// measurements (f) and (g)). Empty omits the flag, which is every
+	// hand-written graph and every planned run with activation off.
+	//
+	// A directory that does not exist is accepted silently by the CLI, so a
+	// value here is only as good as whatever guarantees the directory is
+	// present — see coordinator.SkillStaging, which re-materializes it before
+	// every spawn rather than trusting the path.
+	PluginDirs []string
 }
 
 // NodeInvocation is everything the runner needs to launch one node. It is a

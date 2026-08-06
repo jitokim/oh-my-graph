@@ -170,7 +170,8 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // buildArgs is the argv (excluding the binary) for a node:
 //
 //	-p <prompt> --output-format json --permission-mode <mode>
-//	  [--max-budget-usd <amount>] [--setting-sources <sources>] [--agent <name>]
+//	  [--max-budget-usd <amount>] [--setting-sources <sources>]
+//	  [--plugin-dir <dir> ...] [--agent <name>]
 //	  [--allowedTools "<comma,joined>"] [--tools "<comma,joined>"]
 //	  [--strict-mcp-config] [--disallowedTools "<comma,joined>"]
 //	  [--resume <session_id>] [--session-id <uuid>]
@@ -185,7 +186,10 @@ func (r *ClaudeCLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *ex
 // declared (claude then kills the run itself once its own spend crosses it —
 // see NodeInvocation.BudgetUSD). The five ceiling flags are rendered in
 // ToolPolicy's own layer order (isolate, grant, narrow, bound MCP, subtract) so
-// a printed argv reads as the policy it enforces.
+// a printed argv reads as the policy it enforces. --plugin-dir sits between
+// isolation and the grant, which is where it reads correctly: it restores
+// instruction material layer 1 withheld, before any layer decides what may be
+// done with it (ADR 0017 §1).
 func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
@@ -201,6 +205,9 @@ func (r *ClaudeCLIRunner) buildArgs(spec NodeInvocation) []string {
 	policy := spec.Policy
 	if policy.SettingSources != nil {
 		args = append(args, "--setting-sources", *policy.SettingSources)
+	}
+	for _, dir := range policy.PluginDirs {
+		args = append(args, "--plugin-dir", dir)
 	}
 	if spec.Agent != "" {
 		args = append(args, "--agent", spec.Agent)

@@ -528,27 +528,39 @@ validator가 거부하는 그래프를 기술하면, oh-my-graph는 그 거부 �
 cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므로, 미리 보여줄
 것 자체가 아직 존재하지 않기 때문입니다.
 
-당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다.
-다만 더 투박한 방식이고, 그대로 밝혀 둡니다:
-플랜된 노드는 스킬을 보거나 호출할 수 없으므로(측정으로 확인), 노드 id가
-스킬 이름과 명확히 일치하면 그 스킬의 SKILL.md 본문이 플랜 시점에 **그
-노드의 프롬프트로 복사됩니다** — 펜스로 감싸고, 출처를 밝히고, 16 KiB로
-상한이 걸리며(초과하는 스킬은 잘라내지 않고 안내와 함께 스킵), 그 노드를
-호출할 때마다 비용이 들고, Claude Code라면 관련 있을 때만 활성화했을 스킬이
-무조건 적용됩니다. 모든 인라이닝은 실행 전에 크기와 SHA-256 prefix를
-출력하고, 정확한 텍스트는 — 거기서 전체 해시를 다시 계산할 수 있습니다 —
-저장된 `graph.json`에 스냅샷으로 남으며(이후의 스킬 수정은 이미 플랜된 run에
-닿지 않습니다), `--no-skill-mapping`으로 끌 수 있습니다.
+당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다. 그리고
+노드를 대신한 추측이 아니라 Claude Code 자신의 활성화(activation)를 통해
+닿습니다: `auto`는 당신의 스킬 코퍼스 전체를 자기가 소유한 플러그인
+디렉토리(`~/.oh-my-graph/runs/<run-id>/skills-plugin/`)로 복사하고, 플랜된 각
+노드에 `--plugin-dir <그 경로>`를 넘기고 tool 목록에 `Skill`을 더합니다. 그
+다음 어떤 스킬이 필요한지는 노드 자신의 모델이 실행 시점에 description을 보고
+고릅니다.
 
-스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 아무것도 매핑하지
+tool ceiling은 그대로입니다. 플랜된 노드는 여전히 당신의 settings, CLAUDE.md,
+hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은 선언된 scope도 그대로
+강제됩니다 — 달라지는 것은 이 노드들에게 `Skill` tool이 존재한다는 것뿐입니다.
+그 대가는 실행 전에 출력됩니다: 스테이징된 스킬 하나하나의 크기와 SHA-256,
+그리고 그 코퍼스가 **모든** 노드 호출에 더하는 프롬프트 토큰(재시도와 feedback
+재실행 포함).
+
+플랜이 더 이상 말해줄 수 없는 것은 *어떤* 스킬을 그 노드가 쓸지입니다 —
+모델보다 먼저 아는 주체가 없습니다. 출력이 그렇게 명시하고, 각 호출은 그 노드의
+평범한 세션 transcript에 남습니다. 스테이징된 디렉토리는 매 노드 spawn 직전에
+manifest로부터 다시 만들어지고 검증되므로, 어떤 노드도 뒤따르는 노드를 위해
+스킬을 심어둘 수 없습니다. 그리고 run 도중 원본 스킬을 수정하면 조용히 바뀌는
+대신 run이 멈춥니다. `--no-skill-activation`으로 전체를 끌 수 있고 — `auto`와
+`resume` 모두 — 예전의 `--no-skill-mapping`도 안내와 함께 계속 동작합니다.
+
+스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 스테이징되지
 않습니다: **플러그인**이 제공하는 스킬(`~/.claude/plugins/...`)과
-**프로젝트** 스킬(`./.claude/skills`)입니다. 둘 다 매칭 실패가 아니라 명시된
+**프로젝트** 스킬(`./.claude/skills`)입니다. 둘 다 실패가 아니라 명시된
 한계이므로, 플랜 출력이 매 run마다 그렇게 말합니다 — `skill scan: 35 skill(s)
 from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 그리고
 아무것도 못 찾은 스캔도 자기가 들여다본 디렉토리를 반드시 이름으로 밝히므로,
-"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다. 스킬이
-플러그인에서 왔다면 오늘은 매핑되지 않습니다. 그 판단의 근거가 된 측정과
-무엇이 바뀌어야 하는지는
+"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다. 이
+모든 것의 근거가 된 측정은
+[ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)에,
+그것이 대체한 플랜 시점 인라이닝은
 [ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md)에 있습니다.
 [docs/EXAMPLES.md](docs/EXAMPLES.md#zero-config-auto-mode-the-headline)에서
 플랜 출력, tool ceiling, 라이브 노드 피드를 차례로 다룹니다.

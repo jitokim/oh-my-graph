@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/signal"
@@ -399,6 +400,19 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		})
 	}
 
+	// ADR 0017 §6, and this is the one place a resumed leg could silently lose
+	// its skills: toRunnerToolPolicies deliberately does NOT carry PluginDirs
+	// across, so the directory is re-created and verified here or it is not
+	// there at all. The resolved policies are what BOTH the scheduler and the
+	// recorder below get, so a --no-skill-activation de-escalation persists
+	// into the snapshot instead of being re-imposed by the next leg.
+	policies := toRunnerToolPolicies(snap.ToolPolicies)
+	staging, err := resumeSkillStaging(os.Stdout, runDir, snap.ToolPolicies, policies, flags.noSkillActivation)
+	if err != nil {
+		return err
+	}
+	nodeRunner = coordinator.GuardStaging(nodeRunner, staging)
+
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:           runID,
 		GraphSourcePath: snap.GraphSourcePath,
@@ -406,7 +420,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:           snap.Graph,
 		Inputs:          snap.Inputs,
 		ContinueOnFail:  snap.ContinueOnFail,
-		ToolPolicies:    snap.ToolPolicies,
+		ToolPolicies:    toNodeToolPolicies(policies),
 		// Goal lineage carries across legs: a resumed cycle of a goal loop
 		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
 		// group membership just because a second process finished it.
@@ -457,7 +471,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Gate:           gate.NewRecordedController(toGateDecisions(decisions)),
 		Verifier:       verify.NewShellVerifier(),
 		Worktrees:      worktrees,
-		ToolPolicies:   toRunnerToolPolicies(snap.ToolPolicies),
+		ToolPolicies:   policies,
 		Recorder:       recorder,
 		EventSink:      feed,
 		// CompletedNodes seeds the resumed leg's ready set from
@@ -563,6 +577,16 @@ func toGateDecisions(decisions map[string]runstate.GateDecision) map[string]gate
 // snapshot's runstate.NodeToolPolicy map back into the runner.ToolPolicy map
 // the Scheduler takes, preserving nilness (see toNodeToolPolicies) so a
 // hand-written `run`'s resumed leg still imposes no ceiling at all.
+//
+// It carries the five CEILING fields and deliberately NOT PluginDirs, which is
+// the one field where "rehydrate what the first leg recorded" is the wrong
+// behaviour (ADR 0017 §6). The five bound capability, so re-imposing them
+// verbatim is exactly right and a dropped one would silently WIDEN a resumed
+// leg. PluginDirs names a directory, and a --plugin-dir pointing at nothing is
+// accepted by the CLI with exit 0 and no warning — so a leg that trusted the
+// path would run with no skills and be indistinguishable from one whose model
+// chose none. Leaving the field out here is what makes resumeSkillStaging
+// unskippable: without it the directory is not on any policy at all.
 func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[string]runner.ToolPolicy {
 	if policies == nil {
 		return nil
@@ -576,6 +600,96 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 			SettingSources:  p.SettingSources,
 			StrictMCPConfig: p.StrictMCPConfig,
 		}
+	}
+	return out
+}
+
+// resumeSkillStaging re-establishes (or drops) a resumed leg's skill
+// activation, in place on policies, and returns the staging the leg must
+// re-materialize before every spawn.
+//
+// The snapshot is the only record that a run was activation-enabled — the
+// grant is invisible in graph.json by design (ADR 0017 §2) — so snapPolicies
+// is what it reads, and it moves in exactly one direction:
+//
+//   - off: `Skill` is removed from every rehydrated tool set and no directory
+//     is created. That is --no-skill-activation, and it is the whole reason
+//     the flag exists on `resume` at all: without it an activation-enabled run
+//     could never be de-escalated once started, which would make ADR 0017's
+//     reversibility claim false for every resumed leg;
+//   - on: the staged directory is re-created from its MANIFEST and verified,
+//     then handed back to the policies that recorded it. A missing or
+//     unreadable manifest, a source skill that changed, a source skill that
+//     vanished — each HALTS the leg with the path named. Never proceed with a
+//     directory the run cannot vouch for.
+//
+// Nothing here can grant `Skill` to a node whose snapshot did not have it, or
+// point a policy at a directory the snapshot did not name. That is what keeps
+// a resume structurally unable to widen a run's ceiling.
+//
+// The real resume path for an auto run is `resume --retry-failed`, i.e.
+// immediately after a node failed — the worst possible moment to stop
+// checking.
+func resumeSkillStaging(w io.Writer, runDir string, snapPolicies map[string]runstate.NodeToolPolicy, policies map[string]runner.ToolPolicy, off bool) (*coordinator.SkillStaging, error) {
+	activated := make([]string, 0, len(snapPolicies))
+	dirs := map[string]bool{}
+	for id, p := range snapPolicies {
+		if len(p.PluginDirs) == 0 {
+			continue
+		}
+		activated = append(activated, id)
+		for _, dir := range p.PluginDirs {
+			dirs[dir] = true
+		}
+	}
+	if len(activated) == 0 {
+		return nil, nil
+	}
+	sort.Strings(activated)
+
+	if off {
+		for _, id := range activated {
+			p := policies[id]
+			p.Tools = withoutSkillTool(p.Tools)
+			p.PluginDirs = nil
+			policies[id] = p
+		}
+		fmt.Fprintf(w, "skill activation dropped for this leg (--no-skill-activation): %d node(s) lose the Skill tool.\n", len(activated))
+		return nil, nil
+	}
+
+	if len(dirs) != 1 {
+		return nil, fmt.Errorf("resume: run %s recorded %d staged skill directories; exactly one is expected, so this snapshot is not one this build can vouch for — re-run the goal, or resume with --no-skill-activation", filepath.Base(runDir), len(dirs))
+	}
+	dir := ""
+	for d := range dirs {
+		dir = d
+	}
+	staging, err := coordinator.LoadSkillStaging(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w\nResume with --no-skill-activation to continue without the staged skills", err)
+	}
+	if err := staging.Materialize(); err != nil {
+		return nil, fmt.Errorf("resume: %w\nResume with --no-skill-activation to continue without the staged skills", err)
+	}
+	for _, id := range activated {
+		p := policies[id]
+		p.PluginDirs = []string{dir}
+		policies[id] = p
+	}
+	return staging, nil
+}
+
+// withoutSkillTool is de-escalation's whole edit: layer 3 minus the one name
+// ADR 0017 added to it. It copies rather than filtering in place, because the
+// slice it is handed is shared with the snapshot map it was rehydrated from.
+func withoutSkillTool(tools []string) []string {
+	out := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if t == coordinator.SkillToolName {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out
 }
