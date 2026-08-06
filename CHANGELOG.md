@@ -257,7 +257,7 @@ docs get a sweep that corrects what they had been claiming.
   the orphan. A run that never wrote a snapshot has nothing to resume from, so
   its hint says "run the graph again" and `resume` fails on it with that
   sentence instead of a bare "no such file".
-- **A passing node's spend now reads against its budget (#115).** The
+- **A passing node's spend now reads against its budget (#120, closes #115).** The
   `COST(USD)` column annotates each row with the share of `budget_usd` that
   spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
   the run that fails, not only in the FAIL detail afterward. Floored, never
@@ -268,7 +268,8 @@ docs get a sweep that corrects what they had been claiming.
   nothing for the feature. To keep a budgeted run's table on an 80-column
   terminal — the shipped graphs that declare a budget are mixed runs, not
   budget-less ones — the `SESSION` stub narrowed from 20 characters to 18.
-- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#118).**
+- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#120,
+  partially addressing #118).**
   A reviewer that fans in from several producers still names one node in
   `rerun`, so its loop body can exclude a producer whose artifact it judges;
   the loop then re-judges an unchanged file every round and halts with the
