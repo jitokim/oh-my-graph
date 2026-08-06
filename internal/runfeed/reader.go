@@ -81,11 +81,19 @@ func Walk(path string, visit func(Event) error) error {
 //
 // The reading itself is Walk's, so the leg-walking rule lives in exactly one
 // place and cannot drift from the other one-shot consumers of the same file.
-// Known limitation, accepted for v1: a crashed or killed process
-// leaves its last leg open, so by the stream alone such a run reads as in
-// flight until it is resumed or its directory is cleaned up — there is no
-// liveness probe here, deliberately, to keep every caller a pure reader of
-// the two contract files.
+//
+// This is the STREAM's answer and only the stream's: a crashed or killed
+// process never writes its run_finished, so by the stream alone its last leg
+// reads open forever. There is still no liveness probe here, and that is still
+// deliberate — but it is no longer a limitation the tool accepts. ADR 0015
+// retired the acceptance by moving the missing half OUT rather than in: the run
+// lock answers whether that leg's writer is alive (runstate.ProbeLock), and
+// internal/runstatus composes the two facts once for every in-repo surface —
+// open leg AND held lock is in flight, open leg AND affirmatively free lock is
+// abandoned, every doubt is in flight. So no caller reads this function's
+// answer as the whole truth about a run, and this package stays what it is: a
+// pure stdlib reader of the two contract files that spawns nothing, probes
+// nothing, and knows nothing about locks or processes.
 func InFlight(path string) (bool, error) {
 	open := false
 	err := Walk(path, func(event Event) error {

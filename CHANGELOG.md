@@ -80,6 +80,72 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   scanned". A `name:` collision inside one `~/.claude/skills` names its loser
   rather than silently moving the count.
 
+### Changed
+
+- **The run lock is the kernel's `flock(2)`, not the lock file's existence
+  (ADR 0015 §1).** `runstate.AcquireLock` opens `resume.lock`
+  `O_CREATE|O_RDWR` and takes `LOCK_EX|LOCK_NB`; only once the lock is held
+  does it truncate and write its two lines — a format marker
+  (`oh-my-graph-lock 1`) and the holder's pid. The kernel releases the lock
+  when the holder dies, however it dies, so a held lock now means a live leg
+  rather than possibly a corpse: `LockHeldError` on that arm says "a leg of
+  this run is in flight (started by pid N); wait for it, or stop it" and
+  **drops the old "delete it and retry: rm …" advice**, which under `flock`
+  is an active double-spend footgun (unlinking does not release the live
+  holder's lock, while the next leg takes an uncontended one on a fresh
+  inode). For the same reason **release no longer unlinks** — a `resume.lock`
+  is now a permanent, inert resident of every run directory, and nothing may
+  read its existence as a state. A lock file with no marker was written by a
+  pre-`flock` binary whose live leg holds no lock at all, so it keeps the old
+  semantics — existence is the lock, a human decides, and the message names
+  the exact path to delete — an arm that self-expires the moment such a lock
+  is cleared. New: `runstate.ProbeLock` answers `held` / `free` / `unknown`
+  for a reader, via a **shared** (`LOCK_SH`) lock on a read-only fd that
+  creates, writes and removes nothing, gated on the run directory being on a
+  known-local filesystem (on linux, `flock()` over NFS silently degrades to
+  per-process record locks). A missing file, a non-local filesystem and any
+  error alike answer `unknown`, which means the answer this tool gave before —
+  a false *dead* would authorise a second scheduler over a live run, so nothing
+  is ever called dead because a probe failed. Off darwin and linux a
+  build-tagged stub reports `unknown` and `AcquireLock` keeps the pre-ADR
+  `O_EXCL` behaviour in full.
+- **A lock file written before the marker existed is read under a second,
+  weaker rule (ADR 0015 §1, dated note).** Its writer took no `flock`, so the
+  probe reads the only signal such a file carries — its pid line — in **one
+  direction only**: a pid naming no process at all (`kill(pid, 0)` → `ESRCH`)
+  is `free`, while a pid naming something (holder or recycled stranger,
+  indistinguishable) and an unreadable pid are both `unknown`. Without it every
+  run abandoned *before* this release would read `RUNNING` for the rest of
+  time, since the marker will never appear on a file already on disk. It does
+  not reopen the pid recycling the ADR refutes — that produced a false *alive*,
+  and pid-alive is never read as evidence here — and the acquire path is
+  unchanged, so an unmarked lock is still refused with a human deciding. The
+  arm self-expires once such a lock is cleared, and docs/RUN-FEED.md's
+  "Liveness" section states it for external consumers, who may skip it and
+  treat every unmarked file as `unknown`.
+- **A run whose process died now reads `ABANDONED` instead of `RUNNING`
+  forever (ADR 0015 §2, §4).** The rule — *an open leg AND a held lock is in
+  flight; an open leg AND an affirmatively free lock is abandoned; every doubt
+  is in flight* — is stated once in the new `internal/runstatus` and shared by
+  every surface that asks, so they cannot drift: `runs list` gains the verdict word
+  `ABANDONED` beside `RUNNING` (deliberately not `FAIL` — the work never got a
+  verdict) and its snapshot-less row widened from "in flight" to "in flight or
+  abandoned", so a run killed before its first node settled is *labelled*
+  rather than vanishing behind a `WARNING`; the dashboard card gains an
+  `abandoned` state with its own muted token, stops spinning the nodes the dead
+  leg left open (they tally as pending) and carries the recovery hint;
+  `serve`'s `ResolveRun` no longer parks a live view on a corpse; and `watch`
+  refuses to tail a stream that will never get another line. Nothing in either
+  versioned file changed — no reader ever repairs the feed — but `resume.lock`
+  leaves the internal set and gains a documented "Liveness" section in
+  docs/RUN-FEED.md. `resume` on such a run warns first: the engine spawns each
+  `claude` in its own process group, so the death that abandoned the run may
+  have left a subprocess still spending, and that warning (on the row, in
+  `watch`'s refusal, on `resume`'s stderr and on the card, whose gate button is
+  one money-spending click) is the mitigation — ADR 0015 rejects probing for
+  the orphan. A run that never wrote a snapshot has nothing to resume from, so
+  its hint says "run the graph again" and `resume` fails on it with that
+  sentence instead of a bare "no such file".
 - **A passing node's spend now reads against its budget (#115).** The
   `COST(USD)` column annotates each row with the share of `budget_usd` that
   spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
@@ -120,6 +186,33 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 
 ### Fixed
 
+- **A node left running by a leg that died spun forever in `serve` (ADR 0015).**
+  All THREE of `serve`'s stream reducers — the dashboard card's,
+  `/api/transcript`'s, and the single-run page's own `apply()` in
+  `ui/app.js` — switched only on node events, so they never
+  saw `run_started` — and a node whose leg crashed mid-run has a `node_started`
+  with no terminal after it. `/api/transcript` therefore kept serving that dead
+  leg's session transcript as "what it is doing right now", and the dashboard
+  card and the run page kept the dot spinning, across every later resume that
+  did not happen to re-run that node. All three now treat **every `run_started`
+  as a leg boundary**: a node the previous leg left open stops being running (and
+  stops carrying its session id) the moment a new leg opens, and the new leg's own
+  `node_started` is what makes it running again.
+- **The single-run live view — the page the gate button is on — claimed a dead
+  run was still running (ADR 0015 §4).** The ADR named four surfaces and missed
+  the fifth: the dashboard card said `abandoned` and carried the recovery hint,
+  while the page that card links to said `running`, spun its nodes, tailed the
+  dead leg's transcript as "now doing", and offered the gate's approve button
+  with nothing said — the exact inversion of the ADR's own rule that a button
+  must say what it will allow *before* it is clicked. `/api/graph` now carries
+  the answer as two additive keys, `abandoned` and `hint`, composed through
+  `internal/runstatus` like every other surface and absent on every other run
+  (the page cannot derive it — the answer needs the lock, and probing is
+  server-side). The header says `ABANDONED`, the nodes stop spinning and drop
+  their live tails, and the hint sits above the feed the button lives in. Still
+  no new event type, field or verdict, and still no poll: the page re-asks on
+  every leg boundary, so a run that dies while the page is already open keeps
+  painting until then — `watch`'s accepted gap, for the same reason.
 - **A typo'd `result_matches` cost a node before it was diagnosed.**
   `success_check.result_matches` had no load-time validation: its first and
   only compile happened inside the scheduler's success-check evaluation, which
@@ -192,8 +285,11 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   because an unrelated process had recycled it. Liveness becomes the kernel's
   `flock(2)` on `resume.lock`, ABANDONED is derived at read time by every
   reader, and no reader appends a terminal event on a dead run's behalf. Both
-  file schemas stay 2 and neither file changes. Accepted as an ADR; the
-  implementation has not landed.
+  file schemas stay 2 and neither file changes. Accepted as an ADR and since
+  **implemented in full** — the lock (§1), the read-time derivation (§2) and
+  every surface that renders it (§4) are all in Changed and Fixed above, and the
+  two gaps the ADR accepts by design remain gaps: `watch` gains no idle-time
+  probe, and nothing probes for an orphaned `claude`.
 
 ## [v0.4.1] - 2026-08-04
 

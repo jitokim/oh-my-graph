@@ -68,6 +68,14 @@ type nodeFeedState struct {
 // posture throughout (see handleEvents) — accepting that an unknown future
 // event type could leave a node reading as running; the worst that yields is
 // a tail served for a settled node, still one of the run's own sessions.
+//
+// run_started is a LEG BOUNDARY and is read before the node filter, because it
+// carries no node id: a node whose leg died mid-run has a node_started with no
+// terminal after it, and without this it would read as running — carrying its
+// dead leg's session id — through every later resume that did not happen to
+// re-run it, serving a stale transcript as "what it is doing right now". The
+// boundary clears running and the session; the next leg's own
+// node_started/node_retried is what makes either true again.
 func readNodeFeedState(feedPath, nodeID string) (nodeFeedState, error) {
 	file, err := os.Open(feedPath)
 	if err != nil {
@@ -84,6 +92,13 @@ func readNodeFeedState(feedPath, nodeID string) (nodeFeedState, error) {
 	for scanner.Scan() {
 		var event runfeed.Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.Type == runfeed.EventRunStarted {
+			// seen survives: the feed has still named this node, which is what
+			// vouches for it while no snapshot exists (handleTranscript).
+			state.running = false
+			state.session = ""
 			continue
 		}
 		if event.NodeID != nodeID {

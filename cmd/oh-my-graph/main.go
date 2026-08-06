@@ -449,12 +449,15 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // to today's.
 func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, fragmentsResolved bool, web browser.Opener, goal *runstate.GoalRef) error {
 	// The first leg holds the run's resume.lock for its whole duration — the
-	// same O_EXCL lock every `resume` takes (internal/runstate.AcquireLock).
+	// same flock every `resume` takes (internal/runstate.AcquireLock).
 	// Without it, a `resume <run-id> --retry-failed` raced against a
 	// still-in-flight first leg would open a second scheduler over the same
 	// state.json/events.jsonl and double-spawn (double-bill) nodes; instead
 	// the concurrent resume fails on this lock with its usual LockHeldError.
-	release, err := runstate.AcquireLock(filepath.Join(runDirFor(runID), lockFileName))
+	// It is taken here, before the event stream below, and released by a defer
+	// registered before the stream's: the ordering invariant a reader's
+	// abandoned-run derivation rests on (acquireRunLock, ADR 0015 §2).
+	release, err := acquireRunLock(filepath.Join(runDirFor(runID), lockFileName))
 	if err != nil {
 		return err
 	}

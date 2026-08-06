@@ -19,6 +19,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // testPoll keeps the SSE tail's end-of-stream sleep short so follow tests
@@ -256,6 +257,130 @@ func TestHandleGraph_NoSnapshotYetIsHonestlyUnavailable(t *testing.T) {
 	}
 	if payload.Available || payload.RunID != "run-fresh" || len(payload.Nodes) != 0 {
 		t.Errorf("payload = %+v, want an unavailable run-fresh with no nodes", payload)
+	}
+}
+
+// --- /api/graph: the run-level liveness answer (ADR 0015) ---------------------
+
+// graphOf performs the page's own structure fetch and returns both the decoded
+// payload and the raw body, so a test can assert on omitted keys too.
+func graphOf(t *testing.T, dir, runID string) (graphPayload, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	newTestServer(dir, runID).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/graph status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var payload graphPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	return payload, rec.Body.String()
+}
+
+// openLegRun is a run whose stream leaves a leg open with a node still
+// running — the shape both zombie runs have — with a snapshot, so the page has
+// a structure to draw.
+func openLegRun(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-dead",
+		Graph: json.RawMessage(twoNodeGraph),
+		Nodes: map[string]runstate.NodeRecord{"a": {Verdict: runstate.VerdictPass, CostUSD: 0.25}},
+	})
+	writeEvents(t, dir, "run-dead",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a"},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass, CostUSD: 0.25},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "b"},
+	)
+	return dir
+}
+
+func TestHandleGraph_AnAbandonedRunSaysSoAndCarriesTheRecoveryHint(t *testing.T) {
+	// The page is the surface with the gate button, and that button starts a
+	// leg that spends money (ADR 0014) beside a `claude` the dead leg may have
+	// orphaned. So the page — not only the dashboard card that links to it —
+	// has to carry the answer and the warning.
+	dir := openLegRun(t)
+	freeLock(t, dir)
+
+	payload, _ := graphOf(t, dir, "run-dead")
+	if !payload.Abandoned {
+		t.Fatalf("payload = %+v, want abandoned for a leg whose lock is free", payload)
+	}
+	if !strings.Contains(payload.Hint, "run-dead") || !strings.Contains(payload.Hint, "oh-my-graph resume") {
+		t.Errorf("hint = %q, want the recovery command for this run", payload.Hint)
+	}
+	if !strings.Contains(payload.Hint, "spending") {
+		t.Errorf("hint = %q, want the orphaned-subprocess warning — it is the only mitigation ADR 0015 accepts", payload.Hint)
+	}
+	// Same rule, one place: the payload must agree with what runstatus itself
+	// says, never with a second composition of "open leg AND free lock".
+	shared, err := runstatus.Of(dir)
+	if err != nil {
+		t.Fatalf("runstatus.Of returned error: %v", err)
+	}
+	if want := shared == runstatus.Abandoned; payload.Abandoned != want {
+		t.Errorf("payload abandoned = %v, want the shared rule's %v (%v)", payload.Abandoned, want, shared)
+	}
+}
+
+func TestHandleGraph_ASnapshotLessAbandonedRunIsToldToRunTheGraphAgain(t *testing.T) {
+	// Killed before its first node settled: no state.json, so there is nothing
+	// to resume FROM and `resume` fails outright on it (ADR 0015 §5). The hint
+	// must say that instead of naming a command that cannot work.
+	dir := t.TempDir()
+	writeEvents(t, dir, "run-early",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a"},
+	)
+	freeLock(t, dir)
+
+	payload, _ := graphOf(t, dir, "run-early")
+	if payload.Available {
+		t.Fatalf("payload = %+v, want unavailable — this run wrote no snapshot", payload)
+	}
+	if !payload.Abandoned {
+		t.Fatalf("payload = %+v, want abandoned", payload)
+	}
+	if strings.Contains(payload.Hint, "oh-my-graph resume") {
+		t.Errorf("hint = %q, must not offer a resume command for a run with no snapshot", payload.Hint)
+	}
+	if !strings.Contains(payload.Hint, "run the graph again") {
+		t.Errorf("hint = %q, want the re-run advice", payload.Hint)
+	}
+}
+
+func TestHandleGraph_ALiveRunCarriesNeitherFlagNorHint(t *testing.T) {
+	// A held lock is a live leg, and the additive-field rule applies to this
+	// payload as much as to the contract files: a healthy run's body must be
+	// what it was before, keys included.
+	dir := openLegRun(t)
+	holdLock(t, dir)
+
+	payload, body := graphOf(t, dir, "run-dead")
+	if payload.Abandoned || payload.Hint != "" {
+		t.Errorf("payload = %+v, want no abandoned answer for a run whose lock is held", payload)
+	}
+	for _, key := range []string{`"abandoned"`, `"hint"`} {
+		if strings.Contains(body, key) {
+			t.Errorf("a live run's payload must omit %s: %s", key, body)
+		}
+	}
+}
+
+func TestHandleGraph_ASettledRunIsNeverAbandoned(t *testing.T) {
+	// A closed leg is settled whatever the lock says — the lock is not even
+	// consulted (runstatus.Probe). A finished run must never wear the word.
+	dir := openLegRun(t)
+	writeEvents(t, dir, "run-dead", runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed})
+	freeLock(t, dir)
+
+	payload, _ := graphOf(t, dir, "run-dead")
+	if payload.Abandoned || payload.Hint != "" {
+		t.Errorf("payload = %+v, want no abandoned answer for a settled run", payload)
 	}
 }
 
