@@ -249,6 +249,28 @@ func TestScanUnisolated_LinkedWorktreeIsACheckout(t *testing.T) {
 	}
 }
 
+// A `-` is a legal last character of a directory name, so a checkout whose
+// basename ends in one is an ordinary checkout and must be reported like any
+// other. Trimming it would rewrite the mention into a DIFFERENT path — one
+// that is no checkout — and the warning would vanish silently.
+func TestScanUnisolated_CheckoutWhoseNameEndsInAHyphen(t *testing.T) {
+	home := t.TempDir()
+	repo := newCheckout(t, filepath.Join(home, "invocation-repo"))
+	other := newCheckout(t, filepath.Join(home, "other-repo-"))
+
+	scan := scanOf(t, repo, "also harden "+other)
+
+	if scan == nil || len(scan.Paths) != 1 {
+		t.Fatalf("scan = %+v, want one warning for %s", scan, other)
+	}
+	if scan.Paths[0].Repo != resolveSymlinks(other) {
+		t.Errorf("repo = %s, want %s", scan.Paths[0].Repo, other)
+	}
+	if scan.Paths[0].Mention != other {
+		t.Errorf("mention = %s, want the path as it was written %s", scan.Paths[0].Mention, other)
+	}
+}
+
 // Invoked outside any repository, nothing is isolated at all — including the
 // working directory itself. The boundary is then the invocation directory, and
 // the printed message says so instead of claiming a repository that is not

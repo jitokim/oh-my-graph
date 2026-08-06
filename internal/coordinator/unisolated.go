@@ -133,10 +133,18 @@ func scanUnisolated(root invocationRoot, goal string, g *graph.Graph) *Unisolate
 // pathMentions extracts the distinct absolute paths written in text, in the
 // order they appear. Trailing separators and sentence punctuation are trimmed,
 // so "in /Users/me/repo/." and "/Users/me/repo" are the same mention.
+//
+// A trailing `-` is NOT trimmed, because it is a legal last character of a
+// directory name: trimming it would rewrite a real checkout at
+// `/Users/me/repo-` into `/Users/me/repo` and lose the warning that checkout
+// earned. The templated shape the trim was reaching for
+// (`/tmp/shepherd-{{ inputs.pr }}` → `/tmp/shepherd-`) needs no help from it —
+// as pathMention's own comment says, that path resolves into no checkout and
+// isForeignCheckout drops it.
 func pathMentions(text string) []string {
 	var mentions []string
 	for _, match := range pathMention.FindAllStringSubmatch(text, -1) {
-		mention := strings.TrimRight(match[1], "./-")
+		mention := strings.TrimRight(match[1], "./")
 		if mention == "" || slices.Contains(mentions, mention) {
 			continue
 		}
