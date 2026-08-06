@@ -49,6 +49,12 @@ func TestPersistOutput_LeavesAnExistingRunDirAlone(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatalf("seed legacy run dir: %v", err)
 	}
+	// MkdirAll's mode is masked by the caller's umask, so on a machine with a
+	// hardened umask the fixture would not be the 0755 this test is about — it
+	// would assert the developer's umask. chmod(2) is not masked.
+	if err := os.Chmod(runDir, 0o755); err != nil {
+		t.Fatalf("chmod legacy run dir: %v", err)
+	}
 
 	if err := New(runDir, nil).PersistOutput("build", "reply", ""); err != nil {
 		t.Fatalf("PersistOutput: %v", err)

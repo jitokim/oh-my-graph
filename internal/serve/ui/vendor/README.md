@@ -17,13 +17,23 @@ cytoscape-dagre — the extension self-registers from the `cytoscape` and
 these files actually do, and cytoscape sits right on two of its edges: it
 injects an inline `<style>` element (`.__________cytoscape_container {
 position: relative; }`) — which is the whole reason `style-src` carries
-`'unsafe-inline'` — and today it needs neither `eval`/`new Function` nor a
-Worker, which is why `script-src` stays `'self'` and `default-src` stays
-`'none'`. A new version that changed either would break the map *silently* in
-the browser, with nothing but a console violation to say so, because no Go test
-can execute it. On upgrade, re-grep the new file for `eval(`, `new Function`
-and `new Worker`, then load `/run/<id>/` and confirm the console is free of CSP
-violations and the DAG still lays out.
+`'unsafe-inline'` — and today it executes neither eval nor a Function
+constructor nor a Worker, which is why `script-src` stays `'self'` and
+`default-src` stays `'none'`. A new version that changed either would break the
+map *silently* in the browser, with nothing but a console violation to say so,
+because no Go test can execute it.
+
+On upgrade, re-grep the new file — for `eval(`, `Function(` and `Worker(`.
+Note `Function(` bare, **not** `new Function`: the construct actually present
+today is lodash's root fallback, `freeGlobal || freeSelf ||
+Function("return this")()`, in both `cytoscape.min.js` and `dagre.min.js`, and
+it matches none of `eval(`, `new Function`, `new Worker`. It is
+eval-equivalent and `script-src 'self'` would block it, but in a browser
+`freeSelf` is truthy so the third operand is never evaluated — dead code, not
+an absence. Every other `Function(` hit in these files today is a substring of
+`isFunction(`/`castFunction(`. So a grep hit is not automatically a problem:
+read each one and decide whether it is *reachable*. Then load `/run/<id>/` and
+confirm the console is free of CSP violations and the DAG still lays out.
 
 ## cytoscape.js
 

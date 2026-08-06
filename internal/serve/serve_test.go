@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -161,21 +164,60 @@ func pausedGateForHostTest(t *testing.T) *Server {
 // a test can assert the POLICY rather than the presence of a header. Asserting
 // only that some CSP was sent is satisfiable by a policy that permits exactly
 // what the header is supposed to forbid.
+//
+// A repeated directive is FIRST-wins, and also an outright failure. Browsers
+// enforce the first occurrence and ignore the rest, so a last-wins parse would
+// read `frame-ancestors 'self'; …; frame-ancestors 'none'` as 'none' and pass
+// every assertion below while every real browser permitted the framing — the
+// clickjack open on a green test. Failing outright is stricter than the browser
+// rule and cheap: this server's policy is a single const with no repeats, so a
+// duplicate can only be a mistake.
 func parseCSP(t *testing.T, header string) map[string]string {
 	t.Helper()
 	if header == "" {
 		t.Fatal("no Content-Security-Policy header at all")
 	}
-	directives := map[string]string{}
+	directives, repeated := splitCSP(header)
+	for _, name := range repeated {
+		t.Errorf("CSP repeats %s; browsers enforce the FIRST occurrence (%q here), so a "+
+			"later, stricter-looking one is not the policy in force", name, directives[name])
+	}
+	return directives
+}
+
+// splitCSP is parseCSP's parsing, without a *testing.T, so the parser itself
+// can be tested rather than trusted.
+func splitCSP(header string) (directives map[string]string, repeated []string) {
+	directives = map[string]string{}
 	for _, part := range strings.Split(header, ";") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 		name, value, _ := strings.Cut(part, " ")
+		if _, seen := directives[name]; seen {
+			repeated = append(repeated, name)
+			continue
+		}
 		directives[name] = strings.TrimSpace(value)
 	}
-	return directives
+	return directives, repeated
+}
+
+func TestSplitCSP_IsFirstWinsOnARepeatedDirective(t *testing.T) {
+	// The policy this parser is asked to judge could be weakened by APPENDING:
+	// a last-wins parse reads the trailing 'none' and passes every framing
+	// assertion, while the browser enforces the leading 'self' and lets the
+	// clickjack through. First-wins is the browser's rule; the repeat is also
+	// reported, because this server's policy is one const with no repeats.
+	directives, repeated := splitCSP("frame-ancestors 'self'; img-src 'self'; frame-ancestors 'none'")
+
+	if got := directives["frame-ancestors"]; got != "'self'" {
+		t.Errorf("frame-ancestors = %q, want %q — the FIRST occurrence is the one in force", got, "'self'")
+	}
+	if len(repeated) != 1 || repeated[0] != "frame-ancestors" {
+		t.Errorf("repeated = %v, want exactly [frame-ancestors]", repeated)
+	}
 }
 
 // assertRefusesFraming pins the ONE header pair that stops the clickjack, by
@@ -235,7 +277,7 @@ func TestHandler_StampsTheAuditedContentSecurityPolicy(t *testing.T) {
 		"default-src":     "'none'",
 		"script-src":      "'self'",
 		"style-src":       "'self' 'unsafe-inline'",
-		"img-src":         "'self' data:",
+		"img-src":         "'self'",
 		"connect-src":     "'self'",
 		"base-uri":        "'none'",
 		"form-action":     "'none'",
@@ -277,6 +319,97 @@ func TestHandler_StampsTheHeadersOnRefusalsToo(t *testing.T) {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 	assertRefusesFraming(t, rec, "403 refusal")
+}
+
+// TestEveryFrontEndIsWrappedInSecurityHeaders is the inverted form of the two
+// tests above: they exercise the two front-ends this package has TODAY, which
+// is exactly the enumerate-instead-of-invert failure internal/invariants fixed
+// for the exec seams — a third front-end would be born unframed and no test
+// here would notice. So rather than list them, this reads the package's own
+// source and requires that EVERY exported function returning an http.Handler
+// hands back a securityHeaders(...) call.
+//
+// It cannot fail silently: the count check below goes red if the scan stops
+// finding entrypoints at all.
+func TestEveryFrontEndIsWrappedInSecurityHeaders(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	entrypoints := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || !fn.Name.IsExported() || !returnsHTTPHandler(fn) || fn.Body == nil {
+				continue
+			}
+			entrypoints++
+			for _, ret := range topLevelReturns(fn.Body) {
+				if len(ret.Results) != 1 || !isCallTo(ret.Results[0], "securityHeaders") {
+					t.Errorf("%s: %s returns an http.Handler that is not wrapped in securityHeaders — "+
+						"a front-end that skips it can be framed, and every other guard in this "+
+						"package answers a clickjack honestly", name, fn.Name.Name)
+				}
+			}
+		}
+	}
+
+	if entrypoints < 2 {
+		t.Errorf("found %d exported http.Handler entrypoints, want at least the Server's and the "+
+			"Dashboard's — a scan that finds nothing passes vacuously", entrypoints)
+	}
+}
+
+// returnsHTTPHandler reports whether fn's single result is an http.Handler,
+// which is this package's shape for "a front-end's whole route set".
+func returnsHTTPHandler(fn *ast.FuncDecl) bool {
+	results := fn.Type.Results
+	if results == nil || len(results.List) != 1 {
+		return false
+	}
+	selector, ok := results.List[0].Type.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Handler" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "http"
+}
+
+// topLevelReturns collects body's return statements, NOT descending into nested
+// function literals — a closure's return belongs to the closure, not to the
+// entrypoint whose handler is under test.
+func topLevelReturns(body *ast.BlockStmt) []*ast.ReturnStmt {
+	var returns []*ast.ReturnStmt
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			returns = append(returns, typed)
+		}
+		return true
+	})
+	return returns
+}
+
+// isCallTo reports whether expr is a call to the package-level function named
+// name, e.g. securityHeaders(...).
+func isCallTo(expr ast.Expr, name string) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	return ok && fn.Name == name
 }
 
 // --- /api/graph --------------------------------------------------------------

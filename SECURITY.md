@@ -229,7 +229,11 @@ being exact about what that leaves:
 - The CSP is written against what the shipped `ui/` assets actually do, and one
   directive is loose by necessity: `style-src` carries `'unsafe-inline'` because
   vendored cytoscape injects a `<style>` element at renderer init. `script-src`
-  stays `'self'` with no `'unsafe-eval'`. A cytoscape bump must re-verify the
+  stays `'self'` with no `'unsafe-eval'` — nothing shipped calls eval, and the
+  one Function-constructor call in the vendored libraries (lodash's
+  `Function("return this")()` root fallback, in cytoscape and dagre alike) is
+  short-circuited before it in a browser, so it never runs.
+  A cytoscape bump must re-verify the
   policy by hand (`internal/serve/ui/vendor/README.md` says so), because no Go
   test can execute vendored JavaScript.
 
@@ -244,6 +248,11 @@ which inlines the body of any mapped local `SKILL.md`.
 Those files are written **owner-only**: `0700` directories, `0600` files. That
 is the stance `auto`'s saved plan spec already took, now applied to the rest of
 the run.
+
+One thing inside a run directory is not ours to mode: `worktrees/<name>` is a
+checkout of *your own source*, and `git` writes it at your umask. Only the
+`worktrees/` container is `0700` — which is enough, since a `0700` directory
+denies traversal to everyone else regardless of what is under it.
 
 Two things this deliberately does not do:
 

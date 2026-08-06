@@ -159,7 +159,13 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 //   - script-src 'self'   — index.html and dashboard.html load four and one
 //     same-origin <script src> respectively and carry no inline script, no
 //     on*= handler and no javascript: URL. No 'unsafe-eval': none of the three
-//     vendored libraries contains an eval( or a new Function.
+//     vendored libraries calls eval(, and the only Function-constructor call in
+//     any of them is lodash's root fallback, `freeGlobal || freeSelf ||
+//     Function("return this")()`, in BOTH cytoscape.min.js and dagre.min.js.
+//     That call is eval-equivalent and script-src would block it — but in a
+//     browser `freeSelf` (self && self.Object === Object && self) is truthy, so
+//     the third operand is never evaluated. It is dead code here, not an
+//     absence; a version that reached it would need 'unsafe-eval'.
 //   - style-src 'self' 'unsafe-inline' — the two same-origin stylesheets, PLUS
 //     the one inline stylesheet this page cannot avoid: cytoscape injects a
 //     <style> element holding ".__________cytoscape_container { position:
@@ -168,9 +174,11 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 //     it then draws into, so blocking it does not degrade the map, it
 //     mis-places it. 'unsafe-inline' is therefore on STYLE only; script-src
 //     stays strict, which is where an injection actually costs something.
-//   - img-src 'self' data: — the pages reference no image at all (the DAG is a
-//     <canvas>), but a browser still probes /favicon.ico against img-src, and
-//     'self' keeps that an ordinary 404 rather than a console violation.
+//   - img-src 'self'      — the pages reference no image at all (the DAG is a
+//     <canvas>, and style.css's only background-image is a gradient, which no
+//     directive governs), but a browser still probes /favicon.ico against
+//     img-src, and 'self' keeps that an ordinary 404 rather than a console
+//     violation. Nothing loads a data: image, so data: is not listed.
 //   - connect-src 'self'  — every fetch() and EventSource in app.js and
 //     dashboard.js is a document-relative path under this same origin.
 //   - base-uri 'none' and form-action 'none' — neither page has a <base> or a
@@ -183,7 +191,7 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; " +
+	"img-src 'self'; " +
 	"connect-src 'self'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
