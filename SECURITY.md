@@ -197,6 +197,18 @@ is the concrete hazard: a node changing HEAD in a repository some other process
 is working in will collide with it, and the run's feed records the node's
 result, not the git commands it chose to run.
 
+**`auto` now says this at plan time, for the repositories it can see.** When
+the goal or a planned prompt names an absolute path that resolves into a git
+checkout outside the invocation repository, the plan printout — the one
+`--plan-only` also renders — names that checkout, says where the plan named it,
+and states that nothing there is isolated, before any node spends. It is a
+warning and never a refusal: a multi-repository goal is legitimate, the engine
+just cannot isolate it. Treat it as a floor, not a guarantee. It is a heuristic
+read of the plan's text and it cannot see a path a node builds at run time, one
+arriving through an `--input` or a parent's artifact, a repository reached by a
+relative path, or what a node actually does once it is there — so a plan that
+warns about nothing is not a plan that touches nothing outside this repository.
+
 Two consequences worth planning around: keep a goal that spans repositories to
 one that expects each node to isolate *itself* in the repositories it does not
 own, and never verify such work by asserting a local HEAD — an assertion like

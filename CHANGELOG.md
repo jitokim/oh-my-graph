@@ -42,6 +42,46 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   refusal is terminal. Continuing such a run with the check silently dropped is
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
   no `--verify-cmd` either.
+- **`auto` warns at plan time when a goal reaches a repository it cannot
+  isolate** (#103). If the goal or a planned prompt names an absolute path that
+  resolves into a git checkout outside the invocation repository, the plan
+  printout — the same one `auto --plan-only` renders — names that checkout, says
+  whether the goal or which nodes named it, and states plainly that oh-my-graph
+  creates no worktree there and takes no lock on it, so a node that switches a
+  branch in it races whatever else is standing in that directory. It is a
+  warning and never a refusal: a multi-repository goal is legitimate and the
+  engine simply cannot isolate it. The rule requires the path to resolve into a
+  real `.git` checkout (a clone or a linked worktree), so `/tmp` scratch paths,
+  templated paths, files that do not exist and every path inside the invocation
+  repository stay silent — verified against the graphs this repo ships — and it
+  drops a checkout that is a tool installation rather than a work tree (rooted
+  under `/usr`, `/opt`, `/Library`, `/System`, `/nix`, or under a dot-directory
+  of `$HOME`), because Homebrew, nvm, oh-my-zsh, a plugin marketplace and a
+  chezmoi-managed `~/.config` are all real clones and a warning about a HEAD
+  nobody will switch is what teaches a reader to scroll past the block. It is
+  computed on the planner's own prompts before any `SKILL.md` body is inlined,
+  so a skill's documented paths are never blamed on the plan. The printed text
+  states its own blind spots (a path built at run time, one arriving through
+  `--input` or an artifact, a relative path, a tool installation's own clone),
+  and says outright that in `auto` mode oh-my-graph isolates no checkout at all
+  — not even the one it was invoked from, where planned nodes work directly in
+  your tree — because a heuristic that reads as complete, or a boundary that
+  reads as protection, is worse than none.
+
+### Changed
+
+- **`auto` no longer plans a feedback loop that cannot repair what it judges**
+  (#118). When a planned reviewer fans in from several producers, the planner
+  prompt now requires `feedback.rerun` to name a node the loop reaches every
+  producer from — normally their nearest common ancestor — and
+  `coordinator.validatePlannedFeedbackReach` refuses a plan that aims the arc at
+  one producer while another sits outside the body, naming the covering target
+  to aim at instead. A refused plan buys the usual one corrected re-plan, so the
+  fix costs a planner call rather than the run. The rule reuses
+  `graph.LintFeedbackReach` — the advisory `lint` prints for hand-written graphs
+  — and fires only where that sweep found a covering target, so a shape no
+  aiming of the arc could repair, and a stable-context parent upstream of the
+  rerun target, both still plan (ADR 0010, amended).
 
 ### Fixed
 

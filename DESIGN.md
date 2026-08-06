@@ -482,12 +482,27 @@ break working hand-written graphs to catch a planner's mistake. What the sweep
 sees is `depends_on`; which files a prompt actually judges it cannot see —
 issue #118's reviewer named its two artifacts by literal path, not through
 `{{ artifacts.<id> }}` — and the printed advisory says so itself rather than
-asserting the defect as fact. The complementary half is planner guidance
-(`internal/coordinator`), not more validation — a planned follow-up, not
-shipped: the planner prompt still describes only the linear implement→review
-shape. A producer left outside the body that *asks* for the payload with
-`{{ feedback.<id> }}` is already a load error, not an advisory (the
-placeholder rule above).
+asserting the defect as fact. A producer left outside the body that *asks* for
+the payload with `{{ feedback.<id> }}` is already a load error, not an advisory
+(the placeholder rule above).
+
+**Auto mode refuses what `lint` only warns about.** The same sweep is a
+*refusal* for planner output (`coordinator.validatePlannedFeedbackReach`), and
+the planner prompt carries the rule so the ordinary plan never draws it: when a
+reviewing node depends on more than one producer, `rerun` must name a node the
+loop reaches all of them from — normally their nearest common ancestor — and a
+parent that is only stable context belongs *upstream* of the rerun target, not
+beside it. Neither reason for the advisory's restraint survives the change of
+author: unreviewed output has no author to weigh a warning, and a refused plan
+is not a lost run — the reply already faces the whole field-disposition ceiling,
+and a refusal buys one corrected re-plan (`repair.go`) carrying the validator's
+own sentence. The rule is deliberately narrower than "every producer must be in
+the body": it fires **only when the sweep found a covering target**, so the
+refusal always arrives with the edit that fixes it, and the two-independent-roots
+shape — where the corpus-versus-work indistinguishability actually bites — is
+never refused, because no aiming of the arc could repair it. The topology is
+computed once, in `graph.LintFeedbackReach`; the coordinator reads its
+advisories and decides only what to do with them.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
@@ -1445,6 +1460,38 @@ body on every invocation, and inlining is unconditional where Claude Code's
 own `description`-driven activation is conditional — whether that helps or
 misfires is ADR 0012's required (a)/(b) probes, not assumed here.
 
+The last thing computed with a plan is a warning rather than a decision. If the
+goal or a planned prompt names an absolute path that resolves into a git
+checkout **outside the invocation repository**, `Plan.Unisolated`
+(`internal/coordinator/unisolated.go`) carries it and the plan printout says —
+before anything spends, and in the same output `--plan-only` renders — that
+oh-my-graph isolates nothing there: no worktree, no lock, so a node working in
+that checkout must create its own worktree or race whatever else is standing in
+it (#103). The boundary is one of **ownership, not of protection**: `auto`
+rejects `cwd:` and `worktree:` at plan time, so it provisions no managed
+worktree anywhere — the invocation repository included, where planned nodes edit
+and commit directly — and what the reported checkouts have that it does not is
+that the user did not open them for this run. The printed text may not read as
+if the invocation repository were the isolated one. The rule is deliberately
+narrow: a mention must resolve into a `.git` checkout (an ordinary clone or a
+linked worktree, both of which have their own HEAD), which is what keeps `/tmp`
+scratch paths, templated paths, files that do not exist and every path *inside*
+the invocation repository silent; a checkout that is a **tool installation**
+rather than a work tree is dropped as well (rooted under `/usr`, `/opt`,
+`/Library`, `/System`, `/nix`, or under a dot-directory of `$HOME` — Homebrew,
+nvm, oh-my-zsh, a plugin marketplace and a chezmoi-managed `~/.config` are all
+real clones, and a warning about a HEAD nobody will switch is the line that
+teaches the reader to scroll past the block); and one warning is emitted per
+checkout rather than per path, since the hazard is a shared HEAD. It is computed on the planner's own
+prompts, strictly before skill inlining, so absolute paths a local `SKILL.md`
+happens to document are never attributed to the plan. It is a WARNING and never
+a refusal — a multi-repository goal is legitimate, and the engine simply cannot
+isolate it — and the printed text states its own blind spots (a path built at
+run time, one arriving through `--input` or a parent's artifact, a repository
+reached by a relative path, a tool installation's own clone, and what a node
+actually does once it is there), because a heuristic that reads as complete is
+worse than no heuristic at all.
+
 ### The tool ceiling — one layered policy, not a list of flags (v1.1)
 The allowlist above bounds what a plan may **declare**. Execution is bounded by
 a separate, layered policy carried on `Plan.ToolPolicies` (one
@@ -1541,7 +1588,7 @@ turns that rule into a build failure. Current dispositions:
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `budget_usd`, `timeout` | allowed |
 | `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
-| `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
+| `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but two things they leave open are closed here (ADR 0010). **max**: only `max` ≥ 1 is required at load and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected. **Reach**: an arc on a fan-in declarer may name a target whose body excludes a producer the declarer judges — valid, and unable to converge (#118) — so `validatePlannedFeedbackReach` refuses it whenever `graph.LintFeedbackReach` found a covering target, naming that target in the refusal |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is

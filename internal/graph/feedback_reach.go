@@ -16,12 +16,22 @@ import (
 // The three ids are separate fields rather than only prose because they are
 // the three the reader of issue #118 had to reconstruct from graph.json by
 // hand: who judges (Declarer), what the arc re-runs (Rerun), and whose
-// artifact is therefore unrepairable (Producer).
+// artifact is therefore unrepairable (Producer). Suggestion is the fourth
+// datum for the same reason, and one more: it is the only part of the finding
+// a SECOND consumer has to branch on. The coordinator refuses a planned arc
+// exactly when a covering target exists (validatePlannedFeedbackReach), so
+// "is there a fix?" has to be answerable without parsing Detail's prose —
+// otherwise the rule would be computed twice and drift.
 type FeedbackAdvisory struct {
 	Declarer string
 	Rerun    string
 	Producer string
-	Detail   string
+	// Suggestion is the rerun target whose body would cover every producer
+	// this declarer depends on AND still validate, or "" when no such target
+	// exists and the fix is structural. Detail renders it; nothing recomputes
+	// it.
+	Suggestion string
+	Detail     string
 }
 
 func (a FeedbackAdvisory) String() string {
@@ -77,6 +87,14 @@ func (a FeedbackAdvisory) String() string {
 // would cover every producer AND still pass validateFeedback. That suggestion
 // is what keeps this from being an advisory everyone learns to scroll past:
 // the finding arrives with the edit that fixes it.
+//
+// Advisory is this sweep's standing for a graph a HUMAN wrote. Auto mode holds
+// planner output to more (coordinator.validatePlannedFeedbackReach): it reads
+// these same advisories and refuses the plan for the ones carrying a
+// Suggestion, because unreviewed output has no author to weigh a warning and a
+// refused plan buys one corrected re-plan. That is a decision about who wrote
+// the graph, not a second opinion about the topology — the topology is
+// computed here, once.
 func (g *Graph) LintFeedbackReach() []FeedbackAdvisory {
 	var advisories []FeedbackAdvisory
 	for _, n := range g.Nodes {
@@ -115,9 +133,10 @@ func (g *Graph) LintFeedbackReach() []FeedbackAdvisory {
 		suggestion := g.coveringFeedbackTarget(n.ID, unreachable)
 		for _, producer := range unreachable {
 			advisories = append(advisories, FeedbackAdvisory{
-				Declarer: n.ID,
-				Rerun:    n.Feedback.Rerun,
-				Producer: producer,
+				Declarer:   n.ID,
+				Rerun:      n.Feedback.Rerun,
+				Producer:   producer,
+				Suggestion: suggestion,
 				Detail: fmt.Sprintf(
 					"arc reruns %q, whose loop body {%s} excludes producer %q, and %[3]q is not upstream of the loop either — so if this node judges %[3]q's output, a defect it finds there cannot be repaired: every round re-judges an unchanged artifact until the rounds are spent. This sweep reads `depends_on`, not which artifacts the prompt judges, so ignore it if %[3]q is only stable context. %s",
 					n.Feedback.Rerun, strings.Join(body, ", "), producer, advice(suggestion)),

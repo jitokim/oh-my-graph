@@ -685,6 +685,12 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
+	// Last, and deliberately after the ceiling: that paragraph says planned
+	// nodes "run isolated", meaning settings and tools. This one narrows it —
+	// filesystem isolation is a different isolation, and in auto mode there is
+	// none of it at all — so it has to be read second or the two look
+	// contradictory.
+	noteUnisolatedPaths(w, plan.Unisolated)
 	fmt.Fprintln(w)
 }
 
@@ -706,6 +712,97 @@ func noteReplan(w io.Writer, repair *coordinator.PlanRepair) {
 	for _, issue := range repair.Issues {
 		fmt.Fprintf(w, "    ! %s\n", issue)
 	}
+}
+
+// noteUnisolatedPaths warns, before anything spends, that this plan's text
+// names a local git checkout other than the one oh-my-graph was invoked from
+// (SECURITY.md, "Isolation stops at the invocation repository"). Silent for the
+// common single-repository plan, and silent whenever the boundary could not be
+// resolved.
+//
+// The message may not claim that the invocation repository is isolated, because
+// it is not: `auto` rejects `cwd:` and `worktree:` at plan time, so it
+// provisions no managed worktree anywhere and every planned node works directly
+// in the tree the user opened. What the checkouts named above have that the
+// invocation tree does not is that the user did not open them for this run.
+//
+// It is printed HERE, in the plan printout, because that is where a user
+// already looks and it is what `auto --plan-only` renders: a multi-repository
+// goal is exactly the case where someone wants to read the plan before paying
+// for it, and the fact the engine cannot isolate half of it has to arrive
+// before the run, not in a post-mortem of a collision.
+//
+// A warning and never a refusal — the reason is in UnisolatedScan's doc. The
+// closing paragraph states the rule's own limits in the user's face for the
+// same reason: detection is a heuristic read of prompt text, and a warning
+// that let itself be read as complete would be worse than no warning at all,
+// because a silent plan would then look like a checked one.
+func noteUnisolatedPaths(w io.Writer, scan *coordinator.UnisolatedScan) {
+	if scan == nil {
+		return
+	}
+	for _, path := range scan.Paths {
+		// Two lines rather than one: the checkout is the headline, and a path
+		// this deep plus every node that named it does not fit beside it on a
+		// terminal. The written spelling is kept — a "~/..." goal and a file
+		// deep inside the repository both resolve to the root above, and only
+		// the original text can be searched for.
+		fmt.Fprintf(w, "  ! not isolated: %s — a local git checkout\n", path.Repo)
+		detail := "    named by " + unisolatedNamedBy(path)
+		if path.Mention != path.Repo {
+			detail += ", written as " + path.Mention
+		}
+		fmt.Fprintln(w, detail)
+	}
+	if scan.IsRepo {
+		fmt.Fprintf(w, "  in auto mode oh-my-graph isolates no checkout at all — not even the one it was invoked\n"+
+			"  from (%s), where every planned node works directly in your tree\n"+
+			"  (cwd: and worktree: are rejected at plan time). The difference is only whose tree it is:\n", scan.Root)
+	} else {
+		fmt.Fprintf(w, "  in auto mode oh-my-graph isolates no checkout at all, and it was not invoked from a git\n"+
+			"  repository (%s) either — every planned node works directly in that\n"+
+			"  directory. The difference is only whose tree it is:\n", scan.Root)
+	}
+	fmt.Fprint(w,
+		"  the checkouts above are ones you did not open for this run, and oh-my-graph creates no\n"+
+			"  worktree and takes no lock in them, so a node that switches a branch there changes a\n"+
+			"  directory another process may be standing in. If a node must work in one, say in the goal\n"+
+			"  that it has to create its own git worktree there first and stay inside it. See SECURITY.md,\n"+
+			"  \"Isolation stops at the invocation repository\".\n"+
+			"  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths\n"+
+			"  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It\n"+
+			"  cannot see a path a node builds at run time, one arriving through an --input or a parent's\n"+
+			"  artifact, a repository reached by a relative path, or what a node will actually do once it\n"+
+			"  is there, and it deliberately says nothing about a tool installation's own checkout (a\n"+
+			"  package or version manager under /usr, /opt or a dot-directory of your home) — and it is a\n"+
+			"  warning, not a refusal: a multi-repository goal is legitimate, oh-my-graph simply cannot\n"+
+			"  isolate it.\n",
+	)
+}
+
+// unisolatedNamedBy renders where a checkout was named — the goal, one node,
+// or several — so the user can find the text that put it in the plan. The goal
+// comes first because it is the user's own words, and a warning they can act
+// on by rewording is more useful than one about a prompt they did not write.
+// Nodes share one clause ("nodes a, b") rather than one each, which is what
+// keeps the line readable when a path reaches most of the graph.
+func unisolatedNamedBy(path coordinator.UnisolatedPath) string {
+	var sources []string
+	if path.InGoal {
+		sources = append(sources, "the goal")
+	}
+	if len(path.NodeIDs) > 0 {
+		quoted := make([]string, 0, len(path.NodeIDs))
+		for _, id := range path.NodeIDs {
+			quoted = append(quoted, fmt.Sprintf("%q", id))
+		}
+		noun := "node "
+		if len(quoted) > 1 {
+			noun = "nodes "
+		}
+		sources = append(sources, noun+strings.Join(quoted, ", "))
+	}
+	return strings.Join(sources, " and ")
 }
 
 // plannerCallsPhrase names how many planner calls a plan-only preview paid

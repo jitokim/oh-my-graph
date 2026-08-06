@@ -188,6 +188,15 @@ type Plan struct {
 	// the graph, so a human approving a plan must be shown what will run and
 	// where. Every entry names a node in Graph.
 	VerifyAttachments []VerifyAttachment
+	// Unisolated is the plan-time warning that this plan's text names a local
+	// git checkout OUTSIDE the invocation repository — a directory auto
+	// provisions no worktree in and takes no lock on (unisolated.go, and
+	// SECURITY.md "Isolation stops at the invocation repository"). nil when
+	// the plan names none, which is the common case. Same disclosure contract
+	// as AgentMappings and SkillMappings: the caller must print it with the
+	// plan, since the entire point is that the user learns it BEFORE a node
+	// spends anything working in a checkout someone else may be standing in.
+	Unisolated *UnisolatedScan
 	// SkillScan says a skill scan ran and over which directories, so the
 	// caller can distinguish an empty SkillMappings that means "scanned, no
 	// match" from one that means "never scanned". nil when no scan happened
@@ -220,6 +229,11 @@ type Coordinator struct {
 	// every plan's sink nodes after validation (ADR 0016 §2, verifycmd.go).
 	// Zero means none was supplied — the zero-config path.
 	verifyCommand VerifyCommand
+	// invocationDir is the directory planned nodes will run in, and so the
+	// directory the isolation boundary is computed from (unisolated.go).
+	// Empty — the production value — means the process's working directory,
+	// which is where auto runs every planned node; tests pass a temp dir.
+	invocationDir string
 }
 
 // Option configures a Coordinator at construction.
@@ -249,6 +263,15 @@ func WithoutSkillMapping() Option {
 // DefaultSkillDirs; tests pass temp dirs.
 func WithSkillDirs(dirs ...string) Option {
 	return func(c *Coordinator) { c.skillDirs = dirs }
+}
+
+// WithInvocationDir sets the directory the unisolated-path warning measures
+// its boundary from (unisolated.go). Production leaves it unset, which means
+// the process's working directory — the one every planned node runs in — so
+// the warning is about the same repository the run will actually work in.
+// Tests pass a temp dir.
+func WithInvocationDir(dir string) Option {
+	return func(c *Coordinator) { c.invocationDir = dir }
 }
 
 // New builds a Coordinator bound to a NodeRunner.
@@ -317,7 +340,7 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	spentUSD := 0.0
 	var repaired *PlanRepair
 	for attempt := 0; ; attempt++ {
-		plan, costUSD, refusal := c.attemptPlan(ctx, prompt)
+		plan, costUSD, refusal := c.attemptPlan(ctx, goal, prompt)
 		spentUSD += costUSD
 		if refusal == nil {
 			// The sum, never the last call alone: three ADRs claim planning
@@ -378,6 +401,11 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // here through the same path — there is no "second attempt" branch, so a
 // repaired plan clears the identical ceiling the first one had to.
 //
+// goal is the user's own goal text, which prompt already contains. It is
+// passed separately because the unisolated-path scan below reads it as its own
+// source: a repository the GOAL names is worth warning about even when the
+// planner's prompts paraphrase it away.
+//
 // The call's cost is returned separately from the Plan because a REFUSED
 // attempt still spent it: the caller sums across attempts, which is what keeps
 // a repaired plan's price honest and a rejected one's price reportable.
@@ -395,7 +423,7 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // call whose job is to understand this repository. Widening the ceiling here
 // is a product decision about plan quality, not a safety fix, so it is not
 // made silently as part of one.
-func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, float64, *planRefusal) {
+func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, float64, *planRefusal) {
 	outcome, err := c.runner.Run(ctx, coordinatorInvocation(prompt))
 	if err != nil {
 		// No reply, so nothing was produced and nothing is repairable: this
@@ -468,6 +496,18 @@ func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, flo
 		Graph:        g,
 		Spec:         []byte(spec),
 		ToolPolicies: toolPoliciesByNode(g),
+	}
+	// Computed HERE, on the planner's own prompts, and deliberately before the
+	// two mappings below: skill mapping inlines the user's local SKILL.md
+	// bodies into these prompts, and those bodies name absolute paths of their
+	// own that the plan never chose. An advisory that reported those would be
+	// noise attributed to the planner.
+	//
+	// A boundary that cannot be resolved leaves the plan unwarned rather than
+	// failing it: this is a disclosure, and a paid, valid plan must not be
+	// thrown away because a working directory could not be read.
+	if root, ok := resolveInvocationRoot(c.invocationDir); ok {
+		plan.Unisolated = scanUnisolated(root, goal, g)
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
@@ -650,6 +690,11 @@ func toolName(rule string) string {
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
 //     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
+//   - no planned feedback arc may leave a producer its declarer fans in from
+//     outside the loop, when the graph itself contains a target that would
+//     cover it (validatePlannedFeedbackReach — the only graph-LEVEL check
+//     here, since an arc's reach is a property of the topology, not of one
+//     node's fields);
 //   - no planned node may declare a retry max above maxPlannedRetries
 //     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
@@ -673,11 +718,22 @@ func toolName(rule string) string {
 // list is what the bounded re-plan hands back. A repair that fixed one
 // refusal and tripped the next would have burned its single retry, so
 // collecting all of them here is what decides whether one retry converges.
+//
+// The list's ORDER is part of that: graph-level refusals lead, because the
+// repair prompt keeps only the first maxIssuesInPrompt bytes of it. See the
+// comment in the body.
 func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	if len(g.Nodes) == 0 {
 		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
 	}
-	var issues []*PlanError
+	// The graph-level refusals come FIRST, and the order is load-bearing.
+	// repairSection truncates the joined reasons at maxIssuesInPrompt from the
+	// FRONT only, and validatePlannedFeedbackReach's sentence is by some margin
+	// the longest one this validator emits (~600 characters against 83–172 for
+	// a per-node refusal). Appended last, a dozen short per-node refusals would
+	// push it past the cut, the corrected reply would re-emit the same arc, and
+	// the single repair would be spent on being refused for it twice.
+	issues := validatePlannedFeedbackReach(g)
 	add := func(err *PlanError) {
 		if err != nil {
 			issues = append(issues, err)
@@ -704,6 +760,146 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		add(validatePlannedNodeTools(node))
 	}
 	return issues
+}
+
+// validatePlannedFeedbackReach refuses a planned feedback arc whose loop body
+// cannot reach a producer its declarer fans in from — issue #118's shape,
+// written by this very planner: a reviewer depending on `qa-plan` and
+// `load-script`, an arc aimed at `load-script`, five defects all in
+// `QA-PLAN.md`, and two rounds re-running the healthy branch against a file the
+// loop could not touch (~$14 of a $42 run). The graph was VALID; ADR 0010's
+// seven load rules all held.
+//
+// The topology is NOT computed here. graph.LintFeedbackReach already decides
+// which producers lie outside the body, already skips the two shapes rules 3
+// and 4 bless (a gate parent, a parent upstream of the rerun target), and
+// already computes the covering target and re-validates it before offering it.
+// This function reads those advisories and decides what auto mode does with
+// them. Two computations of one rule drift — this repository has paid for that
+// once already, in a dashboard card reducer that re-implemented
+// runfeed.InFlight — so the sweep stays the single definition and the
+// disposition lives here.
+//
+// WHY A REFUSAL HERE AND AN ADVISORY THERE. The sweep is advisory for a
+// hand-written graph because a sibling producer may be stable context on
+// purpose and the engine cannot tell (it sees `depends_on`, not which files a
+// prompt judges); refusing would break working graphs to catch a planner's
+// mistake. Neither half of that holds for planner output. It has no author to
+// weigh a warning — nobody reads `lint` on a graph `auto` planned, wrote to
+// graph.json and ran in the same breath — and a refusal is not fatal: the reply
+// is untrusted, already faces the whole field-disposition ceiling, and a
+// refused plan buys one corrected re-plan (repair.go) carrying this refusal's
+// text. The price of being wrong is one extra planner call; the price of being
+// silent was measured at $14.
+//
+// WHERE IT IS DELIBERATELY WEAKER THAN "every producer must be in the body".
+// It fires only when the advisory carries a Suggestion — a target that covers
+// every producer AND still passes both feedback rule sets. Two things follow,
+// both wanted:
+//
+//   - The refusal is always actionable. A plan refused with no legal target to
+//     aim at would burn its one repair call on a shape the planner cannot fix
+//     by moving the arc, and lose a plan the user paid for.
+//   - The producers-are-independent-roots shape is never refused. That is the
+//     honest false positive the ADR names — a sibling *corpus* root is
+//     topologically identical to #118's sibling *work* — and no ancestor covers
+//     two roots, so no Suggestion exists and the plan stands.
+//
+// A stable-context parent stays expressible in both of its shapes. The
+// idiomatic one — `spec → impl → review` with `rerun: impl` — never reaches
+// here at all: the sweep skips a parent upstream of the rerun target, so
+// nothing is reported and nothing is refused. The other one, a context node
+// BESIDE the work under a shared ancestor, is refused, and that is the residual
+// false positive this rule accepts. It is a narrow one, and the refusal carries
+// the exit that fits it rather than only the one that fits #118: a spec the work
+// is judged against belongs upstream of the work, so
+// `ancestor → context → work → review` both satisfies this check and is the
+// better plan — the implementer gets to read the criteria it will be judged on.
+// Which of the two exits to take is a question the refusal asks outright, for
+// the reason given at plannedFeedbackReachRefusal. Only a producer that is
+// genuinely beside the work AND genuinely not judged is priced wrongly, and it
+// is priced at one planner call.
+//
+// One refusal per declarer, not per producer: the advisories for a declarer
+// share one Suggestion, so per-producer refusals would repeat one correction N
+// times in a repair prompt that is truncated at maxIssuesInPrompt.
+func validatePlannedFeedbackReach(g *graph.Graph) []*PlanError {
+	producersByDeclarer := make(map[string][]string)
+	suggestionByDeclarer := make(map[string]string)
+	rerunByDeclarer := make(map[string]string)
+	var order []string
+	for _, advisory := range g.LintFeedbackReach() {
+		if advisory.Suggestion == "" {
+			continue
+		}
+		if _, seen := producersByDeclarer[advisory.Declarer]; !seen {
+			order = append(order, advisory.Declarer)
+		}
+		producersByDeclarer[advisory.Declarer] = append(producersByDeclarer[advisory.Declarer], advisory.Producer)
+		suggestionByDeclarer[advisory.Declarer] = advisory.Suggestion
+		rerunByDeclarer[advisory.Declarer] = advisory.Rerun
+	}
+
+	issues := make([]*PlanError, 0, len(order))
+	for _, declarer := range order {
+		producers := producersByDeclarer[declarer]
+		issues = append(issues, &PlanError{Reason: fmt.Sprintf(
+			plannedFeedbackReachRefusal,
+			declarer,
+			rerunByDeclarer[declarer],
+			quoteIDs(producers),
+			plural(len(producers), "a node", "nodes"),
+			plural(len(producers), "it", "they"),
+			plural(len(producers), "is", "are"),
+			suggestionByDeclarer[declarer],
+			plural(len(producers), "it", "them"),
+		)})
+	}
+	return issues
+}
+
+// plannedFeedbackReachRefusal is the sentence the planner gets back — and,
+// after a refusal, the sentence a repair prompt quotes verbatim, which is why
+// it names the replacement target rather than only the fault.
+//
+// It offers two corrections and asks WHICH before either, rather than leading
+// with one. The two are not interchangeable and the rule cannot choose between
+// them: it sees `depends_on`, not which files a prompt judges. Leading with
+// "aim the arc at X" would be the right instruction for #118's shape and the
+// wrong one for the residual false positive above — it would pull a context
+// node into the loop and re-run the criteria every round, the exact harm
+// graph.LintFeedbackReach's upstream-of-target skip exists to avoid. The
+// planner wrote both prompts and is the one party that knows which it has, so
+// the question goes to it. The covering target is still named, so the refusal
+// stays as actionable as the weakening promises.
+//
+// Every %[n]s is explicit: the producer list, the pronouns standing in for it
+// and the agreement words each recur, at different positions across the three
+// sentences. The pronoun comes in both cases — %[5]s subject, %[8]s object —
+// because the last clause takes it as an object ("depend on them"), which the
+// subject form got wrong in the plural.
+const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun: %[2]q}, whose loop body excludes %[3]s — %[4]s this one depends on, so nothing the arc re-runs can rewrite what %[5]s produced. A defect this node finds there is re-judged unchanged every round until the rounds are spent, at full cost. Which correction is right depends on what %[3]s %[6]s. If %[5]s %[6]s work this node judges, aim the arc at %[7]q instead: its loop body covers every producer this node depends on and still validates. If %[5]s %[6]s only stable context this node reads rather than work it judges, have %[2]q depend on %[8]s instead — context the work is built against belongs upstream of the loop, not beside it."
+
+// quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
+// `"a", "b" and "c"`.
+func quoteIDs(ids []string) string {
+	quoted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		quoted = append(quoted, strconv.Quote(id))
+	}
+	if len(quoted) < 2 {
+		return strings.Join(quoted, "")
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+}
+
+// plural picks the verb/pronoun agreeing with a count, so a refusal about one
+// producer does not read as a refusal about a list.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // validatePlannedNodeCwd rejects a planned node that redirects its working
@@ -1142,6 +1338,19 @@ Rules:
   backward along depends_on, no node outside the loop may depend on a
   loop node other than the reviewer, and one node belongs to at most one
   loop.
+  If the reviewing node depends on MORE THAN ONE producing node, "rerun"
+  must name a node the loop can reach every one of them from — normally
+  their nearest common ancestor, NOT one of the producers. A re-run covers
+  the target plus every node on a depends_on path from it up to the
+  reviewer; a producer off that path is never re-run, so a defect the
+  reviewer finds in ITS output is re-judged unchanged every round until
+  the rounds are spent, and the run halts having never touched the file.
+  A parent that is only stable CONTEXT the reviewer reads — a spec, the
+  acceptance criteria, a corpus — belongs UPSTREAM of the rerun target
+  instead: have the implementing node depend on it, so the work is built
+  against the context rather than merely compared with it. A plan whose
+  arc leaves a producer unreachable while the graph contains a target that
+  would cover it is rejected outright.
   {{ feedback.<id> }} takes NO filter — it always inlines the payload, so
   "{{ feedback.review | inline }}" is WRONG; the " | inline" filter exists
   for {{ artifacts.<id> }} only. The placeholder is legal ONLY on a node
