@@ -78,6 +78,62 @@ func TestLintFeedbackReach_SuggestedTargetActuallyFixesIt(t *testing.T) {
 	}
 }
 
+// TestLintFeedbackReach_SuggestionFieldAndProseAgree is the guard on the
+// advisory's second consumer. The coordinator refuses a planned arc exactly
+// when Suggestion is non-empty, while a human reads Detail — so if the field
+// and the prose could disagree, `lint` would print advice auto mode did not
+// act on, or auto mode would refuse a plan while the message said the fix was
+// structural.
+//
+// Asserted as the property rather than against a literal target: whatever
+// coveringFeedbackTarget picks, the prose must name that node and the field
+// must hold it, and applying the field's value must actually silence the
+// sweep.
+func TestLintFeedbackReach_SuggestionFieldAndProseAgree(t *testing.T) {
+	advisories := parseGraph(t, fanInReviewYAML).LintFeedbackReach()
+	if len(advisories) != 1 {
+		t.Fatalf("LintFeedbackReach() = %v, want exactly 1", advisories)
+	}
+	got := advisories[0]
+	if got.Suggestion == "" {
+		t.Fatal("a covering target exists for #118's graph, so Suggestion must carry it")
+	}
+	if !strings.Contains(got.Detail, "rerun: "+got.Suggestion) {
+		t.Errorf("Detail %q does not name Suggestion %q, so the field and the prose disagree", got.Detail, got.Suggestion)
+	}
+	fixed := parseGraph(t, strings.Replace(fanInReviewYAML, "rerun: load-script", "rerun: "+got.Suggestion, 1))
+	if advisories := fixed.LintFeedbackReach(); len(advisories) != 0 {
+		t.Errorf("aiming the arc at Suggestion %q still warns: %v", got.Suggestion, advisories)
+	}
+}
+
+// TestLintFeedbackReach_StructuralAdviceCarriesNoSuggestion is the other half:
+// when no target covers both producers the field must be empty, because that
+// emptiness is what keeps auto mode from refusing a plan it could not tell the
+// planner how to fix.
+func TestLintFeedbackReach_StructuralAdviceCarriesNoSuggestion(t *testing.T) {
+	g := parseGraph(t, `
+name: two-roots
+nodes:
+  - id: plan
+    prompt: "plan: {{ feedback.review }}"
+  - id: script
+    prompt: write the script
+  - id: review
+    depends_on: [plan, script]
+    prompt: judge both
+    success_check: { result_matches: "ready" }
+    feedback: { rerun: plan, max: 2 }
+`)
+	advisories := g.LintFeedbackReach()
+	if len(advisories) != 1 {
+		t.Fatalf("LintFeedbackReach() = %v, want exactly 1", advisories)
+	}
+	if advisories[0].Suggestion != "" {
+		t.Errorf("Suggestion = %q, want empty — no ancestor covers two independent roots", advisories[0].Suggestion)
+	}
+}
+
 // TestLintFeedbackReach_LinearLoopIsQuiet guards the shape the construct was
 // designed for (graphs/review-loop.yaml): one producer, one reviewer, nothing
 // to be unreachable.

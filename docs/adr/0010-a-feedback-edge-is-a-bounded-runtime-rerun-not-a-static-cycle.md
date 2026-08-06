@@ -218,7 +218,55 @@ Load-time validation (all in `internal/graph`, all before anything spends):
 > the rest; teaching it to aim at the nearest common ancestor when the
 > reviewer fans in is where a mis-aimed arc stops being written in the first
 > place. That teaching is a planned follow-up and is NOT shipped here — this
-> ADR's change is the advisory alone.
+> ADR's change is the advisory alone. (Shipped 2026-08-06 — see the next
+> amendment.)
+
+> **Update (2026-08-06) — a PLANNED arc that misses a producer is refused, and
+> the planner is taught the rule.** The follow-up above shipped, and it shipped
+> as *both* halves: the planner prompt now carries the fan-in rule, and
+> `coordinator.validatePlannedFeedbackReach` enforces it.
+>
+> The three objections that made an eighth load rule unsound are objections
+> about a graph a HUMAN wrote. Reread against planner output, two of them
+> dissolve and the third is priced:
+>
+> - "Refusing would break working hand-written graphs." There is no author here
+>   to have meant the shape. An `auto` plan is written, saved to `graph.json`
+>   and run in one breath; nobody runs `lint` on it, so an advisory printed at
+>   plan time is an advisory nobody weighs.
+> - "A refusal costs the whole plan." It costs one planner call. The reply is
+>   untrusted and already faces the whole field-disposition ceiling, and since
+>   the bounded re-plan (`repair.go`) a refusal buys a fresh corrected attempt
+>   carrying the validator's own sentence — which names the target to aim at,
+>   so the correction is mechanical rather than a guess.
+> - "The engine sees `depends_on`, not which artifacts a prompt judges." Still
+>   true, and not answered. It is *paid* for instead, by making the rule
+>   strictly narrower than "every producer must be in the body": auto mode
+>   refuses only the advisories carrying a **covering target** — one that covers
+>   every producer and still passes both feedback rule sets. So the
+>   two-independent-roots shape, where a sibling *corpus* root is genuinely
+>   indistinguishable from #118's sibling *work*, is never refused: no target
+>   covers two roots, there is no correction to ask for, and burning the one
+>   re-plan on a shape no aiming of the arc can fix would lose a plan the user
+>   paid for. The rule refuses only where it can also say what to do.
+>
+> A legitimate stable-context parent stays expressible in both of its shapes.
+> The idiomatic one — `spec → impl → review` with `rerun: impl` — never reaches
+> the refusal at all, because the sweep's ancestor-of-the-target skip (above)
+> keeps it out of the advisories. The other one, a context node *beside* the
+> work under a shared ancestor, IS refused, and that residual false positive is
+> accepted knowingly: the refusal names its own second exit — a spec the work is
+> judged against belongs upstream of the work, so having the implementer depend
+> on it satisfies the check and is the better plan besides. The cost of being
+> wrong there is one planner call; the cost of silence was measured at $14.
+>
+> The topology is computed **once**. `validatePlannedFeedbackReach` consumes
+> `graph.LintFeedbackReach`'s advisories — including the covering target it had
+> already re-validated before offering — and decides only the disposition. Two
+> computations of one rule drift, and this repository has paid for that once
+> already (a dashboard card reducer that re-implemented `runfeed.InFlight`), so
+> the advisory grew a `Suggestion` field rather than the coordinator growing a
+> second opinion.
 
 ### Semantics
 

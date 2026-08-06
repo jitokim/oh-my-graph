@@ -43,6 +43,21 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
   no `--verify-cmd` either.
 
+### Changed
+
+- **`auto` no longer plans a feedback loop that cannot repair what it judges**
+  (#118). When a planned reviewer fans in from several producers, the planner
+  prompt now requires `feedback.rerun` to name a node the loop reaches every
+  producer from — normally their nearest common ancestor — and
+  `coordinator.validatePlannedFeedbackReach` refuses a plan that aims the arc at
+  one producer while another sits outside the body, naming the covering target
+  to aim at instead. A refused plan buys the usual one corrected re-plan, so the
+  fix costs a planner call rather than the run. The rule reuses
+  `graph.LintFeedbackReach` — the advisory `lint` prints for hand-written graphs
+  — and fires only where that sweep found a covering target, so a shape no
+  aiming of the arc could repair, and a stable-context parent upstream of the
+  rerun target, both still plan (ADR 0010, amended).
+
 ### Fixed
 
 - **A run deleted while the dashboard was sweeping came back as a card.** A

@@ -482,12 +482,27 @@ break working hand-written graphs to catch a planner's mistake. What the sweep
 sees is `depends_on`; which files a prompt actually judges it cannot see —
 issue #118's reviewer named its two artifacts by literal path, not through
 `{{ artifacts.<id> }}` — and the printed advisory says so itself rather than
-asserting the defect as fact. The complementary half is planner guidance
-(`internal/coordinator`), not more validation — a planned follow-up, not
-shipped: the planner prompt still describes only the linear implement→review
-shape. A producer left outside the body that *asks* for the payload with
-`{{ feedback.<id> }}` is already a load error, not an advisory (the
-placeholder rule above).
+asserting the defect as fact. A producer left outside the body that *asks* for
+the payload with `{{ feedback.<id> }}` is already a load error, not an advisory
+(the placeholder rule above).
+
+**Auto mode refuses what `lint` only warns about.** The same sweep is a
+*refusal* for planner output (`coordinator.validatePlannedFeedbackReach`), and
+the planner prompt carries the rule so the ordinary plan never draws it: when a
+reviewing node depends on more than one producer, `rerun` must name a node the
+loop reaches all of them from — normally their nearest common ancestor — and a
+parent that is only stable context belongs *upstream* of the rerun target, not
+beside it. Neither reason for the advisory's restraint survives the change of
+author: unreviewed output has no author to weigh a warning, and a refused plan
+is not a lost run — the reply already faces the whole field-disposition ceiling,
+and a refusal buys one corrected re-plan (`repair.go`) carrying the validator's
+own sentence. The rule is deliberately narrower than "every producer must be in
+the body": it fires **only when the sweep found a covering target**, so the
+refusal always arrives with the edit that fixes it, and the two-independent-roots
+shape — where the corpus-versus-work indistinguishability actually bites — is
+never refused, because no aiming of the arc could repair it. The topology is
+computed once, in `graph.LintFeedbackReach`; the coordinator reads its
+advisories and decides only what to do with them.
 
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
@@ -1541,7 +1556,7 @@ turns that rule into a build failure. Current dispositions:
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `budget_usd`, `timeout` | allowed |
 | `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
-| `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
+| `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but two things they leave open are closed here (ADR 0010). **max**: only `max` ≥ 1 is required at load and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected. **Reach**: an arc on a fan-in declarer may name a target whose body excludes a producer the declarer judges — valid, and unable to converge (#118) — so `validatePlannedFeedbackReach` refuses it whenever `graph.LintFeedbackReach` found a covering target, naming that target in the refusal |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is

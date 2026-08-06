@@ -650,6 +650,11 @@ func toolName(rule string) string {
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
 //     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
+//   - no planned feedback arc may leave a producer its declarer fans in from
+//     outside the loop, when the graph itself contains a target that would
+//     cover it (validatePlannedFeedbackReach — the only graph-LEVEL check
+//     here, since an arc's reach is a property of the topology, not of one
+//     node's fields);
 //   - no planned node may declare a retry max above maxPlannedRetries
 //     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
@@ -703,7 +708,129 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		add(validatePlannedNodeRetry(node))
 		add(validatePlannedNodeTools(node))
 	}
+	issues = append(issues, validatePlannedFeedbackReach(g)...)
 	return issues
+}
+
+// validatePlannedFeedbackReach refuses a planned feedback arc whose loop body
+// cannot reach a producer its declarer fans in from — issue #118's shape,
+// written by this very planner: a reviewer depending on `qa-plan` and
+// `load-script`, an arc aimed at `load-script`, five defects all in
+// `QA-PLAN.md`, and two rounds re-running the healthy branch against a file the
+// loop could not touch (~$14 of a $42 run). The graph was VALID; ADR 0010's
+// seven load rules all held.
+//
+// The topology is NOT computed here. graph.LintFeedbackReach already decides
+// which producers lie outside the body, already skips the two shapes rules 3
+// and 4 bless (a gate parent, a parent upstream of the rerun target), and
+// already computes the covering target and re-validates it before offering it.
+// This function reads those advisories and decides what auto mode does with
+// them. Two computations of one rule drift — this repository has paid for that
+// once already, in a dashboard card reducer that re-implemented
+// runfeed.InFlight — so the sweep stays the single definition and the
+// disposition lives here.
+//
+// WHY A REFUSAL HERE AND AN ADVISORY THERE. The sweep is advisory for a
+// hand-written graph because a sibling producer may be stable context on
+// purpose and the engine cannot tell (it sees `depends_on`, not which files a
+// prompt judges); refusing would break working graphs to catch a planner's
+// mistake. Neither half of that holds for planner output. It has no author to
+// weigh a warning — nobody reads `lint` on a graph `auto` planned, wrote to
+// graph.json and ran in the same breath — and a refusal is not fatal: the reply
+// is untrusted, already faces the whole field-disposition ceiling, and a
+// refused plan buys one corrected re-plan (repair.go) carrying this refusal's
+// text. The price of being wrong is one extra planner call; the price of being
+// silent was measured at $14.
+//
+// WHERE IT IS DELIBERATELY WEAKER THAN "every producer must be in the body".
+// It fires only when the advisory carries a Suggestion — a target that covers
+// every producer AND still passes both feedback rule sets. Two things follow,
+// both wanted:
+//
+//   - The refusal is always actionable. A plan refused with no legal target to
+//     aim at would burn its one repair call on a shape the planner cannot fix
+//     by moving the arc, and lose a plan the user paid for.
+//   - The producers-are-independent-roots shape is never refused. That is the
+//     honest false positive the ADR names — a sibling *corpus* root is
+//     topologically identical to #118's sibling *work* — and no ancestor covers
+//     two roots, so no Suggestion exists and the plan stands.
+//
+// A stable-context parent stays expressible in both of its shapes. The
+// idiomatic one — `spec → impl → review` with `rerun: impl` — never reaches
+// here at all: the sweep skips a parent upstream of the rerun target, so
+// nothing is reported and nothing is refused. The other one, a context node
+// BESIDE the work under a shared ancestor, is refused, and that is the residual
+// false positive this rule accepts. It is a narrow one and the refusal names
+// its own second exit: a spec the work is judged against belongs upstream of
+// the work, so `ancestor → context → work → review` both satisfies this check
+// and is the better plan — the implementer gets to read the criteria it will be
+// judged on. Only a producer that is genuinely beside the work AND genuinely
+// not judged is priced wrongly, and it is priced at one planner call.
+//
+// One refusal per declarer, not per producer: the advisories for a declarer
+// share one Suggestion, so per-producer refusals would repeat one correction N
+// times in a repair prompt that is truncated at maxIssuesInPrompt.
+func validatePlannedFeedbackReach(g *graph.Graph) []*PlanError {
+	producersByDeclarer := make(map[string][]string)
+	suggestionByDeclarer := make(map[string]string)
+	rerunByDeclarer := make(map[string]string)
+	var order []string
+	for _, advisory := range g.LintFeedbackReach() {
+		if advisory.Suggestion == "" {
+			continue
+		}
+		if _, seen := producersByDeclarer[advisory.Declarer]; !seen {
+			order = append(order, advisory.Declarer)
+		}
+		producersByDeclarer[advisory.Declarer] = append(producersByDeclarer[advisory.Declarer], advisory.Producer)
+		suggestionByDeclarer[advisory.Declarer] = advisory.Suggestion
+		rerunByDeclarer[advisory.Declarer] = advisory.Rerun
+	}
+
+	issues := make([]*PlanError, 0, len(order))
+	for _, declarer := range order {
+		producers := producersByDeclarer[declarer]
+		issues = append(issues, &PlanError{Reason: fmt.Sprintf(
+			plannedFeedbackReachRefusal,
+			declarer,
+			rerunByDeclarer[declarer],
+			quoteIDs(producers),
+			plural(len(producers), "a node", "nodes"),
+			plural(len(producers), "it", "they"),
+			plural(len(producers), "is", "are"),
+			suggestionByDeclarer[declarer],
+		)})
+	}
+	return issues
+}
+
+// plannedFeedbackReachRefusal is the sentence the planner gets back — and,
+// after a refusal, the sentence a repair prompt quotes verbatim, which is why
+// it names the replacement target rather than only the fault. Every %[n]s is
+// explicit: the producer list and the agreement words each appear twice, at
+// different positions in the two halves.
+const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun: %[2]q}, whose loop body excludes %[3]s — %[4]s this one depends on, so nothing the arc re-runs can rewrite what %[5]s produced. A defect this node finds there is re-judged unchanged every round until the rounds are spent, at full cost. Aim the arc at %[7]q instead: its loop body covers every producer this node depends on and still validates. If %[3]s %[6]s only stable context this node reads rather than work it judges, have %[2]q depend on %[5]s instead — context the work is built against belongs upstream of the loop, not beside it."
+
+// quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
+// `"a", "b" and "c"`.
+func quoteIDs(ids []string) string {
+	quoted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		quoted = append(quoted, strconv.Quote(id))
+	}
+	if len(quoted) < 2 {
+		return strings.Join(quoted, "")
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+}
+
+// plural picks the verb/pronoun agreeing with a count, so a refusal about one
+// producer does not read as a refusal about a list.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // validatePlannedNodeCwd rejects a planned node that redirects its working
@@ -1142,6 +1269,19 @@ Rules:
   backward along depends_on, no node outside the loop may depend on a
   loop node other than the reviewer, and one node belongs to at most one
   loop.
+  If the reviewing node depends on MORE THAN ONE producing node, "rerun"
+  must name a node the loop can reach every one of them from — normally
+  their nearest common ancestor, NOT one of the producers. A re-run covers
+  the target plus every node on a depends_on path from it up to the
+  reviewer; a producer off that path is never re-run, so a defect the
+  reviewer finds in ITS output is re-judged unchanged every round until
+  the rounds are spent, and the run halts having never touched the file.
+  A parent that is only stable CONTEXT the reviewer reads — a spec, the
+  acceptance criteria, a corpus — belongs UPSTREAM of the rerun target
+  instead: have the implementing node depend on it, so the work is built
+  against the context rather than merely compared with it. A plan whose
+  arc leaves a producer unreachable while the graph contains a target that
+  would cover it is rejected outright.
   {{ feedback.<id> }} takes NO filter — it always inlines the payload, so
   "{{ feedback.review | inline }}" is WRONG; the " | inline" filter exists
   for {{ artifacts.<id> }} only. The placeholder is legal ONLY on a node
