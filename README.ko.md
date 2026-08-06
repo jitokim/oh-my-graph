@@ -237,11 +237,30 @@ qualifier를 달지 않습니다 — 대신 `DETAIL`에 실패 원인이 적힙�
 evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
 입니다 — **당신이** 호출 시점에 건네는 빌드 명령을, validation이 끝난 *뒤에*
 신뢰된 코드가 플랜의 sink 노드에 붙이고 엔진이 실행하므로, 검증 노드가 빌드도
-되지 않는 브랜치를 통과시킬 수 없게 됩니다. **찾아보게 될 것이므로 분명히
-적습니다:** 엔진 쪽은 구현되고 테스트됐지만, 이번 릴리스의 `auto`는
-`--verify-cmd` / `--verify-timeout`을 파싱하지 않습니다. 그래서 오늘 모든
-`auto` run은 여전히 zero-config 경로를 타고, 거기서 얻는 것은 qualifier
-입니다. 그런 명령이 갖게 될 지위는 [SECURITY.md](SECURITY.md)에 있습니다.
+되지 않는 브랜치를 통과시킬 수 없게 됩니다:
+
+```sh
+oh-my-graph auto "fix the failing spec" --verify-cmd './gradlew build'
+```
+
+엔진은 이 명령을 플랜의 모든 sink 노드에서, 그 노드 자신의 서브프로세스가
+끝난 뒤에, 한 번에 하나씩 실행합니다 — 그리고 이걸 통과하지 못한 sink는 run
+전체를 실패시킵니다. 이걸로 노드에 주어지는 권한은 하나도 없습니다: 명령은
+당신 것이고, 엔진이 자기 verify seam에서 직접 실행하며, exit code도 엔진이
+직접 판정합니다. `--verify-timeout`은 한 번의 실행을 제한합니다(기본값
+10분이고 그것이 곧 상한 — 손으로 쓴 체크가 받는 2분 기본값이 아닙니다. 콜드
+Gradle이나 Cargo 빌드야말로 그 기본값이 감당하도록 만들어진 대상이 아니기
+때문입니다). 실행할 수 없는 평범한 프로그램 호출은 planner 호출 **이전에**
+거부되므로, 오타는 아무 비용도 들지 않습니다 — 셸 문법(파이프, `&&`, 치환)이
+섞인 명령은 pre-flight가 셸을 다시 구현하는 대신 그 검사를 건너뜁니다.
+`--plan-only`는 그 명령과 그것이 붙을 sink 노드를
+함께 출력하므로 run을 사기 전에 확인할 수 있고, `--max-cycles` goal 루프의
+모든 사이클은 그 명령을 달고 있는 새 그래프를 계획합니다. `--verify-cmd`가
+없으면 `auto`는 자기가 무엇을 확인하지 *않는지*를, 그리고 프로젝트를 알아본
+경우 그것을 바꿔줄 플래그를 함께 출력합니다. 그런 명령이 갖는 지위는
+[SECURITY.md](SECURITY.md)에 있습니다. 미리 알아둘 만한 비용이 하나
+있습니다: `--verify-cmd`로 시작한 run은 `resume`할 수 없습니다. `resume`은 run
+디렉터리에서 발견한 verification을 믿고 재생하는 대신 전부 거부합니다.
 
 stdout이 터미널이면 `run`, `auto`, `resume`은 시작되는 leg의 [web live
 view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저에서 엽니다.
@@ -395,7 +414,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
-| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(최소 한 번의 플래너 호출 비용은 그대로 들고, validation 거부가 나면 수정된 호출 한 번이 그 위에 더해집니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다 — validation으로 거부된 플랜이 수정된 플래너 호출 한 번을 사므로 플래너 호출 최악은 `2 × N`입니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). |
+| `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(최소 한 번의 플래너 호출 비용은 그대로 들고, validation 거부가 나면 수정된 호출 한 번이 그 위에 더해집니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다 — validation으로 거부된 플랜이 수정된 플래너 호출 한 번을 사므로 플래너 호출 최악은 `2 × N`입니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). `--verify-cmd 'CMD'`는 당신의 빌드 명령을 플랜의 sink 노드에 붙여 엔진이 직접 실행하고 판정하게 하므로, 체크 노드가 빌드되지 않는 브랜치를 통과시킬 수 없습니다. `--verify-timeout D`는 한 번의 실행을 제한합니다(기본값이자 상한 10m). `--verify-cmd`로 시작한 run은 resume할 수 없습니다. |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |

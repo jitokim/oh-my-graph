@@ -59,6 +59,13 @@ type Dashboard struct {
 	// 409. The interface already takes the run id per call, so one resumer
 	// serves every run on the dashboard.
 	resumer GateResumer
+	// lister names the runs a sweep considers. It is listRunIDs for every real
+	// dashboard, and exists as a field for exactly one reason: a run deleted
+	// BETWEEN the listing and its stamp is a race a test cannot win by racing,
+	// and it is the case handleCardEvents' runDirGone check is there for. A
+	// fake lister names a run id whose directory is not there, which is that
+	// state with the timing taken out of it.
+	lister func(root string) ([]string, error)
 }
 
 // dashboardTemplate is the dashboard page. Like the single-run page it is
@@ -76,6 +83,7 @@ func NewDashboard(runsRoot string) *Dashboard {
 		poll:         defaultPoll,
 		projectsRoot: defaultProjectsRoot(),
 		token:        newGateToken(),
+		lister:       listRunIDs,
 	}
 }
 
@@ -191,7 +199,7 @@ func (d *Dashboard) serverFor(runID string) *Server {
 // the same data /api/cards/events streams, in one read — what a card list is
 // without a subscription, and what a test asserts the derivation against.
 func (d *Dashboard) handleCards(w http.ResponseWriter, r *http.Request) {
-	runIDs, err := listRunIDs(d.runsRoot)
+	runIDs, err := d.listRuns()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read runs dir: %v", err), http.StatusInternalServerError)
 		return
@@ -216,6 +224,24 @@ func (d *Dashboard) handleCards(w http.ResponseWriter, r *http.Request) {
 // and replaces, so a reconnect rebuilds the whole dashboard deterministically
 // — the same replay property the single-run feed has.
 //
+// A sweep is several observations of a tree that changes under it — the listing
+// that decides membership, then the per-run stamp that decides content — so a
+// run deleted mid-sweep is a real case, not a corner one, and it is handled
+// where the stamp is taken rather than left to the next tick. What makes it
+// worth the care is that the intermediate frame is not merely early: a card for
+// a deleted run is a tile the page offers a click on, and that click is a 404.
+//
+// One window is deliberately left open, because closing it would close a
+// legitimate case with it. A non-atomic delete (`rm -rf` unlinks the contract
+// files, THEN the directory) has an instant where the directory is real and its
+// files are not, and a run in that instant is byte-for-byte a healthy young one:
+// a directory that has said nothing yet, or a stream whose first node has not
+// finished — the shapes
+// TestDashboard_ARunDirectoryThatHasSaidNothingIsPendingNotFailed and
+// TestDashboard_ARunWithNoSnapshotYetStillGetsALiveCard pin as cards this
+// dashboard MUST draw. A run caught there gets one such card, and card_removed
+// on the following tick.
+//
 // The seen-set is per CONNECTION, deliberately: this handler holds no state
 // across viewers. A run removed while a viewer was disconnected therefore gets
 // no card_removed frame — the next connection's replay simply never names it,
@@ -237,7 +263,7 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 
 	seen := map[string]runStamp{}
 	for first := true; ; first = false {
-		runIDs, err := listRunIDs(d.runsRoot)
+		runIDs, err := d.listRuns()
 		if err != nil {
 			sendSSE(w, flusher, "stream_error", errorFrame(err.Error()))
 			return
@@ -246,6 +272,26 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 		for _, runID := range runIDs {
 			present[runID] = true
 			stamp := stampRun(d.runsRoot, runID)
+			// The listing and the stamp just taken are two observations of a
+			// tree that changes under us, and a run deleted between them stamps
+			// as empty — which without this check is announced as a CHANGED
+			// card: a tile, and a link to a 404, for a run that is already gone,
+			// with card_removed a whole tick behind it. Confirming the directory
+			// AFTER the stamp settles which of the two an empty stamp was. Still
+			// there means the stamp is honest (a young run that has not written
+			// its contract files yet, which gets its card); gone means the
+			// listing was stale, so this run is not present in this sweep at all
+			// and the removal pass below speaks for it immediately.
+			//
+			// It is confirmed BEFORE the unchanged-stamp fast path, not after,
+			// because an empty stamp is also what a run that has not written its
+			// contract files yet stamps as: deleting such a run leaves the stamp
+			// equal to the one already seen, and a check behind that comparison
+			// would never run for exactly the run it was written for.
+			if runDirGone(d.runsRoot, runID) {
+				delete(present, runID)
+				continue
+			}
 			if prev, known := seen[runID]; known && prev == stamp {
 				continue
 			}
@@ -316,12 +362,36 @@ func stampRun(runsRoot, runID string) runStamp {
 	}
 }
 
+// runDirGone reports whether a run directory the sweep listed has vanished
+// since it was listed. One stat per listed run per tick, on top of the two
+// stampRun takes — the price of the check reaching a run whose stamp did not
+// move, which is the very run it exists for.
+//
+// Only a NOT-EXIST answer counts as gone: a directory that cannot be stat'd for
+// any other reason is still a run, and the card buildCard derives for it is how
+// that problem reaches the operator.
+func runDirGone(runsRoot, runID string) bool {
+	_, err := os.Stat(filepath.Join(runsRoot, runID))
+	return errors.Is(err, fs.ErrNotExist)
+}
+
 func stampFile(path string) fileStamp {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fileStamp{}
 	}
 	return fileStamp{exists: true, size: info.Size(), modNanos: info.ModTime().UnixNano()}
+}
+
+// listRuns names the runs this dashboard's card routes consider. Both of them
+// go through it, so an injected lister is seen by the whole card front-end
+// rather than by one handler.
+//
+// runInRoot deliberately does NOT: it is the membership guard behind
+// /run/<id>/, and a security guard answers from the real directory listing,
+// never from an injected one.
+func (d *Dashboard) listRuns() ([]string, error) {
+	return d.lister(d.runsRoot)
 }
 
 // listRunIDs names every run directory under root, newest first. Run ids are

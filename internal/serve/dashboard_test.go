@@ -859,7 +859,20 @@ func TestDashboardEvents_ADeletedRunIsAnnounced(t *testing.T) {
 		t.Fatalf("frame name = %q, want cards_ready", name)
 	}
 
-	if err := os.RemoveAll(filepath.Join(root, "run-done")); err != nil {
+	// The run goes away in ONE step — a rename out of the root, not
+	// os.RemoveAll — because "the very next frame is card_removed" is only a
+	// promise the sweep can keep for a removal it cannot observe half-done.
+	// os.RemoveAll unlinks the contract files first and the directory second,
+	// and a sweep landing in between sees a directory that is real and empty,
+	// which is byte-for-byte a healthy young run (handleCardEvents names the two
+	// tests that pin those shapes). It draws the card it must draw for those,
+	// and card_removed follows a tick later. Racing that window is what made
+	// this test flaky; it is not what this test is about. A rename within one
+	// filesystem is atomic, so every sweep either sees the run whole or does not
+	// see it at all, and the next frame is decided by the assertion rather than
+	// by the clock.
+	graveyard := t.TempDir() // a sibling of root, so the rename stays on one fs
+	if err := os.Rename(filepath.Join(root, "run-done"), filepath.Join(graveyard, "run-done")); err != nil {
 		t.Fatalf("remove run dir: %v", err)
 	}
 	name, data := stream.readFrame(t)
@@ -871,6 +884,100 @@ func TestDashboardEvents_ADeletedRunIsAnnounced(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(data), &removed); err != nil || removed.RunID != "run-done" {
 		t.Errorf("card_removed payload = %s (%v), want run-done", data, err)
+	}
+}
+
+// TestDashboardEvents_ARunGoneFromDiskButStillListedIsRemovedNotRedrawn is the
+// sweep's mid-sweep-deletion check, with the timing taken out of it.
+//
+// The case is a listing that names a run whose directory is already gone —
+// which in production is the instant between the sweep's listing and that run's
+// stamp, a window no test can win by racing (that race is what made
+// TestDashboardEvents_ADeletedRunIsAnnounced flaky). A lister that keeps naming
+// a removed run is the same observation, decided by the assertion rather than
+// by the clock, and it makes the check load-bearing in both directions: without
+// it the empty stamp is announced as a CHANGED card — a tile linking to a 404 —
+// and the run is never removed at all, because the stale listing keeps it
+// present forever.
+func TestDashboardEvents_ARunGoneFromDiskButStillListedIsRemovedNotRedrawn(t *testing.T) {
+	root := runsRootWith(t, "run-done")
+	seedSettledRun(t, root, "run-done")
+
+	d := newTestDashboard(root)
+	d.lister = func(string) ([]string, error) { return []string{"run-done"}, nil }
+
+	stream, cancel := sseClientAt(t, d.Handler(), "/api/cards/events")
+	defer cancel()
+
+	if card := readCard(t, stream); card.RunID != "run-done" {
+		t.Fatalf("first card = %q, want run-done", card.RunID)
+	}
+	if name, data := stream.readFrame(t); name != "cards_ready" {
+		t.Fatalf("frame = (%q, %s), want cards_ready", name, data)
+	}
+
+	// Atomic, so no sweep can see the run half-removed — the listing is the only
+	// thing left saying it exists.
+	graveyard := t.TempDir()
+	if err := os.Rename(filepath.Join(root, "run-done"), filepath.Join(graveyard, "run-done")); err != nil {
+		t.Fatalf("remove run dir: %v", err)
+	}
+
+	name, data := stream.readFrame(t)
+	if name != "card_removed" {
+		t.Fatalf("frame = (%q, %s), want card_removed — a listed-but-gone run must not be redrawn as a card", name, data)
+	}
+	var removed struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(data), &removed); err != nil || removed.RunID != "run-done" {
+		t.Errorf("card_removed payload = %s (%v), want run-done", data, err)
+	}
+}
+
+// TestDashboardEvents_APreRunfeedRunGoneFromDiskIsStillRemoved is the same
+// observation for the one run whose stamp deletion does not move: a directory
+// that has written neither its feed nor its snapshot yet stamps as empty, and
+// so does a directory that is gone. The two are told apart by the directory
+// check, which is why that check has to sit in FRONT of the unchanged-stamp
+// fast path — behind it, the sweep compares empty to empty, takes the fast
+// path, and the run stays present with no card_removed ever sent.
+//
+// Deliberately a separate test from the settled-run case above: a settled run's
+// stamp changes when its files go, so it reaches the check either way, and one
+// test cannot pin both orderings.
+func TestDashboardEvents_APreRunfeedRunGoneFromDiskIsStillRemoved(t *testing.T) {
+	root := runsRootWith(t, "run-young")
+
+	d := newTestDashboard(root)
+	d.lister = func(string) ([]string, error) { return []string{"run-young"}, nil }
+
+	stream, cancel := sseClientAt(t, d.Handler(), "/api/cards/events")
+	defer cancel()
+
+	// The card a directory that has said nothing yet must still get — the empty
+	// stamp the sweep now holds for it is the one the deletion will not change.
+	if card := readCard(t, stream); card.RunID != "run-young" {
+		t.Fatalf("first card = %q, want run-young", card.RunID)
+	}
+	if name, data := stream.readFrame(t); name != "cards_ready" {
+		t.Fatalf("frame = (%q, %s), want cards_ready", name, data)
+	}
+
+	graveyard := t.TempDir()
+	if err := os.Rename(filepath.Join(root, "run-young"), filepath.Join(graveyard, "run-young")); err != nil {
+		t.Fatalf("remove run dir: %v", err)
+	}
+
+	name, data := stream.readFrame(t)
+	if name != "card_removed" {
+		t.Fatalf("frame = (%q, %s), want card_removed — a gone run whose stamp never moved must still be removed", name, data)
+	}
+	var removed struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(data), &removed); err != nil || removed.RunID != "run-young" {
+		t.Errorf("card_removed payload = %s (%v), want run-young", data, err)
 	}
 }
 

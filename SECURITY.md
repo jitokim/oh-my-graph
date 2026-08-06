@@ -74,17 +74,31 @@ a plan authored.
 That flag is [ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md):
 after a plan has been validated, trusted Go code attaches your command to the
 graph's sink nodes, so the engine runs the build itself and judges its exit
-code. (**Not yet reachable from the CLI**: the engine side is implemented and
-tested, but `auto` does not parse `--verify-cmd` / `--verify-timeout` yet, so
-today every auto run still takes the zero-config path described below.)
+code.
+
+```sh
+oh-my-graph auto "fix the failing spec" --verify-cmd './gradlew build'
+```
+
+The command is checked for runnability *before* the planner call when it is a
+plain program invocation, so a typo costs nothing — one carrying shell syntax is
+left for `sh -c` to resolve rather than parsed here; it is printed with the plan (`--plan-only` shows it, per sink
+node, with its timeout); it is bounded by `--verify-timeout`, which defaults to
+10 minutes and may not exceed it; and it is snapshotted into the run's saved
+`graph.json`. Every cycle of a `--max-cycles` goal loop plans a new graph and
+every one of them gets it.
 
 `resume` never takes a verification from a run directory on an auto graph: it
-refuses the resume and names the edited node. A `success_check.verify` is
+refuses the resume and names the node. A `success_check.verify` is
 engine-run shell outside every ceiling layer, so a snapshot that carries one —
-whether from a future `--verify-cmd` run or from an edit to `graph.json` — is
-not something a resumed leg replays on trust. Hand-written graphs are
-unaffected: their `verify:` is your own reviewed artifact and round-trips
-unchanged.
+whether from your own `--verify-cmd` run or from an edit to `graph.json` — is
+not something a resumed leg replays on trust, and a resume cannot tell the two
+apart. **The practical consequence: an `auto` run started with `--verify-cmd`
+cannot be resumed.** `resume` registers no `--verify-cmd` of its own to
+re-supply the command with, and continuing such a run with the check silently
+dropped is precisely the failure this mechanism exists to prevent — so it stops
+instead. Hand-written graphs are unaffected: their `verify:` is your own
+reviewed artifact and round-trips unchanged.
 
 A planned node is granted nothing by `--verify-cmd` — no ceiling layer changes, and
 the allowlist deliberately does **not** grow an entry per ecosystem, because

@@ -8,7 +8,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 //	oh-my-graph runs list
@@ -96,7 +96,7 @@ func mainExitCode(args []string) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
        oh-my-graph runs list
@@ -245,8 +245,21 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Same live-view gate as `run` and `resume`.
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping)...)
+	// The zero-config path says out loud what it is not checking, before the
+	// planner call rather than after it, so the user can Ctrl-C and re-run with
+	// one flag instead of learning it beside a finished ledger (ADR 0016 §3).
+	// "." is the invocation directory: the same tree the planned nodes and the
+	// evidence command would both run in.
+	verifyCommand := flags.verifyCommand()
+	noteVerifyAdvice(os.Stdout, verifyCommand, ".")
+
+	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
+	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
+	// re-enters the same coordinator and plans afresh, so every cycle's sinks
+	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
+	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping),
+		coordinator.WithVerifyCommand(verifyCommand))
+	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
 		webOpener(flags.noWeb, stdout, opener))
@@ -538,7 +551,14 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	printPauseHint(os.Stdout, runID, runErr)
+	// serializedVerify is also the discriminator for whether this run can be
+	// resumed at all, and not by coincidence: it is non-nil exactly when the
+	// tool ceiling is non-empty (what `resume` reads off snap.ToolPolicies to
+	// tell an auto graph from a hand-written one) AND some node carries an
+	// injected verification (what ReattachVerifyCommand refuses to take from a
+	// run directory). That pair is ADR 0016 §4's terminal refusal, so the hint
+	// must not print a resume command for it.
+	printPauseHint(os.Stdout, runID, runErr, serializedVerify != nil)
 
 	return runErr
 }
@@ -641,7 +661,9 @@ func saveSpecAs(dir, name string, spec []byte) (string, error) {
 // have to disclaim that a declared Bash scope was not enforced) nor looser
 // (planned nodes now run without the user's own settings, which is a real
 // behaviour change and not something to be discovered later). noteCeiling
-// prints both halves.
+// prints both halves. noteVerifyAttachments adds the one thing on this screen
+// the ceiling does NOT cover: the user's own --verify-cmd, which the engine
+// runs at each sink outside every layer of it (ADR 0016 §2).
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	g := plan.Graph
 	fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
@@ -660,6 +682,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	}
 	noteAgentMappings(w, plan.AgentMappings)
 	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
+	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
 	fmt.Fprintln(w)
@@ -966,6 +989,18 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 	return out
 }
 
+// verifyResumeRefusal is what printPauseHint says in place of a resume
+// command when the paused run cannot be resumed at all (ADR 0016 §4):
+// `resume` drops a snapshot-borne success_check.verify rather than replaying
+// it, and has no --verify-cmd of its own to re-supply one, so every resumed
+// leg of an auto run started with --verify-cmd is refused before its first
+// node runs. Naming the cause is the whole of what the hint can offer here —
+// what it must NOT do is print a command that exits 1 and hand the reader on
+// to a refusal whose own remediation names a flag `resume` does not register.
+const verifyResumeRefusal = "This run cannot be resumed: it was started with --verify-cmd, and `resume` " +
+	"takes no verification from a run directory and has no flag to re-supply one (ADR 0016 §4). " +
+	"Re-run the goal with --verify-cmd; this run's artifacts stay in its run directory."
+
 // printPauseHint prints the exact resume commands when runErr is one of the
 // two pause shapes — a *schedule.PausedError (the gate lifecycle's "print the
 // exact resume command" step — DESIGN.md, "Gate nodes and resume") or a
@@ -974,9 +1009,24 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 // rather than inventing one when it doesn't) — and is a silent no-op for any
 // other outcome (success or failure), so it is safe to call unconditionally
 // after every run.
-func printPauseHint(w io.Writer, runID string, runErr error) {
+//
+// verifyBlocksResume says this run's pause is terminal rather than resumable,
+// and it is the caller's to decide because only the caller knows whether this
+// graph carries an injected verification under a tool ceiling — the pair
+// `resume` refuses (verifyResumeRefusal). A session-limit pause is exactly
+// the shape a long auto run reaches, so the hint that fires most often for a
+// --verify-cmd run is the one that would otherwise be wrong.
+func printPauseHint(w io.Writer, runID string, runErr error, verifyBlocksResume bool) {
 	var paused *schedule.PausedError
 	if errors.As(runErr, &paused) {
+		// Unreachable together with verifyBlocksResume today — validatePlannedNodes
+		// refuses a planned gate node, so only an auto graph can carry an injected
+		// verification and only a hand-written one can pause at a gate. Handled
+		// anyway: this function's whole promise is that the command it prints runs.
+		if verifyBlocksResume {
+			fmt.Fprintf(w, "\nPaused at gate %q. %s\n", paused.GateID, verifyResumeRefusal)
+			return
+		}
 		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
 			paused.GateID, runID, paused.GateID, runID, paused.GateID)
 		return
@@ -985,10 +1035,16 @@ func printPauseHint(w io.Writer, runID string, runErr error) {
 	if !errors.As(runErr, &limited) {
 		return
 	}
-	if reset := runner.SessionLimitReset(limited.Cause); reset != "" {
+	reset := runner.SessionLimitReset(limited.Cause)
+	switch {
+	case verifyBlocksResume && reset != "":
+		fmt.Fprintf(w, "\nSession limit reached (resets %s). %s\n", reset, verifyResumeRefusal)
+	case verifyBlocksResume:
+		fmt.Fprintf(w, "\nSession limit reached. %s\n", verifyResumeRefusal)
+	case reset != "":
 		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed\n",
 			reset, reset, runID)
-		return
+	default:
+		fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
 	}
-	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
 }
