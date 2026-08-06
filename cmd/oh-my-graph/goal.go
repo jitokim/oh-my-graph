@@ -264,7 +264,9 @@ func printCycleVerdict(w io.Writer, report coordinator.CycleReport) {
 
 // saveAssessment persists one cycle's verdict as assess.json in that cycle's
 // run directory, so the observation step leaves the same kind of on-disk
-// trace the planning step does (graph.json) — ADR 0011 §4.
+// trace the planning step does (graph.json) — ADR 0011 §4. Owner-only (0o600)
+// for the same reason graph.json is: the verdict quotes the goal and the
+// evidence the assessor read out of the run.
 func saveAssessment(runDir string, a coordinator.Assessment) error {
 	data, err := json.MarshalIndent(assessRecord{
 		GoalMet:       a.GoalMet,
@@ -275,7 +277,7 @@ func saveAssessment(runDir string, a coordinator.Assessment) error {
 	if err != nil {
 		return fmt.Errorf("encode assessment: %w", err)
 	}
-	return os.WriteFile(filepath.Join(runDir, assessFileName), append(data, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(runDir, assessFileName), append(data, '\n'), 0o600)
 }
 
 // printGoalSummary prints the goal loop's closing accounting below the final

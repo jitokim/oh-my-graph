@@ -216,12 +216,18 @@ type StreamWriter struct {
 // mode, stamping runID into every event it emits. Opening for append — never
 // truncate — is what makes a resumed leg continue the same stream the first
 // leg started, and what makes the file safe for a concurrent tail -f reader.
+//
+// Owner-only (0o700 / 0o600), like the rest of the run directory: the stream
+// carries node results and session ids, and "a consumer may tail this file"
+// (docs/RUN-FEED.md) has always meant a consumer running as you — the same
+// assumption the 127.0.0.1-only live view makes. An existing directory keeps
+// whatever mode it had; MkdirAll does not chmod one.
 func NewStreamWriter(path, runID string) (*StreamWriter, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create run dir %q: %w", dir, err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open event stream %q: %w", path, err)
 	}

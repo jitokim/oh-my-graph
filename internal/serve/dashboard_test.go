@@ -873,3 +873,33 @@ func TestDashboardEvents_ADeletedRunIsAnnounced(t *testing.T) {
 		t.Errorf("card_removed payload = %s (%v), want run-done", data, err)
 	}
 }
+
+// --- security: the dashboard and its mounted runs refuse to be framed --------
+
+func TestDashboard_RefusesToBeFramed(t *testing.T) {
+	// The dashboard is the easier half of the clickjack to aim: "/" needs no
+	// run id at all, so a hostile page can frame it without knowing anything
+	// about this machine, and a card click there navigates the frame to the
+	// run view that carries the gate buttons. Both front-ends must refuse.
+	root := runsRootWith(t, "run-1")
+	seedInFlightRun(t, root, "run-1")
+	handler := newTestDashboard(root).Handler()
+
+	paths := []string{
+		"/",             // the dashboard page
+		"/api/cards",    // an API route of the dashboard's own mux
+		"/dashboard.js", // a static asset
+		"/run/run-1/",   // the mounted run view: the page with the gate buttons
+		"/run/run-1/api/graph",
+	}
+	for _, path := range paths {
+		req := httptest.NewRequestWithContext(context.Background(), "GET", path, nil)
+		req.Host = "127.0.0.1:8642"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+		assertRefusesFraming(t, rec, "GET "+path)
+	}
+}

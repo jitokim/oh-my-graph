@@ -122,7 +122,10 @@ func (m *GitManager) Acquire(ctx context.Context, name string) (string, error) {
 		return "", fmt.Errorf("worktree %q: stat managed dir: %w", name, statErr)
 	}
 
-	if err := os.MkdirAll(m.baseDir, 0o755); err != nil {
+	// Owner-only like the rest of the run directory this lives under
+	// (<run-dir>/worktrees). What git then checks out inside it is the user's
+	// own source at the user's own umask; this is only the container.
+	if err := os.MkdirAll(m.baseDir, 0o700); err != nil {
 		return "", fmt.Errorf("worktree %q: create managed base dir: %w", name, err)
 	}
 

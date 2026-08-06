@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -153,6 +156,260 @@ func pausedGateForHostTest(t *testing.T) *Server {
 	t.Helper()
 	s, _ := pausedGateServer(t, newFakeResumer())
 	return s
+}
+
+// --- security: the pages refuse to be framed ---------------------------------
+
+// parseCSP splits a Content-Security-Policy header into directive → value, so
+// a test can assert the POLICY rather than the presence of a header. Asserting
+// only that some CSP was sent is satisfiable by a policy that permits exactly
+// what the header is supposed to forbid.
+//
+// A repeated directive is FIRST-wins, and also an outright failure. Browsers
+// enforce the first occurrence and ignore the rest, so a last-wins parse would
+// read `frame-ancestors 'self'; …; frame-ancestors 'none'` as 'none' and pass
+// every assertion below while every real browser permitted the framing — the
+// clickjack open on a green test. Failing outright is stricter than the browser
+// rule and cheap: this server's policy is a single const with no repeats, so a
+// duplicate can only be a mistake.
+func parseCSP(t *testing.T, header string) map[string]string {
+	t.Helper()
+	if header == "" {
+		t.Fatal("no Content-Security-Policy header at all")
+	}
+	directives, repeated := splitCSP(header)
+	for _, name := range repeated {
+		t.Errorf("CSP repeats %s; browsers enforce the FIRST occurrence (%q here), so a "+
+			"later, stricter-looking one is not the policy in force", name, directives[name])
+	}
+	return directives
+}
+
+// splitCSP is parseCSP's parsing, without a *testing.T, so the parser itself
+// can be tested rather than trusted.
+func splitCSP(header string) (directives map[string]string, repeated []string) {
+	directives = map[string]string{}
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(part, " ")
+		if _, seen := directives[name]; seen {
+			repeated = append(repeated, name)
+			continue
+		}
+		directives[name] = strings.TrimSpace(value)
+	}
+	return directives, repeated
+}
+
+func TestSplitCSP_IsFirstWinsOnARepeatedDirective(t *testing.T) {
+	// The policy this parser is asked to judge could be weakened by APPENDING:
+	// a last-wins parse reads the trailing 'none' and passes every framing
+	// assertion, while the browser enforces the leading 'self' and lets the
+	// clickjack through. First-wins is the browser's rule; the repeat is also
+	// reported, because this server's policy is one const with no repeats.
+	directives, repeated := splitCSP("frame-ancestors 'self'; img-src 'self'; frame-ancestors 'none'")
+
+	if got := directives["frame-ancestors"]; got != "'self'" {
+		t.Errorf("frame-ancestors = %q, want %q — the FIRST occurrence is the one in force", got, "'self'")
+	}
+	if len(repeated) != 1 || repeated[0] != "frame-ancestors" {
+		t.Errorf("repeated = %v, want exactly [frame-ancestors]", repeated)
+	}
+}
+
+// assertRefusesFraming pins the ONE header pair that stops the clickjack, by
+// exact value. `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN` both
+// still permit the attack (the hostile frame is loaded FROM this origin's own
+// URL), so nothing weaker than 'none'/DENY may pass here.
+func assertRefusesFraming(t *testing.T, rec *httptest.ResponseRecorder, what string) {
+	t.Helper()
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("%s: X-Frame-Options = %q, want %q", what, got, "DENY")
+	}
+	directives := parseCSP(t, rec.Header().Get("Content-Security-Policy"))
+	if got := directives["frame-ancestors"]; got != "'none'" {
+		t.Errorf("%s: CSP frame-ancestors = %q, want %q", what, got, "'none'")
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("%s: X-Content-Type-Options = %q, want %q", what, got, "nosniff")
+	}
+}
+
+func TestHandler_RefusesToBeFramed(t *testing.T) {
+	// Clickjacking: a hostile page the user is already visiting frames this
+	// server's own URL, overlays it, and baits a click onto the approve button.
+	// The click lands INSIDE the framed page, so its own JavaScript reads its
+	// own <meta name="omg-token"> and the browser stamps this server's own
+	// Origin — requireLoopbackHost, requireSameOrigin and requireGateToken all
+	// pass, correctly, because the request never left this origin. Only a
+	// refusal to be framed stops it.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	if err := os.WriteFile(filepath.Join(dir, "a.out"), []byte("model output"), 0o644); err != nil {
+		t.Fatalf("write fixture artifact: %v", err)
+	}
+	handler := newTestServer(dir, "run-1").Handler()
+
+	// An HTML route (the framed document itself) and API routes alike — the
+	// headers are stamped over the whole route set, not just the page.
+	for _, path := range []string{"/", "/index.html", "/api/graph", "/api/result?node=a", "/app.js"} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Host = "127.0.0.1:8642"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+		assertRefusesFraming(t, rec, "GET "+path)
+	}
+}
+
+func TestHandler_StampsTheAuditedContentSecurityPolicy(t *testing.T) {
+	// The whole policy, directive by directive, as audited against the shipped
+	// ui/ assets (see contentSecurityPolicy). Pinned exactly so a later
+	// loosening — 'unsafe-eval' to make some library work, or 'unsafe-inline'
+	// creeping from style-src onto script-src, which is where it would actually
+	// cost something — has to be a deliberate edit to this test.
+	want := map[string]string{
+		"default-src":     "'none'",
+		"script-src":      "'self'",
+		"style-src":       "'self' 'unsafe-inline'",
+		"img-src":         "'self'",
+		"connect-src":     "'self'",
+		"base-uri":        "'none'",
+		"form-action":     "'none'",
+		"frame-ancestors": "'none'",
+	}
+
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "127.0.0.1:8642"
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, req)
+
+	got := parseCSP(t, rec.Header().Get("Content-Security-Policy"))
+	for name, wantValue := range want {
+		if got[name] != wantValue {
+			t.Errorf("CSP %s = %q, want %q", name, got[name], wantValue)
+		}
+	}
+	for name := range got {
+		if _, expected := want[name]; !expected {
+			t.Errorf("CSP carries unexpected directive %s = %q", name, got[name])
+		}
+	}
+}
+
+func TestHandler_StampsTheHeadersOnRefusalsToo(t *testing.T) {
+	// The headers wrap the Host guard rather than sitting inside it, so even a
+	// refusal carries them — nosniff most of all, since http.Error's body is
+	// attacker-influenced text/plain.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	req := httptest.NewRequest("GET", "/api/graph", nil)
+	req.Host = "evil.example.com"
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	assertRefusesFraming(t, rec, "403 refusal")
+}
+
+// TestEveryFrontEndIsWrappedInSecurityHeaders is the inverted form of the two
+// tests above: they exercise the two front-ends this package has TODAY, which
+// is exactly the enumerate-instead-of-invert failure internal/invariants fixed
+// for the exec seams — a third front-end would be born unframed and no test
+// here would notice. So rather than list them, this reads the package's own
+// source and requires that EVERY exported function returning an http.Handler
+// hands back a securityHeaders(...) call.
+//
+// It cannot fail silently: the count check below goes red if the scan stops
+// finding entrypoints at all.
+func TestEveryFrontEndIsWrappedInSecurityHeaders(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	entrypoints := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || !fn.Name.IsExported() || !returnsHTTPHandler(fn) || fn.Body == nil {
+				continue
+			}
+			entrypoints++
+			for _, ret := range topLevelReturns(fn.Body) {
+				if len(ret.Results) != 1 || !isCallTo(ret.Results[0], "securityHeaders") {
+					t.Errorf("%s: %s returns an http.Handler that is not wrapped in securityHeaders — "+
+						"a front-end that skips it can be framed, and every other guard in this "+
+						"package answers a clickjack honestly", name, fn.Name.Name)
+				}
+			}
+		}
+	}
+
+	if entrypoints < 2 {
+		t.Errorf("found %d exported http.Handler entrypoints, want at least the Server's and the "+
+			"Dashboard's — a scan that finds nothing passes vacuously", entrypoints)
+	}
+}
+
+// returnsHTTPHandler reports whether fn's single result is an http.Handler,
+// which is this package's shape for "a front-end's whole route set".
+func returnsHTTPHandler(fn *ast.FuncDecl) bool {
+	results := fn.Type.Results
+	if results == nil || len(results.List) != 1 {
+		return false
+	}
+	selector, ok := results.List[0].Type.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Handler" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "http"
+}
+
+// topLevelReturns collects body's return statements, NOT descending into nested
+// function literals — a closure's return belongs to the closure, not to the
+// entrypoint whose handler is under test.
+func topLevelReturns(body *ast.BlockStmt) []*ast.ReturnStmt {
+	var returns []*ast.ReturnStmt
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			returns = append(returns, typed)
+		}
+		return true
+	})
+	return returns
+}
+
+// isCallTo reports whether expr is a call to the package-level function named
+// name, e.g. securityHeaders(...).
+func isCallTo(expr ast.Expr, name string) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	return ok && fn.Name == name
 }
 
 // --- /api/graph --------------------------------------------------------------
