@@ -12,6 +12,19 @@ Load order in index.html matters: cytoscape.js first, then dagre, then
 cytoscape-dagre — the extension self-registers from the `cytoscape` and
 `dagre` globals when loaded last.
 
+**A cytoscape bump must re-verify the CSP** (`contentSecurityPolicy` in
+`serve.go`). The served pages ship a strict policy that is written against what
+these files actually do, and cytoscape sits right on two of its edges: it
+injects an inline `<style>` element (`.__________cytoscape_container {
+position: relative; }`) — which is the whole reason `style-src` carries
+`'unsafe-inline'` — and today it needs neither `eval`/`new Function` nor a
+Worker, which is why `script-src` stays `'self'` and `default-src` stays
+`'none'`. A new version that changed either would break the map *silently* in
+the browser, with nothing but a console violation to say so, because no Go test
+can execute it. On upgrade, re-grep the new file for `eval(`, `new Function`
+and `new Worker`, then load `/run/<id>/` and confirm the console is free of CSP
+violations and the DAG still lays out.
+
 ## cytoscape.js
 
 - File: `cytoscape.min.js` (~425 KB)

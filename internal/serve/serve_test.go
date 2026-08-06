@@ -155,6 +155,130 @@ func pausedGateForHostTest(t *testing.T) *Server {
 	return s
 }
 
+// --- security: the pages refuse to be framed ---------------------------------
+
+// parseCSP splits a Content-Security-Policy header into directive → value, so
+// a test can assert the POLICY rather than the presence of a header. Asserting
+// only that some CSP was sent is satisfiable by a policy that permits exactly
+// what the header is supposed to forbid.
+func parseCSP(t *testing.T, header string) map[string]string {
+	t.Helper()
+	if header == "" {
+		t.Fatal("no Content-Security-Policy header at all")
+	}
+	directives := map[string]string{}
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(part, " ")
+		directives[name] = strings.TrimSpace(value)
+	}
+	return directives
+}
+
+// assertRefusesFraming pins the ONE header pair that stops the clickjack, by
+// exact value. `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN` both
+// still permit the attack (the hostile frame is loaded FROM this origin's own
+// URL), so nothing weaker than 'none'/DENY may pass here.
+func assertRefusesFraming(t *testing.T, rec *httptest.ResponseRecorder, what string) {
+	t.Helper()
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("%s: X-Frame-Options = %q, want %q", what, got, "DENY")
+	}
+	directives := parseCSP(t, rec.Header().Get("Content-Security-Policy"))
+	if got := directives["frame-ancestors"]; got != "'none'" {
+		t.Errorf("%s: CSP frame-ancestors = %q, want %q", what, got, "'none'")
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("%s: X-Content-Type-Options = %q, want %q", what, got, "nosniff")
+	}
+}
+
+func TestHandler_RefusesToBeFramed(t *testing.T) {
+	// Clickjacking: a hostile page the user is already visiting frames this
+	// server's own URL, overlays it, and baits a click onto the approve button.
+	// The click lands INSIDE the framed page, so its own JavaScript reads its
+	// own <meta name="omg-token"> and the browser stamps this server's own
+	// Origin — requireLoopbackHost, requireSameOrigin and requireGateToken all
+	// pass, correctly, because the request never left this origin. Only a
+	// refusal to be framed stops it.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	if err := os.WriteFile(filepath.Join(dir, "a.out"), []byte("model output"), 0o644); err != nil {
+		t.Fatalf("write fixture artifact: %v", err)
+	}
+	handler := newTestServer(dir, "run-1").Handler()
+
+	// An HTML route (the framed document itself) and API routes alike — the
+	// headers are stamped over the whole route set, not just the page.
+	for _, path := range []string{"/", "/index.html", "/api/graph", "/api/result?node=a", "/app.js"} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Host = "127.0.0.1:8642"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+		assertRefusesFraming(t, rec, "GET "+path)
+	}
+}
+
+func TestHandler_StampsTheAuditedContentSecurityPolicy(t *testing.T) {
+	// The whole policy, directive by directive, as audited against the shipped
+	// ui/ assets (see contentSecurityPolicy). Pinned exactly so a later
+	// loosening — 'unsafe-eval' to make some library work, or 'unsafe-inline'
+	// creeping from style-src onto script-src, which is where it would actually
+	// cost something — has to be a deliberate edit to this test.
+	want := map[string]string{
+		"default-src":     "'none'",
+		"script-src":      "'self'",
+		"style-src":       "'self' 'unsafe-inline'",
+		"img-src":         "'self' data:",
+		"connect-src":     "'self'",
+		"base-uri":        "'none'",
+		"form-action":     "'none'",
+		"frame-ancestors": "'none'",
+	}
+
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "127.0.0.1:8642"
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, req)
+
+	got := parseCSP(t, rec.Header().Get("Content-Security-Policy"))
+	for name, wantValue := range want {
+		if got[name] != wantValue {
+			t.Errorf("CSP %s = %q, want %q", name, got[name], wantValue)
+		}
+	}
+	for name := range got {
+		if _, expected := want[name]; !expected {
+			t.Errorf("CSP carries unexpected directive %s = %q", name, got[name])
+		}
+	}
+}
+
+func TestHandler_StampsTheHeadersOnRefusalsToo(t *testing.T) {
+	// The headers wrap the Host guard rather than sitting inside it, so even a
+	// refusal carries them — nosniff most of all, since http.Error's body is
+	// attacker-influenced text/plain.
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	req := httptest.NewRequest("GET", "/api/graph", nil)
+	req.Host = "evil.example.com"
+	rec := httptest.NewRecorder()
+	newTestServer(dir, "run-1").Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	assertRefusesFraming(t, rec, "403 refusal")
+}
+
 // --- /api/graph --------------------------------------------------------------
 
 func TestHandleGraph_ServesDAGFromSnapshot(t *testing.T) {

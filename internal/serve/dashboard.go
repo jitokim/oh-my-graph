@@ -40,7 +40,9 @@ import (
 // (loopback bind, Host check, same-origin check, gate token) is unchanged and
 // applies here identically: requireLoopbackHost wraps the whole mux, mounted
 // runs included, and each mounted run's gate POSTs keep their own
-// requireSameOrigin + requireGateToken pair.
+// requireSameOrigin + requireGateToken pair. securityHeaders wraps the whole
+// mux too, so the dashboard and every run mounted under it refuse to be framed
+// — this front-end especially, because its "/" needs no run id to address.
 type Dashboard struct {
 	runsRoot string
 	poll     time.Duration
@@ -99,8 +101,9 @@ func (d *Dashboard) WithGateResumer(r GateResumer) *Dashboard {
 // the vendored libraries — resolves under the same prefix without the page
 // knowing it moved.
 //
-// Every route sits behind requireLoopbackHost, the DNS-rebinding guard, once
-// for the whole mux — the mounted runs included.
+// Every route sits behind requireLoopbackHost, the DNS-rebinding guard, and
+// securityHeaders, the frame/CSP guard, once for the whole mux — the mounted
+// runs included.
 func (d *Dashboard) Handler() http.Handler {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -126,7 +129,7 @@ func (d *Dashboard) Handler() http.Handler {
 	// The dashboard deliberately does NOT serve the run view's own assets at
 	// the root: there is no run at "/", so app.js there would poll a run that
 	// does not exist. Anything else is a 404.
-	return requireLoopbackHost(mux)
+	return securityHeaders(requireLoopbackHost(mux))
 }
 
 // handleIndex serves the dashboard page with this process's gate token, which

@@ -30,6 +30,14 @@
 // all. Widening the bind address would still need a real auth story first;
 // neither of the two is a login.
 //
+// Those guards all answer "where did this request come from", and a clickjack
+// answers all of them honestly by never leaving this origin: framed, overlaid
+// and clicked, the page POSTs its own token from its own origin. So every
+// response also carries frame-ancestors 'none' and X-Frame-Options: DENY —
+// the one guard that refuses the framing itself rather than the request — plus
+// nosniff and the rest of contentSecurityPolicy, stamped over both front-ends
+// by securityHeaders.
+//
 // The server itself spawns no processes: it does not shell out to
 // `open`/`xdg-open` to launch a browser, and it does not run nodes. Exactly
 // four objects in this repo may spawn a process (internal/invariants, ADR
@@ -142,6 +150,77 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 	})
 }
 
+// contentSecurityPolicy is the policy every response carries. It is written
+// against what the shipped ui/ assets actually do, directive by directive:
+//
+//   - default-src 'none'  — nothing is allowed that is not named below, so a
+//     directive this page does not need (font-src, media-src, worker-src,
+//     manifest-src) denies rather than inherits something permissive.
+//   - script-src 'self'   — index.html and dashboard.html load four and one
+//     same-origin <script src> respectively and carry no inline script, no
+//     on*= handler and no javascript: URL. No 'unsafe-eval': none of the three
+//     vendored libraries contains an eval( or a new Function.
+//   - style-src 'self' 'unsafe-inline' — the two same-origin stylesheets, PLUS
+//     the one inline stylesheet this page cannot avoid: cytoscape injects a
+//     <style> element holding ".__________cytoscape_container { position:
+//     relative; }" (renderer init in cytoscape.min.js). That rule is what makes
+//     the container a positioning context for the absolutely-positioned layers
+//     it then draws into, so blocking it does not degrade the map, it
+//     mis-places it. 'unsafe-inline' is therefore on STYLE only; script-src
+//     stays strict, which is where an injection actually costs something.
+//   - img-src 'self' data: — the pages reference no image at all (the DAG is a
+//     <canvas>), but a browser still probes /favicon.ico against img-src, and
+//     'self' keeps that an ordinary 404 rather than a console violation.
+//   - connect-src 'self'  — every fetch() and EventSource in app.js and
+//     dashboard.js is a document-relative path under this same origin.
+//   - base-uri 'none' and form-action 'none' — neither page has a <base> or a
+//     <form>, so both are denied outright rather than left to default-src.
+//   - frame-ancestors 'none' — the clickjacking guard; see securityHeaders.
+//
+// A cytoscape bump must re-verify this policy (ui/vendor/README.md says so):
+// the inline <style> above is the vendored code's behavior, not a contract, and
+// a version that also needed eval or a Worker would break the page silently.
+const contentSecurityPolicy = "default-src 'none'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"base-uri 'none'; " +
+	"form-action 'none'; " +
+	"frame-ancestors 'none'"
+
+// securityHeaders stamps every response of BOTH front-ends with the headers
+// that constrain what a browser may do with what this server returns. It wraps
+// requireLoopbackHost rather than sitting inside it, so even a 403 refusal
+// carries them.
+//
+// SECURITY: frame-ancestors 'none' (with X-Frame-Options: DENY for the same
+// answer to anything that predates CSP) is the clickjacking guard, and it
+// closes a hole that EVERY other guard in this package leaves open — because
+// every other guard asks where a request came from, and a clickjack never
+// leaves this origin. A hostile page the user is already visiting frames
+// http://127.0.0.1:8642/run/<id>/, overlays it, and baits a click onto the
+// approve button: the click lands INSIDE the framed page, so the page's own
+// JavaScript reads its own <meta name="omg-token"> and the browser stamps this
+// server's own Origin. requireLoopbackHost sees a loopback Host,
+// requireSameOrigin sees its own origin, requireGateToken sees the real token
+// in constant time — all four pass, correctly, and a gate the user never read
+// is approved, starting a leg that spends money (ADR 0014). The only place to
+// refuse that is at the framing itself, which is what this header does.
+//
+// X-Content-Type-Options: nosniff matters most on /api/result, which serves raw
+// model output as text/plain: without it a browser may sniff attacker-shaped
+// node output into HTML and render it as a document on this origin.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("Content-Security-Policy", contentSecurityPolicy)
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Server serves one run's live view out of its run directory. It holds no
 // state ABOUT THE RUN beyond the paths: every request re-reads the contract
 // files, so the view is always as fresh as the disk and the server survives
@@ -213,13 +292,17 @@ func New(runDir, runID string) *Server {
 // no leg is resumed, which is the property that matters
 // (TestGateDecision_GetDecidesNothing pins it).
 //
+// Every route also carries securityHeaders — the frame guard that stops the
+// gate buttons below from being clickjacked, and the CSP the shipped assets
+// were audited against.
+//
 // This is the whole live view of one run as a standalone site, rooted at "/":
 // what `oh-my-graph serve <run-id>` serves. The Dashboard serves the SAME
-// route set — routes(), without the guard it re-applies once for every route
+// route set — routes(), without the guards it re-applies once for every route
 // it owns — under /run/<id>/, which is why the page's own fetches are
 // document-relative (see routes).
 func (s *Server) Handler() http.Handler {
-	return requireLoopbackHost(s.routes())
+	return securityHeaders(requireLoopbackHost(s.routes()))
 }
 
 // routes is Handler's route set without the loopback guard, so it can be
