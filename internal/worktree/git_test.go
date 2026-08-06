@@ -395,3 +395,51 @@ func TestGitManager_ScrubsBillingVarsFromGitChildren(t *testing.T) {
 		t.Error("scrub removed more than the billing variables")
 	}
 }
+
+// TestGitManager_AcquireCreatesTheManagedBaseOwnerOnly pins the at-rest mode of
+// the managed base dir. It lives under the run directory and holds each lane's
+// checkout of the user's own source, so it gets the same owner-only treatment
+// as the rest of the run directory.
+func TestGitManager_AcquireCreatesTheManagedBaseOwnerOnly(t *testing.T) {
+	m, _ := newTestManager(t)
+	if _, err := m.Acquire(context.Background(), "lane"); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	info, err := os.Stat(m.baseDir)
+	if err != nil {
+		t.Fatalf("stat managed base dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("managed base dir mode = %v, want 0700.", got)
+	}
+}
+
+// TestGitManager_AcquireLeavesAnExistingManagedBaseAlone is the compatibility
+// half: MkdirAll does not chmod a directory that already exists, so a resume
+// leg adopts the base an older binary created without re-moding it. Nothing
+// about resuming a run that predates the narrowing changes.
+func TestGitManager_AcquireLeavesAnExistingManagedBaseAlone(t *testing.T) {
+	m, _ := newTestManager(t)
+	if err := os.MkdirAll(m.baseDir, 0o755); err != nil {
+		t.Fatalf("seed legacy managed base dir: %v", err)
+	}
+	// MkdirAll's mode is umask-masked, so without this the fixture would be the
+	// developer's umask rather than the 0755 this test is about. chmod(2) is not
+	// masked.
+	if err := os.Chmod(m.baseDir, 0o755); err != nil {
+		t.Fatalf("chmod legacy managed base dir: %v", err)
+	}
+
+	if _, err := m.Acquire(context.Background(), "lane"); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	info, err := os.Stat(m.baseDir)
+	if err != nil {
+		t.Fatalf("stat managed base dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Errorf("legacy managed base dir mode = %v, want it untouched at 0755.", got)
+	}
+}

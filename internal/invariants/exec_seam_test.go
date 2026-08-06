@@ -225,23 +225,8 @@ func TestNoDirectProcessSpawns(t *testing.T) {
 	var found []finding
 
 	walkRepoGoFiles(t, repoRoot, func(rel string, file *ast.File) {
-		for importPath, names := range directSpawnSelectors {
-			local, ok := importLocalName(file, importPath)
-			if !ok {
-				continue
-			}
-			for _, name := range names {
-				ast.Inspect(file, func(n ast.Node) bool {
-					call, isCall := n.(*ast.CallExpr)
-					if !isCall {
-						return true
-					}
-					if isPkgCall(call, local, name) {
-						found = append(found, finding{rel, importPath + "." + name})
-					}
-					return true
-				})
-			}
+		for _, call := range directSpawnsIn(file) {
+			found = append(found, finding{rel, call})
 		}
 	})
 
@@ -260,14 +245,126 @@ func TestNoDirectProcessSpawns(t *testing.T) {
 	}
 }
 
+// directSpawnsIn reports every directSpawnSelectors call file makes, as
+// "<import path>.<name>". Each selector is matched against the file's OWN local
+// name for that package, so an aliased — or dot — import is followed rather
+// than assumed.
+//
+// TestNoDirectProcessSpawns runs this over the repo; TestDirectSpawnScanFollowsTheImport
+// runs it over sources that deliberately do spawn, which is the only way to
+// prove the scan would see one, since a green repo scan is also what a scan
+// that matches nothing produces.
+func directSpawnsIn(file *ast.File) []string {
+	var found []string
+	for importPath, names := range directSpawnSelectors {
+		local, ok := importLocalName(file, importPath)
+		if !ok {
+			continue
+		}
+		for _, name := range names {
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, isCall := n.(*ast.CallExpr)
+				if !isCall {
+					return true
+				}
+				if isPkgCall(call, local, name) {
+					found = append(found, importPath+"."+name)
+				}
+				return true
+			})
+		}
+	}
+	return found
+}
+
 // isPkgCall reports whether call is `<pkg>.<name>(...)`.
+//
+// pkg is the file's local name for the import, which importLocalName reports as
+// "." for a dot import. A dot import puts the package's exported names into the
+// file's own scope, so `os.StartProcess(...)` is written `StartProcess(...)`:
+// there is no selector to match, and matching only selectors would let a dot
+// import walk straight past the direct-spawn scan.
 func isPkgCall(call *ast.CallExpr, pkg, name string) bool {
+	if pkg == "." {
+		id, ok := call.Fun.(*ast.Ident)
+		return ok && id.Name == name
+	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != name {
 		return false
 	}
 	id, ok := sel.X.(*ast.Ident)
 	return ok && id.Name == pkg
+}
+
+// TestDirectSpawnScanFollowsTheImport feeds the scan sources that DO spawn, so
+// that TestNoDirectProcessSpawns' green means "nothing spawns" rather than "the
+// scan matches nothing". The dot-import cases are the ones that motivated it:
+// a bare `StartProcess(...)` under `import . "os"` is the same capability with
+// no selector on it.
+func TestDirectSpawnScanFollowsTheImport(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "dot-imported os.StartProcess",
+			src: `package p
+import . "os"
+func f() { StartProcess("/bin/sh", nil, nil) }`,
+			want: []string{"os.StartProcess"},
+		},
+		{
+			name: "dot-imported syscall.ForkExec",
+			src: `package p
+import . "syscall"
+func f() { ForkExec("/bin/sh", nil, nil) }`,
+			want: []string{"syscall.ForkExec"},
+		},
+		{
+			name: "aliased syscall.Exec",
+			src: `package p
+import sys "syscall"
+func f() { sys.Exec("/bin/sh", nil, nil) }`,
+			want: []string{"syscall.Exec"},
+		},
+		{
+			name: "plain os.StartProcess",
+			src: `package p
+import "os"
+func f() { os.StartProcess("/bin/sh", nil, nil) }`,
+			want: []string{"os.StartProcess"},
+		},
+		{
+			name: "a dot import that spawns nothing",
+			src: `package p
+import . "os"
+func f() { Getenv("HOME") }`,
+			want: nil,
+		},
+		{
+			name: "a same-named call with no such import",
+			src: `package p
+func StartProcess(string) {}
+func f() { StartProcess("/bin/sh") }`,
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), "probe.go", tc.src, 0)
+			if err != nil {
+				t.Fatalf("parse probe source: %v", err)
+			}
+			got := directSpawnsIn(file)
+			sort.Strings(got)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("directSpawnsIn = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestExecSeamCallSitesScrubEnv closes the defense-in-depth gap that the import

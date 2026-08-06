@@ -893,7 +893,7 @@ func TestDashboard_RefusesToBeFramed(t *testing.T) {
 		"/run/run-1/api/graph",
 	}
 	for _, path := range paths {
-		req := httptest.NewRequest("GET", path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", path, nil)
 		req.Host = "127.0.0.1:8642"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
