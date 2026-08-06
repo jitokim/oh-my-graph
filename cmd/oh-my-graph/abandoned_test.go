@@ -20,9 +20,8 @@ import (
 // question is what the lock says about a leg that is gone.
 
 // deadLegLock leaves exactly what a leg that died leaves behind: a marked lock
-// file nothing holds. It skips where the probe cannot answer — no flock(2), or
-// a filesystem outside runstate's known-local allowlist — since there the
-// derivation is unknown by design (and the pre-ADR-0015 answer is correct).
+// file nothing holds. It goes through requireLiveness, so it skips only where
+// the probe cannot answer at all.
 func deadLegLock(t *testing.T, runDir string) {
 	t.Helper()
 	path := filepath.Join(runDir, lockFileName)
@@ -33,9 +32,7 @@ func deadLegLock(t *testing.T, runDir string) {
 	if err := release(); err != nil {
 		t.Fatalf("release fixture lock: %v", err)
 	}
-	if got := runstate.ProbeLock(path); got != runstate.LivenessFree {
-		t.Skipf("the lock probe cannot answer here (%v)", got)
-	}
+	requireLiveness(t, runstate.ProbeLock(path), runstate.LivenessFree)
 }
 
 // liveLegLock holds the run's lock for the test, as a running leg does.
@@ -47,8 +44,22 @@ func liveLegLock(t *testing.T, runDir string) {
 		t.Fatalf("acquire fixture lock: %v", err)
 	}
 	t.Cleanup(func() { release() })
-	if got := runstate.ProbeLock(path); got != runstate.LivenessHeld {
+	requireLiveness(t, runstate.ProbeLock(path), runstate.LivenessHeld)
+}
+
+// requireLiveness gates an assertion on the probe having actually answered.
+// Only LivenessUnknown skips — no flock(2), or a filesystem outside runstate's
+// known-local set, leaves the derivation unknown BY DESIGN, and asserting past
+// that would be asserting against ADR 0015's own safety gate. Every other
+// disagreement is a contradiction (a held lock reading free, or a free one
+// reading held) and must fail, not quietly skip the test that would catch it.
+func requireLiveness(t *testing.T, got, want runstate.Liveness) {
+	t.Helper()
+	if got == runstate.LivenessUnknown {
 		t.Skipf("the lock probe cannot answer here (%v)", got)
+	}
+	if got != want {
+		t.Fatalf("ProbeLock = %v, want %v", got, want)
 	}
 }
 
@@ -129,8 +140,13 @@ func TestListRuns_ASnapshotlessAbandonedRunIsStillListed(t *testing.T) {
 	if !strings.Contains(row, verdictAbandoned) {
 		t.Errorf("row = %q, want an %s row with placeholders", row, verdictAbandoned)
 	}
-	if !strings.Contains(row, "-") {
-		t.Errorf("row = %q, want the same %q placeholders an unknown graph renders", row, "-")
+	// GRAPH, NODES and COST are unknowable without a snapshot, so the row must
+	// carry three "-" placeholders between the run id and the verdict. Asserted
+	// per column, not over the whole row: the run id itself contains a "-", so
+	// a substring check would pass on real values too.
+	if fields := strings.Fields(row); len(fields) != 5 ||
+		fields[1] != "-" || fields[2] != "-" || fields[3] != "-" {
+		t.Errorf("row = %q, want the graph, node and cost columns rendered as %q placeholders", row, "-")
 	}
 	// Nothing to resume FROM: the honest recovery is to run the graph again.
 	if strings.Contains(got, "oh-my-graph resume") {

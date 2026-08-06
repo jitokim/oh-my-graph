@@ -189,9 +189,7 @@ func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatalf("a released resume.lock must remain on disk as an inert handle: %v", err)
 	}
-	if got := runstate.ProbeLock(lockPath); got != runstate.LivenessFree {
-		t.Fatalf("ProbeLock after a completed resume = %v, want %v", got, runstate.LivenessFree)
-	}
+	requireLiveness(t, runstate.ProbeLock(lockPath), runstate.LivenessFree)
 	release, err := runstate.AcquireLock(lockPath)
 	if err != nil {
 		t.Fatalf("the next leg must be able to take the released lock: %v", err)

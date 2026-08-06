@@ -441,7 +441,7 @@ func writeLockBody(f *os.File) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	_, err := f.Write([]byte(fmt.Sprintf("%s\n%d\n", LockFormatMarker, os.Getpid())))
+	_, err := fmt.Fprintf(f, "%s\n%d\n", LockFormatMarker, os.Getpid())
 	return err
 }
 

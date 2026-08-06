@@ -371,6 +371,9 @@ func TestPIDGone_OnlyESRCHIsEvidence(t *testing.T) {
 		{"a negative pid — a process group, never asked", -os.Getpid(), false},
 	}
 	for _, tc := range cases {
+		if tc.want && !flockSupported {
+			continue // no kill(2) to ask here: pidGone can never report gone
+		}
 		if got := pidGone(tc.pid); got != tc.want {
 			t.Errorf("pidGone(%s) = %v, want %v", tc.name, got, tc.want)
 		}

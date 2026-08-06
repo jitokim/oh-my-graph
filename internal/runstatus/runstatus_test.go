@@ -52,6 +52,27 @@ func TestStatus_ZeroValueIsSettled(t *testing.T) {
 	}
 }
 
+// TestStatus_StringIsTheLabelEverySurfaceRenders pins the three words, because
+// String is what `runs list`, the dashboard card and every log line put in front
+// of an operator: changing one of them silently changes what the tool says a run
+// is. The default arm is asserted through Settled deliberately — an unset Status
+// must read as the harmless one (see TestStatus_ZeroValueIsSettled).
+func TestStatus_StringIsTheLabelEverySurfaceRenders(t *testing.T) {
+	cases := []struct {
+		status Status
+		want   string
+	}{
+		{Settled, "settled"},
+		{InFlight, "in flight"},
+		{Abandoned, "abandoned"},
+	}
+	for _, tc := range cases {
+		if got := tc.status.String(); got != tc.want {
+			t.Errorf("Status(%d).String() = %q, want %q", int(tc.status), got, tc.want)
+		}
+	}
+}
+
 // --- Of: the stream and the lock, read off a real run directory --------------
 
 // TestOf_ComposesTheStreamWithTheLock exercises the composition against real
@@ -180,7 +201,11 @@ func writeEvents(t *testing.T, runDir, runID string, events []runfeed.Event) {
 	if err != nil {
 		t.Fatalf("open fixture event stream: %v", err)
 	}
-	defer w.Close()
+	t.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("close fixture event stream: %v", err)
+		}
+	})
 	for _, e := range events {
 		if err := w.Emit(e); err != nil {
 			t.Fatalf("emit fixture event %q: %v", e.Type, err)
@@ -208,9 +233,7 @@ func holdLock(t *testing.T, runDir string) {
 		t.Fatalf("acquire fixture lock: %v", err)
 	}
 	t.Cleanup(func() { release() })
-	if got := runstate.ProbeLock(path); got != runstate.LivenessHeld {
-		t.Skipf("the lock probe cannot answer here (%v): no flock(2), or a filesystem outside the known-local set", got)
-	}
+	requireLiveness(t, runstate.ProbeLock(path), runstate.LivenessHeld)
 }
 
 // freeLock leaves behind exactly what a leg that died leaves behind: a marked
@@ -225,9 +248,7 @@ func freeLock(t *testing.T, runDir string) {
 	if err := release(); err != nil {
 		t.Fatalf("release fixture lock: %v", err)
 	}
-	if got := runstate.ProbeLock(path); got != runstate.LivenessFree {
-		t.Skipf("the lock probe cannot answer here (%v): no flock(2), or a filesystem outside the known-local set", got)
-	}
+	requireLiveness(t, runstate.ProbeLock(path), runstate.LivenessFree)
 }
 
 // deadPID is a pid no process can bear — above pid_max on both platforms this
@@ -245,7 +266,21 @@ func legacyLock(t *testing.T, runDir string, pid int, want runstate.Liveness) {
 	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
 		t.Fatalf("write a pre-flock fixture lock: %v", err)
 	}
-	if got := runstate.ProbeLock(path); got != want {
-		t.Skipf("the lock probe cannot answer here (%v, want %v): no flock(2), or a filesystem outside the known-local set", got, want)
+	requireLiveness(t, runstate.ProbeLock(path), want)
+}
+
+// requireLiveness gates a fixture on the probe having actually answered. Only
+// LivenessUnknown skips — no flock(2), or a filesystem outside the known-local
+// set, leaves the derivation unknown BY DESIGN, and asserting past that would
+// be asserting against ADR 0015's own safety gate. Every other disagreement is
+// a contradiction (a held lock reading free, or a free one reading held) and
+// must fail, not quietly skip the test that would have caught it.
+func requireLiveness(t *testing.T, got, want runstate.Liveness) {
+	t.Helper()
+	if got == runstate.LivenessUnknown {
+		t.Skipf("the lock probe cannot answer here (%v): no flock(2), or a filesystem outside the known-local set", got)
+	}
+	if got != want {
+		t.Fatalf("ProbeLock over the fixture lock = %v, want %v", got, want)
 	}
 }

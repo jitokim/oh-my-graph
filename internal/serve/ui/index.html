@@ -45,8 +45,11 @@
        the footer, because a gate this run is paused at carries approve/reject
        buttons down in the feed and pressing one starts a leg that spends
        money. What that click would allow has to be readable before it is
-       pressed. Filled from /api/graph's answer; hidden on every other run. -->
-  <div id="run-hint" class="run-hint" hidden></div>
+       pressed. Filled from /api/graph's answer; hidden on every other run.
+       It appears without user action, so it is a polite live region: a screen
+       reader announces the warning rather than leaving it to be stumbled on
+       below the gate buttons. -->
+  <div id="run-hint" class="run-hint" role="status" aria-live="polite" hidden></div>
   <main>
     <!-- The feed: the main surface. Chronological, top to bottom; sticks to
          the bottom only while the reader is already there. Entries are built

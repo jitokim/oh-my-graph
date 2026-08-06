@@ -192,9 +192,8 @@ func TestRunLeg_LockBracketsTheEventStream(t *testing.T) {
 	if rec.stream.events == 0 || rec.stream.last == "" {
 		t.Fatalf("mid-run the leg's stream should already carry its opening event, got %+v", rec.stream)
 	}
-	if rec.liveness != runstate.LivenessHeld {
-		t.Errorf("mid-run ProbeLock = %v, want %v — a live run must never read as abandoned", rec.liveness, runstate.LivenessHeld)
-	}
+	// A live run must never read as abandoned.
+	requireLiveness(t, rec.liveness, runstate.LivenessHeld)
 	var held *runstate.LockHeldError
 	if !errors.As(rec.acquire, &held) {
 		t.Errorf("mid-run AcquireLock = %v, want *runstate.LockHeldError — a second leg must be refused", rec.acquire)
@@ -208,16 +207,12 @@ func TestRunLeg_LockBracketsTheEventStream(t *testing.T) {
 	if atRelease.events <= atAcquire.events {
 		t.Errorf("the leg wrote %d event(s) inside the lock, want more than the %d it started with", atRelease.events, atAcquire.events)
 	}
-	if livenessAtRelease != runstate.LivenessHeld {
-		t.Errorf("ProbeLock at the instant of release = %v, want %v", livenessAtRelease, runstate.LivenessHeld)
-	}
+	requireLiveness(t, livenessAtRelease, runstate.LivenessHeld)
 
 	// And once the leg is over, the lock is free beside a closed leg: the run
 	// is settled, not abandoned — the derivation never consults the lock here,
 	// but the file it left behind is the handle a later resume takes.
-	if got := runstate.ProbeLock(lockPath); got != runstate.LivenessFree {
-		t.Errorf("ProbeLock after the leg finished = %v, want %v", got, runstate.LivenessFree)
-	}
+	requireLiveness(t, runstate.ProbeLock(lockPath), runstate.LivenessFree)
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Errorf("the finished leg must leave its lock file behind, not unlink it: %v", err)
 	}
