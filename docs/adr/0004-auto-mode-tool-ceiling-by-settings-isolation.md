@@ -108,12 +108,26 @@ settings, hooks and MCP servers.
 > activation needs both (measured, claude 2.1.223, with a probe that makes the
 > model actually invoke a planted skill rather than report on its own
 > visibility). ADR 0017 relaxes layer 1 from `""` to the explicit value
-> `"user"` and appends `Skill` to layer 3. Three claims of this ADR survive
-> that, and one does not. **E4 survives and is re-confirmed:** with the
+> `"user"` and appends `Skill` to layer 3. **Read ADR 0017's Status first: as of
+> the 2026-08-07 review its layer-1 clause is NOT authorized, because the claim
+> that this ADR's ceiling survives the relaxation was retracted.** The
+> corrected accounting:
+> **E4 survives and is re-confirmed, but only for what it says:** with the
 > measuring machine's `settings.json` granting `Bash(*)`, a node whose
 > `--tools` omits `Bash` still reports `NO-BASH-TOOL` — an allow-rule approves
-> a tool that exists, it does not create one, so layer 3 absorbs layer 1's
-> relaxation and the capability ceiling holds. **Layer 0 survives untouched:**
+> a tool that exists, it does not create one. **E1 does NOT survive the layer-1
+> relaxation, and an earlier version of this annotation wrongly left it
+> standing.** E1 measured this ADR's actual node shape — a node declaring
+> `Bash(git *)` whose out-of-scope `touch` **ran** without layer 1 and was
+> **denied** with it. `--tools` bounds tool *names*, not *scopes*, so relaxing
+> layer 1 makes the user's `Bash(*)` a live allow rule beside the node's
+> narrower one and layer 2 stops binding — which is why layer 2 *"used to be a
+> declaration rather than a limit"* (`toolPolicyFor`). ADR 0017's probe did not
+> test that shape; re-testing it is its blocking measurement (g). Until (g)
+> reports, **treat this ADR's ceiling as intact and ADR 0017's layer-1 route as
+> unauthorized.** Consequences/Positive #1 ("a real ceiling, not a
+> declaration") therefore also stands unamended for now. **Layer 0 survives
+> untouched:**
 > `Skill` is injected into the *policy* after validation by trusted code,
 > never into `plannedToolAllowlist`, so a planner still cannot name it — the
 > ADR 0016 §2 posture. **The hooks-gap closure in Consequences survives**,
@@ -122,10 +136,18 @@ settings, hooks and MCP servers.
 > `.claude/settings.local.json` for a later node to load. What does **not**
 > survive is the first bullet of "Negative / trade-offs": a planned node no
 > longer loses the user's CLAUDE.md, and user hooks now load (whether they
-> *fire* is unmeasured and is ADR 0017's measurement (a)). MCP stays closed —
-> `--strict-mcp-config` was measured to hold under `--setting-sources user`.
-> Reversible with one flag: `--no-skill-activation` restores this ceiling
-> bit-for-bit. See
+> *fire*, and whether a `PreToolUse`/`PermissionRequest` hook can **approve a
+> call `--allowedTools` denies**, is unmeasured and is ADR 0017's measurement
+> (a)). **E3's model pin also stops holding:** a `settings.json` setting
+> `model:` now applies to every planned node, where E3 measured it as *not*
+> applied under `""`. **MCP: E5's "NOT MEASURED" stands.** An earlier version
+> of this annotation said `--strict-mcp-config` *"was measured to hold"*; it was
+> not — the measuring machine has no user-scoped MCP servers, so there was no
+> positive control, and the result was a self-report.
+> Reversible with one flag on `auto` **and on `resume`**:
+> `--no-skill-activation` restores this ceiling bit-for-bit (ADR 0017's first
+> draft omitted the resume half, which made the reversibility claim false for
+> every resumed leg). See
 > `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
 
 ### 2. Every `graph.Node` field has an explicit planned-node disposition

@@ -48,16 +48,25 @@
 > contradictory answers to identical argv. The result: ceiling layer 1
 > withholds the **definitions** and layer 3 withholds the **tool**,
 > independently; relaxing both restores Claude Code's own description-driven
-> activation over the whole corpus; and — the finding that decides it — the
-> capability ceiling **survives** the relaxation, because `--tools` replaces
-> the built-in set (E4), so a `settings.json` granting `Bash(*)` still yields
-> `NO-BASH-TOOL`. This ADR's third Alternative rejected that path as requiring
+> activation over the whole corpus. **What an earlier version of this annotation
+> also claimed — that the capability ceiling survives the relaxation — is
+> retracted (2026-08-07).** E4 holds (`--tools` replaces the built-in set, so a
+> tool the node never declared cannot appear), but the probe behind that claim
+> used a node declaring no `Bash` and therefore never tested ADR 0004's E1 shape,
+> where the user's `Bash(*)` becomes a live allow rule beside a node's narrower
+> `Bash(git *)`. This ADR's third Alternative rejected that path as requiring
 > *"weakening or decomposing Layer 1 and/or Layer 3… on an unmeasured
-> listing-vs-tool attribution"*; the attribution is now measured, and the
-> decomposition costs the user's CLAUDE.md rather than the ceiling.
+> listing-vs-tool attribution"*; the attribution is now measured, **but whether
+> the decomposition costs only the user's CLAUDE.md or also the scope ceiling is
+> ADR 0017's blocking measurement (g)** — so this Alternative's caution was
+> better founded than ADR 0017's first draft allowed, and **until (g) reports,
+> this mechanism ships and nothing replaces it.**
 >
-> Against the 7% this mechanism actually delivers (§"Yield measurement", 9.9%
-> raw, ~7% corrected for the `artifacts` → `html-artifact` false positive),
+> Against the 7% this mechanism actually delivers (§"Yield measurement": **5 of
+> 56 planner-authored ids = 9%** raw, 4 of 56 ≈ 7% corrected for the
+> `artifacts` → `html-artifact` false positive — an earlier version of this
+> annotation wrote "9.9%", which contradicts the table below; ADR 0017 also
+> cited a "393 id" corpus that does not exist anywhere in this repo),
 > activation sees all 35 skills, is conditional where inlining is
 > unconditional, has no size cap — so `pre-commit-checklist`, the skill that
 > matched the four **best** planner-authored ids and was discarded from every
