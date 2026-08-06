@@ -887,6 +887,54 @@ func TestDashboardEvents_ADeletedRunIsAnnounced(t *testing.T) {
 	}
 }
 
+// TestDashboardEvents_ARunGoneFromDiskButStillListedIsRemovedNotRedrawn is the
+// sweep's mid-sweep-deletion check, with the timing taken out of it.
+//
+// The case is a listing that names a run whose directory is already gone —
+// which in production is the instant between the sweep's listing and that run's
+// stamp, a window no test can win by racing (that race is what made
+// TestDashboardEvents_ADeletedRunIsAnnounced flaky). A lister that keeps naming
+// a removed run is the same observation, decided by the assertion rather than
+// by the clock, and it makes the check load-bearing in both directions: without
+// it the empty stamp is announced as a CHANGED card — a tile linking to a 404 —
+// and the run is never removed at all, because the stale listing keeps it
+// present forever.
+func TestDashboardEvents_ARunGoneFromDiskButStillListedIsRemovedNotRedrawn(t *testing.T) {
+	root := runsRootWith(t, "run-done")
+	seedSettledRun(t, root, "run-done")
+
+	d := newTestDashboard(root)
+	d.lister = func(string) ([]string, error) { return []string{"run-done"}, nil }
+
+	stream, cancel := sseClientAt(t, d.Handler(), "/api/cards/events")
+	defer cancel()
+
+	if card := readCard(t, stream); card.RunID != "run-done" {
+		t.Fatalf("first card = %q, want run-done", card.RunID)
+	}
+	if name, data := stream.readFrame(t); name != "cards_ready" {
+		t.Fatalf("frame = (%q, %s), want cards_ready", name, data)
+	}
+
+	// Atomic, so no sweep can see the run half-removed — the listing is the only
+	// thing left saying it exists.
+	graveyard := t.TempDir()
+	if err := os.Rename(filepath.Join(root, "run-done"), filepath.Join(graveyard, "run-done")); err != nil {
+		t.Fatalf("remove run dir: %v", err)
+	}
+
+	name, data := stream.readFrame(t)
+	if name != "card_removed" {
+		t.Fatalf("frame = (%q, %s), want card_removed — a listed-but-gone run must not be redrawn as a card", name, data)
+	}
+	var removed struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(data), &removed); err != nil || removed.RunID != "run-done" {
+		t.Errorf("card_removed payload = %s (%v), want run-done", data, err)
+	}
+}
+
 // --- security: the dashboard and its mounted runs refuse to be framed --------
 
 func TestDashboard_RefusesToBeFramed(t *testing.T) {

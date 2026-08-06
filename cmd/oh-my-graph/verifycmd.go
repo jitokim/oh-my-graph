@@ -54,6 +54,15 @@ const verifyShellMetachars = "|&;<>()$`\\\"'\n*?[]{}~="
 // and PATHEXT resolution belongs to the interpreter), or guarantee the command
 // will succeed. A `--verify-cmd 'true'` still passes this and still verifies
 // nothing — the ledger reports provenance, never adequacy (ADR 0016).
+//
+// It has one false refusal, and it is the price of not parsing shell: a bare
+// shell BUILTIN with no metacharacter in it (`--verify-cmd 'ulimit -n'`) is a
+// command `sh -c` would run and this refuses, because no file answers to it.
+// Knowing which words are builtins is knowing the interpreter — the thing
+// verifyShellMetachars stands down rather than half-reimplement — and a
+// builtin as a build command is not a case worth a table that would be wrong
+// on some shell somewhere. The escape hatch is the same one a fragment takes:
+// any metacharacter, `ulimit -n && true` included, skips this entirely.
 func checkVerifyExecutable(command string) error {
 	command = strings.TrimSpace(command)
 	if command == "" || strings.ContainsAny(command, verifyShellMetachars) {
@@ -66,18 +75,32 @@ func checkVerifyExecutable(command string) error {
 	if strings.ContainsRune(program, filepath.Separator) {
 		return checkExecutableFile(command, program, resolvedPath(program))
 	}
-	dirs := filepath.SplitList(os.Getenv("PATH"))
-	for _, dir := range dirs {
+	var searched []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			continue
 		}
 		if isExecutableFile(filepath.Join(dir, program)) {
 			return nil
 		}
+		searched = append(searched, dir)
 	}
-	return fmt.Errorf("verify command %q cannot run: %q is not in any PATH directory (searched PATH=%s). "+
-		"The command is checked before the planner call, so this costs nothing — fix it and re-run",
-		command, program, os.Getenv("PATH"))
+	return fmt.Errorf("verify command %q cannot run: %q is not in any PATH directory. "+
+		"The command is checked before the planner call, so this costs nothing — fix it and re-run.\nSearched:%s",
+		command, program, searchedList(searched))
+}
+
+// searchedList renders the PATH entries a failed search covered, one per line.
+//
+// The whole PATH inline is several terminal lines of colon-separated text the
+// reader has to split by eye to find the directory they expected to be in it,
+// which is the one thing this message is for. An empty PATH says so rather
+// than trailing a blank line.
+func searchedList(dirs []string) string {
+	if len(dirs) == 0 {
+		return " nothing — PATH is empty"
+	}
+	return "\n  " + strings.Join(dirs, "\n  ")
 }
 
 // resolvedPath makes a path-shaped program absolute for the message, so a

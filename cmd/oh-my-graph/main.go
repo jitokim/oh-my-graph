@@ -551,7 +551,14 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	printPauseHint(os.Stdout, runID, runErr)
+	// serializedVerify is also the discriminator for whether this run can be
+	// resumed at all, and not by coincidence: it is non-nil exactly when the
+	// tool ceiling is non-empty (what `resume` reads off snap.ToolPolicies to
+	// tell an auto graph from a hand-written one) AND some node carries an
+	// injected verification (what ReattachVerifyCommand refuses to take from a
+	// run directory). That pair is ADR 0016 §4's terminal refusal, so the hint
+	// must not print a resume command for it.
+	printPauseHint(os.Stdout, runID, runErr, serializedVerify != nil)
 
 	return runErr
 }
@@ -982,6 +989,18 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 	return out
 }
 
+// verifyResumeRefusal is what printPauseHint says in place of a resume
+// command when the paused run cannot be resumed at all (ADR 0016 §4):
+// `resume` drops a snapshot-borne success_check.verify rather than replaying
+// it, and has no --verify-cmd of its own to re-supply one, so every resumed
+// leg of an auto run started with --verify-cmd is refused before its first
+// node runs. Naming the cause is the whole of what the hint can offer here —
+// what it must NOT do is print a command that exits 1 and hand the reader on
+// to a refusal whose own remediation names a flag `resume` does not register.
+const verifyResumeRefusal = "This run cannot be resumed: it was started with --verify-cmd, and `resume` " +
+	"takes no verification from a run directory and has no flag to re-supply one (ADR 0016 §4). " +
+	"Re-run the goal with --verify-cmd; this run's artifacts stay in its run directory."
+
 // printPauseHint prints the exact resume commands when runErr is one of the
 // two pause shapes — a *schedule.PausedError (the gate lifecycle's "print the
 // exact resume command" step — DESIGN.md, "Gate nodes and resume") or a
@@ -990,9 +1009,24 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 // rather than inventing one when it doesn't) — and is a silent no-op for any
 // other outcome (success or failure), so it is safe to call unconditionally
 // after every run.
-func printPauseHint(w io.Writer, runID string, runErr error) {
+//
+// verifyBlocksResume says this run's pause is terminal rather than resumable,
+// and it is the caller's to decide because only the caller knows whether this
+// graph carries an injected verification under a tool ceiling — the pair
+// `resume` refuses (verifyResumeRefusal). A session-limit pause is exactly
+// the shape a long auto run reaches, so the hint that fires most often for a
+// --verify-cmd run is the one that would otherwise be wrong.
+func printPauseHint(w io.Writer, runID string, runErr error, verifyBlocksResume bool) {
 	var paused *schedule.PausedError
 	if errors.As(runErr, &paused) {
+		// Unreachable together with verifyBlocksResume today — validatePlannedNodes
+		// refuses a planned gate node, so only an auto graph can carry an injected
+		// verification and only a hand-written one can pause at a gate. Handled
+		// anyway: this function's whole promise is that the command it prints runs.
+		if verifyBlocksResume {
+			fmt.Fprintf(w, "\nPaused at gate %q. %s\n", paused.GateID, verifyResumeRefusal)
+			return
+		}
 		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
 			paused.GateID, runID, paused.GateID, runID, paused.GateID)
 		return
@@ -1001,10 +1035,16 @@ func printPauseHint(w io.Writer, runID string, runErr error) {
 	if !errors.As(runErr, &limited) {
 		return
 	}
-	if reset := runner.SessionLimitReset(limited.Cause); reset != "" {
+	reset := runner.SessionLimitReset(limited.Cause)
+	switch {
+	case verifyBlocksResume && reset != "":
+		fmt.Fprintf(w, "\nSession limit reached (resets %s). %s\n", reset, verifyResumeRefusal)
+	case verifyBlocksResume:
+		fmt.Fprintf(w, "\nSession limit reached. %s\n", verifyResumeRefusal)
+	case reset != "":
 		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed\n",
 			reset, reset, runID)
-		return
+	default:
+		fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
 	}
-	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
 }

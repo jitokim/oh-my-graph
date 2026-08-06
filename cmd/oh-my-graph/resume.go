@@ -495,7 +495,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	printPauseHint(os.Stdout, runID, runErr)
+	// Never the terminal refusal: a leg that reached the scheduler at all got
+	// past ReattachVerifyCommand above, which admits an auto graph only when it
+	// carries no verification, so whatever pauses this leg is resumable.
+	printPauseHint(os.Stdout, runID, runErr, false)
 
 	return runErr
 }

@@ -219,7 +219,12 @@ decision:
   the assumption and resolves it for `resume`, which refuses a snapshot-borne
   command rather than replaying one. (`run` on a hand-edited `graph.json` is
   outside that: at that point it is a hand-written graph the user is choosing
-  to run, which has always been allowed to carry a `verify:`.)
+  to run, which has always been allowed to carry a `verify:`.) What such a
+  replay does *not* get is the run-wide serialization above: the discriminator
+  for serializing is the tool ceiling, which `run` never imposes, so a saved
+  plan with more than one sink re-run through `run` runs its checks
+  concurrently — the write-interference case this ADR calls load-bearing.
+  Single-sink plans, the common shape, are unaffected.
 - **It runs through `verify.ShellVerifier`** — the second exec seam, already
   `childenv.Scrub`ed. **No new spawner, no fifth seam, no new ADR owed.**
 

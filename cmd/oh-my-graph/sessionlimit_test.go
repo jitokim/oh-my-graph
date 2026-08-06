@@ -149,7 +149,7 @@ func TestMainExitCode_SessionLimitMapsToExitCode2(t *testing.T) {
 // an invented one — when it doesn't.
 func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	var buf bytes.Buffer
-	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg})
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, false)
 	out := buf.String()
 	if !strings.Contains(out, "(resets 5:20pm)") || !strings.Contains(out, "Resume after 5:20pm") {
 		t.Fatalf("a parseable cause should put the reset time in the hint:\n%s", out)
@@ -159,12 +159,45 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	}
 
 	buf.Reset()
-	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"})
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, false)
 	out = buf.String()
 	if strings.Contains(out, "resets") {
 		t.Fatalf("an unparseable cause must not invent a reset time:\n%s", out)
 	}
 	if !strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
 		t.Fatalf("the hint must still carry the exact resume command:\n%s", out)
+	}
+}
+
+// TestPrintPauseHint_UnresumableRunOffersNoResumeCommand is the hint's half of
+// ADR 0016 §4's residual: an auto run started with --verify-cmd is refused by
+// every resumed leg, so a pause hint that printed `oh-my-graph resume <id>
+// --retry-failed` would be the first of two wrong instructions in a row — the
+// refusal that command earns names --verify-cmd, which `resume` does not
+// register either. Both pause shapes are pinned, because both print a command.
+func TestPrintPauseHint_UnresumableRunOffersNoResumeCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		runErr error
+		want   string // what the hint must still say about WHY it paused
+	}{
+		{"limit with a reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, "resets 5:20pm"},
+		{"limit with no reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, "Session limit reached"},
+		{"gate", &schedule.PausedError{GateID: "review"}, `Paused at gate "review"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			printPauseHint(&buf, "run-9", tc.runErr, true)
+			out := buf.String()
+			if strings.Contains(out, "oh-my-graph resume") {
+				t.Fatalf("an unresumable run must be offered no resume command:\n%s", out)
+			}
+			if !strings.Contains(out, "cannot be resumed") || !strings.Contains(out, "--verify-cmd") {
+				t.Fatalf("the hint must name the refusal and its cause:\n%s", out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("the hint must still say why the run paused (%q):\n%s", tc.want, out)
+			}
+		})
 	}
 }

@@ -59,6 +59,13 @@ type Dashboard struct {
 	// 409. The interface already takes the run id per call, so one resumer
 	// serves every run on the dashboard.
 	resumer GateResumer
+	// lister names the runs a sweep considers. It is listRunIDs for every real
+	// dashboard, and exists as a field for exactly one reason: a run deleted
+	// BETWEEN the listing and its stamp is a race a test cannot win by racing,
+	// and it is the case handleCardEvents' runDirGone check is there for. A
+	// fake lister names a run id whose directory is not there, which is that
+	// state with the timing taken out of it.
+	lister func(root string) ([]string, error)
 }
 
 // dashboardTemplate is the dashboard page. Like the single-run page it is
@@ -76,6 +83,7 @@ func NewDashboard(runsRoot string) *Dashboard {
 		poll:         defaultPoll,
 		projectsRoot: defaultProjectsRoot(),
 		token:        newGateToken(),
+		lister:       listRunIDs,
 	}
 }
 
@@ -191,7 +199,7 @@ func (d *Dashboard) serverFor(runID string) *Server {
 // the same data /api/cards/events streams, in one read — what a card list is
 // without a subscription, and what a test asserts the derivation against.
 func (d *Dashboard) handleCards(w http.ResponseWriter, r *http.Request) {
-	runIDs, err := listRunIDs(d.runsRoot)
+	runIDs, err := d.listRuns()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read runs dir: %v", err), http.StatusInternalServerError)
 		return
@@ -255,7 +263,7 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 
 	seen := map[string]runStamp{}
 	for first := true; ; first = false {
-		runIDs, err := listRunIDs(d.runsRoot)
+		runIDs, err := d.listRuns()
 		if err != nil {
 			sendSSE(w, flusher, "stream_error", errorFrame(err.Error()))
 			return
@@ -366,6 +374,17 @@ func stampFile(path string) fileStamp {
 		return fileStamp{}
 	}
 	return fileStamp{exists: true, size: info.Size(), modNanos: info.ModTime().UnixNano()}
+}
+
+// listRuns names the runs this dashboard's card routes consider. Both of them
+// go through it, so an injected lister is seen by the whole card front-end
+// rather than by one handler.
+//
+// runInRoot deliberately does NOT: it is the membership guard behind
+// /run/<id>/, and a security guard answers from the real directory listing,
+// never from an injected one.
+func (d *Dashboard) listRuns() ([]string, error) {
+	return d.lister(d.runsRoot)
 }
 
 // listRunIDs names every run directory under root, newest first. Run ids are

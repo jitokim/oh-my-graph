@@ -41,6 +41,26 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
   no `--verify-cmd` either.
 
+### Fixed
+
+- **A run deleted while the dashboard was sweeping came back as a card.** A
+  sweep takes two observations of a tree that changes under it — the listing
+  that decides membership, then the per-run stamp that decides content — and a
+  run deleted between them stamped as empty, which was announced as a *changed*
+  card: a tile, and a click that lands on a 404, for a run that is already gone,
+  with its `card_removed` a whole tick behind it. The window is as long as the
+  sweep, so it widened with every run on the dashboard. Confirming the run
+  directory after the stamp settles which of the two an empty stamp was, and the
+  same sweep's removal pass now speaks for a run whose listing was stale.
+- **The session-limit pause hint pointed a `--verify-cmd` run at a resume that
+  cannot work.** An `auto` run started with `--verify-cmd` cannot be resumed
+  (see above) — but on a session-limit pause the engine still printed
+  `oh-my-graph resume <id> --retry-failed`, and following it earned a refusal
+  whose own remediation names a flag `resume` does not register. Two wrong
+  instructions in a row, on precisely the long, expensive run someone pays for
+  build evidence to protect. The hint now says the run cannot be resumed and
+  why, instead of printing a command that exits 1.
+
 ## [v0.5.0] - 2026-08-06
 
 The evidence release. It is about the distance between what a run said and what
