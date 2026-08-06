@@ -95,6 +95,40 @@
 > itself to. See
 > `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
 
+> **Update (2026-08-07, later the same day) — ADR 0017 is settled, and this
+> Alternative's caution was right about the route while being wrong about the
+> outcome.** Both of ADR 0017's blocking measurements were taken. **(g)
+> confirms the retraction above**: under `--setting-sources user` a node
+> declaring `Bash(git *)` ran an out-of-scope `touch` — judged by the file
+> appearing, not by self-report — and the identical probe under
+> `--setting-sources ""` was denied. So the decomposition *would* have cost the
+> scope ceiling, exactly as the caution recorded here suspected, and the
+> layer-1 route is dead. **(f) supplies the definitions another way**:
+> `--plugin-dir <dir>` (a `.claude-plugin/plugin.json` plus
+> `skills/<name>/SKILL.md`) loads a staged corpus with layer 1 left at `""` —
+> skill invoked, out-of-scope command still denied, no CLAUDE.md, no MCP, each
+> with a positive control. ADR 0017's decision is now built on that, so
+> **ceiling layer 1 does not move at all** and only layer 3 gains `Skill`;
+> layer 2 does not move either, measured (a skill fires under `dontAsk` with an
+> allow list naming only `Bash(git *)`, `permission_denials: []`).
+>
+> What this changes for the annotation above: the "whether the decomposition
+> costs only CLAUDE.md or also the scope ceiling" question is answered — *the
+> scope ceiling* — and is now moot, because no route taken loads the user's
+> settings. The seal ADR 0017 substitutes for **§6's snapshot property** is
+> correspondingly narrower and stronger than described above: it covers a
+> corpus oh-my-graph itself staged, re-materialized and verified before every
+> node spawn, so a node cannot plant instructions for its successors — a
+> prevention rather than the halt-after-the-fact this note first recorded.
+>
+> **This mechanism still ships until ADR 0017's implementation lands**, and its
+> gate is still voided rather than discharged. What is no longer true is that
+> it ships *for want of an admissible replacement*: there is one, it is
+> measured, and the cost is now a printed number rather than an open question —
+> ~6,008 prompt tokens per node invocation to stage 35 skill descriptions,
+> against the 7% of node ids this mechanism reaches. See
+> `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
+
 ## Context
 
 Users invest heavily in local Claude Code skills — this machine carries 35
