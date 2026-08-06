@@ -23,6 +23,8 @@ package coordinator
 import (
 	"fmt"
 	"strings"
+
+	"github.com/jitokim/oh-my-graph/internal/fence"
 )
 
 // maxPlanRepairAttempts is how many EXTRA planner calls one plan() invocation
@@ -127,18 +129,18 @@ type planRefusal struct {
 // them with a complete corrected object.
 //
 // The refusals are quoted as DATA for the same reason the assessor's
-// `remaining` is (fence.go): they are engine-authored sentences that embed
+// `remaining` is (internal/fence): they are engine-authored sentences that embed
 // model-authored fragments verbatim — a placeholder token, a node id, a
 // declared tool — and at least one validator interpolates such a fragment
 // without escaping it, so a planner can put newlines and forged marker lines
 // inside the text this function quotes. A nonce minted after the text is fixed
 // is what makes those lines unable to end their own quote.
 func repairSection(issues []string) (string, error) {
-	nonce, err := fenceNonce("plan repair")
+	nonce, err := fence.Nonce("plan repair")
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(plannerRepairTemplate, nonce, truncate(strings.Join(issues, "\n"), maxIssuesInPrompt)), nil
+	return fmt.Sprintf(plannerRepairTemplate, nonce, fence.Truncate(strings.Join(issues, "\n"), maxIssuesInPrompt)), nil
 }
 
 // plannerRepairTemplate is appended to the planner prompt for the one extra

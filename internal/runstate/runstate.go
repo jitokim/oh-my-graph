@@ -178,8 +178,26 @@ type NodeRecord struct {
 	// at it are retained, and max − round rounds remain — no separate
 	// rounds-spent counter exists to drift from it.
 	Round int `json:"round,omitempty"`
+	// Judged marks a FAIL that a check rendered a verdict ON, as opposed to
+	// one the machinery caused: a failed success_check or a verification that
+	// ran and said no, never a spawn error, an interpolation error, a blown
+	// budget, or a verification that could not be completed. It is ADR 0010's
+	// judgment-vs-infrastructure split (schedule.isJudgmentFailure) made
+	// durable, and absent (false) on every PASS and on every marker record —
+	// an additive field, no schema bump.
+	//
+	// It exists because that split is the gate on quoting a failed node's own
+	// reply back into the prompt that retries it (ADR 0016, "a retry carries
+	// the attempt it is repeating"), and a `resume --retry-failed` decides
+	// that in a different PROCESS from the one that judged it. The alternative
+	// was re-deriving the cause by parsing Detail's prose, which would make a
+	// wording change silently move a trust boundary. Consumers get the same
+	// thing for free: "the work was wrong" and "the machinery broke" stop
+	// being distinguishable only by reading English.
+	Judged bool `json:"judged,omitempty"`
 	// Provenance is HOW this node's PASS was reached — one of runfeed's four
-	// qualifiers (ADR 0016 §6) — carried forward so a resumed leg's end-of-run
+	// qualifiers (ADR 0016 §6, "build evidence is a user-supplied engine
+	// command") — carried forward so a resumed leg's end-of-run
 	// table qualifies an earlier leg's rows the same way it qualifies its own.
 	// Without it a resume would print a table whose earlier rows read a bare
 	// `PASS` beside this leg's `PASS (self-reported)`, and a reader would have
@@ -190,6 +208,13 @@ type NodeRecord struct {
 	// has no verdict to qualify) and on any snapshot written before this
 	// field existed, so today's snapshots stay readable and there is NO
 	// schema bump.
+	//
+	// It is the PASS-side counterpart of Judged, and the two are disjoint by
+	// construction: a record qualifies its PASS or it classifies its FAIL,
+	// never both. A node whose engine-run evidence command said no is a FAIL
+	// with Judged true and no Provenance — "verified" would claim a
+	// verification the node never survived — and it earns its `verified`
+	// qualifier only on the attempt that finally passes.
 	Provenance string `json:"provenance,omitempty"`
 }
 

@@ -477,15 +477,25 @@ func (r *scriptedRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 	if r.invocations == nil {
 		r.invocations = make(map[string]int)
 	}
-	r.invocations[spec.Prompt]++
-	cost, fails := r.failing[spec.Prompt]
-	if !fails && r.invocations[spec.Prompt] == 1 {
-		cost, fails = r.failFirst[spec.Prompt]
+	prompt := nodePromptOf(spec.Prompt)
+	r.invocations[prompt]++
+	cost, fails := r.failing[prompt]
+	if !fails && r.invocations[prompt] == 1 {
+		cost, fails = r.failFirst[prompt]
 	}
 	if fails {
-		return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "FAIL", ExitCode: 1, TotalCostUSD: cost}, nil
+		return runner.NodeOutcome{SessionID: "s-" + prompt, Result: "FAIL", ExitCode: 1, TotalCostUSD: cost}, nil
 	}
-	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
+	return runner.NodeOutcome{SessionID: "s-" + prompt, Result: "PASS", ExitCode: 0}, nil
+}
+
+// nodePromptOf recovers a node's OWN prompt from an invocation, dropping the
+// quote of a previous attempt a retry appends to it (ADR 0016). A fixture that
+// keys a node by its prompt has to cut there or a re-executed node looks like a
+// node it has never seen — which is exactly how it fails: not "the retry ran
+// with the wrong prompt", but "the retry never ran".
+func nodePromptOf(prompt string) string {
+	return strings.SplitN(prompt, schedule.RetryQuoteHeader, 2)[0]
 }
 
 func (r *scriptedRunner) invocationCount(prompt string) int {

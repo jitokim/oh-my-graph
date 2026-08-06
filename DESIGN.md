@@ -492,7 +492,33 @@ placeholder rule above).
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
 attempt does not resume the parent session either — it starts cold, which
-`lint` warns about up front and the passing attempt's ledger detail states. The causes are a closed set — `nonzero_exit`,
+`lint` warns about up front and the passing attempt's ledger detail states.
+A retry is no longer a byte-identical re-spawn, though: when the attempt it
+repeats **was judged** — a failed `success_check`, or a verification that ran
+and said no — the retried attempt's prompt carries that attempt's own reply,
+quoted as nonce-fenced data (ADR 0016, `internal/schedule/retryfeedback.go`).
+Exactly **one** prior attempt is ever carried and it never accumulates: every
+attempt's prompt is rebuilt from the interpolated node prompt, so the added
+cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
+of reply, cut head-and-tail with the cut announced. The check itself is **not**
+quoted — not its expression, not the detail that embeds it — because feeding
+back a `result_matches` regex teaches the cheapest possible pass, which is to
+print whatever it matches; the node is told its attempt did not pass, told not
+to argue the verdict, and pointed back at its own instructions. Causes that
+rendered no verdict on the reply carry nothing: a spawn error, an interpolation
+error, `budget_exceeded`, and a verification that could not be *completed*, the
+same `isJudgmentFailure` split a feedback arc uses. A `handoff: session` retry
+still starts cold — unchanged — and the quote says so out loud, because the
+text it hands back is the node's own words out of a conversation it can no
+longer open. Across processes, `resume --retry-failed` re-reads the reply from
+`<run-dir>/failed/<node-id>.out` for each node it clears, gated on the
+snapshot's `judged` flag: the FAIL record (and with it the ledger row and the
+capped detail) is dropped by the retry leg, so that file is the only account of
+the attempt that survives the boundary. A seeded execution is a retry like any
+other and starts cold on the same terms — a `handoff: session` node does not
+resume its parent there either, and the row that prices it says so — and the
+`failed/` file it was seeded from is removed once that execution passes, so the
+directory never holds a losing reply beside a winning artifact. The causes are a closed set — `nonzero_exit`,
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
@@ -1566,7 +1592,7 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   output, so every block rides in a **nonce-fenced** marker pair — one
   6-hex-character nonce per `Assess` call, in the opening AND closing
   marker, with the prompt telling the assessor that only markers bearing it
-  are real (the skill-inlining fence's mechanism, `internal/coordinator/fence.go`).
+  are real (the skill-inlining fence's mechanism, `internal/fence`).
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
   outside it. The next cycle's planner prompt fences the `remaining` it
@@ -1726,14 +1752,15 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go), and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
-internal/schedule/{scheduler,errors,feedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010)
+internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0016)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Five call sites across coordinator and schedule; internal/invariants counts them repo-wide against fence.go's own sentence
+internal/coordinator/{coordinator,router,agentmap,skillmap,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (internal/fence, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
@@ -1743,7 +1770,7 @@ internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..15}-*.md
+docs/adr/00{01..16}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 

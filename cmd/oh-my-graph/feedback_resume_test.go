@@ -34,8 +34,9 @@ func (r *promptOutcomeRunner) Run(_ context.Context, spec runner.NodeInvocation)
 	if r.counts == nil {
 		r.counts = make(map[string]int)
 	}
-	r.counts[spec.Prompt]++
-	outcome, scripted := r.outcomes[spec.Prompt]
+	prompt := nodePromptOf(spec.Prompt)
+	r.counts[prompt]++
+	outcome, scripted := r.outcomes[prompt]
 	if !scripted {
 		return runner.NodeOutcome{}, fmt.Errorf("no scripted outcome for prompt %q", spec.Prompt)
 	}

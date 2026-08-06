@@ -282,6 +282,7 @@ nodes:
 		"impl: bad-1":      result("draft-v2", 0),
 		"review: draft-v2": result("bad-2", 0),
 	})
+	fake.KeyFn = nodePromptKey
 	s, h, led := newHarness(t, fake, Options{})
 
 	if err := s.Run(context.Background(), g, h, led); err == nil {

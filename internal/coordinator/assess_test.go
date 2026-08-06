@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -222,8 +223,8 @@ func TestAssess_FenceMarkersCarryAPerAssessmentNonce(t *testing.T) {
 
 	prompt := promptFor()
 	nonce := assessNonceOf(t, prompt)
-	if len(nonce) != 2*fenceNonceBytes {
-		t.Fatalf("fence nonce = %q, want %d hex characters", nonce, 2*fenceNonceBytes)
+	if len(nonce) != 2*fence.NonceBytes {
+		t.Fatalf("fence nonce = %q, want %d hex characters", nonce, 2*fence.NonceBytes)
 	}
 	if _, err := hex.DecodeString(nonce); err != nil {
 		t.Fatalf("fence nonce = %q does not decode as hex: %v", nonce, err)
@@ -350,7 +351,7 @@ func TestAssess_LongArtifactIsExcerptedKeepingHeadAndTail(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(captured.Prompt, excerptMarker) {
+	if !strings.Contains(captured.Prompt, fence.ExcerptMarker) {
 		t.Error("over-long artifact was not excerpted")
 	}
 	if !strings.Contains(captured.Prompt, head) || !strings.Contains(captured.Prompt, tail) {

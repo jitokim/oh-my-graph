@@ -66,6 +66,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
@@ -403,7 +404,7 @@ func (c *Coordinator) applySkillMapping(plan *Plan) error {
 			continue
 		}
 		if nonce == "" {
-			minted, err := fenceNonce("skill")
+			minted, err := fence.Nonce("skill")
 			if err != nil {
 				return err
 			}

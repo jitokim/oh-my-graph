@@ -135,6 +135,7 @@ nodes:
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
 		"flaky": {Result: "NOPE", ExitCode: 0, SessionID: "s-flaky", TotalCostUSD: 0.05},
 	})
+	fake.KeyFn = nodePromptKey
 	feed, path := newEventStream(t, "run-retry")
 	s, h, led := newHarness(t, fake, Options{EventSink: feed})
 

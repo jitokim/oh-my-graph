@@ -145,7 +145,9 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	}
 	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
 	banner := fmt.Sprintf("Resuming run %q (gate %q %s)", flags.runID, gateID, decisionVerb(decision))
-	return continueRun(flags, snap, snap.Nodes, decisions, banner, nodeRunner, web)
+	// nil: a gate resume clears no failed node, so there is no attempt for
+	// anything in this leg to be repeating.
+	return continueRun(flags, snap, snap.Nodes, decisions, nil, banner, nodeRunner, web)
 }
 
 // resumeRetryLeg is the --retry-failed mode: keep every PASSED node's record
@@ -184,7 +186,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 		}
 		banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
 	}
-	return continueRun(flags, snap, retained, snap.Gate.Decisions, banner, nodeRunner, web)
+	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, banner, nodeRunner, web)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
@@ -266,10 +268,13 @@ func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[str
 // stream, worktrees), seed the scheduler so exactly the carried records never
 // re-run, and execute the leg. records is the set of node records this leg
 // carries forward — all of snap.Nodes for a gate resume, the retained subset
-// for a retry — and decisions is the gate-decision map the leg replays. web,
+// for a retry — and decisions is the gate-decision map the leg replays.
+// cleared is the node ids whose records this leg dropped so they re-execute
+// (nil for a gate resume): those are the nodes whose previous attempt this leg
+// is repeating, and the only ones whose failed reply is re-read from disk. web,
 // when non-nil, is the Opener this leg's embedded live view hands its URL to;
 // nil is no live view at all (see executeResume).
-func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
+func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, cleared []string, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	runID := flags.runID
 	runDir := runDirFor(runID)
 
@@ -306,6 +311,47 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	h := handoff.New(runDir, snap.Inputs)
 	for nodeID, rec := range records {
 		h.Seed(nodeID, rec.ArtifactPath, rec.SessionID)
+	}
+
+	// A retry leg re-reads a cleared node's failed reply from
+	// failed/<node-id>.out, so the re-execution is handed the attempt it is
+	// repeating (ADR 0016). This is the whole reason that file is written by a
+	// process other than the one that reads it: --retry-failed drops the FAIL
+	// record — with it the ledger row and the 240-rune detail — and the reply on
+	// disk is the only account of the attempt that survives into this leg.
+	//
+	// Only nodes whose recorded failure was JUDGED are seeded, which is exactly
+	// the gate the in-leg retry applies (isJudgmentFailure). It is read from the
+	// UNPARTITIONED snapshot, because the record carrying it is one of the ones
+	// this leg dropped. Without it the two halves of one feature would disagree
+	// about their own trigger — a budget-killed node, whose reply no check ever
+	// faulted, would be told across a process boundary that a check rejected it.
+	//
+	// A failure to re-read is a WARNING, never fatal, matching the write side's
+	// policy exactly (Scheduler.keepFailedReply): the leg's job is to re-run the
+	// node, and losing the quote costs it context, not correctness. Contrast
+	// SeedFeedback above, whose failure IS fatal — a feedback re-run without its
+	// payload is a paid lie about what the body was told.
+	//
+	// An ABSENT file is warned about too, and only here. It is a clean no-op to
+	// handoff, which cannot know whether a reply was owed; this loop can, because
+	// it has already gated on Judged — a judged failure is one the previous leg
+	// rendered a verdict on, so its reply was written, and a missing one means
+	// something removed it or the write did not survive. Both retries are legal
+	// and both re-run the node; the difference is that one carries the attempt it
+	// repeats and the other quietly does not, and a degraded retry that looks
+	// exactly like a whole one is the one nobody ever notices paying for.
+	for _, nodeID := range cleared {
+		if !snap.Nodes[nodeID].Judged {
+			continue
+		}
+		switch seeded, err := h.SeedPriorReply(nodeID); {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "warning: %v; %s will be retried without it\n", err, nodeID)
+		case !seeded:
+			fmt.Fprintf(os.Stderr, "warning: no persisted reply for %s, whose failure was judged; "+
+				"it will be retried without the attempt it is repeating\n", nodeID)
+		}
 	}
 
 	// A feedback declarer carrying a non-terminal MARKER record (round k, no
