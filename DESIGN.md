@@ -1467,19 +1467,30 @@ checkout **outside the invocation repository**, `Plan.Unisolated`
 before anything spends, and in the same output `--plan-only` renders — that
 oh-my-graph isolates nothing there: no worktree, no lock, so a node working in
 that checkout must create its own worktree or race whatever else is standing in
-it (#103). The rule is deliberately narrow: a mention must resolve into a
-`.git` checkout (an ordinary clone or a linked worktree, both of which have
-their own HEAD), which is what keeps `/tmp` scratch paths, system paths,
-templated paths, files that do not exist and every path *inside* the invocation
-repository silent; and one warning is emitted per checkout rather than per
-path, since the hazard is a shared HEAD. It is computed on the planner's own
+it (#103). The boundary is one of **ownership, not of protection**: `auto`
+rejects `cwd:` and `worktree:` at plan time, so it provisions no managed
+worktree anywhere — the invocation repository included, where planned nodes edit
+and commit directly — and what the reported checkouts have that it does not is
+that the user did not open them for this run. The printed text may not read as
+if the invocation repository were the isolated one. The rule is deliberately
+narrow: a mention must resolve into a `.git` checkout (an ordinary clone or a
+linked worktree, both of which have their own HEAD), which is what keeps `/tmp`
+scratch paths, templated paths, files that do not exist and every path *inside*
+the invocation repository silent; a checkout that is a **tool installation**
+rather than a work tree is dropped as well (rooted under `/usr`, `/opt`,
+`/Library`, `/System`, `/nix`, or under a dot-directory of `$HOME` — Homebrew,
+nvm, oh-my-zsh, a plugin marketplace and a chezmoi-managed `~/.config` are all
+real clones, and a warning about a HEAD nobody will switch is the line that
+teaches the reader to scroll past the block); and one warning is emitted per
+checkout rather than per path, since the hazard is a shared HEAD. It is computed on the planner's own
 prompts, strictly before skill inlining, so absolute paths a local `SKILL.md`
 happens to document are never attributed to the plan. It is a WARNING and never
 a refusal — a multi-repository goal is legitimate, and the engine simply cannot
 isolate it — and the printed text states its own blind spots (a path built at
 run time, one arriving through `--input` or a parent's artifact, a repository
-reached by a relative path, and what a node actually does once it is there),
-because a heuristic that reads as complete is worse than no heuristic at all.
+reached by a relative path, a tool installation's own clone, and what a node
+actually does once it is there), because a heuristic that reads as complete is
+worse than no heuristic at all.
 
 ### The tool ceiling — one layered policy, not a list of flags (v1.1)
 The allowlist above bounds what a plan may **declare**. Execution is bounded by

@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,6 +64,37 @@ func TestPlan_RefusalNamesTheTargetTheSweepComputed(t *testing.T) {
 	planErr := planExpectingError(t, fake, "canary the staging deploy")
 	if !strings.Contains(planErr.Reason, advisories[0].Suggestion) {
 		t.Errorf("refusal %q does not name the sweep's covering target %q", planErr.Reason, advisories[0].Suggestion)
+	}
+}
+
+// TestPlan_RefusalReadsAsEnglishForSeveralProducers exercises the sentence's
+// plural path, which the single-producer fixture above never reaches. One
+// refusal covers every producer a declarer cannot reach, so the agreement words
+// and both pronoun cases are all interpolated — and a refusal is a PROMPT: it
+// is quoted verbatim into the repair call that has to be understood well enough
+// to converge on the first and only retry, so "depend on they" is a defect in
+// the thing this rule spends money on, not a typo in a log line.
+func TestPlan_RefusalReadsAsEnglishForSeveralProducers(t *testing.T) {
+	spec := `{"name":"wide-fan-in","version":"1","nodes":[` +
+		`{"id":"scope","prompt":"scope the work","allowed_tools":["Read"]},` +
+		`{"id":"qa-plan","depends_on":["scope"],"prompt":"write QA-PLAN.md","allowed_tools":["Write"]},` +
+		`{"id":"fixtures","depends_on":["scope"],"prompt":"write the fixtures","allowed_tools":["Write"]},` +
+		`{"id":"load-script","depends_on":["scope"],"prompt":"write canary-load.js; {{ feedback.review }}","allowed_tools":["Write"]},` +
+		`{"id":"review","depends_on":["qa-plan","fixtures","load-script"],"prompt":"judge all three",` +
+		`"allowed_tools":["Read"],"success_check":{"result_matches":"^PASS$"},"feedback":{"rerun":"load-script","max":2}}]}`
+	fake, _ := newPlannerFake(runnerOutcome(spec))
+
+	planErr := planExpectingError(t, fake, "canary the staging deploy")
+	for _, want := range []string{
+		`excludes "qa-plan" and "fixtures" — nodes this one depends on`,
+		"what they produced",
+		`depends on what "qa-plan" and "fixtures" are`,
+		"If they are work this node judges",
+		`have "load-script" depend on them instead`,
+	} {
+		if !strings.Contains(planErr.Reason, want) {
+			t.Errorf("refusal is missing %q:\n%s", want, planErr.Reason)
+		}
 	}
 }
 
@@ -166,6 +198,40 @@ func TestPlan_MisaimedArcBuysACorrectedReplan(t *testing.T) {
 	}
 	if body := plan.Graph.FeedbackBody("review"); len(body) != 4 {
 		t.Errorf("FeedbackBody(review) = %v, want the whole loop — the corrected arc must reach both producers", body)
+	}
+}
+
+// TestPlan_ReachRefusalSurvivesACrowdedRepairPrompt pins the ORDER
+// validatePlannedNodes builds its list in. repairSection truncates the joined
+// refusals at maxIssuesInPrompt from the front only, and this refusal is by
+// some margin the longest one the validator emits — appended after the per-node
+// refusals, as it first was, a reply that is also wrong about twenty other
+// nodes pushes it past the cut. The corrected reply would then re-emit the same
+// arc, be refused for it a second time, and the single repair would be gone.
+//
+// Twenty-five padded refusals is not a realistic plan; it is the cheapest way
+// to hold the ordering in place, since the failure is silent and only shows up
+// as a run that did not converge.
+func TestPlan_ReachRefusalSurvivesACrowdedRepairPrompt(t *testing.T) {
+	crowded := strings.TrimSuffix(fanInArcSpec, "]}")
+	for i := 0; i < 25; i++ {
+		crowded += fmt.Sprintf(`,{"id":"pad-%02d","prompt":"pad","allowed_tools":["Read"],"permission_mode":"bypassPermissions"}`, i)
+	}
+	crowded += "]}"
+	fake, repairPrompt := newRepairFake(
+		runner.NodeOutcome{Result: crowded, TotalCostUSD: 0.02},
+		runner.NodeOutcome{Result: fanInArcSpec, TotalCostUSD: 0.03},
+	)
+
+	// The second reply is still mis-aimed, so Plan fails — the assertion is on
+	// what the one repair call was told, not on the outcome.
+	if _, err := New(fake).Plan(context.Background(), "canary the staging deploy", nil); err == nil {
+		t.Fatal("the repaired reply repeats the arc, so the plan must still fail")
+	}
+	for _, want := range []string{"qa-plan", "scope", "pad-00"} {
+		if !strings.Contains(repairPrompt.Prompt, want) {
+			t.Errorf("the repair prompt lost %q to truncation, so the planner cannot fix it:\n%s", want, repairPrompt.Prompt)
+		}
 	}
 }
 

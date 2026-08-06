@@ -13,20 +13,28 @@ import (
 // UnisolatedScan is the plan-time answer to "does this plan work anywhere
 // oh-my-graph cannot isolate?" — the disclosure half of the limit SECURITY.md
 // states ("Isolation stops at the invocation repository"). It is attached to
-// every Plan whose text names a local git checkout outside that boundary, and
-// nil otherwise, so a caller can print it unconditionally.
+// every Plan whose text names a local git checkout outside that boundary — bar
+// a tool installation's own clone, which isToolInstallation drops and the
+// printed limits paragraph discloses — and nil otherwise, so a caller can print
+// it unconditionally.
 //
 // It is a WARNING and never a refusal. A goal spanning two repositories is a
 // legitimate thing to ask for; the engine simply provisions no worktree and
-// takes no lock outside the one repository it was invoked from, so a node that
-// switches a branch in a shared checkout races whatever else is standing in it
-// (the collision reported in #103). Refusing the plan would break a working
-// use case to fix a disclosure problem.
+// takes no lock, so a node that switches a branch in a shared checkout races
+// whatever else is standing in it (the collision reported in #103). Refusing
+// the plan would break a working use case to fix a disclosure problem.
 //
-// Root is the boundary itself: the invocation repository's root when
-// oh-my-graph was invoked inside a checkout (IsRepo), and the invocation
-// directory when it was not — in which case nothing at all is isolated, and
-// the printed warning says so.
+// THE BOUNDARY IS ONE OF OWNERSHIP, NOT OF PROTECTION. `auto` rejects `cwd:`
+// and `worktree:` at plan time, so it provisions no managed worktree anywhere
+// — the invocation repository included, where planned nodes edit and commit
+// directly. What the checkouts reported here have that it does not is that the
+// user did not open them for this run, and so is not standing in them. Anything
+// printed from this scan has to say that and not the reverse.
+//
+// Root is the tree the run itself works in: the invocation repository's root
+// when oh-my-graph was invoked inside a checkout (IsRepo), and the invocation
+// directory when it was not — in which case there is not even a repository
+// around the work, and the printed warning says so.
 type UnisolatedScan struct {
 	Root   string
 	IsRepo bool
@@ -173,15 +181,18 @@ func resolveInvocationRoot(dir string) (invocationRoot, bool) {
 }
 
 // isForeignCheckout answers the whole rule for one written path: does it
-// resolve into a git checkout, and is that checkout outside the boundary? It
-// returns the checkout's root.
+// resolve into a git checkout, is that checkout outside the boundary, and is it
+// a checkout anybody works in? It returns the checkout's root.
 //
 // Requiring a checkout is what keeps the false-positive rate honest. The
 // hazard being warned about is a shared HEAD, so a path that is not in a
-// repository cannot have it: a `/tmp/...` scratch path, a `/usr/local/...`
-// tool, a documentation URL-ish path, and a file that simply does not exist
-// all fire nothing. A path inside the invocation repository fires nothing
-// either — that one IS the isolated repository.
+// repository cannot have it: a `/tmp/...` scratch path, a documentation
+// URL-ish path, and a file that simply does not exist all fire nothing. A path
+// inside the invocation tree fires nothing either — that one is the tree the
+// user opened, and this warning is about the ones they did not.
+//
+// The third question is isToolInstallation's, and it is the one that keeps the
+// rule reporting the plan rather than the machine it runs on.
 func (r invocationRoot) isForeignCheckout(mention string) (string, bool) {
 	path, ok := expandHome(mention)
 	if !ok || !filepath.IsAbs(path) {
@@ -194,7 +205,62 @@ func (r invocationRoot) isForeignCheckout(mention string) (string, bool) {
 	if withinDir(r.dir, repo) {
 		return "", false
 	}
+	if isToolInstallation(repo) {
+		return "", false
+	}
 	return repo, true
+}
+
+// systemPrefixes are directories a package manager owns and a person does not
+// work in. A checkout ROOTED under one of them is some tool's own copy of
+// itself.
+//
+// `/var` is deliberately absent, although the review that prompted this rule
+// listed it: on macOS every temp directory resolves into `/private/var`, so the
+// prefix would silently mean two different things on two platforms, and a git
+// checkout somebody actually edits under `/var` is rarer than that
+// inconsistency is worth.
+var systemPrefixes = []string{"/usr", "/opt", "/Library", "/System", "/nix"}
+
+// isToolInstallation drops a checkout that exists because something was
+// installed, not because anybody works in it. This is not a hypothetical class:
+// on the machine this was written on, `/usr/local/Homebrew`, `~/.nvm` and a
+// Claude Code plugin marketplace under `~/.claude` are all real clones, and so
+// are `~/.oh-my-zsh`, `~/.pyenv`, `~/.rbenv`, `~/.sdkman`, `~/.vim/bundle/*`,
+// `~/.tmux/plugins/*`, `/opt/homebrew` and a chezmoi-managed `~/.config` on
+// other people's. A prompt naming a binary inside one ("run
+// ~/.nvm/versions/node/v20/bin/node") would otherwise print a warning about a
+// HEAD nobody is going to switch.
+//
+// Losing those few true positives is the cheaper mistake, because this warning
+// is only worth printing while it is still read: one line of furniture in it
+// and the user learns to scroll past the whole block, which is the failure mode
+// every advisory in this codebase is written against.
+//
+// Both shapes are about the checkout's ROOT, not the path that was written, so
+// a file deep inside a tool's tree is dropped with it. `~/IdeaProjects/...`,
+// `~/src/...`, `~/work/...` and a `/tmp/...` clone are untouched, which is
+// where work actually lives. Home ITSELF being a checkout is not a tool
+// installation — a dotfiles repository at `~` is one somebody edits — so it
+// stays reportable like any other.
+func isToolInstallation(repo string) bool {
+	for _, prefix := range systemPrefixes {
+		if withinDir(prefix, repo) {
+			return true
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	rel, err := filepath.Rel(resolveSymlinks(home), repo)
+	if err != nil {
+		return false
+	}
+	// Rel's "." (home itself) and ".."/"../x" (outside home) both begin with a
+	// dot and are neither of them a dot-directory of home.
+	first, _, _ := strings.Cut(rel, string(filepath.Separator))
+	return strings.HasPrefix(first, ".") && first != "." && first != ".."
 }
 
 // checkoutRootOf walks up from path looking for a `.git` entry, and returns

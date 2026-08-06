@@ -379,7 +379,8 @@ func TestPrintPlan_WarnsAboutUnisolatedCheckouts(t *testing.T) {
 	for _, want := range []string{
 		"! not isolated: /home/u/IdeaProjects/lbox-ai-memory — a local git checkout\n",
 		`    named by the goal and node "mem-impl"`,
-		"stops at the repository it was invoked from (/home/u/IdeaProjects/lbox-argo-applications)",
+		"isolates no checkout at all",
+		"not even the one it was invoked\n  from (/home/u/IdeaProjects/lbox-argo-applications)",
 		"create its own git worktree there first",
 		"heuristic read of the plan's text",
 		"warning, not a refusal",
@@ -387,6 +388,16 @@ func TestPrintPlan_WarnsAboutUnisolatedCheckouts(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the unisolated-path warning is missing %q:\n%s", want, got)
 		}
+	}
+
+	// And it may not claim an isolation auto does not have. `auto` rejects
+	// cwd: and worktree: at plan time, so it provisions no managed worktree
+	// anywhere — including in the repository it was invoked from. A sentence
+	// contrasting "the checkouts above" with a protected invocation repository
+	// would teach the opposite of SECURITY.md, "Isolation stops at the
+	// invocation repository", to the only readers who will never open it.
+	if strings.Contains(got, "isolation stops at the repository") {
+		t.Errorf("the warning presents the boundary as one of protection; it is one of ownership:\n%s", got)
 	}
 
 	// And it stays a signal: a plan naming nothing outside the boundary
@@ -426,7 +437,7 @@ func TestPrintPlan_UnisolatedWarningNamesTheMentionAndTheMissingRepository(t *te
 	if !strings.Contains(got, `    named by node "impl", written as /home/u/IdeaProjects/other/pkg/server/handler.go`) {
 		t.Errorf("the detail line must keep the path as it was written:\n%s", got)
 	}
-	if !strings.Contains(got, "was not invoked from a git repository (/home/u/scratch)") {
+	if !strings.Contains(got, "was not invoked from a git\n  repository (/home/u/scratch)") {
 		t.Errorf("outside a repository, the message must say so rather than name one:\n%s", got)
 	}
 }

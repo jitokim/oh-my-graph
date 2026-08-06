@@ -718,11 +718,22 @@ func toolName(rule string) string {
 // list is what the bounded re-plan hands back. A repair that fixed one
 // refusal and tripped the next would have burned its single retry, so
 // collecting all of them here is what decides whether one retry converges.
+//
+// The list's ORDER is part of that: graph-level refusals lead, because the
+// repair prompt keeps only the first maxIssuesInPrompt bytes of it. See the
+// comment in the body.
 func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	if len(g.Nodes) == 0 {
 		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
 	}
-	var issues []*PlanError
+	// The graph-level refusals come FIRST, and the order is load-bearing.
+	// repairSection truncates the joined reasons at maxIssuesInPrompt from the
+	// FRONT only, and validatePlannedFeedbackReach's sentence is by some margin
+	// the longest one this validator emits (~600 characters against 83–172 for
+	// a per-node refusal). Appended last, a dozen short per-node refusals would
+	// push it past the cut, the corrected reply would re-emit the same arc, and
+	// the single repair would be spent on being refused for it twice.
+	issues := validatePlannedFeedbackReach(g)
 	add := func(err *PlanError) {
 		if err != nil {
 			issues = append(issues, err)
@@ -748,7 +759,6 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		add(validatePlannedNodeRetry(node))
 		add(validatePlannedNodeTools(node))
 	}
-	issues = append(issues, validatePlannedFeedbackReach(g)...)
 	return issues
 }
 
@@ -800,12 +810,15 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 // here at all: the sweep skips a parent upstream of the rerun target, so
 // nothing is reported and nothing is refused. The other one, a context node
 // BESIDE the work under a shared ancestor, is refused, and that is the residual
-// false positive this rule accepts. It is a narrow one and the refusal names
-// its own second exit: a spec the work is judged against belongs upstream of
-// the work, so `ancestor → context → work → review` both satisfies this check
-// and is the better plan — the implementer gets to read the criteria it will be
-// judged on. Only a producer that is genuinely beside the work AND genuinely
-// not judged is priced wrongly, and it is priced at one planner call.
+// false positive this rule accepts. It is a narrow one, and the refusal carries
+// the exit that fits it rather than only the one that fits #118: a spec the work
+// is judged against belongs upstream of the work, so
+// `ancestor → context → work → review` both satisfies this check and is the
+// better plan — the implementer gets to read the criteria it will be judged on.
+// Which of the two exits to take is a question the refusal asks outright, for
+// the reason given at plannedFeedbackReachRefusal. Only a producer that is
+// genuinely beside the work AND genuinely not judged is priced wrongly, and it
+// is priced at one planner call.
 //
 // One refusal per declarer, not per producer: the advisories for a declarer
 // share one Suggestion, so per-producer refusals would repeat one correction N
@@ -839,6 +852,7 @@ func validatePlannedFeedbackReach(g *graph.Graph) []*PlanError {
 			plural(len(producers), "it", "they"),
 			plural(len(producers), "is", "are"),
 			suggestionByDeclarer[declarer],
+			plural(len(producers), "it", "them"),
 		)})
 	}
 	return issues
@@ -846,10 +860,25 @@ func validatePlannedFeedbackReach(g *graph.Graph) []*PlanError {
 
 // plannedFeedbackReachRefusal is the sentence the planner gets back — and,
 // after a refusal, the sentence a repair prompt quotes verbatim, which is why
-// it names the replacement target rather than only the fault. Every %[n]s is
-// explicit: the producer list and the agreement words each appear twice, at
-// different positions in the two halves.
-const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun: %[2]q}, whose loop body excludes %[3]s — %[4]s this one depends on, so nothing the arc re-runs can rewrite what %[5]s produced. A defect this node finds there is re-judged unchanged every round until the rounds are spent, at full cost. Aim the arc at %[7]q instead: its loop body covers every producer this node depends on and still validates. If %[3]s %[6]s only stable context this node reads rather than work it judges, have %[2]q depend on %[5]s instead — context the work is built against belongs upstream of the loop, not beside it."
+// it names the replacement target rather than only the fault.
+//
+// It offers two corrections and asks WHICH before either, rather than leading
+// with one. The two are not interchangeable and the rule cannot choose between
+// them: it sees `depends_on`, not which files a prompt judges. Leading with
+// "aim the arc at X" would be the right instruction for #118's shape and the
+// wrong one for the residual false positive above — it would pull a context
+// node into the loop and re-run the criteria every round, the exact harm
+// graph.LintFeedbackReach's upstream-of-target skip exists to avoid. The
+// planner wrote both prompts and is the one party that knows which it has, so
+// the question goes to it. The covering target is still named, so the refusal
+// stays as actionable as the weakening promises.
+//
+// Every %[n]s is explicit: the producer list, the pronouns standing in for it
+// and the agreement words each recur, at different positions across the three
+// sentences. The pronoun comes in both cases — %[5]s subject, %[8]s object —
+// because the last clause takes it as an object ("depend on them"), which the
+// subject form got wrong in the plural.
+const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun: %[2]q}, whose loop body excludes %[3]s — %[4]s this one depends on, so nothing the arc re-runs can rewrite what %[5]s produced. A defect this node finds there is re-judged unchanged every round until the rounds are spent, at full cost. Which correction is right depends on what %[3]s %[6]s. If %[5]s %[6]s work this node judges, aim the arc at %[7]q instead: its loop body covers every producer this node depends on and still validates. If %[5]s %[6]s only stable context this node reads rather than work it judges, have %[2]q depend on %[8]s instead — context the work is built against belongs upstream of the loop, not beside it."
 
 // quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
 // `"a", "b" and "c"`.

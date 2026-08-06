@@ -117,6 +117,63 @@ func TestScanUnisolated_QuietOnEverythingThatIsNotAForeignCheckout(t *testing.T)
 	}
 }
 
+// The other half of the false-positive suite, and the half that was missing:
+// every case above is a path that is NOT a checkout, so together they prove
+// only that the rule requires a `.git`, which is true by construction. The
+// noise that actually reaches a user comes from paths that ARE checkouts and
+// are not the hazard the message describes. On the machine this was written on,
+// /usr/local/Homebrew, ~/.nvm and a Claude Code plugin marketplace under
+// ~/.claude are all real clones; a prompt naming a binary inside one is
+// ordinary text, and one line of that furniture teaches the reader to scroll
+// past the whole block.
+//
+// The home half runs end to end, through a real `.git` under a fake $HOME. The
+// system half cannot: a test may not create /usr/local/Homebrew, and asserting
+// against whatever this machine happens to have installed would be a test of
+// the machine. isToolInstallation is a pure path function, so it is asserted
+// directly — and asserted in both directions, because a skip that swallowed
+// work trees would be worse than the noise it removes.
+func TestScanUnisolated_QuietOnToolInstallationCheckouts(t *testing.T) {
+	home := resolveSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	repo := newCheckout(t, filepath.Join(home, "IdeaProjects", "invocation-repo"))
+	nvm := newCheckout(t, filepath.Join(home, ".nvm"))
+	if err := os.MkdirAll(filepath.Join(nvm, "versions", "node", "v20", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marketplace := newCheckout(t, filepath.Join(home, ".claude", "plugins", "marketplaces", "a-plugin"))
+
+	for _, text := range []string{
+		"run ~/.nvm/versions/node/v20/bin/node against the fixture",
+		"run " + filepath.Join(nvm, "versions", "node", "v20", "bin", "node"),
+		"read " + filepath.Join(marketplace, "README.md"),
+	} {
+		if scan := scanOf(t, repo, text); scan != nil {
+			t.Errorf("warned about %+v; %q names a tool installation, not a work tree", scan.Paths, text)
+		}
+	}
+
+	for _, root := range []string{
+		"/usr/local/Homebrew", "/opt/homebrew", "/Library/Developer/thing",
+		"/System/thing", "/nix/store/thing", filepath.Join(home, ".oh-my-zsh"),
+		filepath.Join(home, ".config"),
+	} {
+		if !isToolInstallation(root) {
+			t.Errorf("isToolInstallation(%s) = false: a checkout there is an installation, not a work tree", root)
+		}
+	}
+	// And the narrowing stops exactly where work starts. A checkout here is
+	// the #103 hazard and must still be reported.
+	for _, root := range []string{
+		filepath.Join(home, "IdeaProjects", "other"), filepath.Join(home, "src", "other"),
+		filepath.Join(home, "work", "other"), "/tmp/a-clone", home,
+	} {
+		if isToolInstallation(root) {
+			t.Errorf("isToolInstallation(%s) = true: that is a work tree, and dropping it loses the warning #103 asked for", root)
+		}
+	}
+}
+
 // Goals are written the way people type, and people type ~. An unexpanded ~
 // mention would silently miss the exact spelling the reporter's goal used.
 func TestScanUnisolated_ExpandsTheHomeSpelling(t *testing.T) {

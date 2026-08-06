@@ -52,13 +52,21 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   warning and never a refusal: a multi-repository goal is legitimate and the
   engine simply cannot isolate it. The rule requires the path to resolve into a
   real `.git` checkout (a clone or a linked worktree), so `/tmp` scratch paths,
-  system paths, templated paths, files that do not exist and every path inside
-  the invocation repository stay silent — verified against the graphs this repo
-  ships — and it is computed on the planner's own prompts before any `SKILL.md`
-  body is inlined, so a skill's documented paths are never blamed on the plan.
-  The printed text states its own blind spots (a path built at run time, one
-  arriving through `--input` or an artifact, a relative path), because a
-  heuristic that reads as complete is worse than none.
+  templated paths, files that do not exist and every path inside the invocation
+  repository stay silent — verified against the graphs this repo ships — and it
+  drops a checkout that is a tool installation rather than a work tree (rooted
+  under `/usr`, `/opt`, `/Library`, `/System`, `/nix`, or under a dot-directory
+  of `$HOME`), because Homebrew, nvm, oh-my-zsh, a plugin marketplace and a
+  chezmoi-managed `~/.config` are all real clones and a warning about a HEAD
+  nobody will switch is what teaches a reader to scroll past the block. It is
+  computed on the planner's own prompts before any `SKILL.md` body is inlined,
+  so a skill's documented paths are never blamed on the plan. The printed text
+  states its own blind spots (a path built at run time, one arriving through
+  `--input` or an artifact, a relative path, a tool installation's own clone),
+  and says outright that in `auto` mode oh-my-graph isolates no checkout at all
+  — not even the one it was invoked from, where planned nodes work directly in
+  your tree — because a heuristic that reads as complete, or a boundary that
+  reads as protection, is worse than none.
 
 ### Changed
 
