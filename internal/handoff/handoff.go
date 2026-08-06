@@ -175,12 +175,19 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 // <run-dir>/<node-id>.out and remembers both the artifact path (for dependents'
 // {{ artifacts.<id> }}) and the session id (for a session-child's --resume and
 // for the ledger). Called once per successful node.
+//
+// Owner-only (0o700 / 0o600), the same stance saveGeneratedSpec takes for a
+// saved plan and for the same reason: an artifact is a model's full reply, and
+// with `| inline` it is the text that then goes into a downstream node's
+// prompt. On a shared machine that is nobody else's business. This narrows the
+// at-rest exposure only — a running node's prompt is still visible in argv to
+// any co-tenant (SECURITY.md, "What is exposed while a node runs").
 func (h *Handoff) PersistOutput(nodeID, result, sessionID string) error {
-	if err := os.MkdirAll(h.runDir, 0o755); err != nil {
+	if err := os.MkdirAll(h.runDir, 0o700); err != nil {
 		return fmt.Errorf("create run dir %q: %w", h.runDir, err)
 	}
 	path := h.artifactPath(nodeID)
-	if err := os.WriteFile(path, []byte(result), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(result), 0o600); err != nil {
 		return fmt.Errorf("persist output for node %q: %w", nodeID, err)
 	}
 
@@ -237,13 +244,15 @@ func (h *Handoff) Seed(nodeID, artifactPath, sessionID string) {
 // rename within one directory is atomic on POSIX, so a resume that races a
 // crash reads either the previous round's complete payload or the new one,
 // never a torn file — and the map is updated only after the rename, so the
-// in-memory payload never runs ahead of what a resume would see.
+// in-memory payload never runs ahead of what a resume would see. The payload
+// ends up owner-only like a PersistOutput artifact without a mode argument
+// here: os.CreateTemp creates at 0o600 and the rename carries that mode over.
 func (h *Handoff) SetFeedback(nodeID, payload string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	path := h.feedbackPath(nodeID)
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create feedback dir for node %q: %w", nodeID, err)
 	}
 

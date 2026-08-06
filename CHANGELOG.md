@@ -275,6 +275,60 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   no `result_matches` to read it, and on a `result_matches` that dropped its
   exit-zero guard.
 
+### Security
+
+- **`serve` refuses to be framed, so the gate button cannot be clickjacked.**
+  Every guard on the gate routes asks where a request came from — the loopback
+  bind, the `Host` check, the `Origin` check, the constant-time token compare —
+  and a clickjack answers all four honestly, because it never leaves this
+  origin. A hostile page frames `http://127.0.0.1:8642/run/<id>/` (or the
+  dashboard's `/`, which needs no run id at all), overlays it, and baits a
+  click onto approve: the click lands inside the framed page, which reads its
+  own token and is stamped with this server's own `Origin`, and a gate nobody
+  read starts a leg that spends money. Both front-ends now send
+  `frame-ancestors 'none'` + `X-Frame-Options: DENY`, plus `nosniff` and a full
+  CSP written against what the shipped `ui/` assets actually do (`style-src`
+  carries `'unsafe-inline'` for the `<style>` cytoscape injects at renderer
+  init; `script-src` stays `'self'` with no `'unsafe-eval'`). Verified in a real
+  headless Chrome: both pages render with zero violations, and a cross-origin
+  framer is refused — against a deliberately unfixed build on a second port the
+  same page framed the view successfully.
+- **Run directories and their contents are written owner-only (`0700`/`0600`).**
+  A run directory is the run's whole memory — every node's prompt and inputs
+  (`state.json`), every node's full reply (`<node-id>.out`), feedback payloads,
+  the event stream — and it was world-readable at `0755`/`0644` while `auto`'s
+  saved plan spec had already been narrowed to `0700`/`0600` for the same
+  reason. Existing run directories are **not** re-moded (`MkdirAll` does not
+  chmod one), so `resume` and `serve` keep reading runs from older binaries
+  unchanged; narrow them yourself with `chmod -R go-rwx ~/.oh-my-graph/runs` if
+  you want to. What `oh-my-graph init` scaffolds into your own project is
+  deliberately untouched at `0644`. **This narrows the at-rest exposure only —
+  it does not close it:** a node's full prompt is still passed in argv, where
+  `ps auxww` exposes it for the node's lifetime, and it also lands in the CLI's
+  own session transcript under `~/.claude/projects`.
+- **The argv exposure is documented rather than claimed closed.** SECURITY.md
+  gains "What is exposed at rest" and "What is exposed while a node runs".
+  Because `| inline` is used pervasively, a prompt in argv carries the content
+  of upstream artifacts, not just its own text. Moving the prompt to stdin was
+  considered and deliberately not done: it touches the seam with the most
+  careful lifecycle handling in the repo (`waitDelay`, process-group kill,
+  `--output-format json` parsing), adds a deadlock surface, has an unmeasured
+  interaction with `--resume`, and would need a `make smoke` measurement against
+  a live CLI before anyone should believe it.
+- **The exec-seam invariant walks the whole repository instead of three named
+  directories.** `internal/invariants` enumerated `internal`, `cmd` and `graphs`,
+  so a new top-level Go package importing `os/exec` would have been invisible to
+  the guard that enforces this project's core security property — and a guard
+  that scans nothing fails silent-green. It is now a repo-root walk with a
+  skip-list (dot/underscore directories, `testdata`, `vendor`, `bin`), which
+  changes zero results today (every directory holding `.go` files is already
+  under those three) and is self-verifying: a skip-list that broke the walk
+  makes all eight allowlisted files report stale and the test go red. A new
+  companion test rejects `os.StartProcess`/`syscall.ForkExec` and friends by AST
+  selector — the spawn route an import allowlist cannot see — without an import
+  check on `syscall`, which eight non-spawning files here import for signals,
+  flock, filesystem-type and pid probing.
+
 ### Documentation
 
 - **ADR 0015 — an abandoned run is derived from the lock, not repaired into

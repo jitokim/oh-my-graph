@@ -346,6 +346,14 @@ func (e *SchemaMismatchError) Error() string {
 // cannot be encoded (e.g. a Graph holding invalid JSON) fails without disturbing
 // an existing good file at path. Write stamps s.Schema to the current Schema
 // constant, so the caller cannot accidentally persist a wrong version.
+//
+// A snapshot is owner-only at rest, which matters because Graph carries every
+// node's prompt verbatim and Inputs carries the values interpolated into them.
+// The file mode is 0o600 without a mode argument here — os.CreateTemp creates
+// at 0o600 and the rename carries that over — and the run directory is now
+// created 0o700 above, so the enclosing directory no longer hands a co-tenant
+// the rest of the run. This is at rest ONLY: while a node runs, the same prompt
+// text is in its argv (SECURITY.md, "What is exposed while a node runs").
 func Write(path string, s Snapshot) error {
 	s.Schema = Schema
 
@@ -355,7 +363,7 @@ func Write(path string, s Snapshot) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create run dir %q: %w", dir, err)
 	}
 

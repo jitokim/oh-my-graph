@@ -41,11 +41,55 @@ var allowedExecImporters = map[string]bool{
 	"internal/browser/exec.go": true,
 }
 
-// scannedDirs are the source trees the invariant covers: all production code
-// lives under these roots. `graphs` is one of them — it holds the //go:embed
-// declaration for the shipped example graphs, and a file added there would
-// otherwise be outside this walk.
-var scannedDirs = []string{"internal", "cmd", "graphs"}
+// skippedDirs are the directory NAMES the repo-root walk does not descend
+// into, at any depth. Everything else in the repo is scanned.
+//
+// The walk is deliberately an inversion: it used to enumerate the trees to
+// cover (internal, cmd, graphs), which meant a new top-level Go package was
+// invisible to the guard that enforces this project's core security property —
+// and the failure mode of a guard that scans nothing is a silent green CI, not
+// an error. A skip-list fails the other way: a directory nobody thought to
+// exclude is scanned, and the worst case is a false positive somebody has to
+// look at.
+//
+// The entries:
+//
+//   - dot-directories (.git, .github, .claude) and underscore-prefixed ones are
+//     matched by rule below, not listed here — Go's own tooling ignores them
+//     as package directories, so nothing compiled can live there.
+//   - testdata: excluded from every Go build by the toolchain itself, so a .go
+//     file there is never linked into a binary and cannot be a spawner.
+//   - vendor: not present today (this repo has no vendored Go modules), but
+//     `go mod vendor` would otherwise drop thousands of third-party files into
+//     the walk, many of which legitimately import os/exec. Note that
+//     internal/serve/ui/vendor holds vendored JAVASCRIPT and no .go files, so
+//     skipping it costs nothing either way.
+//   - bin: the gitignored build output directory (`make build`).
+//
+// A botched skip-list cannot fail silently: the stale check in
+// TestOnlyTheFourExecSeamsImportOsExec asserts that every allowlisted file was
+// FOUND to import os/exec, so a walk that stopped reaching internal/ reports
+// all eight allowlisted files stale (measured, by adding "internal" here) and
+// goes red rather than passing on an empty scan.
+var skippedDirs = map[string]bool{
+	"testdata": true,
+	"vendor":   true,
+	"bin":      true,
+}
+
+// skipDir reports whether the walk should skip the directory named name — a
+// listed exclusion above, or a dot/underscore directory, which the Go toolchain
+// itself never treats as a package directory. The repo root arrives as "." from
+// filepath.Rel and must never be skipped by the dot rule.
+func skipDir(name string) bool {
+	if name == "." || name == ".." {
+		return false
+	}
+	if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+		return true
+	}
+	return skippedDirs[name]
+}
 
 // childenvImportPath is this repo's shared child-env scrub package — the one
 // TestExecSeamCallSitesScrubEnv requires each seam's call site to route its
@@ -65,43 +109,58 @@ var execSeamCallSites = []string{
 	"internal/browser/exec.go",  // Seam 4: browser.ExecOpener (ADR 0006)
 }
 
+// walkRepoGoFiles parses every non-test .go file in the repository — the whole
+// tree from the root down, minus skipDir — and calls visit with each file's
+// repo-relative slash-separated path and its parsed AST.
+//
+// Walking from the root rather than from a list of trees is what keeps this
+// guard honest: a new top-level package is covered the day it lands, without
+// anyone remembering to enroll it. Test files are excluded because a test may
+// legitimately spawn a helper process; the invariant is about production code.
+func walkRepoGoFiles(t *testing.T, repoRoot string, visit func(rel string, file *ast.File)) {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		// A full parse, not parser.ImportsOnly: TestNoDirectProcessSpawns
+		// needs the call expressions, and one walk serves both checks.
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		visit(filepath.ToSlash(rel), file)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", repoRoot, err)
+	}
+}
+
 func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 
 	importers := map[string]bool{}
-	fset := token.NewFileSet()
-	for _, dir := range scannedDirs {
-		root := filepath.Join(repoRoot, dir)
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-			if err != nil {
-				return err
-			}
-			for _, imp := range file.Imports {
-				importPath, err := strconv.Unquote(imp.Path.Value)
-				if err != nil {
-					return err
-				}
-				if importPath == "os/exec" {
-					rel, err := filepath.Rel(repoRoot, path)
-					if err != nil {
-						return err
-					}
-					importers[filepath.ToSlash(rel)] = true
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walking %s: %v", dir, err)
+	walkRepoGoFiles(t, repoRoot, func(rel string, file *ast.File) {
+		if _, ok := importLocalName(file, "os/exec"); ok {
+			importers[rel] = true
 		}
-	}
+	})
 
 	var unexpected, stale []string
 	for file := range importers {
@@ -129,6 +188,86 @@ func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 		t.Errorf("%s is in allowedExecImporters but no longer imports os/exec; "+
 			"remove the stale entry so the allowlist stays exact.", file)
 	}
+}
+
+// directSpawnSelectors are the package-qualified calls that start a process
+// WITHOUT going through os/exec — the bypass the import allowlist above cannot
+// see, because a file using one of them need not import os/exec at all.
+//
+// Keyed by import path so each is matched against the file's own local name for
+// that package (an alias, or the path's last segment), never against a bare
+// identifier that could belong to something else entirely.
+//
+// This is a selector scan and deliberately NOT an import allowlist: `syscall`
+// is imported by eight non-test files in this repo for signal handling, flock,
+// filesystem-type probing and pid probing, none of which spawn anything. An
+// import-based check would be noise, and noise that gets muted guards nothing.
+// Nothing in the repo calls any of these today; the scan exists so that stays
+// true by test rather than by habit.
+var directSpawnSelectors = map[string][]string{
+	"os":      {"StartProcess"},
+	"syscall": {"ForkExec", "StartProcess", "Exec", "CreateProcess"},
+}
+
+// TestNoDirectProcessSpawns closes the gap under TestOnlyTheFourExecSeamsImportOsExec:
+// that test proves only four files import os/exec, but os/exec is not the only
+// way to spawn. os.StartProcess and syscall.ForkExec are the same capability one
+// layer down, and a file calling them would sail past an import allowlist.
+//
+// The rule is absolute rather than allowlisted: even the four seams route their
+// spawns through os/exec (which is what TestExecSeamCallSitesScrubEnv can then
+// verify scrubs the child env). A direct fork/exec anywhere — seam or not — would
+// be a spawn with no scrub check over it, so there is nobody to exempt.
+func TestNoDirectProcessSpawns(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+
+	type finding struct{ file, call string }
+	var found []finding
+
+	walkRepoGoFiles(t, repoRoot, func(rel string, file *ast.File) {
+		for importPath, names := range directSpawnSelectors {
+			local, ok := importLocalName(file, importPath)
+			if !ok {
+				continue
+			}
+			for _, name := range names {
+				ast.Inspect(file, func(n ast.Node) bool {
+					call, isCall := n.(*ast.CallExpr)
+					if !isCall {
+						return true
+					}
+					if isPkgCall(call, local, name) {
+						found = append(found, finding{rel, importPath + "." + name})
+					}
+					return true
+				})
+			}
+		}
+	})
+
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].file != found[j].file {
+			return found[i].file < found[j].file
+		}
+		return found[i].call < found[j].call
+	})
+	for _, f := range found {
+		t.Errorf("%s calls %s, which spawns a process without going through os/exec — so "+
+			"the import allowlist in TestOnlyTheFourExecSeamsImportOsExec cannot see it and "+
+			"TestExecSeamCallSitesScrubEnv cannot prove its child environment is scrubbed. "+
+			"Route the spawn through one of the four exec seams, or write the ADR for a new "+
+			"one (docs/adr/0002, 0005, 0006).", f.file, f.call)
+	}
+}
+
+// isPkgCall reports whether call is `<pkg>.<name>(...)`.
+func isPkgCall(call *ast.CallExpr, pkg, name string) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == pkg
 }
 
 // TestExecSeamCallSitesScrubEnv closes the defense-in-depth gap that the import

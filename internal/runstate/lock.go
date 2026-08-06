@@ -235,15 +235,22 @@ func (l *heldLock) release() error {
 	return nil
 }
 
+// acquireLock takes the run's lock, creating the run directory owner-only
+// (0o700 / 0o600) if this is the leg that gets there first — the lock is
+// usually the first thing written into a fresh run directory, so its MkdirAll
+// is what decides that directory's mode for everything the run writes after it.
+// An existing directory keeps whatever mode it had: MkdirAll does not chmod
+// one, so a run directory from an older binary stays 0o755 and resume/serve
+// read it exactly as before.
 func acquireLock(path string) (*heldLock, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create run directory for lock %q: %w", path, err)
 	}
 	if !flockSupported {
 		return acquireLegacyLock(path)
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock %q: %w", path, err)
 	}
@@ -301,7 +308,7 @@ func legacyLockHeldError(path string, head []byte) *LockHeldError {
 // release unlinks. It writes no marker, because a reader must never conclude
 // "free, therefore abandoned" from a file whose writer holds no flock.
 func acquireLegacyLock(path string) (*heldLock, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
 			return nil, &LockHeldError{Path: path, Legacy: true}
