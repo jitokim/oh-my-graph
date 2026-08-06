@@ -522,7 +522,12 @@ directory never holds a losing reply beside a winning artifact. The causes are a
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
-produces and silently mean "never retry".
+produces and silently mean "never retry". A **negative `max`** is refused at
+load for the same reason: the scheduler adds `max` to the attempt count only
+when it is positive, so `max: -1` is discarded and the node runs once — the
+identical quiet non-retry, from a value no author can have meant. `max: 0` is
+legal and untouched: it IS the extra-attempt count a node declaring no retry
+already has.
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
@@ -642,10 +647,10 @@ leg did. `graph.go` states this at the struct itself; copy the pair, not just
 the `yaml` half.
 
 `SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
-reject an empty `command`, an unparseable `timeout`, a timeout over the ceiling,
-and an uncompilable `output_matches` — at load, naming the node
-(`GraphValidationError`), never mid-run. Changing this struct touches loader,
-validator, shipped example graphs and tests together.
+reject an uncompilable `result_matches`, an empty `command`, an unparseable
+`timeout`, a timeout over the ceiling, and an uncompilable `output_matches` — at
+load, naming the node (`GraphValidationError`), never mid-run. Changing this
+struct touches loader, validator, shipped example graphs and tests together.
 
 ### Verdict patterns — `result_matches` reads raw markdown
 
@@ -653,6 +658,13 @@ validator, shipped example graphs and tests together.
 (`outcome.Result`, the CLI's `result` field), with no normalization whatsoever:
 no trimming, no markdown stripping, no case folding, no `(?m)`. `^` and `$`
 therefore anchor to the start and end of the whole reply text.
+
+The pattern is **compiled at load**, exactly like `verify.output_matches`: a
+pattern that does not compile is a `GraphValidationError` naming the node and
+quoting the pattern, so `lint` and `run --dry-run` refuse the graph and no node
+is spawned. A verdict pattern is a declaration, and a broken declaration is
+knowable from the file alone — it used to be diagnosed only inside the
+scheduler's evaluation, which runs after its own node has been paid for.
 
 Models emit markdown. A prompt that says "begin your reply with PASS" leaves
 the model free to write `**PASS**`, and it does — that exact reply has failed
@@ -951,6 +963,18 @@ incompatible snapshot is refused rather than misread:
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
 - **gate decisions so far**, and which gate the run is paused at.
 
+**One field the snapshot holds but `resume` does not trust**: an auto graph's
+`success_check.verify`. A verification is a command the ENGINE runs, outside
+every layer of the auto ceiling — which is why `validatePlannedNodeVerify`
+refuses a planner-authored one at plan time — so a resumed leg reconstructing a
+planned graph strips any it finds and **refuses the resume**, naming the nodes
+(`coordinator.ReattachVerifyCommand`, ADR 0016 §4). The discriminator is the
+snapshot's tool policies, non-empty exactly for a planned graph: a hand-written
+graph's `verify:` is the user's own reviewed artifact and round-trips
+untouched. Today the refusal is terminal, since only `auto` will parse
+`--verify-cmd`; a `resume` that re-supplies the command is what makes such a
+run resumable.
+
 **What the snapshot deliberately does NOT hold:** in-degree counts and the
 ready set. Both are *derived* from `graph × completed`, so persisting them would
 create a second source of truth that can go stale. `resume` recomputes them:
@@ -1034,12 +1058,88 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   lane's surviving dir or re-attaches the branch a paused leg retained, so
   the lane continues its committed state instead of dying on the ref
   collision (see "Worktree isolation").
-- A `resume.lock` (`O_EXCL`, holding the pid) guards against two concurrent
-  legs of the same run id double-running nodes: the `run`/`auto` first leg
-  holds it for its whole duration, and every `resume` takes the same lock — so
-  a `resume --retry-failed` raced against a still-in-flight run fails on the
-  lock instead of double-spawning. A stale lock is reported with the exact
-  path to delete.
+- A `resume.lock` guards against two concurrent legs of the same run id
+  double-running nodes: the `run`/`auto` first leg holds it for its whole
+  duration, and every `resume` takes the same lock — so a
+  `resume --retry-failed` raced against a still-in-flight run fails on the
+  lock instead of double-spawning. **The lock is the kernel's exclusive
+  `flock(2)` on that file, not the file's existence** (ADR 0015): the kernel
+  releases it when the holder dies, however it dies, so a held lock means a
+  live leg and there is nothing stale to report. The file's first line is a
+  format marker (`oh-my-graph-lock 1`) and its second is the holder's pid —
+  informational, a label on an already-established liveness, never a liveness
+  test (a pid was measured being recycled by an unrelated process). Release
+  unlocks and closes but does **not** unlink: acquiring is open-then-flock,
+  and an unlink between those steps would let one leg hold the lock on an
+  orphaned inode while another took it uncontended on a fresh one. A lock file
+  with no marker was written by a pre-`flock` binary, whose live leg holds no
+  flock at all; on the **acquire** path it keeps the old semantics, where
+  existence is the lock, a human decides, and the refusal names the exact path
+  to delete. A reader can ask the same file whether a leg is still alive
+  without creating, writing or removing anything (`runstate.ProbeLock`, a
+  shared-lock probe on a read-only fd); a missing file, a non-local filesystem
+  and any error alike answer *unknown*, which means the answer this tool gave
+  before ADR 0015.
+- **A pre-`flock` lock file is read under a second, weaker liveness rule**, and
+  it is the reason an old run resolves differently from a new one. The flock is
+  silent about a file whose writer never took one, so folding "unmarked" into
+  *unknown* would leave every run abandoned before the upgrade reading
+  `RUNNING` for the rest of time — there is no later moment at which such a
+  file becomes readable, because the only thing that can change is a pid and
+  the marker will never appear. Its single pid line is the only signal it
+  carries, and it is read in **one direction only**: a pid that names no
+  process at all (`kill(pid, 0)` → `ESRCH`) means the leg that wrote the file
+  has exited — *free*; a pid that names something is a holder or a recycled
+  stranger, indistinguishable — *unknown*; an unreadable pid — *unknown*. This
+  does not reopen the pid recycling ADR 0015 refutes, which produced a false
+  *alive*: pid-alive is never read as evidence here, so recycling can only move
+  an answer to *unknown*, never onto a live run. And the acquire path is
+  deliberately unchanged, so no answer derived this way can start a second leg
+  by itself. The residual false-dead that cannot be mechanised away is a
+  pre-`flock` leg inside a container read from outside it, where a
+  namespace-local pid means nothing and the format records no namespace to
+  check. The arm self-expires, but **not by itself**: the acquire path still
+  refuses an unmarked lock under legacy semantics, so recovering such a run is
+  two steps — the surfaces derive `ABANDONED` and print `resume … --retry-failed`,
+  that resume is refused with the exact `rm` for the stale file, and only then
+  does the retry take (and write) a marked lock, after which the flock alone
+  decides forever. The human on that path is ADR 0015 §4's deliberate choice,
+  not an oversight; what the hint cannot do is promise the second step away.
+- **An abandoned run is derived from that probe, never repaired into the feed
+  (ADR 0015 §2).** One rule, stated once in `internal/runstatus` and shared by
+  every surface: *in flight = an open leg AND a held lock; abandoned = an open
+  leg AND an affirmatively free lock; everything else is settled, and every
+  doubt reads as in flight.* No reader writes anything — `events.jsonl` keeps
+  only lines a scheduler emitted. `runs list` renders `ABANDONED` beside
+  `RUNNING` (never `FAIL`: a FAIL is a verdict about the work, which never got
+  one), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
+  right now", `watch` refuses to tail a stream that will never get another
+  line, the dashboard paints the card abandoned, and the single-run live view —
+  the surface that carries the gate button — reads the same answer off
+  `/api/graph` (additive `abandoned`/`hint` keys, absent on every other run):
+  its header says `ABANDONED`, the nodes its dead leg left open stop spinning
+  and stop tailing that leg's transcript, and the hint sits above the feed the
+  button lives in. That page's own stream reducer applies the same leg boundary
+  the two Go reducers do — every `run_started` ends the previous leg's running
+  nodes. The leg that opens a run
+  must hold the lock **before** its first event and **after** its last, or a
+  starting run would read abandoned for its first instants; that ordering is
+  stated at `acquireRunLock` and pinned by
+  `TestRunLeg_LockBracketsTheEventStream`.
+- **The residual hazard is an orphaned `claude`, and the mitigation is
+  wording.** Every child is spawned with `Setpgid`, so a death that took the
+  engine alone (SIGHUP, `kill -9`, a panic, an OOM kill) leaves a subprocess
+  still running and still spending while the run reads abandoned. There are two
+  deliberate spenders on such a run — `resume` and the gate button — so the
+  recovery hint reaches every surface either is reachable from: the `ABANDONED`
+  row, `watch`'s refusal, `resume`'s own stderr, the card, and the run page the
+  card links to, which is where the button actually is. Both must say what the
+  click would allow *before* it is pressed. ADR 0015 rejects probing for the orphan;
+  that would be a fifth exec seam.
+- **Recovery is `resume --retry-failed`, and nothing new** — except for a run
+  killed before its first node settled, which has no `state.json` and therefore
+  nothing to resume from: its hint says "run the graph again", and `resume`
+  itself fails on it with that sentence instead of a bare "no such file".
 
 **Auto-planned graphs still may not contain gates.** `validatePlannedNodes`
 already rejects `type: gate` and continues to: an unattended run whose planner
@@ -1123,12 +1223,23 @@ one, and it answers 409 like any other view that cannot resume.
   It does **not** call `runfeed.InFlight`: one walk already carries the leg
   state, and a card is rebuilt for every changed run on every tick, so a
   second read of the same stream was doubling the I/O on the hot path.
-  `buildCard` therefore *re-implements* `InFlight`'s rule (`started != "" &&
-  ended == ""`) inline. That is a duplicated rule, so the agreement is
-  enforced rather than structural: `TestBuildCard_InFlightAgreesWithRunfeed`
-  judges the inline derivation against `runfeed.InFlight` itself, which is
-  what keeps a card from disagreeing with `runs list`, `watch` or the run's
-  own view about the same run. Cost is the snapshot's
+  `buildCard` therefore reads the leg state (`started != "" && ended == ""`)
+  off its own walk, and then hands it to the SHARED derivation
+  (`runstatus.Probe`), which composes it with the lock exactly as `runs
+  list`, `ResolveRun`, `watch` and the single-run view's `/api/graph` do — the
+  composition is stated once, not five times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
+  held by an enforced agreement rather than a structural one:
+  `TestBuildCard_AgreesWithTheSharedRule` judges the inline leg derivation
+  against `runfeed.InFlight`, and the card's state and `ResolveRun`'s
+  preference against `runstatus.Of`, which is what keeps a card from
+  disagreeing with `runs list`, `watch` or the run's own view about the same
+  run. A card's state vocabulary is the node vocabulary plus two:
+  `gate-paused`, and **`abandoned`** — a leg the stream left open whose lock
+  is free, i.e. whose process is gone (muted, never red: nothing failed, the
+  work simply has no verdict). Nodes that leg left running render abandoned
+  rather than spinning forever and tally as pending, and the card carries the
+  recovery hint, because the page it links to has a gate button that starts a
+  leg with one click. Cost is the snapshot's
   per-node total, the same accounting `runs list` prints. A run directory
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
@@ -1400,9 +1511,13 @@ the README rather than discovered.
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
 user's subagents — and therefore which system prompt, tool grant and model —
-runs the node, routing around Layers 0–3 entirely. `success_check.verify:` would
-let it run arbitrary shell outside every guard. Both are **rejected** in
-`validatePlannedNodes`, alongside `bypassPermissions`, `cwd` and `type: gate`.
+runs the node, routing around Layers 0–3 entirely. A **planner-authored**
+`success_check.verify:` would let it run arbitrary shell outside every guard.
+Both are **rejected** in `validatePlannedNodes`, alongside `bypassPermissions`,
+`cwd` and `type: gate`. What is rejected there is the planner's authorship, not
+the field: trusted code may attach a `verify:` strictly *after* validation, from
+the user-supplied `--verify-cmd` string, and does
+(`coordinator.attachVerifyCommand`, ADR 0016 §2).
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -1421,10 +1536,11 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `budget_usd`, `timeout`, `retry` | allowed |
+| `budget_usd`, `timeout` | allowed |
+| `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
@@ -1577,9 +1693,23 @@ ledger — so the summary never under-counts silently.
   like any external consumer would, which is what keeps it honest; the
   full contract, including how it versions alongside `state.json`, is
   docs/RUN-FEED.md.
+- **RunStatus** (`internal/runstatus`) — the one composition of the two facts
+  those views need and neither owner has: the stream's leg state (RunFeed's
+  `InFlight`) and the run's liveness (RunState's `ProbeLock`). It answers
+  settled / in flight / abandoned, spawns nothing and writes nothing, and it
+  owns the recovery wording every surface prints. RunFeed stays a pure
+  stdlib reader of the stream and RunState keeps the lock file it already
+  owned; this is only their meeting point (ADR 0015 §2).
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
+  Every PASS row is qualified by **how** the verdict was reached — `verified` /
+  `self-reported` / `exit-only` / `approved`, a closed set derived in trusted
+  code from the predicates the engine actually evaluated (ADR 0016 §6). The
+  qualifier sits beside `Verdict`, never replacing it, so nothing that tests for
+  PASS/FAIL changes; it is carried into `state.json` and onto `node_passed` from
+  the same `ledger.Record`, so the table, the snapshot and the feed cannot
+  disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
 exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →
@@ -1633,8 +1763,9 @@ internal/fence/fence.go + _test                the shared data fence: a per-call
 internal/coordinator/{coordinator,router,agentmap,skillmap,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (internal/fence, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
-internal/runstate/{runstate,recorder,lock}.go + _test  state.json snapshot — atomic write, schema version, run lock, resume load
+internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
+internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
@@ -1664,7 +1795,9 @@ opt-in per node with a loud warning, never a default. For auto-planned graphs
 just a prompt convention and not just a declaration check:
 `coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
 is empty or names a tool outside the fixed allowlist, or that sets `cwd`,
-`agent`, or `success_check.verify`; and `Plan.ToolPolicies` imposes a per-node
+`agent`, or a planner-authored `success_check.verify` (trusted code attaches the
+user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
+imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
 grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are

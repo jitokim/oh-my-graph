@@ -63,6 +63,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // stateFileName and lockFileName are the two run-directory files this server
@@ -71,7 +72,9 @@ import (
 // guard the gate routes take before deciding anything.
 const (
 	stateFileName = "state.json"
-	lockFileName  = "resume.lock"
+	// The lock's name is runstate's, not this package's: since ADR 0015 §3 it
+	// is contract surface, and the package that takes and probes it owns it.
+	lockFileName = runstate.LockFileName
 )
 
 // DefaultPort is the port `serve` binds when --port is not given. It is an
@@ -185,7 +188,9 @@ func New(runDir, runID string) *Server {
 //	/            the served page, rendered with this process's gate token
 //	/index.html  the same page (the FileServer's own name for it)
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges,
-//	             plus the goal-lineage block when the run is a goal cycle)
+//	             plus the goal-lineage block when the run is a goal cycle, plus
+//	             the abandoned answer and its recovery hint when the run's open
+//	             leg has no process left behind it — ADR 0015 §4)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //	/api/transcript  a RUNNING node's live transcript tail as JSON (?node=<id>)
@@ -195,7 +200,10 @@ func New(runDir, runID string) *Server {
 //
 // Every GET reads only: the run directory, plus — for /api/transcript — the
 // one transcript file the run's own feed names (see handleTranscript's
-// boundary note). The two gate POSTs are the mutating routes (ADR 0014): they
+// boundary note). /api/graph's liveness answer keeps that property: the lock
+// probe behind it takes a SHARED, non-blocking lock on a read-only fd and
+// creates, writes and removes nothing (ADR 0015 §1, runstate.ProbeLock).
+// The two gate POSTs are the mutating routes (ADR 0014): they
 // continue the paused run through the injected GateResumer, and they carry
 // their own CSRF guard on top of the ones every route gets. Every route sits
 // behind requireLoopbackHost, the DNS-rebinding guard; the method-scoped
@@ -276,6 +284,18 @@ type graphPayload struct {
 	// iterated auto goal (ADR 0011 §4: serve stays a per-run view and shows
 	// the goal block in its header). Absent on every single-cycle run.
 	Goal *goalPayload `json:"goal,omitempty"`
+	// Abandoned and Hint carry the one run-level fact the page cannot derive
+	// from the stream it is handed: a leg the stream leaves open whose process
+	// is gone (ADR 0015 §2). Deriving it needs the run lock, and only this side
+	// can probe that. Both are absent on every other run, so a payload for a
+	// healthy run is byte-identical to before.
+	//
+	// The page is the surface that carries the gate button, and that button
+	// starts a leg that spends money (ADR 0014), so it is the surface that most
+	// needs the sentence — the same argument that puts Hint on the dashboard
+	// card that links here (ADR 0015 §4, the residual-hazard paragraph).
+	Abandoned bool   `json:"abandoned,omitempty"`
+	Hint      string `json:"hint,omitempty"`
 }
 
 // goalPayload is runstate.GoalRef re-encoded for the UI rather than embedded,
@@ -321,15 +341,15 @@ func (s *Server) loadRunGraphAndGoal() (*graph.Graph, *runstate.GoalRef, error) 
 	return g, snap.Goal, nil
 }
 
-// handleGraph serves the run's DAG structure. A snapshot that exists but
-// cannot be read (corrupt, or a schema this binary does not understand —
-// runstate.Load's loud refusal) is a 500 carrying the reason, not a silent
-// empty graph.
+// handleGraph serves the run's DAG structure, plus the run-level liveness
+// answer the page cannot reach by itself. A snapshot that exists but cannot be
+// read (corrupt, or a schema this binary does not understand — runstate.Load's
+// loud refusal) is a 500 carrying the reason, not a silent empty graph.
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	g, goal, err := s.loadRunGraphAndGoal()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			writeJSON(w, graphPayload{RunID: s.runID, Available: false})
+			writeJSON(w, s.withRunStatus(graphPayload{RunID: s.runID, Available: false}))
 			return
 		}
 		http.Error(w, fmt.Sprintf("load run graph: %v", err), http.StatusInternalServerError)
@@ -343,7 +363,37 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	for _, node := range g.Nodes {
 		payload.Nodes = append(payload.Nodes, graphNode{ID: node.ID, Type: node.Type, DependsOn: node.DependsOn})
 	}
-	writeJSON(w, payload)
+	writeJSON(w, s.withRunStatus(payload))
+}
+
+// withRunStatus attaches the abandoned answer and its recovery hint, through
+// internal/runstatus — the ONE composition of "an open leg AND a free lock"
+// that `runs list`, the dashboard card, ResolveRun and `watch` also go through,
+// never a second copy of the rule (ADR 0015 §2).
+//
+// Available doubles as "this run has a readable snapshot", which is the fact the
+// hint splits on: with no snapshot there is nothing to resume from, so the
+// honest advice is to run the graph again. That is the same split the card makes.
+//
+// A stream this binary refuses to read (a newer schema) answers "not
+// abandoned": serve's posture there is to keep rendering rather than refuse
+// (handleEvents), and a false abandoned would invite an operator to resume a
+// live run — the direction ADR 0015 never takes.
+//
+// The answer is the one the request is served at, and it is not re-pushed: the
+// page re-asks on every leg boundary it sees, and a run that dies while the
+// page is already open keeps painting until then. That is the accepted gap
+// ADR 0015 §4 states for `watch` — no idle-time probe — reached here for the
+// same reason: the probe belongs to a reader asking a question, not to the pure
+// stream follower.
+func (s *Server) withRunStatus(payload graphPayload) graphPayload {
+	status, err := runstatus.Of(s.runDir)
+	if err != nil || status != runstatus.Abandoned {
+		return payload
+	}
+	payload.Abandoned = true
+	payload.Hint = runstatus.Hint(s.runID, payload.Available)
+	return payload
 }
 
 // handleResult serves one node's handoff artifact (`<run-dir>/<node-id>.out`,

@@ -2,6 +2,9 @@ package graph
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +295,90 @@ func TestParse_VerifyWithUncompilableOutputMatchesRejected(t *testing.T) {
 	}
 	if !strings.Contains(vErr.Reason, "output_matches") {
 		t.Fatalf("reason should name the offending field: %q", vErr.Reason)
+	}
+}
+
+// --- success_check.result_matches: the same standing as its sibling ---------
+//
+// result_matches used to compile for the first time inside the scheduler's
+// success-check evaluation, which runs only after its own node has been spawned
+// and paid for: a typo'd pattern cost a full node before it was diagnosed.
+
+// yamlSingleQuoted renders s as a YAML single-quoted scalar — the one scalar
+// form with no escape sequences at all, where the only special sequence is a
+// doubled `”` for a literal quote. Go's strconv.Quote would emit a Go string
+// literal that YAML then reads as a DOUBLE-quoted scalar and re-escapes under
+// its own rules; the two happen to agree on every pattern below, but a regex
+// carrying an escape the two spell differently would reach the validator as
+// something other than what the test names.
+func yamlSingleQuoted(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// resultMatchesGraph renders a one-node graph declaring the given
+// result_matches pattern, so a regex full of backslashes and brackets reaches
+// the validator verbatim.
+func resultMatchesGraph(pattern string) []byte {
+	return []byte("name: r\nnodes:\n  - id: judged\n    prompt: judged\n    success_check:\n      result_matches: " + yamlSingleQuoted(pattern) + "\n")
+}
+
+// TestParse_ResultMatchesAcceptedExactlyWhenCompilable states the property the
+// fix has to hold, rather than one example of it: load accepts a result_matches
+// pattern exactly when regexp accepts it. The oracle is regexp.Compile itself,
+// so the test cannot pass by refusing everything or by waving everything
+// through, and a graph that reaches the scheduler can carry no pattern the
+// scheduler could fail to compile.
+func TestParse_ResultMatchesAcceptedExactlyWhenCompilable(t *testing.T) {
+	patterns := []string{
+		`^[*_` + "`" + `\s]*PASS[*_` + "`" + `\s]*$`, // the shape graphs/fragments/e2e-verify.yaml ships
+		`PASS`,
+		`MERGED — [0-9a-f]{7,}`,
+		`[unclosed`,
+		`(`,
+		`*`,
+		`(?P<`,
+		`a{2,1}`,
+	}
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			_, compilable := regexp.Compile(pattern)
+			_, err := Parse(resultMatchesGraph(pattern))
+
+			if compilable == nil {
+				if err != nil {
+					t.Fatalf("pattern %q compiles, so load must accept it: %v", pattern, err)
+				}
+				return
+			}
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != "judged" {
+				t.Fatalf("error named node %q, want judged", vErr.NodeID)
+			}
+			if !strings.Contains(vErr.Reason, "result_matches") {
+				t.Errorf("reason should name the offending field: %q", vErr.Reason)
+			}
+			if !strings.Contains(vErr.Reason, pattern) {
+				t.Errorf("reason should quote the offending pattern %q: %q", pattern, vErr.Reason)
+			}
+		})
+	}
+}
+
+// TestParse_ResultMatchesSurvivesLoad is the other half of the property: a
+// compilable pattern is not merely accepted, it reaches the scheduler intact.
+// Validation that quietly dropped the field would satisfy the test above.
+func TestParse_ResultMatchesSurvivesLoad(t *testing.T) {
+	const pattern = `^\s*PASS\s*$`
+	g, err := Parse(resultMatchesGraph(pattern))
+	if err != nil {
+		t.Fatalf("valid result_matches rejected: %v", err)
+	}
+	n, ok := g.NodeByID("judged")
+	if !ok {
+		t.Fatal("node judged did not survive parsing")
+	}
+	if n.SuccessCheck.ResultMatches != pattern {
+		t.Errorf("result_matches = %q, want %q", n.SuccessCheck.ResultMatches, pattern)
 	}
 }
 
@@ -650,6 +737,45 @@ nodes:
 		if !strings.Contains(vErr.Reason, valid) {
 			t.Errorf("reason should list valid cause %q: %q", valid, vErr.Reason)
 		}
+	}
+}
+
+// TestParse_RetryMaxBoundJudgedAtLoad pins the other half of the same footgun:
+// the scheduler only adds retry.max to the attempt count when it is positive,
+// so a negative bound is discarded and the node silently runs once — the exact
+// outcome a typoed cause produces. Stated as the boundary rather than one
+// example: negative is refused, and the two bounds that mean something
+// (declaring no extra attempt, declaring some) still load and keep their value.
+func TestParse_RetryMaxBoundJudgedAtLoad(t *testing.T) {
+	for _, max := range []int{-3, -1, 0, 2} {
+		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
+			g, err := Parse([]byte(fmt.Sprintf(`
+name: retry-bound
+nodes:
+  - { id: a, prompt: a, retry: { max: %d, on: [nonzero_exit] } }
+`, max)))
+
+			if max >= 0 {
+				if err != nil {
+					t.Fatalf("retry.max %d must be accepted: %v", max, err)
+				}
+				n, _ := g.NodeByID("a")
+				if n.Retry == nil || n.Retry.Max != max {
+					t.Fatalf("retry.max did not survive parsing: %+v", n.Retry)
+				}
+				return
+			}
+			vErr := asValidationError(t, err)
+			if vErr.NodeID != "a" {
+				t.Fatalf("error named node %q, want a", vErr.NodeID)
+			}
+			if !strings.Contains(vErr.Reason, "retry.max") {
+				t.Errorf("reason should name the offending field: %q", vErr.Reason)
+			}
+			if !strings.Contains(vErr.Reason, strconv.Itoa(max)) {
+				t.Errorf("reason should quote the offending bound %d: %q", max, vErr.Reason)
+			}
+		})
 	}
 }
 

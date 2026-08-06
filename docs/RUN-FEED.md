@@ -50,30 +50,26 @@ verdict in `state.json` is FAIL and `judged` is absent.
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
 
-Two things reach outside this contract, and neither is something an external
-consumer needs:
+One thing reaches outside this contract, and it is not something an external
+consumer needs: `serve` tails a running node's own claude transcript from
+`~/.claude/projects` to stream its live output. That is a *supplement* to the
+feed, not a substitute — the transcript is claude's file, on claude's schema,
+and the run-feed events (`node_started`/`node_retried` publishing the attempt's
+session id) are what let any consumer locate it.
 
-- `serve` tails a running node's own claude transcript from
-  `~/.claude/projects` to stream its live output. That is a *supplement* to
-  the feed, not a substitute — the transcript is claude's file, on claude's
-  schema, and the run-feed events (`node_started`/`node_retried` publishing
-  the attempt's session id) are what let any consumer locate it.
-- The run's `resume.lock` is how *writers* coordinate, not how a reader
-  reads. `executeGraph` (`cmd/oh-my-graph/main.go`) and `executeResume`
-  (`cmd/oh-my-graph/resume.go`) hold it for a whole leg, and `serve`'s gate
-  endpoint creates and unlinks the very same lock before it accepts a
-  decision (`runstate.AcquireLock`, `internal/serve/gate.go`) — holding it is
-  how "no leg is in flight" is established. The lock is an internal file with
-  no compatibility promise (see the last line of this document).
+A third file, `resume.lock`, is **not** internal any more: it is how a reader
+tells a run that is thinking from one whose process is gone. See "Liveness —
+`resume.lock`" below.
 
 Two in-repo readers also apply this contract's rules by hand instead of
 through `internal/runfeed`, so follow `internal/runfeed` rather than them:
-`serve`'s dashboard card re-derives `runfeed.InFlight`'s rule inline off a
+`serve`'s dashboard card re-derives `runfeed.InFlight`'s leg rule inline off a
 walk it already does (the two are held together by
-`TestBuildCard_InFlightAgreesWithRunfeed`), and `serve`'s `/api/transcript`
-hand-rolls its own scanner without the newer-`schema` refusal `runfeed.Walk`
-makes. Everything this document versions and guarantees is `state.json` and
-`events.jsonl`.
+`TestBuildCard_AgreesWithTheSharedRule`; the *composition* with the lock is not
+duplicated — every in-repo surface goes through `internal/runstatus`), and
+`serve`'s `/api/transcript` hand-rolls its own scanner without the
+newer-`schema` refusal `runfeed.Walk` makes. Everything this document versions
+and guarantees is `state.json` and `events.jsonl`.
 
 `state.json` and `events.jsonl` together are a **stable consumer API**. The
 files answer complementary questions:
@@ -170,9 +166,13 @@ Guarantees:
   The same caveat `runfeed.InFlight` carries at the run level applies here at
   the node level: **the stream records intent, not process liveness.** A
   crashed or killed oh-my-graph leaves its last `node_started` unterminated,
-  so such a node reads as running until the run is resumed or its directory is
-  cleaned up. There is no liveness probe, deliberately — every consumer stays
-  a pure reader of the two contract files.
+  so by the stream alone such a node reads as running forever. Two things
+  bound that, and a consumer wanting to match oh-my-graph's own views should
+  apply both: **every `run_started` is a leg boundary** — a node left running
+  by an earlier leg is not running, whatever the current leg does — and the
+  lock answers whether the *current* leg's writer is alive at all (see
+  "Liveness" below). The stream itself stays free of process liveness: no
+  reader ever appends to it, and nothing in these two files changed.
 
   Use `state.json` for *what has settled and at what cost*, and the stream for
   *what is happening now*.
@@ -267,7 +267,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 |---|---|---|
 | `run_started` | — | A scheduler leg begins, before any node launches. |
 | `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
-| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
+| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)*, `round` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
@@ -290,6 +290,22 @@ per-line cap below for the actual hard limit. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+`node_passed` additionally carries `provenance`: **how** the PASS was reached
+(ADR 0016 §6), one of a closed set of four —
+
+| `provenance` | the PASS was reached by |
+|---|---|
+| `verified` | a `success_check.verify` command the ENGINE ran and whose exit code — and `output_matches`, when declared — it judged. |
+| `self-reported` | `result_matches` — the node emitted the right words. Nothing outside the node observed anything. |
+| `exit-only` | a subprocess ran and exited 0, with no predicate over what it did. |
+| `approved` | a human approved a `type: gate` node — no subprocess, and the strongest provenance in the set. |
+
+It reports **provenance, never adequacy**: `verified` says the engine gathered
+the evidence, not that the evidence was sufficient. It is an optional additive
+field, **no schema bump** — absent means the run predates it (or, on
+`node_failed`, that it never applies: only a PASS has a provenance). A consumer
+that has never heard of it parses these events exactly as before.
 
 Node events emitted by a feedback re-execution (ADR 0010) additionally carry
 `round`, the 1-based feedback round the execution belongs to — an optional
@@ -365,6 +381,96 @@ to pause).
   error, never a silent truncation — a stream whose line exceeds it, treating
   it as corrupt or foreign; an external consumer may assume the same bound.
 
+## Liveness — `resume.lock` (ADR 0015)
+
+`events.jsonl` says a leg *started*; it cannot say whether that leg's process
+is still alive, because a killed process writes no `run_finished`. The run
+directory's `resume.lock` answers that, and it is documented here — rather than
+left internal — because oh-my-graph's own read-back commands consult it, and
+this document promises they read what any consumer can read, with no side
+channel.
+
+- **A leg holds an exclusive `flock(2)` on `resume.lock` for its whole
+  duration**, taken before it writes its first event and still held after its
+  last. The kernel releases it when the holder dies, however it dies. (True on
+  darwin and linux, the platforms with `flock(2)` — the only ones the two
+  promises below hold on. Elsewhere a build-tagged fallback keeps the pre-ADR-0015
+  scheme, where the file's *existence* is the lock and release removes it; a
+  consumer there gets nothing from this section and should use the open-leg rule
+  unconditionally, which is what the "unknown" arm below already prescribes.)
+- **A consumer probes with a SHARED lock (`LOCK_SH|LOCK_NB`) on a read-only
+  fd**, and unlocks immediately. A shared probe conflicts with the holder's
+  exclusive lock — which is the question — but not with other probes, so
+  observers never block each other or flicker one another into a false
+  "alive". **Never probe with an exclusive lock**: that would briefly block
+  the very leg you are observing. A reader creates, writes and removes
+  nothing.
+- **Beside an OPEN leg** (the stream's last `run_started` has no
+  `run_finished` after it): a *contended* probe means the writer is alive —
+  the run is in flight; a *succeeding* probe means the writer is gone — the
+  run is **abandoned**, and no event will ever be appended to it. Beside a
+  closed leg the lock says nothing and is not worth probing.
+- **A missing file, a filesystem whose `flock` is not the kernel's own (linux
+  emulates it over NFS as POSIX record locks), and any probe error all mean
+  *unknown*, and unknown means the open-leg rule** — the answer this tool gave
+  before ADR 0015, and a safe one. It is also what a consumer that cannot or
+  will not `flock` should use unconditionally. Nothing is ever concluded
+  abandoned from the absence of evidence.
+- **The marker is the file's first line, and it is exactly
+  `oh-my-graph-lock 1`** — a bare version-tagged token, no trailing fields,
+  terminated by a newline. It is stated here as a literal because the whole
+  section forks on it: a consumer that cannot tell a marked file from an
+  unmarked one cannot implement either rule. Everything after that line is
+  internal (see below). The `1` is the *lock file's* own format version, not
+  either file schema, and it is what a future format would bump; a first line
+  that is neither this literal nor absent is not a marked file, and takes the
+  unmarked arm.
+- **A lock file whose first line is not the marker predates this contract, and
+  resolves under a different, weaker rule.** It was written by a binary that
+  took no `flock` at all, so probing it says nothing about its writer. What it
+  does carry is one line holding that writer's pid, and oh-my-graph reads that
+  pid in **one direction only**: a pid that names no process at all
+  (`kill(pid, 0)` → `ESRCH`) means the leg has exited, so beside an open leg
+  the run reads **abandoned**; a pid that names some process proves nothing (it
+  may be the holder, it may be an unrelated process that inherited a recycled
+  pid — exactly what was measured) and is *unknown*; an unreadable or
+  malformed pid is *unknown*. This rule exists only so runs abandoned before
+  the upgrade are diagnosable at all, and it self-expires — the next leg to
+  take such a run's lock writes a marked file, after which the `flock` alone
+  decides forever. **That next leg needs a human, though**: oh-my-graph's own
+  acquire path still refuses an unmarked lock under pre-`flock` semantics
+  (existence is the lock), naming the file to delete, so the sequence on such a
+  run is *derive abandoned → the offered `resume` is refused → delete the named
+  file → resume again*. Nothing expires on its own timer, and a consumer must
+  not read "self-expires" as "will eventually stop being unmarked without
+  anyone acting". **A consumer is free not to implement it:** treating every
+  unmarked file as *unknown* is always safe, and differs only in reporting a
+  pre-upgrade corpse as in flight.
+
+The file's *contents* carry exactly one promise: the marker line. In a file
+that **has** it, everything after — the holder's pid — is explicitly
+informational and explicitly **not a liveness test**: a pid in a lock file was
+measured being recycled by an unrelated process, reading "alive" for hours.
+That measurement is also why the pre-marker rule above reads a pid only in the
+one direction recycling cannot corrupt. The file is **never removed** (on the
+`flock` platforms; the fallback noted above is the exception, and there its
+presence is the whole signal), so its presence carries no information either; it
+is a handle, not a flag.
+
+Two things this deliberately does not do: no reader ever repairs the stream by
+appending a terminal event on a dead writer's behalf (the history stays exactly
+what the schedulers wrote), and no new event type, field or verdict is
+introduced anywhere. A consumer that has never heard of "abandoned" reads the
+same bytes and derives what it always did.
+
+Finally, the honest caveat about what a free lock does and does not prove: it
+proves the *oh-my-graph* leg is gone, not that its children are. The engine
+spawns each `claude` in its own process group, so a death that took only the
+engine can leave a subprocess still running and still spending. Recovering such
+a run (`oh-my-graph resume <run-id> --retry-failed`) may therefore run a node
+alongside its own orphan; oh-my-graph's surfaces warn about this rather than
+probing for it.
+
 ## Version / compatibility rule
 
 Both files follow the same rule:
@@ -386,5 +492,11 @@ Both files follow the same rule:
   `schema` per event and surface (not silently misread) a version they do not
   understand.
 
-Anything in the run directory not listed here (lock files, temp files) is
-internal and carries no compatibility promise.
+Anything in the run directory not listed here (temp files) is internal and
+carries no compatibility promise. `resume.lock` is listed here — see
+"Liveness" — and carries exactly the two promises stated there (an exclusive
+`flock` for a leg's duration, and the format marker as its first line);
+everything else about it, its pid line included, remains internal. The
+pre-marker rule under "Liveness" is not a third promise: it describes lock
+files already on disk, written before this contract existed, and promises
+nothing about the ones this binary writes.

@@ -142,6 +142,43 @@ func TestTranscript_SettledNodeIs204(t *testing.T) {
 	}
 }
 
+// TestTranscript_ALaterLegClosesTheDeadLegsNode is the per-node instance of the
+// bug the run-level derivation fixes: a leg died with `a` still running, so the
+// stream carries a node_started for it with no terminal at all. A later leg —
+// here a resume that ran only `b` — is a BOUNDARY: `a` is not running, and the
+// dead leg's session id must not be served as "what it is doing right now",
+// which is exactly what a reducer that only sees node events does, forever,
+// across every later resume that does not re-run that node.
+func TestTranscript_ALaterLegClosesTheDeadLegsNode(t *testing.T) {
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(twoNodeGraph)})
+	writeEvents(t, dir, "run-1",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a", SessionID: sessionA},
+		// The leg dies here: no node terminal, no run_finished.
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "b", SessionID: sessionB},
+	)
+	s, projects := newTranscriptServer(t, dir)
+	writeTranscript(t, projects, sessionA,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"from the dead leg"}]}}`)
+	writeTranscript(t, projects, sessionB,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"from the live leg"}]}}`)
+
+	if rec := getTranscript(t, s, "a"); rec.Code != 204 {
+		t.Errorf("a node left open by a dead leg: status = %d, want 204 (body %q)", rec.Code, rec.Body.String())
+	}
+	// The leg that is actually running still serves its own tail: the boundary
+	// clears state, it does not disable the endpoint.
+	rec := getTranscript(t, s, "b")
+	if rec.Code != 200 {
+		t.Fatalf("the live leg's node: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if payload := decodeTranscript(t, rec); len(payload.Entries) != 1 || payload.Entries[0].Text != "from the live leg" {
+		t.Errorf("entries = %+v, want the live leg's own transcript", payload.Entries)
+	}
+}
+
 // TestTranscript_PausedGateIs204 pins the third terminal. A pausing gate
 // emits no node terminal at all, so gate_paused IS the last thing the stream
 // says about that node in this leg: the reducer must settle it (running

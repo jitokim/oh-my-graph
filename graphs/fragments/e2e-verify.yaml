@@ -9,12 +9,14 @@
 # this gate asks for, in prose) and `verify_command` (the command the ENGINE
 # runs as evidence). The command is bound rather than hardcoded because this
 # fragment is meant to travel: `make local` is this repo's build, not every
-# repo's, and a gate that names the wrong command is not a gate. Everything
-# else is the proven shape: session continuation, synchronous execution, a
-# verdict-only final reply, and an evidence-grounded success_check whose
-# failure is a retry cause (the engine runs `verify` itself and judges the
-# exit code, so a node that reports PASS without the suite passing does not
-# pass).
+# repo's, and a gate that names the wrong command is not a gate. Bind it from
+# an input or a literal, never from an artifact: the ENGINE runs the command
+# through `sh -c`, so an artifact binding would hand a model's own output
+# straight to a shell. Everything else is the proven shape: session
+# continuation, synchronous execution, a verdict-only final reply, and an
+# evidence-grounded success_check whose failure is a retry cause (the engine
+# runs `verify` itself and judges the exit code, so a node that reports PASS
+# without the suite passing does not pass).
 fragment: e2e-verify
 description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
 substitutions: [checks, verify_command]

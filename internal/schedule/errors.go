@@ -24,6 +24,19 @@ type NodeCheckError struct {
 	// rendered, so a feedback arc must not fire on it (ADR 0010) — see
 	// isJudgmentFailure.
 	Infrastructure bool
+	// Evidence is what the verification actually printed, bounded at
+	// maxEvidenceRunes rather than at the 240-rune Detail bound — set only on a
+	// judged verify failure, empty on every other predicate and on a
+	// verification that never reached a verdict.
+	//
+	// It exists because Detail is sized for a TABLE and this payload is sized
+	// for a MODEL. When a feedback arc fires on a failed verification, the
+	// re-run's payload is this string, not the node's own narration (ADR 0016
+	// §2's companion): for exactly that failure the node's result text is the
+	// word `PASS` — the narration the verification just contradicted — so
+	// handing the fixer node its own `PASS` back is the one payload guaranteed
+	// to be useless. A compiler's error list is the payload's whole point.
+	Evidence string
 }
 
 func (e *NodeCheckError) Error() string {

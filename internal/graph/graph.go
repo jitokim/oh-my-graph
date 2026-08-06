@@ -175,7 +175,9 @@ type SuccessCheck struct {
 	ExitZero bool `yaml:"exit_zero" json:"exit_zero,omitempty"`
 	// ResultMatches, when non-empty, is a regular expression that must match
 	// somewhere in the node's .result text. Empty means "no result predicate".
-	// Self-reported: a node passes it by emitting the right words.
+	// Self-reported: a node passes it by emitting the right words. Compiled at
+	// load time by Validate, like OutputMatches, so a bad regex is a load
+	// error rather than a verdict handed down after the node was paid for.
 	ResultMatches string `yaml:"result_matches" json:"result_matches,omitempty"`
 	// Verify, when non-nil, is a command the engine runs and judges itself.
 	// A pointer so "absent" and "declared but zero-valued" stay distinguishable.
@@ -208,8 +210,9 @@ const (
 // Retry is a node's flat re-run policy: up to Max additional attempts when the
 // failure cause is listed in On. A retried attempt always starts a fresh claude
 // session (never resumes a failed one). Every entry in On must be one of the
-// Cause* tokens above — an unknown cause would match nothing and silently mean
-// "never retry", so Validate rejects it at load time (validateRetryCauses).
+// Cause* tokens above — an unknown cause would match nothing — and Max must not
+// be negative — a negative bound is discarded by the scheduler. Either silently
+// means "never retry", so Validate rejects both at load time (validateRetry).
 type Retry struct {
 	Max int      `yaml:"max" json:"max,omitempty"`
 	On  []string `yaml:"on" json:"on,omitempty"`

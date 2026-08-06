@@ -22,6 +22,9 @@
   --passed: #0ca30c;
   --failed: #d03b3b;
   --gate-paused: #ec835a;
+  /* A leg whose process is gone (ADR 0015): muted, never red — nothing failed,
+     the work simply never got a verdict. */
+  --abandoned: #7d8894;
 }
 
 /* Dark tokens twice — once for the OS preference (only when no explicit
@@ -118,6 +121,7 @@ header {
 .dot.passed { background: var(--passed); }
 .dot.failed { background: var(--failed); }
 .dot.gate-paused { background: var(--gate-paused); }
+.dot.abandoned { background: var(--abandoned); }
 
 .elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
 .cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }
@@ -138,6 +142,19 @@ header {
 /* --- layout ---------------------------------------------------------------- */
 
 main { flex: 1; display: flex; min-height: 0; }
+
+/* The abandoned run's recovery hint: full-width prose under the header, in the
+   same anatomy the dashboard card's hint uses (muted rule, never red — nothing
+   failed). It sits above the feed on purpose; the gate button it warns about is
+   down in the feed (ADR 0015 §4). */
+.run-hint {
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 0.4rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid var(--abandoned);
+}
 
 /* --- feed (the main surface) ------------------------------------------------ */
 
