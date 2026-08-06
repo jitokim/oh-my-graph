@@ -235,8 +235,10 @@ granted nothing by it: the command is yours, the engine runs it on its own
 verify seam, and it judges the exit code itself. `--verify-timeout` bounds one
 execution (10 minutes by default, which is also the ceiling — not the 2-minute
 default a hand-written check gets, because a cold Gradle or Cargo build is
-exactly what that default was not sized for). A command that cannot run is
-refused **before** the planner call, so a typo costs nothing. `--plan-only`
+exactly what that default was not sized for). A plain program invocation that
+cannot run is refused **before** the planner call, so a typo costs nothing — a
+command carrying shell syntax (a pipe, an `&&`, a substitution) skips that
+check rather than have the pre-flight re-implement the shell. `--plan-only`
 prints the command and the sink nodes it will run at, so you can see it before
 buying the run, and every cycle of a `--max-cycles` goal loop plans a new graph
 that carries it. With no `--verify-cmd`, `auto` prints what it is *not*

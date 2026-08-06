@@ -80,8 +80,9 @@ code.
 oh-my-graph auto "fix the failing spec" --verify-cmd './gradlew build'
 ```
 
-The command is checked for runnability *before* the planner call, so a typo
-costs nothing; it is printed with the plan (`--plan-only` shows it, per sink
+The command is checked for runnability *before* the planner call when it is a
+plain program invocation, so a typo costs nothing — one carrying shell syntax is
+left for `sh -c` to resolve rather than parsed here; it is printed with the plan (`--plan-only` shows it, per sink
 node, with its timeout); it is bounded by `--verify-timeout`, which defaults to
 10 minutes and may not exceed it; and it is snapshotted into the run's saved
 `graph.json`. Every cycle of a `--max-cycles` goal loop plans a new graph and

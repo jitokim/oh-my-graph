@@ -25,9 +25,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `--verify-timeout` bounds one execution (10 minutes by default, which is also
   the ceiling — not the 2-minute default a hand-written check gets, because a
   cold Gradle or Cargo build is what that default was not sized for). The
-  command is checked for runnability *before* the planner call, naming the path
-  or the `PATH` that was searched, because a planner call is billed whether or
-  not the plan turns out to be usable. `--plan-only` prints the command and the
+  command is checked for runnability *before* the planner call when it is a
+  plain program invocation, naming the path or the `PATH` that was searched,
+  because a planner call is billed whether or not the plan turns out to be
+  usable; one carrying shell syntax skips that check rather than have the
+  pre-flight re-implement the shell. `--plan-only` prints the command and the
   sink nodes it will run at, so the flag that shows you a plan before you pay
   for it also shows you the shell the engine will run. Every cycle of a
   `--max-cycles` goal loop plans a new graph and every one of them carries it.

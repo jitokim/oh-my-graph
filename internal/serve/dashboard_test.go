@@ -935,6 +935,52 @@ func TestDashboardEvents_ARunGoneFromDiskButStillListedIsRemovedNotRedrawn(t *te
 	}
 }
 
+// TestDashboardEvents_APreRunfeedRunGoneFromDiskIsStillRemoved is the same
+// observation for the one run whose stamp deletion does not move: a directory
+// that has written neither its feed nor its snapshot yet stamps as empty, and
+// so does a directory that is gone. The two are told apart by the directory
+// check, which is why that check has to sit in FRONT of the unchanged-stamp
+// fast path — behind it, the sweep compares empty to empty, takes the fast
+// path, and the run stays present with no card_removed ever sent.
+//
+// Deliberately a separate test from the settled-run case above: a settled run's
+// stamp changes when its files go, so it reaches the check either way, and one
+// test cannot pin both orderings.
+func TestDashboardEvents_APreRunfeedRunGoneFromDiskIsStillRemoved(t *testing.T) {
+	root := runsRootWith(t, "run-young")
+
+	d := newTestDashboard(root)
+	d.lister = func(string) ([]string, error) { return []string{"run-young"}, nil }
+
+	stream, cancel := sseClientAt(t, d.Handler(), "/api/cards/events")
+	defer cancel()
+
+	// The card a directory that has said nothing yet must still get — the empty
+	// stamp the sweep now holds for it is the one the deletion will not change.
+	if card := readCard(t, stream); card.RunID != "run-young" {
+		t.Fatalf("first card = %q, want run-young", card.RunID)
+	}
+	if name, data := stream.readFrame(t); name != "cards_ready" {
+		t.Fatalf("frame = (%q, %s), want cards_ready", name, data)
+	}
+
+	graveyard := t.TempDir()
+	if err := os.Rename(filepath.Join(root, "run-young"), filepath.Join(graveyard, "run-young")); err != nil {
+		t.Fatalf("remove run dir: %v", err)
+	}
+
+	name, data := stream.readFrame(t)
+	if name != "card_removed" {
+		t.Fatalf("frame = (%q, %s), want card_removed — a gone run whose stamp never moved must still be removed", name, data)
+	}
+	var removed struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(data), &removed); err != nil || removed.RunID != "run-young" {
+		t.Errorf("card_removed payload = %s (%v), want run-young", data, err)
+	}
+}
+
 // --- security: the dashboard and its mounted runs refuse to be framed --------
 
 func TestDashboard_RefusesToBeFramed(t *testing.T) {

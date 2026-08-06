@@ -272,9 +272,6 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 		for _, runID := range runIDs {
 			present[runID] = true
 			stamp := stampRun(d.runsRoot, runID)
-			if prev, known := seen[runID]; known && prev == stamp {
-				continue
-			}
 			// The listing and the stamp just taken are two observations of a
 			// tree that changes under us, and a run deleted between them stamps
 			// as empty — which without this check is announced as a CHANGED
@@ -285,8 +282,17 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 			// its contract files yet, which gets its card); gone means the
 			// listing was stale, so this run is not present in this sweep at all
 			// and the removal pass below speaks for it immediately.
+			//
+			// It is confirmed BEFORE the unchanged-stamp fast path, not after,
+			// because an empty stamp is also what a run that has not written its
+			// contract files yet stamps as: deleting such a run leaves the stamp
+			// equal to the one already seen, and a check behind that comparison
+			// would never run for exactly the run it was written for.
 			if runDirGone(d.runsRoot, runID) {
 				delete(present, runID)
+				continue
+			}
+			if prev, known := seen[runID]; known && prev == stamp {
 				continue
 			}
 			seen[runID] = stamp
@@ -357,8 +363,9 @@ func stampRun(runsRoot, runID string) runStamp {
 }
 
 // runDirGone reports whether a run directory the sweep listed has vanished
-// since it was listed. One stat, taken on the emit path only, so a quiet
-// dashboard still costs the two stats per run per tick stampRun takes.
+// since it was listed. One stat per listed run per tick, on top of the two
+// stampRun takes — the price of the check reaching a run whose stamp did not
+// move, which is the very run it exists for.
 //
 // Only a NOT-EXIST answer counts as gone: a directory that cannot be stat'd for
 // any other reason is still a run, and the card buildCard derives for it is how

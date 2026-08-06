@@ -1355,7 +1355,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
