@@ -373,8 +373,13 @@ func TestSeedPriorReply_RoundTripsWhatPersistFailureWrote(t *testing.T) {
 
 	// A fresh Handoff over the same directory — this is what `resume` builds.
 	next := New(dir, nil)
-	if err := next.SeedPriorReply("dev"); err != nil {
+	seeded, err := next.SeedPriorReply("dev")
+	if err != nil {
 		t.Fatalf("SeedPriorReply: %v", err)
+	}
+	if !seeded {
+		t.Error("SeedPriorReply reported nothing seeded for a reply it did seed; that bool is how a " +
+			"caller tells a retry carrying its previous attempt from one silently without it")
 	}
 	reply, ok := next.TakePriorReply("dev")
 	if !ok || reply != "what the failed attempt said" {
@@ -392,7 +397,7 @@ func TestTakePriorReply_HandsItOverExactlyOnce(t *testing.T) {
 	if _, err := h.PersistFailure("dev", "prior"); err != nil {
 		t.Fatalf("PersistFailure: %v", err)
 	}
-	if err := h.SeedPriorReply("dev"); err != nil {
+	if _, err := h.SeedPriorReply("dev"); err != nil {
 		t.Fatalf("SeedPriorReply: %v", err)
 	}
 
@@ -408,10 +413,19 @@ func TestTakePriorReply_HandsItOverExactlyOnce(t *testing.T) {
 // never ran, it failed to spawn, it said nothing) seeds nothing and errors
 // about nothing — running the retry without a quote is the pre-ADR-0016
 // behaviour, which is correct rather than degraded.
+//
+// It is nonetheless REPORTABLE: seeded comes back false, so a caller that knew
+// a reply was owed can say so instead of handing the node a silently degraded
+// retry that looks exactly like a whole one.
 func TestSeedPriorReply_MissingFileIsACleanNoOp(t *testing.T) {
 	h := New(t.TempDir(), nil)
-	if err := h.SeedPriorReply("never-ran"); err != nil {
+	seeded, err := h.SeedPriorReply("never-ran")
+	if err != nil {
 		t.Fatalf("SeedPriorReply on a missing file = %v, want nil", err)
+	}
+	if seeded {
+		t.Error("SeedPriorReply on a missing file reported a reply seeded; a nil error alone cannot " +
+			"tell the caller which of the two it got")
 	}
 	if reply, ok := h.TakePriorReply("never-ran"); ok {
 		t.Fatalf("TakePriorReply = %q, want nothing seeded", reply)
@@ -428,9 +442,12 @@ func TestSeedPriorReply_UnreadableFileIsReported(t *testing.T) {
 	if err := os.MkdirAll(FailedOutputPath(dir, "dev"), 0o755); err != nil {
 		t.Fatalf("stage an unreadable reply: %v", err)
 	}
-	err := New(dir, nil).SeedPriorReply("dev")
+	seeded, err := New(dir, nil).SeedPriorReply("dev")
 	if err == nil {
 		t.Fatal("SeedPriorReply on an unreadable path = nil, want the failure reported")
+	}
+	if seeded {
+		t.Error("SeedPriorReply reported a reply seeded alongside a read failure")
 	}
 	if !strings.Contains(err.Error(), "dev") {
 		t.Errorf("error %q does not name the node it is about", err)
@@ -446,7 +463,7 @@ func TestPersistFailure_RegistersNothing_PriorReplyIsNotAnArtifact(t *testing.T)
 	if _, err := h.PersistFailure("dev", "a reply that failed"); err != nil {
 		t.Fatalf("PersistFailure: %v", err)
 	}
-	if err := h.SeedPriorReply("dev"); err != nil {
+	if _, err := h.SeedPriorReply("dev"); err != nil {
 		t.Fatalf("SeedPriorReply: %v", err)
 	}
 	if _, err := h.Interpolate("{{ artifacts.dev }}"); err == nil {

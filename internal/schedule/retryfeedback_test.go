@@ -358,8 +358,12 @@ func seedPriorLegReply(t *testing.T, runDir string, h *handoff.Handoff, nodeID, 
 	if err := os.WriteFile(path, []byte(reply), 0o644); err != nil {
 		t.Fatalf("stage the previous leg's reply: %v", err)
 	}
-	if err := h.SeedPriorReply(nodeID); err != nil {
+	seeded, err := h.SeedPriorReply(nodeID)
+	if err != nil {
 		t.Fatalf("SeedPriorReply: %v", err)
+	}
+	if !seeded {
+		t.Fatalf("SeedPriorReply seeded nothing for %s; the staged reply never reached the leg", nodeID)
 	}
 }
 

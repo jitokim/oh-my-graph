@@ -442,22 +442,29 @@ func excerptFailedReply(reply string) string {
 // behaviour, which is correct rather than degraded. Any other read failure is
 // returned so the resume path can warn.
 //
+// seeded is what tells those two nils apart. Without it a caller reading only
+// the error cannot distinguish a retry that carries its previous attempt from
+// one that silently does not — the same outcome the caller sees when everything
+// worked — and the caller is the one that knows whether the file was EXPECTED:
+// a judged failure was written by the leg before it, so its absence is worth a
+// word, while an unjudged one never had a reply to leave.
+//
 // Nothing here decides WHETHER the reply should be quoted: the caller does,
 // from runstate.NodeRecord.Judged, which is the same isJudgmentFailure verdict
 // the in-leg retry is gated on, recorded by the leg that rendered it. Handoff
 // reads the file it wrote and nothing more.
-func (h *Handoff) SeedPriorReply(nodeID string) error {
+func (h *Handoff) SeedPriorReply(nodeID string) (seeded bool, err error) {
 	reply, err := os.ReadFile(FailedOutputPath(h.runDir, nodeID))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("re-read failed reply for node %q: %w", nodeID, err)
+		return false, fmt.Errorf("re-read failed reply for node %q: %w", nodeID, err)
 	}
 	h.mu.Lock()
 	h.priorReplies[nodeID] = string(reply)
 	h.mu.Unlock()
-	return nil
+	return true, nil
 }
 
 // TakePriorReply hands over a seeded prior reply and FORGETS it, so one seeded

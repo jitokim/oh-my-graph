@@ -332,12 +332,25 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// node, and losing the quote costs it context, not correctness. Contrast
 	// SeedFeedback above, whose failure IS fatal — a feedback re-run without its
 	// payload is a paid lie about what the body was told.
+	//
+	// An ABSENT file is warned about too, and only here. It is a clean no-op to
+	// handoff, which cannot know whether a reply was owed; this loop can, because
+	// it has already gated on Judged — a judged failure is one the previous leg
+	// rendered a verdict on, so its reply was written, and a missing one means
+	// something removed it or the write did not survive. Both retries are legal
+	// and both re-run the node; the difference is that one carries the attempt it
+	// repeats and the other quietly does not, and a degraded retry that looks
+	// exactly like a whole one is the one nobody ever notices paying for.
 	for _, nodeID := range cleared {
 		if !snap.Nodes[nodeID].Judged {
 			continue
 		}
-		if err := h.SeedPriorReply(nodeID); err != nil {
+		switch seeded, err := h.SeedPriorReply(nodeID); {
+		case err != nil:
 			fmt.Fprintf(os.Stderr, "warning: %v; %s will be retried without it\n", err, nodeID)
+		case !seeded:
+			fmt.Fprintf(os.Stderr, "warning: no persisted reply for %s, whose failure was judged; "+
+				"it will be retried without the attempt it is repeating\n", nodeID)
 		}
 	}
 

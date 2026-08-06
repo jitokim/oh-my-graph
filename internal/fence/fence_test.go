@@ -45,8 +45,10 @@ func TestExcerpt_KeepsHeadAndTailAndAnnouncesTheCut(t *testing.T) {
 	body := strings.Repeat("a", 500) + "MIDDLE" + strings.Repeat("z", 500)
 	got := Excerpt(body, 200)
 
-	if len(got) > 200+len(ExcerptMarker) {
-		t.Errorf("Excerpt returned %d bytes for a 200-byte budget", len(got))
+	if len(got) > 200 {
+		t.Errorf("Excerpt returned %d bytes for a 200-byte budget; the marker is spent out of the "+
+			"budget, not added to it — a caller subtracting the result's length from its own cap "+
+			"cannot see an overspend", len(got))
 	}
 	if !strings.HasPrefix(got, "aaa") {
 		t.Errorf("Excerpt dropped the head: %q", got[:20])
@@ -71,14 +73,30 @@ func TestExcerpt_ShortEnoughMaterialIsUntouched(t *testing.T) {
 }
 
 // TestExcerpt_BudgetSmallerThanTheMarkerFallsBackToTruncate covers the case
-// where announcing the cut would cost more than the material kept.
+// where announcing the cut would cost more than the material kept. A budget
+// that can still afford Truncate's own marker keeps the announcement; one that
+// cannot afford it spends the whole budget on material rather than overrunning
+// it — the announcement is what gives way, never the bound.
 func TestExcerpt_BudgetSmallerThanTheMarkerFallsBackToTruncate(t *testing.T) {
-	got := Excerpt(strings.Repeat("a", 100), 5)
+	budget := len(ExcerptMarker)
+	got := Excerpt(strings.Repeat("a", 100), budget)
 	if !strings.HasPrefix(got, "aaaaa") {
 		t.Errorf("Excerpt with a tiny budget = %q, want the head", got)
 	}
-	if !strings.Contains(got, "truncated") {
+	if !strings.Contains(got, TruncateMarker) {
 		t.Errorf("Excerpt with a tiny budget cut silently: %q", got)
+	}
+	if len(got) > budget {
+		t.Errorf("Excerpt returned %d bytes for a %d-byte budget", len(got), budget)
+	}
+
+	tiny := Excerpt(strings.Repeat("a", 100), 5)
+	if len(tiny) > 5 {
+		t.Errorf("Excerpt(…, 5) = %q (%d bytes); a budget too small for the marker buys material "+
+			"only, it does not license an overrun", tiny, len(tiny))
+	}
+	if !strings.HasPrefix(tiny, "aaaaa") {
+		t.Errorf("Excerpt(…, 5) = %q, want the five bytes the budget affords", tiny)
 	}
 }
 
@@ -90,11 +108,16 @@ func TestExcerpt_BudgetSmallerThanTheMarkerFallsBackToTruncate(t *testing.T) {
 func TestCutsLandOnRuneBoundaries(t *testing.T) {
 	body := strings.Repeat("긴 답장", 200) // 3-byte runes, ASCII spaces between
 	for n := 1; n < 80; n++ {
-		if got := Excerpt(body, len(ExcerptMarker)+n); !utf8.ValidString(got) {
+		budget := len(ExcerptMarker) + n
+		if got := Excerpt(body, budget); !utf8.ValidString(got) {
 			t.Fatalf("Excerpt(…, marker+%d) returned invalid UTF-8", n)
+		} else if len(got) > budget {
+			t.Fatalf("Excerpt(…, %d) returned %d bytes", budget, len(got))
 		}
 		if got := Truncate(body, n); !utf8.ValidString(got) {
 			t.Fatalf("Truncate(…, %d) returned invalid UTF-8", n)
+		} else if len(got) > n {
+			t.Fatalf("Truncate(…, %d) returned %d bytes", n, len(got))
 		}
 		head, tail := HeadAndTail(body, n)
 		if !utf8.ValidString(head) || !utf8.ValidString(tail) {
@@ -127,8 +150,19 @@ func TestTruncate(t *testing.T) {
 	if got := Truncate("short", 100); got != "short" {
 		t.Errorf("Truncate(%q, 100) = %q, want it unchanged", "short", got)
 	}
-	got := Truncate(strings.Repeat("a", 100), 10)
-	if !strings.HasPrefix(got, strings.Repeat("a", 10)) || !strings.Contains(got, "truncated") {
+	// A budget that affords the marker still announces the cut — and pays for
+	// the announcement out of the budget, so what survives is the remainder.
+	budget := len(TruncateMarker) + 10
+	got := Truncate(strings.Repeat("a", 100), budget)
+	if !strings.HasPrefix(got, strings.Repeat("a", 10)) || !strings.Contains(got, TruncateMarker) {
 		t.Errorf("Truncate = %q, want 10 bytes plus an announced cut", got)
+	}
+	if len(got) > budget {
+		t.Errorf("Truncate returned %d bytes for a %d-byte budget", len(got), budget)
+	}
+	// A budget too small for the marker is still a budget: the cut goes
+	// unannounced rather than overrunning it.
+	if tiny := Truncate(strings.Repeat("a", 100), 10); len(tiny) > 10 {
+		t.Errorf("Truncate(…, 10) = %q (%d bytes), want at most the 10 bytes promised", tiny, len(tiny))
 	}
 }

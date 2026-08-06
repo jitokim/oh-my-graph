@@ -106,14 +106,33 @@ func HeadAndTail(s string, keep int) (head, tail string) {
 	return trimPartialRuneSuffix(s[:n]), trimPartialRunePrefix(s[len(s)-(keep-n):])
 }
 
+// TruncateMarker announces the cut Truncate makes at the end of over-long
+// material. Like ExcerptMarker it is exported so a test can assert that a cut
+// was ANNOUNCED without transcribing the sentence that announces it.
+const TruncateMarker = "… (truncated)"
+
 // Truncate shortens s to at most n bytes, marking the cut. It is the head-only
 // bound, for material whose tail carries nothing (an error's echo of a reply)
 // and for Excerpt's own fallback when the budget is smaller than its marker.
+//
+// The marker is spent OUT OF n rather than added to it. n is a budget callers
+// subtract the result's length from — assessMaterial's per-run detail cap does
+// exactly that — so a return that overspends by the marker's length is an
+// overspend the caller cannot see, on every cut, and it is the same n both
+// Excerpt and this function promise to stay inside. A budget too small to hold
+// the marker buys material only: a cut that cannot afford to announce itself is
+// still a cut that has to fit.
 func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return trimPartialRuneSuffix(s[:n]) + "… (truncated)"
+	if n <= 0 {
+		return ""
+	}
+	if n < len(TruncateMarker) {
+		return trimPartialRuneSuffix(s[:n])
+	}
+	return trimPartialRuneSuffix(s[:n-len(TruncateMarker)]) + TruncateMarker
 }
 
 // trimPartialRuneSuffix drops the fragment of a multi-byte rune a cut leaves at
