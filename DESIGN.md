@@ -496,7 +496,12 @@ attempt does not resume the parent session either — it starts cold, which
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
-produces and silently mean "never retry".
+produces and silently mean "never retry". A **negative `max`** is refused at
+load for the same reason: the scheduler adds `max` to the attempt count only
+when it is positive, so `max: -1` is discarded and the node runs once — the
+identical quiet non-retry, from a value no author can have meant. `max: 0` is
+legal and untouched: it IS the extra-attempt count a node declaring no retry
+already has.
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
@@ -616,10 +621,10 @@ leg did. `graph.go` states this at the struct itself; copy the pair, not just
 the `yaml` half.
 
 `SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
-reject an empty `command`, an unparseable `timeout`, a timeout over the ceiling,
-and an uncompilable `output_matches` — at load, naming the node
-(`GraphValidationError`), never mid-run. Changing this struct touches loader,
-validator, shipped example graphs and tests together.
+reject an uncompilable `result_matches`, an empty `command`, an unparseable
+`timeout`, a timeout over the ceiling, and an uncompilable `output_matches` — at
+load, naming the node (`GraphValidationError`), never mid-run. Changing this
+struct touches loader, validator, shipped example graphs and tests together.
 
 ### Verdict patterns — `result_matches` reads raw markdown
 
@@ -627,6 +632,13 @@ validator, shipped example graphs and tests together.
 (`outcome.Result`, the CLI's `result` field), with no normalization whatsoever:
 no trimming, no markdown stripping, no case folding, no `(?m)`. `^` and `$`
 therefore anchor to the start and end of the whole reply text.
+
+The pattern is **compiled at load**, exactly like `verify.output_matches`: a
+pattern that does not compile is a `GraphValidationError` naming the node and
+quoting the pattern, so `lint` and `run --dry-run` refuse the graph and no node
+is spawned. A verdict pattern is a declaration, and a broken declaration is
+knowable from the file alone — it used to be diagnosed only inside the
+scheduler's evaluation, which runs after its own node has been paid for.
 
 Models emit markdown. A prompt that says "begin your reply with PASS" leaves
 the model free to write `**PASS**`, and it does — that exact reply has failed
