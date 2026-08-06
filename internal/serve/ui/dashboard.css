@@ -76,6 +76,7 @@ main {
 .card.passed { border-left-color: var(--passed); }
 .card.failed { border-left-color: var(--failed); }
 .card.gate-paused { border-left-color: var(--gate-paused); }
+.card.abandoned { border-left-color: var(--abandoned); }
 .card.unknown { border-left-color: var(--muted); }
 
 /* A running card's status pill borrows the run view's own live pulse, so
@@ -140,6 +141,20 @@ main {
   overflow-wrap: anywhere;
 }
 
+/* The abandoned run's recovery hint. It is prose, not a chip, and it wraps:
+   this card's gate button is one click that spends money, so what that click
+   would allow has to be readable before it is pressed (ADR 0015 §4). */
+.card-hint {
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--hairline);
+  border-left: 2px solid var(--abandoned);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
 /* --- the mini-DAG ----------------------------------------------------------- */
 
 /* Hand-drawn SVG rather than a cytoscape instance per card: a dashboard can
@@ -160,6 +175,7 @@ main {
 .mini-node.passed { fill: var(--passed); }
 .mini-node.failed { fill: var(--failed); }
 .mini-node.gate-paused { fill: var(--gate-paused); }
+.mini-node.abandoned { fill: var(--abandoned); }
 .card.running .mini-node.running { animation: chip-pulse 2s ease-in-out infinite; }
 
 .mini-none {

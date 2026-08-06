@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // ResolveRun picks which run under root (the runs directory) to serve:
@@ -15,10 +15,13 @@ import (
 //  1. An explicit run id wins. It must exist on disk — a mistyped id is the
 //     one failure the user causes, so it is a clearly worded error rather
 //     than an empty page.
-//  2. Otherwise the newest run whose event stream says it is in flight
-//     (runfeed.InFlight — the same leg-walking `runs list` uses to render
-//     RUNNING), because "the run happening right now" is what a live view is
-//     for.
+//  2. Otherwise the newest run that is actually in flight (runstatus.Of — the
+//     same shared derivation `runs list` renders RUNNING from: an open leg AND
+//     a held lock), because "the run happening right now" is what a live view
+//     is for. An ABANDONED run is deliberately NOT preferred: its leg is open
+//     only because the process that opened it died, and parking a live view on
+//     a corpse instead of the newest real run is exactly what ADR 0015 §4
+//     fixes here.
 //  3. Otherwise the newest run directory.
 //
 // The CLI only ever takes branch 1: since the dashboard landed, `oh-my-graph
@@ -62,8 +65,8 @@ func ResolveRun(root, explicit string) (string, error) {
 	}
 
 	for _, runID := range runIDs {
-		inFlight, err := runfeed.InFlight(filepath.Join(root, runID, runfeed.FileName))
-		if err == nil && inFlight {
+		status, err := runstatus.Of(filepath.Join(root, runID))
+		if err == nil && status == runstatus.InFlight {
 			return runID, nil
 		}
 	}

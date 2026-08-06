@@ -13,6 +13,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // newTestDashboard builds a Dashboard over root with the short test poll, so
@@ -302,12 +303,20 @@ func TestDashboard_AnUnreadableRunIsShownNotDropped(t *testing.T) {
 	}
 }
 
-func TestBuildCard_InFlightAgreesWithRunfeed(t *testing.T) {
-	// buildCard reads the stream ONCE and derives the open leg from that walk
-	// rather than paying a second read for runfeed.InFlight. That is only safe
-	// while the derived rule and InFlight's own rule are the same rule, so this
-	// judges one against the other — on the shapes where a leg rule can go
-	// wrong — instead of restating the expected answer by hand.
+func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
+	// The cross-surface agreement test, and the reason ADR 0015 §2 puts the
+	// derivation in one place. Four things are judged against each other on
+	// every fixture, each with a real lock in each of its three conditions:
+	//
+	//  1. runfeed.InFlight's own rule (the last leg is open) against the leg
+	//     state buildCard derives inline off the walk it already does — it reads
+	//     the stream ONCE on the dashboard's hot path, which is only safe while
+	//     the two are the same rule;
+	//  2. runstatus.Of (stream + lock, read from a path) against
+	//     runstatus.Probe (the same rule for a caller that already walked);
+	//  3. the card's own state word against that shared answer;
+	//  4. ResolveRun's preference against it too — it must prefer an in-flight
+	//     run over a newer settled one, and must NOT prefer an abandoned one.
 	cases := map[string][]runfeed.Event{
 		"no events at all": {},
 		"open leg": {
@@ -338,25 +347,196 @@ func TestBuildCard_InFlightAgreesWithRunfeed(t *testing.T) {
 		},
 	}
 	for name, events := range cases {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			if len(events) > 0 {
-				writeEvents(t, dir, "run-1", events...)
-			}
-			feedPath := filepath.Join(dir, runfeed.FileName)
+		for _, lock := range []string{"no lock file", "lock held", "lock free"} {
+			t.Run(name+", "+lock, func(t *testing.T) {
+				// Two runs, so ResolveRun's preference is observable: run-1
+				// carries the fixture, run-2 is newer (ids sort lexically) and
+				// always settled, so it is what an id-less resolve falls back to.
+				root := runsRootWith(t, "run-1", "run-2")
+				seedSettledRun(t, root, "run-2")
+				dir := filepath.Join(root, "run-1")
+				if len(events) > 0 {
+					writeEvents(t, dir, "run-1", events...)
+				}
+				switch lock {
+				case "lock held":
+					holdLock(t, dir)
+				case "lock free":
+					freeLock(t, dir)
+				}
+				feedPath := filepath.Join(dir, runfeed.FileName)
 
-			want, err := runfeed.InFlight(feedPath)
-			if err != nil {
-				t.Fatalf("runfeed.InFlight returned error: %v", err)
-			}
-			_, started, ended, err := walkNodeStates(feedPath)
-			if err != nil {
-				t.Fatalf("walkNodeStates returned error: %v", err)
-			}
-			if got := started != "" && ended == ""; got != want {
-				t.Errorf("derived inFlight = %v, want runfeed.InFlight's %v", got, want)
-			}
-		})
+				openLeg, err := runfeed.InFlight(feedPath)
+				if err != nil {
+					t.Fatalf("runfeed.InFlight returned error: %v", err)
+				}
+				_, started, ended, err := walkNodeStates(feedPath)
+				if err != nil {
+					t.Fatalf("walkNodeStates returned error: %v", err)
+				}
+				derived := started != "" && ended == ""
+				if derived != openLeg {
+					t.Errorf("derived open leg = %v, want runfeed.InFlight's %v", derived, openLeg)
+				}
+
+				shared, err := runstatus.Of(dir)
+				if err != nil {
+					t.Fatalf("runstatus.Of returned error: %v", err)
+				}
+				if probed := runstatus.Probe(dir, derived); probed != shared {
+					t.Errorf("the card's composition = %v, want the shared rule's %v", probed, shared)
+				}
+
+				card := buildCard(root, "run-1")
+				switch shared {
+				case runstatus.InFlight:
+					if card.State != stateRunning {
+						t.Errorf("card state = %q, want %q for an in-flight run", card.State, stateRunning)
+					}
+				case runstatus.Abandoned:
+					if card.State != stateAbandoned {
+						t.Errorf("card state = %q, want %q for an abandoned run", card.State, stateAbandoned)
+					}
+					if card.Hint == "" {
+						t.Error("an abandoned card must carry the recovery hint: the gate button on the page it links to is one click that spends money")
+					}
+				default:
+					if card.State == stateRunning || card.State == stateAbandoned {
+						t.Errorf("card state = %q for a settled run", card.State)
+					}
+					if card.Hint != "" {
+						t.Errorf("only an abandoned run gets a hint, got %q", card.Hint)
+					}
+				}
+
+				resolved, err := ResolveRun(root, "")
+				if err != nil {
+					t.Fatalf("ResolveRun returned error: %v", err)
+				}
+				wantResolved := "run-2" // the newest, the fallback
+				if shared == runstatus.InFlight {
+					wantResolved = "run-1" // preferred: it is happening right now
+				}
+				if resolved != wantResolved {
+					t.Errorf("ResolveRun = %q, want %q (run-1 is %v)", resolved, wantResolved, shared)
+				}
+			})
+		}
+	}
+}
+
+// holdLock takes run dir's real lock and holds it for the test, as a live leg
+// does. It skips where the probe cannot answer — no flock(2), or a filesystem
+// outside runstate's known-local allowlist — because there the derivation is
+// deliberately unknown and asserting otherwise would assert against ADR 0015's
+// own safety gate.
+func holdLock(t *testing.T, runDir string) {
+	t.Helper()
+	path := filepath.Join(runDir, runstate.LockFileName)
+	release, err := runstate.AcquireLock(path)
+	if err != nil {
+		t.Fatalf("acquire fixture lock: %v", err)
+	}
+	t.Cleanup(func() { release() })
+	if got := runstate.ProbeLock(path); got != runstate.LivenessHeld {
+		t.Skipf("the lock probe cannot answer here (%v)", got)
+	}
+}
+
+// freeLock leaves exactly what a leg that died leaves: a marked lock file,
+// written by the real AcquireLock, that nothing holds.
+func freeLock(t *testing.T, runDir string) {
+	t.Helper()
+	path := filepath.Join(runDir, runstate.LockFileName)
+	release, err := runstate.AcquireLock(path)
+	if err != nil {
+		t.Fatalf("acquire fixture lock: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release fixture lock: %v", err)
+	}
+	if got := runstate.ProbeLock(path); got != runstate.LivenessFree {
+		t.Skipf("the lock probe cannot answer here (%v)", got)
+	}
+}
+
+// --- an abandoned run's card ---------------------------------------------------
+
+func TestBuildCard_AnAbandonedRunStopsSpinning(t *testing.T) {
+	// The two zombie runs, as a fixture: a leg that started a node and then
+	// died. The node must not keep spinning, the card must not claim the run is
+	// running, and the tally must not claim work is in progress.
+	root := runsRootWith(t, "run-dead")
+	seedInFlightRun(t, root, "run-dead")
+	freeLock(t, filepath.Join(root, "run-dead"))
+
+	var cards []runCard
+	getJSON(t, newTestDashboard(root), "/api/cards", &cards)
+	card := cardByID(t, cards, "run-dead")
+
+	if card.State != stateAbandoned {
+		t.Errorf("card state = %q, want %q", card.State, stateAbandoned)
+	}
+	for _, node := range card.Nodes {
+		if node.State == stateRunning {
+			t.Errorf("node %q still reads as running in an abandoned run", node.ID)
+		}
+	}
+	if card.Counts.Running != 0 {
+		t.Errorf("counts.running = %d in an abandoned run, want 0", card.Counts.Running)
+	}
+	// tally's existing default arm: an abandoned node is "not done yet".
+	if card.Counts.Pending != 1 {
+		t.Errorf("counts.pending = %d, want the abandoned node to tally as pending", card.Counts.Pending)
+	}
+	if !strings.Contains(card.Hint, "run-dead") {
+		t.Errorf("card hint = %q, want the recovery hint for this run", card.Hint)
+	}
+}
+
+// TestBuildCard_ALaterLegClosesTheDeadLegsNodes is the per-node half of the same
+// bug, at the run level: a node left running by a leg that died stays running
+// in the card's reducer across every later leg that does not re-run it, because
+// the reducer only ever saw node events. The regression is a run that has since
+// been resumed and FINISHED — its lock is free and its leg is closed, so the
+// run-level derivation says nothing at all, and only the leg boundary can.
+func TestBuildCard_ALaterLegClosesTheDeadLegsNodes(t *testing.T) {
+	root := runsRootWith(t, "run-resumed")
+	dir := filepath.Join(root, "run-resumed")
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-resumed",
+		Graph: json.RawMessage(twoNodeGraph),
+		Nodes: map[string]runstate.NodeRecord{
+			"a": {Verdict: runstate.VerdictPass, CostUSD: 0.25},
+			"b": {Verdict: runstate.VerdictPass, CostUSD: 0.75},
+		},
+	})
+	writeEvents(t, dir, "run-resumed",
+		// Leg 1: `a` starts, then the process dies — no terminal, no
+		// run_finished.
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a"},
+		// Leg 2: a resume that re-ran nothing but `b`, and finished.
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "b"},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "b", Verdict: runfeed.VerdictPass, CostUSD: 0.75},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+
+	var cards []runCard
+	getJSON(t, newTestDashboard(root), "/api/cards", &cards)
+	card := cardByID(t, cards, "run-resumed")
+
+	for _, node := range card.Nodes {
+		if node.ID == "a" && node.State == stateRunning {
+			t.Error("node `a` was left open by a leg that died; a later leg is a boundary, so it must not still read as running")
+		}
+	}
+	if card.Counts.Running != 0 {
+		t.Errorf("counts.running = %d in a finished run, want 0", card.Counts.Running)
+	}
+	if card.State == stateRunning || card.State == stateAbandoned {
+		t.Errorf("the run itself finished; card state = %q", card.State)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // watchPollInterval is how long the tail loop sleeps at end-of-stream before
@@ -47,14 +48,29 @@ func runWatch(args []string) error {
 // run_finished event — the event that closes a leg, so a paused run's watch
 // ends at its "paused" outcome — or when ctx is cancelled (Ctrl-C), which is
 // the normal way to stop watching, not a failure. A stream that ends without a
-// run_finished (a leg that crashed mid-run) is indistinguishable from a slow
-// writer, so it is followed until the user interrupts.
+// run_finished is checked ONCE at startup, against the run's lock: a leg whose
+// lock is free is abandoned, its stream will never get another line, and the
+// tail is refused rather than hung (ADR 0015 §4). It deliberately does not gain
+// an idle-time probe for a run that dies mid-watch — runfeed.Follow has no idle
+// hook, and adding one would push liveness into the pure stream reader — so
+// that one hang remains, and is stated rather than fixed.
 //
 // An unknown run id — no event stream on disk — is a distinct, clearly worded
 // error rather than a raw file-not-found, because it is the one failure the
 // user causes by mistyping an id.
 func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, poll time.Duration) error {
 	feedPath := filepath.Join(runDir, runfeed.FileName)
+
+	// The shared derivation (runstatus.Of), so `watch` refuses exactly the runs
+	// `runs list` calls ABANDONED and the dashboard paints abandoned. An error
+	// here is not this command's to report — a missing stream is the mistyped-id
+	// error below, and a stream this binary refuses to read is Follow's — so an
+	// unanswerable probe simply falls through to the tail, which is the
+	// pre-ADR-0015 behaviour.
+	if status, err := runstatus.Of(runDir); err == nil && status == runstatus.Abandoned {
+		fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
+		return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
+	}
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE
 	// endpoint streams through (via its FollowWait variant), so the two

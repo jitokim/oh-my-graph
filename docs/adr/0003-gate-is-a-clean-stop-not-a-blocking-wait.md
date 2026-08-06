@@ -104,9 +104,17 @@ persisted would be a lie.
   > 0015 decides on, unlinking the file does not release a live holder's lock,
   > so a second leg creates a fresh inode and takes an uncontended lock on it —
   > two schedulers, one run, both spending. Do not follow the advice above.
-  > 0015 is accepted but **not yet implemented** (`internal/runstate/lock.go` is
-  > still `O_EXCL` as described here), so today's binary still behaves as this
-  > ADR records; the advice is what is retired, not the mechanism's description.
+  >
+  > **Update (2026-08-06):** 0015 is now **implemented**, so the mechanism
+  > described here is no longer what the binary does either: `AcquireLock` takes
+  > an exclusive `flock(2)` on `resume.lock`, and release unlocks without
+  > unlinking. The `O_EXCL` description survives in exactly two places, and the
+  > "delete it and retry" advice with it — a lock file an *older* binary left
+  > behind (refused under these semantics, because they are the only ones its
+  > writer knew, an arm that self-expires the moment such a lock is cleared),
+  > and a platform with no `flock(2)`, where `AcquireLock` keeps this mechanism
+  > in full. A reader can now also tell a live holder from a corpse without a
+  > human: see 0015 §1 and docs/RUN-FEED.md's "Liveness" section.
 - Resuming re-reads the graph from the snapshot, not the YAML file. That is the
   correct behaviour (artifacts already on disk were produced by the old graph),
   but it will surprise someone who edits the YAML and expects a resume to pick it

@@ -172,6 +172,12 @@ func TestResume_LockPreventsConcurrentResume(t *testing.T) {
 	}
 }
 
+// TestResume_LockIsReleasedAfterAResume checks what "released" means under
+// ADR 0015: the lock is given back, but the FILE stays. It must not be
+// unlinked — acquiring is open-then-flock, and an unlink between those two
+// steps lets one leg hold the lock on an orphaned inode while another takes it
+// uncontended on a fresh one. So the evidence of a release is that the lock
+// reads free and the next leg can take it, never that the file is gone.
 func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
 	isolateRunHome(t)
 	runID, rec := pausedGateFlowRun(t)
@@ -181,8 +187,16 @@ func TestResume_LockIsReleasedAfterAResume(t *testing.T) {
 	}
 
 	lockPath := filepath.Join(runDirFor(runID), lockFileName)
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("resume.lock left behind after a completed resume: stat err = %v", err)
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("a released resume.lock must remain on disk as an inert handle: %v", err)
+	}
+	requireLiveness(t, runstate.ProbeLock(lockPath), runstate.LivenessFree)
+	release, err := runstate.AcquireLock(lockPath)
+	if err != nil {
+		t.Fatalf("the next leg must be able to take the released lock: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release: %v", err)
 	}
 }
 
