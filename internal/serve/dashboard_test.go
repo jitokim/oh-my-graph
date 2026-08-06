@@ -859,7 +859,20 @@ func TestDashboardEvents_ADeletedRunIsAnnounced(t *testing.T) {
 		t.Fatalf("frame name = %q, want cards_ready", name)
 	}
 
-	if err := os.RemoveAll(filepath.Join(root, "run-done")); err != nil {
+	// The run goes away in ONE step — a rename out of the root, not
+	// os.RemoveAll — because "the very next frame is card_removed" is only a
+	// promise the sweep can keep for a removal it cannot observe half-done.
+	// os.RemoveAll unlinks the contract files first and the directory second,
+	// and a sweep landing in between sees a directory that is real and empty,
+	// which is byte-for-byte a healthy young run (handleCardEvents names the two
+	// tests that pin those shapes). It draws the card it must draw for those,
+	// and card_removed follows a tick later. Racing that window is what made
+	// this test flaky; it is not what this test is about. A rename within one
+	// filesystem is atomic, so every sweep either sees the run whole or does not
+	// see it at all, and the next frame is decided by the assertion rather than
+	// by the clock.
+	graveyard := t.TempDir() // a sibling of root, so the rename stays on one fs
+	if err := os.Rename(filepath.Join(root, "run-done"), filepath.Join(graveyard, "run-done")); err != nil {
 		t.Fatalf("remove run dir: %v", err)
 	}
 	name, data := stream.readFrame(t)

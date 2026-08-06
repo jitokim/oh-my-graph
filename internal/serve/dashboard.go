@@ -216,6 +216,24 @@ func (d *Dashboard) handleCards(w http.ResponseWriter, r *http.Request) {
 // and replaces, so a reconnect rebuilds the whole dashboard deterministically
 // — the same replay property the single-run feed has.
 //
+// A sweep is several observations of a tree that changes under it — the listing
+// that decides membership, then the per-run stamp that decides content — so a
+// run deleted mid-sweep is a real case, not a corner one, and it is handled
+// where the stamp is taken rather than left to the next tick. What makes it
+// worth the care is that the intermediate frame is not merely early: a card for
+// a deleted run is a tile the page offers a click on, and that click is a 404.
+//
+// One window is deliberately left open, because closing it would close a
+// legitimate case with it. A non-atomic delete (`rm -rf` unlinks the contract
+// files, THEN the directory) has an instant where the directory is real and its
+// files are not, and a run in that instant is byte-for-byte a healthy young one:
+// a directory that has said nothing yet, or a stream whose first node has not
+// finished — the shapes
+// TestDashboard_ARunDirectoryThatHasSaidNothingIsPendingNotFailed and
+// TestDashboard_ARunWithNoSnapshotYetStillGetsALiveCard pin as cards this
+// dashboard MUST draw. A run caught there gets one such card, and card_removed
+// on the following tick.
+//
 // The seen-set is per CONNECTION, deliberately: this handler holds no state
 // across viewers. A run removed while a viewer was disconnected therefore gets
 // no card_removed frame — the next connection's replay simply never names it,
@@ -247,6 +265,20 @@ func (d *Dashboard) handleCardEvents(w http.ResponseWriter, r *http.Request) {
 			present[runID] = true
 			stamp := stampRun(d.runsRoot, runID)
 			if prev, known := seen[runID]; known && prev == stamp {
+				continue
+			}
+			// The listing and the stamp just taken are two observations of a
+			// tree that changes under us, and a run deleted between them stamps
+			// as empty — which without this check is announced as a CHANGED
+			// card: a tile, and a link to a 404, for a run that is already gone,
+			// with card_removed a whole tick behind it. Confirming the directory
+			// AFTER the stamp settles which of the two an empty stamp was. Still
+			// there means the stamp is honest (a young run that has not written
+			// its contract files yet, which gets its card); gone means the
+			// listing was stale, so this run is not present in this sweep at all
+			// and the removal pass below speaks for it immediately.
+			if runDirGone(d.runsRoot, runID) {
+				delete(present, runID)
 				continue
 			}
 			seen[runID] = stamp
@@ -314,6 +346,18 @@ func stampRun(runsRoot, runID string) runStamp {
 		feed:  stampFile(filepath.Join(runDir, runfeed.FileName)),
 		state: stampFile(filepath.Join(runDir, stateFileName)),
 	}
+}
+
+// runDirGone reports whether a run directory the sweep listed has vanished
+// since it was listed. One stat, taken on the emit path only, so a quiet
+// dashboard still costs the two stats per run per tick stampRun takes.
+//
+// Only a NOT-EXIST answer counts as gone: a directory that cannot be stat'd for
+// any other reason is still a run, and the card buildCard derives for it is how
+// that problem reaches the operator.
+func runDirGone(runsRoot, runID string) bool {
+	_, err := os.Stat(filepath.Join(runsRoot, runID))
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 func stampFile(path string) fileStamp {
