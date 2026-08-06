@@ -83,7 +83,7 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로
   ([`auto` 심화](#auto-in-depth)).
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: LIVE 헤더에 2 running / 68 passed / 19 failed run 칩과 누적 지출 합계, IN FLIGHT 행에는 각자 노드 상태가 표시된 미니 DAG를 그리는 실행 중 run 카드 두 개, 그리고 87개의 run이 접혀 있는 SETTLED 그룹" width="100%" />
+  <img src="assets/dashboard.png" alt="oh-my-graph dashboard: LIVE 헤더에 4 running / 1 gate-paused / 126 passed / 30 failed run 칩과 누적 지출 합계, IN FLIGHT 행에는 각자 노드 상태가 표시된 미니 DAG를 그리는 실행 중 run 카드 네 개 — 그중 하나는 세 노드가 병렬 실행 중인 fan-out — 그리고 159개의 run이 접혀 있는 SETTLED 그룹" width="100%" />
 </p>
 <p align="center"><em>run 하나에서 한 단계 올라간 dashboard — 실제 dogfood 보드입니다: 카드 하나하나가 이 저장소 자체의 개발을 돌린 실제 run입니다. 헤더의 <code>$906.1948</code>은 프로젝트 전체 개발 기간에 걸친 누적 구독 사용량이며, run 하나의 가격이 아니고 공짜도 아닙니다.</em></p>
 
