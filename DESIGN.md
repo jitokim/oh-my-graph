@@ -1460,6 +1460,27 @@ body on every invocation, and inlining is unconditional where Claude Code's
 own `description`-driven activation is conditional — whether that helps or
 misfires is ADR 0012's required (a)/(b) probes, not assumed here.
 
+The last thing computed with a plan is a warning rather than a decision. If the
+goal or a planned prompt names an absolute path that resolves into a git
+checkout **outside the invocation repository**, `Plan.Unisolated`
+(`internal/coordinator/unisolated.go`) carries it and the plan printout says —
+before anything spends, and in the same output `--plan-only` renders — that
+oh-my-graph isolates nothing there: no worktree, no lock, so a node working in
+that checkout must create its own worktree or race whatever else is standing in
+it (#103). The rule is deliberately narrow: a mention must resolve into a
+`.git` checkout (an ordinary clone or a linked worktree, both of which have
+their own HEAD), which is what keeps `/tmp` scratch paths, system paths,
+templated paths, files that do not exist and every path *inside* the invocation
+repository silent; and one warning is emitted per checkout rather than per
+path, since the hazard is a shared HEAD. It is computed on the planner's own
+prompts, strictly before skill inlining, so absolute paths a local `SKILL.md`
+happens to document are never attributed to the plan. It is a WARNING and never
+a refusal — a multi-repository goal is legitimate, and the engine simply cannot
+isolate it — and the printed text states its own blind spots (a path built at
+run time, one arriving through `--input` or a parent's artifact, a repository
+reached by a relative path, and what a node actually does once it is there),
+because a heuristic that reads as complete is worse than no heuristic at all.
+
 ### The tool ceiling — one layered policy, not a list of flags (v1.1)
 The allowlist above bounds what a plan may **declare**. Execution is bounded by
 a separate, layered policy carried on `Plan.ToolPolicies` (one

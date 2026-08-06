@@ -349,6 +349,88 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 	}
 }
 
+// TestPrintPlan_WarnsAboutUnisolatedCheckouts pins the plan-time warning for
+// the reported scenario (#103): a goal spanning two local repositories gets
+// told, in the printout `auto --plan-only` also renders, that the second one
+// is outside everything oh-my-graph isolates. It must name the checkout, name
+// where the plan said it, give the actionable instruction (the node has to
+// make its own worktree), and — because detection is a heuristic read of
+// prompt text — state its own limits rather than reading as a clean bill of
+// health.
+func TestPrintPlan_WarnsAboutUnisolatedCheckouts(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"mem-impl","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g, Unisolated: &coordinator.UnisolatedScan{
+		Root:   "/home/u/IdeaProjects/lbox-argo-applications",
+		IsRepo: true,
+		Paths: []coordinator.UnisolatedPath{{
+			Repo:    "/home/u/IdeaProjects/lbox-ai-memory",
+			Mention: "/home/u/IdeaProjects/lbox-ai-memory",
+			InGoal:  true,
+			NodeIDs: []string{"mem-impl"},
+		}},
+	}}, "/tmp/graph.json")
+	got := out.String()
+
+	for _, want := range []string{
+		"! not isolated: /home/u/IdeaProjects/lbox-ai-memory — a local git checkout\n",
+		`    named by the goal and node "mem-impl"`,
+		"stops at the repository it was invoked from (/home/u/IdeaProjects/lbox-argo-applications)",
+		"create its own git worktree there first",
+		"heuristic read of the plan's text",
+		"warning, not a refusal",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the unisolated-path warning is missing %q:\n%s", want, got)
+		}
+	}
+
+	// And it stays a signal: a plan naming nothing outside the boundary
+	// prints not one word of it.
+	var clean strings.Builder
+	printPlan(&clean, coordinator.Plan{Graph: g}, "/tmp/graph.json")
+	if strings.Contains(clean.String(), "not isolated") {
+		t.Errorf("nothing was outside the boundary, so nothing may say so:\n%s", clean.String())
+	}
+}
+
+// A mention deeper than the checkout root is filed under the root — that is
+// what the "make your own worktree" advice applies to — but the printed line
+// keeps the path as written, so the user can find the text that caused it. And
+// with no repository around the invocation directory, the message may not
+// claim one.
+func TestPrintPlan_UnisolatedWarningNamesTheMentionAndTheMissingRepository(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"impl","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g, Unisolated: &coordinator.UnisolatedScan{
+		Root: "/home/u/scratch",
+		Paths: []coordinator.UnisolatedPath{{
+			Repo:    "/home/u/IdeaProjects/other",
+			Mention: "/home/u/IdeaProjects/other/pkg/server/handler.go",
+			NodeIDs: []string{"impl"},
+		}},
+	}}, "/tmp/graph.json")
+	got := out.String()
+
+	if !strings.Contains(got, "! not isolated: /home/u/IdeaProjects/other — a local git checkout\n") {
+		t.Errorf("the headline must be the checkout the advice applies to:\n%s", got)
+	}
+	if !strings.Contains(got, `    named by node "impl", written as /home/u/IdeaProjects/other/pkg/server/handler.go`) {
+		t.Errorf("the detail line must keep the path as it was written:\n%s", got)
+	}
+	if !strings.Contains(got, "was not invoked from a git repository (/home/u/scratch)") {
+		t.Errorf("outside a repository, the message must say so rather than name one:\n%s", got)
+	}
+}
+
 // TestPrintPlan_ShowsSkillMappingsAndSkips pins skill mapping's disclosure
 // contract (ADR 0012 §6): one line per decision — an applied mapping prints
 // its name, inlined size, hash prefix (the integrity link to the full text in

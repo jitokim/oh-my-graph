@@ -685,6 +685,11 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
+	// Last, and deliberately after the ceiling: that paragraph says planned
+	// nodes "run isolated", meaning settings and tools. This one narrows it —
+	// worktree isolation is a different isolation and it stops at one
+	// repository — so it has to be read second or the two look contradictory.
+	noteUnisolatedPaths(w, plan.Unisolated)
 	fmt.Fprintln(w)
 }
 
@@ -706,6 +711,84 @@ func noteReplan(w io.Writer, repair *coordinator.PlanRepair) {
 	for _, issue := range repair.Issues {
 		fmt.Fprintf(w, "    ! %s\n", issue)
 	}
+}
+
+// noteUnisolatedPaths warns, before anything spends, that this plan's text
+// names a local git checkout outside the repository oh-my-graph was invoked
+// from — the one place auto's isolation reaches (SECURITY.md, "Isolation stops
+// at the invocation repository"). Silent for the common single-repository
+// plan, and silent whenever the boundary could not be resolved.
+//
+// It is printed HERE, in the plan printout, because that is where a user
+// already looks and it is what `auto --plan-only` renders: a multi-repository
+// goal is exactly the case where someone wants to read the plan before paying
+// for it, and the fact the engine cannot isolate half of it has to arrive
+// before the run, not in a post-mortem of a collision.
+//
+// A warning and never a refusal — the reason is in UnisolatedScan's doc. The
+// closing paragraph states the rule's own limits in the user's face for the
+// same reason: detection is a heuristic read of prompt text, and a warning
+// that let itself be read as complete would be worse than no warning at all,
+// because a silent plan would then look like a checked one.
+func noteUnisolatedPaths(w io.Writer, scan *coordinator.UnisolatedScan) {
+	if scan == nil {
+		return
+	}
+	for _, path := range scan.Paths {
+		// Two lines rather than one: the checkout is the headline, and a path
+		// this deep plus every node that named it does not fit beside it on a
+		// terminal. The written spelling is kept — a "~/..." goal and a file
+		// deep inside the repository both resolve to the root above, and only
+		// the original text can be searched for.
+		fmt.Fprintf(w, "  ! not isolated: %s — a local git checkout\n", path.Repo)
+		detail := "    named by " + unisolatedNamedBy(path)
+		if path.Mention != path.Repo {
+			detail += ", written as " + path.Mention
+		}
+		fmt.Fprintln(w, detail)
+	}
+	if scan.IsRepo {
+		fmt.Fprintf(w, "  auto's worktree isolation stops at the repository it was invoked from (%s):\n", scan.Root)
+	} else {
+		fmt.Fprintf(w, "  oh-my-graph was not invoked from a git repository (%s), so it isolates nothing:\n", scan.Root)
+	}
+	fmt.Fprint(w,
+		"  it creates no worktree in the checkouts above and takes no lock on them, so a node that\n"+
+			"  switches a branch there changes a directory another process may be standing in. If a node\n"+
+			"  must work in one, say in the goal that it has to create its own git worktree there first\n"+
+			"  and stay inside it. See SECURITY.md, \"Isolation stops at the invocation repository\".\n"+
+			"  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths\n"+
+			"  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It\n"+
+			"  cannot see a path a node builds at run time, one arriving through an --input or a parent's\n"+
+			"  artifact, a repository reached by a relative path, or what a node will actually do once it\n"+
+			"  is there — and it is a warning, not a refusal: a multi-repository goal is legitimate,\n"+
+			"  oh-my-graph simply cannot isolate it.\n",
+	)
+}
+
+// unisolatedNamedBy renders where a checkout was named — the goal, one node,
+// or several — so the user can find the text that put it in the plan. The goal
+// comes first because it is the user's own words, and a warning they can act
+// on by rewording is more useful than one about a prompt they did not write.
+// Nodes share one clause ("nodes a, b") rather than one each, which is what
+// keeps the line readable when a path reaches most of the graph.
+func unisolatedNamedBy(path coordinator.UnisolatedPath) string {
+	var sources []string
+	if path.InGoal {
+		sources = append(sources, "the goal")
+	}
+	if len(path.NodeIDs) > 0 {
+		quoted := make([]string, 0, len(path.NodeIDs))
+		for _, id := range path.NodeIDs {
+			quoted = append(quoted, fmt.Sprintf("%q", id))
+		}
+		noun := "node "
+		if len(quoted) > 1 {
+			noun = "nodes "
+		}
+		sources = append(sources, noun+strings.Join(quoted, ", "))
+	}
+	return strings.Join(sources, " and ")
 }
 
 // plannerCallsPhrase names how many planner calls a plan-only preview paid

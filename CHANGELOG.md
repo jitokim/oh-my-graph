@@ -42,6 +42,23 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   refusal is terminal. Continuing such a run with the check silently dropped is
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
   no `--verify-cmd` either.
+- **`auto` warns at plan time when a goal reaches a repository it cannot
+  isolate** (#103). If the goal or a planned prompt names an absolute path that
+  resolves into a git checkout outside the invocation repository, the plan
+  printout — the same one `auto --plan-only` renders — names that checkout, says
+  whether the goal or which nodes named it, and states plainly that oh-my-graph
+  creates no worktree there and takes no lock on it, so a node that switches a
+  branch in it races whatever else is standing in that directory. It is a
+  warning and never a refusal: a multi-repository goal is legitimate and the
+  engine simply cannot isolate it. The rule requires the path to resolve into a
+  real `.git` checkout (a clone or a linked worktree), so `/tmp` scratch paths,
+  system paths, templated paths, files that do not exist and every path inside
+  the invocation repository stay silent — verified against the graphs this repo
+  ships — and it is computed on the planner's own prompts before any `SKILL.md`
+  body is inlined, so a skill's documented paths are never blamed on the plan.
+  The printed text states its own blind spots (a path built at run time, one
+  arriving through `--input` or an artifact, a relative path), because a
+  heuristic that reads as complete is worse than none.
 
 ### Changed
 

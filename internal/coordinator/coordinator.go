@@ -188,6 +188,15 @@ type Plan struct {
 	// the graph, so a human approving a plan must be shown what will run and
 	// where. Every entry names a node in Graph.
 	VerifyAttachments []VerifyAttachment
+	// Unisolated is the plan-time warning that this plan's text names a local
+	// git checkout OUTSIDE the invocation repository — a directory auto
+	// provisions no worktree in and takes no lock on (unisolated.go, and
+	// SECURITY.md "Isolation stops at the invocation repository"). nil when
+	// the plan names none, which is the common case. Same disclosure contract
+	// as AgentMappings and SkillMappings: the caller must print it with the
+	// plan, since the entire point is that the user learns it BEFORE a node
+	// spends anything working in a checkout someone else may be standing in.
+	Unisolated *UnisolatedScan
 	// SkillScan says a skill scan ran and over which directories, so the
 	// caller can distinguish an empty SkillMappings that means "scanned, no
 	// match" from one that means "never scanned". nil when no scan happened
@@ -220,6 +229,11 @@ type Coordinator struct {
 	// every plan's sink nodes after validation (ADR 0016 §2, verifycmd.go).
 	// Zero means none was supplied — the zero-config path.
 	verifyCommand VerifyCommand
+	// invocationDir is the directory planned nodes will run in, and so the
+	// directory the isolation boundary is computed from (unisolated.go).
+	// Empty — the production value — means the process's working directory,
+	// which is where auto runs every planned node; tests pass a temp dir.
+	invocationDir string
 }
 
 // Option configures a Coordinator at construction.
@@ -249,6 +263,15 @@ func WithoutSkillMapping() Option {
 // DefaultSkillDirs; tests pass temp dirs.
 func WithSkillDirs(dirs ...string) Option {
 	return func(c *Coordinator) { c.skillDirs = dirs }
+}
+
+// WithInvocationDir sets the directory the unisolated-path warning measures
+// its boundary from (unisolated.go). Production leaves it unset, which means
+// the process's working directory — the one every planned node runs in — so
+// the warning is about the same repository the run will actually work in.
+// Tests pass a temp dir.
+func WithInvocationDir(dir string) Option {
+	return func(c *Coordinator) { c.invocationDir = dir }
 }
 
 // New builds a Coordinator bound to a NodeRunner.
@@ -317,7 +340,7 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	spentUSD := 0.0
 	var repaired *PlanRepair
 	for attempt := 0; ; attempt++ {
-		plan, costUSD, refusal := c.attemptPlan(ctx, prompt)
+		plan, costUSD, refusal := c.attemptPlan(ctx, goal, prompt)
 		spentUSD += costUSD
 		if refusal == nil {
 			// The sum, never the last call alone: three ADRs claim planning
@@ -378,6 +401,11 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // here through the same path — there is no "second attempt" branch, so a
 // repaired plan clears the identical ceiling the first one had to.
 //
+// goal is the user's own goal text, which prompt already contains. It is
+// passed separately because the unisolated-path scan below reads it as its own
+// source: a repository the GOAL names is worth warning about even when the
+// planner's prompts paraphrase it away.
+//
 // The call's cost is returned separately from the Plan because a REFUSED
 // attempt still spent it: the caller sums across attempts, which is what keeps
 // a repaired plan's price honest and a rejected one's price reportable.
@@ -395,7 +423,7 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // call whose job is to understand this repository. Widening the ceiling here
 // is a product decision about plan quality, not a safety fix, so it is not
 // made silently as part of one.
-func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, float64, *planRefusal) {
+func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, float64, *planRefusal) {
 	outcome, err := c.runner.Run(ctx, coordinatorInvocation(prompt))
 	if err != nil {
 		// No reply, so nothing was produced and nothing is repairable: this
@@ -468,6 +496,18 @@ func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, flo
 		Graph:        g,
 		Spec:         []byte(spec),
 		ToolPolicies: toolPoliciesByNode(g),
+	}
+	// Computed HERE, on the planner's own prompts, and deliberately before the
+	// two mappings below: skill mapping inlines the user's local SKILL.md
+	// bodies into these prompts, and those bodies name absolute paths of their
+	// own that the plan never chose. An advisory that reported those would be
+	// noise attributed to the planner.
+	//
+	// A boundary that cannot be resolved leaves the plan unwarned rather than
+	// failing it: this is a disclosure, and a paid, valid plan must not be
+	// thrown away because a working directory could not be read.
+	if root, ok := resolveInvocationRoot(c.invocationDir); ok {
+		plan.Unisolated = scanUnisolated(root, goal, g)
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
