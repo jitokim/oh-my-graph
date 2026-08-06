@@ -97,12 +97,12 @@ open-multi-agent — is surveyed in [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
   by the tool it contains. Features, fixes, docs and releases are authored by
   its own graphs — a claude node implements on a branch, sibling nodes run the
   checks and the reviews, and a final node opens the draft PR. The verifiable
-  part — a snapshot taken 2026-08-05, and it only goes up: 40 of the 102 pull
+  part — a snapshot taken 2026-08-06, and it only goes up: 49 of the 114 pull
   requests merged into `main` carry a Claude co-author trailer in their squash
   commit, the receipt that a claude session wrote them. Don't take the
   snapshot's word for it, count today's number yourself:
-  `git log main --first-parent -i --grep="co-authored-by: claude"` (41 matches
-  at that snapshot: those 40 squash commits plus the initial commit). That
+  `git log main --first-parent -i --grep="co-authored-by: claude"` (50 matches
+  at that snapshot: those 49 squash commits plus the initial commit). That
   trailer names the model, not the pipeline, so from 2026-08-02 on, commits
   authored by a graph lane also carry
   `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` — a
@@ -212,8 +212,23 @@ are a closed set:
 `verified` means *measured*, not *correct*: `verify: { command: "true" }`
 yields it. The ledger reports how a verdict was reached, never whether the
 check was a good one. A `FAIL` carries no qualifier — it states its cause in
-`DETAIL` instead. See
-[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md).
+`DETAIL` instead.
+
+Which qualifier a node can earn depends on the path. A hand-written graph earns
+`verified` by declaring `success_check.verify` — your own reviewed artifact,
+your own command. A **planned** node cannot: a planner-authored `verify:` is
+engine-run shell outside every ceiling layer, so it is refused outright, which
+is why `auto`'s check nodes have only ever been able to reach `self-reported`.
+That is the gap [ADR 0016 (build
+evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
+closes — a build command **you** supply at invocation, attached by trusted code
+to the plan's sink nodes *after* validation and run by the engine, so a
+verification node cannot pass a branch that does not build. **Stated plainly
+because you will look for it:** the engine side is implemented and tested, but
+`auto` does not parse `--verify-cmd` / `--verify-timeout` in this release, so
+today every `auto` run still takes the zero-config path and the qualifier is
+what you get out of it. [SECURITY.md](SECURITY.md) has the standing such a
+command would have.
 
 When stdout is a terminal, `run`, `auto` and `resume` also serve the [web live
 view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
@@ -248,7 +263,7 @@ from source there.
 Pick a tag from the Releases page, then:
 
 ```sh
-VERSION=0.4.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.0 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -363,7 +378,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
-| `runs list` | List runs, newest first: graph name, node count, cost, verdict, plus a total. Read-only. |
+| `runs list` | List runs, newest first: graph name, node count, cost, verdict (`PASS`, `FAIL`, `RUNNING`, `ABANDONED`), plus a total. Read-only. |
 | `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
 | `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
@@ -399,6 +414,25 @@ additionally proves `{{ inputs.* }}` resolution against your actual
 `--input` values. An
 in-flight run shows in `runs list` as `RUNNING` (with `-` placeholders until
 its first snapshot lands).
+
+A run whose process died — a closed terminal, a `kill -9`, an OOM — used to
+read `RUNNING` forever, because a killed leg never writes the event that would
+end it. It now reads **`ABANDONED`** instead. Liveness is the kernel's
+`flock(2)` on the run's `resume.lock`, so a held lock means a live leg and a
+dead one releases it however it died; the state is derived when you read it,
+never repaired into the event stream, and it is one rule shared by `runs list`,
+the dashboard, the single-run view and `watch`, so they cannot disagree
+([ADR 0015](docs/adr/0015-an-abandoned-run-is-derived-from-the-lock-not-repaired-into-the-feed.md)).
+`ABANDONED` is deliberately not `FAIL` — the work never got a verdict. Every
+surface carries the same recovery hint, and the hint carries a warning worth
+reading before you act on it: the engine spawns each `claude` in its own process
+group, so **the death that abandoned the run may have left a subprocess still
+running and still spending**. Check for one before you resume, or you will pay
+for the same node twice. A run that died before its first node settled wrote no
+snapshot, so there is nothing to resume from and its hint says to run the graph
+again instead. Any doubt — an unreadable lock, a network filesystem, a lock file
+written by a pre-`flock` binary — reads as in-flight, never as abandoned: a false
+"dead" would authorise a second scheduler over a live run.
 
 <a id="auto-in-depth"></a>
 
@@ -509,12 +543,32 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   above ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — evidence-grounded gating (`exit_zero`,
   `result_matches`, and the engine-run `verify` command) plus per-cause retry.
-  A retried attempt is not a blind re-spawn: when a check judged the previous
-  attempt, the retry's prompt carries that attempt's own reply — one attempt
-  deep, never accumulating, nonce-fenced and byte-bounded, and never quoting
-  the check itself ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
+  **A node that fails keeps its own account of why.** The engine's summary of a
+  failure is one capped line — and for the commonest failure of all, a
+  `result_matches` miss, that line is `result did not match /<re>/`: zero bytes
+  of what the node actually said, after you paid for it. The node's full reply
+  is now persisted to `<run-dir>/failed/<node-id>.out` (head-and-tail capped,
+  with the cut stated in the file). It is deliberately **not** an artifact — no
+  `{{ artifacts.<id> }}` resolves for a failed node and no `handoff: session`
+  child can resume one; it is the node's own account, in its own subdirectory.
+  A retried attempt is then not a blind re-spawn: when a check judged the
+  previous attempt, the retry's prompt carries that attempt's own reply — one
+  attempt deep, never accumulating, nonce-fenced and byte-bounded, and never
+  quoting the check itself (feeding a `result_matches` regex back would teach
+  the cheapest possible pass, which is to print whatever it matches). A cause
+  that rendered no verdict on the reply — a spawn error, a blown budget, a
+  verification that could not be *completed* — carries nothing, and a
+  `handoff: session` retry still starts cold and says so. This is on by default
+  and it costs money: up to roughly 2k tokens of quoted reply per retry of a
+  judged failure, bounded and flat, never compounding ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016 (retry)](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
-  post-hoc ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
+  post-hoc. In a run where any node declares one, a **passing** row's
+  `COST(USD)` cell also states the share of that node's budget the spend used —
+  `0.4900 (98%)` — so "one bad run from failing" is visible on the run that
+  passed, not only in the FAIL detail on the run after it. Floored, never
+  rounded, so a node that came in under budget never reads 100%. A graph where
+  no node declares a budget pays nothing for it: no annotation, no blank
+  column ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — a per-node wall-clock bound replacing the 20-minute default,
   for nodes whose legitimate work runs long ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
 - **`feedback:`** — a bounded review loop without unrolling it: when a
