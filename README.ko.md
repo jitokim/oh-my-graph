@@ -108,12 +108,12 @@ oh-my-graph가 채우는 빈틈이 바로 그 지점입니다: 할 일을 DAG로
   저장소는 그 안에 담긴 도구가 만듭니다. 기능, 수정, 문서, 릴리스가 자기
   자신의 그래프로 작성됩니다 — claude 노드가 브랜치에서 구현하고, 형제
   노드들이 체크와 리뷰를 돌리고, 마지막 노드가 draft PR을 엽니다. 검증
-  가능한 부분 — 2026-08-05에 찍은 스냅샷이고, 숫자는 올라가기만 합니다:
-  `main`에 머지된 102개의 pull request 중 40개가 squash 커밋에 Claude
+  가능한 부분 — 2026-08-06에 찍은 스냅샷이고, 숫자는 올라가기만 합니다:
+  `main`에 머지된 114개의 pull request 중 49개가 squash 커밋에 Claude
   co-author trailer를 달고 있습니다. claude 세션이 그것들을 썼다는
   영수증입니다. 스냅샷을 그대로 믿지 말고 오늘의 숫자를 직접 세어 보세요:
   `git log main --first-parent -i --grep="co-authored-by: claude"`
-  (그 스냅샷 시점에 41건: 그 40개의 squash 커밋과 최초 커밋). 이 trailer는
+  (그 스냅샷 시점에 50건: 그 49개의 squash 커밋과 최초 커밋). 이 trailer는
   파이프라인이 아니라 모델을 가리키므로, 2026-08-02부터 그래프 레인이 작성한
   커밋에는
   `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`도 함께 붙습니다 —
@@ -226,8 +226,22 @@ TOTAL COST: $0.0125
 `verify: { command: "true" }`도 `verified`가 됩니다. ledger는 판정이 어떻게
 도출됐는지를 보고할 뿐, 그 체크가 좋은 체크였는지는 말하지 않습니다. `FAIL`은
 qualifier를 달지 않습니다 — 대신 `DETAIL`에 실패 원인이 적힙니다.
-[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
-참고.
+
+노드가 어떤 qualifier를 받을 수 있는지는 경로에 따라 다릅니다. 손으로 쓴
+그래프는 `success_check.verify`를 선언해서 `verified`를 얻습니다 — 당신이
+직접 리뷰한 산출물이고, 당신이 직접 쓴 명령입니다. **플래닝된** 노드는 그럴
+수 없습니다: planner가 작성한 `verify:`는 모든 ceiling 계층 바깥에서 엔진이
+실행하는 셸이므로 아예 거부되며, 그래서 `auto`의 체크 노드는 지금까지
+`self-reported`까지밖에 도달할 수 없었습니다. 그 격차를 메우는 것이
+[ADR 0016 (build
+evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
+입니다 — **당신이** 호출 시점에 건네는 빌드 명령을, validation이 끝난 *뒤에*
+신뢰된 코드가 플랜의 sink 노드에 붙이고 엔진이 실행하므로, 검증 노드가 빌드도
+되지 않는 브랜치를 통과시킬 수 없게 됩니다. **찾아보게 될 것이므로 분명히
+적습니다:** 엔진 쪽은 구현되고 테스트됐지만, 이번 릴리스의 `auto`는
+`--verify-cmd` / `--verify-timeout`을 파싱하지 않습니다. 그래서 오늘 모든
+`auto` run은 여전히 zero-config 경로를 타고, 거기서 얻는 것은 qualifier
+입니다. 그런 명령이 갖게 될 지위는 [SECURITY.md](SECURITY.md)에 있습니다.
 
 stdout이 터미널이면 `run`, `auto`, `resume`은 시작되는 leg의 [web live
 view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저에서 엽니다.
@@ -265,7 +279,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.4.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.0 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -385,7 +399,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |
-| `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict, 그리고 합계. 읽기 전용. |
+| `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict(`PASS`, `FAIL`, `RUNNING`, `ABANDONED`), 그리고 합계. 읽기 전용. |
 | `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
 | `serve [<run-id>]` | Web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). **run id 없이** 실행하면 dashboard입니다 — run마다 live mini-DAG 카드가 하나씩 뜨고, 카드를 클릭하면 그 run의 view(`/run/<id>/`)로 갑니다. run id를 주면 그 run의 view로 바로 갑니다. stdout이 터미널이면 브라우저로 열립니다(`--no-open`이거나 파이프·CI면 URL만 출력하고 서빙은 그대로 합니다). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
@@ -417,6 +431,29 @@ session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
 `--input` 값에 대한 `{{ inputs.* }}` 해석까지 증명합니다. 진행 중인 run은
 `runs list`에 `RUNNING`으로 표시됩니다(첫 snapshot이 도착하기 전까지는
 `-` placeholder로).
+
+프로세스가 죽어 버린 run — 터미널이 닫혔거나, `kill -9`, OOM — 은 예전에는
+영원히 `RUNNING`으로 읽혔습니다. 죽은 leg는 자신을 끝내는 이벤트를 결코
+쓰지 못하기 때문입니다. 이제는 **`ABANDONED`**로 읽힙니다. liveness의 근거는
+그 run의 `resume.lock`에 걸린 커널의 `flock(2)`입니다. 락이 잡혀 있으면 살아
+있는 leg이고, 어떻게 죽든 죽은 프로세스는 락을 놓습니다. 이 상태는 읽는
+시점에 파생될 뿐 이벤트 스트림에 기록되지 않으며, `runs list`·대시보드·단일
+run 뷰·`watch`가 공유하는 하나의 규칙이라 서로 어긋날 수 없습니다
+([ADR 0015](docs/adr/0015-an-abandoned-run-is-derived-from-the-lock-not-repaired-into-the-feed.md)).
+`ABANDONED`는 의도적으로 `FAIL`이 아닙니다 — 그 작업은 애초에 판정을 받은 적이
+없습니다. 모든 표면이 같은 복구 힌트를 달고 나오며, 그 힌트에는 행동에 옮기기
+전에 읽어야 할 경고가 붙어 있습니다: 엔진은 각 `claude`를 자기만의 process
+group으로 띄우므로, **run을 버려지게 만든 그 죽음이 아직 살아서 돈을 쓰고 있는
+서브프로세스를 남겨 뒀을 수 있습니다.** resume 하기 전에 그런 프로세스가 있는지
+확인하지 않으면 같은 노드에 두 번 돈을 내게 됩니다. 첫 노드가 끝나기도 전에 죽은
+run은 snapshot을 쓴 적이 없으므로 resume 할 대상 자체가 없고, 그 힌트는 대신
+그래프를 다시 돌리라고 말합니다. 조금이라도 의심스러우면 — 읽을 수 없는 락,
+네트워크 파일시스템, pid가 여전히 어떤 프로세스를 가리키거나 아예 읽히지 않는
+`flock` 이전 락 파일 — 버려진 것이 아니라 진행 중으로 읽습니다: 잘못된 "죽음"
+판정은 살아 있는 run 위에 두 번째 scheduler를 승인해 버리기 때문입니다.
+`flock` 이전 락 파일은 물어볼 `flock` 자체가 없는 파일이므로, 그 pid 줄을 한
+방향으로만 읽습니다: 어떤 프로세스도 가리키지 않는 pid만 free이고, 열린 leg
+옆에 있는 그것만이 버려진 것으로 읽힙니다.
 
 <a id="auto-in-depth"></a>
 
@@ -531,12 +568,32 @@ from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 
   참고 ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — 근거 기반 게이팅(`exit_zero`,
   `result_matches`, 그리고 엔진이 실행하는 `verify` 명령)과 원인별 retry.
-  재시도된 attempt는 더 이상 눈먼 재실행이 아닙니다: 이전 attempt를 체크가
-  **판정**했다면, 재시도의 프롬프트가 그 attempt 자신의 답변을 싣습니다 —
-  딱 한 단계, 누적 없음, nonce로 펜싱되고 바이트 상한이 있으며, 체크 자체는
-  절대 인용하지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
+  **실패한 노드는 왜 실패했는지에 대한 자기 자신의 기록을 남깁니다.** 실패에
+  대한 엔진의 요약은 상한이 걸린 한 줄이고, 가장 흔한 실패인 `result_matches`
+  불일치에서 그 줄은 `result did not match /<re>/` — 돈을 다 쓰고 난 뒤에
+  노드가 실제로 뭐라고 말했는지는 0바이트라는 뜻입니다. 이제 노드의 전체
+  답변이 `<run-dir>/failed/<node-id>.out`에 영속화됩니다(head+tail 상한, 잘린
+  사실은 파일 안에 명시). 이것은 의도적으로 **artifact가 아닙니다** — 실패한
+  노드에 대해서는 `{{ artifacts.<id> }}`가 해석되지 않고 `handoff: session`
+  자식도 그 세션을 재개할 수 없습니다. 이건 노드 자신의 기록이고, 자기만의
+  하위 디렉토리에 있습니다. 그 위에서 재시도된 attempt는 더 이상 눈먼
+  재실행이 아닙니다: 이전 attempt를 체크가 **판정**했다면, 재시도의 프롬프트가
+  그 attempt 자신의 답변을 싣습니다 — 딱 한 단계, 누적 없음, nonce로 펜싱되고
+  바이트 상한이 있으며, 체크 자체는 절대 인용하지 않습니다(`result_matches`
+  정규식을 되먹이면 가장 값싼 통과법, 즉 그 패턴에 맞는 글자를 그냥 출력하는
+  법을 가르치게 됩니다). 답변에 대해 아무 판정도 내려지지 않은 원인 — spawn
+  오류, 예산 초과, *완료되지 못한* verification — 은 아무것도 싣지 않으며,
+  `handoff: session` 재시도는 여전히 cold로 시작하고 그렇다고 말합니다. 이
+  기능은 기본으로 켜져 있고 돈이 듭니다: 판정된 실패의 재시도 1회당 인용된
+  답변 약 2k 토큰까지. 상한이 있고 평평하며, 절대 누적되지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016 (retry)](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — 노드별 비용 상한, 라이브(`--max-budget-usd`)와 사후
-  모두 적용 ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
+  모두 적용. 어떤 노드든 예산을 선언한 run에서는 **통과한** 행의
+  `COST(USD)` 칸이 그 노드의 예산 중 얼마를 썼는지도 함께 말합니다 —
+  `0.4900 (98%)` — 그래서 "한 번만 잘못 돌면 실패"라는 사실이 실패한 run이
+  아니라 통과한 run에서 이미 보입니다. 반올림이 아니라 내림이므로, 예산 아래로
+  들어온 노드가 100%로 읽히는 일은 없습니다. 어떤 노드도 예산을 선언하지 않은
+  그래프는 이 기능에 아무 대가도 치르지 않습니다: 주석도, 빈 칸도
+  없습니다 ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — 20분 기본값을 대체하는 노드별 wall-clock 상한, 정당하게
   오래 걸리는 작업을 하는 노드를 위한 것 ([spec](DESIGN.md#execution-engine) · [ADR 0007](docs/adr/0007-per-node-execution-limits.md)).
 - **`feedback:`** — 펼쳐 놓지 않은 채로 경계가 있는 리뷰 루프: 리뷰어 노드가

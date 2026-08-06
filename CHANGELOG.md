@@ -8,12 +8,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.0] - 2026-08-06
 
-Merged to `main` after the v0.4.1 tag, not yet released.
+The evidence release. It is about the distance between what a run said and what
+was actually observed. A `PASS` stops printing the same word for "the engine ran
+your build and it exited 0" and "the model typed PASS": every terminal pass now
+carries a provenance qualifier — `verified`, `self-reported`, `exit-only`,
+`approved` — and the engine grows the machinery to attach a build command *you*
+supplied to a planned graph's sink nodes, so a verification node can no longer
+certify a branch that does not compile (ADR 0016). A run whose process died stops
+reading `RUNNING` forever: liveness becomes the kernel's `flock(2)` on
+`resume.lock`, `ABANDONED` is derived at read time, and the rule is stated once so
+`runs list`, the dashboard, the single-run view and `watch` cannot disagree about
+it (ADR 0015). A node that fails keeps its own account — its reply, not just the
+engine's 240-rune summary of the failure — and the retry that repeats the attempt
+is handed it back, nonce-fenced and bounded. And a plan the validator refuses buys
+one corrected planner call instead of nothing at all. Around them: `auto
+--plan-only` previews a plan before it spends, a passing node's spend reads against
+its budget, `serve` refuses to be framed, run directories go owner-only, and the
+docs get a sweep that corrects what they had been claiming.
 
 ### Added
 
+- **A `PASS` now says how it was reached, and build evidence becomes a command
+  you supply (ADR 0016, #119).** A user ran `auto` against a Kotlin repository:
+  the planner produced a final verify node holding `Bash(git *)`, which checked
+  the branch name, the commit list and a clean tree, replied `PASS` in 17
+  seconds for $0.13 — and certified a branch that did not compile, after the
+  apply node it was checking had spent $11.01. Every ledger row read `PASS`.
+  Widening `plannedToolAllowlist` fixes neither half: a node holding the build
+  tool can still run the build, watch it fail, and reply `PASS`. So two things
+  land instead. **The ledger's terminal `PASS` gains a provenance qualifier**
+  from a closed set of four — `verified` (the engine ran a `success_check.verify`
+  and judged its exit code, plus `output_matches` when declared),
+  `self-reported` (a `result_matches` pattern matched what the node *said*;
+  nothing outside the model's narration was observed), `exit-only` (the
+  subprocess exited 0 and no predicate beyond that was declared) and `approved`
+  (a human released a `type: gate` — no subprocess, no predicate). It rides in
+  the `VERDICT` column of `show` and the end-of-run table, and on the
+  `node_passed` event. A `FAIL` carries none: it states its cause in `DETAIL`
+  instead. `verified` means **measured, not correct** — `verify: { command:
+  "true" }` yields it; the ledger reports how a verdict was reached, never
+  whether the check was a good one. **And the engine learns to attach a build
+  command to a plan's sinks**: `coordinator.VerifyCommand` is set by trusted Go
+  code strictly *after* `validatePlannedNodes`, so a planner-authored `verify:`
+  stays refused outright and the plan the validator saw never contained one; the
+  ENGINE runs it through `verify.ShellVerifier` — the second exec seam, already
+  `childenv.Scrub`'ed — and judges the exit code itself, granting the node
+  nothing and leaving every ADR 0004 ceiling layer byte-for-byte as it was.
+  Attachment is to sink nodes (a full build per node costs up to six serialized
+  builds per run, and is wrong for every goal whose point is to *reach* green),
+  it is disclosed with the plan the way agent and skill mappings are, it is
+  snapshotted into `graph.json`, and a planned `retry.max` is capped so a sink
+  cannot run your build 41 times. Repo detection (`gradlew`, `package.json`,
+  `Cargo.toml`, …) only ever **prints a suggested command** — never a grant,
+  because `Write` and `Edit` are in the allowlist and node 1 creating a
+  `package.json` would otherwise widen node 2's set. `resume` refuses a
+  snapshot-borne verification on an auto graph rather than replaying it on trust.
+  **Stated exactly, because it is the part a user will reach for:** `auto` does
+  **not** parse `--verify-cmd` / `--verify-timeout` in this release. The engine
+  side is implemented and tested and the ADR is `Proposed`, not `Accepted`; the
+  flag that reaches it from a command line is not in the tree, so every `auto`
+  run still takes the zero-config path and the provenance qualifier is the half
+  of this you can use today. SECURITY.md and ADR 0016 both say so in their own
+  words. ([#123](https://github.com/jitokim/oh-my-graph/pull/123))
 - **A failed node's own reply survives it, and the retry that repeats the
   attempt is told what it said.** A node that failed its `success_check` used
   to leave behind only the engine's account of the failure — a 240-rune
@@ -199,7 +257,7 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   the orphan. A run that never wrote a snapshot has nothing to resume from, so
   its hint says "run the graph again" and `resume` fails on it with that
   sentence instead of a bare "no such file".
-- **A passing node's spend now reads against its budget (#115).** The
+- **A passing node's spend now reads against its budget (#120, closes #115).** The
   `COST(USD)` column annotates each row with the share of `budget_usd` that
   spend used — `0.4900 (98%)` — so "one bad run from failing" is visible before
   the run that fails, not only in the FAIL detail afterward. Floored, never
@@ -210,7 +268,8 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   nothing for the feature. To keep a budgeted run's table on an 80-column
   terminal — the shipped graphs that declare a budget are mixed runs, not
   budget-less ones — the `SESSION` stub narrowed from 20 characters to 18.
-- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#118).**
+- **`lint` says when a fan-in reviewer's arc cannot reach a producer (#120,
+  partially addressing #118).**
   A reviewer that fans in from several producers still names one node in
   `rerun`, so its loop body can exclude a producer whose artifact it judges;
   the loop then re-judges an unchanged file every round and halts with the
@@ -220,8 +279,6 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   It is **advisory only**: it never changes whether a graph is valid or what
   any command exits with. Parents that are gates, or that are upstream of the
   rerun target (the `spec → impl → review` shape), are not reported.
-
-### Changed
 
 - **A negative `retry.max` is refused at load instead of discarded.** The
   scheduler adds `retry.max` to a node's attempt count only when it is
@@ -384,6 +441,43 @@ Merged to `main` after the v0.4.1 tag, not yet released.
 
 ### Documentation
 
+- **A spawner count written in prose now answers to the allowlist (#112).**
+  "Exactly four objects may spawn a process" is hand-written in more than thirty
+  sentences across package docs, README, DESIGN, CONTRIBUTING and a shipped
+  graph prompt, and only the allowlist in `exec_seam_test.go` was checked by
+  anything — so the prose drifted: copies still said "two" and "three" long
+  after the seam set had grown, including in `internal/childenv`'s own package
+  doc (the package that *owns* the rule) and in `graphs/self-dev.yaml`, which
+  told a coding agent "the `NodeRunner` seam is the only `os/exec` touch point"
+  — which is how a fifth spawner gets added by someone sincerely reporting it
+  touched nothing. `TestProseSpawnerCountsMatchTheExecSeamAllowlist` now reads
+  the number back out of the prose and holds it to the count **derived** from
+  `allowedExecImporters`, with deliberately no second copy of the number (a
+  guard carrying its own constant would be the same bug again). ADRs and this
+  changelog are excluded as history — every "exactly two" in ADR 0002 was true
+  when it was written. Alongside it, `errors.As` now reaches a fragment error:
+  `UnresolvedFragmentError` embedded `GraphValidationError` by value and defined
+  no `Unwrap`, so a caller doing exactly what `GraphValidationError`'s doc told
+  it to do silently missed fragment errors.
+- **The docs say what the code does, starting with the published contracts
+  (#111, #113).** CONTRIBUTING's merge-review checklist listed three spawners
+  and three call-site tests, contradicting its own table four lines up — a
+  reviewer following it would have approved a browser-seam PR that dropped the
+  env scrub. The run-feed contract told consumers a currently-running node is
+  absent from `state.json`'s `nodes`, which a feedback loop falsifies: while
+  `impl` runs round 2 the snapshot still reads its round-1 `PASS`, so a consumer
+  using absence as the liveness test reads a running node as settled. RUN-FEED.md
+  now names what to key on instead — a `node_started`/`node_retried` with no
+  terminal event after it, in `events.jsonl`, never in the snapshot — and gains
+  the `judged` field and the verdict-qualifier table. The CLI usage synopsis
+  advertised a `serve --run` flag that does not exist and omitted `version`,
+  `--no-web`, `--no-agent-mapping` and `--no-skill-mapping`; it is now one
+  constant, and `usage_test.go` derives its checks from `run()`'s dispatch
+  switch and each subcommand's real `FlagSet` in **both** directions, so an
+  advertised-but-unregistered flag and a registered-but-undocumented one each
+  fail. DESIGN.md absorbs a dozen smaller drifts (the `NodeInvocation` /
+  `NodeOutcome` field lists, the argv paragraph, the planned-node disposition
+  table's missing `use`/`with`, `permission_mode`'s full measured set).
 - **ADR 0015 — an abandoned run is derived from the lock, not repaired into
   the feed (#109).** Two runs read RUNNING for over a day, because
   `runfeed.InFlight` calls a leg open when its last `run_started` has no
@@ -397,6 +491,15 @@ Merged to `main` after the v0.4.1 tag, not yet released.
   every surface that renders it (§4) are all in Changed and Fixed above, and the
   two gaps the ADR accepts by design remain gaps: `watch` gains no idle-time
   probe, and nothing probes for an orphaned `claude`.
+- **Two ADRs landed in parallel and both took the number 0016.**
+  `0016-build-evidence-is-a-user-supplied-engine-command.md` (#119/#123) and
+  `0016-a-retry-carries-the-attempt-it-is-repeating.md` (#124) were authored on
+  separate lanes and merged without either seeing the other's number. Both are
+  cited by that number throughout the code, the READMEs, DESIGN.md and this
+  entry, so the collision is recorded here rather than repaired in the release
+  commit: renumbering is its own change, and a link that resolves today should
+  not be broken by a version bump. Cite ADR 0016 by **filename**, not by number,
+  until one of them is renumbered.
 
 ## [v0.4.1] - 2026-08-04
 
@@ -1106,7 +1209,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...v0.5.0
 [v0.4.1]: https://github.com/jitokim/oh-my-graph/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/jitokim/oh-my-graph/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/jitokim/oh-my-graph/compare/v0.3.0...v0.3.1
