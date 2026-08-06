@@ -200,13 +200,34 @@ Running graph "haiku-smoke" (run 20260729-101532)
 ✓ critique  PASS  $0.0034  2.1s
 
 Run 20260729-101532 — 2 node(s)
-NODE             VERDICT    SESSION                     COST(USD)  DETAIL
-------------------------------------------------------------------------------
-critique         PASS       a1b2c3d4-e5f6-47a8-9c1…       0.0034
-write            PASS       f9e8d7c6-b5a4-4321-8765…      0.0091
-------------------------------------------------------------------------------
+NODE             VERDICT              SESSION                   COST(USD)  DETAIL
+---------------------------------------------------------------------------------
+critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
+---------------------------------------------------------------------------------
 TOTAL COST: $0.0125
 ```
+
+모든 `PASS`는 **어떻게** 통과했는지를 함께 말합니다. "엔진이 당신의 빌드를
+실제로 돌렸고 exit 0이었다"와 "모델이 PASS라고 말했다"는 같은 주장이 아니고,
+같은 단어로 찍혀서도 안 되기 때문입니다. `write`는 `success_check.verify`를
+선언하므로 그 행은 `verified`이고, `critique`는 `exit_zero`만 선언하므로
+프로세스 종료 코드 외에는 아무것도 확인되지 않았다는 사실을 행 자체가
+말합니다. qualifier는 닫힌 4원소 집합입니다:
+
+| qualifier | 엔진이 실제로 한 일 |
+|---|---|
+| `verified` | `success_check.verify` 명령을 실행하고 그 exit code를 (선언됐다면 `output_matches`까지) 직접 판정했다 |
+| `self-reported` | 노드가 *말한* 내용에 `result_matches` 패턴을 맞춰봤을 뿐 — 모델의 서술 바깥에 있는 상태는 아무것도 관찰하지 않았다 |
+| `exit-only` | 서브프로세스가 0으로 종료했고, 그 외의 predicate는 선언되지 않았다 |
+| `approved` | 사람이 `type: gate` 노드를 승인했다 — 서브프로세스도 predicate도 없다 |
+
+`verified`는 *측정됐다*는 뜻이지 *옳다*는 뜻이 아닙니다.
+`verify: { command: "true" }`도 `verified`가 됩니다. ledger는 판정이 어떻게
+도출됐는지를 보고할 뿐, 그 체크가 좋은 체크였는지는 말하지 않습니다. `FAIL`은
+qualifier를 달지 않습니다 — 대신 `DETAIL`에 실패 원인이 적힙니다.
+[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
+참고.
 
 stdout이 터미널이면 `run`, `auto`, `resume`은 시작되는 leg의 [web live
 view](#usage)를 임시 `127.0.0.1` 포트로 서빙하고 기본 브라우저에서 엽니다.
@@ -509,7 +530,11 @@ from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 
 - **`handoff`** — 위의 [Handoff — 자식이 무엇을 물려받는가](#handoff--what-a-child-inherits)
   참고 ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — 근거 기반 게이팅(`exit_zero`,
-  `result_matches`, 그리고 엔진이 실행하는 `verify` 명령)과 원인별 retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
+  `result_matches`, 그리고 엔진이 실행하는 `verify` 명령)과 원인별 retry.
+  재시도된 attempt는 더 이상 눈먼 재실행이 아닙니다: 이전 attempt를 체크가
+  **판정**했다면, 재시도의 프롬프트가 그 attempt 자신의 답변을 싣습니다 —
+  딱 한 단계, 누적 없음, nonce로 펜싱되고 바이트 상한이 있으며, 체크 자체는
+  절대 인용하지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — 노드별 비용 상한, 라이브(`--max-budget-usd`)와 사후
   모두 적용 ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — 20분 기본값을 대체하는 노드별 wall-clock 상한, 정당하게

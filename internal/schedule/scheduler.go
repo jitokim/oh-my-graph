@@ -238,6 +238,42 @@ type Options struct {
 	// `resume` passes runstate.Snapshot.SettledNodes(); CompletedNodes keeps
 	// deciding topology, SettledNodes only gates re-launch.
 	SettledNodes map[string]bool
+	// SerializedVerifyNodes is the set of node ids whose success_check.verify
+	// must run one at a time, run-wide: while one of them is verifying, no
+	// other member may start its own verification. nil (the zero value) is
+	// today's behaviour — every verification runs as soon as its node settles,
+	// concurrently with any other.
+	//
+	// It exists for the evidence command auto mode attaches to a plan's sink
+	// nodes (ADR 0016 §2), and coordinator.InjectedVerifyNodes is what fills
+	// it. The serialization is LOAD-BEARING, not a nicety, and it has two
+	// independent reasons — neither of which is the ORDERING of the checks:
+	//
+	//   - flake: two concurrent `./gradlew build` invocations in one project
+	//     directory contend for the build daemon's locks, and a flaky check is
+	//     worse than a slow one;
+	//   - a build WRITES (build/, target/, node_modules/, generated sources),
+	//     so two concurrent builds of one directory can each fail on the
+	//     other's half-written output, and neither result then describes the
+	//     tree the user has.
+	//
+	// The ordering property holds without this field and must not be attributed
+	// to it: verifyEvidence runs at the START of its node's settlement, but
+	// still after that node's own subprocess, and every non-sink is an ancestor
+	// of a sink — so the last-STARTING check begins after every node's
+	// subprocess has ended whether or not the checks are serialized.
+	//
+	// So relaxing this owes a replacement argument, not a benchmark: a
+	// measurement showing Gradle tolerates concurrency buys a faster check only
+	// together with an argument for why one build may read another's output
+	// mid-write.
+	//
+	// It removes interference between CHECKS, not skew between a check and a
+	// still-running node: a node re-run by a retry or a feedback round spawns
+	// while another member's check may be running. The RUN's verdict stays
+	// sound (every sink must pass, and the last check to start ran after every
+	// subprocess); a particular node's check result is best-effort.
+	SerializedVerifyNodes map[string]bool
 	// NodeRounds seeds each node's current feedback round for a resumed leg
 	// (ADR 0010): the resume path derives it from a declarer's non-terminal
 	// marker record (round k → every body node resumes at round k), so the
@@ -271,6 +307,14 @@ type Scheduler struct {
 	settledNodes map[string]bool
 	// nodeRounds seeds the feedback state per Run — see Options.NodeRounds.
 	nodeRounds map[string]int
+	// serializedVerify is the set of node ids whose verifications are mutually
+	// exclusive run-wide — see Options.SerializedVerifyNodes.
+	serializedVerify map[string]bool
+	// verifyMu is that mutual exclusion. It is held ONLY across a member's
+	// verify.Verifier call, never across a node's subprocess or a snapshot
+	// write, so a serialized check cannot stall anything but another
+	// serialized check.
+	verifyMu sync.Mutex
 	// feedback is this Run's view of every feedback arc: rounds, bodies,
 	// re-arming in-degrees (ADR 0010). Built by execute() from the graph it
 	// is handed — the one piece of per-run state the Scheduler holds, which
@@ -319,20 +363,21 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		eventSink = noopEventSink{}
 	}
 	return &Scheduler{
-		runner:         nodeRunner,
-		continueOnFail: opts.ContinueOnFail,
-		concurrency:    opts.Concurrency,
-		gate:           gateController,
-		verifier:       verifier,
-		worktrees:      worktrees,
-		progress:       progressWriter,
-		recorder:       recorder,
-		events:         eventSink,
-		toolPolicies:   opts.ToolPolicies,
-		completedNodes: opts.CompletedNodes,
-		settledNodes:   opts.SettledNodes,
-		nodeRounds:     opts.NodeRounds,
-		sessionIDs:     runner.NewSessionID,
+		runner:           nodeRunner,
+		continueOnFail:   opts.ContinueOnFail,
+		concurrency:      opts.Concurrency,
+		gate:             gateController,
+		verifier:         verifier,
+		worktrees:        worktrees,
+		progress:         progressWriter,
+		recorder:         recorder,
+		events:           eventSink,
+		toolPolicies:     opts.ToolPolicies,
+		completedNodes:   opts.CompletedNodes,
+		settledNodes:     opts.SettledNodes,
+		nodeRounds:       opts.NodeRounds,
+		serializedVerify: opts.SerializedVerifyNodes,
+		sessionIDs:       runner.NewSessionID,
 	}
 }
 
@@ -654,7 +699,12 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 //
 // It returns nil on success, or the failure (an interpolation error, a runner
 // error, a *NodeCheckError — including a failed verification — or a
-// *NodeBudgetError) after retries are exhausted. A feedback declarer's
+// *NodeBudgetError) after retries are exhausted. A failure the node actually
+// spoke into — a judged verdict, or a result that could not be persisted —
+// keeps that reply at failed/<node-id>.out on the way out (keepFailedReply),
+// and — when a check judged it — hands that same reply to the attempt that
+// retries it, quoted as fenced data (retryfeedback.go, ADR 0016).
+// A feedback declarer's
 // judgment failure with rounds remaining returns a *feedbackSignal instead
 // (see judgeFeedback), which Run() intercepts and turns into the body's
 // re-arm rather than a failure. A gate node never reaches this general path
@@ -665,14 +715,36 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	start := time.Now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 
+	// A previous LEG's reply, if the resume path seeded one — a
+	// `resume --retry-failed` re-running a node that already failed in an
+	// earlier process. Taken (not read), so it is quoted into this execution
+	// only; from the second attempt on, the prompt carries the attempt this leg
+	// watched fail instead.
+	//
+	// It is taken HERE, before the session id is minted, because a seeded reply
+	// makes this execution a RETRY of the attempt that produced it — and a
+	// retry starts cold (prepareRetry, ADR 0016 §6). Without that, a
+	// `handoff: session` node would resume its parent's conversation while the
+	// quote appended to its prompt told it "You are a FRESH claude session […]
+	// neither is any conversation it belonged to": the two halves of one
+	// feature disagreeing across the process boundary, which is exactly what
+	// NodeRecord.Judged exists to prevent on the verdict axis. Cold means this
+	// execution needs a session id of its own, like every retried attempt.
+	priorLegReply, retryingPriorLeg := "", false
+	if node.Type != graph.TypeGate {
+		priorLegReply, retryingPriorLeg = h.TakePriorReply(node.ID)
+	}
+
 	// A fresh-session claude node has its session id minted HERE, before
 	// anything spawns, so node_started can publish it and a live view can
 	// locate the transcript of a node that is still RUNNING — the terminal
 	// events used to be the id's first appearance. A gate spawns no subprocess
 	// and a session-handoff node continues its parent's session (whose id the
-	// parent's own terminal event already published), so neither carries one.
+	// parent's own terminal event already published), so neither carries one —
+	// unless this is the retry of a prior leg, where the session node resumes
+	// nothing and so needs its own id after all.
 	sessionID := ""
-	if node.Type != graph.TypeGate && node.Handoff != graph.HandoffSession {
+	if node.Type != graph.TypeGate && (node.Handoff != graph.HandoffSession || retryingPriorLeg) {
 		sessionID = s.sessionIDs()
 	}
 	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
@@ -684,6 +756,20 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	invocation, err := s.buildInvocation(ctx, node, h, sessionID)
 	if err != nil {
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
+	}
+
+	// basePrompt is the interpolated node prompt with nothing appended, kept
+	// because every retry is rebuilt FROM it rather than on top of whatever the
+	// last attempt ran (retryfeedback.go). That is what makes "one prior attempt
+	// per prompt" a property of the code and not of anyone's discipline.
+	basePrompt := invocation.Prompt
+
+	// The seeded reply taken above is quoted here, and this execution starts
+	// cold with it — startCold without the session id prepareRetry mints,
+	// because this execution's id was minted above so node_started could
+	// publish it.
+	if retryingPriorLeg {
+		s.startCold(&invocation, node, basePrompt, priorLegReply)
 	}
 
 	attempts := 1
@@ -707,7 +793,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			runErr = halt.explain(runErr)
 			lastErr = runErr
 			if s.shouldRetry(node, attempt, attempts, causeFromRunError(runErr)) {
-				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
+				// No outcome, so no reply: the attempt being repeated said
+				// nothing. Rebuilding from basePrompt is not a no-op here — it
+				// DROPS a quote an earlier attempt may have carried, because
+				// the attempt immediately before this one is the one that died
+				// mid-spawn, and it is the only one a prompt may quote.
+				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, ""))
 				continue
 			}
 			if killedBeforeReporting {
@@ -754,6 +845,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		}
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
+				s.keepFailedReply(h, node, outcome.Result)
 				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
@@ -762,13 +854,23 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// semantics are untouched here — only the pass/fail verdict is.
 			verdictErr = evaluateBudget(node, outcome)
 			if verdictErr == nil {
-				return s.recordPass(led, h, node, outcome, time.Since(start), attempt)
+				return s.recordPass(led, h, node, outcome, time.Since(start), attempt, retryingPriorLeg)
 			}
 		}
 
 		lastErr = verdictErr
 		if s.shouldRetry(node, attempt, attempts, causeFromCheck(verdictErr)) {
-			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation))
+			// The next attempt is handed this one's reply, but only when a
+			// check actually JUDGED the work — isJudgmentFailure, the same
+			// split ADR 0010 draws for a feedback arc, and for the same reason
+			// (feedback.go). A blown budget or a verification that could not be
+			// completed rendered no verdict on the reply, so quoting it back
+			// would ask the node to repair something nothing found fault with.
+			prior := ""
+			if isJudgmentFailure(verdictErr) {
+				prior = outcome.Result
+			}
+			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, prior))
 			continue
 		}
 		// The feedback arc is consulted exactly where the failure would
@@ -780,6 +882,11 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if signal != nil {
 			return signal
 		}
+		// This is where the run paid for a reply and then judged it
+		// unacceptable. Keep the reply BEFORE recordFail, so a consumer
+		// reacting to node_failed on the event stream never beats the file
+		// onto disk.
+		s.keepFailedReply(h, node, outcome.Result)
 		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, finalErr)
 	}
 
@@ -839,22 +946,101 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 	rec := failRecord(node, sessionID, cost, duration, cause)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	// isJudgmentFailure here, at the one place a terminal failure is recorded,
+	// so the snapshot carries the same split the in-leg retry quote is gated on
+	// and a later process never has to re-derive it (ADR 0016).
+	s.recordSnapshot(node, rec, h, isJudgmentFailure(cause))
 	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
+}
+
+// keepFailedReply persists a failing node's own reply to failed/<node-id>.out
+// and points the progress feed at it. Everything else a failure leaves behind —
+// the ledger row, the snapshot record, the node_failed detail — is the ENGINE's
+// account of the failure, capped at maxDetailRunes, and for the largest single
+// class of failure (a result_matches miss) it carries none of the reply's bytes
+// at all. This is the node's own account, kept whole enough to read.
+//
+// It is called only on paths that have an outcome: an interpolation error or a
+// spawn failure never produced a reply, and a gate never speaks. An empty reply
+// writes nothing (see Handoff.PersistFailure).
+//
+// A write failure is NON-fatal and warns exactly like a failed snapshot write:
+// the node has already failed, and losing its reply must not change the verdict
+// or invent a second failure mode. (Contrast SetFeedback, whose failure IS
+// fatal — a feedback re-run without its payload is a paid lie about what the
+// body was told. Different claim, different policy.)
+func (s *Scheduler) keepFailedReply(h *handoff.Handoff, node graph.Node, reply string) {
+	path, err := h.PersistFailure(node.ID, reply)
+	if err != nil {
+		s.logProgress("⚠ %s  failed reply not saved: %v\n", node.ID, err)
+		return
+	}
+	if path == "" {
+		return
+	}
+	s.logProgress("✎ %s  reply saved: %s\n", node.ID, path)
+}
+
+// dropFailedReply removes a failed/<node-id>.out an EARLIER LEG left behind,
+// once this leg's execution of that node has passed. The file's whole meaning
+// is "this node failed and these were its words" — the same claim
+// TestScheduler_PassingNodeKeepsNoFailedReply pins for a node that never failed
+// — and a run directory holding the losing reply beside the winning artifact,
+// with a PASS verdict in state.json, makes the directory a statement about
+// nothing.
+//
+// Best-effort exactly as keepFailedReply is, and for the same reason: the node
+// has passed, and a filesystem that will not take the removal must not rewrite
+// that. Only a resume leg can have such a file to drop — an in-leg retry never
+// wrote one, because only a TERMINAL failure does.
+func (s *Scheduler) dropFailedReply(h *handoff.Handoff, node graph.Node) {
+	if err := h.DropFailure(node.ID); err != nil {
+		s.logProgress("⚠ %s  stale failed reply not removed: %v\n", node.ID, err)
+	}
 }
 
 // recordPass writes the node's live "✓ PASS" progress line, its ledger row,
 // the same record into the resumable snapshot, and the matching node_passed
 // event, then returns nil so callers can `return s.recordPass(...)` directly.
-func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) error {
+func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) error {
 	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
-	rec := passRecord(node, outcome, duration, attempt)
+	s.dropFailedReply(h, node)
+	rec := passRecord(node, outcome, duration, attempt, coldStart)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	s.recordSnapshot(node, rec, h, false)
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return nil
+}
+
+// passProvenance says HOW this node's PASS was reached, over runfeed's closed
+// set (ADR 0016 §6). It is derived from the predicates the engine actually
+// evaluated, so it needs no cooperation from the node: nothing can force a
+// planned node to build, but the engine always knows whether anything but the
+// node's own narration was consulted.
+//
+// It is called once per terminal PASS and stored on the ledger.Record, which
+// the snapshot and the event are then derived from — the same one-computation,
+// three-destinations rule the cost and verdict already follow. A qualifier
+// computed separately per surface is a qualifier that can disagree with
+// itself, which is the exact failure this whole section exists to end.
+//
+// The order is the strength order. A node carrying both a verification and a
+// result_matches is `verified`, because the verification is what was judged
+// from observed facts; result_matches is a cheap secondary filter over what
+// the node SAID, and never evidence on its own (graph.SuccessCheck says so).
+func passProvenance(node graph.Node) string {
+	switch {
+	case node.Type == graph.TypeGate:
+		return runfeed.ProvenanceApproved
+	case node.SuccessCheck.Verify != nil:
+		return runfeed.ProvenanceVerified
+	case node.SuccessCheck.ResultMatches != "":
+		return runfeed.ProvenanceSelfReported
+	default:
+		return runfeed.ProvenanceExitOnly
+	}
 }
 
 // appendRoundNote joins a body node's "feedback round k/N" note onto its
@@ -879,9 +1065,15 @@ func appendRoundNote(rec *ledger.Record, note string) {
 func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, duration time.Duration) error {
 	s.logProgress("✓ %s  %s  gate approved\n", node.ID, ledger.VerdictPass)
 	s.emitEvent(runfeed.Event{Type: runfeed.EventGateApproved, NodeID: node.ID})
-	rec := ledger.Record{NodeID: node.ID, Verdict: ledger.VerdictPass, Duration: duration, Detail: "gate approved"}
+	rec := ledger.Record{
+		NodeID:     node.ID,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Detail:     "gate approved",
+		Provenance: passProvenance(node),
+	}
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h)
+	s.recordSnapshot(node, rec, h, false)
 	s.recordGateDecision(node, runstate.GateApprove)
 	// A gate is never in a feedback body (validated), so its round is 0.
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0, 0))
@@ -897,10 +1089,52 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 // that id already names a real session the failed child wrote — so it gets a
 // new one, which recordRetry publishes on node_retried for the same
 // live-view reason node_started publishes the first.
-func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation) string {
-	invocation.ResumeSession = ""
+//
+// The cold start is why the prompt is rebuilt here rather than mutated in
+// place: the retried attempt inherits no conversation, so everything it is to
+// know has to be in its prompt, and everything it is NOT to know — including
+// every attempt before the last — has to be absent from it. Rebuilding from
+// basePrompt each time is what guarantees both (retryfeedback.go). priorReply
+// is the reply of the attempt just finished, or "" when that attempt produced
+// none or produced one no check judged.
+func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) string {
+	s.startCold(invocation, node, basePrompt, priorReply)
 	invocation.SessionID = s.sessionIDs()
 	return invocation.SessionID
+}
+
+// startCold is what "a retry starts cold" MEANS to an invocation: the prompt is
+// rebuilt from basePrompt with at most the one prior reply quoted into it, and
+// the invocation resumes nothing.
+//
+// It is separate from prepareRetry because a retry does not always mint a
+// session id here: an in-leg retry does (prepareRetry), while the retry of a
+// node that failed in an EARLIER PROCESS is the first execution of this leg and
+// already had its id minted where node_started published it (runNode). Both are
+// retries and both must be cold — a `handoff: session` node that resumed its
+// parent here would be handed the quote's FRESH-SESSION paragraph as a lie.
+func (s *Scheduler) startCold(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
+	s.quotePriorAttempt(invocation, node, basePrompt, priorReply)
+	invocation.ResumeSession = ""
+}
+
+// quotePriorAttempt sets invocation.Prompt to basePrompt plus the fenced quote
+// of priorReply, or to basePrompt alone when there is nothing to quote.
+//
+// A nonce that cannot be minted DROPS the quote and says so on the progress
+// feed; it never falls back to fixed markers, which would be a fence in name
+// only. Degrading here rather than failing the node is a different judgement
+// from the coordinator's, and the difference is what is left to fall back on: a
+// planner call whose material cannot be fenced has no un-fenced version worth
+// making, while a retry without the quote is exactly the retry this engine ran
+// for every release before ADR 0016 — complete, valid, and merely less informed.
+func (s *Scheduler) quotePriorAttempt(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
+	prompt, err := retryPrompt(basePrompt, priorReply)
+	if err != nil {
+		s.logProgress("⚠ %s  previous attempt not quoted to the retry: %v\n", node.ID, err)
+		prompt = basePrompt
+	}
+	invocation.Prompt = prompt
 }
 
 // recordRetry writes the node's live "↻ retry" progress line and the matching
@@ -920,9 +1154,13 @@ func (s *Scheduler) recordRetry(node graph.Node, retryNumber int, sessionID stri
 // not know it ran and would re-execute it, a real cost — which is why it is
 // surfaced on the progress feed rather than silently swallowed (DESIGN.md,
 // "Gate nodes and resume").
-func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff) {
+//
+// judged is meaningful only on a FAIL, where it is isJudgmentFailure's answer
+// about that failure's cause; every other caller passes false, because a PASS
+// and a mid-loop marker have no verdict to have been rendered on them.
+func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff, judged bool) {
 	artifactPath, _ := h.ArtifactPath(node.ID)
-	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID))); err != nil {
+	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID), judged)); err != nil {
 		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
 	}
 }
@@ -939,7 +1177,7 @@ func (s *Scheduler) recordGateDecision(node graph.Node, decision runstate.GateDe
 // Scheduler already built for the same node, so the two never carry different
 // cost/verdict/detail for the same event — one accounting computation, two
 // destinations (the ledger for this leg's table, the snapshot for a resume).
-func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.NodeRecord {
+func toNodeRecord(rec ledger.Record, artifactPath string, round int, judged bool) runstate.NodeRecord {
 	verdict := runstate.VerdictFail
 	if rec.Verdict == ledger.VerdictPass {
 		verdict = runstate.VerdictPass
@@ -953,6 +1191,10 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int) runstate.No
 		ArtifactPath: artifactPath,
 		Detail:       rec.Detail,
 		Round:        round,
+		Judged:       judged,
+		// Empty on every FAIL (failRecord sets none), so the two qualifiers
+		// never appear on the same record — see runstate.NodeRecord.
+		Provenance: rec.Provenance,
 	}
 }
 
@@ -972,6 +1214,9 @@ func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, roun
 		Retries:   retries,
 		Detail:    rec.Detail,
 		Round:     round,
+		// Only a PASS record carries one, so node_failed emits none without
+		// this needing to know which event type it is building.
+		Provenance: rec.Provenance,
 	}
 }
 
@@ -1145,6 +1390,14 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 		return verifyFault(node.ID, err.Error())
 	}
 
+	if s.serializedVerify[node.ID] {
+		// Held across this node's Verify call only (see Scheduler.verifyMu).
+		// The wait is deliberately not logged: a sink queuing behind another
+		// sink's build is the mechanism working, not an event.
+		s.verifyMu.Lock()
+		defer s.verifyMu.Unlock()
+	}
+
 	s.logProgress("… %s  verifying: %s\n", node.ID, request.Command)
 	result, err := s.verifier.Verify(ctx, request)
 	if err != nil {
@@ -1190,22 +1443,54 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 
 	if expected := v.ExpectedExitCode(); result.ExitCode != expected {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` exited %d, want %d%s",
-			command, result.ExitCode, expected, outputTail(result.Output)))
+			command, result.ExitCode, expected, outputTail(result.Output)),
+			evidenceOf(command, result.Output))
 	}
 	if pattern == nil {
 		return nil
 	}
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
-			command, v.OutputMatches, outputTail(result.Output)))
+			command, v.OutputMatches, outputTail(result.Output)),
+			evidenceOf(command, result.Output))
 	}
 	return nil
 }
 
+// maxEvidenceRunes bounds the verification output a feedback re-run is handed.
+// It is deliberately NOT maxDetailRunes: that bound exists to keep a table
+// readable, and 240 runes of a build log is the compiler's last sentence with
+// the error list cut off — the payload's whole point (ADR 0016 §2).
+//
+// 4000 runes is the lane's pick, and it is a trade, not a derivation: it is
+// roughly a thousand tokens of argv-borne prompt on every feedback round, and
+// enough for the error list of a build that failed for a handful of reasons. A
+// build that failed for a hundred reasons is not diagnosable from any bound.
+// Nobody has measured "enough compiler output to fix a build" against prompt
+// cost; when someone does, this is the number to move.
+const maxEvidenceRunes = 4000
+
+// evidenceOf renders what a failed verification actually printed, for the
+// payload a feedback re-run reads. The TAIL is kept, like every other
+// truncation in this file, because a failing command explains itself last —
+// and unlike outputTail, newlines are preserved: the reader is a model looking
+// at a compiler's error list, not a one-line table cell.
+func evidenceOf(command, output string) string {
+	body := strings.TrimSpace(output)
+	if body == "" {
+		body = "(no output)"
+	}
+	if runes := []rune(body); len(runes) > maxEvidenceRunes {
+		body = "…" + string(runes[len(runes)-maxEvidenceRunes:])
+	}
+	return fmt.Sprintf("`%s` failed. Its output:\n\n%s", command, body)
+}
+
 // verifyFailure builds the error shape for evidence that was gathered and
-// judged insufficient — a verdict on the work.
-func verifyFailure(nodeID, detail string) error {
-	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail}
+// judged insufficient — a verdict on the work. detail is the table-sized
+// summary; evidence is the model-sized payload a feedback re-run reads.
+func verifyFailure(nodeID, detail, evidence string) error {
+	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Evidence: evidence}
 }
 
 // verifyFault builds the error shape for a verification that could not be
@@ -1416,25 +1701,28 @@ func causeFromCheck(err error) string {
 
 // passRecord / failRecord build the single ledger row for a node's terminal
 // result, keeping the record shape in one place.
-func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int) ledger.Record {
+func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) ledger.Record {
 	rec := ledger.Record{
-		NodeID:    node.ID,
-		SessionID: outcome.SessionID,
-		CostUSD:   outcome.TotalCostUSD,
-		BudgetUSD: node.BudgetUSD,
-		Verdict:   ledger.VerdictPass,
-		Duration:  duration,
+		NodeID:     node.ID,
+		SessionID:  outcome.SessionID,
+		CostUSD:    outcome.TotalCostUSD,
+		BudgetUSD:  node.BudgetUSD,
+		Verdict:    ledger.VerdictPass,
+		Duration:   duration,
+		Provenance: passProvenance(node),
 	}
 
 	var notes []string
 	if attempt > 0 {
 		notes = append(notes, fmt.Sprintf("passed after %d retr%s", attempt, plural(attempt)))
-		// runNode clears ResumeSession on every retry, so a session-handoff
-		// node's passing attempt ran without its parent's conversation — a
-		// fact the surfaces reading this Detail would otherwise never show.
-		if node.Handoff == graph.HandoffSession {
-			notes = append(notes, "retry started fresh — parent session not resumed")
-		}
+	}
+	// runNode starts every retry cold — an in-leg one (attempt > 0) and the
+	// re-execution of a node that failed in an EARLIER PROCESS (coldStart,
+	// where the leg's first attempt is already a retry) — so a session-handoff
+	// node's passing attempt ran without its parent's conversation, a fact the
+	// surfaces reading this Detail would otherwise never show.
+	if (attempt > 0 || coldStart) && node.Handoff == graph.HandoffSession {
+		notes = append(notes, "retry started fresh — parent session not resumed")
 	}
 	// A passing node is by definition within budget, so the delta is <= 0 here;
 	// reporting the headroom is what makes "ran at 99% of budget" visible in the

@@ -187,13 +187,33 @@ Running graph "haiku-smoke" (run 20260729-101532)
 ✓ critique  PASS  $0.0034  2.1s
 
 Run 20260729-101532 — 2 node(s)
-NODE             VERDICT    SESSION                     COST(USD)  DETAIL
-------------------------------------------------------------------------------
-critique         PASS       a1b2c3d4-e5f6-47a8-9c1…       0.0034
-write            PASS       f9e8d7c6-b5a4-4321-8765…      0.0091
-------------------------------------------------------------------------------
+NODE             VERDICT              SESSION                   COST(USD)  DETAIL
+---------------------------------------------------------------------------------
+critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
+---------------------------------------------------------------------------------
 TOTAL COST: $0.0125
 ```
+
+Every `PASS` says **how** it was reached, because "the engine ran your build
+and it exited 0" and "the model said the word PASS" are not the same claim and
+must not print as the same word. `write` declares a `success_check.verify`, so
+its row is `verified`; `critique` declares only `exit_zero`, so nothing beyond
+the process's exit status was checked and its row says so. The four qualifiers
+are a closed set:
+
+| qualifier | what the engine actually did |
+|---|---|
+| `verified` | ran a `success_check.verify` command and judged its exit code (and `output_matches`, when declared) |
+| `self-reported` | matched a `result_matches` pattern against what the node *said* — no state outside the model's narration was observed |
+| `exit-only` | the subprocess exited 0, and no predicate beyond that was declared |
+| `approved` | a human approved a `type: gate` node — no subprocess, no predicate |
+
+`verified` means *measured*, not *correct*: `verify: { command: "true" }`
+yields it. The ledger reports how a verdict was reached, never whether the
+check was a good one. A `FAIL` carries no qualifier — it states its cause in
+`DETAIL` instead. See
+[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md).
 
 When stdout is a terminal, `run`, `auto` and `resume` also serve the [web live
 view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
@@ -488,7 +508,11 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
 - **`handoff`** — see [Handoff — what a child inherits](#handoff--what-a-child-inherits)
   above ([spec](DESIGN.md#handoff--artifact-default-session-opt-in-committed) · [recipe](docs/EXAMPLES.md#artifact-fan-out-vs-session-chain-handoff)).
 - **`success_check` / `retry`** — evidence-grounded gating (`exit_zero`,
-  `result_matches`, and the engine-run `verify` command) plus per-cause retry ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11)).
+  `result_matches`, and the engine-run `verify` command) plus per-cause retry.
+  A retried attempt is not a blind re-spawn: when a check judged the previous
+  attempt, the retry's prompt carries that attempt's own reply — one attempt
+  deep, never accumulating, nonce-fenced and byte-bounded, and never quoting
+  the check itself ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc ([spec](DESIGN.md#execution-engine) · [recipe](docs/EXAMPLES.md#budgets-budget_usd)).
 - **`timeout`** — a per-node wall-clock bound replacing the 20-minute default,

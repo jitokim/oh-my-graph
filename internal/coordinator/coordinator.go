@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -130,15 +131,7 @@ func (e *PlanError) Error() string {
 	if e.Output == "" {
 		return fmt.Sprintf("graph planning failed: %s", e.Reason)
 	}
-	return fmt.Sprintf("graph planning failed: %s\nplanner replied:\n%s", e.Reason, truncate(e.Output, maxOutputInError))
-}
-
-// truncate shortens s to at most n bytes, marking the cut.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "… (truncated)"
+	return fmt.Sprintf("graph planning failed: %s\nplanner replied:\n%s", e.Reason, fence.Truncate(e.Output, maxOutputInError))
 }
 
 // Plan is the coordinator's product: the validated graph, the raw JSON spec it
@@ -188,6 +181,13 @@ type Plan struct {
 	// disclosure contract as AgentMappings: the caller must print these with
 	// the plan. Empty when nothing matched or mapping is off.
 	SkillMappings []SkillMapping
+	// VerifyAttachments are the sink nodes trusted code attached the user's
+	// --verify-cmd to (ADR 0016 §2, verifycmd.go) — empty when no command was
+	// supplied. Same disclosure contract as AgentMappings and SkillMappings,
+	// and for a sharper reason: this one adds an ENGINE-run shell command to
+	// the graph, so a human approving a plan must be shown what will run and
+	// where. Every entry names a node in Graph.
+	VerifyAttachments []VerifyAttachment
 	// SkillScan says a skill scan ran and over which directories, so the
 	// caller can distinguish an empty SkillMappings that means "scanned, no
 	// match" from one that means "never scanned". nil when no scan happened
@@ -216,6 +216,10 @@ type Coordinator struct {
 	// DefaultSkillDirs, tests point it at temp dirs. Empty means no scanning
 	// and no mapping, ever, exactly like agentDirs.
 	skillDirs []string
+	// verifyCommand is the user-supplied build evidence command attached to
+	// every plan's sink nodes after validation (ADR 0016 §2, verifycmd.go).
+	// Zero means none was supplied — the zero-config path.
+	verifyCommand VerifyCommand
 }
 
 // Option configures a Coordinator at construction.
@@ -295,7 +299,16 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	if strings.TrimSpace(goal) == "" {
 		return Plan{}, &PlanError{Reason: "goal is empty"}
 	}
-	base, err := plannerPromptFor(goal, inputKeys, remaining)
+	// Checked BEFORE the planner call, so an unusable --verify-cmd costs
+	// nothing. Discovering it after the paid planning call — and after a plan
+	// the user then has to re-approve — would be a worse error than the same
+	// one raised a second earlier. It is also checked before the REPAIR loop,
+	// which would otherwise multiply that wasted call by maxPlanRepairAttempts.
+	if err := c.verifyCommand.Validate(); err != nil {
+		return Plan{}, err
+	}
+
+	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
 	if err != nil {
 		return Plan{}, err
 	}
@@ -336,22 +349,28 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // plannerPromptFor renders one planning attempt's base prompt: the planner
 // instruction for the goal, plus the goal loop's continuation section when a
 // previous cycle left work remaining.
-func plannerPromptFor(goal string, inputKeys []string, remaining string) (string, error) {
-	prompt := plannerPrompt(goal, inputKeys)
+//
+// verifyCommandSupplied travels through to plannerPrompt because it picks
+// which final-check paragraph the planner is given (ADR 0016 §5), and a repair
+// attempt must be given the same one the first attempt was — a repair that
+// re-planned against the other paragraph would be answering a different
+// question than the one that was refused.
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool) (string, error) {
+	prompt := plannerPrompt(goal, inputKeys, verifyCommandSupplied)
 	if remaining == "" {
 		return prompt, nil
 	}
 	// `remaining` is the assessor's own words — model output quoted into
 	// oh-my-graph's own prompt — so it is fenced with a per-call nonce
-	// like every other untrusted quote in this package (fence.go). Bare
+	// like every other untrusted quote in this package (internal/fence). Bare
 	// prose around it was forgeable: the assessor is itself fed
 	// prompt-injectable artifacts, so a `remaining` that emits a plain
 	// end-marker could otherwise appear to speak as the engine here.
-	nonce, err := fenceNonce("planner continuation")
+	nonce, err := fence.Nonce("planner continuation")
 	if err != nil {
 		return "", err
 	}
-	return prompt + fmt.Sprintf(plannerContinuationTemplate, nonce, truncate(remaining, maxRemainingInPrompt)), nil
+	return prompt + fmt.Sprintf(plannerContinuationTemplate, nonce, fence.Truncate(remaining, maxRemainingInPrompt)), nil
 }
 
 // attemptPlan makes exactly ONE planner call with the given prompt and turns
@@ -465,6 +484,19 @@ func (c *Coordinator) attemptPlan(ctx context.Context, prompt string) (Plan, flo
 	// nodes carry agent: (those are refused — ADR 0012 §2) and must inline
 	// into the graph that becomes the final Spec, exactly once.
 	if err := c.applySkillMapping(&plan); err != nil {
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
+	}
+	// Last of the post-validation mutations, so the command lands in the graph
+	// that becomes the final Spec — the artifact `--plan-only` prints and
+	// `run`/`resume` replay. The plan the validator saw carried no verify:
+	// validatePlannedNodeVerify still refuses a planner-authored one, and this
+	// string came from the user's own command line (ADR 0016 §2).
+	//
+	// Not repairable, for the same reason the two mappings above are not: the
+	// command is the USER's, so no further paid planner call can fix it — and
+	// plan() already validated it before spending the first one. The spec still
+	// travels, because this plan was one validation ACCEPTED.
+	if err := c.attachVerifyCommand(&plan); err != nil {
 		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	return plan, costUSD, nil
@@ -618,6 +650,8 @@ func toolName(rule string) string {
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
 //     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
+//   - no planned node may declare a retry max above maxPlannedRetries
+//     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
 //     this function ever runs, at Plan's graph.Parse boundary, where
 //     graph.Validate's unresolved-fragment backstop (ADR 0013) is converted
@@ -666,6 +700,7 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		add(validatePlannedNodeAgent(node))
 		add(validatePlannedNodeWorktree(node))
 		add(validatePlannedNodeFeedback(node))
+		add(validatePlannedNodeRetry(node))
 		add(validatePlannedNodeTools(node))
 	}
 	return issues
@@ -746,6 +781,53 @@ func validatePlannedNodeFeedback(node graph.Node) *PlanError {
 		Reason: fmt.Sprintf(
 			"planned node %q declared feedback max %d; auto mode caps a planned loop at %d rounds — every round re-runs the whole loop body at full cost",
 			node.ID, node.Feedback.Max, maxPlannedFeedbackRounds,
+		),
+	}
+}
+
+// maxPlannedRetries is the ceiling on a planned node's retry max — the bound
+// feedback.max already had, which retry never did (internal/graph's
+// validateRetryCauses checks only the cause TOKENS; nothing anywhere bounds
+// Retry.Max).
+//
+// It became load-bearing with ADR 0016 §2. `verify_failed` is a legal retry
+// cause and the retry decision is taken on the verify verdict, so once a sink
+// carries the user's build command, retry count is the ONE lever a planner
+// still has on that command's execution — its count, never its content. A
+// planned sink declaring `retry: {max: 40, on: [verify_failed]}` would have
+// the engine run `./gradlew build` 41 times, each bounded only by the
+// 10-minute verify ceiling, serialized, with up to maxPlannedFeedbackRounds
+// rounds of feedback on top. #119 is a cost story, so the count gets a
+// ceiling.
+//
+// It bounds one node's re-runs, not the run's total build count: Retry.Max is
+// ADDITIONAL attempts, so 3 is 4 executions of the node and of the command
+// attached to it — and maxPlannedFeedbackRounds multiplies that again, so a
+// sink inside a feedback loop reaches roughly 16 executions of the user's
+// command, each bounded only by the 10-minute verify ceiling and all of them
+// serialized. That compound is the real worst case; this constant only keeps
+// it from being unbounded.
+//
+// The same small number as maxPlannedFeedbackRounds, for the same reason: the
+// planner prompt never asks for retry at all, so anything a plan declares here
+// is already unsolicited, and leaving one round of headroom keeps a defensible
+// value from failing a plan the user has already paid for. Rejected rather
+// than clamped, exactly like feedback: a plan that asked for 40 and silently
+// ran 3 is a different plan from the one that was validated.
+const maxPlannedRetries = 3
+
+// validatePlannedNodeRetry bounds a planned node's re-run count. See
+// maxPlannedRetries for why this is not merely tidiness. It returns a
+// *PlanError like every sibling check, so an over-retrying node is collected
+// into the repair prompt with the rest rather than fired one at a time.
+func validatePlannedNodeRetry(node graph.Node) *PlanError {
+	if node.Retry == nil || node.Retry.Max <= maxPlannedRetries {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf(
+			"planned node %q declared retry max %d; auto mode caps a planned node at %d re-runs — each one re-runs the node at full cost, and re-runs any evidence command attached to it",
+			node.ID, node.Retry.Max, maxPlannedRetries,
 		),
 	}
 }
@@ -859,21 +941,119 @@ var plannerRetryCauses = []string{
 // the exact sets validation enforces so a well-behaved plan validates on the
 // first try. Enforcement does not depend on the planner reading or following
 // this text.
-func plannerPrompt(goal string, inputKeys []string) string {
+func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) string {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
 		sort.Strings(sorted)
 		keys = strings.Join(sorted, ", ")
 	}
+	paragraph := finalCheckWithoutVerifyCommand
+	if verifyCommandSupplied {
+		paragraph = finalCheckWithVerifyCommand
+	}
+	// Rendered in two steps, not one: the verdict pattern lives inside the
+	// chosen paragraph, and a placeholder substituted INTO a format string is
+	// never expanded again — a single Sprintf would ship the planner a literal
+	// "%!s" where the pattern it must copy character-for-character belongs.
+	// That is also why the pattern is no longer an argument of the outer
+	// template: the template's %[4]s takes the RENDERED paragraph, and the
+	// retry causes keep %[5]s.
+	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern))
 	return fmt.Sprintf(plannerPromptTemplate,
 		goal,
 		keys,
 		strings.Join(plannedToolAllowlist, ", "),
-		strconv.Quote(plannedVerdictPattern),
+		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
 	)
 }
+
+// finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
+// spellings of the planner's final-check paragraph (ADR 0016 §5). The
+// difference is one fact the planner cannot otherwise know: whether the ENGINE
+// will run its own evidence command after the final node.
+//
+// Both keep the branch rule (branchEvidenceRule, shared verbatim so the two
+// spellings cannot drift) and both keep "your whole reply is exactly PASS",
+// because that instruction is not decoration — plannedVerdictPattern is
+// anchored at both ends, so it IS the gate on that node whenever no verify
+// command exists, and a reply carrying anything besides the verdict fails it.
+//
+// A prompt is not a mechanism, and this repository has learned that
+// repeatedly: §6's provenance qualifier is what stops a self-report from
+// reading as a measurement, and §2 is what gathers evidence. This half is a
+// hope, and measurement (a) — plan the same goal with and without this wording
+// and compare what the check node claims — is what decides whether it stays.
+const (
+	finalCheckWithoutVerifyCommand = branchEvidenceRule + `- Nothing in this graph can compile, build or test the code: no build
+  command is available to any node. A check node's prompt must therefore
+  only assert things it can actually observe with the tools it declared,
+  and must never be written as though its PASS meant the code works.
+`
+
+	finalCheckWithVerifyCommand = `- oh-my-graph itself runs an independent build verification after the final
+  node — a command the user supplied at invocation, which the ENGINE
+  executes and judges on its exit code. It is not a node, it is not in this
+  graph, and no node can run it or influence it. That check is what
+  establishes the code builds.
+- So the final check node must NOT try to prove the code is correct, and
+  must not be written as though its verdict covered the build. Keep it to
+  what it can observe with the tools it declared, and its PASS is a
+  statement about those specific checks and nothing wider.
+` + branchEvidenceRule
+)
+
+// branchEvidenceRule is the branch half of the final-check paragraph, shared
+// by both spellings because it is one prompt and the rule does not depend on
+// who gathers build evidence. It carries the single %s the verdict pattern
+// renders into, so it must appear exactly once per rendered paragraph.
+//
+// It asks for evidence that belongs to the REPOSITORY — a pull request, a
+// branch ref — never to a checkout. The rule used to mandate
+// 'git rev-parse --abbrev-ref HEAD', which quietly assumed something the
+// engine does not guarantee: WHERE the work happened. auto plans no worktrees
+// (validatePlannedNodeWorktree) but a node holding Bash(git *) may make one
+// itself, and auto's isolation reaches no repository but the invocation one
+// (SECURITY.md, "Auto-planned graphs"). In the run that reported this (#103) a
+// check node asserted HEAD in a second local repository that no node had ever
+// switched, so the assertion was unsatisfiable the moment it was written and a
+// run whose PRs both existed and were correct reported FAIL — while the same
+// node's 'gh pr list --head' checks were correct and sufficient.
+//
+// It still closes the bug the branch assertion was added for (a node that
+// commits on the default branch and PASSes anyway), and closes it wider: work
+// committed on the right branch but never pushed has no pull request either.
+const branchEvidenceRule = `- If the goal involves creating a branch or committing on one, the final
+  check node MUST verify that the work landed on the intended feature
+  branch and not on the repository's default branch (e.g. main or master).
+  Assert that against state belonging to the REPOSITORY, never against what
+  some working directory currently has checked out:
+  - Prefer what the remote says: 'gh pr list --head <branch> --state open'
+    (declare "Bash(gh pr *)"), asserting an open pull request exists for the
+    feature branch. For a branch in a repository other than the one
+    oh-my-graph was invoked from, read that repository's slug first
+    ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
+    it: 'gh pr list --repo <slug> --head <branch> --state open'.
+  - If the goal never reaches a pull request, assert the branch REF instead:
+    'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
+    (declare "Bash(git *)"). Every worktree of a repository shares its refs;
+    a checked-out HEAD belongs to one directory only.
+  - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
+    '-C <path>'. A node is free to do its work in a git worktree it made
+    itself, which leaves every other checkout's HEAD untouched, and
+    oh-my-graph isolates no repository but the one it was invoked from — so
+    a HEAD assertion reports FAIL on work that in fact succeeded.
+  When the assertion holds, instruct the node that its whole reply is
+  exactly the four bare characters PASS and nothing else, with no markdown
+  emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
+  FAIL otherwise. Give that node "success_check": {"result_matches": %s} —
+  copy that pattern character for character, doubled backslashes included,
+  since your reply is parsed as JSON. It stays anchored at both ends, so a
+  commit that never reached the intended branch fails the run instead of
+  passing silently, while tolerating the markdown a model wraps a bare
+  verdict in unbidden.
+`
 
 // plannedVerdictPattern is the verdict regex the planner is told to give its
 // branch-assertion check node — the same idiom every shipped graph follows
@@ -982,20 +1162,7 @@ Rules:
   'git add -A', 'git add .', or 'git add -u': the working tree may hold
   untracked files that are not part of the task, and sweeping them into
   the commit is a bug.
-- If the goal involves creating a branch or committing on one, the final
-  check node MUST verify which branch HEAD is on: its prompt runs
-  'git rev-parse --abbrev-ref HEAD' (declare "Bash(git *)"), asserts the
-  output equals the intended feature branch AND is not the repository's
-  default branch (e.g. main or master), and — when both hold — instructs
-  the node that its whole reply is exactly the four bare characters PASS
-  and nothing else, with no markdown emphasis ("**PASS**" is WRONG), no
-  heading, no backticks and no preamble; FAIL otherwise. Give that node
-  "success_check": {"result_matches": %[4]s} — copy that pattern
-  character for character, doubled backslashes included, since your reply
-  is parsed as JSON. It stays anchored at both ends, so a commit that
-  landed on the wrong branch fails the run instead of passing silently,
-  while tolerating the markdown a model wraps a bare verdict in unbidden.
-`
+%[4]s`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt

@@ -12,7 +12,12 @@ iterative pattern in real pipelines:
 
 - **`retry` (node × attempt)** re-runs *the same node* with the same inputs.
   It recovers transient faults; it cannot express "the *work an earlier node
-  produced* was judged wrong, redo it".
+  produced* was judged wrong, redo it". (Amended 2026-08-06 by
+  [ADR 0016](0016-a-retry-carries-the-attempt-it-is-repeating.md): a retry's
+  *inputs* are still the same, but its PROMPT now carries one fenced quote of
+  the attempt it repeats when a check judged that attempt. The sentence above
+  stays true of what retry is FOR — it still re-runs one node against unchanged
+  upstream artifacts, which is exactly what a feedback arc exists to change.)
 - **`on_fail` (graph policy)** decides what the *run* does once a failure is
   final — halt or prune the subtree and continue. Both discard the branch;
   neither recovers it.

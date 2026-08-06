@@ -55,18 +55,34 @@ func showRecords(snap runstate.Snapshot) []ledger.Record {
 	records := make([]ledger.Record, 0, len(snap.Nodes))
 	for nodeID, rec := range snap.Nodes {
 		records = append(records, ledger.Record{
-			NodeID:    nodeID,
-			SessionID: rec.SessionID,
-			CostUSD:   rec.CostUSD,
-			BudgetUSD: rec.BudgetUSD,
-			Verdict:   ledger.Verdict(rec.Verdict),
-			Duration:  rec.Duration,
-			Detail:    rec.Detail,
+			NodeID:     nodeID,
+			SessionID:  rec.SessionID,
+			CostUSD:    rec.CostUSD,
+			BudgetUSD:  rec.BudgetUSD,
+			Verdict:    ledger.Verdict(rec.Verdict),
+			Duration:   rec.Duration,
+			Detail:     rec.Detail,
+			Provenance: rec.Provenance,
 		})
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].NodeID < records[j].NodeID })
 	return records
 }
+
+// showRuleWidth is this table's divider: the header line's own length, summed
+// from the columns rather than restated as a number. The VERDICT column is
+// ledger.VerdictWidth — the same constant the end-of-run table sizes it by, not
+// a copy of it — so widening the qualifier set moves both tables at once
+// instead of leaving this one to drift a literal at a time.
+const (
+	showNodeWidth     = 16
+	showSessionWidth  = 38
+	showCostWidth     = 10
+	showDurationWidth = 12
+	showDetailWidth   = 6 // len("DETAIL"), the header's last cell
+	showRuleWidth     = showNodeWidth + 1 + ledger.VerdictWidth + 1 + showSessionWidth +
+		1 + showCostWidth + 1 + showDurationWidth + 2 + showDetailWidth
+)
 
 // printRunDetail writes the detail table: a header, one aligned row per node
 // (id, verdict, session, cost, duration, detail), and a total-cost footer. The
@@ -76,24 +92,36 @@ func showRecords(snap runstate.Snapshot) []ledger.Record {
 // total is the per-node sum: the snapshot does not persist an auto run's
 // one-time planning cost, so that call is not included here (unlike the
 // end-of-run ledger total).
+//
+// The VERDICT column renders through ledger.VerdictCell, so a PASS is
+// qualified here exactly as it is in the end-of-run table (ADR 0016 §6).
+// `show` is the surface someone opens to re-read a finished run — the surface
+// #119's reporter would have opened — so it is the last place a self-reported
+// PASS should be able to read as a verified one.
 func printRunDetail(w io.Writer, runID string, records []ledger.Record) {
 	fmt.Fprintf(w, "Run %s — %d node(s)\n", runID, len(records))
-	fmt.Fprintf(w, "%-16s %-10s %-38s %10s %12s  %s\n", "NODE", "VERDICT", "SESSION", "COST(USD)", "DURATION", "DETAIL")
-	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 92))
+	fmt.Fprintf(w, "%-*s %-*s %-*s %*s %*s  %s\n",
+		showNodeWidth, "NODE",
+		ledger.VerdictWidth, "VERDICT",
+		showSessionWidth, "SESSION",
+		showCostWidth, "COST(USD)",
+		showDurationWidth, "DURATION",
+		"DETAIL")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", showRuleWidth))
 
 	var total float64
 	for _, rec := range records {
 		total += rec.CostUSD
-		fmt.Fprintf(w, "%-16s %-10s %-38s %10.4f %12s  %s\n",
-			rec.NodeID,
-			string(rec.Verdict),
-			sessionOrDash(rec.SessionID),
-			rec.CostUSD,
-			formatDuration(rec.Duration),
+		fmt.Fprintf(w, "%-*s %-*s %-*s %*.4f %*s  %s\n",
+			showNodeWidth, rec.NodeID,
+			ledger.VerdictWidth, ledger.VerdictCell(rec),
+			showSessionWidth, sessionOrDash(rec.SessionID),
+			showCostWidth, rec.CostUSD,
+			showDurationWidth, formatDuration(rec.Duration),
 			rec.Detail,
 		)
 	}
-	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 92))
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", showRuleWidth))
 	fmt.Fprintf(w, "TOTAL COST: $%.4f\n", total)
 }
 

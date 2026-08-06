@@ -492,7 +492,33 @@ placeholder rule above).
 retry: flat re-run up to `max` on causes in `retry.on`, fresh session (never
 resume a failed one). For a `handoff: session` node this means a retried
 attempt does not resume the parent session either — it starts cold, which
-`lint` warns about up front and the passing attempt's ledger detail states. The causes are a closed set — `nonzero_exit`,
+`lint` warns about up front and the passing attempt's ledger detail states.
+A retry is no longer a byte-identical re-spawn, though: when the attempt it
+repeats **was judged** — a failed `success_check`, or a verification that ran
+and said no — the retried attempt's prompt carries that attempt's own reply,
+quoted as nonce-fenced data (ADR 0016, `internal/schedule/retryfeedback.go`).
+Exactly **one** prior attempt is ever carried and it never accumulates: every
+attempt's prompt is rebuilt from the interpolated node prompt, so the added
+cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
+of reply, cut head-and-tail with the cut announced. The check itself is **not**
+quoted — not its expression, not the detail that embeds it — because feeding
+back a `result_matches` regex teaches the cheapest possible pass, which is to
+print whatever it matches; the node is told its attempt did not pass, told not
+to argue the verdict, and pointed back at its own instructions. Causes that
+rendered no verdict on the reply carry nothing: a spawn error, an interpolation
+error, `budget_exceeded`, and a verification that could not be *completed*, the
+same `isJudgmentFailure` split a feedback arc uses. A `handoff: session` retry
+still starts cold — unchanged — and the quote says so out loud, because the
+text it hands back is the node's own words out of a conversation it can no
+longer open. Across processes, `resume --retry-failed` re-reads the reply from
+`<run-dir>/failed/<node-id>.out` for each node it clears, gated on the
+snapshot's `judged` flag: the FAIL record (and with it the ledger row and the
+capped detail) is dropped by the retry leg, so that file is the only account of
+the attempt that survives the boundary. A seeded execution is a retry like any
+other and starts cold on the same terms — a `handoff: session` node does not
+resume its parent there either, and the row that prices it says so — and the
+`failed/` file it was seeded from is removed once that execution passes, so the
+directory never holds a losing reply beside a winning artifact. The causes are a closed set — `nonzero_exit`,
 `run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
@@ -936,6 +962,18 @@ incompatible snapshot is refused rather than misread:
   cannot `--resume` its parent on the second leg. The `.out` artifact files stay
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
 - **gate decisions so far**, and which gate the run is paused at.
+
+**One field the snapshot holds but `resume` does not trust**: an auto graph's
+`success_check.verify`. A verification is a command the ENGINE runs, outside
+every layer of the auto ceiling — which is why `validatePlannedNodeVerify`
+refuses a planner-authored one at plan time — so a resumed leg reconstructing a
+planned graph strips any it finds and **refuses the resume**, naming the nodes
+(`coordinator.ReattachVerifyCommand`, ADR 0016 §4). The discriminator is the
+snapshot's tool policies, non-empty exactly for a planned graph: a hand-written
+graph's `verify:` is the user's own reviewed artifact and round-trips
+untouched. Today the refusal is terminal, since only `auto` will parse
+`--verify-cmd`; a `resume` that re-supplies the command is what makes such a
+run resumable.
 
 **What the snapshot deliberately does NOT hold:** in-degree counts and the
 ready set. Both are *derived* from `graph × completed`, so persisting them would
@@ -1473,9 +1511,13 @@ the README rather than discovered.
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
 user's subagents — and therefore which system prompt, tool grant and model —
-runs the node, routing around Layers 0–3 entirely. `success_check.verify:` would
-let it run arbitrary shell outside every guard. Both are **rejected** in
-`validatePlannedNodes`, alongside `bypassPermissions`, `cwd` and `type: gate`.
+runs the node, routing around Layers 0–3 entirely. A **planner-authored**
+`success_check.verify:` would let it run arbitrary shell outside every guard.
+Both are **rejected** in `validatePlannedNodes`, alongside `bypassPermissions`,
+`cwd` and `type: gate`. What is rejected there is the planner's authorship, not
+the field: trusted code may attach a `verify:` strictly *after* validation, from
+the user-supplied `--verify-cmd` string, and does
+(`coordinator.attachVerifyCommand`, ADR 0016 §2).
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -1494,10 +1536,11 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected** (`exit_zero`/`result_matches` allowed) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `budget_usd`, `timeout`, `retry` | allowed |
+| `budget_usd`, `timeout` | allowed |
+| `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but load validation only requires `max` ≥ 1 and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected (ADR 0010) |
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
@@ -1549,7 +1592,7 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   output, so every block rides in a **nonce-fenced** marker pair — one
   6-hex-character nonce per `Assess` call, in the opening AND closing
   marker, with the prompt telling the assessor that only markers bearing it
-  are real (the skill-inlining fence's mechanism, `internal/coordinator/fence.go`).
+  are real (the skill-inlining fence's mechanism, `internal/fence`).
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
   outside it. The next cycle's planner prompt fences the `remaining` it
@@ -1660,6 +1703,13 @@ ledger — so the summary never under-counts silently.
 - **RunLedger** — record session_id/cost/verdict/timing, plus auto mode's one
   planning-call cost; end-of-run table + total cost (planning cost included, so
   an auto run's total is honest; a hand-written `run` records no planning cost).
+  Every PASS row is qualified by **how** the verdict was reached — `verified` /
+  `self-reported` / `exit-only` / `approved`, a closed set derived in trusted
+  code from the predicates the engine actually evaluated (ADR 0016 §6). The
+  qualifier sits beside `Verdict`, never replacing it, so nothing that tests for
+  PASS/FAIL changes; it is carried into `state.json` and onto `node_passed` from
+  the same `ledger.Record`, so the table, the snapshot and the feed cannot
+  disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
 exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →
@@ -1702,14 +1752,15 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go), and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
-internal/schedule/{scheduler,errors,feedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010)
+internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0016)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/coordinator/{coordinator,router,agentmap,skillmap,fence,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (fence.go, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Five call sites across coordinator and schedule; internal/invariants counts them repo-wide against fence.go's own sentence
+internal/coordinator/{coordinator,router,agentmap,skillmap,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (internal/fence, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
@@ -1719,7 +1770,7 @@ internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..15}-*.md
+docs/adr/00{01..16}-*.md
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 
@@ -1744,7 +1795,9 @@ opt-in per node with a loud warning, never a default. For auto-planned graphs
 just a prompt convention and not just a declaration check:
 `coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
 is empty or names a tool outside the fixed allowlist, or that sets `cwd`,
-`agent`, or `success_check.verify`; and `Plan.ToolPolicies` imposes a per-node
+`agent`, or a planner-authored `success_check.verify` (trusted code attaches the
+user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
+imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
 grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are
