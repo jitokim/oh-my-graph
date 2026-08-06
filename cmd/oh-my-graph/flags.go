@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 )
 
 // commonRunFlags are the execution options `run` and `auto` share. One
@@ -64,6 +67,8 @@ type autoFlags struct {
 	noSkillMapping   bool
 	maxCycles        int
 	maxGoalBudgetUSD float64
+	verifyCmd        string
+	verifyTimeout    time.Duration
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -83,6 +88,15 @@ type autoFlags struct {
 // (ADR 0011 §1): the goal loop iterates PLANS, which only `auto` produces —
 // and keeping the cycle count off commonRunFlags is what keeps chat
 // structurally single-cycle.
+//
+// --verify-cmd and --verify-timeout are `auto`'s own for the same reason and a
+// second one (ADR 0016 §2). The reason: they describe what trusted code
+// attaches to a PLAN's sink nodes, and only `auto` produces a plan. The second
+// one: `run` needs no such flag at all, because a hand-written graph writes
+// `verify:` on whichever node it means — a flag would be a worse spelling of a
+// field the user already has. They are NOT registered on `resume`, which is
+// what makes an auto run carrying build evidence unresumable today; see
+// continueRun and ADR 0016 §4's Disposition.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
@@ -91,7 +105,16 @@ func newAutoFlags() *autoFlags {
 	f.set.BoolVar(&f.noSkillMapping, "no-skill-mapping", false, "do not inline your Claude Code skills (~/.claude/skills) into matching planned nodes' prompts")
 	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call. N has no upper bound, and a validation-refused plan buys one corrected planner call, so the planner-call worst case is 2 × N")
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
+	f.set.StringVar(&f.verifyCmd, "verify-cmd", "", "shell command the ENGINE runs at every sink node of the plan, as build evidence (ADR 0016) — e.g. './gradlew build'. No node is granted anything: the command is yours, it is attached by trusted code after the plan validates, and the engine judges its exit code itself, so a check node can no longer certify a branch that does not build. Every cycle of --max-cycles plans afresh and every cycle's sinks get it")
+	f.set.DurationVar(&f.verifyTimeout, "verify-timeout", 0, "bound on ONE --verify-cmd execution (0 = 10m, which is also the ceiling every verification has). Not the 2-minute default a hand-written verification gets: a cold Gradle, Cargo or Maven build is exactly what that default was not sized for")
 	return f
+}
+
+// verifyCommand is the --verify-cmd/--verify-timeout pair as the value object
+// the coordinator takes (coordinator.WithVerifyCommand). The zero pair is the
+// zero-config path: no attachment, and the advice line instead.
+func (f *autoFlags) verifyCommand() coordinator.VerifyCommand {
+	return coordinator.VerifyCommand{Command: f.verifyCmd, Timeout: f.verifyTimeout}
 }
 
 // parse reads args in the order `"<goal>" [flags...]`. The goal is required,
@@ -135,6 +158,18 @@ func (f *autoFlags) parse(args []string) error {
 	// says is worse than no bound.
 	if f.planOnly && f.maxCycles > 1 {
 		return fmt.Errorf("auto: --plan-only cannot be combined with --max-cycles %d; each cycle after the first is planned from the previous cycle's run, so there is nothing to show ahead of time beyond cycle 1", f.maxCycles)
+	}
+	// Build evidence is validated at parse for the same reason the two bounds
+	// above are, and for a sharper one: a planner call is billed whether or not
+	// the plan is usable, so a --verify-cmd that could never have run must be
+	// refused BEFORE anything is bought (ADR 0016 §2). The coordinator makes the
+	// same check again at plan time — it is a library and cannot assume a CLI
+	// ran first — but by then the money is at the next line.
+	if err := f.verifyCommand().Validate(); err != nil {
+		return fmt.Errorf("auto: %w", err)
+	}
+	if err := checkVerifyExecutable(f.verifyCmd); err != nil {
+		return fmt.Errorf("auto: %w", err)
 	}
 	return nil
 }

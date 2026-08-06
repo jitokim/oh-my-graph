@@ -1,13 +1,16 @@
 # ADR 0016 — Build evidence for a planned node is a user-supplied engine command, not a wider tool grant
 
-- Status: Proposed — decision taken, **engine implemented, flag not yet
-  parsed.** As of 2026-08-06 the tree holds the injection (§2), the
-  serialization, the `retry.max` cap, the detector and its advice line (§3),
-  the planner-prompt split (§5) and the verdict qualifier (§6) — but `auto`
-  does not parse `--verify-cmd` / `--verify-timeout`, so nothing reaches the
-  mechanism from a command line and every run still takes the zero-config
-  path. Read the Decision as the shape the code is meant to take, and
-  SECURITY.md for what a user can rely on today. It needs no measurement
+- Status: Proposed — decision taken, **engine implemented and now reachable:
+  `auto` parses `--verify-cmd` / `--verify-timeout`.** As of 2026-08-06 the
+  tree holds the injection (§2), the serialization, the `retry.max` cap, the
+  detector and its advice line (§3), the planner-prompt split (§5), the verdict
+  qualifier (§6), and the flags themselves — validated before the planner call,
+  disclosed with the plan (so `--plan-only` shows what the sinks will run), and
+  carried by the coordinator across every cycle of a `--max-cycles` goal loop.
+  Two things named in the Decision are still unshipped: `resume` has no
+  `--verify-cmd`, so §4's refusal stays terminal and an auto run carrying build
+  evidence cannot be resumed; and `chat`, which §2 names alongside `auto`, has
+  no flag either. It needs no measurement
   gate: unlike ADR 0004 and ADR 0012, nothing here changes a node's argv, its
   tool set or any ceiling layer, so there is no CLI-behaviour premise to
   probe. (§2's `retry.max` cap tightens what a plan may declare; it grants

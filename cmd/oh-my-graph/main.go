@@ -8,7 +8,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 //	oh-my-graph runs list
@@ -96,7 +96,7 @@ func mainExitCode(args []string) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-mapping]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
        oh-my-graph runs list
@@ -245,8 +245,21 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Same live-view gate as `run` and `resume`.
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping)...)
+	// The zero-config path says out loud what it is not checking, before the
+	// planner call rather than after it, so the user can Ctrl-C and re-run with
+	// one flag instead of learning it beside a finished ledger (ADR 0016 §3).
+	// "." is the invocation directory: the same tree the planned nodes and the
+	// evidence command would both run in.
+	verifyCommand := flags.verifyCommand()
+	noteVerifyAdvice(os.Stdout, verifyCommand, ".")
+
+	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
+	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
+	// re-enters the same coordinator and plans afresh, so every cycle's sinks
+	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
+	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillMapping),
+		coordinator.WithVerifyCommand(verifyCommand))
+	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
 		webOpener(flags.noWeb, stdout, opener))
@@ -641,7 +654,9 @@ func saveSpecAs(dir, name string, spec []byte) (string, error) {
 // have to disclaim that a declared Bash scope was not enforced) nor looser
 // (planned nodes now run without the user's own settings, which is a real
 // behaviour change and not something to be discovered later). noteCeiling
-// prints both halves.
+// prints both halves. noteVerifyAttachments adds the one thing on this screen
+// the ceiling does NOT cover: the user's own --verify-cmd, which the engine
+// runs at each sink outside every layer of it (ADR 0016 §2).
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	g := plan.Graph
 	fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
@@ -660,6 +675,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	}
 	noteAgentMappings(w, plan.AgentMappings)
 	noteSkillMappings(w, plan.SkillScan, plan.SkillMappings)
+	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
 	noteCeiling(w)
 	fmt.Fprintln(w)

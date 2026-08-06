@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Added
+
+- **`auto --verify-cmd` / `--verify-timeout` — build evidence becomes reachable
+  (ADR 0016 §2, #119).** v0.5.0 shipped the whole engine for this and no way to
+  reach it: the attachment, the serialization, the `retry.max` cap and the
+  provenance qualifier were all in the tree, but no `FlagSet` parsed the flag,
+  so every `auto` run still took the zero-config path. It parses now.
+  `oh-my-graph auto "<goal>" --verify-cmd './gradlew build'` hands the engine a
+  command it runs itself at every sink node of the plan, one at a time, after
+  that node's own subprocess — and a sink that fails it fails the run, so a
+  check node can no longer certify a branch that does not compile. No node is
+  granted anything by it and no ceiling layer moves.
+  `--verify-timeout` bounds one execution (10 minutes by default, which is also
+  the ceiling — not the 2-minute default a hand-written check gets, because a
+  cold Gradle or Cargo build is what that default was not sized for). The
+  command is checked for runnability *before* the planner call, naming the path
+  or the `PATH` that was searched, because a planner call is billed whether or
+  not the plan turns out to be usable. `--plan-only` prints the command and the
+  sink nodes it will run at, so the flag that shows you a plan before you pay
+  for it also shows you the shell the engine will run. Every cycle of a
+  `--max-cycles` goal loop plans a new graph and every one of them carries it.
+  With no `--verify-cmd`, `auto` now prints what the run will not check and, if
+  it recognizes the project, the command that would change that (§3).
+- **Known cost of the above:** an `auto` run started with `--verify-cmd` cannot
+  be resumed. `resume` refuses every verification it finds in a run directory
+  on an auto graph rather than replay engine-run shell on trust (ADR 0016 §4),
+  and it has no `--verify-cmd` of its own to re-supply the command with, so the
+  refusal is terminal. Continuing such a run with the check silently dropped is
+  the failure the mechanism exists to prevent; it stops instead. `chat` takes
+  no `--verify-cmd` either.
+
 ## [v0.5.0] - 2026-08-06
 
 The evidence release. It is about the distance between what a run said and what

@@ -223,12 +223,28 @@ That is the gap [ADR 0016 (build
 evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
 closes — a build command **you** supply at invocation, attached by trusted code
 to the plan's sink nodes *after* validation and run by the engine, so a
-verification node cannot pass a branch that does not build. **Stated plainly
-because you will look for it:** the engine side is implemented and tested, but
-`auto` does not parse `--verify-cmd` / `--verify-timeout` in this release, so
-today every `auto` run still takes the zero-config path and the qualifier is
-what you get out of it. [SECURITY.md](SECURITY.md) has the standing such a
-command would have.
+verification node cannot pass a branch that does not build:
+
+```sh
+oh-my-graph auto "fix the failing spec" --verify-cmd './gradlew build'
+```
+
+The engine runs that at every sink node of the plan, one at a time, after the
+node's own subprocess — and a sink that fails it fails the run. Your nodes are
+granted nothing by it: the command is yours, the engine runs it on its own
+verify seam, and it judges the exit code itself. `--verify-timeout` bounds one
+execution (10 minutes by default, which is also the ceiling — not the 2-minute
+default a hand-written check gets, because a cold Gradle or Cargo build is
+exactly what that default was not sized for). A command that cannot run is
+refused **before** the planner call, so a typo costs nothing. `--plan-only`
+prints the command and the sink nodes it will run at, so you can see it before
+buying the run, and every cycle of a `--max-cycles` goal loop plans a new graph
+that carries it. With no `--verify-cmd`, `auto` prints what it is *not*
+checking — and, if it recognizes the project, the flag that would change that.
+[SECURITY.md](SECURITY.md) has the standing such a command has. One cost worth
+knowing up front: a run started with `--verify-cmd` cannot be `resume`d, which
+refuses every verification it finds in a run directory rather than replay one
+on trust.
 
 When stdout is a terminal, `run`, `auto` and `resume` also serve the [web live
 view](#usage) of the leg they are starting on an ephemeral `127.0.0.1` port and
@@ -374,7 +390,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent/skill mappings and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` cannot be resumed. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
