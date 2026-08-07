@@ -215,9 +215,15 @@ own, and never verify such work by asserting a local HEAD — an assertion like
 `git -C <other-repo> rev-parse --abbrev-ref HEAD` encodes an assumption about
 where the work happened and fails on work that succeeded. The planner is told
 to assert remote state (`gh pr list --head <branch>`) for exactly this reason.
-Managed multi-repository worktrees are not implemented and would need their own
-ADR; the surface they need is the one `validatePlannedNodeCwd` closed
-deliberately.
+Managed multi-repository worktrees are not implemented, and
+[ADR 0018](docs/adr/0018-isolation-stays-scoped-to-the-invocation-repository.md)
+records the decision **not** to build them — the surface they need is the one
+`validatePlannedNodeCwd` closed deliberately, the cost that decides it is
+cleanup debris left in a repository you did not open, and the shape any future
+proposal has to start from (a user-supplied `--repo`, never a planner-named or
+detector-derived path) is written down there. That record also names the
+measurement that would reverse it, so the warning above is the protection for
+as long as this section says it is.
 
 ## Subagents (`agent:`)
 
