@@ -394,9 +394,9 @@ nodes:
 }
 
 // judgedAgainstAnInterpolatedSiblingYAML is the counterexample that closed the
-// escalation lane on issue #118. The proposal was to make this sweep DECIDABLE
-// on a subset — fire hard (a load error, not advice) only when the declarer's
-// prompt interpolates the unreachable producer's artifact, since
+// escalation lane on issue #118. The proposal was to make this sweep SAFE TO
+// ESCALATE on a subset — fire hard (a load error, not advice) only when the
+// declarer's prompt interpolates the unreachable producer's artifact, since
 // `{{ artifacts.criteria }}` proves the reviewer actually reads it.
 //
 // This graph satisfies that predicate exactly, and it is CORRECT. Every defect
@@ -443,8 +443,10 @@ nodes:
 //     files by literal path. The escalation would not have caught the bug that
 //     motivated it.
 //
-// A rule that hard-fails correct graphs and misses the motivating one is not a
-// decidable subset. The sweep stays advisory; the remaining lever is runtime
+// The predicate itself is mechanically computable — judgesByPlaceholder below
+// decides it — but a rule with both false positives (it hard-fails correct
+// graphs) and false negatives (it misses the motivating one) is not safe to
+// escalate on. The sweep stays advisory; the remaining lever is runtime
 // (let the reviewer name its own next target), not static.
 func TestLintFeedbackReach_InterpolatingASiblingStaysAdvisory(t *testing.T) {
 	g := parseGraph(t, judgedAgainstAnInterpolatedSiblingYAML)
