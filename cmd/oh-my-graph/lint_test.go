@@ -248,14 +248,11 @@ nodes:
 
 // --- feedback-reach warnings -------------------------------------------------
 
-// TestLintGraph_FeedbackReachWarningNamesAllThreeIds is issue #118 at the CLI
-// boundary: the graph is valid — it lints clean and exits 0 — but its
-// reviewer's feedback arc cannot repair one of the two producers it judges.
-// The warning must name the reviewer, the rerun target and the unreachable
-// producer, and offer the target that would cover both, because working that
-// out by hand from graph.json is what the reporter had to do.
-func TestLintGraph_FeedbackReachWarningNamesAllThreeIds(t *testing.T) {
-	path := writeGraphFile(t, `
+// fanInFeedbackYAML is issue #118's topology at the CLI boundary: a valid
+// graph whose reviewer fans in from two producers while its feedback arc
+// re-runs only one of them. Shared with the read-once test below, which needs
+// a graph that lints clean AND has an advisory to lose.
+const fanInFeedbackYAML = `
 name: fan-in
 nodes:
   - { id: scope, prompt: scope }
@@ -268,7 +265,16 @@ nodes:
     depends_on: [qa-plan, load-script]
     success_check: { exit_zero: true, result_matches: "^PASS$" }
     feedback: { rerun: load-script, max: 2 }
-`)
+`
+
+// TestLintGraph_FeedbackReachWarningNamesAllThreeIds is issue #118 at the CLI
+// boundary: the graph is valid — it lints clean and exits 0 — but its
+// reviewer's feedback arc cannot repair one of the two producers it judges.
+// The warning must name the reviewer, the rerun target and the unreachable
+// producer, and offer the target that would cover both, because working that
+// out by hand from graph.json is what the reporter had to do.
+func TestLintGraph_FeedbackReachWarningNamesAllThreeIds(t *testing.T) {
+	path := writeGraphFile(t, fanInFeedbackYAML)
 	var out, warnings strings.Builder
 	if err := lintGraph(&out, &warnings, path); err != nil {
 		t.Fatalf("a feedback-reach advisory must not fail lint: %v", err)
