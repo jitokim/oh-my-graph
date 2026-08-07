@@ -4,6 +4,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -198,6 +199,10 @@ func TestManual_SkillActivationStillFires(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(cwd, probeMarker)); err == nil {
 			t.Errorf("%s exists in the control arm; the two arms are not distinguishable and the "+
 				"treatment result proves nothing", probeMarker)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			// A permission or I/O error is not evidence of absence: swallowing it
+			// would let the control arm "pass" without ever reading the marker.
+			t.Fatalf("stat control marker: %v", err)
 		}
 	})
 }
@@ -246,5 +251,9 @@ func TestManual_SkillActivationCeilingHolds(t *testing.T) {
 	if _, err := os.Stat(breach); err == nil {
 		t.Fatalf("CEILING BREACH: %s exists. A node that declared Bash(git *) ran an out-of-scope command "+
 			"under the activation argv; layer 1 is the only thing that held it and something moved it", breach)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// Anything other than "not there" leaves the ceiling unjudged, and an
+		// unjudged ceiling must not read as a held one.
+		t.Fatalf("stat ceiling marker: %v", err)
 	}
 }

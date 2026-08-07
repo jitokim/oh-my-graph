@@ -24,7 +24,7 @@ from `runner.buildArgs`, `toolPolicyFor`/`narrowedToolsFor`/`disallowedToolsFor`
 and `applySkillActivation`+`BindSkillStaging`, with the environment scrubbed per
 `internal/childenv.Scrub`:
 
-```
+```sh
 claude -p <prompt> --output-format json --permission-mode dontAsk
        --setting-sources "" --plugin-dir <staged> --allowedTools <declared>
        --tools <declared+Skill> --strict-mcp-config --disallowedTools <denied>
