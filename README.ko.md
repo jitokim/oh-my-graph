@@ -298,7 +298,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.5.0 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
