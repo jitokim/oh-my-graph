@@ -531,14 +531,18 @@ cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므�
 당신의 Claude Code 스킬(`~/.claude/skills`만)도 `auto` run에 닿습니다. 그리고
 노드를 대신한 추측이 아니라 Claude Code 자신의 활성화(activation)를 통해
 닿습니다: `auto`는 당신의 스킬 코퍼스 전체를 자기가 소유한 플러그인
-디렉토리(`~/.oh-my-graph/runs/<run-id>/skills-plugin/`)로 복사하고, 플랜된 각
-노드에 `--plugin-dir <그 경로>`를 넘기고 tool 목록에 `Skill`을 더합니다. 그
-다음 어떤 스킬이 필요한지는 노드 자신의 모델이 실행 시점에 description을 보고
-고릅니다.
+디렉토리(`~/.oh-my-graph/runs/<run-id>/skills-plugin/`)로 복사하고, **활성화
+대상이 되는** 플랜된 각 노드에 `--plugin-dir <그 경로>`를 넘기고 tool 목록에
+`Skill`을 더합니다. 그 다음 어떤 스킬이 필요한지는 노드 자신의 모델이 실행
+시점에 description을 보고 고릅니다. **agent에 매핑된 노드는 제외**되어 둘 중
+어느 쪽도 받지 않습니다: 당신의 subagent로 실행된다는 것은 그 agent를 찾기 위해
+당신의 settings를 로드한다는 뜻이고, 그것은 `agent:`가 처음부터 해온 거래입니다.
 
-tool ceiling은 그대로입니다. 플랜된 노드는 여전히 당신의 settings, CLAUDE.md,
-hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은 선언된 scope도 그대로
-강제됩니다 — 달라지는 것은 이 노드들에게 `Skill` tool이 존재한다는 것뿐입니다.
+tool ceiling은 그대로입니다. 활성화 대상인 플랜된 노드는 여전히 당신의
+settings, CLAUDE.md, hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은
+선언된 scope도 그대로 강제됩니다 — 달라지는 것은 이 노드들에게 `Skill` tool이
+존재한다는 것뿐입니다. (agent에 매핑된 노드는 ADR 0017 이전과 마찬가지로
+당신의 settings를 로드하며, 바로 그 이유로 활성화에서 제외됩니다.)
 그 대가는 실행 전에 출력됩니다: 스테이징된 스킬 하나하나의 크기와 SHA-256,
 그리고 그 코퍼스가 **모든** 노드 호출에 더하는 프롬프트 토큰(재시도와 feedback
 재실행 포함).
@@ -547,8 +551,11 @@ hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은 선언된 s
 모델보다 먼저 아는 주체가 없습니다. 출력이 그렇게 명시하고, 각 호출은 그 노드의
 평범한 세션 transcript에 남습니다. 스테이징된 디렉토리는 매 노드 spawn 직전에
 manifest로부터 다시 만들어지고 검증되므로, 어떤 노드도 뒤따르는 노드를 위해
-스킬을 심어둘 수 없습니다. 그리고 run 도중 원본 스킬을 수정하면 조용히 바뀌는
-대신 run이 멈춥니다. `--no-skill-activation`으로 전체를 끌 수 있고 — `auto`와
+스킬을 심어둘 수 없습니다. 노드가 읽는 것은 스테이징된 사본이므로, 당신의
+`~/.claude/skills` 트리는 스테이징 시점에 한 번만 읽힙니다: run 도중 원본을
+고치거나 지워도 run이 바뀌지도, 멈추지도 않습니다. 멈추는 경우는 하나뿐입니다 —
+스테이징된 파일을 복원해야 하는데 그 원본에 플랜된 바이트가 더는 없을 때.
+`--no-skill-activation`으로 전체를 끌 수 있고 — `auto`와
 `resume` 모두 — 예전의 `--no-skill-mapping`도 안내와 함께 계속 동작합니다.
 
 스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 스테이징되지
@@ -557,8 +564,17 @@ manifest로부터 다시 만들어지고 검증되므로, 어떤 노드도 뒤�
 한계이므로, 플랜 출력이 매 run마다 그렇게 말합니다 — `skill scan: 35 skill(s)
 from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 그리고
 아무것도 못 찾은 스캔도 자기가 들여다본 디렉토리를 반드시 이름으로 밝히므로,
-"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다. 이
-모든 것의 근거가 된 측정은
+"스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다.
+
+**실제로 쓰이는지는 아직 증명되지 않았고, 이 기능은 기본으로 켜져 있습니다.**
+2026-08-07 메인테이너 인수 테스트는 합산 기준 **활성화된 플랜 노드 7개에서
+`Skill` 호출 1회**를 측정했습니다 — 그 1회는 run 1에서 나왔고, **사전 등록된
+두 번째 run과 그 반복 arm에서는 0회**였습니다. argv 수준에서 전달은 증명되었지만
+채택은 증명되지 않았고, ADR 0017이 `Proposed`인 이유가 그것입니다. 그 숫자는 매
+run 가격과 함께 출력되며, 아직 값을 못 하는 기능에 호출마다 토큰 세금을 내고
+싶지 않다면 `--no-skill-activation`이 그 스위치입니다.
+
+이 모든 것의 근거가 된 측정은
 [ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)에,
 그것이 대체한 플랜 시점 인라이닝은
 [ADR 0012](docs/adr/0012-skill-mapping-is-plan-time-inlining.md)에 있습니다.

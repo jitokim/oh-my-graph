@@ -124,16 +124,21 @@ func TestRunAuto_PlannedNodeSpawnsWithTheStagedPluginAndTheSkillTool(t *testing.
 func TestRunAuto_NoSkillActivationLeavesTheRunIsolated(t *testing.T) {
 	runID, fake := autoRunWithSkills(t, "--no-skill-activation")
 
+	saw := false
 	for _, inv := range fake.Invocations() {
 		if inv.Prompt != "work" {
 			continue
 		}
+		saw = true
 		if slices.Contains(inv.Policy.Tools, coordinator.SkillToolName) {
 			t.Errorf("Tools = %v, want no %s with activation off", inv.Policy.Tools, coordinator.SkillToolName)
 		}
 		if len(inv.Policy.PluginDirs) != 0 {
 			t.Errorf("PluginDirs = %v, want none with activation off", inv.Policy.PluginDirs)
 		}
+	}
+	if !saw {
+		t.Fatal("the planned node never ran; the assertions above proved nothing")
 	}
 	if _, err := os.Stat(filepath.Join(runDirFor(runID), "skills-plugin")); !os.IsNotExist(err) {
 		t.Errorf("a staged directory exists with activation off (stat err = %v)", err)

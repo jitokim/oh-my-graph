@@ -23,6 +23,16 @@ handoff, retry, and halt-on-fail logic are all exercised through
 `map[nodeID]NodeOutcome` fixtures, so CI never needs a `claude` login and
 never costs money.
 
+One file is a **sanctioned exception to "spawns nothing"**, and it is still an
+exception to nothing above: `cmd/oh-my-graph/skillargv_test.go` drives the real
+`ClaudeCLIRunner` against a temporary `#!/bin/sh` stub it writes itself, so it
+can assert the bytes of a node's argv — the one layer a real node obeys, and
+the one a `FakeRunner` cannot reach. It never launches `claude`, never touches
+the network, and costs nothing; what it does depend on is a POSIX `/bin/sh` and
+`mktemp`, which is why the CI job runs on `ubuntu-latest`. A new file that
+wants to spawn anything at all needs the same justification: a fact no double
+can establish.
+
 **Test doubles.** A double may block on its scripted sync channel or on
 `ctx.Done()`, never on a wall-clock fallback; and an assertion must not be
 satisfiable by a node or record simply being absent — state presence

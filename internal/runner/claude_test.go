@@ -116,6 +116,28 @@ func TestBuildCmd_SkillActivationArgv(t *testing.T) {
 	}
 }
 
+// Each PluginDirs entry gets its OWN --plugin-dir, in order. Every other test
+// here passes exactly one entry — which is all resumeSkillStaging sets today —
+// so a renderer that joined the entries with a comma, or emitted only the
+// first, would pass them all while naming a directory that does not exist.
+func TestBuildCmd_RepeatsPluginDirPerEntry(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt,
+		Policy: ToolPolicy{PluginDirs: []string{"/runs/r1/a", "/runs/r1/b"}},
+	})
+
+	var got []string
+	for i, arg := range cmd.Args {
+		if arg == "--plugin-dir" && i+1 < len(cmd.Args) {
+			got = append(got, cmd.Args[i+1])
+		}
+	}
+	if want := []string{"/runs/r1/a", "/runs/r1/b"}; !equalArgs(got, want) {
+		t.Fatalf("plugin dirs = %q, want one flag per entry: %q\nargv: %q", got, want, cmd.Args)
+	}
+}
+
 // A policy with no plugin directories emits no --plugin-dir at all: that is
 // every hand-written graph and every planned run with activation off, and a
 // stray empty flag would change what the CLI loads.

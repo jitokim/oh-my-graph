@@ -204,7 +204,10 @@ func parseSkillFile(path string) (skillDef, bool) {
 	if err := yaml.Unmarshal([]byte(front), &def); err != nil {
 		return skillDef{}, false
 	}
-	if def.Name == "" || strings.ContainsAny(def.Name, " \t\n") {
+	// \r is in the set because yaml.v3 normalizes CRLF LINE ENDINGS but keeps
+	// a carriage return written inside a quoted scalar — and the name becomes
+	// a path element under safeSkillDirName.
+	if def.Name == "" || strings.ContainsAny(def.Name, " \t\r\n") {
 		return skillDef{}, false
 	}
 	if strings.TrimSpace(body) == "" {

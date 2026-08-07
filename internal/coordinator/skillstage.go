@@ -328,15 +328,15 @@ func walkSkillDir(def skillDef) ([]stagedFile, fileDigest, int64, error) {
 		}
 		info, err := os.Stat(p)
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxSkillFileBytes {
-			return nil
+			return nil //nolint:nilerr // an unusable file drops out of the corpus, it never fails the scan
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // same silence: this file drops out of the corpus
 		}
 		digest, err := digestFile(p)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // same silence: this file drops out of the corpus
 		}
 		total += digest.size
 		if rel == "SKILL.md" {
@@ -452,7 +452,7 @@ func (s *SkillStaging) Materialize() error {
 		}
 		raw, err := os.ReadFile(f.Source)
 		if err != nil {
-			return fmt.Errorf("skill staging: %s must be restored from %s — the staged copy is missing or no longer the planned bytes — and that source cannot be read (%v); the planned corpus no longer exists anywhere", f.Rel, f.Source, err)
+			return fmt.Errorf("skill staging: %s must be restored from %s — the staged copy is missing or no longer the planned bytes — and that source cannot be read (%w); the planned corpus no longer exists anywhere", f.Rel, f.Source, err)
 		}
 		sum := sha256.Sum256(raw)
 		if hex.EncodeToString(sum[:]) != f.SHA256 {
@@ -556,11 +556,15 @@ func writeStagedFile(dst string, content []byte) error {
 // pluginManifestJSON is the .claude-plugin/plugin.json the CLI needs to see a
 // directory as a plugin at all — the shape measurement (f) used.
 func pluginManifestJSON() []byte {
-	raw, _ := json.MarshalIndent(map[string]string{
+	raw, err := json.MarshalIndent(map[string]string{
 		"name":        stagedPluginName,
 		"version":     "0.0.0",
 		"description": "Skill definitions oh-my-graph staged for this run's planned nodes (ADR 0017).",
 	}, "", "  ")
+	if err != nil {
+		// Unreachable: a map[string]string of constants always marshals.
+		panic(err)
+	}
 	return append(raw, '\n')
 }
 
@@ -723,7 +727,7 @@ func (c *Coordinator) applySkillActivation(plan *Plan) error {
 		// is the same class of fact as a corpus that is not there, and a paid
 		// planner call must not be thrown away over it. The reason is printed.
 		plan.SkillActivation = &SkillActivation{DisabledReason: err.Error()}
-		return nil
+		return nil //nolint:nilerr // plan-time staging failure is silent no-activation, never a failed plan
 	}
 
 	activation := &SkillActivation{

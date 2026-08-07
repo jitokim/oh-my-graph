@@ -407,10 +407,14 @@ func TestResumeRetryFailed_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	probe := newArgvProbe(t)
 	t.Setenv(failPromptEnv, "render the artifact")
 
+	var runErr error
 	captureStdout(t, func() {
-		_ = runAutoWith([]string{"turn the issue into a proposal"},
+		runErr = runAutoWith([]string{"turn the issue into a proposal"},
 			probe.runner(), browser.NewFakeOpener(), os.Stdout)
 	})
+	if runErr == nil {
+		t.Fatal("precondition failed: the auto run was supposed to fail at the artifact node")
+	}
 	runID := soleRunID(t)
 
 	probe.freshArgvDir(t)

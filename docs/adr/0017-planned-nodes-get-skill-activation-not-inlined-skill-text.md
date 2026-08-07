@@ -594,8 +594,10 @@ filesystem fact.
   ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load
     (ADR 0004 layer 1 stays ""); a declared scope like Bash(git *) is still enforced.
     The only change is that the Skill tool now exists for these nodes.
-  The staged corpus is re-materialized and verified before every node spawn; a source
-    skill that changed or vanished halts the run.
+  The staged corpus is re-materialized and verified before every node spawn; nodes read
+    the staged copy, so editing or deleting a source skill mid-run does not halt it.
+    Only a staged file that must be RESTORED while its source no longer holds the
+    planned bytes halts the run.
   Turn it off with --no-skill-activation.
 ```
 
@@ -667,7 +669,12 @@ both would receive the same skill twice — once as unconditional fenced text,
 once by activation — pay for it twice, and become unattributable. One PR,
 mutually exclusive.
 
-Until that PR lands, ADR 0012 is what ships, and its record says so.
+*(Historical, written before implementation:)* Until that PR lands, ADR 0012 is
+what ships, and its record says so.
+
+**Update 2026-08-07:** that PR landed. Activation is what ships; ADR 0012's
+plan-time inlining is gone from the tree, and its record is annotated as
+superseded. The sentence above is kept as the decision text it was.
 
 ## What was implemented, and the three places the code differs from this text
 
@@ -701,8 +708,11 @@ loop mints one per cycle. So plan time takes the **manifest** — every source
 path with its SHA-256, from the scan, after validation, by trusted Go code —
 and `Plan.BindSkillStaging(runDir)` writes the bytes once the run directory is
 known. Every property §5 claims is a property of the manifest, not of when the
-copy happened: the corpus is fixed at plan time, a source that changed since
-then halts, and `--plan-only` stages nothing, which is correct because a
+copy happened: the corpus is fixed at plan time, the staged copy stays
+authoritative for as long as it matches the manifest — so a source edited or
+deleted mid-run neither changes the run nor stops it, and only a staged file
+that must be RESTORED while its source no longer holds the planned bytes halts
+— and `--plan-only` stages nothing, which is correct because a
 preview never ran and gets no run directory. One visible consequence: §7's
 sample printout names the staged path, and the real one cannot — `printPlan`
 runs before the run id exists. It names the corpus, the count, the per-skill
@@ -776,9 +786,13 @@ the CLI version, and the cost.
 
 **PASS requires all six:**
 
-1. **Grant present.** Every planned node's persisted policy carries `Skill` in
+1. **Grant present.** Every **activation-eligible** planned node's persisted
+   policy carries `Skill` in
    `tools` and a `plugin_dirs` entry pointing inside the run directory, and
-   `setting_sources` is still `""`. Read from the **`state.json` of the
+   `setting_sources` is still `""`. Eligible excludes agent-mapped nodes (§1),
+   which are excluded by design; verify separately that each excluded node's
+   policy is **unchanged** — no `Skill`, no `plugin_dirs` — so the exclusion is
+   read as a criterion and not as a miss. Read from the **`state.json` of the
    acceptance run itself** — *not* from `--plan-only`, which writes only a
    `graph.json` under `plans/<id>/` and deliberately produces **no run
    directory and no `state.json`** (*"a preview never ran, so it is not a

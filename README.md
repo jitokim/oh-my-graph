@@ -514,22 +514,27 @@ Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, and
 they reach them through Claude Code's own activation rather than through a
 guess made for the node: `auto` copies your whole skill corpus into a plugin
 directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
-planned node `--plugin-dir <that>` and adds `Skill` to its tool list, so the
-node's own model *can* pick the skill its task calls for, by description, at
-run time.
+**activation-eligible** planned node `--plugin-dir <that>` and adds `Skill` to
+its tool list, so the node's own model *can* pick the skill its task calls for,
+by description, at run time. An **agent-mapped node is excluded** and gets
+neither half: running as one of your subagents already means loading your
+settings to resolve the agent, which is the trade `agent:` has always made.
 
 **Whether it does is not yet shown, and the feature is on by default.** The
-maintainer acceptance test of 2026-08-07 measured **1 skill invocation across
-7 planned nodes**, and **0 under real planner prompts** — the delivery is
+maintainer acceptance tests of 2026-08-07 measured **1 skill invocation across
+7 activated planned nodes** in aggregate — the one came from run 1, and it was
+**0 in the pre-registered second run and its repeat**. The delivery is
 proven at the argv, the adoption is not. ADR 0017 is `Proposed` for that
 reason, and the number is printed with the price before every run. If you
 would rather not pay a per-invocation token tax for a capability that has not
 yet paid for itself, `--no-skill-activation` is the switch.
 
-The tool ceiling does not move for it. Planned nodes still load none of your
-settings, CLAUDE.md, hooks or MCP servers, and a declared scope like
-`Bash(git *)` is still enforced — the only change is that the `Skill` tool now
-exists for them. What that costs is printed before the run: every staged skill
+The tool ceiling does not move for it. Activation-eligible planned nodes still
+load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared
+scope like `Bash(git *)` is still enforced — the only change is that the `Skill`
+tool now exists for them. (An agent-mapped node still loads your settings, as it
+did before ADR 0017, and is excluded from activation for that very reason.)
+What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
 node invocation, including retries and feedback re-runs.
 

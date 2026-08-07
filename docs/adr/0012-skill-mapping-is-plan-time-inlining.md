@@ -80,7 +80,9 @@
 > annotation wrote "9.9%", which contradicts the table below; ADR 0017 also
 > cited a "393 id" corpus that does not exist anywhere in this repo),
 > activation sees all 35 skills, is conditional where inlining is
-> unconditional, has no size cap — so `pre-commit-checklist`, the skill that
+> unconditional, has no 16 KiB per-body cap — it bounds the whole staged
+> corpus at 64 MiB (`maxStagedCorpusBytes`) and each staged file at 1 MiB
+> (`maxSkillFileBytes`) instead — so `pre-commit-checklist`, the skill that
 > matched the four **best** planner-authored ids and was discarded from every
 > one of them, becomes reachable — and needs neither the matcher, the 16 KiB
 > cap, the `{{` neutralization nor the nonce fence, all of which exist only to
@@ -130,8 +132,11 @@
 > settings. The seal ADR 0017 substitutes for **§6's snapshot property** is
 > correspondingly narrower and stronger than described above: it covers a
 > corpus oh-my-graph itself staged, re-materialized and verified before every
-> node spawn, so a node cannot plant instructions for its successors — a
-> prevention rather than the halt-after-the-fact this note first recorded.
+> node spawn, so **within a single leg** a node cannot plant instructions for
+> its successors — a prevention rather than the halt-after-the-fact this note
+> first recorded. Across legs the guarantee does not hold: the manifest a
+> later `resume` reads back is a file a node can write, which ADR 0017 records
+> as an open residual in its Consequences.
 >
 > **This mechanism no longer ships** — ADR 0017's implementation landed on
 > 2026-08-07 — and its gate is voided rather than discharged. What is no longer

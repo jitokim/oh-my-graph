@@ -67,12 +67,9 @@ type autoFlags struct {
 	planOnly          bool
 	noAgentMapping    bool
 	noSkillActivation bool
-	// noSkillMapping is the DEPRECATED spelling of noSkillActivation. The
-	// user intent behind it — "keep my skills out of my auto runs" — is
-	// unchanged by ADR 0017; only the mechanism it switches off is, and the
-	// effect is now stronger rather than weaker, so the old flag keeps working
-	// with a notice instead of failing a script that already passes it.
-	noSkillMapping   bool
+	// The DEPRECATED `--no-skill-mapping` spelling has no field of its own:
+	// it is rewritten to `--no-skill-activation` before parsing, by
+	// deprecatedSkillFlagSpellings and rewriteDeprecatedSkillFlag below.
 	maxCycles        int
 	maxGoalBudgetUSD float64
 	verifyCmd        string

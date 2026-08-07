@@ -15,15 +15,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 - **Planned nodes get Claude Code's own skill activation (ADR 0017, #130).**
   `auto` now stages your whole `~/.claude/skills` corpus into a plugin
   directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
-  planned node `--plugin-dir <that>`, and adds `Skill` to its tool list. Which
-  skill a node uses is then left to the node's own model, at run time, by
+  **activation-eligible** planned node `--plugin-dir <that>`, and adds `Skill`
+  to its tool list. Eligible means every planned node that is not agent-mapped:
+  an agent-mapped node is excluded, gets neither half, and — as before ADR 0017
+  — trades layer 1 away to resolve the agent, so it loads your settings.
+  Which skill a node uses is then left to the node's own model, at run time, by
   description — where the mechanism this replaces picked one at plan time by
   name and reached 7% of planner-authored node ids, one of its five matches
   being semantically wrong.
 
   **The delivery is proven and the adoption is not, and the feature is on by
-  default.** The maintainer acceptance test (2026-08-07) measured **1 skill
-  invocation across 7 planned nodes**, and **0 under real planner prompts**;
+  default.** The maintainer acceptance tests (2026-08-07) measured **1 skill
+  invocation across 7 activated planned nodes** in aggregate — the one came from
+  run 1, and both arms of the pre-registered second run measured **0**;
   ADR 0017's verdict is FAIL and its status is `Proposed`. The argv carries
   both halves of the mechanism — that is pinned by tests at the argv layer on
   the `auto` and `resume` paths alike — but nothing yet shows a planned node
@@ -33,8 +37,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   **The tool ceiling does not move.** Layer 1 stays `--setting-sources ""`:
   measurement (g) showed that relaxing it lets a node that declared
   `Bash(git *)` run an out-of-scope command, because `--tools` bounds tool
-  names and not scopes. Your settings, CLAUDE.md, hooks and MCP servers still
-  do not load. `--plugin-dir` is not a ceiling layer — it supplies definitions
+  names and not scopes. For every activation-eligible node your settings,
+  CLAUDE.md, hooks and MCP servers still do not load; an agent-mapped node is
+  the pre-existing exception, and it is excluded from activation for exactly
+  that reason. `--plugin-dir` is not a ceiling layer — it supplies definitions
   and grants nothing — and `plannedToolAllowlist` is unchanged, so a plan still
   may not DECLARE `Skill`.
 
