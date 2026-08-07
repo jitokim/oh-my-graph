@@ -34,6 +34,16 @@
 # That reply once ended a real run of this graph green with nothing merged,
 # and the only reason the operator noticed was that `git pull` did not move.
 #
+# The merge verdict is also the one in this repo that is matched per LINE
+# rather than at the very start of the reply, because the mirror failure has
+# happened too: run 20260807-144514 merged PR #135 for real, opened its reply
+# with one line of housekeeping ("no local branch to delete"), put
+# `MERGED 83edfad…` on the next line, and was recorded FAIL. Every other node
+# pays a re-run for that; this one cannot, because its re-run re-enters
+# `gh pr merge` on an already-merged PR under a grant too narrow to look at
+# what happened. The SHA, not the position, is what keeps a promise out —
+# see the success_check comment below and ADR 0019.
+#
 # The run pauses at the approve-merge gate (exit 2). Read triage's table,
 # then resume:
 #   oh-my-graph resume <run-id> --approve approve-merge
@@ -72,6 +82,9 @@ nodes:
       as the very FIRST characters of the reply, with no markdown emphasis
       (`**PASS**` is WRONG), no heading, no backticks, no preamble — or with
       a bare FAIL followed by the failing step.
+      Anything you need to qualify — a step that had nothing to do, a
+      caveat, a note — goes AFTER the verdict, never before it: a line of
+      context ahead of the token fails this node even when the work is done.
     allowed_tools: [Read, "Bash(gh *)", "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 30m
@@ -105,6 +118,10 @@ nodes:
       five characters as the very FIRST characters, with no markdown emphasis
       (`**READY**` is WRONG), no heading, no preamble — plus a one-line
       status after it.
+      Anything you need to qualify — a check that had nothing to report, a
+      caveat, a note — goes AFTER the verdict, never before it: a line of
+      context ahead of the token fails this node even when both conditions
+      hold.
       You have 15 minutes: as that timeout comes near (after ~25 loops),
       stop polling and reply with the honest current state — which
       condition is still missing and what it says — as your final answer.
@@ -156,7 +173,10 @@ nodes:
       qualify ("3 of 7 so far") is not a verdict, it is a progress report,
       and this node has no progress to report — only an outcome. The triage
       table starts on the SECOND line: one row per comment → the action
-      taken (applied in <commit> / replied: <reason>). If you could not
+      taken (applied in <commit> / replied: <reason>). Anything you need to
+      qualify goes in that table or below it, never above the first line: a
+      line of context ahead of the token fails this node even when every
+      comment was actioned. If you could not
       finish, do NOT write TRIAGED: start with a bare BLOCKED and what
       stopped you, so the run halts before the merge gate instead of
       passing it.
@@ -229,6 +249,11 @@ nodes:
       "Not yet" is not a third verdict. If you are tempted to wait for
       something, the honest answer is WITHHELD naming what you are waiting
       for — the operator decides whether to re-run.
+      Anything you need to qualify — step 4 finding no local branch to
+      delete, a caveat, a note — goes AFTER the verdict, never before it.
+      One line of housekeeping ahead of the token failed this node after a
+      real merge (run 20260807-144514, PR #135), and a re-run of this node
+      is the one re-run in this graph that is not free.
     # Narrower than every other node's grant: this is the one irreversible
     # mutation in the pipeline, so it may run only the five commands above.
     allowed_tools:
@@ -266,6 +291,28 @@ nodes:
     # carrying no reason — the token with the blocking fact stripped out of
     # it. An alnum cannot be a separator, and every decoration a real reason
     # is written behind is still absorbed on the way to it.
+    #
+    # `(?m)` — the ONE line-anchored verdict in this repo. The anchor is not
+    # dropped: the token must still open a LINE, so a verdict mentioned mid
+    # sentence ("I will reply MERGED 4f2a1c9 once it lands") still fails.
+    # What is given up is only "the first line", and it is given up here and
+    # nowhere else because both of ADR 0019's conditions hold at this node
+    # and nowhere else:
+    #   1. the payload is a fact a promise cannot produce — the SHA does not
+    #      exist until the squash lands, and this node reads it out of its
+    #      own `git pull --ff-only` range. Contrast `adr`'s path, which a
+    #      node that drafted-but-never-committed can name, and which
+    #      therefore still needs first-characters position to be an
+    #      assertion at all;
+    #   2. a false FAIL here is not a re-run. Everywhere else it costs one;
+    #      here it re-enters `gh pr merge` on an already-merged PR under a
+    #      grant too narrow to look at what happened.
+    # Measured against every result_matches failure this project has on disk
+    # (22 of them over 218 verdict-bearing node runs): line-anchoring admits
+    # exactly the two replies that carried a real verdict on a later line and
+    # admits none of the 16 correct FAILs — including all four promise
+    # replies, which have no SHA to put on any line. Dropping the anchor
+    # entirely would have admitted 9 of those 16. See ADR 0019.
     success_check:
       exit_zero: true
-      result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'
+      result_matches: '(?m)^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'

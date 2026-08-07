@@ -63,7 +63,9 @@ nodes:
       reply with the bare token ADR followed immediately by the committed
       file's path (`ADR docs/adr/0014-thing.md`) — those characters FIRST, no
       markdown emphasis (`**ADR**` is WRONG), no heading, no preamble — then a
-      one-line summary of the decision.
+      one-line summary of the decision. Anything you need to qualify goes
+      AFTER the path, never before it: a line of context ahead of the token
+      fails this node even when the ADR is committed.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
     timeout: 30m
@@ -101,6 +103,9 @@ nodes:
       preamble:
         - CLEAN — you judged the whole ADR and have no design concerns.
         - FINDINGS: — followed by a prioritized list, worst first.
+      Anything you need to qualify goes AFTER the token, never before it: a
+      line of context ahead of it fails this node even when the review is
+      finished.
     allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
     permission_mode: plan
     timeout: 30m
@@ -125,8 +130,10 @@ nodes:
       addressed. When the updated ADR is committed, START your reply with
       the bare word DONE — those four characters FIRST, no markdown
       emphasis (`**DONE**` is WRONG), no heading, no preamble — then a
-      one-line summary of what changed. If findings remain unhandled, do
-      NOT write DONE: start with a bare BLOCKED and which ones.
+      one-line summary of what changed. Anything you need to qualify goes
+      AFTER the verdict, never before it: a line of context ahead of the
+      token fails this node even when the work is done. If findings remain
+      unhandled, do NOT write DONE: start with a bare BLOCKED and which ones.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
     permission_mode: dontAsk
     handoff: artifact
@@ -154,7 +161,9 @@ nodes:
       report. When tests are green, START the reply with the bare word PASS —
       those four characters FIRST, no markdown emphasis (`**PASS**` is
       WRONG), no heading, no preamble — then a one-line summary. Otherwise
-      start it with a bare FAIL and what is broken.
+      start it with a bare FAIL and what is broken. Anything you need to
+      qualify goes AFTER the verdict, never before it: a line of context
+      ahead of the token fails this node even when the tests are green.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 1h # hang guard — generous, so real work is never killed mid-flight
@@ -178,7 +187,9 @@ nodes:
       report. START it with the bare word PASS, or with a bare FAIL and the
       failing step — the verdict word must be the very FIRST characters of
       the reply, with no markdown emphasis (`**PASS**` is WRONG), no
-      heading, no preamble.
+      heading, no preamble. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when every check passed.
     allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
     permission_mode: dontAsk
     # Runaway insurance ONLY, never cost tuning — keep this an order of
@@ -221,6 +232,9 @@ nodes:
       emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
         - CLEAN — you judged the whole diff and found nothing.
         - FINDINGS: — followed by a prioritized list, worst first.
+      Anything you need to qualify goes AFTER the token, never before it: a
+      line of context ahead of it fails this node even when the review is
+      finished.
     allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
     permission_mode: plan
     timeout: 30m
@@ -247,7 +261,9 @@ nodes:
       report. When tests are green, START the reply with the bare word PASS —
       those four characters FIRST, no markdown emphasis (`**PASS**` is
       WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
-      and what is broken.
+      and what is broken. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when the tests are green.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
@@ -274,6 +290,9 @@ nodes:
       emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
         - CLEAN — you judged the whole diff and found no issues.
         - FINDINGS: — followed by a short list, worst first.
+      Anything you need to qualify goes AFTER the token, never before it: a
+      line of context ahead of it fails this node even when the review is
+      finished.
     allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
     permission_mode: plan
     handoff: artifact
@@ -298,7 +317,9 @@ nodes:
       report. When tests are green, START the reply with the bare word PASS —
       those four characters FIRST, no markdown emphasis (`**PASS**` is
       WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
-      and what is broken.
+      and what is broken. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when the tests are green.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m
@@ -328,6 +349,9 @@ nodes:
       emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
         - CLEAN — you would merge this as it stands; no flags remain.
         - FINDINGS: — followed by the remaining flags, worst first.
+      Anything you need to qualify goes AFTER the token, never before it: a
+      line of context ahead of it fails this node even when the review is
+      finished.
     allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
     permission_mode: plan
     timeout: 30m
@@ -355,7 +379,9 @@ nodes:
       the bare token PR followed immediately by the pull request's URL
       (`PR https://github.com/owner/repo/pull/123`) — those characters
       FIRST, with no markdown emphasis (`**PR**` is WRONG), no heading, no
-      preamble.
+      preamble. Anything you need to qualify goes AFTER the URL, never
+      before it: a line of context ahead of the token fails this node even
+      when the PR is open.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(gh *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 30m

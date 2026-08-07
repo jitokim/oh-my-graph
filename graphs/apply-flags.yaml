@@ -71,7 +71,9 @@ nodes:
       heading, no backticks, no preamble — then a one-line summary of which
       flags you applied. The SHA is the point: it exists only once the work
       is committed, so "APPLIED: 3 of 5 flags, the rest to follow" is not a
-      reply this node can make.
+      reply this node can make. Anything you need to qualify goes AFTER the
+      SHA, never before it: a line of context ahead of the token fails this
+      node even when every flag is applied and pushed.
     allowed_tools: [Read, Edit, Write, Bash]  # Bash is broad because "the project's checks" vary per repo; narrow it if yours are known
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
