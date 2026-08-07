@@ -26,10 +26,11 @@ fix was a pattern with an anchored alternation and a SHA payload, and it is
 load-bearing.
 
 Run `20260807-144514` is the same node failing the other way. It ran all four
-steps, merged PR #135, and replied:
+steps, merged PR #135, and replied — the first line of the reply was Korean and
+is translated here; only the wording changed, not where it sat:
 
-```
-PR #135의 로컬 브랜치는 존재하지 않아 `git branch -d` 대상이 없었습니다 (원격만 pruned).
+```text
+PR #135 had no local branch, so `git branch -d` had nothing to delete (only the remote was pruned).
 
 MERGED 83edfad11db1ba0281cab9b615c4acadded38512 — ADR 0018 …
 ```
@@ -87,8 +88,12 @@ node **passed**: it ran under `success_check: { exit_zero: true }` with no
 pattern at all. It is the corpus's one known false PASS, it is the reason §1's
 pattern exists, and it is not one of the 22.
 
-Direction: **all six misjudgements point the same way** — a node that had done
-its work, recorded FAIL.
+Direction: **all six are pattern misjudgements pointing the same way** — a
+reply the pattern rejected for where its verdict sat, or for how it was
+decorated, and not for what the reply said. Whether the work behind each was
+actually done is the separate question the "what could not be attributed"
+paragraph below keeps in its own buckets: one world-confirmed, one a synthetic
+fixture, four unconfirmable.
 
 **The pass side, and how far it was audited.** The other 196 executions passed,
 and they were not audited as a body; "no anchored verdict admitted a reply whose
@@ -200,22 +205,25 @@ nothing. It is also not sufficient: a model that ignores it fails identically.
 
 **Pattern side, nothing.** No pattern in the repo changes. `merge` keeps
 
-```
+```regex
 ^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])
 ```
 
 **Cost side, one node.** The reason `merge` looked like it needed the
-relaxation was never that the pattern misjudged it — the pattern judged PR
-#135's reply correctly, by the rule the prompt states. It was that this node's
-false FAIL was the one in the repo that a re-run could not safely correct: the
+relaxation was never that the pattern misjudged it — the pattern judged
+PR #135's reply correctly, by the rule the prompt states. It was that this
+node's false FAIL was the one in the repo a re-run could not safely correct: the
 re-run re-entered `gh pr merge` on an already-merged PR, under a grant too
 narrow to look at what had happened. So that is what changes:
 
 - `merge`'s prompt gains **step 0** — establish the PR's state before changing
   it; if it is already `MERGED`, do not re-enter step 1, take the SHA and report
-  the merge that landed.
-- `merge`'s `allowed_tools` gains `Bash(gh pr view *)` and `Bash(git log *)`.
-  Both are read-only. The grant's purpose — that the only thing this node may
+  the merge that landed. The SHA is confirmed only *after* step 2 refreshes
+  `origin/main`, with `git merge-base --is-ancestor`: a confirmation read off a
+  stale remote-tracking ref is how a re-run turns a real merge into a second
+  false FAIL.
+- `merge`'s `allowed_tools` gains `Bash(gh pr view *)` and
+  `Bash(git merge-base *)`. Both are read-only. The grant's purpose — that the only thing this node may
   *change* is the merge itself — is intact, and DESIGN.md's four-exec-seam
   invariant is untouched (these are tools inside a claude node, not a new
   spawner).
@@ -259,8 +267,9 @@ change than widening what the check accepts.
   graph header already says it.
 - DESIGN.md's "no flags the engine adds" sentence stands, and so does "no
   `(?m)` in this repo": a pattern *may* set a flag, and none does.
-- `merge` can now read PR state and `git log`. Any future narrowing of that
-  grant must keep step 0 executable, or it re-creates the expensive false FAIL.
+- `merge` can now read PR state and test ancestry with `git merge-base`. Any
+  future narrowing of that grant must keep step 0 executable, or it re-creates
+  the expensive false FAIL.
 - The prompt clause is a convention across 28 nodes. A new verdict-bearing node
   that omits it is inconsistent with every shipped graph. The sweep that finds
   it is `grep -c "Anything you need to qualify" graphs/*.yaml

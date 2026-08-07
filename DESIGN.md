@@ -750,8 +750,12 @@ overwrite themselves and the same corpus reads as 211 / 18.
 Of those 22, **16 were the check working** — three of them the literal promise
 reply ("I'll report when the stress test finishes", "I'll wait for that
 waiter", "4 planner processes are running") and the rest honest
-`FAIL`/`NOT READY`/`BLOCKED` reports. The remaining six were misjudgements, all
-in the same direction — a node that had done its work, failed:
+`FAIL`/`NOT READY`/`BLOCKED` reports. The remaining six were *pattern*
+misjudgements, all in the same direction — a reply rejected for where its
+verdict sat, or for how it was decorated, and not for what it said. Whether the
+work behind each was done is a separate question, and ADR 0019 keeps its
+buckets apart: one is world-confirmed (`merge`, PR #135), one is a synthetic
+fixture, and four are read-only nodes nothing on disk can confirm today:
 
 | what went wrong | count | still reachable? |
 |---|---|---|
@@ -798,8 +802,9 @@ Where a false FAIL is unusually expensive, make the re-run cheap instead of
 widening the check. `merge-shepherd`'s `merge` was the one node whose re-run was
 not safe — it re-entered `gh pr merge` on an already-merged PR under a grant too
 narrow to look — so it gained a step 0 that establishes PR state first and two
-read-only commands (`gh pr view`, `git log`) to do it with. ADR 0019 records the
-decision, the refused relaxation, and what would overturn either.
+read-only commands (`gh pr view`, `git merge-base`) to do it with, the ancestry
+check reading `origin/main` only after the pull that refreshes it. ADR 0019
+records the decision, the refused relaxation, and what would overturn either.
 
 **A verdict nothing checks is not a verdict.** A prompt that asks for one and
 a `success_check` of `{ exit_zero: true }` is the same "a prompt is not a

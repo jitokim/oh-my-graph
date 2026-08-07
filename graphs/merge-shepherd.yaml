@@ -224,9 +224,12 @@ nodes:
            `gh pr view {{ inputs.pr }} --json state,mergeCommit`. If it is
            already MERGED, a previous attempt at this node merged it and then
            failed its own verdict check — do NOT re-enter step 1. Take the
-           merge commit SHA from that output (confirm it with
-           `git log --oneline -20 origin/main`), do steps 2-4, and report
-           MERGED <sha> for the merge that already landed.
+           merge commit SHA from that output, SKIP step 1, and do steps 2-4.
+           Confirm the SHA only AFTER step 2 has updated the remote-tracking
+           ref, with `git merge-base --is-ancestor <sha> origin/main` — a
+           check against a stale or truncated `origin/main` can miss a merge
+           that really landed and send this node into a second false FAIL.
+           Then report MERGED <sha> for the merge that already landed.
         1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
            plain merge first; add `--admin` ONLY if merge-queue mechanics
            require it — that is legitimate here because the review is
@@ -273,7 +276,7 @@ nodes:
     # `gh pr merge`. They add no mutation — see step 0 and ADR 0019.
     allowed_tools:
       - "Bash(gh pr view *)"
-      - "Bash(git log *)"
+      - "Bash(git merge-base *)"
       - "Bash(gh pr merge *)"
       - "Bash(git pull *)"
       - "Bash(git remote prune *)"
