@@ -16,9 +16,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `auto` now stages your whole `~/.claude/skills` corpus into a plugin
   directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
   **activation-eligible** planned node `--plugin-dir <that>`, and adds `Skill`
-  to its tool list. Eligible means every planned node that is not agent-mapped:
-  an agent-mapped node is excluded, gets neither half, and — as before ADR 0017
-  — trades layer 1 away to resolve the agent, so it loads your settings.
+  to its tool list. Eligible means every planned node that is not agent-mapped,
+  on a run where activation is on at all: a missing or empty `~/.claude/skills`,
+  or a staging failure, turns it off for the whole run and says so on its own
+  line. An agent-mapped node is excluded, gets neither half, and — as before
+  ADR 0017 — trades layer 1 away to resolve the agent, so it loads your
+  settings.
   Which skill a node uses is then left to the node's own model, at run time, by
   description — where the mechanism this replaces picked one at plan time by
   name and reached 7% of planner-authored node ids, one of its five matches
@@ -28,9 +31,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   default.** The maintainer acceptance tests (2026-08-07) measured **1 skill
   invocation across 7 activated planned nodes** in aggregate — the one came from
   run 1, and both arms of the pre-registered second run measured **0**;
-  ADR 0017's verdict is FAIL and its status is `Proposed`. The argv carries
-  both halves of the mechanism — that is pinned by tests at the argv layer on
-  the `auto` and `resume` paths alike — but nothing yet shows a planned node
+  ADR 0017's verdict is FAIL and its status is `Proposed`. The first leg's argv
+  carries both halves of the mechanism, and a resumed leg's argv carries
+  neither — both are pinned by tests at the argv layer, on the `auto` and
+  `resume` paths respectively — but nothing yet shows a planned node
   choosing to use a skill. The measured yield is printed beside the token
   price before every run, and `--no-skill-activation` is the switch.
 
@@ -45,7 +49,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   may not DECLARE `Skill`.
 
   The staged directory is re-created and verified from a manifest before every
-  node spawn, so a node cannot leave a skill behind for a later one. The nodes
+  node spawn of the leg that staged it, so a node cannot leave a skill behind
+  for a later one. The nodes
   read the staged copy, so your own `~/.claude/skills` tree is read once, at
   staging: editing it mid-run neither changes the run nor stops it. Only a
   staged file that has to be restored while its source no longer holds the
@@ -65,8 +70,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
   The plan printout names every staged skill with its size and SHA-256, the
   nodes reached, the agent-mapped nodes excluded (that composite is
-  unmeasured), and what the corpus adds to every node invocation — including
-  retries and feedback re-runs. What it can no longer name is *which* skill a
+  unmeasured), and what the corpus adds to every activation-eligible node
+  invocation of that leg — including retries and feedback re-runs. What it can
+  no longer name is *which* skill a
   node will use; nothing knows that before the model does.
 
   `--no-skill-activation` turns it off, on `auto` and on `resume` alike

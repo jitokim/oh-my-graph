@@ -1116,7 +1116,8 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 			// Not a ceiling layer, and persisted anyway: it is the ONLY
 			// durable record that this run was skill-activated (the grant is
 			// invisible in graph.json by design, ADR 0017 §2), so a resumed
-			// leg reads it to know there is a staged corpus to verify.
+			// leg reads it to know activation was on for an earlier leg and
+			// to say so while dropping it (dropSkillActivation, ADR 0017 §6).
 			PluginDirs: p.PluginDirs,
 		}
 	}

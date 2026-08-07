@@ -516,7 +516,10 @@ guess made for the node: `auto` copies your whole skill corpus into a plugin
 directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
 **activation-eligible** planned node `--plugin-dir <that>` and adds `Skill` to
 its tool list, so the node's own model *can* pick the skill its task calls for,
-by description, at run time. An **agent-mapped node is excluded** and gets
+by description, at run time. Eligible means a planned node that is not
+agent-mapped, on a run where activation is on at all — an empty or missing
+`~/.claude/skills`, or a staging failure, turns it off for the whole run and
+says so on its own line. An **agent-mapped node is excluded** and gets
 neither half: running as one of your subagents already means loading your
 settings to resolve the agent, which is the trade `agent:` has always made.
 
@@ -536,17 +539,18 @@ tool now exists for them. (An agent-mapped node still loads your settings, as it
 did before ADR 0017, and is excluded from activation for that very reason.)
 What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
-node invocation, including retries and feedback re-runs.
+activation-eligible node invocation of that leg, including retries and feedback
+re-runs.
 
 What the plan can no longer tell you is *which* skill a node will use — nothing
 knows that before the model does. The printout says so, and each invocation is
 recorded in that node's ordinary session transcript. The staged directory is
-re-created and verified from a manifest before every node spawn, so a node
-cannot leave a skill behind for a later one. Your own `~/.claude/skills` tree
+re-created and verified from a manifest before every node spawn of the leg that
+staged it, so a node cannot leave a skill behind for a later one. Your own `~/.claude/skills` tree
 is read once, when the corpus is staged: editing it mid-run neither changes the
 run nor stops it, because the nodes read the staged copy.
-`--no-skill-activation` turns the whole thing off, and the old
-`--no-skill-mapping` still works, with a notice.
+`--no-skill-activation` turns the whole thing off; `--no-skill-mapping` is the
+deprecated alias for it and still works, with a printed notice.
 
 **A resumed leg never activates skills.** Only the first leg of a run does. A
 resumed leg is a fresh process with no in-memory manifest, so the only thing it

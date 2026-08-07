@@ -138,9 +138,11 @@ type NodeToolPolicy struct {
 	// names a directory, and a --plugin-dir pointing at nothing is accepted
 	// silently by the CLI, so a resumed leg trusting this path would run with
 	// no skills and be indistinguishable from one whose model chose none.
-	// `resume` re-materializes the directory from its manifest and verifies it,
-	// or halts (ADR 0017 §6). An old snapshot without the field rehydrates as
-	// an isolated run, which is the correct default.
+	// So since 2026-08-07 `resume` re-stages nothing and verifies nothing: it
+	// drops this field and `Skill` from every rehydrated policy and prints why
+	// (ADR 0017 §6), reading the field only to know activation was on. An old
+	// snapshot without the field rehydrates as an isolated run, which is the
+	// correct default.
 	PluginDirs []string `json:"plugin_dirs,omitempty"`
 }
 

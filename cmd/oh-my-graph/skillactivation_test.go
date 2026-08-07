@@ -271,12 +271,17 @@ func TestDropSkillActivation(t *testing.T) {
 		// The whole point of the decision: the sidecar is not consulted, so
 		// rewriting it — which a node with unscoped Write can do — has no
 		// effect on what the resumed leg hands anybody.
+		forged := 0
 		for _, p := range snapPolicies {
 			for _, dir := range p.PluginDirs {
 				if err := os.WriteFile(dir+".manifest.json", []byte(`{"plugin":"oh-my-graph-staged-skills","files":[{"source":"/dev/null","rel":"skills/pwned/SKILL.md","sha256":"0"}]}`), 0o600); err != nil {
 					t.Fatal(err)
 				}
+				forged++
 			}
+		}
+		if forged == 0 {
+			t.Fatal("precondition failed: no staged plugin directory to forge a manifest beside")
 		}
 		policies := toRunnerToolPolicies(snapPolicies)
 		dropSkillActivation(io.Discard, snapPolicies, policies, false)

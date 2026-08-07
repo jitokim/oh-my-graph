@@ -1460,14 +1460,17 @@ restoring whatever no longer hashes to it. The nodes read the staged copy, so a
 source skill edited or deleted mid-run changes nothing and stops nothing; only
 a staged file that must be restored while its source no longer holds the
 planned bytes fails a spawn, and the message attributes that to the engine
-rather than to the node. Across legs the claim is weaker and is stated as such
-in ADR 0017 §Failure modes: a resumed leg reads the manifest back off disk,
-out of a run directory a node can write, so what load-time validation buys is
-that a forged row can stage inside the staged directory and nowhere else.
-`resume` never rehydrates the directory path verbatim: it re-materializes from
-the validated manifest and verifies, or halts — a `--plugin-dir` pointing at
-nothing is accepted by the CLI with exit 0, so absence is indistinguishable
-from a model that chose no skill.
+rather than to the node. **Across legs there is no claim, so there is no
+activation either**: the only manifest a resumed leg could re-stage from is the
+sidecar in a run directory a node can write, and its per-file SHA-256 does not
+close that, because one actor authoring both `source` and `sha256` satisfies its
+own check. Closing it needs an integrity anchor outside the run directory, which
+this build does not have, so since 2026-08-07 `resume` drops `Skill` and
+`--plugin-dir` from every rehydrated policy and prints why (ADR 0017 §6). It
+never rehydrates the directory path verbatim — a `--plugin-dir` pointing at
+nothing is accepted by the CLI with exit 0, so absence is indistinguishable from
+a model that chose no skill, which is exactly why the de-escalation is
+disclosed on the leg that makes it.
 
 What is lost, permanently: the plan can no longer say WHICH skill a node will
 use, because the model chooses at run time by description. What replaces it is
