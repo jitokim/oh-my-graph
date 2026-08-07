@@ -618,10 +618,14 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 //     could never be de-escalated once started, which would make ADR 0017's
 //     reversibility claim false for every resumed leg;
 //   - on: the staged directory is re-created from its MANIFEST and verified,
-//     then handed back to the policies that recorded it. A missing or
-//     unreadable manifest, a source skill that changed, a source skill that
-//     vanished — each HALTS the leg with the path named. Never proceed with a
-//     directory the run cannot vouch for.
+//     then handed back to the policies that recorded it. A missing manifest,
+//     an unreadable one, one this build did not write (LoadSkillStaging
+//     validates it — across legs the manifest is data, out of a directory a
+//     node can write), or a staged file that must be restored while its source
+//     no longer holds the planned bytes — each HALTS the leg with the path
+//     named. Never proceed with a directory the run cannot vouch for. A source
+//     the user merely edited while the staged copy stands is not that: the
+//     nodes read the staged copy (ADR 0017 §5, amended 2026-08-07).
 //
 // Nothing here can grant `Skill` to a node whose snapshot did not have it, or
 // point a policy at a directory the snapshot did not name. That is what keeps

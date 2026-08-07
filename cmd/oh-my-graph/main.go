@@ -937,11 +937,15 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 		fmt.Fprint(w,
 			"  Which skill a node uses is chosen by the model at run time from those descriptions.\n"+
 				"  It is NOT knowable here; each invocation is recorded in that node's session transcript.\n"+
+				"  MEASURED YIELD so far: 1 skill invocation across 7 planned nodes in the acceptance test\n"+
+				"    of 2026-08-07, and 0 under real planner prompts (ADR 0017). Delivery is proven at the\n"+
+				"    argv; a node CHOOSING to use a skill is not. The tokens above are charged either way.\n"+
 				"  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load\n"+
 				"    (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still enforced.\n"+
 				"    The only change is that the Skill tool now exists for these nodes.\n"+
-				"  The staged corpus is re-materialized and verified before every node spawn; a source\n"+
-				"    skill that changed or vanished halts the run.\n"+
+				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
+				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
+				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
 				"  Turn it off with --no-skill-activation.\n",
 		)
 	} else if activation != nil && activation.DisabledReason != "" {

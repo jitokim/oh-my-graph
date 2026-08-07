@@ -146,7 +146,7 @@ func TestRunAuto_NoSkillActivationLeavesTheRunIsolated(t *testing.T) {
 // what they turned off.
 func TestAutoFlags_DeprecatedSkillMappingFlagIsRewrittenLoudly(t *testing.T) {
 	var notice strings.Builder
-	rewritten := rewriteDeprecatedSkillFlag(&notice, []string{"--no-skill-mapping", "--plan-only"})
+	rewritten := rewriteDeprecatedSkillFlag(&notice, newAutoFlags().set, []string{"--no-skill-mapping", "--plan-only"})
 
 	if !slices.Equal(rewritten, []string{"--no-skill-activation", "--plan-only"}) {
 		t.Fatalf("rewritten = %v, want the deprecated flag translated and the rest untouched", rewritten)
@@ -158,7 +158,7 @@ func TestAutoFlags_DeprecatedSkillMappingFlagIsRewrittenLoudly(t *testing.T) {
 
 	// And nothing is said when nobody typed it.
 	var quiet strings.Builder
-	rewriteDeprecatedSkillFlag(&quiet, []string{"--plan-only"})
+	rewriteDeprecatedSkillFlag(&quiet, newAutoFlags().set, []string{"--plan-only"})
 	if quiet.Len() != 0 {
 		t.Errorf("a run that used no deprecated flag must stay silent:\n%s", quiet.String())
 	}
@@ -170,6 +170,42 @@ func TestAutoFlags_DeprecatedSkillMappingFlagIsRewrittenLoudly(t *testing.T) {
 	}
 	if !f.noSkillActivation {
 		t.Error("--no-skill-mapping did not turn activation off")
+	}
+}
+
+// A rewrite that is not positional-aware edits the user's own strings. The
+// deprecated spelling is only a flag where a flag can appear: as another
+// flag's VALUE it is data — a build command, a goal, an input — and the one
+// thing this function must never do is quietly rewrite what a node will run.
+func TestRewriteDeprecatedSkillFlag_LeavesValuePositionsAlone(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"a separate value", []string{"--verify-cmd", "--no-skill-mapping"}},
+		{"after the terminator", []string{"--", "--no-skill-mapping"}},
+		{"a repeated input value", []string{"--input", "--no-skill-mapping"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var notice strings.Builder
+			got := rewriteDeprecatedSkillFlag(&notice, newAutoFlags().set, tc.args)
+			if !slices.Equal(got, tc.args) {
+				t.Errorf("rewritten = %v, want %v untouched — that element is a value, not a flag", got, tc.args)
+			}
+			if notice.Len() != 0 {
+				t.Errorf("a notice was printed for a flag nobody typed:\n%s", notice.String())
+			}
+		})
+	}
+
+	// And the flag AFTER a consumed value is still rewritten, so the skip is a
+	// skip of one element and not of the rest of the argv.
+	var notice strings.Builder
+	got := rewriteDeprecatedSkillFlag(&notice, newAutoFlags().set,
+		[]string{"--verify-cmd", "make build", "--no-skill-mapping"})
+	if !slices.Equal(got, []string{"--verify-cmd", "make build", "--no-skill-activation"}) {
+		t.Errorf("rewritten = %v, want the trailing deprecated flag still translated", got)
 	}
 }
 

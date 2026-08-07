@@ -1451,15 +1451,23 @@ word, so a plan may not DECLARE `Skill`, and the grant is invisible in
 The staged directory is not protected by its location. `Write` is unscoped in
 `plannedToolAllowlist` and a node runs as the same uid, so no path this process
 creates is unwritable by it. The requirement — *a node must not be able to
-stage a skill for a later node* — is met by lifetime: a manifest of every
-staged file with its source SHA-256 is taken at plan time, and the directory is
-**re-materialized from that manifest immediately before every node spawn**
-(a `NodeRunner` decorator, `coordinator.GuardStaging`), deleting whatever the
-manifest does not name. A source skill that changed or vanished since planning
-halts the run with the path named. `resume` never rehydrates the directory path
-verbatim: it re-materializes from the manifest and verifies, or halts —
-a `--plugin-dir` pointing at nothing is accepted by the CLI with exit 0, so
-absence is indistinguishable from a model that chose no skill.
+stage a skill for a later node* — is met **within a leg** by lifetime: a
+manifest of every staged file with its source SHA-256 is taken at plan time and
+held in memory, and the directory is **re-materialized from that manifest
+immediately before every node spawn** (a `NodeRunner` decorator,
+`coordinator.GuardStaging`), deleting whatever the manifest does not name and
+restoring whatever no longer hashes to it. The nodes read the staged copy, so a
+source skill edited or deleted mid-run changes nothing and stops nothing; only
+a staged file that must be restored while its source no longer holds the
+planned bytes fails a spawn, and the message attributes that to the engine
+rather than to the node. Across legs the claim is weaker and is stated as such
+in ADR 0017 §Failure modes: a resumed leg reads the manifest back off disk,
+out of a run directory a node can write, so what load-time validation buys is
+that a forged row can stage inside the staged directory and nowhere else.
+`resume` never rehydrates the directory path verbatim: it re-materializes from
+the validated manifest and verifies, or halts — a `--plugin-dir` pointing at
+nothing is accepted by the CLI with exit 0, so absence is indistinguishable
+from a model that chose no skill.
 
 What is lost, permanently: the plan can no longer say WHICH skill a node will
 use, because the model chooses at run time by description. What replaces it is
@@ -1839,7 +1847,7 @@ internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — Git
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Five call sites across coordinator and schedule; internal/invariants counts them repo-wide against fence.go's own sentence
+internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/coordinator/{coordinator,router,agentmap,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController

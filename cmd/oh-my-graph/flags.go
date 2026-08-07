@@ -135,7 +135,7 @@ func (f *autoFlags) parse(args []string) error {
 		return fmt.Errorf(`auto: missing goal (usage: oh-my-graph auto "<goal>" [--input k=v ...] — the quoted goal comes first)`)
 	}
 	f.goal = args[0]
-	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, args[1:])); err != nil {
+	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, f.set, args[1:])); err != nil {
 		return err
 	}
 	if f.set.NArg() > 0 {
@@ -251,14 +251,29 @@ var deprecatedSkillFlagSpellings = map[string]string{
 // rewriteDeprecatedSkillFlag translates the deprecated spelling in place and
 // says so once on w. It never rewrites SILENTLY: the flag names a mechanism
 // that no longer exists, so a user who typed it is owed the sentence.
-func rewriteDeprecatedSkillFlag(w io.Writer, args []string) []string {
+//
+// It rewrites only elements in FLAG POSITION, which is why it needs the
+// FlagSet: `--verify-cmd --no-skill-mapping` passes that string to another
+// flag as its VALUE, and rewriting it there would edit the user's build
+// command. So an element consumed as a preceding flag's value is skipped, and
+// so is everything after the `--` terminator.
+func rewriteDeprecatedSkillFlag(w io.Writer, set *flag.FlagSet, args []string) []string {
 	out := make([]string, len(args))
 	copy(out, args)
 	noticed := false
+	isValue := false
 	for i, arg := range out {
+		if isValue {
+			isValue = false
+			continue
+		}
+		if arg == "--" {
+			break
+		}
 		name, value, hasValue := strings.Cut(arg, "=")
 		replacement, deprecated := deprecatedSkillFlagSpellings[name]
 		if !deprecated {
+			isValue = !hasValue && takesSeparateValue(set, name)
 			continue
 		}
 		if hasValue {
@@ -275,4 +290,24 @@ func rewriteDeprecatedSkillFlag(w io.Writer, args []string) []string {
 		}
 	}
 	return out
+}
+
+// takesSeparateValue reports whether arg is a registered non-boolean flag, and
+// so consumes the NEXT element as its value. An unregistered spelling counts
+// as consuming nothing: flag.Parse will reject it a moment later, and guessing
+// that it takes a value would swallow the element after it.
+func takesSeparateValue(set *flag.FlagSet, arg string) bool {
+	if !strings.HasPrefix(arg, "-") {
+		return false
+	}
+	name := strings.TrimLeft(arg, "-")
+	if name == "" {
+		return false
+	}
+	f := set.Lookup(name)
+	if f == nil {
+		return false
+	}
+	boolFlag, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return !ok || !boolFlag.IsBoolFlag()
 }

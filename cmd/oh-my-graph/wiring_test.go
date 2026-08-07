@@ -483,6 +483,13 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		"NOT knowable here",
 		"session transcript",
 		"re-materialized and verified before every node spawn",
+		// The measured yield travels with the price. A disclosure that charges
+		// a user ~6,000 tokens per invocation while the ADR records FAIL, and
+		// says only what the mechanism WOULD do, is the asymmetry ADR 0017
+		// convicts ADR 0012 of.
+		"MEASURED YIELD",
+		"1 skill invocation across 7 planned nodes",
+		"0 under real planner prompts",
 		"--no-skill-activation",
 	} {
 		if !strings.Contains(got, want) {

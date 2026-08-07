@@ -16,10 +16,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `auto` now stages your whole `~/.claude/skills` corpus into a plugin
   directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
   planned node `--plugin-dir <that>`, and adds `Skill` to its tool list. Which
-  skill a node uses is then chosen by the node's own model at run time, by
+  skill a node uses is then left to the node's own model, at run time, by
   description — where the mechanism this replaces picked one at plan time by
   name and reached 7% of planner-authored node ids, one of its five matches
   being semantically wrong.
+
+  **The delivery is proven and the adoption is not, and the feature is on by
+  default.** The maintainer acceptance test (2026-08-07) measured **1 skill
+  invocation across 7 planned nodes**, and **0 under real planner prompts**;
+  ADR 0017's verdict is FAIL and its status is `Proposed`. The argv carries
+  both halves of the mechanism — that is pinned by tests at the argv layer on
+  the `auto` and `resume` paths alike — but nothing yet shows a planned node
+  choosing to use a skill. The measured yield is printed beside the token
+  price before every run, and `--no-skill-activation` is the switch.
 
   **The tool ceiling does not move.** Layer 1 stays `--setting-sources ""`:
   measurement (g) showed that relaxing it lets a node that declared
@@ -30,10 +39,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   may not DECLARE `Skill`.
 
   The staged directory is re-created and verified from a manifest before every
-  node spawn, so a node cannot leave a skill behind for a later one; a source
-  skill that changed or vanished since planning halts the run with the path
-  named. `resume` verifies rather than trusting the recorded path, since a
-  `--plugin-dir` pointing at nothing is accepted by the CLI with exit 0.
+  node spawn, so a node cannot leave a skill behind for a later one. The nodes
+  read the staged copy, so your own `~/.claude/skills` tree is read once, at
+  staging: editing it mid-run neither changes the run nor stops it. Only a
+  staged file that has to be restored while its source no longer holds the
+  planned bytes fails a spawn, and the message says the fault is the engine's
+  rather than the node's. `resume` verifies rather than trusting the recorded
+  path, since a `--plugin-dir` pointing at nothing is accepted by the CLI with
+  exit 0; the manifest it reads back off disk is validated before it is used,
+  so a run directory a node wrote to cannot redirect where the next leg
+  stages.
 
   The plan printout names every staged skill with its size and SHA-256, the
   nodes reached, the agent-mapped nodes excluded (that composite is

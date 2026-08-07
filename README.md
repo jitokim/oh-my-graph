@@ -514,9 +514,17 @@ Your Claude Code skills (`~/.claude/skills` only) reach `auto` runs too, and
 they reach them through Claude Code's own activation rather than through a
 guess made for the node: `auto` copies your whole skill corpus into a plugin
 directory it owns (`~/.oh-my-graph/runs/<run-id>/skills-plugin/`), passes each
-planned node `--plugin-dir <that>` and adds `Skill` to its tool list, and the
-node's own model then picks the skill its task calls for, by description, at
+planned node `--plugin-dir <that>` and adds `Skill` to its tool list, so the
+node's own model *can* pick the skill its task calls for, by description, at
 run time.
+
+**Whether it does is not yet shown, and the feature is on by default.** The
+maintainer acceptance test of 2026-08-07 measured **1 skill invocation across
+7 planned nodes**, and **0 under real planner prompts** — the delivery is
+proven at the argv, the adoption is not. ADR 0017 is `Proposed` for that
+reason, and the number is printed with the price before every run. If you
+would rather not pay a per-invocation token tax for a capability that has not
+yet paid for itself, `--no-skill-activation` is the switch.
 
 The tool ceiling does not move for it. Planned nodes still load none of your
 settings, CLAUDE.md, hooks or MCP servers, and a declared scope like
@@ -529,10 +537,11 @@ What the plan can no longer tell you is *which* skill a node will use — nothin
 knows that before the model does. The printout says so, and each invocation is
 recorded in that node's ordinary session transcript. The staged directory is
 re-created and verified from a manifest before every node spawn, so a node
-cannot leave a skill behind for a later one, and a source skill you edit
-mid-run halts the run rather than silently changing it. `--no-skill-activation`
-turns the whole thing off — on `auto` and on `resume` — and the old
-`--no-skill-mapping` still works, with a notice.
+cannot leave a skill behind for a later one. Your own `~/.claude/skills` tree
+is read once, when the corpus is staged: editing it mid-run neither changes the
+run nor stops it, because the nodes read the staged copy.
+`--no-skill-activation` turns the whole thing off — on `auto` and on `resume` —
+and the old `--no-skill-mapping` still works, with a notice.
 
 Two places a skill can live are **out of scope** and are not staged: skills
 provided by a **plugin** (`~/.claude/plugins/...`) and **project** skills

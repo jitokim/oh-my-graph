@@ -463,6 +463,31 @@ skill for a later node* — is met by lifetime, not by location:
   not an option). Within a leg this is not advisory: a run whose instruction
   corpus changed under it should stop.
 
+  > **Amended 2026-08-07 — the halt is narrowed to the case where the planned
+  > bytes exist nowhere.** The sentence above was written while the premise was
+  > "activation is the point"; the acceptance test then measured 1 invocation
+  > across 7 nodes and 0 under real planner prompts, and a zero-yield feature
+  > that can kill a paid run on an ordinary `vim ~/.claude/skills/...` — or on
+  > a parallel claude session, or on one of the run's own nodes — is not a
+  > trade this record can keep making. The re-argument is short: **a node never
+  > reads the source.** It reads the staged copy, which is pinned when
+  > `BindTo` writes it. So `Materialize` now re-hashes the STAGED file against
+  > the manifest, leaves it alone when it matches, and consults the source only
+  > to RESTORE one that is missing or altered. A source edit with the staged
+  > copy intact is therefore not an event. The seal is unchanged in the
+  > direction that matters — a node's write to the staged tree is still
+  > reverted or deleted before the next spawn — and the halt survives only
+  > where the planned bytes exist nowhere at all, because the alternative there
+  > is letting a node read bytes nobody planned.
+  >
+  > One thing the halt cannot fix, and the review was right to name it: the
+  > failure surfaces through `stagingRunner`, so the scheduler records it
+  > against the node that was about to spawn, and the ledger has one verdict
+  > per node and no way to say "the engine stopped before this node ran". The
+  > error sentence carries the attribution instead. A ledger disposition for
+  > engine-side faults is a change to the ledger, not to this decision, and is
+  > not made here.
+
 What the seal no longer has to cover, because layer 1 stays `""`:
 `~/.claude/CLAUDE.md` and its transitive `@import`s, `~/.claude/settings.json`,
 and every script a hook's `command` field points at. The first draft had to
@@ -475,11 +500,19 @@ the CLI's own read is not closed (closing it would require the CLI to accept a
 content hash, which it does not). And a node that writes has already written —
 what it cannot do is have a later node read it.
 
-**Cleanup** is the run directory's existing lifetime: the staged directory is
-removed when the run reaches a terminal settled state per `runstatus`'s one
-rule, and not at leg end, because a resumable run needs its manifest to still
-mean something. An abandoned run's directory is swept by whatever sweeps run
-directories today.
+**Cleanup: there is none, and the first draft of this paragraph asserted one
+that does not exist.** It said the staged directory is "removed when the run
+reaches a terminal settled state per `runstatus`'s one rule" and that an
+abandoned run's directory is "swept by whatever sweeps run directories today".
+Nothing sweeps run directories today — `os.RemoveAll` appears exactly once
+outside tests in this repo, inside `pruneTo`. So **every run, and every
+`--max-cycles` cycle, leaves a full copy of the user's skill corpus under
+`~/.oh-my-graph/runs/` forever** (the measured corpus is under 2 MiB; the
+bound is `maxStagedCorpusBytes`, 64 MiB). Removing it at leg end is wrong — a
+resumable run needs its manifest to still mean something — and a sweeper for
+run directories is a decision about run artifacts in general, not about this
+directory, so it is named here rather than smuggled in. Until one exists, this
+is disk the user has to reclaim themselves.
 
 ### 6. Resume re-materializes and verifies; it never rehydrates the path blindly
 
@@ -506,6 +539,16 @@ a directory. Therefore:
   paths, releasable only by an explicit `resume --accept-changed-skills`,
   which prints them and re-seals; **a source is gone** → halt. Never proceed
   with a directory the run cannot vouch for.
+
+  > **Amended 2026-08-07, with §5.** The last two outcomes now fire only when
+  > the staged copy also has to be restored. A resumed leg whose staged
+  > directory still holds the planned bytes proceeds even if the user has
+  > since edited or deleted the source — it is verifying the corpus the nodes
+  > read, which is the staged one. "Never proceed with a directory the run
+  > cannot vouch for" is unchanged; what changed is that a source edit is no
+  > longer something the directory needs vouching for. A resumed leg also
+  > validates the manifest itself before using it (§Failure modes), which the
+  > live leg does not need to.
 - **`resume` gains `--no-skill-activation`**, applied as an override on the
   rehydrated policies (drop `Skill` from `Tools`, clear `PluginDirs`). The
   forward direction is already safe — an old run's `""` stays `""`, no old run
@@ -679,6 +722,17 @@ the guard cannot be steered by a node that rewrites a file — strictly stronger
 than reading it back from disk each time. `state.json` still carries
 `plugin_dirs`, which is what tells a resumed leg there is a corpus to verify.
 
+> **Correction (2026-08-07).** "Strictly stronger than reading it back from
+> disk each time" is true of the live leg and hides the leg that is not live.
+> A **resumed** leg has no in-memory manifest: `LoadSkillStaging` reads the
+> sidecar back off disk, out of the same run directory the paragraph above
+> concedes any node can write. That is the one path where the manifest is
+> data, and it is the path §6 itself calls "the real resume path for an auto
+> run". Anchoring the hash elsewhere does not answer it — `state.json` sits in
+> the same node-writable directory, so an actor who can forge one can forge
+> both. What the code does instead is bound the damage and say so: see
+> §Failure modes, "a node authors the manifest a later LEG reads".
+
 **Difference 3 — `--no-skill-mapping` is rewritten at parse, not registered.**
 §Compatibility says it is "accepted as a deprecated alias with a one-line
 notice". Registering it would advertise a deleted mechanism in `--help` and in
@@ -694,9 +748,11 @@ left to be discovered:
   `--no-skill-activation`, which the halt's own message names. Adding a second
   flag that re-seals a corpus a run did not plan against is a decision with its
   own hazard, and it is not made here.
-- **Cleanup of the staged directory at terminal settled state** (§5). It is
-  swept by whatever sweeps run directories today, like every other run
-  artifact. Nothing depends on it being removed sooner.
+- **Cleanup of the staged directory at terminal settled state** (§5). Nothing
+  cleans it up, and nothing cleans up run directories either — the claim that
+  it "is swept by whatever sweeps run directories today" was checkable with
+  `grep` and false. §5 now says so. Every run and every `--max-cycles` cycle
+  leaves a full corpus copy behind.
 
 ## The acceptance test
 
@@ -967,6 +1023,30 @@ before today.
   `plannedToolAllowlist` and no directory is unwritable by a same-uid process,
   so this is answered by re-materializing before every spawn (§5), not by
   permissions. The first write is not prevented; its effect on later nodes is.
+- **A node authors the manifest a later LEG reads — open, bounded, stated.**
+  Within a leg the manifest is trusted Go code's and lives in memory. Across
+  legs it is a file (`<run-dir>/skills-plugin.manifest.json`) in a directory a
+  node can write, and `LoadSkillStaging` reads it. Its per-file SHA-256 is no
+  defence there: one actor authoring both `source` and `sha256` satisfies its
+  own check. So a node that writes bytes anywhere and then rewrites the
+  sidecar to name them has staged a skill for the **next leg's** nodes — on
+  `resume --retry-failed`, which is the resume path an auto run actually
+  takes. Three things bound it, none of them closes it:
+  - the node must already have `Write`, which is unscoped for planned nodes,
+    so it could equally write into `~/.claude/skills` itself and wait for the
+    user's next run — this is not a new capability, it is a shorter path;
+  - `safeStagedRel` refuses on load any `rel` that is not a clean relative
+    path under `skills/`, so a forged row places content **inside** the staged
+    directory and nowhere else. Before that check, `../../..` reached anywhere
+    this process can write, and `pruneTo` — which walks only the staged
+    directory — would never have cleaned it up;
+  - `writeStagedFile` refuses to write through a symlink (Lstat, then remove,
+    then `O_EXCL`), so a planted link cannot redirect a staged write either.
+
+  Closing it properly needs an anchor outside the run directory, which this
+  build does not have — `state.json` is in the same directory. Recorded as a
+  residual rather than papered over: the header of `skillstage.go` scopes its
+  own claim to "within a leg" for the same reason.
 - **Cost with nothing to show.** Every planned node pays ~6,008 tokens for 35
   descriptions whether or not it activates anything, on every retry and
   feedback re-run. ADR 0012 measured 84% of planner ids as having no candidate

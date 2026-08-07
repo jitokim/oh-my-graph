@@ -42,7 +42,7 @@ func newChatFlags() *chatFlags {
 // parse reads args as flags only — `chat` takes no positional argument, so a
 // leftover one is a typo worth naming rather than silently ignoring.
 func (f *chatFlags) parse(args []string) error {
-	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, args)); err != nil {
+	if err := f.set.Parse(rewriteDeprecatedSkillFlag(os.Stderr, f.set, args)); err != nil {
 		return err
 	}
 	if f.set.NArg() > 0 {

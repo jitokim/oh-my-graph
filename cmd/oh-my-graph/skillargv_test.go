@@ -40,6 +40,10 @@ const (
 	// ANTHROPIC_* keys, so everything else the test sets reaches the child.
 	argvDirEnv    = "OMG_TEST_ARGV_DIR"
 	repliesDirEnv = "OMG_TEST_REPLIES_DIR"
+	// failPromptEnv makes the stub exit non-zero for the one node whose prompt
+	// contains it, which is how a test manufactures the failed node that
+	// `resume --retry-failed` exists for. Empty means every node succeeds.
+	failPromptEnv = "OMG_TEST_FAIL_PROMPT"
 )
 
 // stubClaude is a `claude` that never thinks: it appends its own argv,
@@ -55,6 +59,13 @@ for a in "$@"; do
     *"planning coordinator"*) cat "$OMG_TEST_REPLIES_DIR/plan.json"; exit 0 ;;
   esac
 done
+if [ -n "$OMG_TEST_FAIL_PROMPT" ]; then
+  for a in "$@"; do
+    case "$a" in
+      *"$OMG_TEST_FAIL_PROMPT"*) echo "stub claude: failing on request" >&2; exit 1 ;;
+    esac
+  done
+fi
 cat "$OMG_TEST_REPLIES_DIR/node.json"
 `
 
@@ -103,11 +114,17 @@ func (a recordedArgv) prompt() string {
 	return p
 }
 
-// runAutoCapturingArgv drives a whole `auto` run through the real argv path
-// against a stub claude, and returns the run id plus every node spawn's argv
-// keyed by node prompt. The planner's own spawn is dropped: its ceiling is a
-// different decision (coordinatorInvocation), tested elsewhere.
-func runAutoCapturingArgv(t *testing.T, args ...string) (string, map[string]recordedArgv) {
+// argvProbe is the stub-claude harness: an isolated home with one skill and
+// one name-matching agent, the canned envelopes, and the directory the stub
+// records argv into. It is a value rather than inline setup because a resumed
+// leg is a SECOND process against the SAME run, and it needs the same stub and
+// the same home with a fresh argv directory.
+type argvProbe struct {
+	stub    string
+	argvDir string
+}
+
+func newArgvProbe(t *testing.T) *argvProbe {
 	t.Helper()
 	isolateRunHome(t)
 
@@ -126,24 +143,51 @@ func runAutoCapturingArgv(t *testing.T, args ...string) (string, map[string]reco
 	writeFileTree(t, filepath.Join(replies, "node.json"), envelopeJSON(t, "s-node", "done"))
 	t.Setenv(repliesDirEnv, replies)
 
-	argvDir := t.TempDir()
-	t.Setenv(argvDirEnv, argvDir)
-
-	stub := filepath.Join(t.TempDir(), "claude")
-	writeFileTree(t, stub, stubClaude)
-	if err := os.Chmod(stub, 0o755); err != nil {
+	probe := &argvProbe{stub: filepath.Join(t.TempDir(), "claude")}
+	writeFileTree(t, probe.stub, stubClaude)
+	if err := os.Chmod(probe.stub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	probe.freshArgvDir(t)
+	return probe
+}
+
+// runner is a REAL ClaudeCLIRunner pointed at the stub — the whole point of
+// this file is that nothing between the policy and the argv is faked.
+func (p *argvProbe) runner() runner.NodeRunner {
+	return runner.NewClaudeCLIRunner(runner.WithBinary(p.stub))
+}
+
+// freshArgvDir points the stub at an empty recording directory, so a second
+// leg's spawns are its own and cannot be satisfied by the first leg's.
+func (p *argvProbe) freshArgvDir(t *testing.T) {
+	t.Helper()
+	p.argvDir = t.TempDir()
+	t.Setenv(argvDirEnv, p.argvDir)
+}
+
+func (p *argvProbe) spawns(t *testing.T) map[string]recordedArgv {
+	t.Helper()
+	return readRecordedArgv(t, p.argvDir)
+}
+
+// runAutoCapturingArgv drives a whole `auto` run through the real argv path
+// against a stub claude, and returns the run id plus every node spawn's argv
+// keyed by node prompt. The planner's own spawn is dropped: its ceiling is a
+// different decision (coordinatorInvocation), tested elsewhere.
+func runAutoCapturingArgv(t *testing.T, args ...string) (string, map[string]recordedArgv) {
+	t.Helper()
+	probe := newArgvProbe(t)
 
 	var err error
 	captureStdout(t, func() {
 		err = runAutoWith(append([]string{"turn the issue into a proposal"}, args...),
-			runner.NewClaudeCLIRunner(runner.WithBinary(stub)), browser.NewFakeOpener(), os.Stdout)
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
 	})
 	if err != nil {
 		t.Fatalf("auto run: %v", err)
 	}
-	return soleRunID(t), readRecordedArgv(t, argvDir)
+	return soleRunID(t), probe.spawns(t)
 }
 
 // readRecordedArgv loads every spawn the stub recorded, keyed by node prompt.
@@ -294,6 +338,102 @@ func TestRunAuto_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	}
 	if len(spawns) == 0 {
 		t.Fatal("no node spawned at all, so nothing above was actually checked")
+	}
+}
+
+// THE RESUMED LEG, at the same layer. `resume` does not carry the first leg's
+// argv over: `continueRun` rebuilds the policy map from the snapshot
+// (toRunnerToolPolicies drops PluginDirs on purpose) and resumeSkillStaging
+// re-establishes the directory from its manifest. That is a SECOND
+// construction of the whole mechanism, and until this test it was checked only
+// as far as the policy map — the exact "built correctly and never reaches the
+// process" gap this file's header names, left open on `resume --retry-failed`,
+// which ADR 0017 §6 calls the real resume path for an auto run.
+func TestResumeRetryFailed_RespawnsWithThePluginDirAndTheCeiling(t *testing.T) {
+	probe := newArgvProbe(t)
+	t.Setenv(failPromptEnv, "render the artifact")
+
+	var runErr error
+	captureStdout(t, func() {
+		runErr = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	if runErr == nil {
+		t.Fatal("precondition failed: the auto run was supposed to fail at the artifact node")
+	}
+	runID := soleRunID(t)
+
+	// A second leg, recording into its own directory and with the stub's
+	// failure switched off, so what it asserts is this leg's spawn.
+	probe.freshArgvDir(t)
+	t.Setenv(failPromptEnv, "")
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), probe.runner(), nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("resume --retry-failed: %v", resumeErr)
+	}
+
+	spawns := probe.spawns(t)
+	argv := nodeArgv(t, spawns, "render the artifact")
+	wantDir := filepath.Join(runDirFor(runID), "skills-plugin")
+
+	if dir, ok := argv.value("--plugin-dir"); !ok || dir != wantDir {
+		t.Errorf("--plugin-dir = %q (present=%t), want %q — a resumed node with no plugin dir runs with no skills and exits 0\nargv: %q", dir, ok, wantDir, argv)
+	}
+	if tools := argv.tools(); !slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want %s among them\nargv: %q", tools, coordinator.SkillToolName, argv)
+	}
+	if sources, ok := argv.value("--setting-sources"); !ok || sources != "" {
+		t.Errorf("--setting-sources = %q (present=%t), want a rendered empty value — resume must not widen layer 1\nargv: %q", sources, ok, argv)
+	}
+	if !argv.has("--strict-mcp-config") {
+		t.Errorf("layer 4 is missing from the resumed argv: %q", argv)
+	}
+	if raw, err := os.ReadFile(filepath.Join(wantDir, "skills", "architecture-design", "SKILL.md")); err != nil {
+		t.Errorf("the resumed leg's staged skill is missing: %v", err)
+	} else if !strings.Contains(string(raw), "the design procedure") {
+		t.Errorf("the resumed leg's staged skill is not the user's file:\n%s", raw)
+	}
+}
+
+// The kill switch on the resume path, argv-deep: `resume --no-skill-activation`
+// is the only way an activation-enabled run can be de-escalated once started,
+// so "the policy dropped Skill" is not enough — the re-spawned process must
+// carry neither half.
+func TestResumeRetryFailed_NoSkillActivationArgvIsUnchanged(t *testing.T) {
+	probe := newArgvProbe(t)
+	t.Setenv(failPromptEnv, "render the artifact")
+
+	captureStdout(t, func() {
+		_ = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	runID := soleRunID(t)
+
+	probe.freshArgvDir(t)
+	t.Setenv(failPromptEnv, "")
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed", "--no-skill-activation"}), probe.runner(), nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("resume --retry-failed --no-skill-activation: %v", resumeErr)
+	}
+
+	spawns := probe.spawns(t)
+	argv := nodeArgv(t, spawns, "render the artifact")
+	if argv.has("--plugin-dir") {
+		t.Errorf("--plugin-dir survived --no-skill-activation on resume: %q", argv)
+	}
+	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want no %s\nargv: %q", tools, coordinator.SkillToolName, argv)
+	}
+	if sources, ok := argv.value("--setting-sources"); !ok || sources != "" {
+		t.Errorf("--setting-sources = %q (present=%t); de-escalation must not move layer 1 either\nargv: %q", sources, ok, argv)
 	}
 }
 

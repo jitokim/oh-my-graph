@@ -23,22 +23,32 @@
 // plannedToolAllowlist unscoped, a node runs as the same uid as oh-my-graph,
 // and there is no path this process can create that such a node cannot write —
 // 0700 included, chmod included. The requirement — A NODE MUST NOT BE ABLE TO
-// STAGE A SKILL FOR A LATER NODE — is met by LIFETIME instead:
+// STAGE A SKILL FOR A LATER NODE — is met WITHIN A LEG by LIFETIME instead:
 //
 //   - the manifest (source path, staged path, SHA-256, per file) is taken at
 //     PLAN time by trusted Go code, from the scan, after validation, and is
 //     held in memory for the leg;
 //   - Materialize runs immediately before EVERY node spawn: it deletes every
-//     path the manifest does not name and rewrites every path it does. What a
-//     node wrote is gone before the next node reads. That is prevention, not
-//     detection — a seal could only halt after the fact;
-//   - a SOURCE file that changed or vanished since planning halts the run with
-//     the path named, so the corpus cannot change under a leg either.
+//     path the manifest does not name and restores every path it does whose
+//     bytes no longer hash to what plan time recorded. What a node wrote is
+//     gone before the next node reads. That is prevention, not detection — a
+//     seal could only halt after the fact.
 //
-// Two residuals, stated rather than closed: the window between verification
-// and the CLI's own read is not closed (that would need the CLI to accept a
-// content hash, which it does not), and a node that writes has already
-// written — what it cannot do is have a successor read it.
+// ACROSS LEGS THE CLAIM IS WEAKER, and the honest scope is "within a leg". A
+// resumed leg has no in-memory manifest: LoadSkillStaging reads the sidecar
+// back off disk, out of the same run directory a node can write. The sidecar's
+// per-file SHA-256 does not close that — one actor authoring both `source` and
+// `sha256` satisfies its own check — so a node that writes bytes anywhere and
+// then rewrites the sidecar to name them has staged a skill for the next
+// LEG's nodes. What load-time validation does bound is the damage: a `rel`
+// that is not a clean relative path under `skills/` is refused
+// (safeStagedRel), so a forged row can place content inside the staged
+// directory and nowhere else. ADR 0017 §Failure modes records the residual.
+//
+// Two more residuals, stated rather than closed: the window between
+// verification and the CLI's own read is not closed (that would need the CLI
+// to accept a content hash, which it does not), and a node that writes has
+// already written — what it cannot do is have a successor read it.
 //
 // STAGING IS TRUSTED CODE, NEVER THE PLANNER. The planner cannot name a skill,
 // a directory or the Skill tool: plannedToolAllowlist is unchanged, so
@@ -47,10 +57,21 @@
 // posture as agentmap.go's `agent:` and verifycmd.go's injected verification.
 // The durable record of the grant is state.json's tool_policies.
 //
-// FAILURE IS SILENT NO-ACTIVATION, NEVER AN ERROR, matching scanSkillDirs: an
-// unreadable skill tree, a name that is not a safe directory element, a corpus
-// past the size bound — each drops out and the run proceeds without
-// activation, with the reason printed. Zero-config stays zero-config.
+// AT PLAN TIME, FAILURE IS SILENT NO-ACTIVATION, NEVER AN ERROR, matching
+// scanSkillDirs: an unreadable skill tree, a name that is not a safe directory
+// element, a corpus past the size bound — each drops out and the run proceeds
+// without activation, with the reason printed. Zero-config stays zero-config.
+//
+// AFTER THE CORPUS IS STAGED that inverts, and only as far as it has to. The
+// nodes read the STAGED copy, never the user's source tree, so the corpus a
+// run depends on is pinned the moment BindTo writes it: a source file the user
+// (or a parallel claude session) edits mid-run is no longer anything this run
+// reads, and it does not stop the run. Materialize consults a source at all
+// only to RESTORE a staged file that is missing or no longer hashes to the
+// manifest — and only that unrestorable case fails the spawn, because the
+// alternative there is letting a node read bytes nobody planned. ADR 0017 §5
+// records the change of position and why: halting a paid run over an ordinary
+// edit was a cost the measured yield does not buy.
 package coordinator
 
 import (
@@ -383,20 +404,27 @@ func (s *SkillStaging) BindTo(dir string) error {
 // of the "a node cannot stage a skill for a later node" property. It runs
 // immediately before EVERY node spawn (see GuardStaging):
 //
-//   - every source is re-read and re-hashed. A source that CHANGED since
-//     planning halts the run with the path named; one that VANISHED halts too.
-//     A run whose instruction corpus changed under it should stop, and silence
-//     is not an option: a --plugin-dir pointing at nothing exits 0 with no
-//     warning, so absence looks exactly like a model that chose no skill;
 //   - every path the manifest does not name is DELETED. This is the direction
 //     that matters — the hazard is a node ADDING a skill directory of its own,
-//     which overwriting alone would leave in place;
-//   - every path the manifest does name is rewritten when its bytes differ.
+//     which overwriting alone would leave in place. It happens FIRST, so a
+//     symlink a node planted at a directory component of a manifest path is
+//     gone before anything is written through it;
+//   - every path the manifest DOES name is re-hashed in place. Bytes that
+//     still match plan time are left alone — that is the whole common case,
+//     and it keeps a sibling node's claude from reading a file mid-rewrite;
+//   - a staged file that is missing or no longer matches is RESTORED from its
+//     source. Only that path reads the user's tree, and only there can a
+//     source that changed or vanished fail the spawn: the planned bytes then
+//     exist nowhere, and letting a node read whatever is there instead is the
+//     one outcome worse than stopping.
 //
-// Rewriting only on difference keeps the common case free of writes while a
-// sibling node's claude may be reading the tree. The mutex serializes
-// reconciles against each other; it cannot serialize them against the CLI's
-// own reads, which is the residual ADR 0017 §5 records rather than closes.
+// A source the user edits while the staged copy is intact is therefore not an
+// error at all (ADR 0017 §5, amended 2026-08-07). The nodes read the staged
+// copy; the source is provenance, not the live corpus.
+//
+// The mutex serializes reconciles against each other; it cannot serialize them
+// against the CLI's own reads, which is the residual ADR 0017 §5 records
+// rather than closes.
 func (s *SkillStaging) Materialize() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -407,27 +435,50 @@ func (s *SkillStaging) Materialize() error {
 		return fmt.Errorf("skill staging: %w", err)
 	}
 
-	keep := make(map[string]bool, len(s.files)+2)
-	keep[filepath.Join(s.dir, ".claude-plugin", "plugin.json")] = true
+	pluginJSON := filepath.Join(s.dir, ".claude-plugin", "plugin.json")
+	keep := make(map[string]bool, len(s.files)+1)
+	keep[pluginJSON] = true
 	for _, f := range s.files {
+		keep[filepath.Join(s.dir, filepath.FromSlash(f.Rel))] = true
+	}
+	if err := s.pruneTo(keep); err != nil {
+		return err
+	}
+
+	for _, f := range s.files {
+		dst := filepath.Join(s.dir, filepath.FromSlash(f.Rel))
+		if stagedFileMatches(dst, f.SHA256) {
+			continue
+		}
 		raw, err := os.ReadFile(f.Source)
 		if err != nil {
-			return fmt.Errorf("skill staging: source %s is gone since this run was planned (%v); the corpus this run depends on no longer exists", f.Source, err)
+			return fmt.Errorf("skill staging: %s must be restored from %s — the staged copy is missing or no longer the planned bytes — and that source cannot be read (%v); the planned corpus no longer exists anywhere", f.Rel, f.Source, err)
 		}
 		sum := sha256.Sum256(raw)
 		if hex.EncodeToString(sum[:]) != f.SHA256 {
-			return fmt.Errorf("skill staging: source %s changed since this run was planned; a run whose instruction corpus changed under it does not continue", f.Source)
+			return fmt.Errorf("skill staging: %s must be restored from %s — the staged copy is missing or no longer the planned bytes — and that source changed since this run was planned; the planned corpus no longer exists anywhere", f.Rel, f.Source)
 		}
-		dst := filepath.Join(s.dir, filepath.FromSlash(f.Rel))
-		keep[dst] = true
 		if err := writeStagedFile(dst, raw); err != nil {
 			return err
 		}
 	}
-	if err := writeStagedFile(filepath.Join(s.dir, ".claude-plugin", "plugin.json"), pluginManifestJSON()); err != nil {
-		return err
+	return writeStagedFile(pluginJSON, pluginManifestJSON())
+}
+
+// stagedFileMatches reports whether the staged copy is already the planned
+// bytes. Lstat first: a symlink a node planted at a manifest-named path must
+// count as "not the planned bytes" whatever it points at, or the shortcut here
+// would vouch for a file this process never wrote.
+func stagedFileMatches(dst, want string) bool {
+	info, err := os.Lstat(dst)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
 	}
-	return s.pruneTo(keep)
+	digest, err := digestFile(dst)
+	if err != nil {
+		return false
+	}
+	return digest.sum == want
 }
 
 // pruneTo deletes every regular file under the staged directory the manifest
@@ -466,14 +517,37 @@ func (s *SkillStaging) pruneTo(keep map[string]bool) error {
 // writeStagedFile writes one staged file 0600 under a 0700 tree, skipping the
 // write when the bytes already match. Permissions are the polite half of the
 // answer, never the load-bearing half — see this file's header.
+//
+// It never writes THROUGH what it finds. os.ReadFile/os.WriteFile follow
+// symlinks, so a node that plants one at a manifest-named path would have
+// trusted code write the user's own skill text wherever it points — and the
+// link would then survive the sweep, because the sweep keeps every path the
+// manifest names. So: Lstat rather than Stat, anything that is not a regular
+// file is removed rather than opened, and the create is O_EXCL on a path this
+// call has just unlinked, which the kernel refuses to follow.
 func writeStagedFile(dst string, content []byte) error {
-	if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(content) {
-		return nil
+	if info, err := os.Lstat(dst); err == nil {
+		if info.Mode().IsRegular() {
+			if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(content) {
+				return nil
+			}
+		}
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("skill staging: %w", err)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return fmt.Errorf("skill staging: %w", err)
 	}
-	if err := os.WriteFile(dst, content, 0o600); err != nil {
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("skill staging: %w", err)
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return fmt.Errorf("skill staging: %w", err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("skill staging: %w", err)
 	}
 	return nil
@@ -520,6 +594,13 @@ func (s *SkillStaging) writeManifest() error {
 // resumed leg that cannot find the manifest cannot vouch for the directory,
 // and a directory it cannot vouch for is one whose skills may simply be
 // absent — silently, with exit 0 (ADR 0017 §6).
+//
+// This is the ONE path on which the manifest is data rather than something
+// trusted Go code is still holding, so it is the one path that has to validate
+// it (see this file's header on the cross-leg residual). Every `rel` is
+// checked here rather than in Materialize, because refusing a bad manifest
+// before a leg starts is a message about the run; refusing it per spawn would
+// be a node failure attributed to a node.
 func LoadSkillStaging(dir string) (*SkillStaging, error) {
 	raw, err := os.ReadFile(manifestPath(dir))
 	if err != nil {
@@ -529,10 +610,47 @@ func LoadSkillStaging(dir string) (*SkillStaging, error) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("skill staging: manifest at %s is unreadable: %w", manifestPath(dir), err)
 	}
+	if m.Plugin != stagedPluginName {
+		return nil, fmt.Errorf("skill staging: manifest at %s names plugin %q, not %q; it is not one this build wrote", manifestPath(dir), m.Plugin, stagedPluginName)
+	}
 	if len(m.Files) == 0 {
 		return nil, fmt.Errorf("skill staging: manifest at %s names no files", manifestPath(dir))
 	}
+	for _, f := range m.Files {
+		if !safeStagedRel(f.Rel) {
+			return nil, fmt.Errorf("skill staging: manifest at %s names staged path %q, which is not a path inside the staged directory; this manifest is not one this build wrote", manifestPath(dir), f.Rel)
+		}
+	}
 	return &SkillStaging{skills: m.Skills, files: m.Files, dir: dir}, nil
+}
+
+// safeStagedRel is the guard on where a LOADED manifest can make this process
+// write. walkSkillDir builds every `rel` as path.Join("skills", <safe name>,
+// <rel within the walk root>), so at plan time it is safe by construction; off
+// disk it is an input strictly less trusted than the frontmatter
+// safeSkillDirName already polices, and `../../..` in it would put
+// Materialize's write outside the staged directory — where pruneTo, which
+// walks only the staged directory, would never clean it up again.
+//
+// Slash-separated, already clean, relative, no `..` element, and under
+// `skills/` — which is every shape walkSkillDir produces and nothing else.
+func safeStagedRel(rel string) bool {
+	if rel == "" || rel != path.Clean(rel) || path.IsAbs(rel) {
+		return false
+	}
+	if strings.ContainsRune(rel, os.PathSeparator) && os.PathSeparator != '/' {
+		return false
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) < 3 || parts[0] != "skills" {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // GuardStaging wraps a NodeRunner so the staged corpus is re-materialized and
@@ -541,10 +659,13 @@ func LoadSkillStaging(dir string) (*SkillStaging, error) {
 // "the instruction corpus is what it was when this run was planned" is a
 // property of the process the runner is about to start.
 //
-// A verification failure fails the node with the changed path named, which
-// under the scheduler's default halt-on-fail stops the run — the loud outcome
-// ADR 0017 §5 requires, rather than a leg that quietly runs on a corpus
-// somebody edited.
+// A failure here fails the node, which under the scheduler's default
+// halt-on-fail stops the run — the loud outcome ADR 0017 §5 requires, rather
+// than a leg that quietly runs on a corpus nobody planned. Since Materialize
+// now fails only when the planned bytes exist nowhere (see there), that is a
+// staging fault and not the node's own, and the error says so: the ledger has
+// one verdict per node and no way to record "the engine stopped before this
+// node ran", so the sentence is the only place the distinction can live.
 func GuardStaging(next runner.NodeRunner, staging *SkillStaging) runner.NodeRunner {
 	if staging == nil {
 		return next
@@ -559,7 +680,7 @@ type stagingRunner struct {
 
 func (r *stagingRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	if err := r.staging.Materialize(); err != nil {
-		return runner.NodeOutcome{}, err
+		return runner.NodeOutcome{}, fmt.Errorf("%w\nThis node never ran: the staged skill corpus could not be restored before it spawned, so the failure recorded against it is the engine's, not its work. Resume with --no-skill-activation to continue without the staged skills", err)
 	}
 	return r.next.Run(ctx, spec)
 }
