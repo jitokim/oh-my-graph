@@ -73,6 +73,88 @@ func TestBuildCmd_Argv(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_SkillActivationArgv pins the argv of a skill-activated planned
+// node — the shape ADR 0017's measurements were taken against:
+//
+//	--setting-sources "" --plugin-dir <staged> --tools ...,Skill --strict-mcp-config
+//
+// Two things are asserted rather than merely present. First, --plugin-dir sits
+// AFTER --setting-sources: the isolation is what withholds the definitions, so
+// the flag that restores them reads correctly only on that side of it. Second,
+// the exact argv is compared whole, so a --plugin-dir added while some ceiling
+// flag quietly vanished fails here — which is the failure that would turn a
+// capability change into a ceiling change without anyone noticing.
+func TestBuildCmd_SkillActivationArgv(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy: ToolPolicy{
+			AllowedTools:    []string{"Read", "Bash(git *)"},
+			Tools:           []string{"Read", "Bash", "Skill"},
+			SettingSources:  noSettings(),
+			StrictMCPConfig: true,
+			DisallowedTools: []string{"Write", "WebFetch"},
+			PluginDirs:      []string{"/runs/r1/skills-plugin"},
+		},
+	})
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--setting-sources", "",
+		"--plugin-dir", "/runs/r1/skills-plugin",
+		"--allowedTools", "Read,Bash(git *)",
+		"--tools", "Read,Bash,Skill",
+		"--strict-mcp-config",
+		"--disallowedTools", "Write,WebFetch",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// Each PluginDirs entry gets its OWN --plugin-dir, in order. Every other test
+// here passes exactly one entry — which is all resumeSkillStaging sets today —
+// so a renderer that joined the entries with a comma, or emitted only the
+// first, would pass them all while naming a directory that does not exist.
+func TestBuildCmd_RepeatsPluginDirPerEntry(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt: testPrompt,
+		Policy: ToolPolicy{PluginDirs: []string{"/runs/r1/a", "/runs/r1/b"}},
+	})
+
+	var got []string
+	for i, arg := range cmd.Args {
+		if arg == "--plugin-dir" && i+1 < len(cmd.Args) {
+			got = append(got, cmd.Args[i+1])
+		}
+	}
+	if want := []string{"/runs/r1/a", "/runs/r1/b"}; !equalArgs(got, want) {
+		t.Fatalf("plugin dirs = %q, want one flag per entry: %q\nargv: %q", got, want, cmd.Args)
+	}
+}
+
+// A policy with no plugin directories emits no --plugin-dir at all: that is
+// every hand-written graph and every planned run with activation off, and a
+// stray empty flag would change what the CLI loads.
+func TestBuildCmd_NoPluginDirsEmitsNoFlag(t *testing.T) {
+	r := NewClaudeCLIRunner(WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
+	})
+	for _, arg := range cmd.Args {
+		if arg == "--plugin-dir" {
+			t.Fatalf("argv carries --plugin-dir with no PluginDirs set: %q", cmd.Args)
+		}
+	}
+}
+
 // TestBuildCmd_AgentArgv pins the full argv of the shape `agent:` actually
 // occurs in: a hand-written node, which carries its own allow rules and no
 // ceiling layer at all.

@@ -1431,34 +1431,75 @@ other layers stay), every decision is shown in the printed plan, and
 `--no-agent-mapping` turns it off. The full rule and its trade live in
 "Node-as-subagent"; the raw plan itself still may not carry `agent:`.
 
-Strictly after agent mapping, the coordinator may also map the user's own
-Claude Code skills onto planned nodes (`internal/coordinator/skillmap.go`,
-ADR 0012) — by a different mechanism, because measurement (claude 2.1.220)
-shows both model-side skill surfaces (the skills listing and the `Skill` tool)
-are absent under the planned-node argv, so a prompt reference would be dead
-text. Instead, trusted code scans `~/.claude/skills/*/SKILL.md` only (never a
-project directory and never a plugin's — both surfaces are cut from v1, and
-the plan printout names them as out of scope on every run rather than mapping
-nothing in silence), matches by the same
-conservative name-token rule, and **appends the skill's body to the node's
-prompt** in a nonce-fenced, attributed block with `{{` neutralized until none
-remains (the prompt is a handoff template; skill prose must not become
-template code, and a single pass would let odd brace runs re-form tokens). No
-ceiling layer is touched — an agent-mapped node (Layer 1 dropped) is refused a
-skill outright, because that composite is unmeasured. Bodies over 16 KiB are
-skipped, never truncated; every decision prints one line — a mapping with the
-inlined size and a SHA-256 prefix, a refusal with its reason (there is no
-inlined text to measure or hash) — the full text lands in the saved
-`graph.json`, and
-`--no-skill-mapping` turns it off. The decisions are bracketed by the scan
-that produced them (`Plan.SkillScan`: the directories read, the count, and
-`Shadowed` — every definition that lost a name collision, which gets its own
-printed disclosure line so a shadowed skill is never silently the loser),
-because a name-only rule leaves most node ids unmatched and an empty decision
-list would otherwise read the same as "mapping never ran". Honest cost: a mapped node pays for the
-body on every invocation, and inlining is unconditional where Claude Code's
-own `description`-driven activation is conditional — whether that helps or
-misfires is ADR 0012's required (a)/(b) probes, not assumed here.
+Strictly after agent mapping, the coordinator stages the user's own Claude
+Code skills for planned nodes (`internal/coordinator/skillstage.go`, ADR 0017).
+The mechanism is the CLI's own description-driven activation, not a plan-time
+choice: trusted code scans `~/.claude/skills/*/SKILL.md` only (never a project
+directory and never a plugin's — both surfaces stay cut, and the plan printout
+names them as out of scope on every run), copies **the whole corpus** into
+`<run-dir>/skills-plugin/` as a Claude Code plugin, and gives each planned node
+`--plugin-dir <staged>` plus `Skill` in its `--tools` list. Two layers and only
+two: `--plugin-dir` is not a ceiling layer at all (it supplies definitions and
+grants nothing), and `Skill` enters at **Layer 3**, through the one function
+that builds that list. **Layer 1 stays `--setting-sources ""`** — ADR 0017's
+measurement (g) showed that relaxing it lets a node that declared `Bash(git *)`
+run an out-of-scope command, because `--tools` bounds tool NAMES and not
+SCOPES. Layer 0 does not move either: `plannedToolAllowlist` never learns the
+word, so a plan may not DECLARE `Skill`, and the grant is invisible in
+`graph.json` — its durable record is `state.json`'s `tool_policies`.
+
+The staged directory is not protected by its location. `Write` is unscoped in
+`plannedToolAllowlist` and a node runs as the same uid, so no path this process
+creates is unwritable by it. The requirement — *a node must not be able to
+stage a skill for a later node* — is met **within a leg** by lifetime: a
+manifest of every staged file with its source SHA-256 is taken at plan time and
+held in memory, and the directory is **re-materialized from that manifest
+immediately before every node spawn** (a `NodeRunner` decorator,
+`coordinator.GuardStaging`), deleting whatever the manifest does not name and
+restoring whatever no longer hashes to it. The nodes read the staged copy, so a
+source skill edited or deleted mid-run changes nothing and stops nothing; only
+a staged file that must be restored while its source no longer holds the
+planned bytes fails a spawn, and the message attributes that to the engine
+rather than to the node. **Across legs there is no claim, so there is no
+activation either**: the only manifest a resumed leg could re-stage from is the
+sidecar in a run directory a node can write, and its per-file SHA-256 does not
+close that, because one actor authoring both `source` and `sha256` satisfies its
+own check. Closing it needs an integrity anchor outside the run directory, which
+this build does not have, so since 2026-08-07 `resume` drops `Skill` and
+`--plugin-dir` from every rehydrated policy and prints why (ADR 0017 §6). It
+never rehydrates the directory path verbatim — a `--plugin-dir` pointing at
+nothing is accepted by the CLI with exit 0, so absence is indistinguishable from
+a model that chose no skill, which is exactly why the de-escalation is
+disclosed on the leg that makes it.
+
+What is lost, permanently: the plan can no longer say WHICH skill a node will
+use, because the model chooses at run time by description. What replaces it is
+a per-run corpus disclosure — every staged skill with size and SHA-256, the
+nodes reached, the agent-mapped nodes excluded, and the per-invocation prompt
+cost, which every node pays on every retry and every feedback re-run.
+`--no-skill-activation` turns it off, on `auto` and on `resume` alike
+(de-escalation only, so no resumed leg can widen a run's ceiling);
+`--no-skill-mapping` is accepted as a deprecated alias with a printed notice.
+ADR 0012's plan-time inlining — the name-token matcher, the 16 KiB cap, the
+`{{` neutralization and the nonce fence around skill bodies — is deleted in the
+same change: the two must never coexist, or a node would receive the same skill
+twice and become unattributable.
+
+**What is delivered and what is used are not the same thing, and only the first
+is established.** ADR 0017's acceptance test (2026-08-07,
+`docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`) confirmed on
+real spawns, by an argv-recording shim, that every activated node is launched
+with `--setting-sources ""`, `--plugin-dir <staged>` and `Skill` in `--tools`,
+against a clean `--no-skill-activation` control. It also recorded **1 `Skill`
+invocation across 7 activated planned nodes**, and zero across the three nodes
+of the pre-registered run, under prompts the planner itself wrote — while a
+prompt that names a skill fires reliably. So the wiring is real and the model
+mostly does not choose a skill; ADR 0017 stays `Proposed` for that reason and
+this section describes a mechanism, not a measured benefit. One further
+consequence to know when reading the two mapping steps above: **they are
+mutually exclusive.** Agent mapping runs first and an agent-mapped node is
+excluded from activation, so the nodes whose job matches a named role most
+cleanly — the design and doc nodes — are the ones a skill cannot reach.
 
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git
@@ -1483,8 +1524,9 @@ nvm, oh-my-zsh, a plugin marketplace and a chezmoi-managed `~/.config` are all
 real clones, and a warning about a HEAD nobody will switch is the line that
 teaches the reader to scroll past the block); and one warning is emitted per
 checkout rather than per path, since the hazard is a shared HEAD. It is computed on the planner's own
-prompts, strictly before skill inlining, so absolute paths a local `SKILL.md`
-happens to document are never attributed to the plan. It is a WARNING and never
+prompts, so absolute paths a local `SKILL.md` happens to document — which now
+reach a node through the staged plugin rather than through its prompt — are
+never attributed to the plan. It is a WARNING and never
 a refusal — a multi-repository goal is legitimate, and the engine simply cannot
 isolate it — and the printed text states its own blind spots (a path built at
 run time, one arriving through `--input` or a parent's artifact, a repository
@@ -1546,9 +1588,10 @@ independent mechanisms, so a wrong assumption about any one layer degrades to
 the previous behaviour rather than to nothing.
 
 Remaining honest gaps, unchanged by this work: skill/slash-command surfaces are
-still not enumerable — though ADR 0012 has since measured the planned-node case
-(both the skills listing and the `Skill` tool are absent under this argv, which
-is why skill mapping inlines content at plan time instead of referencing it); **Layer 4 is unverified** (E5 — `--strict-mcp-config`
+still not enumerable — though ADR 0012 and then ADR 0017 measured the
+planned-node case layer by layer: Layer 1 withholds the skill DEFINITIONS and
+Layer 3 withholds the `Skill` TOOL, which is why activation needs both a staged
+`--plugin-dir` and `Skill` in `--tools`; **Layer 4 is unverified** (E5 — `--strict-mcp-config`
 ships because it is free, not because MCP closure was observed); and dropping
 user settings also drops the user's CLAUDE.md, hooks and MCP servers for planned
 nodes — a behaviour change that makes planned nodes *more isolated and less
@@ -1639,7 +1682,8 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   output, so every block rides in a **nonce-fenced** marker pair — one
   6-hex-character nonce per `Assess` call, in the opening AND closing
   marker, with the prompt telling the assessor that only markers bearing it
-  are real (the skill-inlining fence's mechanism, `internal/fence`).
+  are real (`internal/fence`; ADR 0012's inlined skill bodies were its first
+  caller and are gone, the mechanism is not).
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
   outside it. The next cycle's planner prompt fences the `remaining` it
@@ -1806,8 +1850,8 @@ internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — Git
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Five call sites across coordinator and schedule; internal/invariants counts them repo-wide against fence.go's own sentence
-internal/coordinator/{coordinator,router,agentmap,skillmap,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill inlining (skillmap.go — ADR 0012) over the shared nonce fence (internal/fence, also used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
+internal/coordinator/{coordinator,router,agentmap,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)

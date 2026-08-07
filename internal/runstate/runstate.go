@@ -130,6 +130,20 @@ type NodeToolPolicy struct {
 	SettingSources *string `json:"setting_sources,omitempty"`
 	// StrictMCPConfig renders as --strict-mcp-config, bounding MCP servers.
 	StrictMCPConfig bool `json:"strict_mcp_config,omitempty"`
+	// PluginDirs renders as one --plugin-dir per entry: the staged skill
+	// plugin a planned node activates skills from (ADR 0017). It is persisted
+	// because it is the ONLY durable record that a run was activation-enabled
+	// — the grant is deliberately invisible in graph.json (ADR 0017 §2) — but
+	// it is NEVER rehydrated verbatim the way the five ceiling fields are. It
+	// names a directory, and a --plugin-dir pointing at nothing is accepted
+	// silently by the CLI, so a resumed leg trusting this path would run with
+	// no skills and be indistinguishable from one whose model chose none.
+	// So since 2026-08-07 `resume` re-stages nothing and verifies nothing: it
+	// drops this field and `Skill` from every rehydrated policy and prints why
+	// (ADR 0017 §6), reading the field only to know activation was on. An old
+	// snapshot without the field rehydrates as an isolated run, which is the
+	// correct default.
+	PluginDirs []string `json:"plugin_dirs,omitempty"`
 }
 
 // NodeRecord is one completed node's entry in the snapshot: exactly the fields

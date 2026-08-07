@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/signal"
@@ -399,6 +400,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		})
 	}
 
+	// ADR 0017 §6, amended 2026-08-07: a resumed leg does not activate skills.
+	// toRunnerToolPolicies deliberately does NOT carry PluginDirs across, and
+	// nothing here puts them back, so there is no staged directory to guard.
+	// The resolved policies are what BOTH the scheduler and the recorder below
+	// get, so the de-escalation persists into the snapshot instead of being
+	// re-decided by every later leg.
+	policies := toRunnerToolPolicies(snap.ToolPolicies)
+	dropSkillActivation(os.Stdout, snap.ToolPolicies, policies, flags.noSkillActivation)
+
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:           runID,
 		GraphSourcePath: snap.GraphSourcePath,
@@ -406,7 +416,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:           snap.Graph,
 		Inputs:          snap.Inputs,
 		ContinueOnFail:  snap.ContinueOnFail,
-		ToolPolicies:    snap.ToolPolicies,
+		ToolPolicies:    toNodeToolPolicies(policies),
 		// Goal lineage carries across legs: a resumed cycle of a goal loop
 		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
 		// group membership just because a second process finished it.
@@ -457,7 +467,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Gate:           gate.NewRecordedController(toGateDecisions(decisions)),
 		Verifier:       verify.NewShellVerifier(),
 		Worktrees:      worktrees,
-		ToolPolicies:   toRunnerToolPolicies(snap.ToolPolicies),
+		ToolPolicies:   policies,
 		Recorder:       recorder,
 		EventSink:      feed,
 		// CompletedNodes seeds the resumed leg's ready set from
@@ -563,6 +573,18 @@ func toGateDecisions(decisions map[string]runstate.GateDecision) map[string]gate
 // snapshot's runstate.NodeToolPolicy map back into the runner.ToolPolicy map
 // the Scheduler takes, preserving nilness (see toNodeToolPolicies) so a
 // hand-written `run`'s resumed leg still imposes no ceiling at all.
+//
+// It carries the five CEILING fields and deliberately NOT PluginDirs, which is
+// the one field where "rehydrate what the first leg recorded" is the wrong
+// behaviour (ADR 0017 §6). The five bound capability, so re-imposing them
+// verbatim is exactly right and a dropped one would silently WIDEN a resumed
+// leg. PluginDirs names a directory a node of the previous leg could have
+// written, and a --plugin-dir pointing at nothing is accepted by the CLI with
+// exit 0 and no warning — so a leg that trusted the path would either read a
+// corpus that leg's nodes chose, or run with no skills and be
+// indistinguishable from one whose model chose none. Since 2026-08-07 no path
+// puts the field back: dropSkillActivation completes the de-escalation by
+// taking `Skill` out of Tools too, and says so.
 func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[string]runner.ToolPolicy {
 	if policies == nil {
 		return nil
@@ -576,6 +598,82 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 			SettingSources:  p.SettingSources,
 			StrictMCPConfig: p.StrictMCPConfig,
 		}
+	}
+	return out
+}
+
+// dropSkillActivation takes skill activation OFF a resumed leg, in place on
+// policies, and says so. It is unconditional (ADR 0017 §6, amended
+// 2026-08-07), and the reason is a hazard the first leg does not have:
+//
+// Within a leg the manifest is trusted Go code's and lives in memory.
+// Materialize runs from it before EVERY spawn and deletes every path it does
+// not name, so a node that plants a skill has it wiped before the next node
+// reads — and no file on disk is ever consulted to decide what the corpus is.
+// A resumed leg has none of that. It is a second process with no in-memory
+// manifest, so the only thing it could re-stage from is the sidecar in the run
+// directory — and that directory is writable by the very nodes the previous
+// leg ran, which hold unscoped `Write` and run as the same uid. Its per-file
+// SHA-256 is no defence: one actor authoring both `source` and `sha256`
+// satisfies its own check, and the load-time `rel` guard only bounds a forged
+// row to inside the staged directory, which is exactly where the nodes read.
+// So a resumed leg that re-staged would hand its nodes a corpus the previous
+// leg's nodes could have chosen — including by REPLACING the user's skills,
+// since re-materialization prunes whatever the manifest does not name.
+//
+// Closing that needs an integrity anchor outside the run directory: somewhere
+// to record what this run staged that a node cannot reach, plus a settled
+// answer for what `resume` does when the anchor and the directory disagree.
+// That is a design, and ADR 0017 §6 defers it rather than guessing at it. Until
+// it exists, a resumed leg runs with no `Skill` and no `--plugin-dir` — which
+// costs approximately nothing: activation's measured yield is ~1 skill
+// invocation across 7 eligible nodes, and 0 in the pre-registered acceptance
+// run (ADR 0017 §The acceptance test).
+//
+// The de-escalation is printed rather than silent, because a resumed leg that
+// behaves differently from its first leg and does not say why is the same
+// unexplained-absence shape this whole mechanism is most exposed to.
+//
+// snapPolicies is read rather than policies because PluginDirs is the only
+// durable record that a run was activation-enabled at all — the grant is
+// invisible in graph.json by design (ADR 0017 §2) — and toRunnerToolPolicies
+// deliberately does not rehydrate it.
+func dropSkillActivation(w io.Writer, snapPolicies map[string]runstate.NodeToolPolicy, policies map[string]runner.ToolPolicy, off bool) {
+	activated := make([]string, 0, len(snapPolicies))
+	for id, p := range snapPolicies {
+		if len(p.PluginDirs) == 0 {
+			continue
+		}
+		activated = append(activated, id)
+	}
+	if len(activated) == 0 {
+		return
+	}
+	sort.Strings(activated)
+
+	for _, id := range activated {
+		p := policies[id]
+		p.Tools = withoutSkillTool(p.Tools)
+		p.PluginDirs = nil
+		policies[id] = p
+	}
+	if off {
+		fmt.Fprintf(w, "skill activation is off for this leg (--no-skill-activation; a resumed leg does not activate skills in any case): %d node(s) run with no Skill tool and no --plugin-dir.\n", len(activated))
+		return
+	}
+	fmt.Fprintf(w, "skill activation is off for this leg: re-staging could only read the manifest inside the run directory, which this run's own nodes could have rewritten, and there is no integrity anchor outside it yet — %d node(s) run with no Skill tool and no --plugin-dir (ADR 0017 §6, 2026-08-07).\n", len(activated))
+}
+
+// withoutSkillTool is de-escalation's whole edit: layer 3 minus the one name
+// ADR 0017 added to it. It copies rather than filtering in place, because the
+// slice it is handed is shared with the snapshot map it was rehydrated from.
+func withoutSkillTool(tools []string) []string {
+	out := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if t == coordinator.SkillToolName {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out
 }

@@ -109,7 +109,7 @@ var nodeFieldDispositions = map[string]fieldRule{
 
 	"Prompt": {
 		disposition:    constrained,
-		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend. Since ADR 0012 the final prompt is planner-authored text PLUS trusted-code-appended local file content: applySkillMapping may append a user SKILL.md body after validation, nonce-fenced, '{{'-neutralized, and recorded on Plan.SkillMappings with path, size and hash",
+		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend. The prompt is constrained planner-authored text and nothing else: ADR 0012 briefly made it 'planner text plus a trusted-code-appended SKILL.md body', and ADR 0017 §8 removed that inlining, so the disposition reverts. A skill now reaches a node through the CLI's own activation over a staged plugin directory, which touches the policy and never the graph",
 		probeJSON:      `"prompt":"   "`,
 		reasonContains: "prompt",
 	},

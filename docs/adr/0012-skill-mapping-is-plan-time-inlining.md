@@ -1,6 +1,18 @@
 # ADR 0012 — Skill mapping for planned nodes is plan-time inlining, not prompt reference
 
-- Status: Proposed — acceptance additionally gated on the two probes in
+- Status: **Superseded in code by ADR 0017 on 2026-08-07.** The mechanism this
+  record decided — the name-token matcher, the 16 KiB cap, the `{{`
+  neutralization, the nonce-fenced inlined body, `SkillMapping` and the
+  `skill mapped:` / `skill skipped:` printout — no longer exists in the tree.
+  What survives, re-pointed at activation, is §6's scan (`scanSkillDirs`,
+  `SkillScan`) and its printed disclosure. Its required measurements (a) and
+  (b) are **voided, not discharged**: the mechanism they were written to
+  measure is gone, and the misfire (b) existed to catch — `artifacts` →
+  `html-artifact` — is exactly the class of error activation is *expected* to
+  avoid, which is not the same as *measured* to. The record below is left
+  unedited, because a record that edits away what it decided teaches a future
+  reader nothing.
+- Former status: Proposed — acceptance additionally gated on the two probes in
   "Required measurements before Accepted" below. **Implemented and shipped
   anyway** (#97, `internal/coordinator/skillmap.go`), while still `Proposed`:
   the gate below was not met before the code landed and is **still owed** as of
@@ -32,6 +44,144 @@
   choosing-stays-in-trusted-code posture. It does **not** claim the same
   trust surface — inlining copies file content where agent mapping only
   names a file; §5 states the difference instead of papering over it.
+
+> **Update (2026-08-07) — superseded in whole by ADR 0017, whose
+> implementation landed the same day.** The decision text below is unchanged
+> and **no longer ships**: the two mechanisms may never coexist in a build, so
+> the deletion rode with the replacement. What changed is the premise. The 2026-08-03 measurement recorded
+> here established that a planned node has neither a skills listing nor a
+> `Skill` tool, and its own attribution-nuance paragraph flagged the
+> decomposition it could not make: *"if a future proposal ever adds `Skill` to
+> `plannedToolAllowlist`, the listing-vs-tool question must be measured
+> separately first."* It was, on claude 2.1.223 (#130), with a probe that
+> makes the model **actually invoke** a planted skill instead of reporting on
+> its own visibility — the same self-reported-versus-verified distinction
+> v0.5.0's provenance qualifier draws, and the self-report form returned
+> contradictory answers to identical argv. The result: ceiling layer 1
+> withholds the **definitions** and layer 3 withholds the **tool**,
+> independently; relaxing both restores Claude Code's own description-driven
+> activation over the whole corpus. **What an earlier version of this annotation
+> also claimed — that the capability ceiling survives the relaxation — is
+> retracted (2026-08-07).** E4 holds (`--tools` replaces the built-in set, so a
+> tool the node never declared cannot appear), but the probe behind that claim
+> used a node declaring no `Bash` and therefore never tested ADR 0004's E1 shape,
+> where the user's `Bash(*)` becomes a live allow rule beside a node's narrower
+> `Bash(git *)`. This ADR's third Alternative rejected that path as requiring
+> *"weakening or decomposing Layer 1 and/or Layer 3… on an unmeasured
+> listing-vs-tool attribution"*; the attribution is now measured, **but whether
+> the decomposition costs only the user's CLAUDE.md or also the scope ceiling is
+> ADR 0017's blocking measurement (g)** — so this Alternative's caution was
+> better founded than ADR 0017's first draft allowed, and **until (g) reports,
+> this mechanism ships and nothing replaces it.**
+>
+> Against the 7% this mechanism actually delivers (§"Yield measurement": **5 of
+> 56 planner-authored ids = 9%** raw, 4 of 56 ≈ 7% corrected for the
+> `artifacts` → `html-artifact` false positive — an earlier version of this
+> annotation wrote "9.9%", which contradicts the table below; ADR 0017 also
+> cited a "393 id" corpus that does not exist anywhere in this repo),
+> activation sees all 35 skills, is conditional where inlining is
+> unconditional, has no 16 KiB per-body cap — it bounds the whole staged
+> corpus at 64 MiB (`maxStagedCorpusBytes`) and each staged file at 1 MiB
+> (`maxSkillFileBytes`) instead — so `pre-commit-checklist`, the skill that
+> matched the four **best** planner-authored ids and was discarded from every
+> one of them, becomes reachable — and needs neither the matcher, the 16 KiB
+> cap, the `{{` neutralization nor the nonce fence, all of which exist only to
+> make inlining safe. ADR 0017 removes them with it, in one PR, because a node
+> holding both mechanisms would receive the same skill twice and become
+> unattributable.
+>
+> Two things survive: **§6's scan** (`scanSkillDirs`/`SkillScan` and its
+> printed directories-and-count disclosure), reused to decide whether
+> activation is enabled at all and to seal the corpus for a run; and **§5's
+> honesty about the surface**, re-derived there for CLAUDE.md rather than for
+> skill bodies. Two things are lost and named as losses: per-node prospective
+> disclosure (nothing can know before the model does which skill a node will
+> use), and the snapshot property (§6's *"a skill edited after planning does
+> not silently change an in-flight run"*), for which ADR 0017 substitutes a
+> plan-time seal that halts a run whose instruction sources changed under it.
+>
+> The gate below is **voided, not discharged**. (a) is superseded by
+> ADR 0017's measurement (e), which asks the same question of the mechanism
+> that replaces this one. (b) is voided because the mechanism it measures is
+> gone — the misfire it was written to characterize, `artifacts` →
+> `html-artifact`, is precisely the class of error activation is *expected* to
+> avoid, and "expected to" has never been the standard this record holds
+> itself to. See
+> `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
+
+> **Update (2026-08-07, later the same day) — ADR 0017 is settled, and this
+> Alternative's caution was right about the route while being wrong about the
+> outcome.** Both of ADR 0017's blocking measurements were taken. **(g)
+> confirms the retraction above**: under `--setting-sources user` a node
+> declaring `Bash(git *)` ran an out-of-scope `touch` — judged by the file
+> appearing, not by self-report — and the identical probe under
+> `--setting-sources ""` was denied. So the decomposition *would* have cost the
+> scope ceiling, exactly as the caution recorded here suspected, and the
+> layer-1 route is dead. **(f) supplies the definitions another way**:
+> `--plugin-dir <dir>` (a `.claude-plugin/plugin.json` plus
+> `skills/<name>/SKILL.md`) loads a staged corpus with layer 1 left at `""` —
+> skill invoked, out-of-scope command still denied, no CLAUDE.md, no MCP, each
+> with a positive control. ADR 0017's decision is now built on that, so
+> **ceiling layer 1 does not move at all** and only layer 3 gains `Skill`;
+> layer 2 does not move either, measured (a skill fires under `dontAsk` with an
+> allow list naming only `Bash(git *)`, `permission_denials: []`).
+>
+> What this changes for the annotation above: the "whether the decomposition
+> costs only CLAUDE.md or also the scope ceiling" question is answered — *the
+> scope ceiling* — and is now moot, because no route taken loads the user's
+> settings. The seal ADR 0017 substitutes for **§6's snapshot property** is
+> correspondingly narrower and stronger than described above: it covers a
+> corpus oh-my-graph itself staged, re-materialized and verified before every
+> node spawn, so **within a single leg** a node cannot plant instructions for
+> its successors — a prevention rather than the halt-after-the-fact this note
+> first recorded. Across legs the guarantee does not hold: the manifest a
+> later `resume` reads back is a file a node can write, which ADR 0017 records
+> as an open residual in its Consequences.
+>
+> **This mechanism no longer ships** — ADR 0017's implementation landed on
+> 2026-08-07 — and its gate is voided rather than discharged. What is no longer
+> true is that
+> it ships *for want of an admissible replacement*: there is one, it is
+> measured, and the cost is now a printed number rather than an open question —
+> ~6,008 prompt tokens per node invocation to stage 35 skill descriptions,
+> against the 7% of node ids this mechanism reaches. See
+> `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
+
+> **Update (2026-08-07, evening) — this record's owed probe (a), answered from
+> the other side. Nothing below is rewritten and the decision is unchanged.**
+> ADR 0012's (a) asks whether an *inlined* skill body steers the node it lands
+> on. It is still unrun, and it is still voided rather than discharged: the
+> mechanism it measures left the tree. What exists now is the mirror question,
+> measured under a rule fixed in writing before the run: ADR 0017's acceptance
+> test asked whether *activated* skill availability steers a node, accepting
+> only the raw `{"type":"tool_use","name":"Skill",…}` record in a node's own
+> transcript as evidence.
+>
+> **Delivery passed.** An argv-recording shim confirms every activated planned
+> node was really spawned with `--setting-sources ""`, `--plugin-dir <staged>`
+> and `Skill` in `--tools`, and a `--no-skill-activation` control arm carries
+> none of it and records zero `Skill` calls. **Activation did not.** Across the
+> two acceptance runs, **7 activated planned nodes produced 1 `Skill`
+> invocation**, and the pre-registered second run produced **zero, twice** —
+> including two nodes whose entire job was to produce an HTML file, with
+> `html-artifact` staged, reachable, and described for exactly that task; both
+> wrote the file with `Write`. A positive control fires whenever the prompt
+> names the skill, so the wiring is live and the model is simply not choosing.
+> Records: `docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`.
+>
+> Two consequences for *this* record, neither of which changes what it decided.
+> **First**, the premise both ADRs rest on — that a node without a procedure
+> would use one if it had it — has now been measured once, from the
+> availability side, and the answer was mostly no. That is evidence about the
+> premise, not about inlining: unconditional text in a prompt and an optional
+> tool are different mechanisms, and (a) remains the only thing that would
+> settle inlining's half. It does not resurrect this mechanism either — 7%
+> recall with one misfire in five mappings is not what a failed alternative
+> makes attractive.
+> **Second**, the project has now shipped and unshipped two skill mechanisms
+> without ever establishing that a skill improves a planned node's output. ADR
+> 0017 opened by criticising this record for exactly that; it has inherited the
+> second half of the criticism, and its Status line says so.
 
 ## Context
 

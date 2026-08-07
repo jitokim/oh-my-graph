@@ -368,11 +368,11 @@ func TestPlan_NoWarningForASingleRepositoryGoal(t *testing.T) {
 	}
 }
 
-// Skill mapping inlines the user's own SKILL.md body into a planned prompt,
-// and those bodies routinely name absolute paths of their own ("work under
-// ~/IdeaProjects") that the plan never chose. The scan runs before inlining
-// for exactly this reason: a warning attributed to a plan must come from the
-// plan.
+// A user's own SKILL.md routinely names absolute paths ("work under
+// ~/IdeaProjects") that the plan never chose. Under ADR 0017 those paths reach
+// a node through the staged plugin rather than through its prompt, so the scan
+// — which reads the planner's own text — must stay blind to them: a warning
+// attributed to a plan has to come from the plan.
 func TestPlan_SkillBodyPathsAreNotWarnedAbout(t *testing.T) {
 	home := t.TempDir()
 	repo := newCheckout(t, filepath.Join(home, "invocation-repo"))
@@ -388,10 +388,10 @@ func TestPlan_SkillBodyPathsAreNotWarnedAbout(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(plan.SkillMappings) != 1 || plan.SkillMappings[0].SkippedReason != "" {
-		t.Fatalf("mappings = %+v, want the skill body inlined — the test is meaningless without it", plan.SkillMappings)
+	if plan.SkillActivation == nil || !plan.SkillActivation.Enabled {
+		t.Fatalf("SkillActivation = %+v, want the skill staged — the test is meaningless without it", plan.SkillActivation)
 	}
 	if plan.Unisolated != nil {
-		t.Fatalf("plan.Unisolated = %+v, want nil: the path came from an inlined skill, not from the plan", plan.Unisolated)
+		t.Fatalf("plan.Unisolated = %+v, want nil: the path is inside a skill file, which no node prompt names", plan.Unisolated)
 	}
 }

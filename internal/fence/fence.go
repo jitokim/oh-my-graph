@@ -9,9 +9,9 @@
 // random nonce in BOTH markers is what removes that prediction: the nonce is
 // minted after the text is already fixed, so no material can contain it.
 //
-// Five call sites share Nonce: skillmap.go's inlined SKILL.md body (ADR 0012)
-// and assess.go's engine-recorded material — node details, artifact excerpts
-// and the previous cycle's `remaining` — which is raw model output by design
+// Four call sites share Nonce: assess.go's engine-recorded material — node
+// details, artifact excerpts and the previous cycle's `remaining` — which is
+// raw model output by design
 // (ADR 0011 §2), plus coordinator.go's continuation quote of that same
 // `remaining` into the next cycle's planner prompt, repair.go's quote of the
 // validator's refusals into a re-plan prompt, and retryfeedback.go's quote of a
@@ -20,7 +20,10 @@
 // engine-authored sentence, but it interpolates model-authored fragments — a
 // placeholder token, a node id — and at least one validator does so without
 // escaping them, so the planner can place newlines and forged marker lines
-// inside the text being quoted back.
+// inside the text being quoted back. A fifth caller, ADR 0012's inlining of a
+// SKILL.md body into a planned node's prompt, is gone: ADR 0017 replaced it
+// with the CLI's own skill activation over a staged plugin directory, so no
+// skill text is quoted into a prompt any more and nothing needs fencing.
 //
 // The BOUND half has one caller that is not quoting into a prompt at all:
 // internal/handoff cuts a failed node's reply down to what a run directory may
