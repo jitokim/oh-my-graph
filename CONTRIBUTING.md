@@ -16,6 +16,17 @@ make fmt     # gofmt -w .
 make fmt-check  # gofmt -l . ; fails if anything is unformatted (CI gate)
 ```
 
+`make build` writes the binary to `./bin/oh-my-graph`; running it in place
+works for a one-off check. If you want your everyday `oh-my-graph` command to
+track local edits while you iterate, symlink it onto your `PATH` instead of
+invoking `./bin/oh-my-graph` directly: `ln -sf "$PWD/bin/oh-my-graph"
+~/.local/bin/oh-my-graph` (assumes `~/.local/bin` is on `PATH`). Because it's
+a symlink, every subsequent `make build` updates what's on `PATH` with no
+separate install step — this is distinct from the README's
+`go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest`, which
+fetches a released version from the module proxy, not your local checkout;
+the symlink is for contributors actively working on the source.
+
 `make test` runs the entire suite against a scripted `FakeRunner`
 (`internal/runner/fake.go`) — no test in the repo spawns a real `claude`
 process. That is intentional: the ready-set scheduler, DAG validation,
