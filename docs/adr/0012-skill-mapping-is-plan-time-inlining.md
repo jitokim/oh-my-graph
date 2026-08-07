@@ -142,6 +142,42 @@
 > against the 7% of node ids this mechanism reaches. See
 > `0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md`.
 
+> **Update (2026-08-07, evening) — this record's owed probe (a), answered from
+> the other side. Nothing below is rewritten and the decision is unchanged.**
+> ADR 0012's (a) asks whether an *inlined* skill body steers the node it lands
+> on. It is still unrun, and it is still voided rather than discharged: the
+> mechanism it measures left the tree. What exists now is the mirror question,
+> measured under a rule fixed in writing before the run: ADR 0017's acceptance
+> test asked whether *activated* skill availability steers a node, accepting
+> only the raw `{"type":"tool_use","name":"Skill",…}` record in a node's own
+> transcript as evidence.
+>
+> **Delivery passed.** An argv-recording shim confirms every activated planned
+> node was really spawned with `--setting-sources ""`, `--plugin-dir <staged>`
+> and `Skill` in `--tools`, and a `--no-skill-activation` control arm carries
+> none of it and records zero `Skill` calls. **Activation did not.** Across the
+> two acceptance runs, **7 activated planned nodes produced 1 `Skill`
+> invocation**, and the pre-registered second run produced **zero, twice** —
+> including two nodes whose entire job was to produce an HTML file, with
+> `html-artifact` staged, reachable, and described for exactly that task; both
+> wrote the file with `Write`. A positive control fires whenever the prompt
+> names the skill, so the wiring is live and the model is simply not choosing.
+> Records: `docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`.
+>
+> Two consequences for *this* record, neither of which changes what it decided.
+> **First**, the premise both ADRs rest on — that a node without a procedure
+> would use one if it had it — has now been measured once, from the
+> availability side, and the answer was mostly no. That is evidence about the
+> premise, not about inlining: unconditional text in a prompt and an optional
+> tool are different mechanisms, and (a) remains the only thing that would
+> settle inlining's half. It does not resurrect this mechanism either — 7%
+> recall with one misfire in five mappings is not what a failed alternative
+> makes attractive.
+> **Second**, the project has now shipped and unshipped two skill mechanisms
+> without ever establishing that a skill improves a planned node's output. ADR
+> 0017 opened by criticising this record for exactly that; it has inherited the
+> second half of the criticism, and its Status line says so.
+
 ## Context
 
 Users invest heavily in local Claude Code skills — this machine carries 35

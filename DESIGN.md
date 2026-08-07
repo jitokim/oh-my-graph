@@ -1474,6 +1474,22 @@ ADR 0012's plan-time inlining — the name-token matcher, the 16 KiB cap, the
 same change: the two must never coexist, or a node would receive the same skill
 twice and become unattributable.
 
+**What is delivered and what is used are not the same thing, and only the first
+is established.** ADR 0017's acceptance test (2026-08-07,
+`docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`) confirmed on
+real spawns, by an argv-recording shim, that every activated node is launched
+with `--setting-sources ""`, `--plugin-dir <staged>` and `Skill` in `--tools`,
+against a clean `--no-skill-activation` control. It also recorded **1 `Skill`
+invocation across 7 activated planned nodes**, and zero across the three nodes
+of the pre-registered run, under prompts the planner itself wrote — while a
+prompt that names a skill fires reliably. So the wiring is real and the model
+mostly does not choose a skill; ADR 0017 stays `Proposed` for that reason and
+this section describes a mechanism, not a measured benefit. One further
+consequence to know when reading the two mapping steps above: **they are
+mutually exclusive.** Agent mapping runs first and an agent-mapped node is
+excluded from activation, so the nodes whose job matches a named role most
+cleanly — the design and doc nodes — are the ones a skill cannot reach.
+
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git
 checkout **outside the invocation repository**, `Plan.Unisolated`

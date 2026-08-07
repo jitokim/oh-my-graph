@@ -1,18 +1,37 @@
 # ADR 0017 — A planned node gets Claude Code's own skill activation, from a plugin directory oh-my-graph stages
 
-- Status: **Proposed — implemented as of 2026-08-07; still `Proposed`, and
-  deliberately so.** Both blocking measurements named by the 2026-08-07 review
-  were taken and independently re-run: **(g)** confirms the retraction —
-  relaxing ceiling layer 1 forfeits the scope ceiling — and **(f)** shows
-  `--plugin-dir` supplies the skill definitions with layer 1 left at `""`. The
-  decision below is written around `--plugin-dir`, which is the mechanism that
-  survived. **Layer 1 is not touched by this ADR.** What still gates `Accepted`
-  is the acceptance test plus measurements (b) and (e), none of which the code
-  landing changes: unlike ADR 0012, this record permits the code to be written
-  and shipped behind its printed disclosure, not to be called done. ADR 0012
-  shipped while `Proposed` with its own acceptance probes unrun, was measured at
-  7% two days later, and nobody had ever established that an inlined body helps
-  a node at all. Every number here is **claude 2.1.223, macOS, one machine**.
+- Status: **Proposed — implemented; the acceptance test was run on 2026-08-07
+  and FAILED.** Not `Accepted`: the condition this record itself named as
+  "the condition for calling this done" was tested under a pre-registered rule
+  and refused. Not *"Accepted — wiring implemented, yield unmeasured"* either,
+  which would be the same error pointing the other way: **yield was measured,
+  and the number is zero.** Across the two acceptance runs, **7 activated
+  planned nodes produced 1 `Skill` tool_use record**, and the second run — the
+  pre-registered one — produced **zero, twice**, under prompts the planner
+  actually wrote. What *is* established, on real spawns captured by an
+  argv-recording shim: every activated node is spawned with
+  `--setting-sources ""`, `--plugin-dir <staged>` and `Skill` in `--tools`,
+  and a `--no-skill-activation` control arm carries none of it. **Delivery
+  works; activation does not follow from it.** See §Context, "The acceptance
+  test was run, and activation did not follow delivery", and
+  `docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`.
+- **The decision below is unchanged and still correct.** Both blocking
+  measurements named by the 2026-08-07 review were taken and independently
+  re-run: **(g)** confirms the retraction — relaxing ceiling layer 1 forfeits
+  the scope ceiling — and **(f)** shows `--plugin-dir` supplies the skill
+  definitions with layer 1 left at `""`. The decision is written around
+  `--plugin-dir`, which is the mechanism that survived. **Layer 1 is not
+  touched by this ADR.** What the acceptance test refuted is not the mechanism
+  but the premise this record's whole Context argues from: *that reach was the
+  binding constraint.* It was not. `Accepted` is now gated on measurement
+  **(i)** — do the staged descriptions reach a planned node at all — as well as
+  on (b) and (e). Unlike ADR 0012, this record permits the code to be written
+  and shipped behind its printed disclosure and its kill switch, not to be
+  called done. ADR 0012 shipped while `Proposed` with its own acceptance probes
+  unrun, was measured at 7% two days later, and nobody had ever established that
+  an inlined body helps a node at all; this record has now inherited the second
+  half of that criticism and says so rather than growing out of it. Every number
+  here is **claude 2.1.223, macOS, one machine**.
 - Date: 2026-08-07
 - Issues: [#130](https://github.com/jitokim/oh-my-graph/issues/130)
 - Supersedes, **in code as of 2026-08-07**:
@@ -195,6 +214,92 @@ It costs the ceiling nothing. The remaining questions are about the staged
 directory itself: what goes in it, where it lives, whether it survives a
 resume, what the plan can still promise, and what happens to the mechanism it
 replaces. Those are §§1–8.
+
+### The acceptance test was run, and activation did not follow delivery
+
+**Recorded 2026-08-07 (KST), claude 2.1.223, macOS, one machine.** Two runs,
+both pre-registered before launch; full records in
+`docs/measurements/0017-skill-activation-acceptance.md` (run 1) and
+`docs/measurements/0017-skill-activation-acceptance-run-2.md` (run 2), each
+naming the session transcripts the counts are re-derivable from.
+
+Run 2 is the one that settles it: its verdict rule was written down before
+anything spent, and the only evidence it accepts is the raw
+`{"type":"tool_use","name":"Skill",…}` object in a node's own JSONL transcript
+— never a model's sentence about itself, the same self-reported-versus-verified
+distinction that decided (f) and (g).
+
+| criterion, pre-registered | result |
+|---|---|
+| the real argv of a treatment spawn carries `--setting-sources ""` **and** `--plugin-dir <staged>` **and** `Skill` in `--tools`, captured by a PATH shim that logs argv and execs the real CLI | **PASS** |
+| the negative control (`--no-skill-activation`) shows none of that argv and zero `Skill` records | **PASS** — the two arms are genuinely different |
+| the treatment arm shows at least one `{"type":"tool_use","name":"Skill"}` | **FAIL — zero, twice** |
+
+Every `tool_use` name in the treatment transcripts, counted by parsing the raw
+JSONL:
+
+```text
+make-html    fbc50f0f…  {'Read': 2, 'Write': 1}
+check        6eda4400…  {'Glob': 1, 'Read': 2, 'Grep': 4}
+render-html  025228fd…  {'Read': 5, 'Grep': 10, 'Write': 1}
+```
+
+`make-html` and `render-html` are nodes whose entire job was to produce an HTML
+file. `html-artifact` was staged, reachable, and carries a description written
+for exactly that task. Both wrote the file directly with `Write`.
+
+**A positive control passed.** The same policy argv, against the *live* staged
+directory of the treatment run, with a prompt that names the skill, produced
+`{"type":"tool_use","name":"Skill","input":{"skill":"oh-my-graph-staged-skills:html-artifact"}}`.
+Run 1's P1/P2 probes did the same, P2 under `propose`'s exact
+tools/allowed/disallowed lists. **The wiring is live end to end.** What did not
+reproduce is the model choosing a skill under the prompts the planner writes.
+
+**What this does to the argument above.** This Context spends its whole length
+on reach: ADR 0012 recovered 7% of node ids, activation offers 35 skills to
+every planned node, and §4 pays ~6,008 prompt tokens per invocation precisely to
+keep that reach unfiltered. **Raising delivery from 7% of node ids to every
+non-agent-mapped planned node produced one skill invocation in seven activated
+nodes, and none at all under run 2's planner prompts.** Reach was not the
+binding constraint. Whatever is, it sits between a node *holding* the tool and a
+node *choosing* it — and that is a model judgement made against the prompt the
+planner wrote, not a wiring property this ADR can decide.
+
+The aggregate, with its caveat: run 1 activated 4 nodes and recorded 1 `Skill`
+call; run 2 activated 3 nodes across two plans and recorded 0. **1 of 7.** The
+two runs pursued different goals, so this is a count of observed activated nodes
+and not a rate anyone should extrapolate. It is reported as an aggregate anyway,
+because reporting only the run that produced a one is how a 7% mechanism came to
+be described as a working one.
+
+### Agent mapping and skill activation are mutually exclusive, and nobody chose that
+
+§Compatibility excludes agent-mapped nodes from activation, and the reason is
+sound in isolation: `applyAgentMapping` drops layer 1 to `nil`, so `--agent` +
+`--plugin-dir` + the user's real settings is an unmeasured composite, and this
+record refuses unmeasured composites. What nobody weighed is what the exclusion
+does in practice. In **both** of run 2's plans the design/doc node —
+`write-note`, whose job was the design note and whose pre-registered skill was
+`architecture-design` — was **agent-mapped to `doc-writer`** and therefore
+excluded from activation before any model had a choice. The secondary prediction
+could not be bound to a node at all, in either plan. It was not testable, twice.
+
+That is not a coincidence of two plans. The two mechanisms match on the same
+signal — a node id that reads like a job — over two overlapping corpora
+(`~/.claude/agents` and `~/.claude/skills`), and agent mapping runs first and
+wins. The jobs where a *skill* is most obviously right are, by construction, the
+jobs where an *agent* is most likely to match. So the shipped design says:
+**the better a node's job matches a named role, the less able that node is to
+reach a procedure for the role.** Nobody decided that. It fell out of the
+ordering fixed in §1's Correction, which was written to close a policy-width bug
+— an agent-mapped node holding `Skill` *and* `nil` setting sources — and not to
+arbitrate between two mapping mechanisms competing for the same nodes.
+
+Recording it does not settle it, and it does not become the next move by being
+newly visible. Lifting the exclusion is a widening on a path this ADR does not
+otherwise touch, it requires the composite to be measured first, and — on the
+evidence directly above — it would extend delivery to nodes that, so far, do not
+activate skills when delivered to. §"The next question" argues the ordering.
 
 ## Decision
 
@@ -666,6 +771,33 @@ Note what a pass does **not** establish: that an activated skill made the
 node's output *better*. It establishes that the right procedure was loaded for
 the right job. Quality is measurement (e).
 
+### Result — run 2026-08-07, verdict FAIL
+
+Recorded here in the criteria's own terms; the evidence is in
+`docs/measurements/0017-skill-activation-acceptance{,-run-2}.md`.
+
+| # | criterion | verdict |
+|---|---|---|
+| 1 | grant present in the run's own `state.json` | **PASS** — `Skill` in `tools`, `plugin_dirs` inside the run directory, `setting_sources` still `""`; and, better than the criterion asked, confirmed at the argv a node was really spawned with |
+| 2 | activation alive against a negative control | **FAIL** — run 1 recorded 1 `Skill` call, run 2 recorded **0, twice**; the control arm is clean (0), so the arms differ, but the treatment side of the criterion is what it tests |
+| 3 | the three skills on the right jobs, pre-registered | **FAIL** — run 1: 1 of 3 (`artifact` → `html-artifact`). Run 2: 0 of 1 bindable, and `architecture-design` was **not bindable at all** because the design node was agent-mapped in both plans |
+| 4 | nothing was denied | **UNREADABLE** — `runner.claudeEnvelope` still parses no `permission_denials`. Recorded as unimplemented, not as a pass |
+| 5 | the ceiling held on the E1 shape | **PASS** — a node under the shipped argv with `--allowedTools 'Bash(git *)'` attempting an out-of-scope `touch`, judged by whether the file appears: it does not |
+| 6 | billing intact, per node | **UNREADABLE** — the envelope's `provider` is not captured either. `childenv.Scrub` is unit-tested; the per-node assertion this criterion wanted is not made |
+
+**"FAIL is recorded, not retried away."** It was. Run 2's repeat was launched
+only after an addendum fixing the verdict at FAIL in writing, stating that the
+repeat could not upgrade it and existed for one additional fact — whether a
+planned node under a real planner prompt ever activates a skill, or never does.
+It never did. Both outcomes were pre-committed and the losing one is what
+happened.
+
+Two criteria remain **unreadable rather than failed**, and the distinction is
+load-bearing: 4 and 6 measure the ceiling and the billing invariant, and a run
+that cannot read them has not shown them broken — it has shown that this record
+promised a data source (§3) that the code did not gain. That is a defect in the
+acceptance apparatus, and it is named here rather than scored as a pass.
+
 ## Required measurements
 
 Record each with cost and CLI version, as every prior E-number is.
@@ -693,8 +825,23 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   the file does not load. The subscription-billing invariant is untouched by
   this ADR, and the acceptance test still asserts it per node.
 
+**Recorded 2026-08-07 (KST), same CLI and machine — the acceptance test:**
+
+- **Does delivery reach the argv a planned node is really spawned with?**
+  **YES**, on real spawns, with a clean negative control.
+- **Does a planned node then invoke a skill?** **NO.** 1 of 7 activated nodes
+  across two runs; 0 of 3 under run 2's pre-registered rule. §Context, "The
+  acceptance test was run…". Cost $3.21 for run 2 (treatment $0.99, control
+  $0.96, repeat $1.09, probe $0.17); run 1's costs are in its own record.
+
 **Still owed before `Accepted`:**
 
+- **(i) Do the staged descriptions reach a planned node at all — and what
+  shape of prompt makes the gate fire?** **New, and now the blocking one.** The
+  design, its three arms and the two decisions its outcomes force are §"The next
+  question". Until (i) reports, this record cannot say whether §4's ~6,008
+  tokens per invocation buy a description block the model reads and declines, or
+  one it never sees.
 - **(b) Does a skill that runs in a subagent route around layer 5?** Some
   skills execute in a subagent rather than loading instructions inline. `Task`
   and `Agent` are both in `deniableTools` and denied to a node that did not
@@ -710,7 +857,86 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   claims, only the value claim — but the value claim is the entire reason to
   pay §4's 6,008 tokens per invocation, and this ADR should not reach
   `Accepted` asserting it the way ADR 0012 asserted inlining's. (The control
-  arm is shared with acceptance criterion 2 — one run serves both.)
+  arm is shared with acceptance criterion 2 — one run serves both.) **(e) is
+  now second in line behind (i):** comparing the output of a node that
+  activated a skill against one that did not requires nodes that activate, and
+  on current evidence there is roughly one per seven.
+
+## The next question
+
+**Do the staged skills' descriptions reach a planned node at all — and if they
+do, what shape of prompt makes the description gate fire?**
+
+One question, one cheap measurement, and two outcomes that force different
+decisions. That last property is what makes it the right next one.
+
+Everything measured so far is consistent with two very different worlds. In the
+first, the 35 descriptions arrive in the node's system prompt exactly as the CLI
+intends, the model reads them and declines — because a planner-authored prompt
+is a terse, fully-specified imperative ("write `design.html`, a standalone HTML
+version of that note") that leaves nothing for a procedure to contribute. In the
+second, the descriptions never reach a `-p` node under `--setting-sources ""`,
+and §4's ~6,008 tokens per invocation are being paid for a block nothing reads.
+**The positive controls do not distinguish these, and that should have been
+noticed when they were run.** A prompt naming the skill proves the tool exists
+and the staged definition loads; it does not prove the model ever saw a
+description. Every "activation is live" claim in this record rests on that
+narrower fact.
+
+**Measurement (i), the discriminating probe.** Under the final shipped argv,
+one goal, three arms:
+
+- **A — the planner's own prompt, verbatim.** Reproduces the observed zero and
+  is the baseline the others are read against.
+- **B — the same prompt plus a fixed, skill-agnostic sentence appended by
+  trusted code**: *"a corpus of procedures is available through the `Skill`
+  tool; consult it if one fits this task."* It names no skill, so it selects
+  nothing, and it is ~20 tokens against §4's 6,008.
+- **C — a prompt naming the skill.** Already run, twice; fires.
+
+A stricter variant of B, worth running in the same session because it isolates
+the gate rather than the nudge: plant one skill whose description is a trigger
+for a specific task, then give a node that task with **no** mention of skills.
+If it fires, descriptions are read and matched.
+
+**If B fires**, the gate works, the descriptions arrive, and the lever is a
+sentence from trusted code. That is the honest form of *"teach the planner that
+a fitting skill exists"*: trusted code says a corpus exists; the node's own
+model chooses from it, at run time, under a ceiling it cannot widen. A prompt is
+not a mechanism — but activation **is** a model judgement, so the input the
+judgement is made against is the legitimate lever, and it is the one variable
+that has visibly moved the outcome.
+
+**If B does not fire but C does**, then activation for a planned node requires
+the skill to be **named**, and naming it from the planner is Alternative D4 — an
+untrusted producer selecting which of the user's local files loads into a node —
+refused twice for a reason that has not changed. In that world activation as
+designed cannot serve planned nodes; §4's stage-everything decision must be
+reopened rather than defended, and the choices narrow to shipping activation off
+by default, or to a mechanism that carries content rather than offering it.
+
+**Why the two alternatives are not the next question.**
+
+*Relaxing the agent/skill exclusion* raises delivery. Delivery is the variable
+just shown not to bind: it went from 7% of node ids to every non-agent-mapped
+planned node and bought one invocation in seven. Widening it further, through
+the one composite this record calls unmeasured (`--agent` + `--plugin-dir` +
+`SettingSources = nil`), spends the ceiling's credibility on the hypothesis the
+data just weakened. It is a real follow-up — the exclusion is an accident, and
+§Context says so — and it is **second**, after something is known to fire.
+
+*Recording the feature as wired-but-unproven and keeping ADR 0012's inlining as
+the shipped path* is not available as written: inlining left the tree in the
+same change (§8), because the two may never coexist. Restoring it would mean
+re-landing a matcher with a measured 1-in-5 false positive among the mappings it
+makes, at 7% recall, whose own gate — ADR 0012's (a) and (b) — was never run
+either. Both mechanisms are unproven; only one of them is also known to misfire.
+"Go back" trades an unproven mechanism for an unproven **and** wrong one, and
+pays back the ~750 lines §8 removed. What *is* adopted from that option is its
+first half: the feature is recorded as wired-but-unproven, in the Status line,
+in the plan printout's refusal to promise a per-node choice, and behind a kill
+switch — which is a strictly better resting place than either mechanism claimed
+before today.
 
 ## Failure modes
 
@@ -722,6 +948,16 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   `//go:build manual` regression test beside `assess_manual_test.go` and
   `repair_manual_test.go`, run before each release, never in CI (it needs a
   real `claude` and costs cents — the `make smoke` posture).
+
+  > **Update (2026-08-07).** This failure mode is now half-realized, and the
+  > half that realized is the one that matters. The acceptance test found the
+  > run indistinguishable from silent absence *from the outside* — HTML written,
+  > every node PASS, nothing in the output different from an activation-free run
+  > — and only the argv shim and the raw transcripts told the two apart. The
+  > mitigation therefore has to assert the argv, not just the outcome, or it
+  > will certify a wiring regression as "the model chose no skill". The argv
+  > assertion already exists in-tree at the unit layer (`35a0f1e`); the manual
+  > regression test must reach the same fact against a real spawn.
 - **A vanished staged directory.** Measured: `--plugin-dir` pointing at
   nothing exits 0 with no warning. This is silent absence with a trivial
   trigger, and `resume` is where it bites. §6 answers it by re-materializing
@@ -788,6 +1024,19 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   the same reason. Lifting it requires its own probe. Note that under `nil`
   such a node already sees the user's real skills, so the exclusion costs it
   little.
+
+  > **Update (2026-08-07).** "Costs it little" is wrong, and the acceptance test
+  > is what shows it. Under `nil` an agent-mapped node sees the user's real
+  > skills *as a corpus*, but it is not the node this ADR is reasoning about —
+  > and the exclusion is not a rare edge. In both of run 2's plans the design/doc
+  > node was agent-mapped and therefore unreachable by activation, so one of the
+  > three pre-registered skills could not be bound to a node at all. The two
+  > mechanisms select on the same signal from overlapping corpora and agent
+  > mapping wins the tie, which makes them **mutually exclusive over exactly the
+  > nodes where a skill fits best.** §Context, "Agent mapping and skill
+  > activation are mutually exclusive". The exclusion itself stands — the
+  > composite is still unmeasured — but it is now a known design consequence
+  > rather than a cheap safety margin.
 - **A follow-up this ADR declines to decide:** `applyAgentMapping`'s
   `SettingSources = nil` is wider than anything decided here, and measurement
   (g) now gives that gap a number rather than a suspicion — an agent-mapped
@@ -917,6 +1166,19 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   skills. §5 bounds the corpus, not the choice.
 - **A snapshot schema change** (`PluginDirs`), where the first draft needed
   none.
+- **The capability is delivered and, so far, unused.** 1 `Skill` invocation
+  across 7 activated planned nodes; 0 across the 3 nodes of the pre-registered
+  run. Every planned node pays §4's ~6,008 tokens; on this evidence roughly one
+  in seven gets anything back, and it is not yet known whether the other six
+  read the block they paid for. That is the whole of measurement (i).
+- **Two of the six acceptance criteria could not be read at all.**
+  `permission_denials` and `provider` are still not parsed by
+  `runner.claudeEnvelope`, though §3 recorded the first as "merely
+  unimplemented" and criterion 6 assumed the second. A record that gates itself
+  on criteria its own code cannot evaluate has a gap in the apparatus, not in
+  the ceiling.
+- **Agent mapping and skill activation cannot both apply to a node**, and they
+  compete hardest over the nodes a skill fits best (§Compatibility, Update).
 - **One machine, one CLI version.** Every number here is claude 2.1.223 on
   darwin. #130 asks for a second machine and the probes in this record are the
   ones to send — with the note that (g)'s and (f)'s arms must be judged by
@@ -961,10 +1223,23 @@ Named with the measurement that would settle each.
    skill's body reaches rather than about what loads. If yes, it is a ceiling
    finding and needs its own ADR or a staging-time refusal.
 2. **Whether activation improves node output.** → (e). ADR 0012 shipped
-   without answering the equivalent question. This one should not.
+   without answering the equivalent question. This one should not — and it is
+   now blocked behind (i), because a comparison needs nodes that activate.
 3. **Whether 35 descriptions steer a node that needed none of them.** The
    distraction half of §4's rejected subset argument. It would show up in
-   (e)'s comparison; no probe isolates it today.
+   (e)'s comparison; no probe isolates it today. **Sharpened 2026-08-07:** the
+   acceptance test's zeros are equally consistent with descriptions that steer
+   nothing because they were read and declined, and with descriptions that steer
+   nothing because they never arrived. → (i).
+3a. **Whether a planned node's system prompt contains the staged descriptions
+   at all.** → (i). Not asked before today, because the positive controls — a
+   prompt that names the skill — were read as establishing more than they do.
+   §"The next question".
+3b. **What the agent/skill exclusion costs in yield.** Unmeasurable while
+   nothing activates: the exclusion removed a node from every run it touched,
+   but the nodes it did *not* remove activated nothing either, so its cost
+   cannot be separated from the general zero. It becomes measurable the moment
+   (i) reports a firing arm.
 4. **Whether a staged plugin's skills can shadow or be shadowed.** The probe
    invoked a staged skill by bare name and it resolved, but plugin skills are
    addressable as `<plugin>:<skill>` elsewhere in the CLI and nothing here
