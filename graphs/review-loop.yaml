@@ -44,8 +44,10 @@ nodes:
       REPLY. When the work is done and the tests are green, START your reply
       with the bare word DONE — those four characters FIRST, no markdown
       emphasis (`**DONE**` is WRONG), no heading, no preamble — then a short
-      summary of what changed. If it is not finished, do NOT write DONE:
-      start with a bare BLOCKED and the current state.
+      summary of what changed. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when the work is done. If it is not finished, do NOT
+      write DONE: start with a bare BLOCKED and the current state.
 
       Reviewer feedback from the previous round follows — it is empty on the
       first pass. If present, address every point before anything else:
@@ -75,7 +77,10 @@ nodes:
       exactly as written, as the very FIRST of the reply, with no markdown
       emphasis (`**ship it**` is WRONG), no quotes, no heading, no
       backticks, no preamble — then one sentence of
-      praise. Otherwise DO NOT say "ship it" — reply with a concise,
+      praise. Anything you need to qualify goes AFTER the verdict, never
+      before it: a line of context ahead of the phrase fails this node even
+      when the work is sound.
+      Otherwise DO NOT say "ship it" — reply with a concise,
       numbered list of required fixes; that list is handed verbatim to the
       implementation re-run.
     # Anchored: a failing review that merely MENTIONS the verdict phrase

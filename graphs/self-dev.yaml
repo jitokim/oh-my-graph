@@ -43,6 +43,9 @@ nodes:
       the change is committed, START your reply with the bare word DONE —
       those four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),
       no heading, no preamble — then a one-line summary of what you changed.
+      Anything you need to qualify goes AFTER the verdict, never before it:
+      a line of context ahead of the token fails this node even when the
+      work is done.
       If it is not finished, do NOT write DONE: start with a bare BLOCKED and
       the current state.
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
@@ -104,6 +107,9 @@ nodes:
       bare token PR followed immediately by the pull request's URL
       (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
       with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
+      Anything you need to qualify goes AFTER the URL, never before it: a
+      line of context ahead of the token fails this node even when the PR
+      is open.
     allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
     permission_mode: dontAsk
     handoff: artifact

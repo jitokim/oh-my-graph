@@ -22,6 +22,9 @@ node:
     emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
       - CLEAN — you reviewed the whole diff and found no security issues.
       - FINDINGS: — followed by a short bulleted list, worst first.
+    Anything you need to qualify goes AFTER the token, never before it: a
+    line of context ahead of it fails this node even when the review is
+    finished.
   allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: plan
   handoff: artifact
