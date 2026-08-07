@@ -54,21 +54,28 @@ func TestLintGraph_ReadsThePathOnlyOnce(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- lintGraph(&out, &warnings, fifo) }()
 
-	select {
-	case err := <-done:
+	// Both are awaited at once, never one behind the other: a writer that fails
+	// to open leaves lintGraph blocked on a FIFO no one will ever write, and
+	// reading only `done` first would time out and call that a second read.
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+
+	var lintErr error
+	for lintDone, writerDone := false, false; !lintDone || !writerDone; {
 		select {
+		case lintErr = <-done:
+			lintDone = true
 		case werr := <-written:
+			writerDone = true
 			if werr != nil {
 				t.Fatalf("the FIFO writer failed, so this run says nothing about read-once: %v", werr)
 			}
-		case <-time.After(time.Second):
-			t.Fatal("the FIFO writer never finished, so this run says nothing about read-once")
+		case <-deadline.C:
+			t.Fatal("lintGraph never returned: it read the path more than once, and the second read is waiting on a writer that will never come")
 		}
-		if err != nil {
-			t.Fatalf("a valid graph served over a FIFO must lint clean: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("lintGraph never returned: it read the path more than once, and the second read is waiting on a writer that will never come")
+	}
+	if lintErr != nil {
+		t.Fatalf("a valid graph served over a FIFO must lint clean: %v", lintErr)
 	}
 
 	if !strings.Contains(out.String(), "valid") {
