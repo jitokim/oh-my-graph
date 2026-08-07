@@ -1,0 +1,10 @@
+Read CHANGES.txt in the current working directory and produce RELEASE-NOTES.md in the same directory: the release notes for version 0.2.0 of a small local job runner.
+
+Requirements:
+- An H1 reading `0.2.0`.
+- Group every line of CHANGES.txt under exactly one of the headings Added, Changed, Fixed, Removed, in that order. Omit a heading with no entries.
+- Every entry is a single bullet, past tense, no trailing period.
+- A line reading `Released: 2026-08-07` directly under the H1.
+- Do not invent changes that are not in CHANGES.txt and do not drop any.
+
+Write the file with the Write tool. Do not modify CHANGES.txt. Your final reply is 2-4 lines stating that RELEASE-NOTES.md was written and how many entries landed under each heading.

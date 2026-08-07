@@ -23,7 +23,7 @@
   `--plugin-dir`, which is the mechanism that survived. **Layer 1 is not
   touched by this ADR.** What the acceptance test refuted is not the mechanism
   but the premise this record's whole Context argues from: *that reach was the
-  binding constraint.* It was not. `Accepted` is now gated on measurement
+  binding constraint.* It was not. `Accepted` was then gated on measurement
   **(i)** — do the staged descriptions reach a planned node at all — as well as
   on (b) and (e). Unlike ADR 0012, this record permits the code to be written
   and shipped behind its printed disclosure and its kill switch, not to be
@@ -31,8 +31,19 @@
   unrun, was measured at 7% two days later, and nobody had ever established that
   an inlined body helps a node at all; this record has now inherited the second
   half of that criticism and says so rather than growing out of it. Every number
-  here is **claude 2.1.223, macOS, one machine**.
-- Date: 2026-08-07
+  here is **claude 2.1.223, macOS, one machine**, except where 2026-08-08 says
+  otherwise.
+- **2026-08-08 — measurement (i) is ANSWERED, and one arm of it shipped.**
+  44 spawns, $7.28, claude 2.1.223 then 2.1.224. The staged descriptions **do**
+  reach a `-p` node under layer 1 = `""` and **are** matched there, so §4's
+  ~6,008 tokens per invocation buy a block the model reads. Arm B — the
+  skill-agnostic sentence this record wrote and shipped nothing of — took the
+  planner's own prompt from 0 of 9 to 8 of 9, and the pre-registered stop rule
+  is what selected it. `Accepted` is now gated on **(b)** and **(e)** only.
+  The cause is *not* what the first write-up of this said: see §"The next
+  question" → "What it reported, including the part it got wrong", and
+  `docs/measurements/0017-skill-activation-yield.md`.
+- Date: 2026-08-07 (Status amended 2026-08-08)
 - Issues: [#130](https://github.com/jitokim/oh-my-graph/issues/130)
 - Supersedes, **in code as of 2026-08-07**:
   `0012-skill-mapping-is-plan-time-inlining.md` in whole (§1–§5; §6's scan and
@@ -325,6 +336,22 @@ placed immediately **after** `applySkillMapping`'s replacement — adjusts the
 > also cannot work: `toolPolicyFor` is a pure function of one `graph.Node` and
 > cannot see `SkillScan`, which §1's own predicate requires. Hence a distinct
 > step, ordered last, that reads the scan and skips agent-mapped nodes.
+
+> **Correction (2026-08-08), on both halves of the sentence above.**
+> *"Immediately after `applySkillMapping`'s replacement"* is stale — that step
+> left the tree with inlining (§8), and `applySkillActivation` now runs after
+> `applyAgentMapping` **and after `attachVerifyCommand`**, i.e. genuinely last.
+> *"Adjusts the policy, never the graph"* is no longer true either: measurement
+> (i)'s arm B ships, so the step also appends `activationNotice` to the prompt
+> of every node it activates. The two corrections are the same correction. The
+> notice is deliberately **not** persisted — a saved `graph.json` is re-runnable
+> through `run`, which has no staged plugin and no `Skill` tool — and "not
+> persisted" is an ORDERING property, not just an omitted assignment: any step
+> that re-encodes the graph after activation writes the notice into the saved
+> spec. `attachVerifyCommand` did exactly that until 2026-08-08, so the ordinary
+> `auto "<goal>" --verify-cmd '…'` saved a `graph.json` promising a corpus its
+> reader does not have. Hence the ordering, and hence a regression test that
+> covers **both** post-validation shapes rather than one.
 
 The relaxation is applied **only when the skill scan (`SkillScan`, kept from
 ADR 0012 §6) found at least one usable definition.** A user with no
@@ -957,12 +984,13 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
 
 **Still owed before `Accepted`:**
 
-- **(i) Do the staged descriptions reach a planned node at all — and what
-  shape of prompt makes the gate fire?** **New, and now the blocking one.** The
-  design, its three arms and the two decisions its outcomes force are §"The next
-  question". Until (i) reports, this record cannot say whether §4's ~6,008
-  tokens per invocation buy a description block the model reads and declines, or
-  one it never sees.
+- ~~**(i) Do the staged descriptions reach a planned node at all — and what
+  shape of prompt makes the gate fire?**~~ **ANSWERED 2026-08-08, and no longer
+  blocking.** They reach and are matched; the gate is a threshold on how
+  directly a description's trigger language matches the task, applied without
+  deliberation under the planner register. §"The next question" carries the
+  arms, the outcome and the part of the first write-up that was wrong;
+  `docs/measurements/0017-skill-activation-yield.md` carries every spawn.
 - **(b) Does a skill that runs in a subagent route around layer 5?** Some
   skills execute in a subagent rather than loading instructions inline. `Task`
   and `Agent` are both in `deniableTools` and denied to a node that did not
@@ -1035,6 +1063,53 @@ refused twice for a reason that has not changed. In that world activation as
 designed cannot serve planned nodes; §4's stage-everything decision must be
 reopened rather than defended, and the choices narrow to shipping activation off
 by default, or to a mechanism that carries content rather than offering it.
+
+### What it reported, including the part it got wrong (2026-08-08)
+
+Run over two rounds — 44 spawns, $7.28, claude 2.1.223 then 2.1.224, one
+machine — under the pre-registered verdict rule (a raw `tool_use` record named
+`Skill` in the node's own transcript, or a planted skill's marker file; never a
+model's account of itself). Every arm and every spawn:
+`docs/measurements/0017-skill-activation-yield.md`.
+
+**B fired: 8 of 9, against A's 0 of 9** on byte-identical prompts and the same
+35 real skills. Naming the skill (C) fires, a planted trigger description fires
+unaided from within a 36-skill corpus (H 3 of 3, D 5 of 5), bundled
+`references/` resolve (F, n=1, no control). So the first branch above is the
+one that happened: the gate works, the descriptions arrive, and the lever is a
+sentence from trusted code. That sentence now ships (`activationNotice`), at
+the exact bytes measured, and this section's `-p` phrasing is the design intent;
+the const is the artifact.
+
+**The attribution written the same day was wrong and is retracted.** It read
+the A/B/H set as saying the 1-in-7 was a *fit* number — the descriptions
+arriving and being correctly judged not to match. Two things falsify that:
+
+1. **Which skill fired.** Every one of B's 8 activations named `html-artifact`,
+   one of the user's **own** skills — the same one acceptance run 2
+   pre-registered as the expected match for that node, sitting unconsulted
+   through all 9 of arm A's spawns. The corpus was not empty of a match.
+2. **Arm L, run 2026-08-08.** That same real description, alone in the corpus,
+   prompt byte-identical to A, no sentence: **0 of 3**, with a positive control
+   on the same one-skill corpus firing 1 of 1. So it is not that 34 distractors
+   buried it, and not that the sentence merely made a plain match visible.
+
+What survives is narrower: **the gate is a threshold on how directly a
+description's trigger language matches the task, applied without deliberation
+under the planner register.** An oracle-authored trigger description clears it
+unaided; a real, genuinely topical, broader one does not — and is chosen
+unanimously the moment one sentence asks for a deliberate look. Not separated,
+and not claimed: whether A's zero is dilution or register (L removes the
+dilution and the zero survives, but L also changes the corpus).
+
+**Where it is measured not to work.** A verification node's output contract
+(`reply PASS, else FAIL and a numbered list`): 0 of 3 with the sentence, 0 of 1
+without. Those nodes are a large share of a planned graph, and §4's per-node
+tax is paid by them too.
+
+**Cost.** B's mean spawn cost $0.205 against A's $0.134, on top of the ~6,008
+prompt tokens. Whether that buys better work is measurement (e), still open —
+but (e) was blocked on having nodes that activate at all, and this unblocks it.
 
 **Why the two alternatives are not the next question.**
 

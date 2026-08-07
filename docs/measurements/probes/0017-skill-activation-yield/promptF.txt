@@ -1,0 +1,1 @@
+Invoke the Skill named omg-probe-release-notes. It bundles a file at references/wording.md. Read that bundled file and reply with the token it contains, and nothing else.

@@ -563,23 +563,73 @@ func TestPlan_ActivationAppendsTheNoticeAndNoSkillText(t *testing.T) {
 // graph.Graph answers NodeByID from a map built at load, so a notice written
 // only into the Nodes slice would never reach a spawn. Both halves are checked
 // here, because either alone is satisfiable by doing nothing.
+//
+// Both cells run against BOTH post-validation shapes, because until 2026-08-08
+// only the first one was tested and only the second one was broken:
+// attachVerifyCommand re-encodes the graph it is handed into plan.Spec, so with
+// activation ordered ahead of it the ordinary `auto "<goal>" --verify-cmd '…'`
+// wrote the notice into graph.json — the exact artifact the comment above says
+// must never exist. The invariant is an ORDERING property, so a test that
+// exercises one ordering proves nothing about the other.
 func TestPlan_TheNoticeReachesTheRunButNotTheSavedGraph(t *testing.T) {
-	plan, _ := planWithCorpus(t, "architecture-design")
+	corpus := t.TempDir()
+	writeSkillFile(t, corpus, "architecture-design",
+		"name: architecture-design\ndescription: what architecture-design does", "the architecture-design body")
 
-	if strings.Contains(string(plan.Spec), activationNotice) {
-		t.Errorf("plan.Spec carries the notice; graph.json is re-run without a staged plugin and must not promise one\n%s", plan.Spec)
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{name: "plain auto", opts: []Option{WithSkillDirs(corpus)}},
+		{name: "auto --verify-cmd", opts: []Option{
+			WithSkillDirs(corpus),
+			WithVerifyCommand(VerifyCommand{Command: "go build ./..."}),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := planWithSkills(t, tc.opts...)
+
+			if strings.Contains(string(plan.Spec), activationNotice) {
+				t.Errorf("plan.Spec carries the notice; graph.json is re-run without a staged plugin and must not promise one\n%s", plan.Spec)
+			}
+			byID, ok := plan.Graph.NodeByID("review")
+			if !ok {
+				t.Fatal("no node review")
+			}
+			if !strings.HasSuffix(byID.Prompt, activationNotice) {
+				t.Errorf("NodeByID prompt = %q, want the notice: the scheduler reads the prompt through this map", byID.Prompt)
+			}
+			for _, node := range plan.Graph.Nodes {
+				if node.ID == "review" && !strings.HasSuffix(node.Prompt, activationNotice) {
+					t.Errorf("Nodes[review] prompt = %q, want the notice", node.Prompt)
+				}
+			}
+		})
 	}
-	byID, ok := plan.Graph.NodeByID("review")
+}
+
+// Ordering activation last must not cost the verify command its snapshot: the
+// notice-free Spec is worth nothing if the fix reached it by dropping the
+// user's evidence command out of graph.json, and the sink node must still hold
+// the verification in the graph the run executes.
+func TestPlan_TheVerifyCommandIsStillSnapshottedUnderActivation(t *testing.T) {
+	corpus := t.TempDir()
+	writeSkillFile(t, corpus, "architecture-design",
+		"name: architecture-design\ndescription: what architecture-design does", "the architecture-design body")
+	plan := planWithSkills(t, WithSkillDirs(corpus), WithVerifyCommand(VerifyCommand{Command: "go build ./..."}))
+
+	if !strings.Contains(string(plan.Spec), "go build ./...") {
+		t.Errorf("plan.Spec = %s, want the user's verify command: graph.json is what `run` replays", plan.Spec)
+	}
+	node, ok := plan.Graph.NodeByID("review")
 	if !ok {
 		t.Fatal("no node review")
 	}
-	if !strings.HasSuffix(byID.Prompt, activationNotice) {
-		t.Errorf("NodeByID prompt = %q, want the notice: the scheduler reads the prompt through this map", byID.Prompt)
+	if node.SuccessCheck.Verify == nil || node.SuccessCheck.Verify.Command != "go build ./..." {
+		t.Errorf("sink verify = %+v, want the attached command in the executed graph", node.SuccessCheck.Verify)
 	}
-	for _, node := range plan.Graph.Nodes {
-		if node.ID == "review" && !strings.HasSuffix(node.Prompt, activationNotice) {
-			t.Errorf("Nodes[review] prompt = %q, want the notice", node.Prompt)
-		}
+	if len(plan.VerifyAttachments) != 1 || plan.VerifyAttachments[0].NodeID != "review" {
+		t.Errorf("VerifyAttachments = %+v, want one on review", plan.VerifyAttachments)
 	}
 }
 

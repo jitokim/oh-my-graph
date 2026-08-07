@@ -1,0 +1,1 @@
+Write RELEASE-NOTES.md in the current working directory: the release notes for version 0.2.0 of a small local job runner. The changes that went into it are listed in CHANGES.txt.

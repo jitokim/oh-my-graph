@@ -155,37 +155,54 @@ const maxStagedCorpusBytes = 64 << 20
 //
 // WHY IT SHIPS, in the terms ADR 0017 left open. The record's Context argues
 // that reach was the binding constraint, measures 1 `Skill` call across 7
-// activated nodes, and retracts that premise without replacing it. Measured
-// 2026-08-08 on claude 2.1.223/macOS, against the real 35-skill corpus and the
-// real argv (`--setting-sources ""`, staged `--plugin-dir`, `Skill` in
-// `--tools`, `dontAsk`), judged ONLY by a `{"type":"tool_use","name":"Skill"}`
-// record in the node's own transcript and by whether a planted skill's marker
-// file appeared:
+// activated nodes, and retracts that premise without replacing it. 44 spawns,
+// $7.28, claude 2.1.223 then 2.1.224/macOS, against the real argv
+// (`--setting-sources ""`, staged `--plugin-dir`, `Skill` in `--tools`,
+// `dontAsk`), judged ONLY by a `{"type":"tool_use","name":"Skill"}` record in
+// the node's own transcript — WITH the skill it names — and by whether a
+// planted skill's marker file appeared. Every arm, every spawn and every
+// re-derivation is docs/measurements/0017-skill-activation-yield.md; the
+// four rows that carry the argument:
 //
-//	arm A  planner's own prompt, verbatim, 35 real skills          0 of 9
-//	arm B  the same prompt + this sentence                         8 of 9
-//	arm H  the same prompt, byte-identical, + one planted skill
-//	       whose DESCRIPTION fits the task, no sentence            3 of 3
-//	arm D  a task matching a planted description, skill unnamed,
-//	       36-skill corpus (planner-style / plain prompt)          3 of 3 / 2 of 2
-//	arm J  this sentence on a task NO skill fits                   0 of 3
-//	       (control without it: 0 of 1)
+//	arm A  planner's own prompt, verbatim, 35 REAL skills          0 of 9
+//	arm B  the same prompt bytes + this sentence                   8 of 9
+//	       — and all 8 named the SAME real skill, `html-artifact`
+//	arm H  the same prompt bytes, + one PLANTED skill whose
+//	       description is written as the task's trigger            3 of 3
+//	arm L  the same prompt bytes, corpus cut to the ONE real
+//	       skill B chose, no sentence                              0 of 3
+//	       (positive control on that corpus, skill named: 1 of 1)
 //
-// H is what makes B a finding rather than a nudge: with the prompt held
-// byte-identical, a description that genuinely fits fires the gate unaided, so
-// the descriptions DO reach a `-p` node under layer 1 = "" and ARE matched
-// (measurement (i), answered). The 1-of-7 is therefore a FIT number, not a
-// reach or a delivery number, and B's delta lives entirely in the band where
-// fit is marginal. J is the bound on that: the sentence does not manufacture a
-// fit where none exists, so it lowers a threshold rather than removing a gate.
+// H and its neighbours (D 5 of 5, C and F 1 of 1) settle reach: the staged
+// descriptions DO arrive at a `-p` node under layer 1 = "" and ARE matched
+// there, so measurement (i) is answered and §4's ~6,008 tokens buy a block the
+// model reads. B and L settle what remains, and they are why the earlier
+// version of this comment — "the 1-of-7 is a FIT number" — is RETRACTED as
+// written. B says the corpus held a real match for that task and the model
+// picks it unanimously once asked to look. L says that same real description,
+// alone and undiluted, still does not clear the gate unaided. So the gate is a
+// THRESHOLD on how directly a description's trigger language matches the task,
+// applied without deliberation under the planner register — not a verdict that
+// the corpus had nothing to offer. The sentence's delta is exactly the band
+// where a real description is a genuine but not literal match, which is where
+// most of a real corpus lives.
 //
-// WHAT IT IS STILL NOT KNOWN TO BUY. On the one task where the deliverable
-// could be checked mechanically, arms A and B are indistinguishable — 6 of 6
-// met every structural requirement of the node's own prompt, none wrote outside
-// its cwd, and a verification node's exact-output contract survived the append
-// unchanged (arm K, 0 of 3 activations and the same verdict shape as its
-// control). That is ADR 0017's measurement (e), still unanswered — but (e) was
-// blocked on having nodes that activate at all, and this is what unblocks it.
+// J is the bound: 0 of 3 with this sentence on a task NO skill fits, against 0
+// of 3 without it. It lowers a threshold rather than removing a gate.
+//
+// WHAT IT IS STILL NOT KNOWN TO BUY, and the cost it is not known to buy it
+// for. On the one task where the deliverable could be checked mechanically,
+// arms A and B are indistinguishable — 6 of 6 met every structural requirement
+// of the node's own prompt and none wrote outside its cwd — while B's mean
+// spawn cost $0.205 against A's $0.134, because a node that consults a skill
+// then reads it and follows it. That is ADR 0017's measurement (e), still
+// unanswered; (e) was blocked on having nodes that activate at all, and this
+// is what unblocks it.
+//
+// WHERE IT IS MEASURED NOT TO HELP: a node whose prompt is an output contract
+// (`reply PASS, else FAIL and a numbered list`) — 0 of 3 with the sentence, 0
+// of 1 without (arm K). Verification nodes are a large share of a planned
+// graph, and nothing here moves them.
 //
 // IT IS DELIBERATELY NOT PERSISTED. applySkillActivation rebuilds plan.Graph
 // with the notice and leaves plan.Spec — the saved graph.json — without it. A
@@ -814,6 +831,16 @@ func (c *Coordinator) applySkillActivation(plan *Plan) error {
 // activation outright (ADR 0017 §6), so a persisted notice would tell those
 // nodes a corpus is available when it is not. Shedding it is the correct
 // behaviour, so it is never written down.
+//
+// NOT WRITING plan.Spec HERE IS ONLY HALF OF THAT, and the half that is easy
+// to mistake for all of it. The other half is ORDERING: applySkillActivation
+// is the LAST post-validation mutation precisely because any later step that
+// re-encodes plan.Graph writes these prompts into plan.Spec by accident. That
+// is not hypothetical — attachVerifyCommand did exactly this until 2026-08-08,
+// so the default `auto "<goal>" --verify-cmd '…'` path saved a graph.json
+// carrying the notice, which is the one artifact this comment says must not
+// exist. Anything added after this call must either leave plan.Spec alone or
+// re-encode from a notice-free graph.
 func rebuildWithNotices(plan *Plan) error {
 	spec, err := json.Marshal(plan.Graph)
 	if err != nil {

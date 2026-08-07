@@ -1,0 +1,4 @@
+- worker pool now bounded to NCPU-2
+- fixed a hang when the queue drained during shutdown
+- dropped the --legacy-poll flag
+- added a --drain-timeout flag

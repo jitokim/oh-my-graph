@@ -1,0 +1,1 @@
+Invoke the Skill named html-artifact and follow it to turn ARCHITECTURE.md in the current working directory into design.html.
