@@ -96,7 +96,8 @@ class of claim this project spent the week removing.
   (de-escalation only, so no resumed leg can widen a run's ceiling).
 
 - **`auto --verify-cmd` / `--verify-timeout` — build evidence becomes reachable
-  (ADR 0016 §2, #119).** v0.5.0 shipped the whole engine for this and no way to
+  (ADR `0016-build-evidence-is-a-user-supplied-engine-command.md` §2, #119).**
+  v0.5.0 shipped the whole engine for this and no way to
   reach it: the attachment, the serialization, the `retry.max` cap and the
   provenance qualifier were all in the tree, but no `FlagSet` parsed the flag,
   so every `auto` run still took the zero-config path. It parses now.
@@ -120,7 +121,8 @@ class of claim this project spent the week removing.
   it recognizes the project, the command that would change that (§3).
 - **Known cost of the above:** an `auto` run started with `--verify-cmd` cannot
   be resumed. `resume` refuses every verification it finds in a run directory
-  on an auto graph rather than replay engine-run shell on trust (ADR 0016 §4),
+  on an auto graph rather than replay engine-run shell on trust
+  (ADR `0016-build-evidence-is-a-user-supplied-engine-command.md` §4),
   and it has no `--verify-cmd` of its own to re-supply the command with, so the
   refusal is terminal. Continuing such a run with the check silently dropped is
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
