@@ -21,11 +21,12 @@ things quietly wrong — it now aims a feedback arc at a node the loop reaches
 every producer from, rather than at one producer while another sits outside the
 body, and it names the repositories a goal reaches that `auto` creates no
 worktree in and takes no lock on. And skill activation lands wired, disclosed,
-and measured at zero: an activation-eligible planned node really is spawned
-with a staged plugin directory and the `Skill` tool, ADR 0017's acceptance test
-was run on 2026-08-07 under a pre-registered rule and FAILED, and both of those
-sentences are in the entry below — shipping the first without the second is the
-class of claim this project spent the week removing.
+and measured at 1 invocation across 7 activated planned nodes in aggregate,
+with 0 in the pre-registered run: an activation-eligible planned node really is
+spawned with a staged plugin directory and the `Skill` tool, ADR 0017's
+acceptance test was run on 2026-08-07 under a pre-registered rule and
+FAILED, and both of those sentences are in the entry below — shipping the first
+without the second is the class of claim this project spent the week removing.
 
 ### Added
 
