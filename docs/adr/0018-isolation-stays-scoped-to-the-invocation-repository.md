@@ -7,6 +7,16 @@
   measurement (§Falsification) whose failure converts this "no" into a "build
   §1". A decision not to build is only honest if it says what would change it.
 - Date: 2026-08-07
+- **Revised 2026-08-07**, same day, after a deep review of the accepted text.
+  The decision does not move — every revision made the refused feature
+  *more* expensive, not less. What changed: §1 answers
+  `validatePlannedNodeWorktree`'s second reason instead of only its first;
+  §2 retracts "a resume needs nothing new" and names what it needs; §2's
+  typo check is corrected (a detector's path resolution is not an actuator's);
+  §3 records a managed-path collision and an unwired cleanup fan-out; §6 names
+  which of two forms the follow-up is, and why the other one cannot exist;
+  §Falsification stops defining its population by a value nothing persists.
+  Nothing in the review was rejected.
 - Issues: [#103](https://github.com/jitokim/oh-my-graph/issues/103) — the
   second half, the one #123 and #129 did not touch.
 - **Amends nothing.** ADR 0005's single-repository scope is *affirmed*, not
@@ -22,7 +32,9 @@
 
 #103 reported two symptoms of one root cause, from a real run
 (`20260804-032843.062915000-1`) whose goal named a second local repository by
-absolute path.
+absolute path. That run directory is no longer on disk; the durable record of
+it is the issue itself — see §Falsification, *"Where the evidence lives"*, which
+is also why the measurement below has to capture its own.
 
 1. **A false FAIL.** The plan's `final-check` node asserted
    `git -C <repo B> rev-parse --abbrev-ref HEAD`, a checkout no node had ever
@@ -116,7 +128,7 @@ with*, not *whether it complies*.
 `worktree.GitManager` keeps its single `repoDir`, `<run-dir>/worktrees/` keeps
 branching from the invocation repository's HEAD, `validatePlannedNodeCwd` and
 `validatePlannedNodeWorktree` stay closed, and the boundary stays where
-SECURITY.md and #129's warning put it. The four remaining sections say why, in
+SECURITY.md and #129's warning put it. The six remaining sections say why, in
 the order the questions were asked, and what the answer would have to be if
 this is ever revisited.
 
@@ -136,6 +148,23 @@ dangerous thing in this codebase has the same disposition: `success_check.verify
 is refused, `agent:` is refused, `Skill` is granted by trusted code and never
 declared (ADR 0017 §2). Provisioning belongs in that list, and it is already in
 it.
+
+**That refusal has a second reason, and §1's own shape breaks it — so it is
+argued here rather than skipped.** `validatePlannedNodeWorktree`'s doc gives
+two: provisioning sits outside every ceiling (above), and *"the same locality
+reason: a planned node always runs in the invocation's working directory,
+never in a checkout of its own making."* A `--repo` shape violates the second
+by construction. The defense is that locality is a **proxy for two properties,
+and the proxy is the weaker statement of both**: that a planned node's writes
+land where the user can see them, and that the node does not choose its own
+location. A managed worktree named by the user keeps both — the checkout is
+under `<run-dir>/worktrees/`, created by trusted code off a HEAD the user's
+own repository already had, and the node is *placed* in it rather than
+selecting it. It arguably improves on the status quo, where a planned node
+edits and commits directly in the tree the user has open. So locality is not
+what decides this record; the ceiling argument is, and §1's bounded-selection
+form exists to answer the ceiling argument. A future proposal that thinks it
+has beaten locality has beaten the easier half.
 
 **By detection: refused, and this is the interesting one, because #129 shipped
 a detector and "warn → provision" reads like a promotion.** It is not a
@@ -165,8 +194,9 @@ other class.
 
 **By the user: the only admissible form.** A repeatable flag —
 `--repo <path>`, on `auto` and on `run` — naming a repository the user vouches
-for, exactly as `--verify-cmd` names a shell command the engine runs (ADR 0016,
-build evidence). The precedent is the point: *the engine does the dangerous
+for, exactly as `--verify-cmd` names a shell command the engine runs
+([ADR 0016, build evidence](0016-build-evidence-is-a-user-supplied-engine-command.md)
+— not the same-numbered [0016 on retries](0016-a-retry-carries-the-attempt-it-is-repeating.md)). The precedent is the point: *the engine does the dangerous
 thing only when the user supplies it, and the plan is never granted anything.*
 Under that form the plan-time reopening is bounded to a **selection, not a
 string**: a planned node may carry `repo: <name from the user's own list>`,
@@ -178,21 +208,70 @@ repository exists*.
 
 That is the form. It is not being built, for the reasons in §2 and §3.
 
-### 2. Partial failure would be a non-event, and only because provisioning stays lazy
+### 2. Partial failure would be a non-event; resume would not be, and the first version of this section said it was
 
 If §1 is ever built: **no run-level provisioning phase.** `Acquire` is called
 per node, on demand, the first time a node names a worktree, and that is what
 keeps "repo A provisioned, repo B failed" from being a new state at all. Repo
 B's failure fails repo B's nodes, exactly as a worktree failure fails one node
-today; halt-on-fail and retry behave as they already do; the ledger needs no
-new disposition; `state.json` records the same per-node verdicts and a resume
-re-provisions from disk through `Acquire`'s existing disk-aware path.
+today; halt-on-fail and retry behave as they already do, and the ledger needs
+no new disposition. That much stands.
 
-The only addition worth making is **plan-time validation, not plan-time
-provisioning**: each `--repo` is checked to resolve to a git checkout root
-outside the invocation repository, by `stat` alone — `checkoutRootOf` already
-does exactly this without spawning git — so a typo dies before anything spends
-rather than at the first node that needs it.
+**Resume does not, and this is a correction.** The claim was that `state.json`
+records the same per-node verdicts and a resumed leg re-provisions from disk
+through `Acquire`'s existing disk-aware path. That path is per *manager* and
+keyed by worktree **name** alone: it can re-adopt a lane, and `validateOwnWorktree`
+makes it refuse a directory belonging to another repository — but it cannot
+invent the manager for repository B. There is exactly one manager today.
+`worktreeManagerFor` builds `NewGitManager("", <run-dir>/worktrees, runID)`,
+with `repoDir` empty, meaning the process's working directory; `run`, `auto`
+and `resume` share it deliberately, so that both legs manage the same location.
+Under §1's shape the `name → path` binding for repository B lives **only in the
+`--repo` flags the user typed on the first leg**. Nothing persists it. A
+resumed leg would therefore either refuse every foreign-repo node, or silently
+drop the binding and run that node in the invocation repository — the second
+being the worse outcome, because it looks like success.
+
+The precedent is already in the tree and it cuts against the original claim:
+`runstate.NodeToolPolicy` is persisted *precisely* because "resuming a planned
+graph without it would silently drop the Layer-1/2 guard that keeps an
+unreviewed plan inside its bounds". A repository map is the same class of
+datum — a trust decision the user made once, which the run must re-impose
+rather than re-derive. So the shape needs one of exactly two things, chosen up
+front:
+
+- **A snapshot-level field**, mirroring `Snapshot.ToolPolicies`: the resolved
+  `name → path` map, written when the plan is accepted and re-imposed on
+  resume. A `--repo` on `resume` may then only *re-confirm* what the snapshot
+  already names — a resumed leg able to introduce a repository would be the
+  user editing the run's trust set mid-flight, with the earlier legs' nodes
+  already judged under the old set.
+- **An explicit refusal**: a multi-repository run is not resumable, stated
+  when `resume` loads the snapshot, not discovered at the first foreign node.
+
+Either is a blocking requirement. This section is the one whose job is to say
+a cost is small, and it under-stated its own.
+
+The other addition worth making is **plan-time validation, not plan-time
+provisioning**: each `--repo` is checked, by `stat` alone and before anything
+spends, to be a git checkout root outside the invocation repository. That
+check composes what `scanUnisolated` already has — `checkoutRootOf` resolves
+the root, `withinDir` decides "outside the invocation repository" — with one
+difference that matters more than it looks. **The resolved root must equal the
+path the user typed.** `checkoutRootOf` deliberately "walks rather than
+requiring path itself to exist, so a goal naming a file a node has yet to
+create still resolves to the repository that file would land in": correct for
+a detector, wrong for an actuator. `--repo ~/IdeaProjects/oh-my-grpah` walks up
+past the typo, binds to whatever checkout is above it, and the engine then
+creates a branch and a `.git/worktrees/` entry — §3's debris exactly — in a
+repository the user never named. Requiring `root == given path` is what makes a
+typo die instead of bind.
+
+And the check may **not** be `isForeignCheckout` reused wholesale: it composes
+`isToolInstallation`, whose suppressions exist to keep a printed warning
+readable. A user who types `--repo ~/.dotfiles` means it, and a detector tuned
+to ignore that path is tuned for the other trust class — the one §1 refuses to
+let reach actuation, in both directions.
 
 An eager "provision every repository at run start" step is the tempting
 alternative and it is wrong twice: it converts a per-node failure into a
@@ -204,9 +283,19 @@ halted run may never reach.
 ### 3. Cleanup across repositories is the reason the answer is "not now"
 
 The directory is ours; the debris is not. `git` permits a worktree of
-repository B to live anywhere on disk, so `<run-dir>/worktrees/<name>` stays
-the managed path and the *filesystem* footprint stays inside the run directory.
-Two things do not:
+repository B to live anywhere on disk, so the *filesystem* footprint stays
+inside the run directory — **though not at today's path.** `Acquire` keys its
+lanes by name alone under one `baseDir`, so two repositories each declaring a
+node named `impl` land on one directory; the second manager's
+`validateOwnWorktree` refuses it ("belongs to another repository"). Loud rather
+than silent, which is the right failure — but the run then dies on a name
+coincidence between two graphs' node names. The managed path needs a
+repository component (`<run-dir>/worktrees/<repo>/<name>`), which is a change
+to the manager's `baseDir` contract and therefore to ADR 0005's. Branches are
+already safe: `omg/<run-id>/<name>` is a ref inside each repository separately,
+so two repositories cannot collide on one.
+
+Two things do not stay inside the run directory at all:
 
 - **The branch.** `omg/<run-id>/<name>` is a ref in repository B. ADR 0005's
   cleanup rule *retains* any branch that carries commits — deliberately, because
@@ -234,10 +323,16 @@ registrations accumulating in repositories the user did not open for the run,
 with no surface that lists them.** A stray worktree in `<run-dir>/worktrees/`
 is ours to explain; a stray one in somebody else's working directory is
 somebody else's problem arriving without warning. Any build must therefore also
-ship (a) cleanup notes that name the *repository* and not only the branch, and
+ship (a) cleanup notes that name the *repository* and not only the branch,
 (b) something that can enumerate and prune what a run left in a foreign
 repository — which is a new command with its own record of what a run touched,
-not a flag on an existing one.
+not a flag on an existing one, and (c) a **composite `Provider`**: `Cleanup` is
+invoked exactly once, on one provider, at leg end (`cmd/oh-my-graph/main.go`,
+and again in `resume.go`). N managers behind that interface need something that
+fans the call out to all of them and merges their notes, or §3's own cleanup
+obligation is unwired — every repository but the invocation one would keep
+everything, on the *successful* path, which is the one the user is least
+looking at.
 
 That is the cost, and against the evidence available (one report, recovered) it
 is not paid today.
@@ -287,18 +382,38 @@ in either checkout.
 
 Nothing in the engine, and one follow-up that is not this ADR's to implement:
 
-**Turn #129's detection into a planner instruction, not into an actuation.**
-When the plan's text names a checkout outside the invocation repository, the
-warning today tells the *user* to go and reword their goal — *"If a node must
-work in one, say in the goal that it has to create its own git worktree there
-first and stay inside it."* That is a correct instruction addressed to the
-wrong party: trusted code can say it directly to the planner, the way
-`branchEvidenceRule` says the remote-state rule. It costs no field, no seam,
-no reopening, and it is the same intervention that fixed #103's first half.
+**Turn #129's detection into a planner instruction, not into an actuation —
+and an unconditional one.** The warning today tells the *user* to go and reword
+their goal — *"If a node must work in one, say in the goal that it has to
+create its own git worktree there first and stay inside it."* That is a correct
+instruction addressed to the wrong party: trusted code can say it directly to
+the planner, the way `branchEvidenceRule` says the remote-state rule, and
+`branchEvidenceRule`'s own paragraph is its home — that rule already carries
+multi-repository text ("For a branch in a repository other than the one
+oh-my-graph was invoked from…"), so the clause lands next to the one thing the
+planner is already told about foreign repositories.
+
+**Unconditional is not a stylistic preference; the detection-conditioned form
+does not exist.** `scanUnisolated` runs strictly *after* `validatePlannedNodes`,
+on the planner's own reply, and is fixed there deliberately — "computed HERE,
+on the planner's own prompts […] so what it reads is what the planner actually
+wrote". Its result cannot exist at the moment the planner prompt is built. An
+instruction gated on it would have to be a second planner call: a re-plan
+spending the one bounded repair retry that a validation refusal already claims,
+on a plan that is valid. So the clause ships as a standing rule every planned
+graph is written under. It costs one paragraph of prompt, no field, no seam, no
+reopening, and it is the same intervention that fixed #103's first half.
 
 It is advisory — a node may ignore it — and it must be labelled that way
 wherever it is described. **Whether it is obeyed is the measurement below**, and
 it is the measurement that decides whether §1 gets built.
+
+**Owner and ordering.** This ADR does not implement it, and it needs a tracking
+issue of its own; until that issue exists this is a note in a record and not
+work anybody has taken. The ordering is a precondition on that issue, not a
+detail it can discover later: the §Falsification baseline must be captured
+*before* the clause lands, because afterwards the status quo's number can never
+be taken again.
 
 ## Alternatives considered
 
@@ -376,8 +491,27 @@ and `runstate.NodeRecord.SessionID` names its transcript under
 the exact thing #103's first triage comment could not read from the run feed.
 
 - **Population.** Planned nodes whose prompt names a checkout outside the
-  invocation repository — i.e. nodes reached by a non-nil `UnisolatedScan`,
-  which is already computed and printed.
+  invocation repository. **Not simply "whatever `UnisolatedScan` reported":**
+  the scan is computed, printed, and then dropped — `Unisolated` reaches no
+  `runstate` field and no `runfeed` event, unlike ADR 0017's acceptance test,
+  which could measure off `NodeRecord.SessionID` because the snapshot persists
+  it. Recomputing the scan from `Snapshot.Graph`'s prompts is possible, but
+  only against an invocation root the snapshot does not record either. So the
+  population is defined by **what the collector captures at run time** — the
+  plan printout, or the invocation directory alongside the snapshot — per run,
+  as part of taking the sample. A population derived after the fact from
+  `state.json` alone is not this population and does not count toward the ten.
+- **What the population excludes, on the record rather than by accident.** A
+  checkout named *only in the user's goal* — an `UnisolatedPath` with `InGoal`
+  true and empty `NodeIDs`, which is exactly how #103's own run named
+  repository B — is not reached by a prompt-based population at all, and the
+  goal text itself persists only for goal-loop runs (`Snapshot.Goal` is nil for
+  a single-cycle `auto`). Those nodes are in scope only when the collector
+  records the goal with the run. A sample that drops them silently is measuring
+  the half where the planner was explicit enough to write the path into a
+  node's own prompt, which is not the same population and plausibly not the
+  same compliance; if they cannot be collected, the result is reported as
+  prompt-mentions only and says so in the number.
 - **Metric.** The fraction whose transcript records a `git worktree add` (or a
   clone) in that repository **before** any command that moves that repository's
   HEAD (`git checkout`, `git switch`, `git reset`, a branch-creating commit in
@@ -391,7 +525,21 @@ the exact thing #103's first triage comment could not read from the run feed.
 - **Confounder to record, not to explain away.** If the §6 planner instruction
   ships first, this measures the instruction and not the status quo, and the
   status quo's number will then never be known. Take a baseline of at least 5
-  nodes before that instruction lands, or record that no baseline exists.
+  nodes before that instruction lands, or record that no baseline exists. §6
+  carries this as a precondition on its own tracking issue, because "take the
+  baseline first" is a race the measurement loses by default: the clause is one
+  paragraph of prompt and the sample is ten runs.
+- **Where the evidence lives.** The reported run
+  (`20260804-032843.062915000-1`) is no longer under `~/.oh-my-graph/runs/`, so
+  the factual base of §Context is not re-checkable from this machine; what
+  survives is #103's issue body and its two triage comments, which quote the
+  plan and the offending assertion. Nothing sweeps run directories (§3), but a
+  user may remove one, and `~/.claude/projects` transcripts are the user's to
+  prune. A sample is therefore only as durable as its captures: copy what is
+  measured — the node's git commands, the prompt, the invocation root — into
+  the measurement's own record when it is taken, rather than assuming the run
+  directory and the transcript are both still readable when the tenth node
+  arrives.
 
 **Two things also falsify this decision, without any counting:**
 
