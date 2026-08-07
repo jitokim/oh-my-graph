@@ -673,8 +673,9 @@ struct touches loader, validator, shipped example graphs and tests together.
 (`outcome.Result`, the CLI's `result` field), with no normalization whatsoever:
 no trimming, no markdown stripping, no case folding, and no flags the engine
 adds of its own. `^` and `$` therefore anchor to the start and end of the whole
-reply text unless the pattern itself opens with `(?m)` — which exactly one
-shipped node does, under the rule in "Where the verdict may sit" below.
+reply text unless the pattern itself opens with `(?m)`, which no shipped
+pattern does — and "Where the verdict may sit" below is the measurement of why
+not.
 
 The pattern is **compiled at load**, exactly like `verify.output_matches`: a
 pattern that does not compile is a `GraphValidationError` naming the node and
@@ -699,13 +700,16 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   exception to report — a step that found nothing to do, a caveat — will put
   that sentence somewhere, and if the prompt never names a place, it goes on
   top. That is how run 20260807-144514 opened `merge`'s reply with "no local
-  branch to delete" and was recorded FAIL over a merge that had landed. Every
-  shipped prefix verdict now carries the offer: *anything you need to qualify
-  goes AFTER the verdict, never before it*. The three whole-reply pins
+  branch to delete" and was recorded FAIL over a merge that had landed. All 28
+  shipped prefix verdicts now carry the offer: *anything you need to qualify
+  goes AFTER the verdict, never before it* — as one unbroken line, so
+  `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
+  is a sweep that cannot silently miss a node. The four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
-  `verify`) say the opposite and must — their reply is the token *and nothing
-  else*, so for them the answer to "where does the caveat go" is "nowhere, and
-  a caveat means this is not the verdict you have".
+  `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
+  their reply is the token *and nothing else*, so for them the answer to "where
+  does the caveat go" is "nowhere, and a caveat means this is not the verdict
+  you have".
 - **The pattern is the backstop.** Wrap the token in the decoration class
   ``[*_`\s]`` — emphasis, code span, whitespace — while keeping the anchor:
   ``'^[*_`\s]*PASS'`` for a prefix verdict, ``'^[*_`\s]*PASS[*_`\s]*$'`` when
@@ -738,12 +742,16 @@ verdict token joins it.
 That rule is not a guess. Every `result_matches` failure this project has on
 disk was replayed against the anchor, the anchor dropped, and the anchor
 weakened to `(?m)` (per line rather than per reply). The corpus: 187 runs, 218
-verdict-bearing node executions, **22 result_matches failures**. Of those 22,
-**16 were the check working** — four of them the literal promise reply
-("I'll report when the stress test finishes", "poller armed", "I'll wait for
-that waiter") and the rest honest `FAIL`/`NOT READY`/`BLOCKED` reports. The
-remaining six were misjudgements, all in the same direction — a node that had
-done its work, failed:
+verdict-bearing node executions, **22 result_matches failures**. Count the
+executions from each run's `events.jsonl`, not from `state.json`'s `nodes` map —
+that map keeps only the last record per node id, so retries and feedback rounds
+overwrite themselves and the same corpus reads as 211 / 18.
+
+Of those 22, **16 were the check working** — three of them the literal promise
+reply ("I'll report when the stress test finishes", "I'll wait for that
+waiter", "4 planner processes are running") and the rest honest
+`FAIL`/`NOT READY`/`BLOCKED` reports. The remaining six were misjudgements, all
+in the same direction — a node that had done its work, failed:
 
 | what went wrong | count | still reachable? |
 |---|---|---|
@@ -751,42 +759,47 @@ done its work, failed:
 | verdict first, `$` pin, evidence trailing | 3 | not in a shipped graph; all three were ad-hoc graphs whose prompt said "reply with exactly X" *and* asked for the evidence |
 | verdict present, on a later line | 2 | yes — one fixture, one real (`merge`, PR #135) |
 
-Zero misjudgements in the other direction were found: no anchored verdict
-admitted a reply whose work was not done.
+The 196 passes were not audited as a body, so "nothing was wrongly admitted" is
+not a claim this table can make. What was audited is the node the question is
+about: `merge`'s 18 patterned PASSes are 16 `MERGED <sha>` — every SHA an
+ancestor of `main` today — and 2 `WITHHELD <reason>`. The corpus's one known
+false PASS is `merge` too, and it is the reply in the paragraph below: it ran
+under `{ exit_zero: true }`, before this pattern existed.
 
-Replaying the same 22 with the anchor **dropped** admits 10 replies — and 9 of
-those 10 are among the 16 correct FAILs, because `NOT READY` contains `READY`
-and a `FAIL` report discussing the run's `PASS` lines contains `PASS`. Nine
-false passes to buy one true fix is the trade this section already refuses.
-Replaying them with `(?m)` admits 3 — and all 3 are replies that carried a
-real, payload-bearing verdict on a later line. It admits none of the 16, and
-in particular none of the four promise replies, which have no SHA to put on
-any line.
+Replaying the same 22 with the anchor **dropped** (leading `^` stripped, any
+`$` kept) admits 11 replies — and 8 of those 11 are among the 16 correct FAILs,
+because `NOT READY` contains `READY` and a `FAIL` report discussing the run's
+`PASS` lines contains `PASS`. Eight false passes to buy three true fixes is the
+trade this section already refuses.
 
-So **line-anchoring is bought node by node, in the same currency as the
-separator class: what a false FAIL costs at THAT node.** It requires both:
+Replaying them with `(?m)` admits 3 and none of the 16, which looks like a
+bargain and is not. **Both halves of that number mislead:**
 
-1. **A payload a promise cannot produce.** `merge`'s SHA does not exist until
-   the squash lands, and the node reads it out of its own
-   `git pull --ff-only` range. Contrast `adr`'s path: a node that drafted an
-   ADR and never committed it can name the file, so there position *is* the
-   assertion, and `adr` keeps `^`. So does `pr`, `apply`, and every bare-word
-   verdict — for `PASS`/`READY`/`DONE`/`CLEAN`/`ship it` the position is the
-   only lock there is, and a line-anchored `PASS` passes any line that opens
-   with the word.
-2. **A false FAIL that is not a free re-run.** Everywhere else it costs one
-   re-run, and since the reply is preserved under
-   `~/.oh-my-graph/runs/<id>/failed/<node>.out` the operator can see exactly
-   what was rejected. `merge` is the exception: its re-run re-enters
-   `gh pr merge` on an already-merged PR under a grant too narrow to look at
-   what happened.
+- Only 2 of the 3 are later-line verdicts. The third (`^COVERED$`) has its
+  verdict on the *first* line; `(?m)` admits it by releasing the `$`. Applied
+  to a whole-reply pin, `(?m)` does not move the anchor — it deletes the pin,
+  and "and nothing else" stops meaning anything.
+- "None of the 16" is the wrong population. The 22 are replies that already
+  failed; the promise reply is not among them, because before the pattern
+  existed it **passed**. Constructed against `merge`'s own pattern, `(?m)`
+  accepts a plan that lists both verdicts as bullets, an indented code block
+  quoting the instruction, and a sentence carrying the PR head SHA — five
+  promise replies in all, one of them the prompt's own `MERGED 4f2a1c9` example
+  quoted back. `^` rejects all five.
 
-`merge-shepherd`'s `merge` is the only shipped node that meets both, so it is
-the only `(?m)` in the repo. One occurrence in 26 `merge` runs is not on its
-own an argument for widening anything — 46 `pr` nodes, 22 `apply` nodes and 30
-`triage` nodes have never hit it — which is why the fix everywhere else is the
-prompt clause above and nothing more. ADR 0019 records the decision and what
-would overturn it.
+The payload is not the lock. A SHA is seven hex characters, and a model that
+has merged nothing can type them; what `^` actually rejects is the *preamble* a
+promise cannot do without — the sentence saying why the verdict cannot be given
+yet, which must come before the quote of what it will say. **Position is the
+lock, at every node, for a payload verdict exactly as for a bare word.** So no
+pattern in this repo is line-anchored, and `(?m)` appears in none of them.
+
+Where a false FAIL is unusually expensive, make the re-run cheap instead of
+widening the check. `merge-shepherd`'s `merge` was the one node whose re-run was
+not safe — it re-entered `gh pr merge` on an already-merged PR under a grant too
+narrow to look — so it gained a step 0 that establishes PR state first and two
+read-only commands (`gh pr view`, `git log`) to do it with. ADR 0019 records the
+decision, the refused relaxation, and what would overturn either.
 
 **A verdict nothing checks is not a verdict.** A prompt that asks for one and
 a `success_check` of `{ exit_zero: true }` is the same "a prompt is not a

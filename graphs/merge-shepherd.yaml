@@ -34,15 +34,18 @@
 # That reply once ended a real run of this graph green with nothing merged,
 # and the only reason the operator noticed was that `git pull` did not move.
 #
-# The merge verdict is also the one in this repo that is matched per LINE
-# rather than at the very start of the reply, because the mirror failure has
-# happened too: run 20260807-144514 merged PR #135 for real, opened its reply
-# with one line of housekeeping ("no local branch to delete"), put
-# `MERGED 83edfad…` on the next line, and was recorded FAIL. Every other node
-# pays a re-run for that; this one cannot, because its re-run re-enters
-# `gh pr merge` on an already-merged PR under a grant too narrow to look at
-# what happened. The SHA, not the position, is what keeps a promise out —
-# see the success_check comment below and ADR 0019.
+# The mirror failure has happened too, and it is fixed on the OTHER side. Run
+# 20260807-144514 merged PR #135 for real, opened its reply with one line of
+# housekeeping ("no local branch to delete"), put `MERGED 83edfad…` on the
+# next line, and was recorded FAIL. The verdict still anchors at the start of
+# the REPLY, not of a line: a line anchor lets the promise straight back in,
+# because a model can put `MERGED <7 hex>` on a line of a plan — the example
+# in this very prompt is seven hex characters — long before anything merges.
+# What changed instead is what that false FAIL costs. Step 0 below, plus two
+# read-only commands in this node's grant, let a re-run SEE that the PR is
+# already merged and report it, so correcting a false FAIL here is the same
+# free re-run it is at every other node. See the success_check comment below
+# and ADR 0019.
 #
 # The run pauses at the approve-merge gate (exit 2). Read triage's table,
 # then resume:
@@ -173,10 +176,10 @@ nodes:
       qualify ("3 of 7 so far") is not a verdict, it is a progress report,
       and this node has no progress to report — only an outcome. The triage
       table starts on the SECOND line: one row per comment → the action
-      taken (applied in <commit> / replied: <reason>). Anything you need to
-      qualify goes in that table or below it, never above the first line: a
-      line of context ahead of the token fails this node even when every
-      comment was actioned. If you could not
+      taken (applied in <commit> / replied: <reason>).
+      Anything you need to qualify goes in that table or below it, never
+      above the first line: a line of context ahead of the token fails this
+      node even when every comment was actioned. If you could not
       finish, do NOT write TRIAGED: start with a bare BLOCKED and what
       stopped you, so the run halts before the merge gate instead of
       passing it.
@@ -217,6 +220,13 @@ nodes:
     prompt: |
       The operator has approved the merge of PR #{{ inputs.pr }}. Triage
       reported: {{ artifacts.triage | inline }}.
+        0. Establish the state BEFORE you change it:
+           `gh pr view {{ inputs.pr }} --json state,mergeCommit`. If it is
+           already MERGED, a previous attempt at this node merged it and then
+           failed its own verdict check — do NOT re-enter step 1. Take the
+           merge commit SHA from that output (confirm it with
+           `git log --oneline -20 origin/main`), do steps 2-4, and report
+           MERGED <sha> for the merge that already landed.
         1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
            plain merge first; add `--admin` ONLY if merge-queue mechanics
            require it — that is legitimate here because the review is
@@ -228,7 +238,7 @@ nodes:
            in the background.
         4. Prune stale local state for this PR: `git remote prune origin`,
            and `git branch -d` the PR's local branch if one exists.
-      Run every step in the foreground and finish all four before you
+      Run every step in the foreground and finish all of them before you
       answer. Your FINAL reply IS the verdict: this node's turn ends the
       moment you reply, so anything you promise to do afterwards never
       happens. NEVER end on a plan to continue — "I'll proceed as soon as
@@ -252,11 +262,18 @@ nodes:
       Anything you need to qualify — step 4 finding no local branch to
       delete, a caveat, a note — goes AFTER the verdict, never before it.
       One line of housekeeping ahead of the token failed this node after a
-      real merge (run 20260807-144514, PR #135), and a re-run of this node
-      is the one re-run in this graph that is not free.
+      real merge (run 20260807-144514, PR #135); step 0 makes the re-run of
+      that mistake safe, not free — it still costs a whole session.
     # Narrower than every other node's grant: this is the one irreversible
-    # mutation in the pipeline, so it may run only the five commands above.
+    # mutation in the pipeline, so the only thing it may CHANGE is the merge
+    # itself and the local state that follows it. The two read-only commands
+    # are what make a false FAIL here cost exactly one re-run, like everywhere
+    # else: without them a re-run cannot tell a PR nobody merged from one this
+    # node merged before failing its own verdict check, and blindly re-enters
+    # `gh pr merge`. They add no mutation — see step 0 and ADR 0019.
     allowed_tools:
+      - "Bash(gh pr view *)"
+      - "Bash(git log *)"
       - "Bash(gh pr merge *)"
       - "Bash(git pull *)"
       - "Bash(git remote prune *)"
@@ -292,27 +309,26 @@ nodes:
     # it. An alnum cannot be a separator, and every decoration a real reason
     # is written behind is still absorbed on the way to it.
     #
-    # `(?m)` — the ONE line-anchored verdict in this repo. The anchor is not
-    # dropped: the token must still open a LINE, so a verdict mentioned mid
-    # sentence ("I will reply MERGED 4f2a1c9 once it lands") still fails.
-    # What is given up is only "the first line", and it is given up here and
-    # nowhere else because both of ADR 0019's conditions hold at this node
-    # and nowhere else:
-    #   1. the payload is a fact a promise cannot produce — the SHA does not
-    #      exist until the squash lands, and this node reads it out of its
-    #      own `git pull --ff-only` range. Contrast `adr`'s path, which a
-    #      node that drafted-but-never-committed can name, and which
-    #      therefore still needs first-characters position to be an
-    #      assertion at all;
-    #   2. a false FAIL here is not a re-run. Everywhere else it costs one;
-    #      here it re-enters `gh pr merge` on an already-merged PR under a
-    #      grant too narrow to look at what happened.
-    # Measured against every result_matches failure this project has on disk
-    # (22 of them over 218 verdict-bearing node runs): line-anchoring admits
-    # exactly the two replies that carried a real verdict on a later line and
-    # admits none of the 16 correct FAILs — including all four promise
-    # replies, which have no SHA to put on any line. Dropping the anchor
-    # entirely would have admitted 9 of those 16. See ADR 0019.
+    # The anchor is `^`, over the whole REPLY, like every other verdict in
+    # this repo. Relaxing it to `(?m)` — matching per line, so PR #135's
+    # verdict-on-line-3 would have passed — was measured and REFUSED, because
+    # the SHA is not the promise-proof payload it looks like:
+    #
+    #   $ MERGED 4f2a1c9        # the example six lines up, quoted back
+    #   $ MERGED <PR head SHA>  # exists before the squash does
+    #
+    # Seven hex characters are producible by a model that has merged nothing.
+    # Under `^` a promise cannot reach them, because a promise is preamble
+    # first by construction — "I'll merge when the review lands" comes before
+    # the quote of what the reply will say. Under `(?m)` that preamble is
+    # free, and five constructed promise replies (a plan listing both
+    # verdicts as bullets, an indented code block quoting the instruction, a
+    # "will be" sentence carrying the PR head SHA) all pass. Position IS the
+    # lock here, same as for a bare-word verdict. ADR 0019 has the replay.
+    #
+    # The false FAIL that prompted the question is paid for in step 0 and in
+    # this node's grant instead, which is the honest place: the pattern was
+    # never wrong about PR #135's reply, the re-run was just expensive.
     success_check:
       exit_zero: true
-      result_matches: '(?m)^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'
+      result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'
