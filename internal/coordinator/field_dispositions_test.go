@@ -109,7 +109,7 @@ var nodeFieldDispositions = map[string]fieldRule{
 
 	"Prompt": {
 		disposition:    constrained,
-		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend. The prompt is constrained planner-authored text and nothing else: ADR 0012 briefly made it 'planner text plus a trusted-code-appended SKILL.md body', and ADR 0017 §8 removed that inlining, so the disposition reverts. A skill now reaches a node through the CLI's own activation over a staged plugin directory, which touches the policy and never the graph",
+		why:            "must be non-empty — a promptless node would 'succeed' having done nothing, after the planning spend. The prompt is constrained planner-authored text plus, on an ACTIVATED node only, one fixed sentence appended by trusted code (skillstage.go's activationNotice). That is deliberately not a return to ADR 0012's inlining, which ADR 0017 §8 removed: inlining appended a whole SKILL.md body chosen by a 7% name matcher, so the appended bytes were a SELECTION over the user's files; the notice is 20 tokens that name no skill and no directory, so it announces THAT a corpus exists and never WHICH one to use — the choosing stays in the node's own model, at run time, through the CLI's description gate. Measured 2026-08-08: the same planner prompt scores 0 of 9 activations without it and 8 of 9 with it, 0 of 3 on a task no skill fits, and a task whose planted description genuinely fits fires 3 of 3 with the prompt held byte-identical and no sentence at all. It is not persisted to graph.json — `run` and `resume` have no staged plugin, so an artifact carrying it would promise a corpus its reader does not have",
 		probeJSON:      `"prompt":"   "`,
 		reasonContains: "prompt",
 	},

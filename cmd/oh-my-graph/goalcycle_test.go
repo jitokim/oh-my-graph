@@ -52,7 +52,13 @@ func newCycleFake(outcomes map[string]runner.NodeOutcome) *runner.FakeRunner {
 			return fmt.Sprintf("assess-%d", assessCalls)
 		}
 		nodeCalls++
-		return fmt.Sprintf("%s-%d", spec.Prompt, nodeCalls)
+		// An ACTIVATED planned node's prompt is the planner's text plus
+		// coordinator's activationNotice, appended after a blank line, so
+		// keying on the whole prompt would miss every outcome scripted under
+		// the planner's own wording. These fixtures' prompts are single
+		// paragraphs, so cutting at the first blank line recovers exactly that
+		// wording whether or not activation is on.
+		return fmt.Sprintf("%s-%d", strings.SplitN(spec.Prompt, "\n\n", 2)[0], nodeCalls)
 	}
 	return fake
 }

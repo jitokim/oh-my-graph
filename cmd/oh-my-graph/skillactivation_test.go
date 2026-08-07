@@ -57,7 +57,9 @@ func TestRunAuto_PlannedNodeSpawnsWithTheStagedPluginAndTheSkillTool(t *testing.
 
 	var node runner.NodeInvocation
 	for _, inv := range fake.Invocations() {
-		if inv.Prompt == "work" {
+		// Prefix, not equality: an activated node's prompt is the planner's
+		// text plus coordinator's activationNotice.
+		if strings.HasPrefix(inv.Prompt, "work") {
 			node = inv
 		}
 	}

@@ -219,20 +219,24 @@ func readRecordedArgv(t *testing.T, dir string) map[string]recordedArgv {
 	return byPrompt
 }
 
-// nodeArgv returns one node's recorded spawn, failing with the prompts that
-// WERE recorded — a node that never ran is the failure most worth naming.
+// nodeArgv returns one node's recorded spawn, matched on the PLANNER's own
+// prompt as a prefix: an activated node's real prompt is that text plus
+// coordinator's activationNotice, and the point of these tests is which argv a
+// node was spawned with, not which of the two arms it is in. Failing lists the
+// prompts that WERE recorded — a node that never ran is the failure most worth
+// naming.
 func nodeArgv(t *testing.T, spawns map[string]recordedArgv, prompt string) recordedArgv {
 	t.Helper()
-	argv, ok := spawns[prompt]
-	if !ok {
-		recorded := make([]string, 0, len(spawns))
-		for p := range spawns {
-			recorded = append(recorded, p)
+	recorded := make([]string, 0, len(spawns))
+	for p, argv := range spawns {
+		if strings.HasPrefix(p, prompt) {
+			return argv
 		}
-		sort.Strings(recorded)
-		t.Fatalf("no node spawned with prompt %q; recorded: %v", prompt, recorded)
+		recorded = append(recorded, p)
 	}
-	return argv
+	sort.Strings(recorded)
+	t.Fatalf("no node spawned with prompt %q; recorded: %v", prompt, recorded)
+	return recordedArgv{}
 }
 
 // envelopeJSON is the `claude --output-format json` envelope carrying result.

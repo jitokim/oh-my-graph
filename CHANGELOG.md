@@ -8,6 +8,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Changed
+
+- **Why v0.5.1's skill activation fired once in seven — measured, attributed,
+  and answered with one sentence (ADR 0017 measurement (i), #130).** v0.5.1
+  shipped activation wired, disclosed, and recording **1 `Skill` invocation
+  across 7 activated planned nodes, 0 in the pre-registered run**, with the
+  cause unknown. It is now known, from **38 real `claude -p` spawns** ($6.15,
+  claude 2.1.223 / macOS) reproducing the exact argv an activated planned node
+  receives — `--setting-sources ""`, the staged `--plugin-dir`, `Skill` in
+  `--tools`, `dontAsk` — and judged only by a `tool_use` record named `Skill`
+  in the node's own transcript or by a planted skill's marker file appearing on
+  disk. Never by asking a model what it can see.
+
+  | arm | what varied | fired |
+  |---|---|---|
+  | A | the planner's own prompt, verbatim, against the real 35-skill corpus | **0 of 9** |
+  | B | the same prompt + one skill-agnostic sentence | **8 of 9** |
+  | H | the same prompt, **byte-identical**, + one planted skill whose *description* fits | **3 of 3** |
+  | D | a task matching a planted description, skill never named, 36-skill corpus | **5 of 5** |
+  | J | the sentence, on a task no skill fits | **0 of 3** (control without it: 0 of 1) |
+
+  **The 1-of-7 is a FIT number, not a reach or delivery number.** Arm H settles
+  it: hold the prompt byte-identical and add one description that genuinely
+  matches the task, and the gate fires unaided — so the staged descriptions do
+  reach a `-p` node under layer 1 = `""` and are matched there. ADR 0017's
+  blocking measurement (i) is answered, and the ~6,008 tokens per invocation
+  buy a block the model reads. What was missing was fit between planner-written
+  node jobs and the user's skill descriptions, and B's delta lives entirely in
+  the band where fit is marginal; J bounds it — the sentence does not
+  manufacture a fit where none exists.
+
+  So `auto` now appends exactly one fixed sentence to an **activated** node's
+  prompt: *"A corpus of procedures is available through the `Skill` tool;
+  consult it if one fits this task."* It names no skill and no directory, so it
+  announces **that** a corpus exists and never **which** one to use — the
+  choosing stays in the node's own model, at run time, through the CLI's
+  description gate. It is not persisted to `graph.json`: `run` and `resume`
+  have no staged plugin, so an artifact carrying it would promise a corpus its
+  reader does not have.
+
+  **What this is still not known to buy.** On the one task where the
+  deliverable could be checked mechanically, arms A and B are
+  indistinguishable — 6 of 6 met every structural requirement of the node's own
+  prompt and none wrote outside its cwd — and a verification node's exact-output
+  contract survived the append unchanged. That is ADR 0017's measurement (e),
+  still unanswered; it was blocked on having nodes that activate at all, and
+  this is what unblocks it.
+
+  **Ruled out, with counts.** Tool starvation: 0 of 35 corpus skills declare
+  `allowed-tools`, so no skill can request a tool, and the one node that did
+  activate held the same tools as two that did not. Corpus size: the gate fires
+  against 36 staged skills. The agent-mapped exclusion: real, and it made
+  `architecture-design` unbindable in both of run 2's plans — but run 1 had
+  **zero** exclusions and still scored 1 of 4, so it is not what drove the
+  aggregate. **Not attributed:** whether the 6 non-firing nodes would have
+  produced better work with a skill, and whether any of this reproduces on a
+  second machine or CLI build.
+
+  Two open questions closed on the way: a staged plugin's bundled
+  `references/` files **do** resolve (the token came back through `Skill` with
+  no file-reading tool involved), and the ceiling is re-verified under this
+  argv by file existence — a node declaring `Bash(git *)` attempting an
+  out-of-scope `touch` is denied and the file does not appear, while in-scope
+  `git status` still runs. Layer 1 is untouched.
+
+- **The activation regression guard ADR 0017 owed is in the tree.**
+  `internal/coordinator/skillactivation_manual_test.go` (`//go:build manual`,
+  never CI, the `make smoke` posture) plants a fitting skill, spawns a real node
+  under the real policy, and fails if the marker file does not appear — and
+  asserts the argv alongside it, because the acceptance run was
+  indistinguishable from silent absence from the outside. It carries the E1
+  ceiling probe too.
+
 ## [v0.5.1] - 2026-08-07
 
 The reachable release. v0.5.0 shipped the whole of ADR 0016's build-evidence
