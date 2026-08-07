@@ -50,11 +50,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   staging: editing it mid-run neither changes the run nor stops it. Only a
   staged file that has to be restored while its source no longer holds the
   planned bytes fails a spawn, and the message says the fault is the engine's
-  rather than the node's. `resume` verifies rather than trusting the recorded
-  path, since a `--plugin-dir` pointing at nothing is accepted by the CLI with
-  exit 0; the manifest it reads back off disk is validated before it is used,
-  so a run directory a node wrote to cannot redirect where the next leg
-  stages.
+  rather than the node's.
+
+  **Only the first leg of a run activates skills.** A resumed leg is a fresh
+  process with no in-memory manifest, so the only record it could re-stage from
+  is the one inside the run directory — which the previous leg's own nodes
+  could have rewritten, since they run as the same user and `Write` is
+  unscoped. A forged record would not just add a skill; re-staging deletes what
+  the record does not name, so it would replace the user's corpus outright.
+  Rather than trust it, `resume` withholds the `Skill` tool and the staged
+  directory from every node and prints one line saying why. Restoring
+  activation on resume needs an integrity anchor outside the run directory,
+  which ADR 0017 §6 specifies as a design and defers.
 
   The plan printout names every staged skill with its size and SHA-256, the
   nodes reached, the agent-mapped nodes excluded (that composite is

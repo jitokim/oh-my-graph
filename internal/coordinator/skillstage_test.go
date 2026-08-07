@@ -383,68 +383,6 @@ func TestSkillStaging_SourceDriftHaltsOnlyWhenTheStagedCopyCannotBeRestored(t *t
 	})
 }
 
-// The manifest is trusted Go code's within a leg and DATA across one: a
-// resumed leg reads it back out of a run directory any node can write. `rel`
-// is the field that decides where this process writes, so a manifest naming a
-// path outside the staged directory is refused whole — pruneTo walks only the
-// staged directory, so an escaped write is one nothing would ever clean up.
-func TestLoadSkillStaging_RefusesAManifestThatWritesOutsideTheStagedDirectory(t *testing.T) {
-	hostile := []struct {
-		name string
-		rel  string
-	}{
-		{"parent escape", "../escape/SKILL.md"},
-		{"deep escape", "skills/x/../../../escape/SKILL.md"},
-		{"absolute", "/etc/cron.d/escape"},
-		{"outside skills/", "hooks/post-tool-use.sh"},
-		{"the plugin manifest itself", "skills/../.claude-plugin/plugin.json"},
-	}
-	for _, tc := range hostile {
-		t.Run(tc.name, func(t *testing.T) {
-			plan, _ := planWithCorpus(t, "architecture-design")
-			pluginDir := stageInto(t, plan)
-
-			forged := stagedManifest{
-				Plugin: stagedPluginName,
-				Files:  []stagedFile{{Source: filepath.Join(t.TempDir(), "node-authored"), Rel: tc.rel, SHA256: "0"}},
-			}
-			raw, err := json.Marshal(forged)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(manifestPath(pluginDir), raw, 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			if _, err := LoadSkillStaging(pluginDir); err == nil {
-				t.Fatalf("LoadSkillStaging accepted a manifest staging %q; the next leg would write there", tc.rel)
-			}
-		})
-	}
-
-	// The plugin name is the manifest's own claim about who wrote it, and it is
-	// read rather than merely written — a field a build writes and never checks
-	// is a field that documents nothing.
-	t.Run("a manifest this build did not write", func(t *testing.T) {
-		plan, _ := planWithCorpus(t, "architecture-design")
-		pluginDir := stageInto(t, plan)
-
-		raw, err := json.Marshal(stagedManifest{
-			Plugin: "someone-elses-plugin",
-			Files:  []stagedFile{{Source: "/dev/null", Rel: "skills/x/SKILL.md", SHA256: "0"}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(manifestPath(pluginDir), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LoadSkillStaging(pluginDir); err == nil {
-			t.Fatal("LoadSkillStaging accepted a manifest naming another plugin")
-		}
-	})
-}
-
 // A node can plant a symlink at a path the manifest names. os.WriteFile would
 // follow it and have trusted code write the user's own skill text wherever it
 // points — outside the staged directory, where the sweep never looks — and the
@@ -486,35 +424,42 @@ func TestSkillStaging_MaterializeDoesNotWriteThroughAPlantedSymlink(t *testing.T
 	}
 }
 
-// The manifest is what `resume` verifies against, so it must round-trip: a
-// loaded staging re-materializes the same corpus, and a run whose manifest is
-// gone cannot be resumed with activation rather than being resumed blind.
-func TestLoadSkillStaging_RoundTripsAndRefusesWithoutAManifest(t *testing.T) {
+// The sidecar is still written, and it is now a RECORD rather than evidence:
+// nothing reads it back (a resumed leg does not activate skills at all —
+// skillstage.go's header, ADR 0017 §6 as of 2026-08-07), but a user or an
+// auditor opening a run directory must still be able to see exactly which
+// corpus that run offered its nodes, with the hashes it was pinned at.
+//
+// So what is pinned here is the record's CONTENT, not a round-trip: a manifest
+// that omitted a file, or recorded a hash the staged copy does not have, would
+// describe a run that did not happen.
+func TestSkillStaging_WritesTheManifestAsARecordOfWhatItStaged(t *testing.T) {
 	plan, _ := planWithCorpus(t, "architecture-design", "html-artifact")
 	pluginDir := stageInto(t, plan)
 
-	loaded, err := LoadSkillStaging(pluginDir)
+	raw, err := os.ReadFile(manifestPath(pluginDir))
 	if err != nil {
-		t.Fatalf("LoadSkillStaging: %v", err)
+		t.Fatalf("read the manifest record: %v", err)
 	}
-	if got := len(loaded.Skills()); got != 2 {
-		t.Fatalf("loaded %d skill(s), want the 2 the manifest recorded", got)
+	var m stagedManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("the record is not readable JSON: %v", err)
 	}
-	if err := os.RemoveAll(pluginDir); err != nil {
-		t.Fatal(err)
+	if m.Plugin != stagedPluginName {
+		t.Errorf("manifest plugin = %q, want %q", m.Plugin, stagedPluginName)
 	}
-	if err := loaded.Materialize(); err != nil {
-		t.Fatalf("re-materialize after the directory was deleted: %v", err)
+	if len(m.Skills) != 2 {
+		t.Errorf("manifest records %d skill(s), want the 2 that were staged", len(m.Skills))
 	}
-	if body := readStaged(t, pluginDir, "skills/html-artifact/SKILL.md"); !strings.Contains(body, "the html-artifact body") {
-		t.Errorf("re-materialized copy is not the recorded one:\n%s", body)
+	if len(m.Files) == 0 {
+		t.Fatal("manifest records no files at all")
 	}
-
-	if err := os.Remove(manifestPath(pluginDir)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadSkillStaging(pluginDir); err == nil {
-		t.Fatal("LoadSkillStaging() = nil error with no manifest; a directory the run cannot vouch for must not be used")
+	// Every recorded row describes a file that is really there, at the hash the
+	// row claims. A record nobody verifies must at least be true when written.
+	for _, f := range m.Files {
+		if !stagedFileMatches(filepath.Join(pluginDir, filepath.FromSlash(f.Rel)), f.SHA256) {
+			t.Errorf("manifest records %s at %s, which is not what is staged there", f.Rel, f.SHA256)
+		}
 	}
 }
 

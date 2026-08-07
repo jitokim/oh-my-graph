@@ -555,8 +555,16 @@ manifest로부터 다시 만들어지고 검증되므로, 어떤 노드도 뒤�
 `~/.claude/skills` 트리는 스테이징 시점에 한 번만 읽힙니다: run 도중 원본을
 고치거나 지워도 run이 바뀌지도, 멈추지도 않습니다. 멈추는 경우는 하나뿐입니다 —
 스테이징된 파일을 복원해야 하는데 그 원본에 플랜된 바이트가 더는 없을 때.
-`--no-skill-activation`으로 전체를 끌 수 있고 — `auto`와
-`resume` 모두 — 예전의 `--no-skill-mapping`도 안내와 함께 계속 동작합니다.
+`--no-skill-activation`으로 전체를 끌 수 있고, 예전의 `--no-skill-mapping`도
+안내와 함께 계속 동작합니다.
+
+**resume된 leg은 스킬을 활성화하지 않습니다.** run의 첫 leg만 활성화합니다.
+resume된 leg은 in-memory manifest가 없는 새 프로세스라, 다시 스테이징할 근거가
+run 디렉토리 안의 기록뿐입니다 — 그런데 그 디렉토리는 직전 leg의 노드들이 쓸 수
+있습니다(같은 uid로 돌고 `Write`에 scope가 없습니다). 그 기록을 run 디렉토리
+바깥에 anchor할 방법이 생기기 전까지, `resume`은 그것을 믿는 대신 `Skill`
+도구와 스테이징 디렉토리를 모든 노드에서 거둬들이고, 그 이유를 한 줄로
+출력합니다. [ADR 0017 §6](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md) 참고.
 
 스킬이 놓일 수 있는 나머지 두 곳은 **범위 밖**이고 스테이징되지
 않습니다: **플러그인**이 제공하는 스킬(`~/.claude/plugins/...`)과

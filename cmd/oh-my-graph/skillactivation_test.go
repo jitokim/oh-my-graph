@@ -214,80 +214,50 @@ func TestRewriteDeprecatedSkillFlag_LeavesValuePositionsAlone(t *testing.T) {
 	}
 }
 
-// resumeSkillStaging is where a resumed leg could silently lose its skills, so
-// each of its three outcomes is pinned. The common thread: it only ever moves
-// DOWN — nothing here can grant Skill to a node whose snapshot did not have
-// it, or point a policy at a directory the snapshot did not name.
-func TestResumeSkillStaging(t *testing.T) {
+// dropSkillActivation is the resume boundary, and since 2026-08-07 it has one
+// outcome for an activation-enabled run and not three: OFF. The hazard it
+// answers is that a resumed leg has no in-memory manifest, so the only thing
+// it could re-stage from is a file in a directory the previous leg's nodes
+// could write (ADR 0017 §6). What is pinned here is that the de-escalation is
+// total and that it is SAID; the argv-deep proof is in skillargv_test.
+func TestDropSkillActivation(t *testing.T) {
 	// A helper that produces the state a real activated run leaves behind.
-	stage := func(t *testing.T) (runDir string, snapPolicies map[string]runstate.NodeToolPolicy) {
+	stage := func(t *testing.T) map[string]runstate.NodeToolPolicy {
 		t.Helper()
 		runID, _ := autoRunWithSkills(t)
-		return runDirFor(runID), loadSnapshot(t, runID).ToolPolicies
+		return loadSnapshot(t, runID).ToolPolicies
 	}
 
-	t.Run("re-materializes and re-points a verified directory", func(t *testing.T) {
-		runDir, snapPolicies := stage(t)
-		pluginDir := filepath.Join(runDir, "skills-plugin")
-		// A node wrote a skill of its own into the staged directory during the
-		// first leg. The resumed leg must not hand it to anybody.
-		planted := filepath.Join(pluginDir, "skills", "node-authored", "SKILL.md")
-		if err := os.MkdirAll(filepath.Dir(planted), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(planted, []byte("---\nname: node-authored\n---\nplanted\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		policies := toRunnerToolPolicies(snapPolicies)
-		if got := policies["work"].PluginDirs; len(got) != 0 {
-			t.Fatalf("toRunnerToolPolicies rehydrated PluginDirs = %v; a path must never be trusted verbatim", got)
-		}
-		staging, err := resumeSkillStaging(io.Discard, runDir, snapPolicies, policies, false)
-		if err != nil {
-			t.Fatalf("resumeSkillStaging: %v", err)
-		}
-		if staging == nil {
-			t.Fatal("staging = nil for an activated run; nothing would re-materialize before each spawn")
-		}
-		if got := policies["work"].PluginDirs; !slices.Equal(got, []string{pluginDir}) {
-			t.Errorf("PluginDirs = %v, want [%s] restored from the verified directory", got, pluginDir)
-		}
-		if _, err := os.Stat(planted); !os.IsNotExist(err) {
-			t.Errorf("the previous leg's node-staged skill survived (stat err = %v)", err)
-		}
-		if _, err := os.Stat(filepath.Join(pluginDir, "skills", "architecture-design", "SKILL.md")); err != nil {
-			t.Errorf("the real corpus did not survive re-materialization: %v", err)
-		}
-	})
-
-	t.Run("de-escalates on --no-skill-activation", func(t *testing.T) {
-		runDir, snapPolicies := stage(t)
+	t.Run("takes both halves off an activated run and says why", func(t *testing.T) {
+		snapPolicies := stage(t)
 		policies := toRunnerToolPolicies(snapPolicies)
 		if !slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
 			t.Fatal("precondition failed: the snapshot did not record the Skill grant")
 		}
+		if got := policies["work"].PluginDirs; len(got) != 0 {
+			t.Fatalf("toRunnerToolPolicies rehydrated PluginDirs = %v; a path must never be trusted verbatim", got)
+		}
 
 		var out strings.Builder
-		staging, err := resumeSkillStaging(&out, runDir, snapPolicies, policies, true)
-		if err != nil {
-			t.Fatalf("resumeSkillStaging: %v", err)
-		}
-		if staging != nil {
-			t.Error("staging must be nil with activation dropped: there is nothing to re-materialize")
-		}
+		dropSkillActivation(&out, snapPolicies, policies, false)
+
 		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
 			t.Errorf("Tools = %v, want %s dropped", policies["work"].Tools, coordinator.SkillToolName)
 		}
 		if len(policies["work"].PluginDirs) != 0 {
 			t.Errorf("PluginDirs = %v, want none", policies["work"].PluginDirs)
 		}
-		// De-escalation is a real change to the run's ceiling, so it is said.
-		if !strings.Contains(out.String(), "--no-skill-activation") {
+		// A resumed leg that behaves differently from its first leg without
+		// saying so is the unexplained-absence shape this mechanism is most
+		// exposed to, so the line is part of the contract.
+		if !strings.Contains(out.String(), "skill activation is off for this leg") {
 			t.Errorf("the de-escalation must be disclosed:\n%s", out.String())
 		}
-		// Every other layer is untouched: de-escalation subtracts one tool
-		// name, it does not rewrite the ceiling.
+		if !strings.Contains(out.String(), "ADR 0017") {
+			t.Errorf("the disclosure must point at where the decision lives:\n%s", out.String())
+		}
+		// Every other layer is untouched: this subtracts one tool name and one
+		// directory, it does not rewrite the ceiling.
 		if policies["work"].SettingSources == nil || *policies["work"].SettingSources != "" {
 			t.Errorf("SettingSources = %v, want layer 1 untouched", policies["work"].SettingSources)
 		}
@@ -296,33 +266,66 @@ func TestResumeSkillStaging(t *testing.T) {
 		}
 	})
 
-	t.Run("halts rather than resuming a directory it cannot vouch for", func(t *testing.T) {
-		runDir, snapPolicies := stage(t)
-		if err := os.RemoveAll(filepath.Join(runDir, "skills-plugin.manifest.json")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.RemoveAll(filepath.Join(runDir, "skills-plugin")); err != nil {
-			t.Fatal(err)
+	t.Run("a manifest a node could have forged changes nothing", func(t *testing.T) {
+		snapPolicies := stage(t)
+		// The whole point of the decision: the sidecar is not consulted, so
+		// rewriting it — which a node with unscoped Write can do — has no
+		// effect on what the resumed leg hands anybody.
+		for _, p := range snapPolicies {
+			for _, dir := range p.PluginDirs {
+				if err := os.WriteFile(dir+".manifest.json", []byte(`{"plugin":"oh-my-graph-staged-skills","files":[{"source":"/dev/null","rel":"skills/pwned/SKILL.md","sha256":"0"}]}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 		policies := toRunnerToolPolicies(snapPolicies)
-		_, err := resumeSkillStaging(io.Discard, runDir, snapPolicies, policies, false)
-		if err == nil {
-			t.Fatal("resumeSkillStaging = nil error with the staged corpus gone; the leg would run with no skills and exit 0")
+		dropSkillActivation(io.Discard, snapPolicies, policies, false)
+
+		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
+			t.Errorf("Tools = %v; a forged manifest must not be able to keep activation on", policies["work"].Tools)
 		}
-		if !strings.Contains(err.Error(), "--no-skill-activation") {
-			t.Errorf("the halt must name the way out:\n%v", err)
+		if len(policies["work"].PluginDirs) != 0 {
+			t.Errorf("PluginDirs = %v, want none", policies["work"].PluginDirs)
+		}
+	})
+
+	t.Run("--no-skill-activation says so and lands in the same place", func(t *testing.T) {
+		snapPolicies := stage(t)
+		policies := toRunnerToolPolicies(snapPolicies)
+
+		var out strings.Builder
+		dropSkillActivation(&out, snapPolicies, policies, true)
+
+		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
+			t.Errorf("Tools = %v, want %s dropped", policies["work"].Tools, coordinator.SkillToolName)
+		}
+		if len(policies["work"].PluginDirs) != 0 {
+			t.Errorf("PluginDirs = %v, want none", policies["work"].PluginDirs)
+		}
+		// The flag is now redundant rather than load-bearing, and a user who
+		// passed it deserves to be told that rather than left thinking it is
+		// what turned activation off.
+		if !strings.Contains(out.String(), "--no-skill-activation") {
+			t.Errorf("the flag must be acknowledged when it was given:\n%s", out.String())
+		}
+		if !strings.Contains(out.String(), "in any case") {
+			t.Errorf("the line must say the flag was not what decided it:\n%s", out.String())
 		}
 	})
 
 	t.Run("does nothing to a run that never had activation", func(t *testing.T) {
 		snapPolicies := map[string]runstate.NodeToolPolicy{"work": {Tools: []string{"Read"}}}
 		policies := toRunnerToolPolicies(snapPolicies)
-		staging, err := resumeSkillStaging(io.Discard, t.TempDir(), snapPolicies, policies, false)
-		if err != nil || staging != nil {
-			t.Fatalf("resumeSkillStaging = (%v, %v), want a no-op for an isolated run", staging, err)
-		}
+		var out strings.Builder
+		dropSkillActivation(&out, snapPolicies, policies, false)
+
 		if !slices.Equal(policies["work"].Tools, []string{"Read"}) {
 			t.Errorf("Tools = %v, want them untouched", policies["work"].Tools)
+		}
+		// Nothing was taken away, so there is nothing to disclose: a line here
+		// would tell every ordinary `run` resume about a feature it never had.
+		if out.String() != "" {
+			t.Errorf("printed %q for a run that never activated anything", out.String())
 		}
 	})
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -341,15 +343,21 @@ func TestRunAuto_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	}
 }
 
-// THE RESUMED LEG, at the same layer. `resume` does not carry the first leg's
-// argv over: `continueRun` rebuilds the policy map from the snapshot
-// (toRunnerToolPolicies drops PluginDirs on purpose) and resumeSkillStaging
-// re-establishes the directory from its manifest. That is a SECOND
-// construction of the whole mechanism, and until this test it was checked only
-// as far as the policy map — the exact "built correctly and never reaches the
-// process" gap this file's header names, left open on `resume --retry-failed`,
-// which ADR 0017 §6 calls the real resume path for an auto run.
-func TestResumeRetryFailed_RespawnsWithThePluginDirAndTheCeiling(t *testing.T) {
+// THE RESUMED LEG, at the same layer, and this is the assertion the 2026-08-07
+// decision turns on: a resumed leg activates NOTHING (ADR 0017 §6).
+//
+// `resume` does not carry the first leg's argv over — `continueRun` rebuilds
+// the policy map from the snapshot, and toRunnerToolPolicies drops PluginDirs
+// on purpose — so the question is only whether anything puts activation back.
+// Nothing may, because a resumed leg has no in-memory manifest and the only
+// thing it could re-stage from is a file inside the run directory, which the
+// PREVIOUS leg's nodes could have written (unscoped `Write`, same uid).
+//
+// This asserts the ARGV and not the policy struct on purpose: an earlier round
+// of this work passed every policy-level test while delivering nothing to the
+// process, and the inverse mistake — a policy that de-escalates while the argv
+// still carries the flag — is the one that would matter here.
+func TestResumeRetryFailed_ActivatesNothing(t *testing.T) {
 	probe := newArgvProbe(t)
 	t.Setenv(failPromptEnv, "render the artifact")
 
@@ -363,13 +371,19 @@ func TestResumeRetryFailed_RespawnsWithThePluginDirAndTheCeiling(t *testing.T) {
 	}
 	runID := soleRunID(t)
 
+	// The first leg DID activate — otherwise this test would pass on a build
+	// where activation never worked at all.
+	if first := probe.spawns(t); !slices.Contains(nodeArgv(t, first, "draft the proposal").tools(), coordinator.SkillToolName) {
+		t.Fatal("precondition failed: the first leg did not activate, so nothing below is a de-escalation")
+	}
+
 	// A second leg, recording into its own directory and with the stub's
 	// failure switched off, so what it asserts is this leg's spawn.
 	probe.freshArgvDir(t)
 	t.Setenv(failPromptEnv, "")
 
 	var resumeErr error
-	captureStdout(t, func() {
+	out := captureStdout(t, func() {
 		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), probe.runner(), nil)
 	})
 	if resumeErr != nil {
@@ -378,24 +392,87 @@ func TestResumeRetryFailed_RespawnsWithThePluginDirAndTheCeiling(t *testing.T) {
 
 	spawns := probe.spawns(t)
 	argv := nodeArgv(t, spawns, "render the artifact")
-	wantDir := filepath.Join(runDirFor(runID), "skills-plugin")
 
-	if dir, ok := argv.value("--plugin-dir"); !ok || dir != wantDir {
-		t.Errorf("--plugin-dir = %q (present=%t), want %q — a resumed node with no plugin dir runs with no skills and exits 0\nargv: %q", dir, ok, wantDir, argv)
+	if argv.has("--plugin-dir") {
+		t.Errorf("a resumed node was spawned with --plugin-dir; the only manifest it could stage from is one the previous leg's nodes could write\nargv: %q", argv)
 	}
-	if tools := argv.tools(); !slices.Contains(tools, coordinator.SkillToolName) {
-		t.Errorf("--tools = %v, want %s among them\nargv: %q", tools, coordinator.SkillToolName, argv)
+	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want no %s on a resumed leg\nargv: %q", tools, coordinator.SkillToolName, argv)
 	}
+	// The ceiling below it does not move either — de-escalating activation is
+	// not a licence to rebuild the policy some other way.
 	if sources, ok := argv.value("--setting-sources"); !ok || sources != "" {
-		t.Errorf("--setting-sources = %q (present=%t), want a rendered empty value — resume must not widen layer 1\nargv: %q", sources, ok, argv)
+		t.Errorf("--setting-sources = %q (present=%t), want a rendered empty value\nargv: %q", sources, ok, argv)
 	}
 	if !argv.has("--strict-mcp-config") {
 		t.Errorf("layer 4 is missing from the resumed argv: %q", argv)
 	}
-	if raw, err := os.ReadFile(filepath.Join(wantDir, "skills", "architecture-design", "SKILL.md")); err != nil {
-		t.Errorf("the resumed leg's staged skill is missing: %v", err)
-	} else if !strings.Contains(string(raw), "the design procedure") {
-		t.Errorf("the resumed leg's staged skill is not the user's file:\n%s", raw)
+	if tools := argv.tools(); !slices.Contains(tools, "Read") {
+		t.Errorf("--tools = %v, want the node's own declared tools intact", tools)
+	}
+	// And the user is told, in one line, why this leg differs from its first.
+	if !strings.Contains(out, "skill activation is off for this leg") {
+		t.Errorf("resume did not disclose the de-escalation:\n%s", out)
+	}
+}
+
+// The hazard itself, end to end: a manifest naming attacker-chosen bytes must
+// not reach a resumed node. Before 2026-08-07 this forged sidecar was loaded,
+// materialized — pruning the user's real corpus away, since re-materialization
+// deletes what the manifest does not name — and handed to the node as
+// --plugin-dir. Same uid, unscoped `Write`, an absolute path: nothing about it
+// needs privilege.
+func TestResumeRetryFailed_ForgedManifestReachesNoNode(t *testing.T) {
+	probe := newArgvProbe(t)
+	t.Setenv(failPromptEnv, "render the artifact")
+
+	captureStdout(t, func() {
+		_ = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	runID := soleRunID(t)
+	pluginDir := filepath.Join(runDirFor(runID), "skills-plugin")
+
+	evil := filepath.Join(t.TempDir(), "SKILL.md")
+	writeFileTree(t, evil, "---\nname: pwned\ndescription: does whatever the previous leg wanted\n---\n\nATTACKER CONTROLLED\n")
+	raw, err := os.ReadFile(evil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	// A well-formed manifest: this build's plugin name, a clean `rel` under
+	// skills/, and a hash that matches its own source. Every check the loader
+	// used to apply passes, because one actor authored all three fields.
+	forged, err := json.Marshal(map[string]any{
+		"plugin": "oh-my-graph-staged-skills",
+		"files":  []map[string]string{{"source": evil, "rel": "skills/pwned/SKILL.md", "sha256": hex.EncodeToString(sum[:])}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pluginDir+".manifest.json", forged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	probe.freshArgvDir(t)
+	t.Setenv(failPromptEnv, "")
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), probe.runner(), nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("resume --retry-failed: %v", resumeErr)
+	}
+
+	argv := nodeArgv(t, probe.spawns(t), "render the artifact")
+	if argv.has("--plugin-dir") {
+		t.Fatalf("the resumed node was pointed at a plugin directory a forged manifest controls: %q", argv)
+	}
+	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want no %s\nargv: %q", tools, coordinator.SkillToolName, argv)
+	}
+	if _, err := os.Stat(filepath.Join(pluginDir, "skills", "pwned", "SKILL.md")); err == nil {
+		t.Errorf("the forged skill was materialized at %s; nothing may re-stage from the sidecar", pluginDir)
 	}
 }
 

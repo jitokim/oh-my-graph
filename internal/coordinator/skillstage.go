@@ -34,16 +34,20 @@
 //     gone before the next node reads. That is prevention, not detection — a
 //     seal could only halt after the fact.
 //
-// ACROSS LEGS THE CLAIM IS WEAKER, and the honest scope is "within a leg". A
-// resumed leg has no in-memory manifest: LoadSkillStaging reads the sidecar
-// back off disk, out of the same run directory a node can write. The sidecar's
-// per-file SHA-256 does not close that — one actor authoring both `source` and
-// `sha256` satisfies its own check — so a node that writes bytes anywhere and
-// then rewrites the sidecar to name them has staged a skill for the next
-// LEG's nodes. What load-time validation does bound is the damage: a `rel`
-// that is not a clean relative path under `skills/` is refused
-// (safeStagedRel), so a forged row can place content inside the staged
-// directory and nowhere else. ADR 0017 §Failure modes records the residual.
+// ACROSS LEGS THERE IS NO CLAIM, so there is no activation either. The scope
+// above is exactly "within a leg", and it is bounded by that in-memory
+// manifest. A resumed leg is a second process that does not have one, so the
+// only thing it could re-stage from is the sidecar — a file in the same run
+// directory a node can write. Its per-file SHA-256 would not close that (one
+// actor authoring both `source` and `sha256` satisfies its own check), and a
+// `rel` guard would only bound a forged row to inside the staged directory,
+// which is where the nodes read. Closing it needs an integrity anchor OUTSIDE
+// the run directory, which this build does not have. So since 2026-08-07 a
+// resumed leg activates nothing: `resume` drops `Skill` and `--plugin-dir`
+// from every rehydrated policy and prints why (cmd/oh-my-graph's
+// dropSkillActivation, ADR 0017 §6). The sidecar is still written — it is this
+// run's record of what it staged, and the artifact an anchor would be computed
+// over — but no code path reads it back to decide what a node may load.
 //
 // Two more residuals, stated rather than closed: the window between
 // verification and the CLI's own read is not closed (that would need the CLI
@@ -383,8 +387,7 @@ func (s *SkillStaging) Dir() string {
 }
 
 // BindTo attaches the manifest to a directory, materializes it, and writes the
-// manifest sidecar beside it so a resumed leg has something to verify against
-// rather than a bare path to trust.
+// manifest sidecar beside it as this run's record of the corpus it staged.
 //
 // Binding is separate from building because the run id does not exist when the
 // plan is made: `auto` mints it after Plan returns, and the goal loop mints one
@@ -573,8 +576,13 @@ func pluginManifestJSON() []byte {
 // does not name and a manifest that deletes itself is a bad manifest.
 func manifestPath(dir string) string { return dir + stagedManifestSuffix }
 
-// writeManifest persists the manifest so a resumed leg can re-materialize and
-// verify rather than trust the path it read out of state.json.
+// writeManifest persists the manifest as this run's RECORD of what it staged:
+// every skill, every file, every plan-time hash, in the run directory beside
+// state.json, so a user or an auditor can read the corpus a run actually
+// offered its nodes. It is not read back by anything. A resumed leg does not
+// re-stage from it (this file's header), precisely because a record living
+// where the nodes can write is a record and not evidence — turning it into
+// evidence is what the deferred anchor is for.
 func (s *SkillStaging) writeManifest() error {
 	s.mu.Lock()
 	m := stagedManifest{Plugin: stagedPluginName, Skills: s.skills, Files: s.files}
@@ -593,69 +601,17 @@ func (s *SkillStaging) writeManifest() error {
 	return nil
 }
 
-// LoadSkillStaging reads a bound directory's manifest back. It is `resume`'s
-// entry point and it deliberately gives no way to proceed without one: a
-// resumed leg that cannot find the manifest cannot vouch for the directory,
-// and a directory it cannot vouch for is one whose skills may simply be
-// absent — silently, with exit 0 (ADR 0017 §6).
-//
-// This is the ONE path on which the manifest is data rather than something
-// trusted Go code is still holding, so it is the one path that has to validate
-// it (see this file's header on the cross-leg residual). Every `rel` is
-// checked here rather than in Materialize, because refusing a bad manifest
-// before a leg starts is a message about the run; refusing it per spawn would
-// be a node failure attributed to a node.
-func LoadSkillStaging(dir string) (*SkillStaging, error) {
-	raw, err := os.ReadFile(manifestPath(dir))
-	if err != nil {
-		return nil, fmt.Errorf("skill staging: no manifest at %s (%w); this run's staged skill corpus cannot be verified, so it is not re-created", manifestPath(dir), err)
-	}
-	var m stagedManifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("skill staging: manifest at %s is unreadable: %w", manifestPath(dir), err)
-	}
-	if m.Plugin != stagedPluginName {
-		return nil, fmt.Errorf("skill staging: manifest at %s names plugin %q, not %q; it is not one this build wrote", manifestPath(dir), m.Plugin, stagedPluginName)
-	}
-	if len(m.Files) == 0 {
-		return nil, fmt.Errorf("skill staging: manifest at %s names no files", manifestPath(dir))
-	}
-	for _, f := range m.Files {
-		if !safeStagedRel(f.Rel) {
-			return nil, fmt.Errorf("skill staging: manifest at %s names staged path %q, which is not a path inside the staged directory; this manifest is not one this build wrote", manifestPath(dir), f.Rel)
-		}
-	}
-	return &SkillStaging{skills: m.Skills, files: m.Files, dir: dir}, nil
-}
-
-// safeStagedRel is the guard on where a LOADED manifest can make this process
-// write. walkSkillDir builds every `rel` as path.Join("skills", <safe name>,
-// <rel within the walk root>), so at plan time it is safe by construction; off
-// disk it is an input strictly less trusted than the frontmatter
-// safeSkillDirName already polices, and `../../..` in it would put
-// Materialize's write outside the staged directory — where pruneTo, which
-// walks only the staged directory, would never clean it up again.
-//
-// Slash-separated, already clean, relative, no `..` element, and under
-// `skills/` — which is every shape walkSkillDir produces and nothing else.
-func safeStagedRel(rel string) bool {
-	if rel == "" || rel != path.Clean(rel) || path.IsAbs(rel) {
-		return false
-	}
-	if strings.ContainsRune(rel, os.PathSeparator) && os.PathSeparator != '/' {
-		return false
-	}
-	parts := strings.Split(rel, "/")
-	if len(parts) < 3 || parts[0] != "skills" {
-		return false
-	}
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
-}
+// There is deliberately NO LoadSkillStaging. A reader for the sidecar existed
+// until 2026-08-07 and had exactly one caller, `resume`, which no longer
+// activates skills at all (see this file's header). Keeping a validated loader
+// that no path reads would be the same shape this repository has spent a week
+// removing — a mechanism that looks like it defends something and defends
+// nothing — so it was removed with its caller. Restoring it is a step of the
+// anchor design ADR 0017 §6 defers, not a leftover: it must come back with the
+// guard it had (every `rel` a clean relative path under `skills/`, refused
+// otherwise, because `../..` would put a write where pruneTo never sweeps) AND
+// with the outside-the-run-directory anchor that makes reading it mean
+// something. `git show a43c645:internal/coordinator/skillstage.go` has both.
 
 // GuardStaging wraps a NodeRunner so the staged corpus is re-materialized and
 // verified immediately before every spawn. It is a NodeRunner decorator rather

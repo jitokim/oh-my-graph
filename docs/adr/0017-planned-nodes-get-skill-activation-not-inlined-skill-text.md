@@ -556,6 +556,57 @@ a directory. Therefore:
   de-escalated on resume, which would have made the reversibility claim false
   for every resumed leg. **De-escalation only, never the reverse**, so a
   resume can never widen a run's ceiling.
+> **Note, 2026-08-07 — activation is OFF on resume, and this section's
+> mechanism is suspended until an anchor exists.**
+>
+> **The hazard.** Everything above assumes a resumed leg can re-stage from the
+> manifest. It cannot, safely. Within a leg the manifest is trusted Go code's
+> and lives in memory: `Materialize` runs from it before every spawn, deletes
+> every path it does not name, and consults no file to decide what the corpus
+> is — so a node that plants a skill has it wiped before the next node reads,
+> and a forged sidecar is never looked at. That property is real and was
+> re-verified against a spawned node before this note was written. A resumed
+> leg has none of it. It is a second process with no in-memory manifest, so
+> `LoadSkillStaging` read the sidecar — a file in the run directory, which the
+> previous leg's nodes could write: unscoped `Write`, same uid, `0700` stops
+> other users and not the node itself. The per-file SHA-256 was no defence
+> (one actor authoring both `source` and `sha256` satisfies its own check),
+> and `safeStagedRel` bounded a forged row to *inside* the staged directory,
+> which is exactly where the nodes read.
+>
+> Verified end to end, not argued: a well-formed manifest naming
+> attacker-chosen bytes was accepted, materialized, and handed to the resumed
+> node as `--plugin-dir` with `Skill` in `--tools`. Re-materialization also
+> **pruned the user's real corpus away**, since it deletes what the manifest
+> does not name — so this was full corpus substitution, not merely addition,
+> and the run exited 0 with no warning.
+>
+> **The decision.** A resumed leg activates nothing. `resume` drops `Skill`
+> from every rehydrated tool set and leaves `PluginDirs` empty, unconditionally
+> — the `--no-skill-activation` behaviour, now the only behaviour — and prints
+> one line saying why, so a leg that behaves differently from its first is not
+> a silent difference. `LoadSkillStaging` and `safeStagedRel` were removed with
+> their only caller rather than left as a reader nothing reads; they are in
+> `a43c645` for whoever implements the anchor. The sidecar is still written, as
+> the run's record of the corpus it staged.
+>
+> **What this costs.** Approximately nothing today. Measured activation yield
+> is ~1 skill invocation across 7 eligible nodes, and 0 in the pre-registered
+> acceptance run (§The acceptance test). It costs a resumed leg a capability
+> that mostly was not firing.
+>
+> **What it defers.** The anchor is a design, not a patch, and it is not
+> attempted here. It has to answer at least: **where** the record lives such
+> that a planned node cannot reach it (the run directory is out; `~/.claude` is
+> the user's and oh-my-graph does not write there; `OMG_HOME` is a parent of
+> the run directory and needs its own argument); **who** writes it and when,
+> given `BindTo` runs after the run id exists; **what `resume` does when the
+> anchor and the directory disagree** — halt, or re-materialize from the anchor
+> and continue; and whether the anchor is the manifest itself or a hash of it.
+> Until that is settled and written down, a resumed leg that activated would be
+> a claim with nothing behind it, which is the thing this ADR's own acceptance
+> test was run to avoid.
+
 - The first draft justified a weaker resume posture with *"a resumed leg may
   be days after a gate paused"*. **That run cannot exist**:
   `validatePlannedNodes` rejects gate nodes outright, so a planned graph has
@@ -1033,6 +1084,11 @@ before today.
   trigger, and `resume` is where it bites. §6 answers it by re-materializing
   and verifying rather than rehydrating a path; the failure mode remains the
   reason that answer is not optional.
+
+  > **Update 2026-08-07.** On `resume` this is answered a second way, and the
+  > blunter one: no resumed leg is given `--plugin-dir` at all, so there is no
+  > path for it to point at nothing (§6 note). Within a leg the answer above
+  > stands unchanged.
 - **A node stages its own skill.** `Write` is unscoped in
   `plannedToolAllowlist` and no directory is unwritable by a same-uid process,
   so this is answered by re-materializing before every spawn (§5), not by
@@ -1061,6 +1117,16 @@ before today.
   build does not have — `state.json` is in the same directory. Recorded as a
   residual rather than papered over: the header of `skillstage.go` scopes its
   own claim to "within a leg" for the same reason.
+
+  > **Closed 2026-08-07, by removal rather than by an anchor.** The residual
+  > was reproduced end to end — a forged sidecar reached a resumed node's argv
+  > and replaced the user's corpus wholesale — and a residual that reproduces
+  > that easily is not one to ship. A resumed leg now activates nothing (§6
+  > note), so nothing reads the sidecar and there is no forgery to bound. The
+  > three bounds above are moot on this build and are kept as the record of
+  > what a re-introduced loader must restore. The bullet above them — "a node
+  > stages its own skill", answered within a leg by re-materializing before
+  > every spawn — is unchanged and was re-verified.
 - **Cost with nothing to show.** Every planned node pays ~6,008 tokens for 35
   descriptions whether or not it activates anything, on every retry and
   feedback re-run. ADR 0012 measured 84% of planner ids as having no candidate

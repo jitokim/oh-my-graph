@@ -215,7 +215,7 @@ func newResumeFlags() *resumeFlags {
 	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute a failed run's failed and cancelled nodes, or finish a session-limit-paused run's unfinished nodes; every passed node's result is kept")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	f.set.BoolVar(&f.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
-	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "drop skill activation from this leg: the staged skill plugin is not re-created and the Skill tool is withheld (ADR 0017). De-escalation only — there is no flag that turns activation on for a run that was planned without it")
+	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "accepted and redundant since 2026-08-07: NO resumed leg activates skills, because the only manifest it could re-stage from lives in the run directory the previous leg's nodes could write (ADR 0017 §6). Passing it changes nothing but the line resume prints. De-escalation only — there is no flag that turns activation on for a resumed leg")
 	return f
 }
 

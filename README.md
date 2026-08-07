@@ -545,8 +545,17 @@ re-created and verified from a manifest before every node spawn, so a node
 cannot leave a skill behind for a later one. Your own `~/.claude/skills` tree
 is read once, when the corpus is staged: editing it mid-run neither changes the
 run nor stops it, because the nodes read the staged copy.
-`--no-skill-activation` turns the whole thing off — on `auto` and on `resume` —
-and the old `--no-skill-mapping` still works, with a notice.
+`--no-skill-activation` turns the whole thing off, and the old
+`--no-skill-mapping` still works, with a notice.
+
+**A resumed leg never activates skills.** Only the first leg of a run does. A
+resumed leg is a fresh process with no in-memory manifest, so the only thing it
+could re-stage from is the record inside the run directory — which the previous
+leg's own nodes could have rewritten, since they run as you and `Write` is
+unscoped. Until there is somewhere outside the run directory to anchor that
+record, `resume` withholds the `Skill` tool and the staged directory instead of
+trusting one, and prints one line saying so. See
+[ADR 0017 §6](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md).
 
 Two places a skill can live are **out of scope** and are not staged: skills
 provided by a **plugin** (`~/.claude/plugins/...`) and **project** skills
