@@ -8,7 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.1] - 2026-08-07
+
+The reachable release. v0.5.0 shipped the whole of ADR 0016's build-evidence
+engine and nothing that reached it: the attachment, the serialization, the
+`retry.max` cap and the provenance qualifier were all in the tree, and no
+`FlagSet` parsed `--verify-cmd`, so the binary a reader installed could not do
+what that release's own README described. That gap is the reason to cut now
+rather than wait for more: the flag is parsed, and issue #119 is closed by a
+version you can actually install. Around it the planner stops getting two
+things quietly wrong — it now aims a feedback arc at a node the loop reaches
+every producer from, rather than at one producer while another sits outside the
+body, and it names the repositories a goal reaches that `auto` creates no
+worktree in and takes no lock on. And skill activation lands wired, disclosed,
+and measured at 1 invocation across 7 activated planned nodes in aggregate,
+with 0 in the pre-registered run: an activation-eligible planned node really is
+spawned with a staged plugin directory and the `Skill` tool, ADR 0017's
+acceptance test was run on 2026-08-07 under a pre-registered rule and
+FAILED, and both of those sentences are in the entry below — shipping the first
+without the second is the class of claim this project spent the week removing.
 
 ### Added
 
@@ -79,7 +97,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   (de-escalation only, so no resumed leg can widen a run's ceiling).
 
 - **`auto --verify-cmd` / `--verify-timeout` — build evidence becomes reachable
-  (ADR 0016 §2, #119).** v0.5.0 shipped the whole engine for this and no way to
+  (ADR `0016-build-evidence-is-a-user-supplied-engine-command.md` §2, #119).**
+  v0.5.0 shipped the whole engine for this and no way to
   reach it: the attachment, the serialization, the `retry.max` cap and the
   provenance qualifier were all in the tree, but no `FlagSet` parsed the flag,
   so every `auto` run still took the zero-config path. It parses now.
@@ -103,7 +122,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   it recognizes the project, the command that would change that (§3).
 - **Known cost of the above:** an `auto` run started with `--verify-cmd` cannot
   be resumed. `resume` refuses every verification it finds in a run directory
-  on an auto graph rather than replay engine-run shell on trust (ADR 0016 §4),
+  on an auto graph rather than replay engine-run shell on trust
+  (ADR `0016-build-evidence-is-a-user-supplied-engine-command.md` §4),
   and it has no `--verify-cmd` of its own to re-supply the command with, so the
   refusal is terminal. Continuing such a run with the check silently dropped is
   the failure the mechanism exists to prevent; it stops instead. `chat` takes
@@ -181,6 +201,26 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   instructions in a row, on precisely the long, expensive run someone pays for
   build evidence to protect. The hint now says the run cannot be resumed and
   why, instead of printing a command that exits 1.
+
+### Documentation
+
+- **The dashboard screenshot showed the defect v0.5.0 fixed (#127).** The
+  shipped image predates ADR 0015 and has two runs sitting in IN FLIGHT that
+  had in fact been dead for days — the exact thing the lock-derived `ABANDONED`
+  rule exists to stop — and it predates the header's gate-paused chip. Retaken
+  against a live v0.5.0 dashboard: four real runs in flight, one of them a
+  fan-out captured while its three parallel nodes were mid-flight, so the
+  mini-DAG card shows a graph shape rather than a straight line. They are real
+  `oh-my-graph run` invocations against the shipped `haiku-smoke` example and a
+  small fan-out graph; nothing in the frame is mocked. Both READMEs' alt text
+  described the old counts and now describes what the new image shows.
+- **CONTRIBUTING says how a local build becomes your `oh-my-graph` (#132).** It
+  documented `make build` and stopped there, leaving the step every contributor
+  improvises: README's `go install …@latest` fetches a *released* version, so
+  following it while iterating runs someone else's binary against your edits.
+  The symlink-onto-PATH recipe contributors were already using ad hoc is
+  written down, `mkdir -p ~/.local/bin` included, since `ln -sf` fails without
+  it on a machine that has never had one.
 
 ## [v0.5.0] - 2026-08-06
 
@@ -1383,7 +1423,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...HEAD
+[v0.5.1]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...v0.5.0
 [v0.4.1]: https://github.com/jitokim/oh-my-graph/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/jitokim/oh-my-graph/compare/v0.3.1...v0.4.0
