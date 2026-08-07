@@ -392,3 +392,93 @@ nodes:
 		t.Errorf("advisory %q suggested a target whose body would contain the gate", advisories[0].Detail)
 	}
 }
+
+// judgedAgainstAnInterpolatedSiblingYAML is the counterexample that closed the
+// escalation lane on issue #118. The proposal was to make this sweep SAFE TO
+// ESCALATE on a subset — fire hard (a load error, not advice) only when the
+// declarer's prompt interpolates the unreachable producer's artifact, since
+// `{{ artifacts.criteria }}` proves the reviewer actually reads it.
+//
+// This graph satisfies that predicate exactly, and it is CORRECT. Every defect
+// `review` can emit is a defect in `impl` measured against `criteria`, and
+// `rerun: impl` repairs precisely that; `criteria` is the yardstick, not the
+// thing measured. Escalating would refuse it, and the covering target the
+// advisory names — `rerun: scope` — would rewrite the acceptance criteria every
+// round, ADR 0010's "actively harmful" (see
+// TestLintFeedbackReach_ProducerUpstreamOfTheTargetIsQuiet).
+//
+// The predicate's error is that `{{ artifacts.P }}` proves the reviewer READS
+// P. The defect needs the reviewer to JUDGE P. The graph has no token
+// separating "read as yardstick" from "read as thing measured" — the two are
+// the same syntax — so the scan narrows the blind spot without touching the
+// load-bearing half.
+const judgedAgainstAnInterpolatedSiblingYAML = `
+name: judged-against-criteria
+nodes:
+  - id: scope
+    prompt: scope the work
+  - id: criteria
+    depends_on: [scope]
+    prompt: write the acceptance criteria
+  - id: impl
+    depends_on: [scope]
+    prompt: "implement it; feedback: {{ feedback.review }}"
+  - id: review
+    depends_on: [criteria, impl]
+    prompt: "judge {{ artifacts.impl }} against the criteria in {{ artifacts.criteria }}"
+    success_check: { exit_zero: true, result_matches: "^PASS$" }
+    feedback: { rerun: impl, max: 2 }
+`
+
+// TestLintFeedbackReach_InterpolatingASiblingStaysAdvisory pins the rejection
+// so the next reader does not re-derive it. It asserts the two facts that
+// together sink the "escalate on {{ artifacts.P }}" proposal, in the one
+// direction each fails:
+//
+//   - The predicate FIRES on a correct graph. Refusing it would break working
+//     hand-written graphs, and interpolating a sibling's artifact is the
+//     idiomatic way to supply stable context — so the subset selects TOWARD
+//     false positives.
+//   - The predicate does NOT fire on #118 itself, whose reviewer named its two
+//     files by literal path. The escalation would not have caught the bug that
+//     motivated it.
+//
+// The predicate itself is mechanically computable — judgesByPlaceholder below
+// decides it — but a rule with both false positives (it hard-fails correct
+// graphs) and false negatives (it misses the motivating one) is not safe to
+// escalate on. The sweep stays advisory; the remaining lever is runtime
+// (let the reviewer name its own next target), not static.
+func TestLintFeedbackReach_InterpolatingASiblingStaysAdvisory(t *testing.T) {
+	g := parseGraph(t, judgedAgainstAnInterpolatedSiblingYAML)
+	if err := g.Validate(); err != nil {
+		t.Fatalf("the counterexample must be a valid graph, else it proves nothing: %v", err)
+	}
+
+	advisories := g.LintFeedbackReach()
+	if len(advisories) != 1 || advisories[0].Producer != "criteria" {
+		t.Fatalf("LintFeedbackReach() = %v, want one advisory about criteria", advisories)
+	}
+	if !judgesByPlaceholder(g, "review", "criteria") {
+		t.Fatal("the counterexample must interpolate {{ artifacts.criteria }}, or it is not in the proposed subset")
+	}
+	if advisories[0].Suggestion != "scope" {
+		t.Errorf("advisory suggests %q, want scope — the record is that the escalated advice would re-run the criteria every round", advisories[0].Suggestion)
+	}
+
+	// #118's own reviewer reads its producers off disk by literal path, so the
+	// proposed predicate is false there: the escalation would have stayed quiet
+	// on the very bug it was meant to refuse.
+	bug := parseGraph(t, fanInReviewYAML)
+	if judgesByPlaceholder(bug, "review", "qa-plan") {
+		t.Error("issue #118's reviewer must reach its producer by literal path; if it interpolates, this test no longer records the adverse selection")
+	}
+}
+
+// judgesByPlaceholder reports whether declarer's prompt interpolates
+// producer's artifact — the predicate the rejected escalation would have
+// keyed on. Spelled out here rather than reused from the handoff sweep
+// because it is the PROPOSAL's rule, not the engine's: nothing in production
+// computes it, and nothing should start.
+func judgesByPlaceholder(g *Graph, declarer, producer string) bool {
+	return strings.Contains(g.byID[declarer].Prompt, "{{ artifacts."+producer+" }}")
+}

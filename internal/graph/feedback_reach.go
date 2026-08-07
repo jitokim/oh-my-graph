@@ -50,9 +50,13 @@ func (a FeedbackAdvisory) String() string {
 // CANNOT see is which artifacts a prompt will actually judge: the #118
 // reviewer named its two files by literal path (`stg-canary/QA-PLAN.md`), not
 // through `{{ artifacts.qa-plan }}`, so no placeholder scan would have caught
-// it either. "This producer is outside the loop" is therefore a statement
-// about topology, not about intent — which is precisely why it is an
-// advisory and not an eighth load rule:
+// it either. Nor does scanning for `{{ artifacts.P }}` carve out a subset that
+// COULD be refused: that token proves the declarer reads P, while the defect
+// needs it to judge P, and a reviewer judging one artifact against another
+// spells both the same way — rejected in ADR 0010's alternatives, pinned by
+// TestLintFeedbackReach_InterpolatingASiblingStaysAdvisory. "This producer is
+// outside the loop" is therefore a statement about topology, not about intent
+// — which is precisely why it is an advisory and not an eighth load rule:
 //
 //   - A producer may be outside the body ON PURPOSE. ADR 0010's own rule 3
 //     blesses the shape — "Parents feeding into the body from outside are

@@ -596,6 +596,29 @@ into an ordinary failure on resume. Instead:
   placeholder contract exists to forbid. Always-inline confines the
   empty-is-normal semantics to prompt text; a path form can be added later
   if a payload ever outgrows a prompt.
+- **Escalating the fan-in reach sweep into a load error on the subset where
+  the declarer interpolates the unreachable producer's artifact.** Rejected
+  2026-08-07 (issue #118 follow-up). `LintFeedbackReach` is advice because it
+  reads `depends_on`, not which artifacts a prompt judges; the proposal was to
+  carve out a subset where that gap closes — `{{ artifacts.P }}` in the
+  declarer's prompt proves it reads P — and refuse those at load. The subset
+  is mechanically computable, but it is not a safe load-error criterion: it is
+  neither sound nor complete for the defect. `{{ artifacts.P }}` proves the
+  reviewer READS P; the defect requires the reviewer to JUDGE P, and the
+  graph has no token separating "read as yardstick" from "read as thing
+  measured". The counterexample is ordinary: `scope → {criteria, impl} →
+  review` with `rerun: impl` and a reviewer that judges
+  `{{ artifacts.impl }}` *against* `{{ artifacts.criteria }}`. It satisfies
+  the predicate, it is correct, and the target the advisory names —
+  `rerun: scope` — would rewrite the acceptance criteria every round, the
+  same actively-harmful advice the ancestor skip above exists to prevent.
+  Worse, the subset selects adversely: #118's own reviewer named its files by
+  literal path, so the escalation would not have fired on the bug that
+  motivated it. Pinned as a negative
+  regression test (`TestLintFeedbackReach_InterpolatingASiblingStaysAdvisory`)
+  so the rejection is not re-derived. The remaining lever is runtime — letting
+  a reviewer name its own next target — which is a new construct, not a
+  stricter load rule.
 - **A retry-style `on:` cause filter on `feedback`.** Deferred, not
   rejected: v1 hard-codes the trigger to the three judgment causes
   (Semantics), and a user-facing filter narrowing *within* that set is a

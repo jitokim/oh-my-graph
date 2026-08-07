@@ -21,7 +21,7 @@ func runLint(args []string) error {
 	return lintGraph(os.Stdout, os.Stderr, args[0])
 }
 
-// lintGraph reports every load-time problem graph.LintFile finds — fragment
+// lintGraph reports every load-time problem graph.LintLoadFile finds — fragment
 // resolution failures (an unresolvable `use:`, a broken binding — ADR 0013)
 // plus every structural check `run` enforces on the RESOLVED graph (DAG/cycle,
 // unknown depends_on ids, the session-handoff parent rule, verify blocks,
@@ -55,15 +55,11 @@ func runLint(args []string) error {
 // early copy of that failure. `run --dry-run` prints the same warnings
 // through the same helper (see dryRunGraph).
 func lintGraph(w, warnW io.Writer, path string) error {
-	issues, fragmentAdvisories, err := graph.LintFile(path)
+	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
 	}
 	if len(issues) == 0 {
-		loaded, err := graph.LoadFile(path) // LintFile found nothing, so this cannot fail
-		if err != nil {
-			return err
-		}
 		printFragmentResolutions(w, loaded.Resolutions)
 		warnAdvisories(warnW, path, loaded.Graph)
 		warnFragmentAdvisories(warnW, path, fragmentAdvisories)

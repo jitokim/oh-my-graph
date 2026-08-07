@@ -11,7 +11,7 @@ import (
 )
 
 // dryRunGraph is the `run --dry-run` path: load the graph through the same
-// fragment-resolving graph.LintFile pass the `lint` subcommand uses (ADR
+// fragment-resolving graph.LintLoadFile pass the `lint` subcommand uses (ADR
 // 0013), report every issue — fragment resolution failures plus the resolved
 // graph's structural problems — resolve the {{ inputs.* }} references against
 // the bound --input values, print the resolved plan, and return without
@@ -24,7 +24,7 @@ import (
 // fragment drift smell) go to warnW through the same warnAdvisories /
 // warnFragmentAdvisories helpers `lint` uses, and never affect the exit code.
 func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
-	issues, fragmentAdvisories, err := graph.LintFile(path)
+	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
 	}
@@ -34,10 +34,6 @@ func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) erro
 		return err
 	}
 
-	loaded, err := graph.LoadFile(path) // LintFile found nothing, so this cannot fail
-	if err != nil {
-		return err
-	}
 	g := loaded.Graph
 	warnAdvisories(warnW, path, g)
 	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
