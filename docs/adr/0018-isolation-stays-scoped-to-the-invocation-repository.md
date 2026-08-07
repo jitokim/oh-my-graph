@@ -30,7 +30,7 @@
 
 ### What was reported, and which half is still open
 
-#103 reported two symptoms of one root cause, from a real run
+Issue #103 reported two symptoms of one root cause, from a real run
 (`20260804-032843.062915000-1`) whose goal named a second local repository by
 absolute path. That run directory is no longer on disk; the durable record of
 it is the issue itself — see §Falsification, *"Where the evidence lives"*, which
@@ -57,8 +57,11 @@ This ADR is about the second one.
 The issue's title — *"cross-repo nodes have no worktree isolation"* — is true,
 and it is true of same-repo planned nodes as well. **`auto` provisions no
 managed worktree anywhere.** `validatePlannedNodeCwd` and
-`validatePlannedNodeWorktree` both refuse the field, so every planned node runs
-directly in the tree the user invoked from, editing and committing in it.
+`validatePlannedNodeWorktree` both refuse the field, so every planned node
+starts in the tree the user invoked from, with nothing placing it anywhere else
+and nothing isolating it there. A node may still `cd` away or cut a worktree of
+its own; that is the node's doing, and the engine neither provides it nor
+enforces it.
 `UnisolatedScan`'s own doc comment says this in the strongest available terms:
 
 > THE BOUNDARY IS ONE OF OWNERSHIP, NOT OF PROTECTION. `auto` rejects `cwd:`
@@ -90,8 +93,8 @@ which the issue conflates and which have nothing in common but the word
   a directory can make the engine create checkouts and branches in it.
 
 Building (A) alone would ship a capability the reporter cannot use and leave
-#103 open. Building (B) is the decision this record has to make, and (A) is
-only worth making at the same time or not at all.
+issue #103 open. Building (B) is the decision this record has to make, and
+(A) is only worth making at the same time or not at all.
 
 ### What the engine can enforce, and where that stops
 
@@ -326,11 +329,13 @@ somebody else's problem arriving without warning. Any build must therefore also
 ship (a) cleanup notes that name the *repository* and not only the branch,
 (b) something that can enumerate and prune what a run left in a foreign
 repository — which is a new command with its own record of what a run touched,
-not a flag on an existing one, and (c) a **composite `Provider`**: `Cleanup` is
-invoked exactly once, on one provider, at leg end (`cmd/oh-my-graph/main.go`,
-and again in `resume.go`). N managers behind that interface need something that
-fans the call out to all of them and merges their notes, or §3's own cleanup
-obligation is unwired — every repository but the invocation one would keep
+not a flag on an existing one, and (c) a **cleanup coordinator, which is not a
+`Provider`**: ADR 0005 put `Acquire` on `worktree.Provider` and deliberately
+left `Cleanup` off it, so the fan-out belongs to a separate object over the
+concrete managers and widening the interface is not an option here. `Cleanup` is
+invoked exactly once, on one manager, at leg end (`cmd/oh-my-graph/main.go`,
+and again in `resume.go`). N managers need something that fans the call out to
+all of them and merges their notes, or §3's own cleanup obligation is unwired — every repository but the invocation one would keep
 everything, on the *successful* path, which is the one the user is least
 looking at.
 
@@ -515,7 +520,12 @@ the exact thing #103's first triage comment could not read from the run feed.
 - **Metric.** The fraction whose transcript records a `git worktree add` (or a
   clone) in that repository **before** any command that moves that repository's
   HEAD (`git checkout`, `git switch`, `git reset`, a branch-creating commit in
-  the shared tree).
+  the shared tree), **and** whose every such HEAD-moving command then runs
+  *inside the path that setup created* — so the created path is recorded
+  alongside each command in the sample, and a node that cuts a worktree and then
+  runs `git checkout` back in the shared checkout counts as non-compliant. Setup
+  alone proves nothing: the collision this measures is a command landing in the
+  shared tree, not the absence of a `worktree add` before it.
 - **Threshold, fixed now.** Over **at least 10** such nodes: **≥ 80% →
   advisory works, this decision stands and hardens.** **< 50% → advisory has
   failed on its own terms, and §1's user-named `--repo` form is built**, with
