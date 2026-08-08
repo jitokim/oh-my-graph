@@ -298,7 +298,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.5.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.2 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -578,13 +578,30 @@ from /home/you/.claude/skills` 다음에 not-scanned 안내가 따라옵니다. 
 아무것도 못 찾은 스캔도 자기가 들여다본 디렉토리를 반드시 이름으로 밝히므로,
 "스킬이 있는데 `auto`가 못 본다"가 추측이 아니라 한 줄로 진단됩니다.
 
-**실제로 쓰이는지는 아직 증명되지 않았고, 이 기능은 기본으로 켜져 있습니다.**
-2026-08-07 메인테이너 인수 테스트는 합산 기준 **활성화된 플랜 노드 7개에서
-`Skill` 호출 1회**를 측정했습니다 — 그 1회는 run 1에서 나왔고, **사전 등록된
-두 번째 run과 그 반복 arm에서는 0회**였습니다. argv 수준에서 전달은 증명되었지만
-채택은 증명되지 않았고, ADR 0017이 `Proposed`인 이유가 그것입니다. 그 숫자는 매
-run 가격과 함께 출력되며, 아직 값을 못 하는 기능에 호출마다 토큰 세금을 내고
-싶지 않다면 `--no-skill-activation`이 그 스위치입니다.
+**실제로 쓰이는지는 이제 측정되었지만, 그 결과가 토큰 값을 하는지는 아직
+아닙니다. 그리고 이 기능은 기본으로 켜져 있습니다.** v0.5.1은 **활성화된 플랜
+노드 7개에서 `Skill` 호출 1회**를 기록한 채로, 원인을 모르는 상태로
+출시되었습니다. 활성화된 노드가 실제로 받는 argv 그대로 돌린 44회의 real spawn이
+그 이유를 말합니다: 플래너 자신의 프롬프트를 한 바이트도 바꾸지 않고 돌렸을 때
+노드가 스킬을 집은 것은 **9번 중 0번**이었습니다 — 맞는 스킬이 없어서가 아니라,
+그 gate가 description의 트리거 표현이 그 작업과 얼마나 직접적으로 맞아떨어지는지에
+대한 threshold이고, 플래너 register 아래에서는 숙고 없이 적용되기 때문입니다.
+그래서 `auto`는 이제 **활성화된** 노드의 프롬프트에 스킬 이름도 디렉토리 이름도
+담지 않은 고정된 한 문장을 덧붙입니다: *"A corpus of procedures is available
+through the Skill tool; consult it if one fits this task."* 같은 프롬프트
+바이트에 이 문장만 더했을 때 **9번 중 8번** 발화했고, 8번 모두 사용자 자신의
+코퍼스에 있던 같은 실제 스킬을 골랐습니다. 이것은 권한이 아니라 프롬프트
+텍스트이며, 저장되는 `graph.json`에는 **의도적으로 기록되지 않습니다** — 그
+artifact는 `run`으로 다시 실행되고, `run`에는 약속할 스테이징된 코퍼스가 없기
+때문입니다.
+
+그 숫자는 probe이고, 결과물이 더 좋아졌다는 주장이 아닙니다. 산출물을 기계적으로
+검사할 수 있었던 유일한 작업에서 두 arm은 구별되지 않았고, 문장을 넣은 쪽의 spawn
+평균 비용은 **$0.134 대비 $0.205**였습니다. 그리고 프롬프트 자체가 출력 계약인
+노드(검증 노드의 `PASS`/`FAIL`)는 문장이 있으나 없으나 활성화되지 않습니다.
+ADR 0017이 `Proposed`인 이유가 그것입니다. 이 숫자들은 매 run 가격과 함께
+출력되며, 값이 아직 측정되지 않은 기능에 호출마다 토큰 세금을 내고 싶지 않다면
+`--no-skill-activation`이 그 스위치입니다.
 
 이 모든 것의 근거가 된 측정은
 [ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)에,

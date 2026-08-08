@@ -281,7 +281,7 @@ from source there.
 Pick a tag from the Releases page, then:
 
 ```sh
-VERSION=0.5.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.2 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -523,14 +523,30 @@ says so on its own line. An **agent-mapped node is excluded** and gets
 neither half: running as one of your subagents already means loading your
 settings to resolve the agent, which is the trade `agent:` has always made.
 
-**Whether it does is not yet shown, and the feature is on by default.** The
-maintainer acceptance tests of 2026-08-07 measured **1 skill invocation across
-7 activated planned nodes** in aggregate — the one came from run 1, and it was
-**0 in the pre-registered second run and its repeat**. The delivery is
-proven at the argv, the adoption is not. ADR 0017 is `Proposed` for that
-reason, and the number is printed with the price before every run. If you
-would rather not pay a per-invocation token tax for a capability that has not
-yet paid for itself, `--no-skill-activation` is the switch.
+**Whether it does is now measured; whether the result is worth the tokens is
+not, and the feature is on by default.** v0.5.1 shipped this recording **1
+skill invocation across 7 activated planned nodes**, cause unknown. 44 real
+spawns against the exact argv an activated node receives say why: under the
+planner's own prompt, verbatim, a node reached for a skill **0 times in 9** —
+not because nothing fit, but because the gate is a threshold on how directly a
+description's trigger language matches the task, applied without deliberation.
+So `auto` now appends one fixed sentence to every **activated** node's prompt,
+naming no skill and no directory: *"A corpus of procedures is available through
+the Skill tool; consult it if one fits this task."* The same prompt bytes with
+that sentence fired **8 of 9**, and all 8 chose the same real skill of the
+user's own corpus. It is prompt text and not a grant, and it is deliberately
+**not** written into a saved `graph.json` — that artifact re-runs through
+`run`, which has no staged corpus to promise.
+
+That number is a probe, and it is not a claim that the work got better. On the
+one task where the deliverable could be checked mechanically the two arms were
+indistinguishable, while the arm with the sentence cost **$0.205 a spawn
+against $0.134**; and a node whose prompt is an output contract (a verification
+node's `PASS`/`FAIL`) does not activate with it or without it. ADR 0017 is
+`Proposed` for that reason, and the numbers are printed with the price before
+every run. If you would rather not pay a per-invocation token tax for a
+capability whose value is still unmeasured, `--no-skill-activation` is the
+switch.
 
 The tool ceiling does not move for it. Activation-eligible planned nodes still
 load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared

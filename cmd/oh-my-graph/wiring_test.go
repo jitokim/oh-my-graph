@@ -486,10 +486,14 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		// The measured yield travels with the price. A disclosure that charges
 		// a user ~6,000 tokens per invocation while the ADR records FAIL, and
 		// says only what the mechanism WOULD do, is the asymmetry ADR 0017
-		// convicts ADR 0012 of.
+		// convicts ADR 0012 of. Both halves of the number are pinned, because
+		// the yield and the value are separate measurements and quoting the
+		// first without the second is that same asymmetry in a smaller font:
+		// 0-of-9 → 8-of-9 is what the sentence bought, and "NOT measured" is
+		// what it is still not known to buy.
 		"MEASURED YIELD",
-		"1 skill invocation across 7 planned nodes",
-		"0 under real planner prompts",
+		"0 of 9 times unaided, and 8 of 9",
+		"Whether the WORK is better is NOT measured",
 		"--no-skill-activation",
 	} {
 		if !strings.Contains(got, want) {

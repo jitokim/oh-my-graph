@@ -8,7 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.2] - 2026-08-08
+
+Nothing new to type. No flag, no command, no schema key — every change here
+corrects something v0.5.1 already shipped. Skill activation stops being a
+mechanism with an unexplained yield: 44 real spawns say the 1-in-7 was a
+threshold on how directly a description's trigger language matches the task,
+not a verdict that nothing in the corpus fit, so an activated node's prompt now
+carries one fixed sentence saying a corpus exists. The "fit" reading an earlier
+draft of that entry attached to the same data is **retracted inside it**,
+because the arm run to confirm it — a real, topical description alone in the
+corpus — was pre-registered at 3 of 3 and came back 0 of 3. `lint` and
+`run --dry-run` stop losing every advisory when the graph arrives over a pipe.
+And every shipped verdict prompt now names where a caveat goes, after a `merge`
+node reported FAIL over a merge that had landed: ADR 0019 keeps the anchor that
+rejected it, and makes that one node's re-run cheap instead.
 
 ### Changed
 
@@ -56,8 +70,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   user's **own** skills — the very one acceptance run 2 pre-registered as the
   expected match, sitting unconsulted in all 9 arm-A spawns. And arm L, run
   after the review that caught this, shows that same real description **alone
-  in the corpus still does not fire unaided** (0 of 3, with a 1-of-1 positive
-  control proving the corpus loaded). So a description written as the task's
+  in the corpus still does not fire unaided** — 0 of 3 against a
+  **pre-registered prediction of 3 of 3**, recorded as wrong, with a 1-of-1
+  positive control proving the corpus loaded. So a description written as the task's
   trigger clears the gate unaided; a real, genuinely topical, broader one does
   not — until one sentence asks for a deliberate look, at which point the model
   picks it unanimously. J bounds that: the sentence does not manufacture a fit
@@ -121,6 +136,106 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   is recorded at
   `docs/measurements/probes/0017-skill-activation-yield/manual-guard-2.1.224.txt`,
   so "re-verified" is an artifact rather than an assertion about a test.
+
+### Fixed
+
+- **Every shipped verdict prompt now says where a caveat goes — and no anchor
+  is relaxed to buy it (ADR 0019, #138).** Run `20260807-144514` ran all four
+  steps of `merge-shepherd`'s `merge`, merged PR #135 for real (`83edfad` is on
+  `main`), and was recorded **FAIL**: it had an exception to report — the PR had
+  no local branch, so step 4's `git branch -d` had nothing to delete — and a
+  prompt that said only what may *not* precede the verdict ("no markdown
+  emphasis, no heading, no backticks, no preamble") and never said where a
+  caveat may go instead. The caveat went on top and `MERGED <sha>` landed on
+  line 3, under a pattern anchored at `^`. So all **28** prefix verdicts across
+  `graphs/` and `graphs/fragments/` gain one clause — *anything you need to
+  qualify goes AFTER the verdict, never before it* — written as one unbroken
+  line, so `grep -c "Anything you need to qualify" graphs/*.yaml
+  graphs/fragments/*.yaml` is a sweep that cannot silently miss a node. The
+  four whole-reply pins (`haiku-smoke`'s `write`, the `e2e-verify` fragment,
+  `apply-flags`'s `verify`, and `coordinator.plannedVerdictPattern`) keep the
+  opposite instruction, *and nothing else*.
+
+  **No pattern changes, and that is the measured decision, not the default
+  one.** Every `result_matches` failure this project has on disk was replayed
+  three ways: 187 runs, **218** verdict-bearing node executions (counted from
+  each run's `events.jsonl`, because `state.json`'s `nodes` map keeps only the
+  last record per node id and reads the same corpus as 211/18), **22**
+  failures. 16 of the 22 were the check working — three of them the literal
+  promise reply the pattern exists to reject — and 6 were pattern
+  misjudgements, all in the same direction. Dropping the anchor admits 11
+  replies, **8 of them among the 16 correct FAILs**, because `NOT READY`
+  contains `READY`. `(?m)` admits 3 and none of the 16, which reads as a
+  bargain and is not: only 2 of the 3 are later-line verdicts, the third is a
+  `$`-pinned reply that `(?m)` admits by *deleting* the pin, and constructed
+  against `merge`'s own pattern `(?m)` accepts five promise replies — one of
+  them the prompt's own `MERGED 4f2a1c9` example quoted back — that `^` rejects
+  all five of. Position is the lock, and `(?m)` remains unused in this repo.
+
+  **The cost moves instead, at the one node where it was unusually expensive.**
+  `merge`'s false FAIL was the only one in the repo a re-run could not safely
+  correct — the re-run re-entered `gh pr merge` on an already-merged PR under a
+  grant too narrow to look at what had happened. Its prompt gains a **step 0**
+  that establishes the PR's state before changing it (already `MERGED` ⇒ do not
+  re-enter step 1, take the SHA and report the merge that landed), and its
+  `allowed_tools` gains the two read-only commands step 0 needs,
+  `Bash(gh pr view *)` and `Bash(git merge-base *)`. The SHA is confirmed only
+  *after* `origin/main` is refreshed, with `git merge-base --is-ancestor`: a
+  confirmation read off a stale remote-tracking ref is how a re-run turns a real
+  merge into a second false FAIL. The grant's purpose — the only thing this node
+  may *change* is the merge itself — is intact, and the four-exec-seam invariant
+  is untouched (these are tools inside a claude node, not a new spawner).
+  `internal/graph/shipped_graphs_test.go` now pins the shipped pattern against
+  the whole promise family **including the `(?m)` counterfactual**, so the
+  measurement stops being a claim in a document.
+
+- **`lint` and `run --dry-run` no longer lose every advisory when the graph is
+  not a seekable file (#134).** Both read the path **twice** — once through
+  `graph.LintFile` for the issue list, once more through `graph.LoadFile` for
+  the graph the advisory sweeps run over — and two reads equal one only for a
+  regular file. Served over a pipe (`lint <(…)`, `/dev/stdin`, a FIFO) the
+  second read comes back empty, decodes to an empty graph that passes every
+  check, and the command prints `valid` at exit 0 with every advisory silently
+  gone. The *issues* survive, because they came from the first read; only the
+  advice is lost, which is the half nothing else re-states. `graph.LintLoadFile`
+  now returns the issue list, the fragment advisories and the `LoadResult` from
+  **one** read, and `LintFile` becomes a thin adapter over it, so both commands
+  sweep the graph they actually linted. Pinned by a FIFO regression test that
+  fails on a deadline rather than on a wrong value, because a second read of a
+  FIFO blocks instead of returning empty — and one whose writer reports its own
+  open/write/close failures on a channel, so a setup failure cannot masquerade
+  as the verdict.
+
+  Recorded alongside it, in ADR 0010: **why the fan-in reach sweep stays
+  advisory.** The escalation candidate for issue #118 — hard-fail when the
+  declarer interpolates the unreachable producer's artifact — is not safe to
+  make a load error. `{{ artifacts.P }}` proves the declarer *reads* P while the
+  defect needs it to *judge* P, so `scope → {criteria, impl} → review` judging
+  `{{ artifacts.impl }}` against `{{ artifacts.criteria }}` satisfies the
+  predicate while being correct; and #118's own reviewer named its files by
+  literal path, so the rule would have missed the motivating bug. Neither sound
+  nor complete, refused in ADR 0010's alternatives, and pinned as a negative
+  regression test.
+
+### Documentation
+
+- **ADR 0018 — isolation stays scoped to the invocation repository; a second
+  repository is disclosed, not provisioned (#135,
+  [#103](https://github.com/jitokim/oh-my-graph/issues/103)).** The second half
+  of #103, the one #123 and #129 did not touch: a goal that names a *second*
+  local repository gets no managed worktree there, so a node switching HEAD in a
+  checkout another process is standing in will collide with it. The record is a
+  decision **not to build** — and it says what would change that, which is the
+  only way a "no" is honest. It writes down the shape any future proposal has to
+  start from (a user-supplied `--repo`, never a planner-named or
+  detector-derived path, because `validatePlannedNodeCwd` closed that surface
+  deliberately), what partial failure and cross-repository cleanup would cost,
+  and a pre-registered measurement whose failure converts the refusal into a
+  build. Nothing in the engine moves: ADR 0005's single-repository scope is
+  **affirmed** and carries a dated pointer here, ADR 0004's ceiling is
+  untouched, and `validatePlannedNodeCwd`/`validatePlannedNodeWorktree` stay
+  exactly as closed as they were. SECURITY.md and `docs/LIMITATIONS.md` now
+  point at that record instead of saying only "would need their own ADR".
 
 ## [v0.5.1] - 2026-08-07
 
@@ -1537,7 +1652,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...HEAD
+[v0.5.2]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...v0.5.0
 [v0.4.1]: https://github.com/jitokim/oh-my-graph/compare/v0.4.0...v0.4.1
