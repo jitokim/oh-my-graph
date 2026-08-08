@@ -1,0 +1,1 @@
+Read CHANGES.txt in the current working directory. Reply with a single integer and nothing else: how many of its lines mention a command-line flag.

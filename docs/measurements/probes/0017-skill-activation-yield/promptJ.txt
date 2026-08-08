@@ -1,0 +1,3 @@
+Read CHANGES.txt in the current working directory. Reply with a single integer and nothing else: how many of its lines mention a command-line flag.
+
+A corpus of procedures is available through the Skill tool; consult it if one fits this task.

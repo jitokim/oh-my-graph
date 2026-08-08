@@ -1,0 +1,12 @@
+Read ARCHITECTURE.md in the current working directory (the note just written) and produce design.html in the same directory: a standalone HTML rendering of that same note.
+
+Requirements:
+- A single self-contained file: one <style> block in <head>, no external CSS, no external JS, no web fonts, no images, no network requests of any kind. It must render correctly opened directly from disk with no server.
+- Complete document: <!DOCTYPE html>, <html lang="en">, <meta charset="utf-8">, <meta name="viewport" content="width=device-width, initial-scale=1">, and a <title> matching the note's H1.
+- Faithful content: every section and every bullet of ARCHITECTURE.md appears, with the same headings, the same option names, and the same Decision sentence verbatim. Do not add new arguments, new options, or invent content that is not in the markdown. Convert markdown structure to semantic HTML (h1/h2/h3, p, ul/li, strong).
+- Readable styling: constrained content width (~customary 70ch, centered), system font stack, comfortable line-height, clear heading hierarchy, and a visually distinct callout box for the Decision section. Keep the CSS modest - well under 100 lines.
+- Escape any <, > or & that appear in prose as HTML entities.
+
+Write the file with the Write tool. Do not modify ARCHITECTURE.md. Your final reply is 2-4 lines stating that design.html was written and confirming it is fully self-contained.
+
+A corpus of procedures is available through the Skill tool; consult it if one fits this task.

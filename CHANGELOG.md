@@ -8,6 +8,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Changed
+
+- **Why v0.5.1's skill activation fired once in seven — measured, attributed,
+  and answered with one sentence (ADR 0017 measurement (i), #130).** v0.5.1
+  shipped activation wired, disclosed, and recording **1 `Skill` invocation
+  across 7 activated planned nodes, 0 in the pre-registered run**, with the
+  cause unknown. It is now known, from **44 real `claude -p` spawns** ($7.28,
+  claude 2.1.223 then 2.1.224 / macOS) reproducing the argv an activated
+  planned node receives — `-p`, `--output-format json`, `--permission-mode
+  dontAsk`, `--setting-sources ""`, the staged `--plugin-dir`, `--allowedTools`
+  (the node's own), `--tools` (those plus `Skill`), `--strict-mcp-config`,
+  `--disallowedTools`, `--session-id` — and judged only by a `tool_use` record
+  named `Skill` in the node's own transcript, **with the skill it names**, or by
+  a planted skill's marker file appearing on disk. Never by asking a model what
+  it can see. Every arm, every spawn, both pre-registrations, the runner
+  scripts and the prompt files are in
+  `docs/measurements/0017-skill-activation-yield.md` and the `probes/`
+  directory beside it.
+
+  | arm | task | corpus | sentence | fired |
+  |---|---|---|---|---|
+  | A | write `design.html` (planner register) | 35 **real** skills | no | **0 of 9** |
+  | B | *the same prompt bytes* | 35 real | yes | **8 of 9** — all 8 chose `html-artifact` |
+  | H | *the same prompt bytes* | 35 real + 1 **planted** trigger description | no | **3 of 3** |
+  | L | *the same prompt bytes* | **1 real**: only the `html-artifact` B chose | no | **0 of 3** |
+  | J | a task no skill fits | 35 real | yes | **0 of 3** (without: **0 of 3**) |
+  | K | a `PASS`/`FAIL`+list output contract | 35 real | yes | **0 of 3** (without: 0 of 1) |
+
+  A↔B varies one sentence, A↔H one added description, A↔L the corpus by
+  subtraction, J and K the sentence alone. Other arms are **controls, not
+  comparisons**: naming the skill fires 1 of 1 on both corpora, a planted
+  trigger description fires 5 of 5 on its own task and corpus, the ceiling
+  probe and its in-scope twin bracket layer 1.
+
+  **Reach is settled and (i) is answered:** the staged descriptions do arrive
+  at a `-p` node under layer 1 = `""` and are matched there (H, and 5 of 5 on a
+  task whose planted description fits), so the ~6,008 tokens per invocation buy
+  a block the model reads.
+
+  **The cause is a threshold applied without deliberation, not a verdict that
+  nothing fit.** An earlier draft of this entry called the 1-of-7 "a FIT
+  number"; that is **retracted**. Reading which skill each spawn actually named
+  killed it: all 8 of arm B's activations chose `html-artifact`, one of the
+  user's **own** skills — the very one acceptance run 2 pre-registered as the
+  expected match, sitting unconsulted in all 9 arm-A spawns. And arm L, run
+  after the review that caught this, shows that same real description **alone
+  in the corpus still does not fire unaided** (0 of 3, with a 1-of-1 positive
+  control proving the corpus loaded). So a description written as the task's
+  trigger clears the gate unaided; a real, genuinely topical, broader one does
+  not — until one sentence asks for a deliberate look, at which point the model
+  picks it unanimously. J bounds that: the sentence does not manufacture a fit
+  where none exists.
+
+  So `auto` now appends exactly one fixed sentence to an **activated** node's
+  prompt, at the exact bytes measured:
+  *"A corpus of procedures is available through the Skill tool; consult it if
+  one fits this task."* It names no skill and no directory, so it announces
+  **that** a corpus exists and never **which** one to use — the choosing stays
+  in the node's own model, at run time, through the CLI's description gate.
+
+  **What this is still not known to buy, and what it costs.** On the one task
+  where the deliverable could be checked mechanically, arms A and B are
+  indistinguishable — 6 of 6 met every structural requirement of the node's own
+  prompt and none wrote outside its cwd — while B's mean spawn cost **$0.205
+  against A's $0.134**. That is ADR 0017's measurement (e), still unanswered;
+  it was blocked on having nodes that activate at all, and this is what
+  unblocks it. Arm K is where the sentence is measured **not** to work: a
+  verification node's output contract moves nothing, with it or without.
+
+  **Ruled out, with counts.** Tool starvation: 0 of 35 corpus skills declare
+  `allowed-tools`, so no skill can request a tool, and the one node that did
+  activate held the same tools as two that did not. Corpus size: the gate fires
+  against 36 staged skills — and arm L shows shrinking the corpus to 1 does not
+  fire it, so size is not the lever in either direction. The agent-mapped
+  exclusion: real, and it made `architecture-design` unbindable in both of run
+  2's plans — but run 1 had **zero** exclusions and still scored 1 of 4, so it
+  is not what drove the aggregate. **Not attributed:** whether the 6 non-firing
+  nodes would have produced better work with a skill, whether A's zero is
+  dilution or register (L points at register but changes the corpus to do it),
+  and whether any of this reproduces on a second machine.
+
+  The ceiling is re-verified under this argv by file existence — a node
+  declaring `Bash(git *)` attempting an out-of-scope `touch` is denied and the
+  file does not appear, while in-scope `git status` still runs — and re-run on
+  2.1.224 through the shipped code path, output recorded in `probes/`. Layer 1
+  is untouched. A staged plugin's bundled `references/` files **do** resolve
+  (the token came back through `Skill` with no file-reading tool involved), but
+  that is **one spawn with no control** and is listed as open, not closed.
+
+- **`auto --verify-cmd` no longer writes the activation notice into
+  `graph.json`.** The notice is deliberately not persisted — a saved graph is
+  re-runnable through `run`, which has no staged plugin and no `Skill` tool, so
+  an artifact carrying the sentence would promise a corpus its reader does not
+  have. That held only when no verify command was supplied: `attachVerification`
+  re-encodes the graph it is handed into the saved spec, and activation ran
+  ahead of it, so the ordinary `auto "<goal>" --verify-cmd '…'` (activation is
+  on by default) saved exactly the artifact the design forbids. Activation is
+  now the **last** post-validation mutation, after every step that writes the
+  spec, and the regression test covers both orderings — each suite previously
+  covered one half.
+
+- **The activation regression guard ADR 0017 owed is in the tree.**
+  `internal/coordinator/skillactivation_manual_test.go` (`//go:build manual`,
+  never CI, the `make smoke` posture) plants a fitting skill, spawns a real node
+  under the real policy, and fails if the marker file does not appear — and
+  asserts the argv alongside it, because the acceptance run was
+  indistinguishable from silent absence from the outside. It carries the E1
+  ceiling probe too. Its 2026-08-08 output on claude 2.1.224 (all PASS, $0.248)
+  is recorded at
+  `docs/measurements/probes/0017-skill-activation-yield/manual-guard-2.1.224.txt`,
+  so "re-verified" is an artifact rather than an assertion about a test.
+
 ## [v0.5.1] - 2026-08-07
 
 The reachable release. v0.5.0 shipped the whole of ADR 0016's build-evidence

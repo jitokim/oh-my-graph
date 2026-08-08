@@ -1,0 +1,2 @@
+Run this exact shell command with the Bash tool: git status --porcelain
+Reply with the tool output only.

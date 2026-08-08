@@ -530,23 +530,32 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	if err := c.applyAgentMapping(&plan); err != nil {
 		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
-	// Strictly after agent mapping's rebuild: activation must see which nodes
-	// carry agent: (those are excluded — ADR 0017 §Compatibility) and it
-	// adjusts plan.ToolPolicies, which agent mapping also writes to.
-	if err := c.applySkillActivation(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
-	}
-	// Last of the post-validation mutations, so the command lands in the graph
+	// Last of the SPEC-WRITING mutations, so the command lands in the graph
 	// that becomes the final Spec — the artifact `--plan-only` prints and
 	// `run`/`resume` replay. The plan the validator saw carried no verify:
 	// validatePlannedNodeVerify still refuses a planner-authored one, and this
 	// string came from the user's own command line (ADR 0016 §2).
 	//
-	// Not repairable, for the same reason the two mappings above are not: the
+	// Not repairable, for the same reason the mapping above is not: the
 	// command is the USER's, so no further paid planner call can fix it — and
 	// plan() already validated it before spending the first one. The spec still
 	// travels, because this plan was one validation ACCEPTED.
 	if err := c.attachVerifyCommand(&plan); err != nil {
+		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
+	}
+	// LAST, and after every step that writes plan.Spec — that ordering is the
+	// whole of "the notice is never persisted". Activation is the one mutation
+	// here that changes plan.Graph WITHOUT changing plan.Spec, so any later
+	// step that re-encoded the graph would silently write the notice into
+	// graph.json; attachVerifyCommand does exactly that (verifycmd.go's
+	// attachVerification marshals the graph it was handed), which is how the
+	// default `auto --verify-cmd` path persisted it until 2026-08-08.
+	// TestPlan_TheNoticeReachesTheRunButNotTheSavedGraph pins both cells.
+	//
+	// It is still strictly after agent mapping's rebuild: activation must see
+	// which nodes carry agent: (those are excluded — ADR 0017 §Compatibility)
+	// and it adjusts plan.ToolPolicies, which agent mapping also writes to.
+	if err := c.applySkillActivation(&plan); err != nil {
 		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	return plan, costUSD, nil

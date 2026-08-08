@@ -1,0 +1,13 @@
+Verify the two deliverables in the current working directory. Use Read, Glob and Grep only - do not create or modify any file.
+
+Check all of the following:
+1. ARCHITECTURE.md exists and is non-empty.
+2. ARCHITECTURE.md contains a Context section, both options (a single-process scheduler and a worker pool), and exactly one line beginning with "Decision:" that names one of the two options unambiguously.
+3. design.html exists and is non-empty.
+4. design.html is a complete standalone document: it contains <!DOCTYPE html>, <html, <meta charset, a <title>, and a <style> block.
+5. design.html is self-contained: grep finds NO external references - no <script src=, no <link rel="stylesheet", no http:// or https:// URL in a src/href/@import, and no <img src=.
+6. design.html's content matches ARCHITECTURE.md: the same headings appear, and the exact Decision sentence from the markdown is present in the HTML.
+
+You cannot build or execute anything, so assert only what you can observe by reading the two files - your verdict says the files exist and are internally consistent, nothing about runtime behaviour.
+
+If every check passes, your entire reply is exactly the four bare characters PASS and nothing else - no markdown emphasis, no heading, no backticks, no preamble. Otherwise reply FAIL followed by a numbered list of each check that failed and the specific evidence.

@@ -219,20 +219,41 @@ func readRecordedArgv(t *testing.T, dir string) map[string]recordedArgv {
 	return byPrompt
 }
 
-// nodeArgv returns one node's recorded spawn, failing with the prompts that
-// WERE recorded — a node that never ran is the failure most worth naming.
+// nodeArgv returns one node's recorded spawn, matched on the PLANNER's own
+// prompt as a prefix: an activated node's real prompt is that text plus
+// coordinator's activationNotice, and the point of these tests is which argv a
+// node was spawned with, not which of the two arms it is in.
+//
+// It collects every match rather than returning the first, because `spawns` is
+// a map and Go randomizes its iteration order: two nodes whose prompts share a
+// prefix would make the answer depend on the run, which is how a flake gets
+// into a test whose whole job is pinning an exact argv. Ambiguity is a test-
+// fixture bug and says so; no match lists what WAS recorded, a node that never
+// ran being the failure most worth naming.
 func nodeArgv(t *testing.T, spawns map[string]recordedArgv, prompt string) recordedArgv {
 	t.Helper()
-	argv, ok := spawns[prompt]
-	if !ok {
-		recorded := make([]string, 0, len(spawns))
-		for p := range spawns {
-			recorded = append(recorded, p)
+	recorded := make([]string, 0, len(spawns))
+	matched := make([]string, 0, 1)
+	var hit recordedArgv
+	for p, argv := range spawns {
+		recorded = append(recorded, p)
+		if strings.HasPrefix(p, prompt) {
+			matched = append(matched, p)
+			hit = argv
 		}
-		sort.Strings(recorded)
-		t.Fatalf("no node spawned with prompt %q; recorded: %v", prompt, recorded)
 	}
-	return argv
+	sort.Strings(recorded)
+	switch len(matched) {
+	case 1:
+		return hit
+	case 0:
+		t.Fatalf("no node spawned with prompt %q; recorded: %v", prompt, recorded)
+	default:
+		sort.Strings(matched)
+		t.Fatalf("prompt %q is a prefix of %d recorded spawns (%v); the fixture's prompts must be distinguishable by prefix",
+			prompt, len(matched), matched)
+	}
+	return recordedArgv{}
 }
 
 // envelopeJSON is the `claude --output-format json` envelope carrying result.

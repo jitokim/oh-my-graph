@@ -2,13 +2,15 @@
 // description-driven skill activation, from a plugin directory oh-my-graph
 // stages, instead of ADR 0012's plan-time inlining of one name-matched body.
 //
-// The mechanism is one flag and one tool name, and neither of them is a
-// ceiling relaxation:
+// The mechanism is one flag, one tool name and one sentence, and none of the
+// three is a ceiling relaxation:
 //
 //	--setting-sources ""            layer 1, UNCHANGED — this is the decision
 //	--plugin-dir <staged>           NOT a layer: it supplies definitions only
 //	--tools ...,Skill               layer 3, the one layer that moves
 //	--strict-mcp-config             layer 4, unchanged
+//	activationNotice                prompt text, not a grant — see there for
+//	                                the measurement that put it here
 //
 // Layer 1 stays "" because measurement (g) settled what relaxing it costs: a
 // node that DECLARED `Bash(git *)`, run under `--setting-sources user`,
@@ -93,6 +95,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -135,6 +138,80 @@ const stagedManifestSuffix = ".manifest.json"
 // above any plausible corpus (the measured one is under 2 MiB) and far below
 // anything that would make a per-spawn re-materialization slow.
 const maxStagedCorpusBytes = 64 << 20
+
+// activationNotice is the one sentence trusted code appends to an ACTIVATED
+// node's prompt, and it is the whole of the 2026-08-08 change. ADR 0017 wrote
+// it as measurement (i)'s arm B and shipped nothing; it is here because arm B
+// is what the measurement selected, at the exact bytes that were measured —
+// re-wording it invalidates every number below.
+//
+// WHAT IT IS NOT. It names no skill, no directory and no plugin, so it selects
+// nothing: the choosing model is still the node's own, at run time, over the
+// user's own descriptions, through the CLI's description gate. It is not
+// Alternative D4 (an untrusted planner picking which local file loads) and it
+// is not a plan-time selector (§Alternatives B) — those both decide WHICH, and
+// this decides only THAT a corpus exists. It moves no ceiling layer: layer 1
+// stays "", layer 3 is unchanged, this is prompt text and not a grant.
+//
+// WHY IT SHIPS, in the terms ADR 0017 left open. The record's Context argues
+// that reach was the binding constraint, measures 1 `Skill` call across 7
+// activated nodes, and retracts that premise without replacing it. 44 spawns,
+// $7.28, claude 2.1.223 then 2.1.224/macOS, against the real argv
+// (`--setting-sources ""`, staged `--plugin-dir`, `Skill` in `--tools`,
+// `dontAsk`), judged ONLY by a `{"type":"tool_use","name":"Skill"}` record in
+// the node's own transcript — WITH the skill it names — and by whether a
+// planted skill's marker file appeared. Every arm, every spawn and every
+// re-derivation is docs/measurements/0017-skill-activation-yield.md; the
+// four rows that carry the argument:
+//
+//	arm A  planner's own prompt, verbatim, 35 REAL skills          0 of 9
+//	arm B  the same prompt bytes + this sentence                   8 of 9
+//	       — and all 8 named the SAME real skill, `html-artifact`
+//	arm H  the same prompt bytes, + one PLANTED skill whose
+//	       description is written as the task's trigger            3 of 3
+//	arm L  the same prompt bytes, corpus cut to the ONE real
+//	       skill B chose, no sentence                              0 of 3
+//	       (positive control on that corpus, skill named: 1 of 1)
+//
+// H and its neighbours (D 5 of 5, C and F 1 of 1) settle reach: the staged
+// descriptions DO arrive at a `-p` node under layer 1 = "" and ARE matched
+// there, so measurement (i) is answered and §4's ~6,008 tokens buy a block the
+// model reads. B and L settle what remains, and they are why the earlier
+// version of this comment — "the 1-of-7 is a FIT number" — is RETRACTED as
+// written. B says the corpus held a real match for that task and the model
+// picks it unanimously once asked to look. L says that same real description,
+// alone and undiluted, still does not clear the gate unaided. So the gate is a
+// THRESHOLD on how directly a description's trigger language matches the task,
+// applied without deliberation under the planner register — not a verdict that
+// the corpus had nothing to offer. The sentence's delta is exactly the band
+// where a real description is a genuine but not literal match, which is where
+// most of a real corpus lives.
+//
+// J is the bound: 0 of 3 with this sentence on a task NO skill fits, against 0
+// of 3 without it. It lowers a threshold rather than removing a gate.
+//
+// WHAT IT IS STILL NOT KNOWN TO BUY, and the cost it is not known to buy it
+// for. On the one task where the deliverable could be checked mechanically,
+// arms A and B are indistinguishable — 6 of 6 met every structural requirement
+// of the node's own prompt and none wrote outside its cwd — while B's mean
+// spawn cost $0.205 against A's $0.134, because a node that consults a skill
+// then reads it and follows it. That is ADR 0017's measurement (e), still
+// unanswered; (e) was blocked on having nodes that activate at all, and this
+// is what unblocks it.
+//
+// WHERE IT IS MEASURED NOT TO HELP: a node whose prompt is an output contract
+// (`reply PASS, else FAIL and a numbered list`) — 0 of 3 with the sentence, 0
+// of 1 without (arm K). Verification nodes are a large share of a planned
+// graph, and nothing here moves them.
+//
+// IT IS DELIBERATELY NOT PERSISTED. applySkillActivation rebuilds plan.Graph
+// with the notice and leaves plan.Spec — the saved graph.json — without it. A
+// graph.json is re-runnable through `run`, and `resume` drops activation
+// outright (ADR 0017 §6), so an artifact carrying this sentence would promise a
+// corpus the process reading it does not have. The same reason the `Skill`
+// grant is invisible there (§2). It IS in every activated node's `-p` argv, so
+// the session transcript — §7's retrospective account — shows it verbatim.
+const activationNotice = "A corpus of procedures is available through the Skill tool; consult it if one fits this task."
 
 // promptTokensPerStagedSkill is ADR 0017 §4's measured per-skill prompt cost,
 // on claude 2.1.223/macOS: a 35-skill corpus added 6,008 prompt tokens to every
@@ -232,6 +309,14 @@ type SkillActivation struct {
 	// ADR 0017 §4's measurement, printed because a per-node tax nobody sees is
 	// how ADR 0012's 84%-no-candidate became a cost nobody priced.
 	EstimatedPromptTokens int
+	// PromptNotice is the sentence trusted code appended to every node in
+	// NodeIDs (activationNotice). Empty when activation is off. It is here so
+	// the plan printout can quote it: this is the one part of activation that
+	// changes what a node is ASKED, and a change to a paid prompt that the
+	// human never saw before approving the plan is the disclosure failure
+	// AgentMappings exists to avoid. It is not read by anything else — the
+	// prompts in Graph already carry it.
+	PromptNotice string
 	// Staging carries the manifest into the run. Nil when activation is off.
 	Staging *SkillStaging
 }
@@ -690,9 +775,11 @@ func (c *Coordinator) applySkillActivation(plan *Plan) error {
 		Enabled:               true,
 		Skills:                staging.Skills(),
 		EstimatedPromptTokens: len(staging.Skills()) * promptTokensPerStagedSkill,
+		PromptNotice:          activationNotice,
 		Staging:               staging,
 	}
-	for _, node := range plan.Graph.Nodes {
+	for i := range plan.Graph.Nodes {
+		node := plan.Graph.Nodes[i]
 		policy, ok := plan.ToolPolicies[node.ID]
 		if !ok {
 			continue
@@ -703,6 +790,12 @@ func (c *Coordinator) applySkillActivation(plan *Plan) error {
 		}
 		policy.Tools = narrowedToolsFor(node, true)
 		plan.ToolPolicies[node.ID] = policy
+		// The notice goes on exactly the nodes that got the tool and the
+		// directory, and on no others: telling an agent-mapped node that a
+		// corpus is available through a plugin it was never given would be the
+		// silent-absence shape inverted — a true-sounding sentence about a
+		// capability that is not there.
+		plan.Graph.Nodes[i].Prompt = node.Prompt + "\n\n" + activationNotice
 		activation.NodeIDs = append(activation.NodeIDs, node.ID)
 	}
 	if len(activation.NodeIDs) == 0 {
@@ -714,7 +807,50 @@ func (c *Coordinator) applySkillActivation(plan *Plan) error {
 		}
 		return nil
 	}
+	if err := rebuildWithNotices(plan); err != nil {
+		return err
+	}
 	plan.SkillActivation = activation
+	return nil
+}
+
+// rebuildWithNotices re-parses plan.Graph so the appended prompts are the ones
+// the run actually uses, and deliberately does NOT touch plan.Spec.
+//
+// The re-parse is not cosmetic: graph.Graph answers NodeByID from a map of node
+// VALUES built at load, and the scheduler reads a node's prompt through it, so
+// assigning to plan.Graph.Nodes[i] alone would leave every notice in a slice
+// nothing reads. applyAgentMapping takes the same round trip for the same
+// reason.
+//
+// Where this departs from applyAgentMapping is the Spec, and it is the point:
+// that function re-encodes so the plan's Graph, Spec and saved graph.json "stay
+// one artifact", because an `agent:` a resumed plan shed would silently change
+// what ran. The notice is the opposite case. graph.json is re-runnable through
+// `run` — which has no staged plugin and no `Skill` tool — and `resume` drops
+// activation outright (ADR 0017 §6), so a persisted notice would tell those
+// nodes a corpus is available when it is not. Shedding it is the correct
+// behaviour, so it is never written down.
+//
+// NOT WRITING plan.Spec HERE IS ONLY HALF OF THAT, and the half that is easy
+// to mistake for all of it. The other half is ORDERING: applySkillActivation
+// is the LAST post-validation mutation precisely because any later step that
+// re-encodes plan.Graph writes these prompts into plan.Spec by accident. That
+// is not hypothetical — attachVerifyCommand did exactly this until 2026-08-08,
+// so the default `auto "<goal>" --verify-cmd '…'` path saved a graph.json
+// carrying the notice, which is the one artifact this comment says must not
+// exist. Anything added after this call must either leave plan.Spec alone or
+// re-encode from a notice-free graph.
+func rebuildWithNotices(plan *Plan) error {
+	spec, err := json.Marshal(plan.Graph)
+	if err != nil {
+		return fmt.Errorf("re-encode activated plan: %w", err)
+	}
+	g, err := graph.Parse(spec)
+	if err != nil {
+		return fmt.Errorf("re-parse activated plan: %w", err)
+	}
+	plan.Graph = g
 	return nil
 }
 

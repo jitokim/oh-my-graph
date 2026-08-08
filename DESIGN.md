@@ -1579,9 +1579,29 @@ with `--setting-sources ""`, `--plugin-dir <staged>` and `Skill` in `--tools`,
 against a clean `--no-skill-activation` control. It also recorded **1 `Skill`
 invocation across 7 activated planned nodes**, and zero across the three nodes
 of the pre-registered run, under prompts the planner itself wrote — while a
-prompt that names a skill fires reliably. So the wiring is real and the model
-mostly does not choose a skill; ADR 0017 stays `Proposed` for that reason and
-this section describes a mechanism, not a measured benefit. One further
+prompt that names a skill fires reliably.
+
+**One sentence is why that number is no longer the number** (2026-08-08,
+44 spawns, `docs/measurements/0017-skill-activation-yield.md`). Trusted code
+appends a fixed, skill-agnostic sentence — *"A corpus of procedures is
+available through the Skill tool; consult it if one fits this task."* — to the
+prompt of every node it activates, and only those: an agent-mapped node, which
+is excluded from activation, is never told a corpus it does not have exists.
+It names no skill and no directory, so it announces THAT a corpus exists and
+never WHICH one to use; the choosing stays in the node's own model, at run
+time, through the CLI's description gate. The same planner prompt scores 0 of 9
+activations without it and 8 of 9 with it, all 8 reaching for the same real
+skill of the user's own corpus. It is **not** written into the saved
+`graph.json` — that artifact is re-runnable through `run`, which has no staged
+plugin and no `Skill` tool — which is why activation is the LAST post-validation
+mutation, after every step that writes the spec.
+
+The yield is real; the benefit is still not measured. On the one task where the
+deliverable could be checked mechanically the two arms were indistinguishable,
+and a node whose prompt is an output contract (a verification node's
+`PASS`/`FAIL`) does not activate with the sentence or without it. ADR 0017
+stays `Proposed` for that reason and this section describes a mechanism whose
+yield is measured and whose value is not. One further
 consequence to know when reading the two mapping steps above: **they are
 mutually exclusive.** Agent mapping runs first and an agent-mapped node is
 excluded from activation, so the nodes whose job matches a named role most

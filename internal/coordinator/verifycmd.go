@@ -172,10 +172,16 @@ func sinkNodeIDs(g *graph.Graph) []string {
 }
 
 // attachVerifyCommand is the post-validation mutation itself: it runs strictly
-// after applyAgentMapping and applySkillMapping, so the command lands in the
-// graph that becomes the final Spec and is therefore SNAPSHOTTED — `run` and
-// `resume` on the saved graph.json replay the check, and `--plan-only` prints
-// it.
+// after applyAgentMapping and strictly BEFORE applySkillActivation, so the
+// command lands in the graph that becomes the final Spec and is therefore
+// SNAPSHOTTED — `run` and `resume` on the saved graph.json replay the check,
+// and `--plan-only` prints it.
+//
+// The "before activation" half of that ordering is load-bearing and was
+// wrong until 2026-08-08: attachVerification re-encodes the graph it is
+// handed, so with activation first it marshalled the activation notice into
+// plan.Spec and `auto --verify-cmd` wrote a graph.json promising a corpus its
+// `run` reader does not have (skillstage.go's rebuildWithNotices).
 //
 // What that snapshot is worth on resume is the residual ADR 0016 §4 records.
 // Half of it is closed today: `resume` calls ReattachVerifyCommand, so a

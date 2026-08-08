@@ -528,19 +528,162 @@ func TestPlan_WithoutSkillActivationLeavesTheCeilingWhereItWas(t *testing.T) {
 	}
 }
 
-// The prompt is the planner's own text and nothing else. ADR 0012 appended a
-// SKILL.md body to it; ADR 0017 deletes that, and the two mechanisms must
+// The prompt gets the planner's own text plus activationNotice, and NOTHING
+// else. ADR 0012 appended a whole SKILL.md body here; the two mechanisms must
 // never coexist in a shipped build — a node holding both would receive the
-// same skill twice, pay for it twice, and become unattributable.
-func TestPlan_ActivationLeavesThePromptAlone(t *testing.T) {
+// same skill twice, pay for it twice, and become unattributable — so the
+// distinguishing assertion is not "the prompt grew" but "it grew by one fixed
+// sentence that names no skill". A corpus of two skills leaves the same one
+// sentence, and neither name nor body reaches the prompt.
+func TestPlan_ActivationAppendsTheNoticeAndNoSkillText(t *testing.T) {
 	plan, _ := planWithCorpus(t, "review", "architecture-design")
 
 	node, _ := plan.Graph.NodeByID("review")
-	if node.Prompt != "review the diff" {
-		t.Errorf("node prompt = %q, want the planner's own text with nothing appended", node.Prompt)
+	if want := "review the diff\n\n" + activationNotice; node.Prompt != want {
+		t.Errorf("node prompt = %q, want %q", node.Prompt, want)
+	}
+	if strings.Contains(node.Prompt, "the review body") || strings.Contains(node.Prompt, "architecture-design") {
+		t.Errorf("node prompt = %q, want no skill name and no skill body: the notice selects nothing", node.Prompt)
+	}
+	if got := plan.SkillActivation.PromptNotice; got != activationNotice {
+		t.Errorf("PromptNotice = %q, want the notice disclosed for the printout", got)
 	}
 	if strings.Contains(string(plan.Spec), "the review body") {
 		t.Error("the saved spec carries a skill body; inlining and activation must not coexist")
+	}
+}
+
+// The notice is NOT persisted. graph.json is re-runnable through `run`, which
+// has no staged plugin and no `Skill` tool, and `resume` drops activation
+// outright (ADR 0017 §6) — so a saved notice would tell those nodes a corpus is
+// available when it is not, which is the silent-absence failure inverted. The
+// assertion is on plan.Spec, since that is the bytes cmd writes as graph.json.
+//
+// The re-parse this rides on is load-bearing for the other direction too:
+// graph.Graph answers NodeByID from a map built at load, so a notice written
+// only into the Nodes slice would never reach a spawn. Both halves are checked
+// here, because either alone is satisfiable by doing nothing.
+//
+// Both cells run against BOTH post-validation shapes, because until 2026-08-08
+// only the first one was tested and only the second one was broken:
+// attachVerifyCommand re-encodes the graph it is handed into plan.Spec, so with
+// activation ordered ahead of it the ordinary `auto "<goal>" --verify-cmd '…'`
+// wrote the notice into graph.json — the exact artifact the comment above says
+// must never exist. The invariant is an ORDERING property, so a test that
+// exercises one ordering proves nothing about the other.
+func TestPlan_TheNoticeReachesTheRunButNotTheSavedGraph(t *testing.T) {
+	corpus := t.TempDir()
+	writeSkillFile(t, corpus, "architecture-design",
+		"name: architecture-design\ndescription: what architecture-design does", "the architecture-design body")
+
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{name: "plain auto", opts: []Option{WithSkillDirs(corpus)}},
+		{name: "auto --verify-cmd", opts: []Option{
+			WithSkillDirs(corpus),
+			WithVerifyCommand(VerifyCommand{Command: "go build ./..."}),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := planWithSkills(t, tc.opts...)
+
+			if strings.Contains(string(plan.Spec), activationNotice) {
+				t.Errorf("plan.Spec carries the notice; graph.json is re-run without a staged plugin and must not promise one\n%s", plan.Spec)
+			}
+			byID, ok := plan.Graph.NodeByID("review")
+			if !ok {
+				t.Fatal("no node review")
+			}
+			if !strings.HasSuffix(byID.Prompt, activationNotice) {
+				t.Errorf("NodeByID prompt = %q, want the notice: the scheduler reads the prompt through this map", byID.Prompt)
+			}
+			for _, node := range plan.Graph.Nodes {
+				if node.ID == "review" && !strings.HasSuffix(node.Prompt, activationNotice) {
+					t.Errorf("Nodes[review] prompt = %q, want the notice", node.Prompt)
+				}
+			}
+		})
+	}
+}
+
+// Ordering activation last must not cost the verify command its snapshot: the
+// notice-free Spec is worth nothing if the fix reached it by dropping the
+// user's evidence command out of graph.json, and the sink node must still hold
+// the verification in the graph the run executes.
+func TestPlan_TheVerifyCommandIsStillSnapshottedUnderActivation(t *testing.T) {
+	corpus := t.TempDir()
+	writeSkillFile(t, corpus, "architecture-design",
+		"name: architecture-design\ndescription: what architecture-design does", "the architecture-design body")
+	plan := planWithSkills(t, WithSkillDirs(corpus), WithVerifyCommand(VerifyCommand{Command: "go build ./..."}))
+
+	if !strings.Contains(string(plan.Spec), "go build ./...") {
+		t.Errorf("plan.Spec = %s, want the user's verify command: graph.json is what `run` replays", plan.Spec)
+	}
+	node, ok := plan.Graph.NodeByID("review")
+	if !ok {
+		t.Fatal("no node review")
+	}
+	if node.SuccessCheck.Verify == nil || node.SuccessCheck.Verify.Command != "go build ./..." {
+		t.Errorf("sink verify = %+v, want the attached command in the executed graph", node.SuccessCheck.Verify)
+	}
+	if len(plan.VerifyAttachments) != 1 || plan.VerifyAttachments[0].NodeID != "review" {
+		t.Errorf("VerifyAttachments = %+v, want one on review", plan.VerifyAttachments)
+	}
+}
+
+// The notice goes on exactly the nodes that got the tool and the directory.
+// An agent-mapped node is excluded from activation, so telling it a corpus is
+// reachable through a plugin it was never given would be a true-sounding
+// sentence about a capability that is not there — and a run with activation off
+// must be byte-identical to one that never scanned.
+func TestPlan_TheNoticeIsBoundedToActivatedNodes(t *testing.T) {
+	agentDir, skillDir := t.TempDir(), t.TempDir()
+	writeAgentFile(t, agentDir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
+	writeSkillFile(t, skillDir, "architecture-design", "name: architecture-design", "the body")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"two","version":"1","nodes":[` +
+		`{"id":"review","prompt":"review","allowed_tools":["Read","Grep"]},` +
+		`{"id":"write-up","prompt":"write it up","allowed_tools":["Write"],"depends_on":["review"]}]}`})
+	plan, err := New(fake, WithAgentDirs(agentDir), WithSkillDirs(skillDir)).Plan(context.Background(), "review", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapped, _ := plan.Graph.NodeByID("review")
+	if mapped.Agent != "code-reviewer" {
+		t.Fatalf("precondition failed: node agent = %q, want code-reviewer", mapped.Agent)
+	}
+	if strings.Contains(mapped.Prompt, activationNotice) {
+		t.Errorf("the agent-mapped node's prompt = %q, want no notice — it holds neither Skill nor a plugin dir", mapped.Prompt)
+	}
+	activated, _ := plan.Graph.NodeByID("write-up")
+	if !strings.HasSuffix(activated.Prompt, activationNotice) {
+		t.Errorf("the activated node's prompt = %q, want the notice", activated.Prompt)
+	}
+
+	off := planWithSkills(t, WithSkillDirs(skillDir), WithoutSkillActivation())
+	node, _ := off.Graph.NodeByID("review")
+	if node.Prompt != "review the diff" {
+		t.Errorf("with activation off, prompt = %q, want the planner's own text untouched", node.Prompt)
+	}
+}
+
+// The notice is a THAT, never a WHICH. It must name no skill of the corpus, no
+// directory and no plugin: the moment it names one it becomes a plan-time
+// selector (ADR 0017 §Alternatives B), whose only measured instance ran at 7%
+// with one wrong mapping in five — and trusted code choosing FOR the node is
+// the posture §4 rejected in favour of the CLI's own description gate.
+func TestActivationNotice_SelectsNothing(t *testing.T) {
+	for _, banned := range []string{stagedPluginName, stagedPluginDirName, "html-artifact", "architecture-design", "/"} {
+		if strings.Contains(activationNotice, banned) {
+			t.Errorf("activationNotice = %q, want it free of %q: it announces THAT a corpus exists, never WHICH skill to use",
+				activationNotice, banned)
+		}
+	}
+	if !strings.Contains(activationNotice, SkillToolName) {
+		t.Errorf("activationNotice = %q, want it to name the %s tool — that is the whole of what it announces",
+			activationNotice, SkillToolName)
 	}
 }
 

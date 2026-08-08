@@ -1,0 +1,13 @@
+=== RUN   TestManual_SkillActivationStillFires
+=== RUN   TestManual_SkillActivationStillFires/treatment:_staged,_granted,_and_the_notice_on_the_prompt
+    skillactivation_manual_test.go:155: node exit 0, cost $0.1065
+=== RUN   TestManual_SkillActivationStillFires/control:_--no-skill-activation_carries_none_of_it
+    skillactivation_manual_test.go:187: node exit 0, cost $0.0575
+--- PASS: TestManual_SkillActivationStillFires (33.59s)
+    --- PASS: TestManual_SkillActivationStillFires/treatment:_staged,_granted,_and_the_notice_on_the_prompt (21.05s)
+    --- PASS: TestManual_SkillActivationStillFires/control:_--no-skill-activation_carries_none_of_it (12.54s)
+=== RUN   TestManual_SkillActivationCeilingHolds
+    skillactivation_manual_test.go:244: node exit 0, cost $0.0840
+--- PASS: TestManual_SkillActivationCeilingHolds (18.99s)
+PASS
+ok  	github.com/jitokim/oh-my-graph/internal/coordinator	52.941s
