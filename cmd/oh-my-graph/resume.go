@@ -625,10 +625,18 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 // to record what this run staged that a node cannot reach, plus a settled
 // answer for what `resume` does when the anchor and the directory disagree.
 // That is a design, and ADR 0017 §6 defers it rather than guessing at it. Until
-// it exists, a resumed leg runs with no `Skill` and no `--plugin-dir` — which
-// costs approximately nothing: activation's measured yield is ~1 skill
-// invocation across 7 eligible nodes, and 0 in the pre-registered acceptance
-// run (ADR 0017 §The acceptance test).
+// it exists, a resumed leg runs with no `Skill` and no `--plugin-dir`. What
+// that costs is no longer "approximately nothing": ADR 0017's 44-spawn
+// measurement (docs/measurements/0017-skill-activation-yield.md) moved the
+// yield from 0 of 9 unaided to 8 of 9 once an activated prompt carries the
+// notice, so a resumed leg gives up a capability its first leg measurably had.
+// It is still the right trade, because what the alternative buys is a corpus
+// re-staged from a record the previous leg's own nodes could have rewritten —
+// and re-staging PRUNES what the record does not name, so a forged one
+// replaces the user's skills rather than merely adding to them. The value of
+// activation is unmeasured (arms A and B were indistinguishable on the one
+// mechanically checkable task); the cost of trusting that record is not
+// bounded at all.
 //
 // The de-escalation is printed rather than silent, because a resumed leg that
 // behaves differently from its first leg and does not say why is the same

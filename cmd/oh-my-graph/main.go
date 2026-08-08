@@ -937,9 +937,13 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 		fmt.Fprint(w,
 			"  Which skill a node uses is chosen by the model at run time from those descriptions.\n"+
 				"  It is NOT knowable here; each invocation is recorded in that node's session transcript.\n"+
-				"  MEASURED YIELD so far: 1 skill invocation across 7 planned nodes in the acceptance test\n"+
-				"    of 2026-08-07, and 0 under real planner prompts (ADR 0017). Delivery is proven at the\n"+
-				"    argv; a node CHOOSING to use a skill is not. The tokens above are charged either way.\n"+
+				"  MEASURED YIELD (44 spawns against this exact argv — ADR 0017; the raw record is\n"+
+				"    docs/measurements/0017-skill-activation-yield.md): the planner's own prompt reached\n"+
+				"    for a skill 0 of 9 times unaided, and 8 of 9 with the one fixed sentence oh-my-graph\n"+
+				"    now appends to every activated prompt. Whether the WORK is better is NOT measured:\n"+
+				"    the two arms were indistinguishable on the one task checkable mechanically, at\n"+
+				"    $0.205 a spawn against $0.134, and an output-contract node activates under neither.\n"+
+				"    The tokens above are charged either way.\n"+
 				"  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load\n"+
 				"    (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still enforced.\n"+
 				"    The only change is that the Skill tool now exists for these nodes.\n"+

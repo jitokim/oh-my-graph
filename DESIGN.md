@@ -188,9 +188,15 @@ separator, a leading dot or a `..` cannot walk out of the `fragments/`
 sibling (`filepath.Join` cleans, so an unconstrained name would). Resolution happens on a **path-aware load
 stage** — `graph.LoadFile` (fail-fast; also returns the entry file's raw
 bytes and one `FragmentResolution` per resolved `use:`) and its collect-all
-counterpart `graph.LintFile` (every fragment issue plus every structural
-issue of the resolved graph, plus advisories on their own channel) — which
-`run`, `lint` and `run --dry-run` all load through. The resolved document
+counterpart `graph.LintLoadFile` (every fragment issue plus every structural
+issue of the resolved graph, plus advisories on their own channel, plus the
+`LoadResult` itself) — which `run`, `lint` and `run --dry-run` all load
+through. Returning the loaded graph from the *same* read is load-bearing, not
+a convenience: `lint` and `run --dry-run` also sweep that graph for advisories,
+and a path that is not a regular file — `lint <(…)`, `/dev/stdin`, a FIFO —
+answers a second read with nothing, which decodes to an empty graph that
+passes every check. `graph.LintFile` remains as a thin adapter that drops the
+`LoadResult`; a caller that needs both must not read twice. The resolved document
 feeds the exact same decode → `Validate` pipeline as a hand-written graph;
 `Parse` stays fragment-blind, and `Validate` refuses any node still carrying
 `use:`/`with:` as a backstop (the coordinator converts that refusal into a
@@ -1948,7 +1954,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ## Repo layout
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
-internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go), and the load-time fragment resolver (LoadFile/LintFile — ADR 0013)
+internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0016)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
@@ -1967,7 +1973,8 @@ internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..16}-*.md
+docs/adr/00{01..19}-*.md                       (0016 is taken by TWO records — the retry ADR and the build-evidence ADR — so cite that number by filename)
+docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 
