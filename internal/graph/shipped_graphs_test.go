@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -99,6 +100,76 @@ func TestEmbeddedGraphsLoadFromTheBinarysOwnPayload(t *testing.T) {
 	// the assertion above is satisfiable by a payload with no fragments at all.
 	if !anyTemplateCitesAFragment(t, root, names) {
 		t.Error("no embedded template cites a fragment — this test can no longer detect a missing fragments/ payload")
+	}
+}
+
+// TestMergeVerdictRejectsThePromiseFamily pins the one shipped verdict pattern
+// whose false PASS is irreversible: `merge-shepherd`'s `merge`, which once
+// ended a real run green with nothing merged (ADR 0019 §1).
+//
+// The pattern is read out of the shipped graph rather than restated here, so
+// this test judges what users actually get. It asserts two things at once:
+//
+//  1. the shipped `^` anchor rejects every promise reply below, and
+//  2. the SAME pattern with `(?m)` prefixed ACCEPTS them.
+//
+// The second assertion is the point. The relaxation to `(?m)` was proposed on
+// the theory that the SHA payload is "a fact a promise cannot produce", and it
+// is not: seven hex characters are typeable, and `merge-shepherd.yaml` hands
+// the model `MERGED 4f2a1c9` as its format example. What `^` actually rejects
+// is the preamble a promise cannot do without. If a future change makes these
+// replies pass, that theory has been re-adopted by accident.
+func TestMergeVerdictRejectsThePromiseFamily(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	var pattern string
+	for _, n := range g.Graph.Nodes {
+		if n.ID == "merge" {
+			pattern = n.SuccessCheck.ResultMatches
+		}
+	}
+	if pattern == "" {
+		t.Fatal("merge-shepherd's merge node declares no result_matches — the verdict is unchecked")
+	}
+	if strings.HasPrefix(pattern, "(?m)") {
+		t.Fatalf("merge's verdict is line-anchored (%q); ADR 0019 refused that, and the promises below are why", pattern)
+	}
+	anchored := regexp.MustCompile(pattern)
+	perLine := regexp.MustCompile("(?m)" + pattern)
+
+	// Nothing merged in any of these. Each puts a well-formed verdict on a
+	// line of its own, which is all a line anchor asks for.
+	promises := map[string]string{
+		"quotes the reply it will give later":             "CodeRabbit's re-review is mid-flight, so I will merge when it concludes.\nMy final reply will be:\n`MERGED 4f2a1c9 — ADR 0018`",
+		"lists both verdicts as plan bullets":             "Plan:\n- `MERGED 4f2a1c9` — the squash merge has landed\n- `WITHHELD <reason>` — I did not merge\nI cannot pick one yet.",
+		"quotes the instruction as a code block":          "The instructions say the reply must be:\n\n    MERGED 4f2a1c9\n\nand I cannot produce that until the squash lands.",
+		"a to-do list with the SHA filled in later":       "Steps remaining: 1. gh pr merge --squash\nThen:\nMERGED 83edfad — I will fill in the real SHA.",
+		"the PR head SHA, which exists before the squash": "Once I squash it the answer will be:\nMERGED 2be7c58 will be the result once I squash it.",
+		"a bare WITHHELD with the reason stripped off":    "I have not decided yet.\nWITHHELD:",
+	}
+	for name, reply := range promises {
+		if anchored.MatchString(reply) {
+			t.Errorf("merge's verdict pattern ACCEPTS a promise (%s):\n%s", name, reply)
+		}
+		if name == "a bare WITHHELD with the reason stripped off" {
+			continue // rejected for its missing payload, not for its position
+		}
+		if !perLine.MatchString(reply) {
+			t.Errorf("(?m) no longer accepts %q — the counterfactual ADR 0019 rests on has drifted; re-measure before trusting §3", name)
+		}
+	}
+
+	// The other half: a verdict that opens the reply still passes, both ways.
+	for name, reply := range map[string]string{
+		"MERGED with a short SHA": "MERGED 52a7373 — ADR 0015 lands.",
+		"MERGED with a full SHA":  "MERGED 83edfad11db1ba0281cab9b615c4acadded38512 — ADR 0018 shipped.",
+		"WITHHELD with a reason":  "WITHHELD CodeRabbit's re-review has not concluded.",
+	} {
+		if !anchored.MatchString(reply) {
+			t.Errorf("merge's verdict pattern REJECTS a real verdict (%s): %s", name, reply)
+		}
 	}
 }
 

@@ -136,24 +136,56 @@ func LoadFile(path string) (*LoadResult, error) {
 // issues, because advice must never affect an exit code. The error return is
 // I/O only (the file could not be read); an unreadable file has no list to
 // collect.
+//
+// Callers that also need the graph itself must use LintLoadFile rather than
+// following this with LoadFile — see the read-once note there.
 func LintFile(path string) (issues []error, advisories []FragmentAdvisory, err error) {
+	issues, advisories, _, err = LintLoadFile(path)
+	return issues, advisories, err
+}
+
+// LintLoadFile is LintFile and LoadFile in one pass, from ONE read of path:
+// the collected issue list, the fragment advisories, and — when that list is
+// empty — the same *LoadResult LoadFile would have returned for the same
+// bytes. `lint` and `run --dry-run` both need the whole list AND the resolved
+// graph (they sweep it for advisories), and reading the path twice to get
+// both is not equivalent to reading it once: on a path that can only be read
+// once — a FIFO, a process substitution like `lint <(...)`, /dev/stdin — the
+// second read comes back EMPTY, which decodes to an empty graph that passes
+// every check. The command then printed `valid` with the advisory sweep run
+// over the wrong (empty) graph, so the advice was silently dropped while the
+// exit code and the issue list, both computed from the first read, stayed
+// correct. Load once, sweep the graph that was linted.
+//
+// loaded is nil exactly when issues is non-empty: an invalid graph has no
+// LoadResult, which is what LoadFile says by failing.
+func LintLoadFile(path string) (issues []error, advisories []FragmentAdvisory, loaded *LoadResult, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read graph file %q: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("read graph file %q: %w", path, err)
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		// A YAML syntax error is the whole report on its own: nothing decoded,
 		// so there is no graph for Graph.Issues to have an opinion about.
-		return []error{fmt.Errorf("parse graph YAML: %w", err)}, nil, nil
+		return []error{fmt.Errorf("parse graph YAML: %w", err)}, nil, nil, nil
 	}
 	outcome := resolveFragments(&doc, path)
 	issues = outcome.errs
 	g, err := decodeResolved(&doc)
 	if err != nil {
-		return append(issues, err), outcome.advisories, nil
+		return append(issues, err), outcome.advisories, nil, nil
 	}
-	return append(issues, g.Issues()...), outcome.advisories, nil
+	issues = append(issues, g.Issues()...)
+	if len(issues) > 0 {
+		return issues, outcome.advisories, nil, nil
+	}
+	return nil, outcome.advisories, &LoadResult{
+		Graph:       g,
+		Source:      data,
+		Resolutions: outcome.resolutions,
+		Advisories:  outcome.advisories,
+	}, nil
 }
 
 // decodeResolved decodes a (possibly spliced) YAML document into a normalized

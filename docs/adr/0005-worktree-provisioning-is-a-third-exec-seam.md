@@ -85,6 +85,14 @@ branches in the user's repository. `validatePlannedNodes` rejects the field,
 with its disposition recorded in the coordinator's field table, alongside
 `cwd`, `agent` and `success_check.verify`.
 
+> *(Re-examined 2026-08-07 by [ADR 0018](0018-isolation-stays-scoped-to-the-invocation-repository.md),
+> after issue #103 reported a node colliding with an unrelated process over a
+> shared checkout in a SECOND local repository. This decision's scope — one
+> repository, the invocation one — is **affirmed unchanged**, and the refusal
+> above is affirmed with it. ADR 0018 records why a second repository may only
+> ever be named by the user, what partial failure and cross-repository cleanup
+> would cost, and the pre-registered measurement that would reopen this.)*
+
 ## Consequences
 
 **Positive**

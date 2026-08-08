@@ -94,6 +94,20 @@ Honest gaps as of v0.4.1, each tracked as an issue rather than left as prose:
   the exception: the coordinator refuses to map an agent whose frontmatter
   declares a tool outside the node's planned `allowed_tools`, and the node's
   `--tools` ceiling still binds — DESIGN.md, E6.)
+- **Isolation stops at the invocation repository.** `auto` provisions no
+  managed worktree anywhere (`cwd:` and `worktree:` are both rejected at plan
+  time), and a managed worktree — a hand-written-graph feature,
+  [ADR 0005](adr/0005-worktree-provisioning-is-a-third-exec-seam.md) — always
+  branches from the repository oh-my-graph was invoked from. A goal that names
+  a *second* local repository gets no isolation there at all, so a node
+  switching HEAD in a checkout some other process is standing in will collide
+  with it. `auto` warns at plan time for the paths it can read
+  ([SECURITY.md](../SECURITY.md)); that warning plus the node's own compliance
+  is the whole protection.
+  [ADR 0018](adr/0018-isolation-stays-scoped-to-the-invocation-repository.md)
+  records why managed multi-repository worktrees are deferred, and the
+  measurement that would convert that into a build.
+  ([#103](https://github.com/jitokim/oh-my-graph/issues/103))
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
