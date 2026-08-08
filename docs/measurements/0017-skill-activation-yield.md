@@ -205,6 +205,16 @@ activate at all; that block is now gone.
 **Not reproduced anywhere else.** One machine, one corpus, two adjacent CLI
 builds. Nothing here is known to hold on a second.
 
+**Erratum on `PREREG.md`'s free H1 discriminator.** That sealed document argues
+tool starvation cannot explain the 1-of-7 because *"`artifact` (hit) and
+`make-html` (miss) both had Write"* — while the table directly above it records
+run 1's declared tools as `(unrecorded)`. No retained record establishes run 1's
+tool lists, so that same-tools comparison is **not established**, and the
+pre-registration is left as written rather than amended. Nothing in this record
+rests on it: the arms reported here hold tools constant across the comparisons
+they license — A↔B varies one appended sentence, A↔H one corpus entry — so the
+0-vs-fired splits above are not tool differences whatever run 1's tools were.
+
 **Measurement (b)** — whether a skill that executes in a subagent routes around
 layer 5 — is untouched by this record.
 
