@@ -84,6 +84,11 @@ rejected it, and makes that one node's re-run cheap instead.
   one fits this task."* It names no skill and no directory, so it announces
   **that** a corpus exists and never **which** one to use — the choosing stays
   in the node's own model, at run time, through the CLI's description gate.
+  The `MEASURED YIELD` block `auto` prints before every run is rewritten to
+  match: where v0.5.1 quoted the unexplained 1-in-7, it now cites these 44
+  spawns — 0 of 9 unaided, 8 of 9 with the sentence — names the record file, and
+  still says plainly that whether the **work** is better is not measured, at
+  $0.205 a spawn against $0.134.
 
   **What this is still not known to buy, and what it costs.** On the one task
   where the deliverable could be checked mechanically, arms A and B are
@@ -95,8 +100,14 @@ rejected it, and makes that one node's re-run cheap instead.
   verification node's output contract moves nothing, with it or without.
 
   **Ruled out, with counts.** Tool starvation: 0 of 35 corpus skills declare
-  `allowed-tools`, so no skill can request a tool, and the one node that did
-  activate held the same tools as two that did not. Corpus size: the gate fires
+  `allowed-tools`, so no skill can request a tool at all here, and every
+  comparison in the table holds the node's tools constant — A↔B varies one
+  appended sentence, A↔H one corpus entry — so the 0-vs-fired splits are not
+  tool differences. (`PREREG.md`'s cheaper version of that discriminator instead
+  compared the one node that activated against two that did not; run 1's
+  declared tools were never recorded, so **that** comparison is not established.
+  The sealed pre-registration is left as written and the measurement record
+  carries the erratum.) Corpus size: the gate fires
   against 36 staged skills — and arm L shows shrinking the corpus to 1 does not
   fire it, so size is not the lever in either direction. The agent-mapped
   exclusion: real, and it made `architecture-design` unbindable in both of run
