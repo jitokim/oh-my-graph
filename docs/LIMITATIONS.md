@@ -41,6 +41,11 @@ sentence in README and SECURITY.md holds here too. It is not a Windows-tagged
 code path: this project's CI is Linux, and a guarantee only Windows executes is
 a guarantee nothing tests.
 
+The fix is not in a release yet. `go install …@latest` still resolves to
+v0.5.2, whose scrub compares keys exactly — so on native Windows, that binary
+has the hole this paragraph describes. Until the next tag, install from `main`
+(`go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@main`).
+
 On Windows, prefer WSL.
 
 ## Known limitations
