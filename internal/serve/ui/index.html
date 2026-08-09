@@ -90,6 +90,12 @@
   </main>
   <footer>
     <span id="banner" class="banner"></span>
+    <span class="spacer"></span>
+    <!-- Which build is answering. A `serve` process outlives the tree it was
+         built from, so without this a week-old server reads as the current
+         binary misbehaving (serve.BuildLabel). Rendered per process like the
+         token above, and static text: nothing fetches or updates it. -->
+    <span class="build" title="the build this server is running">{{.Build}}</span>
   </footer>
   <script src="vendor/cytoscape.min.js"></script>
   <script src="vendor/dagre.min.js"></script>

@@ -490,7 +490,7 @@ func (r *scriptedRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 }
 
 // nodePromptOf recovers a node's OWN prompt from an invocation, dropping the
-// quote of a previous attempt a retry appends to it (ADR 0016). A fixture that
+// quote of a previous attempt a retry appends to it (ADR 0020). A fixture that
 // keys a node by its prompt has to cut there or a re-executed node looks like a
 // node it has never seen — which is exactly how it fails: not "the retry ran
 // with the wrong prompt", but "the retry never ran".

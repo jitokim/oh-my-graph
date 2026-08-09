@@ -207,8 +207,7 @@ other class.
 **By the user: the only admissible form.** A repeatable flag —
 `--repo <path>`, on `auto` and on `run` — naming a repository the user vouches
 for, exactly as `--verify-cmd` names a shell command the engine runs
-([ADR 0016, build evidence](0016-build-evidence-is-a-user-supplied-engine-command.md)
-— not the same-numbered [0016 on retries](0016-a-retry-carries-the-attempt-it-is-repeating.md)). The precedent is the point: *the engine does the dangerous
+([ADR 0016](0016-build-evidence-is-a-user-supplied-engine-command.md)). The precedent is the point: *the engine does the dangerous
 thing only when the user supplies it, and the plan is never granted anything.*
 Under that form the plan-time reopening is bounded to a **selection, not a
 string**: a planned node may carry `repo: <name from the user's own list>`,

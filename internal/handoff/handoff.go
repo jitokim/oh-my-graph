@@ -11,7 +11,7 @@
 //     contract), and a FAILED node's own reply to failed/<node-id>.out so the
 //     work a failed node already paid for survives it — and, from that same
 //     file, hand the reply back to a later leg's retry of the node that wrote
-//     it (SeedPriorReply/TakePriorReply, ADR 0016);
+//     it (SeedPriorReply/TakePriorReply, ADR 0020);
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
@@ -73,7 +73,7 @@ type Handoff struct {
 	artifactPaths map[string]string // node id -> persisted .out path
 	sessions      map[string]string // node id -> claude session id
 	feedback      map[string]string // declarer id -> latest feedback payload (ADR 0010)
-	priorReplies  map[string]string // node id -> a PREVIOUS LEG's failed reply, to hand back once (ADR 0016)
+	priorReplies  map[string]string // node id -> a PREVIOUS LEG's failed reply, to hand back once (ADR 0020)
 }
 
 // New builds a Handoff bound to a run directory and the invocation's inputs. The
@@ -440,14 +440,14 @@ func excerptFailedReply(reply string) string {
 
 // SeedPriorReply rehydrates one node's failed reply from the failed/<id>.out
 // file PersistFailure wrote, so a `resume --retry-failed` leg can quote the
-// previous leg's attempt back to the node it is re-running (ADR 0016). It is
+// previous leg's attempt back to the node it is re-running (ADR 0020). It is
 // the cross-process half of that quote: an in-leg retry still has the reply in
 // memory, but a resume is a different process and the file is the only thing
 // that survived it — which is why the reply is written at all.
 //
 // A missing file is a clean no-op, not an error, exactly as SeedFeedback's is:
 // it means that node left no reply to quote (it never ran, it spawned badly, it
-// said nothing), and running the retry with no quote is the pre-ADR-0016
+// said nothing), and running the retry with no quote is the pre-ADR-0020
 // behaviour, which is correct rather than degraded. Any other read failure is
 // returned so the resume path can warn.
 //

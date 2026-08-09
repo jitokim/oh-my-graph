@@ -316,7 +316,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 
 	// A retry leg re-reads a cleared node's failed reply from
 	// failed/<node-id>.out, so the re-execution is handed the attempt it is
-	// repeating (ADR 0016). This is the whole reason that file is written by a
+	// repeating (ADR 0020). This is the whole reason that file is written by a
 	// process other than the one that reads it: --retry-failed drops the FAIL
 	// record — with it the ledger row and the 240-rune detail — and the reply on
 	// disk is the only account of the attempt that survives into this leg.

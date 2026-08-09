@@ -486,3 +486,8 @@ footer {
 /* Informational ink, never a status color on text — app.js prefixes a
    caution glyph to carry the tone. */
 .banner { color: var(--ink-2); font-size: 12px; }
+/* The build this server is running (serve.BuildLabel), rendered into the page
+   once per process. Quieter than the banner and monospaced, because it is read
+   as an identifier — compared against a commit — not as prose. Empty on a
+   build with no label, and an empty span occupies nothing. */
+.build { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--ink-2); opacity: 0.75; }

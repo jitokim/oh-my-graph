@@ -254,6 +254,11 @@ type Server struct {
 	// resumer continues a run paused at a gate; nil (the default) means this
 	// view answers 409 to every gate decision. See WithGateResumer.
 	resumer GateResumer
+	// build names the binary serving this page, rendered into its footer so a
+	// long-lived `serve` cannot be mistaken for the build that replaced it
+	// (BuildLabel). Empty — the default — renders nothing at all, which is what
+	// every test and any caller that does not care gets.
+	build string
 }
 
 // New builds a Server for one run directory. runID is the directory's name —
@@ -345,14 +350,27 @@ func (s *Server) routes() *http.ServeMux {
 	return mux
 }
 
+// WithBuild sets the build label this view's footer states, and returns the
+// Server so it chains onto New the way WithGateResumer does. The CLI is the
+// only caller: the release version lives in package main, and the answer to
+// "which binary is this" belongs to the process, not to the run it is showing.
+func (s *Server) WithBuild(label string) *Server {
+	s.build = label
+	return s
+}
+
 // handleIndex serves the live view's page with this process's gate token
 // rendered into its <meta name="omg-token">, which is where the page's
 // approve/reject buttons read it from. The token is per Server and never
 // written to disk, so it dies with the process that minted it — a page left
 // open from a previous `serve` cannot decide this run's gate.
+//
+// It carries the build label out on the same render, for the same reason and
+// with the opposite audience: the token identifies this process to the server,
+// the label identifies it to the reader (BuildLabel).
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var page bytes.Buffer
-	if err := indexTemplate.Execute(&page, struct{ Token string }{s.token}); err != nil {
+	if err := indexTemplate.Execute(&page, struct{ Token, Build string }{s.token, s.build}); err != nil {
 		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
 		return
 	}

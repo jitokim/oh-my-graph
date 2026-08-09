@@ -1,4 +1,4 @@
-// A retry that carries the attempt it is repeating (ADR 0016).
+// A retry that carries the attempt it is repeating (ADR 0020).
 //
 // A retry used to be a byte-identical re-spawn: prepareRetry cleared the resume
 // session and minted a new id, and the prompt was whatever buildInvocation

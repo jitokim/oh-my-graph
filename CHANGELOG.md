@@ -162,6 +162,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **`serve` states which build is answering.** Both pages carry the serving
+  binary's identity in the footer — `v0.5.2 (cef30c6, built 2026-08-09 14:02)`
+  — rendered once per process beside the gate token. The report behind it was
+  *"serve dies silently and a stale binary holds the port"*, and **both halves
+  are false**: `serve` reports a bind failure by name and points at `--port`,
+  and a run's embedded live view binds port 0, so it cannot hold a fixed one.
+  What actually happened is that a `serve` started two days earlier was still
+  running, still serving the code it was compiled from, while
+  `bin/oh-my-graph` had been rebuilt many times underneath it — which from a
+  browser is indistinguishable from the new build misbehaving. Nothing was
+  silent except the version. The label carries the VCS revision the toolchain
+  stamped **and** the running executable's own mtime, because the version alone
+  cannot separate two builds of the same tag and the revision is absent more
+  often than it looks: `-buildvcs=false`, a proxy module build, and — measured
+  here on go1.26.5 — a build from a linked git worktree, which is how this
+  project's own graph lanes build. Read once at startup, never per request:
+  `go build -o` replaces the file at that path, so a later stat would report
+  the build that replaced this one. No dependency, no fifth exec seam, CSP
+  unchanged.
 - **The PR node is one shape, so it is a fragment now
   (`graphs/fragments/pr-publish.yaml`, ADR 0013).** A proposal to make
   `verdict:` a first-class schema key raised the prior question — before this
@@ -226,6 +245,47 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documentation
 
+- **The retry ADR is renumbered 0016 → 0020, so "ADR 0016" resolves again.**
+  v0.5.0 recorded the collision and deferred the repair — *"renumbering is its
+  own change, and a link that resolves today should not be broken by a version
+  bump … until one of them is renumbered"*. This is that change, and it is the
+  cheaper of the two directions by a wide margin: the build-evidence record is
+  cited by bare number dozens of times across the code, the retry record by
+  four paths and a dozen prose mentions, so the retry record moves and every
+  remaining bare "ADR 0016" is correct where it stands. Every citation was
+  read, not pattern-replaced — the two records both have a §3 and a §6, and
+  `scheduler.go`'s *"a retry starts cold … §6"* and `passProvenance`'s §6 are
+  different documents. Renumbered:
+  `docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md`, carrying a
+  dated note about where it came from; updated: README, README.ko, DESIGN.md,
+  RUN-FEED.md, ADR 0010 and 12 Go files. ADR 0017 §2 and ADR 0018 §1, which
+  each had to disambiguate mid-sentence in prose, now just cite the number.
+  Earlier CHANGELOG entries are history and keep the number they were written
+  with; the v0.5.0 bullet that recorded the collision now records its
+  resolution too.
+- **`docs/LIMITATIONS.md` is re-stamped v0.4.1 → v0.5.2, and stops promising a
+  tracker it does not have.** The file said its gaps were *"each tracked as an
+  issue rather than left as prose"*; `gh issue list --state open` returns
+  nothing. The promise is dropped rather than replaced — this file *is* where
+  they are tracked, and the issue numbers in it name the closed issue each gap
+  was carved out of, which is provenance, not a tracker. Each stamped section's
+  claims were re-read before the stamp moved rather than after, on the
+  principle that a version bump on a stale claim dates a lie forward; one had
+  gone stale, and #103's now records the ADR 0018 baseline taken 2026-08-09
+  (**0 of 6**, pre-§6-clause) instead of describing that measurement as
+  outstanding.
+- **DESIGN.md points at `docs/LIMITATIONS.md`**, from the MVP DEFERRED list —
+  the place a reader of the spec asks what is not here. Deliberately *not* a
+  new `## Non-goals` section: the boundary already lives in three documents,
+  and a fourth home for it is a drift generator.
+- **`README.ko.md` carries #144's correction.** The Korean README still said
+  the agent-mapped exclusion was the trade `agent:` has always made. It is not:
+  an agent-mapped planned node holds no `Skill` tool, so it invokes no skill at
+  all — not the staged corpus and not the user's own, even though its settings
+  load. The measured paragraph (10 spawns, 0-of-3 vs 3-of-3, 0-of-1 vs 1-of-1
+  at user scope), the concentration on design/doc/review nodes, and
+  `--no-agent-mapping` as the run-wide switch are now in the translation, and
+  the tool-ceiling parenthetical no longer implies those settings buy a skill.
 - ADR 0013 gains the measurement above as a dated Migration update, and
   DESIGN.md's "Verdict patterns" gains the boundary it establishes: reuse
   deduplicates a verdict rule exactly as far as a node shape reaches, and no
@@ -1184,7 +1244,14 @@ docs get a sweep that corrects what they had been claiming.
   entry, so the collision is recorded here rather than repaired in the release
   commit: renumbering is its own change, and a link that resolves today should
   not be broken by a version bump. Cite ADR 0016 by **filename**, not by number,
-  until one of them is renumbered.
+  until one of them is renumbered. *(Resolved 2026-08-09, in its own change:
+  the retry record became
+  `0020-a-retry-carries-the-attempt-it-is-repeating.md` and the build-evidence
+  record kept 0016. Released entries are history and keep the numbers they were
+  written with, so an "ADR 0016" elsewhere in this file still means whichever
+  record it meant at the time — in this release's own entries, the
+  build-evidence one everywhere except the failed-reply/retry bullet above. The
+  tree itself was swept; see the Unreleased entry.)*
 
 ## [v0.4.1] - 2026-08-04
 

@@ -11,7 +11,7 @@ import (
 )
 
 // legRecorder records every prompt a node was asked across BOTH legs and
-// scripts one outcome per node prompt. It is the cross-process half of ADR 0016
+// scripts one outcome per node prompt. It is the cross-process half of ADR 0020
 // under test: what leg 2 asks can only have come off disk, because leg 1's
 // process is gone and --retry-failed deleted its record.
 type legRecorder struct {

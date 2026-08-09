@@ -13,7 +13,7 @@ the very same files, and an external consumer reads exactly what they read:
   <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
-  failed/        per-node reply of a node that FAILED (ADR 0016) — never an artifact
+  failed/        per-node reply of a node that FAILED (ADR 0020) — never an artifact
   feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
   worktrees/     INTERNAL — per-node git worktrees; not this contract
 ```
@@ -33,7 +33,7 @@ existence is not a verdict. Nor is every `<node-id>.out` in the run tree an
 artifact: a feedback arc's payload is written to
 `<run-dir>/feedback/<node-id>.out`, and a FAILED node's own reply to
 `<run-dir>/failed/<node-id>.out` — the same basename shape, one directory
-down (ADR 0010, ADR 0016). Artifacts are the flat ones.
+down (ADR 0010, ADR 0020). Artifacts are the flat ones.
 
 `failed/<node-id>.out` holds the words of a node that failed, bounded at
 256 KiB with any cut announced in the file, and is part of this contract:
@@ -100,7 +100,7 @@ in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
 
-`judged` (additive, ADR 0016 — no schema bump) marks a FAIL a check rendered a
+`judged` (additive, ADR 0020 — no schema bump) marks a FAIL a check rendered a
 verdict **on**, as opposed to one the machinery caused: a failed `success_check`
 or a verification that ran and said no, never a spawn error, an interpolation
 error, a blown budget, or a verification that could not be completed. It is

@@ -108,10 +108,10 @@ func TestPersistFailure_BoundsAnUnboundedReply(t *testing.T) {
 	// assertion below derives its input and its ceiling from the constant, so a
 	// hundredfold cap would satisfy all of them while quietly letting one
 	// runaway node fill a user's disk. 256 KiB is what the CHANGELOG and ADR
-	// 0016 §3 publish.
+	// 0020 §3 publish.
 	if maxFailedReplyBytes != 256*1024 {
 		t.Fatalf("maxFailedReplyBytes = %d, want 256 KiB — the cap on what one node's reply may cost a "+
-			"run directory is published; moving it means moving ADR 0016 §3 and the CHANGELOG with it",
+			"run directory is published; moving it means moving ADR 0020 §3 and the CHANGELOG with it",
 			maxFailedReplyBytes)
 	}
 	dir := t.TempDir()
@@ -360,7 +360,7 @@ func TestPersistFailure_LatestWins(t *testing.T) {
 	}
 }
 
-// --- handing the reply back to the leg that repeats the attempt (ADR 0016) ---
+// --- handing the reply back to the leg that repeats the attempt (ADR 0020) ---
 
 // TestSeedPriorReply_RoundTripsWhatPersistFailureWrote is the cross-process
 // half of the retry quote: a second process, holding only the run directory,
@@ -411,7 +411,7 @@ func TestTakePriorReply_HandsItOverExactlyOnce(t *testing.T) {
 
 // TestSeedPriorReply_MissingFileIsACleanNoOp: a node that left no reply (it
 // never ran, it failed to spawn, it said nothing) seeds nothing and errors
-// about nothing — running the retry without a quote is the pre-ADR-0016
+// about nothing — running the retry without a quote is the pre-ADR-0020
 // behaviour, which is correct rather than degraded.
 //
 // It is nonetheless REPORTABLE: seeded comes back false, so a caller that knew

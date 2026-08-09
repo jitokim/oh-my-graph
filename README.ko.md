@@ -233,8 +233,7 @@ qualifier를 달지 않습니다 — 대신 `DETAIL`에 실패 원인이 적힙�
 수 없습니다: planner가 작성한 `verify:`는 모든 ceiling 계층 바깥에서 엔진이
 실행하는 셸이므로 아예 거부되며, 그래서 `auto`의 체크 노드는 지금까지
 `self-reported`까지밖에 도달할 수 없었습니다. 그 격차를 메우는 것이
-[ADR 0016 (build
-evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
+[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
 입니다 — **당신이** 호출 시점에 건네는 빌드 명령을, validation이 끝난 *뒤에*
 신뢰된 코드가 플랜의 sink 노드에 붙이고 엔진이 실행하므로, 검증 노드가 빌드도
 되지 않는 브랜치를 통과시킬 수 없게 됩니다:
@@ -537,15 +536,34 @@ cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므�
 시점에 description을 보고 고릅니다. 활성화 대상이란 agent에 매핑되지 않은
 플랜된 노드를 말하며, 애초에 그 run에서 활성화가 켜져 있을 때에 한합니다 —
 `~/.claude/skills`가 없거나 비어 있거나 스테이징이 실패하면 run 전체에서
-활성화가 꺼지고, 그 사실이 한 줄로 출력됩니다. **agent에 매핑된 노드는 제외**되어 둘 중
-어느 쪽도 받지 않습니다: 당신의 subagent로 실행된다는 것은 그 agent를 찾기 위해
-당신의 settings를 로드한다는 뜻이고, 그것은 `agent:`가 처음부터 해온 거래입니다.
+활성화가 꺼지고, 그 사실이 한 줄로 출력됩니다. **agent에 매핑된 노드는 제외**되어
+둘 중 어느 쪽도 받지 않습니다. 당신의 subagent로 실행된다는 것은 그 agent를 찾기
+위해 당신의 settings를 로드한다는 뜻이고, `--agent` + 스테이징된 플러그인 + 당신의
+settings라는 조합은 이 프로젝트가 아직 한 번도 측정해보지 않은 조합이기 때문입니다.
+
+**그 제외의 대가는 작지 않으며, 이제 플랜 출력이 그렇게 말합니다.** 제외된 노드는
+`Skill` tool을 아예 들고 있지 않으므로 **어떤 스킬도 호출하지 못합니다** —
+스테이징된 코퍼스는 물론이고, settings가 로드되는데도 당신이 직접 설치한 스킬조차
+쓰지 못합니다. 2026-08-09, 실제 spawn 10회로 측정했습니다: 스킬을 쓰라고 대놓고
+지시했을 때 oh-my-graph가 실제로 보내는 argv에서는 **3번 중 0번** 발화했고, 그
+argv의 `--tools`에 `Skill`만 더하고 나머지는 하나도 바꾸지 않은 경우에는 **3번 중
+3번** 발화했습니다 — 스킬이 프로젝트가 아니라 `~/.claude/skills`에 놓였을 때도
+**1번 중 0번 대 1번 중 1번**으로 같았습니다
+([기록](docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md)).
+게다가 이 제외는 고르게 퍼지지 않습니다: agent 매핑이 먼저 돌고 같은 신호로
+매칭되므로, 절차(procedure)가 가장 잘 맞는 design·doc·review 노드를 가져갑니다.
+그 노드들이 subagent를 얻는 것보다 스킬 표면을 유지하는 편이 낫다면 스위치는
+`--no-agent-mapping`입니다 — run 전체의 agent 매핑을 끄는 스위치라 플랜이 하려던
+매핑 전부가 그 대가이고, 노드별 opt-out은 없습니다. 제외 자체를 푸는 일은 그에
+앞선 자체 측정이 필요하며, 그것이
+[ADR 0017의 (j)](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)입니다.
 
 tool ceiling은 그대로입니다. 활성화 대상인 플랜된 노드는 여전히 당신의
 settings, CLAUDE.md, hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은
 선언된 scope도 그대로 강제됩니다 — 달라지는 것은 이 노드들에게 `Skill` tool이
 존재한다는 것뿐입니다. (agent에 매핑된 노드는 ADR 0017 이전과 마찬가지로
-당신의 settings를 로드하며, 바로 그 이유로 활성화에서 제외됩니다.)
+당신의 settings를 로드하며, 바로 그 이유로 활성화에서 제외됩니다 — 어느 쪽이든
+`Skill` tool은 받지 못하므로, 그 settings가 스킬을 사주지는 않습니다.)
 그 대가는 실행 전에 출력됩니다: 스테이징된 스킬 하나하나의 크기와 SHA-256,
 그리고 그 코퍼스가 그 leg의 **모든** 활성화 대상 노드 호출에 더하는 프롬프트
 토큰(재시도와 feedback 재실행 포함).
@@ -661,7 +679,7 @@ ADR 0017이 `Proposed`인 이유가 그것입니다. 이 숫자들은 매 run �
   오류, 예산 초과, *완료되지 못한* verification — 은 아무것도 싣지 않으며,
   `handoff: session` 재시도는 여전히 cold로 시작하고 그렇다고 말합니다. 이
   기능은 기본으로 켜져 있고 돈이 듭니다: 판정된 실패의 재시도 1회당 인용된
-  답변 약 2k 토큰까지. 상한이 있고 평평하며, 절대 누적되지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016 (retry)](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
+  답변 약 2k 토큰까지. 상한이 있고 평평하며, 절대 누적되지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0020](docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — 노드별 비용 상한, 라이브(`--max-budget-usd`)와 사후
   모두 적용. 어떤 노드든 예산을 선언한 run에서는 **통과한** 행의
   `COST(USD)` 칸이 그 노드의 예산 중 얼마를 썼는지도 함께 말합니다 —
