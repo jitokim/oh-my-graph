@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.5.2**, and what is deliberately deferred. Where a gap has
+gaps as of **v0.5.3**, and what is deliberately deferred. Where a gap has
 already been closed on `main` but not in a tagged release, this file says so
 in the paragraph that describes it rather than in the stamp.
 
@@ -43,16 +43,15 @@ sentence in README and SECURITY.md holds here too. It is not a Windows-tagged
 code path: this project's CI is Linux, and a guarantee only Windows executes is
 a guarantee nothing tests.
 
-The fix is not in a release yet. `go install …@latest` still resolves to
-v0.5.2, whose scrub compares keys exactly — so on native Windows, that binary
-has the hole this paragraph describes. Until the next tag, install from `main`
-(`go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@main`).
+The fix ships in **v0.5.3**, so `go install …@latest` carries it. Any earlier
+binary does not: v0.5.2 and every tag before it compare keys exactly, so on
+native Windows they have the hole this paragraph describes.
 
 On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.5.2. **This file is where they are tracked** — there is
+Honest gaps as of v0.5.3. **This file is where they are tracked** — there is
 no open issue behind any of them (`gh issue list --state open` returns
 nothing, and has since 2026-08-09). The issue numbers below name the *closed*
 issue each gap was carved out of, which is provenance, not a tracker: those
@@ -145,7 +144,7 @@ See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.5.2:
+Called out honestly — these are **not** implemented as of v0.5.3:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause

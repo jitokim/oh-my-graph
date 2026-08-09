@@ -8,7 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.3] - 2026-08-10
+
+Nothing new to type. No flag, no command, no schema key — every change here
+corrects something already shipped. The one that matters most is the guarantee
+CLAUDE.md leads with: `internal/childenv.Scrub` compared environment keys
+exactly, and native Windows resolves them without regard to case, so a
+lowercase `anthropic_api_key` walked straight through the scrub and billed the
+run to the metered API that README and SECURITY.md told the user was inside
+their subscription. Matching is `strings.EqualFold` now, unconditionally rather
+than behind a `GOOS=windows` tag, so the Linux CI that runs every `make test`
+exercises the rule that carries the promise. Beside it, `merge-shepherd` stops
+asking the operator to perform the wait the graph itself skipped — a `recheck`
+node polls the **final** SHA after triage pushes a fix, and answers in three
+values so "still pending" is neither "green" nor "red". The plan printout stops
+telling the reader of an agent-mapped node that it "already sees your real
+skills": 10 real spawns say it carries no `Skill` tool at all and can therefore
+invoke nothing, staged corpus or your own. `serve` names the build that is
+answering. And "ADR 0016" resolves to one file again.
 
 ### Fixed
 
@@ -246,8 +263,43 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   ADR 0004's E1 ceiling arm and a plugin-name collision arm — and no behaviour
   changes here beyond what the plan prints.
 
+- **The #103 test fixtures carry neutral names (#140).** The unisolated-checkout
+  tests reproduced the reported scenario using the reporter's own repository
+  names, branch names, node ids and goal text. The shape is what those tests
+  assert; the identifiers were the reporter's employer's and have no business in
+  a public tree. Renamed to `deploy-config`/`search-index`,
+  `deploy-impl`/`index-impl`, and a generic branch and goal. No assertion
+  changed meaning — every one of them is about the scan's structure, not about
+  what the strings say.
+
 ### Documentation
 
+- **ADR 0018's compliance baseline is taken, before the clause it is a baseline
+  for exists — 0 of 6 (#103).** §Falsification pre-registered a compliance
+  number and warned that shipping §6's planner advisory first would destroy the
+  status quo's version of it permanently. It is taken: over **6 real `auto`
+  runs** and 18 qualifying nodes, **0 of 6** nodes that moved a foreign
+  checkout's HEAD isolated themselves first — zero `git worktree add` and zero
+  `git clone` across the whole sample, which is #103's collision shape six times
+  out of six. All three pre-registered readings ship rather than the flattering
+  one (headline **0/6**, strict-literal **0/18**, lenient-literal **12/18**, the
+  last stated as explicitly *not* a compliance figure), because the metric is
+  silent on a node that moves no HEAD; the goal-only stratum did not arise, so
+  this is a prompt-mention population by construction, and the two nodes whose
+  prompts never named the foreign checkout are excluded and said so.
+  **§1 is not built and the decision does not move.** A baseline is
+  advisory-free — there was no instruction here to disobey, so however low the
+  number reads it cannot conclude that §6's advisory failed on its own terms.
+  What the sample does establish is where to aim: in **6 of 6** the offending
+  `checkout -b` was written into the node's prompt by the *planner*, not
+  improvised by the node, and node compliance with an instruction never given
+  was always going to read 0%. Raw transcripts are deliberately not committed —
+  a node's system prompt carries the operator's whole local skill corpus and
+  this repository is public — so what is archived is what the ADR asks a sample
+  to preserve: per-node command lists, prompts, invocation roots, captures, the
+  sealed pre-registration and the scripts, with `$HOME` scrubbed and every
+  measured path a throwaway `/tmp` fixture.
+  `docs/measurements/0018-unisolated-compliance-baseline.md`.
 - **The retry ADR is renumbered 0016 → 0020, so "ADR 0016" resolves again.**
   v0.5.0 recorded the collision and deferred the repair — *"renumbering is its
   own change, and a link that resolves today should not be broken by a version
@@ -266,7 +318,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   Earlier CHANGELOG entries are history and keep the number they were written
   with; the v0.5.0 bullet that recorded the collision now records its
   resolution too.
-- **`docs/LIMITATIONS.md` is re-stamped v0.4.1 → v0.5.2, and stops promising a
+- **`docs/LIMITATIONS.md` is re-stamped v0.4.1 → v0.5.3, and stops promising a
   tracker it does not have.** The file said its gaps were *"each tracked as an
   issue rather than left as prose"*; `gh issue list --state open` returns
   nothing. The promise is dropped rather than replaced — this file *is* where
@@ -1968,7 +2020,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...HEAD
+[v0.5.3]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/jitokim/oh-my-graph/compare/v0.4.1...v0.5.0
