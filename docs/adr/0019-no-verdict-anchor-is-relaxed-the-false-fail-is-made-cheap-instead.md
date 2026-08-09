@@ -279,7 +279,7 @@ change than widening what the check accepts.
 >
 > The repair is a node, not a pattern change and not a feedback arc:
 > `triage → recheck → approve-merge → merge`. `recheck` waits in the
-> foreground under its own 15m timeout, judges the FINAL SHA and names it, and
+> foreground under its own 20m timeout, judges the FINAL SHA and names it, and
 > writes a three-valued verdict — `RECHECKED <sha>` (green, passes),
 > `BLOCKED <sha>` (red; absent from the pattern, so the run halts before the
 > gate) and `UNSETTLED <sha>` (still pending at timeout; passes). A
@@ -293,8 +293,14 @@ change than widening what the check accepts.
 > reaches `WITHHELD` only when `recheck` came back `UNSETTLED` and the
 > operator approved the gate over it. The clause is kept for exactly that
 > case — a recheck that legitimately timed out — instead of being the routine
-> answer to pending checks, which is what would have turned this graph's
-> terminal state into a green run that merged nothing.
+> answer to pending checks. Not that the green-run-merged-nothing outcome is
+> gone: an `UNSETTLED` the operator approves over still ends the run green
+> having merged nothing, where before the same slow checks ended it RED on
+> `merge`'s rejected promise. It is made RARE (the common case — restarted
+> checks that conclude in minutes — is what `recheck` actually fixes) and it is
+> made VISIBLE (a stated verdict naming the SHA and the pending entry, rather
+> than a promise). Rare and visible is the whole claim; the header and DESIGN.md
+> say so too.
 
 ## 6. Consequences
 

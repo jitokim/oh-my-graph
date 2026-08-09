@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/graphs"
 )
@@ -229,6 +230,15 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 		t.Errorf("recheck's grant is %v, want %v — it only reads check state and sleeps between reads", recheck.AllowedTools, wantTools)
 	}
 
+	// The timeout has to outlast the loop budget the prompt hands the node
+	// (~25 loops at roughly 40s ≈ 17 minutes). A node killed by its own
+	// timeout produces no verdict at all and discards the run — which is the
+	// outcome UNSETTLED was invented to prevent, so a timeout that fires
+	// before the honest answer is due defeats the node's whole design.
+	if got := recheck.TimeoutDuration(); got < 20*time.Minute {
+		t.Errorf("recheck's timeout is %s, want at least 20m — its prompt budgets ~17 minutes of polling, and a timeout inside that kills the node before UNSETTLED is due", got)
+	}
+
 	pattern := recheck.SuccessCheck.ResultMatches
 	if pattern == "" {
 		t.Fatal("recheck declares no result_matches — the re-wait's verdict is unchecked")
@@ -239,9 +249,12 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	anchored := regexp.MustCompile(pattern)
 
 	for name, reply := range map[string]string{
-		"green, full SHA":  "RECHECKED c80872cfaa805d7e9ec3b3cba9ed4c8cf7f3950f — test SUCCESS, coderabbitai APPROVED on that commit.",
+		"green, full SHA":  "RECHECKED c80872cfaa805d7e9ec3b3cba9ed4c8cf7f3950f — every rollup entry SUCCESS, coderabbitai APPROVED on that commit.",
 		"green, short SHA": "RECHECKED c80872c — nothing was pushed; TRIAGED 0, so the concluded checks are the head's.",
-		"timed out":        "UNSETTLED c80872c — test is still IN_PROGRESS after 15 minutes.",
+		"timed out":        "UNSETTLED c80872c — stress is still IN_PROGRESS after 20 minutes.",
+		// `gh` prints a lowercase oid, but a model retyping one may not, and a
+		// false FAIL over the case of a correct verdict buys nothing.
+		"green, uppercase SHA": "RECHECKED C80872C — rollup all green.",
 	} {
 		if !anchored.MatchString(reply) {
 			t.Errorf("recheck's pattern REJECTS a real verdict (%s): %s", name, reply)
@@ -256,6 +269,9 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 		"green without a SHA":      "RECHECKED — both checks are green.",
 		"timed out without a SHA":  "UNSETTLED — test is still running.",
 		"a SHA-shaped word, no id": "RECHECKED the final commit — test SUCCESS.",
+		// A SHA fused to its token is not a verdict anyone writes, and the
+		// separator class is `+` rather than `*` so it cannot be read as one.
+		"SHA fused to the token": "RECHECKEDc80872c",
 		// Position is the lock, exactly as at merge.
 		"a promise quoting itself": "test restarted when triage pushed, so I am waiting in the foreground.\nMy final reply will be:\nRECHECKED c80872c",
 		"a plan listing both":      "Plan:\n- RECHECKED c80872c if the checks go green\n- UNSETTLED c80872c if they do not\nI cannot pick one yet.",
@@ -263,6 +279,66 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 		if anchored.MatchString(reply) {
 			t.Errorf("recheck's pattern ACCEPTS what it must reject (%s):\n%s", name, reply)
 		}
+	}
+}
+
+// qualifierClause is the one unbroken line every shipped prefix verdict carries
+// (DESIGN.md, "Verdict patterns"), written on one line precisely so that
+// grepping for it is a sweep that cannot silently miss a node.
+const qualifierClause = "Anything you need to qualify"
+
+// TestQualifierClauseSweepMatchesDESIGN pins the two numbers DESIGN.md quotes
+// for that sweep. They were correct when written and held by nothing: adding a
+// prefix-verdict node, or a graph citing one more fragment, moves them, and
+// prose that quietly stops being true is worse than prose that was never there
+// — the sweep is offered to readers as something they can run and check.
+//
+// The two counts are different claims, which is why both are here:
+//
+//   - DECLARATIONS is what the documented grep returns — how many times the
+//     clause is WRITTEN across graphs/ and graphs/fragments/.
+//   - NODES is how many runtime nodes end up carrying it, which is larger
+//     because a fragment states it once for every node that cites the
+//     fragment. That gap is the point DESIGN.md is making, so a change that
+//     closes it (fragments abandoned, say) should fail here and be re-argued.
+func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
+	const wantDeclarations, wantNodes = 26, 33
+
+	declarations := 0
+	for _, dir := range []string{
+		filepath.Join("..", "..", "graphs"),
+		filepath.Join("..", "..", "graphs", "fragments"),
+	} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+		if err != nil {
+			t.Fatalf("glob %s: %v", dir, err)
+		}
+		for _, file := range files {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("read %s: %v", file, err)
+			}
+			declarations += strings.Count(string(data), qualifierClause)
+		}
+	}
+	if declarations != wantDeclarations {
+		t.Errorf("the qualifier-clause sweep counts %d declarations, DESIGN.md says %d — update DESIGN.md's \"Verdict patterns\" section along with the graphs", declarations, wantDeclarations)
+	}
+
+	nodes := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		for _, n := range loaded.Graph.Nodes {
+			if strings.Contains(n.Prompt, qualifierClause) {
+				nodes++
+			}
+		}
+	}
+	if nodes != wantNodes {
+		t.Errorf("the clause reaches %d runtime nodes, DESIGN.md says %d — update DESIGN.md's \"Verdict patterns\" section along with the graphs", nodes, wantNodes)
 	}
 }
 

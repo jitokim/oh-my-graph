@@ -886,9 +886,9 @@ which.
 absent.** A node that *waits* has one more outcome than a node that decides:
 the thing it waited for concluded well, concluded badly, or had not concluded
 when the timeout arrived. `merge-shepherd`'s `recheck` — the re-wait for the
-`test` check and CodeRabbit after triage may have pushed a fix — is the shipped
+check rollup and CodeRabbit after triage may have pushed a fix — is the shipped
 case, and it writes all three. The pattern is
-``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]*[0-9a-f]{7,40}\b'``; the red
+``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'``; the red
 conclusion is `BLOCKED <sha>`, which appears in the prompt and **not** in the
 pattern. Three rules, none of them new:
 
@@ -912,7 +912,14 @@ pattern. Three rules, none of them new:
   and a `merge` whose answer to `UNSETTLED` is `WITHHELD`. A premature
   `UNSETTLED` costs a glance and a refused merge; it can never cost a merge of
   unchecked code. Where a premature answer *would* be expensive — `RECHECKED`
-  — the token names a completed check, not a state.
+  — the token names a completed check, not a state. The rest of that price is
+  paid in the graph's terminal state, and it should be said out loud: the case
+  where the checks outlast the wait used to end the run RED (`merge` promised,
+  and the anchored verdict rejected the promise); it now ends GREEN, having
+  merged nothing. Admitting a state word makes the green-run-merged-nothing
+  class *rarer* — the common case, where restarted checks conclude in minutes,
+  is genuinely fixed — but it does not remove it, and a graph that buys this
+  exception owes its header that sentence.
 
 Widening the separator class between a token and its payload is the one
 tolerance worth buying node by node, and the currency is what a false FAIL

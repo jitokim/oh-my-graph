@@ -27,18 +27,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   foreground"*), which the anchored verdict correctly rejected, halting the run.
 
   The chain is now `triage → recheck → approve-merge → merge`. `recheck` polls
-  synchronously under its own 15m timeout, exactly as `ready-and-wait` does and
+  synchronously under its own 20m timeout, exactly as `ready-and-wait` does and
   for the same reason (a node that backgrounds a poll has ended its turn, and
-  its verdict is an interim report). It judges the **final** SHA and names it,
-  reading everything from one `gh pr view --json
-  headRefOid,state,statusCheckRollup,reviews` — `headRefOid` is the final SHA,
-  the rollup is that same commit's, and each review carries the `commit.oid` it
-  was submitted against, so "CodeRabbit reviewed the final SHA" is a comparison
-  rather than an inference. `TRIAGED 0` short-circuits the wait: nothing was
-  pushed, so no check will restart and polling would spend fifteen minutes on a
-  state that cannot change. Its grant is `Bash(gh pr view *)` and
-  `Bash(sleep *)` — narrower than `ready-and-wait`'s `Bash(gh *)`, and there is
-  no mutating form of `gh pr view` left to narrow away.
+  its verdict is an interim report); the timeout outlasts the ~17 minutes of
+  polling the prompt budgets, because a node killed by its own timeout produces
+  no verdict at all and discards the run. It judges the **final** SHA and names
+  it, reading everything from one `gh pr view --json
+  headRefOid,statusCheckRollup,reviews` under a `--jq` projection — `headRefOid`
+  is the final SHA, the rollup is that same commit's, and each review carries
+  the `commit.oid` it was submitted against, so "CodeRabbit reviewed the final
+  SHA" is a comparison rather than an inference. The projection is not
+  cosmetic: raw `reviews` carries every review *body*, which measured 6.8 KB
+  per read against 619 B projected, on the one node whose failure mode is a
+  degraded interim reply. Two rules are stated over the data rather than over
+  one check: green requires **every** entry of the rollup to be finished and
+  good (`COMPLETED` with `SUCCESS`/`SKIPPED`/`NEUTRAL`, or a status context in
+  `SUCCESS`) — this repo's own rollup has three entries, and naming one of them
+  would have reported a red `stress` as green — and CodeRabbit's word is its
+  **latest** review on that SHA by `submittedAt`, because a PR routinely
+  collects several against one commit and a `CHANGES_REQUESTED` after an
+  `APPROVED` is the bot changing its mind. `TRIAGED 0` short-circuits the wait:
+  nothing was pushed, so no check will restart and polling would spend the
+  whole timeout on a state that cannot change. Its grant is
+  `Bash(gh pr view *)` and `Bash(sleep *)` — narrower than `ready-and-wait`'s
+  `Bash(gh *)`, and there is no mutating form of `gh pr view` left to narrow
+  away.
 
   **The verdict is three-valued, and that is the point.** `RECHECKED <sha>`
   (both concluded green) and `UNSETTLED <sha>` (still pending when the timeout
@@ -47,10 +60,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   shape as `triage`'s `BLOCKED`. Collapsing the third outcome into either of
   the others lies: into `RECHECKED` it merges a PR nothing has checked, into
   `BLOCKED` it discards a paid pipeline over checks that were merely slow.
-  `merge`'s `WITHHELD` is kept as the **fallback** for `UNSETTLED` alone —
-  making it the routine answer to pending checks would turn this graph's
-  terminal state into a green run that merged nothing, at the one node with a
-  recorded false PASS (ADR 0019 §5).
+  `merge`'s `WITHHELD` is kept as the **fallback** for `UNSETTLED` alone,
+  rather than the routine answer to pending checks (ADR 0019 §5).
+
+  **What the third verdict costs, stated plainly**, because the shape of the
+  win is easy to overstate: the case where the checks outlast the wait used to
+  end the run **red** — `merge` waited, promised, and the anchored verdict
+  rejected the promise — and now ends **green** via `UNSETTLED → WITHHELD`,
+  having merged nothing. The green-run-merged-nothing outcome is made *rarer*,
+  not removed; the common case, where restarted checks conclude in a few
+  minutes, is what genuinely improves. What is contained is the expensive half:
+  `merge` answers `WITHHELD` to anything not beginning `RECHECKED`, so an
+  `UNSETTLED` written without waiting costs an operator's glance and a refused
+  merge, never a merge of unchecked code. Both graph header and DESIGN.md say
+  this in the same words.
 
   **Why an ordinary node and not a `feedback:` arc.** Both halves were checked
   against the code, not just the ADRs. An arc fires only on a *judgment failure
@@ -64,9 +87,17 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
   The gate comment no longer asks for the check — it states what `recheck`
   found and what to do about it (on `UNSETTLED`, rejecting is cheaper than
-  approving into a `WITHHELD`). `TestRecheckVerdictIsThreeValued` pins the
-  chain, the grant and all three verdicts, including that `BLOCKED` does *not*
-  match and that neither passing token is reachable behind preamble.
+  approving into a `WITHHELD`). One seam is documented rather than closed: an
+  incremental review of triage's own fix that merely `COMMENTED` passes
+  `recheck` untriaged, since there is no arc back to `triage` — those comments
+  reach the operator at the gate and nowhere else. `BLOCKED` halting while
+  `UNSETTLED` passes is likewise now an argued decision rather than an
+  omission: a red conclusion judges the code, and there is nothing to decide
+  at a gate over it; a timeout judges nothing, so it is the operator's call.
+  `TestRecheckVerdictIsThreeValued` pins the chain, the grant, the timeout
+  against the prompt's loop budget, and all three verdicts, including that
+  `BLOCKED` does *not* match and that neither passing token is reachable
+  behind preamble.
   DESIGN.md's "Verdict patterns" gains the three-outcome shape and the rule it
   bends: a state word is admissible as a verdict only when the state is an
   outcome and something downstream bounds a premature one.
