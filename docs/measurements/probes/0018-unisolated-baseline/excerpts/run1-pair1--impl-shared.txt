@@ -1,0 +1,15 @@
+# run1-pair1 / node impl-shared — every Bash command in the session transcript, in order
+# transcript: impl-shared--0a0e43aa-ba26-4327-b6c3-abb5793c81a6.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/shared-config
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/timeout-seconds 2>&1 || git -C /tmp/omg-0018/fixtures/shared-config checkout feat/timeout-seconds
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config add config/defaults.yaml docs/schema.md && git -C /tmp/omg-0018/fixtures/shared-config commit -m "feat: add timeout_seconds default and schema docs"
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config log --oneline -1 feat/timeout-seconds; echo '---'; git -C /tmp/omg-0018/fixtures/shared-config show --stat --oneline feat/timeout-seconds; echo '--- status ---'; git -C /tmp/omg-0018/fixtures/shared-config status --short
+

@@ -1,0 +1,8 @@
+{"schema":2,"ts":"2026-08-09T13:49:09.985786Z","run_id":"20260809-134909.952584000-1","event":"run_started"}
+{"schema":2,"ts":"2026-08-09T13:49:10.002094Z","run_id":"20260809-134909.952584000-1","event":"node_started","node_id":"docs-site","session_id":"16b89572-a1c9-452b-873c-4c01568570bf"}
+{"schema":2,"ts":"2026-08-09T13:49:10.002115Z","run_id":"20260809-134909.952584000-1","event":"node_started","node_id":"brand-assets","session_id":"d52cb653-bb87-4bf3-9f5f-c433c46082bd"}
+{"schema":2,"ts":"2026-08-09T13:49:44.191155Z","run_id":"20260809-134909.952584000-1","event":"node_passed","node_id":"brand-assets","verdict":"PASS","cost_usd":0.3260795,"session_id":"d52cb653-bb87-4bf3-9f5f-c433c46082bd","provenance":"exit-only"}
+{"schema":2,"ts":"2026-08-09T13:49:51.863565Z","run_id":"20260809-134909.952584000-1","event":"node_passed","node_id":"docs-site","verdict":"PASS","cost_usd":0.34115999999999996,"session_id":"16b89572-a1c9-452b-873c-4c01568570bf","provenance":"exit-only"}
+{"schema":2,"ts":"2026-08-09T13:49:51.869252Z","run_id":"20260809-134909.952584000-1","event":"node_started","node_id":"verify","session_id":"17010169-ef12-47da-8dc7-94cc7ab87986"}
+{"schema":2,"ts":"2026-08-09T13:50:24.246422Z","run_id":"20260809-134909.952584000-1","event":"node_passed","node_id":"verify","verdict":"PASS","cost_usd":0.2804285,"session_id":"17010169-ef12-47da-8dc7-94cc7ab87986","provenance":"self-reported"}
+{"schema":2,"ts":"2026-08-09T13:50:24.255475Z","run_id":"20260809-134909.952584000-1","event":"run_finished","outcome":"passed"}

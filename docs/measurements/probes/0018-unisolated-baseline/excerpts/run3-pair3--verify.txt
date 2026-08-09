@@ -1,0 +1,48 @@
+# run3-pair3 / node verify — every Bash command in the session transcript, in order
+# transcript: verify--17010169-ef12-47da-8dc7-94cc7ab87986.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/brand-assets
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets rev-parse --verify chore/rename-accent-token; echo "EXIT:$?"; git -C /tmp/omg-0018/fixtures/docs-site rev-parse --verify chore/rename-accent-token; echo "EXIT:$?"
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets branch --list; echo "---"; git -C /tmp/omg-0018/fixtures/docs-site branch --list
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets rev-parse --verify chore/rename-accent-token
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site rev-parse --verify chore/rename-accent-token
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets log --oneline -5 chore/rename-accent-token
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets log --oneline -5 main
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site log --oneline -5 chore/rename-accent-token
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site log --oneline -5 main
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets show chore/rename-accent-token:tokens.json
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets show chore/rename-accent-token:palette.md
+
+--- #11  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site show chore/rename-accent-token:content/styleguide.md
+
+--- #12  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site show chore/rename-accent-token:content/theme.css
+
+--- #13  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets status --porcelain
+
+--- #14  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/docs-site status --porcelain
+

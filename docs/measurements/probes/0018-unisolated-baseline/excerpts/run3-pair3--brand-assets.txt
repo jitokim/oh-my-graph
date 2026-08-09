@@ -1,0 +1,24 @@
+# run3-pair3 / node brand-assets — every Bash command in the session transcript, in order
+# transcript: brand-assets--d52cb653-bb87-4bf3-9f5f-c433c46082bd.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/brand-assets
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets checkout -b chore/rename-accent-token 2>&1 || git -C /tmp/omg-0018/fixtures/brand-assets checkout chore/rename-accent-token; echo "---STATUS---"; git -C /tmp/omg-0018/fixtures/brand-assets status
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets ls-files
+
+--- #3  [dir: /tmp/omg-0018/fixtures/brand-assets]
+cd /tmp/omg-0018/fixtures/brand-assets && git add tokens.json && git commit -m "chore: rename accent token to brand-accent in tokens.json" && git add palette.md && git commit -m "chore: rename accent token to brand-accent in palette.md"
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets add tokens.json && git -C /tmp/omg-0018/fixtures/brand-assets commit -m "chore: rename accent token to brand-accent in tokens.json"
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets add palette.md && git -C /tmp/omg-0018/fixtures/brand-assets commit -m "chore: rename accent token to brand-accent in palette.md"
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/docs-site]
+git -C /tmp/omg-0018/fixtures/brand-assets log --oneline -3 chore/rename-accent-token; echo "---STATUS---"; git -C /tmp/omg-0018/fixtures/brand-assets status
+

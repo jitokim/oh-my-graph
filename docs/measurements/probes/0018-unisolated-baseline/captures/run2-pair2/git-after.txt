@@ -1,0 +1,26 @@
+=== /tmp/omg-0018/fixtures/report-cli
+-- HEAD:      7104c3dbc630d5630b792e7bc2831157c3a67720
+-- branch:    feat/ascii-bars
+-- branches:
+     * feat/ascii-bars
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/report-cli  7104c3d [feat/ascii-bars]
+-- log:
+     7104c3d (HEAD -> feat/ascii-bars) feat(report): add --bars ASCII chart option
+     5a47f91 (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/chart-lib
+-- HEAD:      9ecf7011d462630583a8c2b84db2f02ea82c2002
+-- branch:    feat/ascii-bars
+-- branches:
+     * feat/ascii-bars
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/chart-lib  9ecf701 [feat/ascii-bars]
+-- log:
+     9ecf701 (HEAD -> feat/ascii-bars) feat(render): add render_bar ASCII bar chart
+     e2a4fbc (main) initial fixture state
+-- status:
+

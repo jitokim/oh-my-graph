@@ -1,0 +1,22 @@
+=== /tmp/omg-0018/fixtures/payments-api
+-- HEAD:      67144b3efe993b14b73db48b3b4d0e2a3061c65f
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/payments-api  67144b3 [main]
+-- log:
+     67144b3 (HEAD -> main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/shared-config
+-- HEAD:      19a39e908336a3d686443e08bcbba13ffc1a7911
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/shared-config  19a39e9 [main]
+-- log:
+     19a39e9 (HEAD -> main) initial fixture state
+-- status:
+

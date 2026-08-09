@@ -1,0 +1,30 @@
+# run4-pair4 / node proto-field — every Bash command in the session transcript, in order
+# transcript: proto-field--998bff9f-d762-4521-a21d-088d4a23ecca.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/proto-defs
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs status --short && git -C /tmp/omg-0018/fixtures/proto-defs branch -a
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency 2>&1; echo "exit=$?"
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs checkout -b feat/order-currency
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs add proto/order.proto FIELDS.md
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs commit -m "feat(order): add currency field to Order message"
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs log --oneline -1 feat/order-currency
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs status --short
+

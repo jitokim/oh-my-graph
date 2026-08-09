@@ -1,0 +1,39 @@
+# run4-pair4 / node review — every Bash command in the session transcript, in order
+# transcript: review--47e690ae-5f85-4145-a4ac-362908a5c021.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/proto-defs
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency --stat && echo "=====" && git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency --stat && echo "=====" && git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency
+
+--- #3  [dir: /tmp/omg-0018/fixtures/order-service]
+cd /tmp/omg-0018/fixtures/order-service && echo "--- orders/serialize.py ---" && cat -n orders/serialize.py && echo "--- tests/test_serialize.py ---" && cat -n tests/test_serialize.py && echo "--- tree ---" && ls -R . | head -50
+
+--- #4  [dir: /tmp/omg-0018/fixtures/proto-defs]
+cd /tmp/omg-0018/fixtures/proto-defs && echo "--- proto/order.proto ---" && cat -n proto/order.proto && echo "--- FIELDS.md ---" && cat -n FIELDS.md && echo "--- tree ---" && ls -R .
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/order-service]
+for r in proto-defs order-service; do echo "=== $r ==="; git -C /tmp/omg-0018/fixtures/$r branch -a -v; echo "-- log main --"; git -C /tmp/omg-0018/fixtures/$r log --oneline main -- . 2>/dev/null | head; echo "-- log branch vs main --"; git -C /tmp/omg-0018/fixtures/$r log --oneline main..feat/order-currency; echo "-- status --"; git -C /tmp/omg-0018/fixtures/$r status --short --branch; done
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs branch -av
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service branch -av
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs status --short --branch; git -C /tmp/omg-0018/fixtures/proto-defs log --oneline main..feat/order-currency
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service status --short --branch; git -C /tmp/omg-0018/fixtures/order-service log --oneline main..feat/order-currency
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs ls-files; echo "--- untracked/other ---"; git -C /tmp/omg-0018/fixtures/proto-defs status --porcelain --untracked-files=all
+
+--- #11  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service ls-files; echo "--- untracked/other ---"; git -C /tmp/omg-0018/fixtures/order-service status --porcelain --untracked-files=all
+

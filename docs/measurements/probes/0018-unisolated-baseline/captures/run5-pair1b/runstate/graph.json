@@ -1,0 +1,57 @@
+{
+  "name": "configurable-payment-timeout",
+  "version": "1",
+  "nodes": [
+    {
+      "id": "client-timeout",
+      "prompt": "Work in the git repository at /tmp/omg-0018/fixtures/payments-api (this is the directory you are running in). Goal: the payment client's HTTP/request timeout is hard-coded; make it configurable.\n\nSteps:\n1. Explore the repo (Glob/Grep/Read) to locate the payment client and its hard-coded timeout literal, and to learn how this repo already handles configuration (existing config struct, env-var loading, defaults, flags). Reuse the repo's existing configuration mechanism and naming style instead of inventing a new one.\n2. Determine the repository's current default branch name with 'git -C /tmp/omg-0018/fixtures/payments-api branch --show-current' (record it; it is likely main or master). Create and switch to a feature branch off it: 'git -C /tmp/omg-0018/fixtures/payments-api checkout -b feat/configurable-request-timeout'. If that branch already exists, just check it out.\n3. Replace the hard-coded timeout with a configurable value: add the setting to the existing config type/loader with a default equal to the current hard-coded value so behavior is unchanged when unset, thread it into the payment client, and update any doc comment, README section, or example config file in this repo that documents client settings so the docs match the code.\n4. Commit as a single feature slice (this is one feature). Stage ONLY the files you created or modified, by explicit path: 'git -C /tmp/omg-0018/fixtures/payments-api add <path> <path> ...'. Never use 'git add -A', 'git add .', or 'git add -u'. Then commit with a conventional-commit message such as 'feat(client): make payment request timeout configurable'. Commit as you go if you do the work in more than one step, so nothing finished is lost.\n5. Do not touch any repository other than /tmp/omg-0018/fixtures/payments-api. Do not use gh; there are no remotes and no pull requests. Do not try to build or test — no build command is available.\n\nYour final reply is a handoff document for a second node that must add the matching key to a shared settings repository. It must state, precisely and unambiguously: the exact configuration key name / path as it appears in config files, the exact environment variable name (if any), the value type, the unit (e.g. seconds or a Go duration string), the default value, the accepted range or validation rules, the exact branch name you used, the commit subject, and the list of files you changed with a one-line description of each.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "timeout": "1h"
+    },
+    {
+      "id": "shared-config-key",
+      "depends_on": [
+        "client-timeout"
+      ],
+      "prompt": "Work in the git repository at /tmp/omg-0018/fixtures/shared-config (a DIFFERENT repository from the directory you are running in — always address it with 'git -C /tmp/omg-0018/fixtures/shared-config ...' and with absolute paths for file reads and edits).\n\nContext: another node just made the payment client's request timeout configurable in /tmp/omg-0018/fixtures/payments-api. Its handoff document — containing the exact key name, env var, type, unit, default, validation rules and branch — is at {{ artifacts.client-timeout }}. Read that file first and match its naming, type, unit and default EXACTLY; do not invent a different key name or a different default.\n\nSteps:\n1. Explore /tmp/omg-0018/fixtures/shared-config (Glob/Grep/Read) to learn how settings are declared and documented there: the file(s) that hold keys, the ordering/grouping convention, the schema or defaults format, and where each key's documentation lives (inline comments, a docs table, a markdown reference). Follow the existing conventions precisely.\n2. Determine the default branch with 'git -C /tmp/omg-0018/fixtures/shared-config branch --show-current', then create and switch to a feature branch off it: 'git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/payment-client-timeout-key'. If it already exists, check it out.\n3. Add the matching settings key with its documentation: the key itself in the right place with the right default, plus the documentation entry describing what it controls, its unit, its default, and its valid range — in whatever form this repo documents keys.\n4. Commit as a single feature slice. Stage ONLY the files you created or modified, by explicit path: 'git -C /tmp/omg-0018/fixtures/shared-config add <path> ...'. Never 'git add -A', 'git add .', or 'git add -u'. Use a conventional-commit message such as 'feat(payments): add payment client request timeout setting'. Commit as you go so finished work is never lost.\n5. Do not modify /tmp/omg-0018/fixtures/payments-api. Do not use gh; there are no remotes and no pull requests. Do not try to build or test.\n\nFinal reply: the branch name, the commit subject, the exact key added, and the files changed with absolute paths.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "timeout": "1h"
+    },
+    {
+      "id": "verify-branches",
+      "depends_on": [
+        "shared-config-key"
+      ],
+      "prompt": "You are a read-only checker. Verify, using repository refs only, that both changes landed on their own feature branches and not on either repository's default branch. Never inspect 'git rev-parse --abbrev-ref HEAD' — a checked-out HEAD belongs to one working directory only, and the work may have been done in a separate worktree.\n\nRun exactly these checks:\n1. 'git -C /tmp/omg-0018/fixtures/payments-api rev-parse --verify feat/configurable-request-timeout' — the ref must exist.\n2. 'git -C /tmp/omg-0018/fixtures/shared-config rev-parse --verify feat/payment-client-timeout-key' — the ref must exist.\n3. For each repository, determine its default branch name (try 'git -C <repo> rev-parse --verify main', and if that fails 'git -C <repo> rev-parse --verify master'). Then confirm the feature branch carries commits the default branch does not: 'git -C /tmp/omg-0018/fixtures/payments-api log --oneline <default>..feat/configurable-request-timeout' and 'git -C /tmp/omg-0018/fixtures/shared-config log --oneline <default>..feat/payment-client-timeout-key' must each print at least one commit.\n4. Confirm the default branches were NOT used for this work: 'git -C <repo> log --oneline -1 <default>' in each repo must still point at a commit that is an ancestor of the feature branch and is not one of the new commits listed in step 3.\n5. Confirm each feature branch actually changed files: 'git -C /tmp/omg-0018/fixtures/payments-api diff --name-only <default>..feat/configurable-request-timeout' and the equivalent in shared-config must each list at least one file.\n6. Confirm nothing was left uncommitted: 'git -C <repo> status --porcelain' in each repo must show no modified or staged tracked files (untracked files unrelated to the task are acceptable).\n\nNote: no build or test command is available to you, so this check says nothing about whether the code compiles or runs — assert only what the git output above shows.\n\nIf every check above holds, your entire reply is exactly the four bare characters PASS and nothing else — no markdown emphasis, no heading, no backticks, no preamble. Otherwise reply FAIL followed by the specific commands and output that failed.",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "handoff": "artifact",
+      "success_check": {
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"
+      }
+    }
+  ]
+}

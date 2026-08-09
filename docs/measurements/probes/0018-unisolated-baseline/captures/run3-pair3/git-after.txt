@@ -1,0 +1,28 @@
+=== /tmp/omg-0018/fixtures/docs-site
+-- HEAD:      924a6d18aad80497f70e376971ecda398ad4dbb6
+-- branch:    chore/rename-accent-token
+-- branches:
+     * chore/rename-accent-token
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/docs-site  924a6d1 [chore/rename-accent-token]
+-- log:
+     924a6d1 (HEAD -> chore/rename-accent-token) chore: rename accent token to brand-accent in styleguide.md
+     5309d31 chore: rename accent token to brand-accent in theme.css
+     5c96937 (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/brand-assets
+-- HEAD:      4973c3d794b005c978fca3fcbbf93b8f79308136
+-- branch:    chore/rename-accent-token
+-- branches:
+     * chore/rename-accent-token
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/brand-assets  4973c3d [chore/rename-accent-token]
+-- log:
+     4973c3d (HEAD -> chore/rename-accent-token) chore: rename accent token to brand-accent in palette.md
+     f7fee12 chore: rename accent token to brand-accent in tokens.json
+     512ebd7 (main) initial fixture state
+-- status:
+

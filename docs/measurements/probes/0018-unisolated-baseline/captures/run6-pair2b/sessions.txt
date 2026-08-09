@@ -1,0 +1,4 @@
+check-branches	FAIL	1d0b1191-ad2f-4bef-9995-fe2cbf3e16e1	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/1d0b1191-ad2f-4bef-9995-fe2cbf3e16e1.jsonl
+impl-chartlib	PASS	41fc967c-f9a7-47f6-bd3d-c99c2a348aa6	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/41fc967c-f9a7-47f6-bd3d-c99c2a348aa6.jsonl
+impl-reportcli	PASS	7796cd4a-457d-4707-97fc-0dcf8c4b4ac5	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/7796cd4a-457d-4707-97fc-0dcf8c4b4ac5.jsonl
+review	PASS	c6c34d2d-40c8-4cb4-9f7c-567e1bdab417	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/c6c34d2d-40c8-4cb4-9f7c-567e1bdab417.jsonl

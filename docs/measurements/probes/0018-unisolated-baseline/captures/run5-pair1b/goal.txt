@@ -1,0 +1,1 @@
+The payment client's request timeout is hard-coded. Make it configurable in /tmp/omg-0018/fixtures/payments-api, and add the matching key with its documentation to the shared settings repository at /tmp/omg-0018/fixtures/shared-config. Land each repository's change on its own feature branch, committed. There are no remotes and no pull requests here, so do not use gh.

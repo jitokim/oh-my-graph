@@ -1,0 +1,56 @@
+{
+  "name": "timeout-seconds-two-repos",
+  "version": "1",
+  "nodes": [
+    {
+      "id": "impl-payments",
+      "prompt": "Work in the repository at /tmp/omg-0018/fixtures/payments-api (this is the directory you were started in; you may also address it explicitly with 'git -C /tmp/omg-0018/fixtures/payments-api ...' and absolute paths).\n\nGoal: make the outbound request timeout configurable.\n\n1. Explore first: list and read the repository's source files (use ls/Glob/Grep/Read) to find (a) the config loader — the code that reads settings and applies defaults — and (b) the HTTP/API client that issues requests, and (c) the existing test files and their conventions (framework, naming, layout).\n2. Add a `timeout_seconds` setting to the config loader, defaulting to 30 when the setting is absent. Follow exactly the same style the loader already uses for its other settings (same parsing/coercion/default mechanism, same struct/field or dict/key idiom). Do not invent a new configuration mechanism.\n3. Make the client actually use that configured value as its request timeout instead of any hard-coded or implicit timeout. Thread it through the same way other config values already reach the client.\n4. Add a test that covers the new behaviour, in the existing test file/suite that matches this area, using the repository's existing test style: assert the default is 30 when the setting is absent, and that an explicitly provided value is honoured and reaches the client.\n\nGit work (commit granularity: feature-slice — this whole timeout_seconds change is ONE feature slice, so make exactly one commit, and make it as soon as the edits are done so nothing finished is lost):\n- Create and switch to a branch named exactly `feat/timeout-seconds` off the current branch: `git checkout -b feat/timeout-seconds` (if it already exists, `git checkout feat/timeout-seconds`).\n- Stage ONLY the files you created or modified, each by explicit path: `git add <path1> <path2> ...`. Never use `git add -A`, `git add .`, or `git add -u` — the working tree may contain untracked files that are not part of this task.\n- Commit with a Conventional Commits message, e.g. `feat: make request timeout configurable via timeout_seconds`.\n- Verify with `git log --oneline -1 feat/timeout-seconds` and `git show --stat --oneline feat/timeout-seconds`.\n\nDo NOT touch the other repository (/tmp/omg-0018/fixtures/shared-config); another node owns it. There is no git remote and no pull request — never push and never use gh. No build or test command is available to you, so do not attempt to run the test suite; just make the code and test correct by reading.\n\nReport, in your final message: the branch name, the commit subject, and the list of files changed with a one-line description of each change.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "timeout": "1h"
+    },
+    {
+      "id": "impl-shared",
+      "prompt": "Work in the repository at /tmp/omg-0018/fixtures/shared-config. You were started in a DIFFERENT directory, so address this repository explicitly: use absolute paths for Read/Edit/Write and `git -C /tmp/omg-0018/fixtures/shared-config ...` for every git command.\n\nGoal: publish the matching `timeout_seconds` setting that the payments-api service reads (an integer number of seconds for outbound request timeouts, default 30).\n\n1. Read /tmp/omg-0018/fixtures/shared-config/config/defaults.yaml and /tmp/omg-0018/fixtures/shared-config/docs/schema.md in full before editing, and note their existing conventions (key ordering/grouping, indentation, comment style in the YAML; table columns or section structure, wording, and type/default notation in the schema doc).\n2. Add a `timeout_seconds` key with the value 30 to config/defaults.yaml, placed in the section/group where the other request- or client-related keys live, matching the surrounding formatting exactly.\n3. Document `timeout_seconds` in docs/schema.md using the document's existing format for an entry — same table columns or heading shape as its neighbours — stating the type (integer, seconds), the default (30), and a one-line description that it bounds outbound request duration.\n\nGit work (commit granularity: feature-slice — this is ONE feature slice, so make exactly one commit covering both files, and commit as soon as the edits are done):\n- `git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/timeout-seconds` (if the branch already exists, `git -C /tmp/omg-0018/fixtures/shared-config checkout feat/timeout-seconds`).\n- Stage ONLY the two files you modified, by explicit path: `git -C /tmp/omg-0018/fixtures/shared-config add config/defaults.yaml docs/schema.md`. Never use `git add -A`, `git add .`, or `git add -u`.\n- Commit with a Conventional Commits message, e.g. `feat: add timeout_seconds default and schema docs`.\n- Verify with `git -C /tmp/omg-0018/fixtures/shared-config log --oneline -1 feat/timeout-seconds` and `git -C /tmp/omg-0018/fixtures/shared-config show --stat --oneline feat/timeout-seconds`.\n\nDo NOT touch the payments-api repository; another node owns it. This repository has no git remote and there is no pull request — never push and never use gh.\n\nReport, in your final message: the branch name, the commit subject, the exact YAML line added, and the schema.md entry added.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)"
+      ],
+      "handoff": "artifact"
+    },
+    {
+      "id": "verify-branches",
+      "depends_on": [
+        "impl-payments",
+        "impl-shared"
+      ],
+      "prompt": "Verify that the timeout_seconds work landed on the feature branch in BOTH repositories and not on either repository's default branch. Neither repository has a git remote and there is no pull request anywhere, so do NOT use gh — assert on branch refs only. Judge repository state with `git -C <path>`, never on what any working directory currently has checked out (do not run or rely on `git rev-parse --abbrev-ref HEAD`).\n\nUpstream reports for context:\n- payments-api: {{ artifacts.impl-payments }}\n- shared-config: {{ artifacts.impl-shared }}\n\nFor REPO_A = /tmp/omg-0018/fixtures/payments-api and REPO_B = /tmp/omg-0018/fixtures/shared-config, for each repo run:\n1. `git -C <repo> rev-parse --verify feat/timeout-seconds` — the ref must exist.\n2. Determine the repository's default branch name (it is `main` or `master`): `git -C <repo> rev-parse --verify main` / `git -C <repo> rev-parse --verify master`; the one that exists is DEFAULT.\n3. `git -C <repo> log --oneline DEFAULT..feat/timeout-seconds` — must list at least one commit, proving the work is on the feature branch and ahead of the default branch.\n4. `git -C <repo> diff --name-only DEFAULT feat/timeout-seconds` — must list the expected files: for REPO_A, the config-loader source file, the client source file and a test file; for REPO_B, exactly `config/defaults.yaml` and `docs/schema.md`.\n5. `git -C <repo> show feat/timeout-seconds:<path>` for each of those files, and confirm the content mentions `timeout_seconds`: in REPO_A the loader defaults it to 30, the client uses it, and the test file references it; in REPO_B defaults.yaml has `timeout_seconds: 30` and schema.md documents it.\n6. Confirm the default branch does NOT already contain the change: `git -C <repo> grep -n timeout_seconds DEFAULT -- .` should produce no matches (a non-zero exit with no output here is the expected, passing result).\n\nYou cannot build, run or test any code — assert only what these git commands actually show, and do not treat a PASS as evidence that the code works.\n\nIf every check above holds for BOTH repositories, your entire reply must be exactly the four bare characters PASS — no markdown emphasis, no heading, no backticks, no preamble, nothing else. Otherwise reply FAIL followed by the specific checks that failed and the command output that shows it.",
+      "allowed_tools": [
+        "Read",
+        "Bash(git *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "success_check": {
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"
+      }
+    }
+  ]
+}

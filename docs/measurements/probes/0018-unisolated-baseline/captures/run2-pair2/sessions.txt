@@ -1,0 +1,3 @@
+chartlib-render	PASS	59cfe637-4286-4c1a-a494-36e4bf3140a6	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/59cfe637-4286-4c1a-a494-36e4bf3140a6.jsonl
+report-bars	PASS	4790caa2-1a53-489f-8cdd-9d567c2e0c3d	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/4790caa2-1a53-489f-8cdd-9d567c2e0c3d.jsonl
+verify-branches	PASS	0e316c29-5e88-460e-a518-f0ac5ce93660	<home>/.claude/projects/-private-tmp-omg-0018-fixtures-report-cli/0e316c29-5e88-460e-a518-f0ac5ce93660.jsonl

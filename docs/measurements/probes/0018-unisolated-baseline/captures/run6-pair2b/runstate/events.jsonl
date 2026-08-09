@@ -1,0 +1,10 @@
+{"schema":2,"ts":"2026-08-09T13:55:10.043721Z","run_id":"20260809-135510.006736000-1","event":"run_started"}
+{"schema":2,"ts":"2026-08-09T13:55:10.059484Z","run_id":"20260809-135510.006736000-1","event":"node_started","node_id":"impl-chartlib","session_id":"41fc967c-f9a7-47f6-bd3d-c99c2a348aa6"}
+{"schema":2,"ts":"2026-08-09T13:56:09.781505Z","run_id":"20260809-135510.006736000-1","event":"node_passed","node_id":"impl-chartlib","verdict":"PASS","cost_usd":0.3789075,"session_id":"41fc967c-f9a7-47f6-bd3d-c99c2a348aa6","provenance":"exit-only"}
+{"schema":2,"ts":"2026-08-09T13:56:09.790041Z","run_id":"20260809-135510.006736000-1","event":"node_started","node_id":"impl-reportcli","session_id":"7796cd4a-457d-4707-97fc-0dcf8c4b4ac5"}
+{"schema":2,"ts":"2026-08-09T13:57:04.523607Z","run_id":"20260809-135510.006736000-1","event":"node_passed","node_id":"impl-reportcli","verdict":"PASS","cost_usd":0.30068199999999995,"session_id":"7796cd4a-457d-4707-97fc-0dcf8c4b4ac5","provenance":"exit-only"}
+{"schema":2,"ts":"2026-08-09T13:57:04.54082Z","run_id":"20260809-135510.006736000-1","event":"node_started","node_id":"review","session_id":"c6c34d2d-40c8-4cb4-9f7c-567e1bdab417"}
+{"schema":2,"ts":"2026-08-09T13:59:02.354912Z","run_id":"20260809-135510.006736000-1","event":"node_passed","node_id":"review","verdict":"PASS","cost_usd":0.5291285,"session_id":"c6c34d2d-40c8-4cb4-9f7c-567e1bdab417","provenance":"self-reported"}
+{"schema":2,"ts":"2026-08-09T13:59:02.360569Z","run_id":"20260809-135510.006736000-1","event":"node_started","node_id":"check-branches","session_id":"1d0b1191-ad2f-4bef-9995-fe2cbf3e16e1"}
+{"schema":2,"ts":"2026-08-09T13:59:31.558559Z","run_id":"20260809-135510.006736000-1","event":"node_failed","node_id":"check-branches","verdict":"FAIL","cost_usd":0.22551549999999998,"session_id":"1d0b1191-ad2f-4bef-9995-fe2cbf3e16e1","detail":"node \"check-branches\" failed success_check result_matches: result did not match /^[*_`\\s]*PASS[*_`\\s]*$/"}
+{"schema":2,"ts":"2026-08-09T13:59:31.567679Z","run_id":"20260809-135510.006736000-1","event":"run_finished","outcome":"failed"}

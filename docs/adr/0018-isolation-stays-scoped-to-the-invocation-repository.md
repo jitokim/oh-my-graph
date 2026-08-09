@@ -17,6 +17,15 @@
   which of two forms the follow-up is, and why the other one cannot exist;
   §Falsification stops defining its population by a value nothing persists.
   Nothing in the review was rejected.
+- **Baseline measured 2026-08-09: 0%** (0 of 6 HEAD-moving nodes; n = 18
+  qualifying nodes over 6 real `auto` runs), taken before the §6 clause exists
+  — see §Falsification, *"Result 2026-08-09"*. **The decision does not move and
+  §1 is not built**: the threshold judges §6's advisory, and **no §6 advisory
+  reached the planner or any node** in this sample, so there was none to
+  disobey. (#129's `! not isolated:` line did print — but it is a warning shown
+  to the *user* after planning, not an instruction given to the party being
+  measured.) But the decision is **provisional** from this date, and that
+  section says on what.
 - Issues: [#103](https://github.com/jitokim/oh-my-graph/issues/103) — the
   second half, the one #123 and #129 did not touch.
 - **Amends nothing.** ADR 0005's single-repository scope is *affirmed*, not
@@ -518,20 +527,51 @@ the exact thing #103's first triage comment could not read from the run feed.
   same compliance; if they cannot be collected, the result is reported as
   prompt-mentions only and says so in the number.
 - **Metric.** The fraction whose transcript records a `git worktree add` (or a
-  clone) in that repository **before** any command that moves that repository's
-  HEAD (`git checkout`, `git switch`, `git reset`, a branch-creating commit in
-  the shared tree), **and** whose every such HEAD-moving command then runs
+  clone) in that repository **before** any command that mutates that
+  repository's state, **and** whose every such mutating command then runs
   *inside the path that setup created* — so the created path is recorded
   alongside each command in the sample, and a node that cuts a worktree and then
   runs `git checkout` back in the shared checkout counts as non-compliant. Setup
   alone proves nothing: the collision this measures is a command landing in the
   shared tree, not the absence of a `worktree add` before it.
-- **Threshold, fixed now.** Over **at least 10** such nodes: **≥ 80% →
-  advisory works, this decision stands and hardens.** **< 50% → advisory has
-  failed on its own terms, and §1's user-named `--repo` form is built**, with
-  §2's lazy provisioning and §3's two cleanup obligations as blocking
-  requirements rather than nice-to-haves. Between 50% and 80% → the sample is
-  extended, not reinterpreted.
+- **Which commands mutate, stated rather than gestured at.** *Not* "whatever
+  moves HEAD": `git stash` and `git branch -f|-m|-D` change the shared tree
+  without moving HEAD, and are in; `git checkout`/`git reset` count in their
+  non-HEAD-moving forms too, because a path checkout is exactly the collision
+  #103 reported. The registered set is the enumerated one in
+  [`probes/0018-unisolated-baseline/PREREG.md`](../measurements/probes/0018-unisolated-baseline/PREREG.md),
+  *"Metric" → "HEAD-moving command"* — `git checkout`, `git switch`,
+  `git reset`, `git commit`, `git merge`, `git rebase`, `git pull`, `git stash`,
+  `git branch -f|-m|-D`, `git branch <new>` followed by entering it — attributed
+  to the target by the directory the command ran in (`-C <path>` or the cwd at
+  that moment). A command is counted **as issued in the transcript**, not as
+  observed to have succeeded: a `git merge` that conflicts still landed in the
+  shared tree. Post-run `git worktree list` / `git log --all` corroborate a row,
+  never decide it. That sentence is the operational definition; the earlier
+  bullet's shorter phrasing is the same rule, not a looser one, and a future
+  sample must re-state this list rather than re-derive it.
+- **Threshold, fixed now — it judges a *post-§6-clause* sample only.** Over
+  **at least 10** such nodes measured **after** §6's planner clause has shipped:
+  **≥ 80% → advisory works, this decision stands and hardens.** **< 50% →
+  advisory has failed on its own terms, and §1's user-named `--repo` form is
+  built**, with §2's lazy provisioning and §3's two cleanup obligations as
+  blocking requirements rather than nice-to-haves. Between 50% and 80% → the
+  sample is extended, not reinterpreted. A **pre**-clause baseline (the next
+  bullet) is advisory-free — there is no instruction in it to obey — so it is
+  reported as a number and an n, and this threshold is not applied to it however
+  low it lands.
+- **Which of the reported readings the threshold is applied to — one, named.**
+  The **headline** reading registered in PREREG.md:
+  `COMPLIANT / (COMPLIANT + NON-COMPLIANT)`. `NO-ATTEMPT` nodes — named the
+  target, moved nothing in it — are a third bucket **excluded from that
+  fraction** and reported as a count beside it; they neither pass nor fail. The
+  strict-literal and lenient-literal readings are published so the
+  disambiguation can be checked, and **decide nothing**. **Zero denominator:**
+  if `COMPLIANT + NON-COMPLIANT = 0` — every qualifying node was `NO-ATTEMPT` —
+  the sample has produced no compliance reading at all, so neither branch fires;
+  it is extended exactly as the 50–80% band is, and "0/0" is never written as
+  0%. The `≥ 10` floor is on the qualifying population, so a sample can clear it
+  and still have a zero denominator.
 - **Confounder to record, not to explain away.** If the §6 planner instruction
   ships first, this measures the instruction and not the status quo, and the
   status quo's number will then never be known. Take a baseline of at least 5
@@ -565,3 +605,98 @@ costs, and this record accepts them.
 **What this decision does not claim:** that a collision is unlikely, or that
 compliance is high. It claims that the cost in §3 is not yet paid for by the
 evidence in hand, and it names the evidence that would pay for it.
+
+### Result 2026-08-09 — the baseline, taken before the §6 clause exists: **0%**
+
+**0 of 6 = 0%.** n = **18** qualifying nodes over **6** real `auto` runs, taken
+**2026-08-09**. Across all twenty node transcripts in the sample the string
+`git worktree add` appears zero times and `git clone` zero times; six nodes
+moved a foreign checkout's HEAD and all six did it in the shared checkout the
+user did not open, leaving all six fixtures standing on a new feature branch
+with a single entry in `git worktree list`. #103's collision shape, six times
+out of six. Cost $9.15.
+
+**Where the raw rows live.** Report:
+[`docs/measurements/0018-unisolated-compliance-baseline.md`](../measurements/0018-unisolated-compliance-baseline.md).
+Sealed pre-registration, per-node rows, capture/extract/scrub scripts, the six
+goals, per-run captures (plan printout, invocation root, goal, `graph.json` /
+`state.json` / `events.jsonl`, both fixtures' git state before and after) and
+the complete ordered git-command list per node:
+[`docs/measurements/probes/0018-unisolated-baseline/`](../measurements/probes/0018-unisolated-baseline/).
+Raw transcripts are deliberately **not** committed (a node's system prompt
+carries the operator's whole local skill corpus, and this repository is
+public); the excerpts and `sessions.txt` are what this section's *"a sample is
+only as durable as its captures"* asks for. Every path measured is a throwaway
+fixture under `/tmp/omg-0018/fixtures` with no remote — no real checkout
+appears anywhere in it. §6 was verified unimplemented before and after the
+sample (`branchEvidenceRule` carries only its worktree *caveat*), so this is
+the status quo number, and the ≥5-node precondition above is met by 18.
+
+**Population caveat — three parts, all of them load-bearing:**
+
+- **The metric is silent on a node that moves no HEAD**, and both literal
+  readings are degenerate (a read-only node is either non-compliant for having
+  no `worktree add`, or compliant for free). PREREG.md fixed the disambiguation
+  before any data and all three are reported: headline **0/6 = 0%** (denominator
+  = nodes that actually moved the target's HEAD), strict-literal 0/18 = 0%,
+  lenient-literal 12/18 = 67%. The last is not a compliance figure — it counts a
+  node that read a file as having cut a worktree — and is carried only because
+  the pre-registration promised it.
+- **This is still a prompt-mention population by construction.** The goal-only
+  stratum this section calls the harder half (`InGoal` true, empty `NodeIDs`,
+  how #103's own run named repository B) did not arise: all six warnings read
+  `named by the goal and nodes "…"`. The goal was captured with every run, so it
+  would have been measurable had it occurred — the number is not truncated by an
+  unmeasured remainder — but a future sample that does hit that path must report
+  the stratum separately.
+- **Two nodes were excluded** whose prompts never named the foreign checkout
+  (`docs-site`, `client-timeout`). `scanUnisolated` did not list them. Both ran
+  `checkout -b` in the *invocation* repository, which is outside this population
+  by definition and, per this ADR's own correction, equally unisolated.
+
+Three deviations from the sealed pre-registration are recorded in the report
+rather than edited into PREREG.md; the largest is that runs 5–6 were added as a
+post-hoc robustness arm with looser goal wording, which could only weaken the
+finding and did not (runs 1–4 alone: 0/4 over a population of 12).
+
+**What the number does to the threshold.** Read literally it is below the 50%
+line, and the threshold above says that line builds §1. **§1 is not built, and
+this record does not treat the trigger as met**: the threshold judges *whether
+the §6 advisory is obeyed* — "Whether it is obeyed is the measurement below" —
+and a baseline is advisory-free by construction, so "advisory has failed on its
+own terms" cannot be concluded from it however low it is. The population-size
+condition (18 ≥ 10) is met; the condition being tested is not. Sharpening this:
+in **6 of 6** non-compliant rows the offending `checkout -b` in the shared
+checkout was **written into the node's prompt by the planner**, not improvised
+by the node. Compliance with an instruction never given was always going to read
+0%, and §6 is aimed at exactly the party that failed.
+
+**The decision is provisional from this date.** It does not move — it never
+rested on compliance being high, it rests on §3's cleanup cost, and it already
+said in Consequences that *"compliance is exactly what has never been measured
+here."* What changes is that the blank is filled with a zero, so the third
+Negative — *"the recovery in #103 was luck and is being treated as tolerable"* —
+now stands on a measured base rate rather than on one report. What stays open is
+that the decision's remaining support is a cost argument alone, and the sample
+that would settle it has not been taken.
+
+**What the full sample would settle, and nothing short of it does:**
+
+1. **Whether the §6 clause moves this number at all** — the post-clause figure
+   over **≥ 10** qualifying nodes, with the population defined and captured the
+   same way (run-time capture of the plan printout, invocation root and goal;
+   judged from transcripts). **< 50% there is the branch that builds §1's
+   user-named `--repo`**, with §2's lazy provisioning, its snapshot-or-refuse
+   resume answer, and §3's two cleanup obligations as blocking requirements.
+   ≥ 80% hardens this decision. Between the two extends the sample.
+2. **Which party actually fails.** The baseline cannot distinguish a planner
+   that prescribes the wrong command from a node that ignores a right one,
+   because only the first existed. A post-clause sample where the planner stops
+   prescribing `checkout -b` in the shared tree and nodes still do not cut
+   worktrees is the first real evidence of node-level disobedience — and it is
+   the evidence that would make §1 the only remaining lever.
+3. **Whether the goal-only stratum behaves the same**, which this sample could
+   not observe.
+
+A post-clause number at or near 0 of 6 is not a repeat of this row; it is the
+< 50% branch, and this baseline is the floor it has to beat.

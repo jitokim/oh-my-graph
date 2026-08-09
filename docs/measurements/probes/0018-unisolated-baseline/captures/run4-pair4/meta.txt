@@ -1,0 +1,11 @@
+label:            run4-pair4
+date:             2026-08-09T22:48:19+09:00
+binary:           <home>/.oh-my-graph/runs/20260809-133725.376127000-1/worktrees/base/bin/oh-my-graph
+binary version:   oh-my-graph 0.5.2
+binary sha256:    8a9a16844e1be0e6f690d092de6b2893fca0267636c0fae0224427f8938e73cd
+claude version:   2.1.226 (Claude Code)
+OMG_HOME:         /tmp/omg-0018/omghome4
+invocation dir:   /private/tmp/omg-0018/fixtures/order-service
+foreign checkout: /private/tmp/omg-0018/fixtures/proto-defs
+argv:             auto <goal> --no-web --continue-on-fail
+goal file:        goals/pair4.txt

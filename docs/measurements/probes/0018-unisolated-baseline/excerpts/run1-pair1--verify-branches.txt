@@ -1,0 +1,70 @@
+# run1-pair1 / node verify-branches — every Bash command in the session transcript, in order
+# transcript: verify-branches--35957631-89ed-4bc4-baeb-3f0c7b1e64fb.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/shared-config
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+cat /tmp/omg-0018/omghome/runs/20260809-134427.657374000-1/impl-payments.out; echo "=====SHARED====="; cat /tmp/omg-0018/omghome/runs/20260809-134427.657374000-1/impl-shared.out
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+A=/tmp/omg-0018/fixtures/payments-api; B=/tmp/omg-0018/fixtures/shared-config
+for R in $A $B; do echo "### $R"; echo "-- feat:"; git -C $R rev-parse --verify feat/timeout-seconds 2>&1; echo "-- main:"; git -C $R rev-parse --verify main 2>&1; echo "-- master:"; git -C $R rev-parse --verify master 2>&1; done
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api rev-parse --verify feat/timeout-seconds
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config rev-parse --verify feat/timeout-seconds
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api rev-parse --verify main
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api rev-parse --verify master
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config rev-parse --verify main
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config rev-parse --verify master
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api log --oneline main..feat/timeout-seconds
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config log --oneline main..feat/timeout-seconds
+
+--- #11  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api diff --name-only main feat/timeout-seconds
+
+--- #12  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config diff --name-only main feat/timeout-seconds
+
+--- #13  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api show feat/timeout-seconds:payments/config.py
+
+--- #14  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api show feat/timeout-seconds:payments/client.py
+
+--- #15  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api show feat/timeout-seconds:tests/test_config.py
+
+--- #16  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config show feat/timeout-seconds:config/defaults.yaml
+
+--- #17  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config show feat/timeout-seconds:docs/schema.md
+
+--- #18  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api grep -n timeout_seconds main -- .; echo "exit=$?"
+
+--- #19  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config grep -n timeout_seconds main -- .; echo "exit=$?"
+
+--- #20  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api grep -n timeout_seconds main -- .
+
+--- #21  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/shared-config grep -n timeout_seconds main -- .
+
