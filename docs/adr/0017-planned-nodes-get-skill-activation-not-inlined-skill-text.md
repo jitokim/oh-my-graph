@@ -410,9 +410,7 @@ staged directory that would shadow the real one.
 
 ### 2. `Skill` is injected after validation; layer 0 does not learn the word
 
-`plannedToolAllowlist` is **not** extended. ADR 0016-build-evidence §1 (there
-are two ADRs numbered 0016; every "ADR 0016" citation in this record means
-`0016-build-evidence-is-a-user-supplied-engine-command.md`) narrowed what that
+`plannedToolAllowlist` is **not** extended. ADR 0016 §1 narrowed what that
 list answers — *"what class of tool is safe for unattended planner output at
 all"* — and a planner that can name `Skill` in `allowed_tools` is a planner
 that can select which of the user's local files gets loaded into a node it
@@ -422,7 +420,7 @@ it stays closed.
 So the grant is a **policy-level act, invisible to the graph**: `node.
 AllowedTools` never contains `Skill`, `validatePlannedNodeTools` never sees
 it, the saved `graph.json` never carries it. The same posture as
-`agentmap.go`'s `agent:` and ADR 0016-build-evidence §2's injected
+`agentmap.go`'s `agent:` and ADR 0016 §2's injected
 verification: *choosing stays in trusted code, and what the planner may
 declare does not move.*
 

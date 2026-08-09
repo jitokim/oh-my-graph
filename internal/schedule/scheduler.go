@@ -703,7 +703,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 // spoke into — a judged verdict, or a result that could not be persisted —
 // keeps that reply at failed/<node-id>.out on the way out (keepFailedReply),
 // and — when a check judged it — hands that same reply to the attempt that
-// retries it, quoted as fenced data (retryfeedback.go, ADR 0016).
+// retries it, quoted as fenced data (retryfeedback.go, ADR 0020).
 // A feedback declarer's
 // judgment failure with rounds remaining returns a *feedbackSignal instead
 // (see judgeFeedback), which Run() intercepts and turns into the body's
@@ -723,7 +723,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	//
 	// It is taken HERE, before the session id is minted, because a seeded reply
 	// makes this execution a RETRY of the attempt that produced it — and a
-	// retry starts cold (prepareRetry, ADR 0016 §6). Without that, a
+	// retry starts cold (prepareRetry, ADR 0020 §6). Without that, a
 	// `handoff: session` node would resume its parent's conversation while the
 	// quote appended to its prompt told it "You are a FRESH claude session […]
 	// neither is any conversation it belonged to": the two halves of one
@@ -948,7 +948,7 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 	led.Record(rec)
 	// isJudgmentFailure here, at the one place a terminal failure is recorded,
 	// so the snapshot carries the same split the in-leg retry quote is gated on
-	// and a later process never has to re-derive it (ADR 0016).
+	// and a later process never has to re-derive it (ADR 0020).
 	s.recordSnapshot(node, rec, h, isJudgmentFailure(cause))
 	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
@@ -1127,7 +1127,7 @@ func (s *Scheduler) startCold(invocation *runner.NodeInvocation, node graph.Node
 // from the coordinator's, and the difference is what is left to fall back on: a
 // planner call whose material cannot be fenced has no un-fenced version worth
 // making, while a retry without the quote is exactly the retry this engine ran
-// for every release before ADR 0016 — complete, valid, and merely less informed.
+// for every release before ADR 0020 — complete, valid, and merely less informed.
 func (s *Scheduler) quotePriorAttempt(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
 	prompt, err := retryPrompt(basePrompt, priorReply)
 	if err != nil {

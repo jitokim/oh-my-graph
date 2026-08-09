@@ -1,7 +1,14 @@
-# ADR 0016 — A retry carries the attempt it is repeating
+# ADR 0020 — A retry carries the attempt it is repeating
 
 - Status: Accepted — implemented.
 - Date: 2026-08-06
+- **Renumbered 2026-08-09, from 0016.** This record and
+  `0016-build-evidence-is-a-user-supplied-engine-command.md` were authored on
+  separate lanes and both took 0016 (CHANGELOG, v0.5.0). Every "ADR 0016"
+  citation left in the tree therefore means the build-evidence record, and this
+  one is 0020 — the later number, because it is the cheaper rename: the
+  build-evidence ADR is the one cited by bare number dozens of times across the
+  code. The date above is the authoring date, not the number's.
 
 ## Context
 

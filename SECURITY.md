@@ -158,8 +158,12 @@ Still a reduction, not a sandbox. What is **not** covered:
   oh-my-graph never passes `--mcp-config`, so the flag costs nothing — but this
   was not measured against a real MCP server (DESIGN.md, E5). Do not read Layer
   4 as an observed guarantee.
-- **Skill and slash-command surfaces** are still not enumerable by any of these
-  mechanisms.
+- **Slash-command surface** is still not enumerable by any of these mechanisms,
+  and neither is **skill surface** *by these flags* — but since v0.5.2 it is
+  bounded by a different one: an activation-eligible node reaches only the
+  corpus `auto` stages for it, printed with each skill's size and SHA-256 before
+  the run, and an agent-mapped node holds no `Skill` tool at all
+  ([ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)).
 - **Enterprise policy settings are never dropped** by `--setting-sources ""` —
   which is deliberate: this cannot be used to step around a corporate policy.
   Conversely, on a machine with `allowManagedPermissionRulesOnly`,

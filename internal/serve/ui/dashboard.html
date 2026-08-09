@@ -50,6 +50,10 @@
   </main>
   <footer>
     <span id="banner" class="banner"></span>
+    <span class="spacer"></span>
+    <!-- The build this dashboard is running — the same label every run view
+         mounted under it carries, for the same reason (serve.BuildLabel). -->
+    <span class="build" title="the build this server is running">{{.Build}}</span>
   </footer>
   <script src="dashboard.js"></script>
 </body>

@@ -165,12 +165,12 @@ nodes:
 // the cut is announced rather than silent.
 func TestRetry_BoundsTheQuotedReply(t *testing.T) {
 	// The number itself, not just the code's agreement with itself: DESIGN.md,
-	// ADR 0016 §3 and the CHANGELOG all publish 8000 bytes as a cost promise,
+	// ADR 0020 §3 and the CHANGELOG all publish 8000 bytes as a cost promise,
 	// and every other assertion here derives BOTH its input and its ceiling
 	// from the constant, so raising it could never fail one of them.
 	if maxPriorReplyInPrompt != 8000 {
 		t.Fatalf("maxPriorReplyInPrompt = %d, want 8000 — the bound is published as a per-attempt cost "+
-			"promise; moving it means moving DESIGN.md, ADR 0016 §3 and the CHANGELOG with it",
+			"promise; moving it means moving DESIGN.md, ADR 0020 §3 and the CHANGELOG with it",
 			maxPriorReplyInPrompt)
 	}
 	huge := strings.Repeat("x", maxPriorReplyInPrompt*3)
@@ -420,7 +420,7 @@ nodes:
 		t.Errorf("the quote dropped the paragraph that makes it readable as notes:\n%s", rec.prompts[1])
 	}
 
-	// The surfaces have to say it too — the ledger detail is where ADR 0016 §6
+	// The surfaces have to say it too — the ledger detail is where ADR 0020 §6
 	// rests the claim that a session node's retry not resuming its parent is
 	// visible rather than silent.
 	row, ok := findRecord(led, "child")

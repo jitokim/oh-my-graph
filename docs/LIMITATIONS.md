@@ -1,7 +1,9 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.4.1**, and what is deliberately deferred.
+gaps as of **v0.5.2**, and what is deliberately deferred. Where a gap has
+already been closed on `main` but not in a tagged release, this file says so
+in the paragraph that describes it rather than in the stamp.
 
 ## Platform support
 
@@ -50,7 +52,12 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.4.1, each tracked as an issue rather than left as prose:
+Honest gaps as of v0.5.2. **This file is where they are tracked** — there is
+no open issue behind any of them (`gh issue list --state open` returns
+nothing, and has since 2026-08-09). The issue numbers below name the *closed*
+issue each gap was carved out of, which is provenance, not a tracker: those
+issues asked for the feature that shipped, and were closed when it did. What
+survived the feature is the paragraph, here.
 
 - **A `success_check` without `verify` is still self-report.** `success_check.verify`
   closes this for graphs that opt in: the engine runs a command of your choosing
@@ -94,9 +101,15 @@ Honest gaps as of v0.4.1, each tracked as an issue rather than left as prose:
   unverified.** The isolation and scoped-Bash layers were measured against a
   real `claude` 2.1.220 and hold (see [SECURITY.md](../SECURITY.md)). MCP closure
   was **not** measured: `--strict-mcp-config` is passed because it costs
-  nothing, not because it was observed to work. Skill and slash-command surfaces
-  are not enumerable by any of these mechanisms, and the whole ceiling is
-  coupled to one CLI version's behaviour.
+  nothing, not because it was observed to work. Slash-command surface is not
+  enumerable by any of these mechanisms, and neither is skill surface *by these
+  flags* — but since v0.5.2 it is bounded by a different one: an
+  activation-eligible node reaches only the corpus `auto` stages for it, printed
+  with each skill's size and SHA-256 before the run, and an agent-mapped node
+  reaches no skill at all
+  ([ADR 0017](adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)).
+  The whole
+  ceiling is coupled to one CLI version's behaviour.
   ([#11](https://github.com/jitokim/oh-my-graph/issues/11))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not
@@ -118,14 +131,21 @@ Honest gaps as of v0.4.1, each tracked as an issue rather than left as prose:
   is the whole protection.
   [ADR 0018](adr/0018-isolation-stays-scoped-to-the-invocation-repository.md)
   records why managed multi-repository worktrees are deferred, and the
-  measurement that would convert that into a build.
+  measurement that would convert that into a build. That measurement's
+  **baseline** has since been taken (2026-08-09, 6 real `auto` runs, 18
+  qualifying nodes): **0 of 6** nodes that moved a foreign checkout's HEAD
+  isolated themselves first — #103's collision shape, six times out of six.
+  The number is the status quo, not a verdict on the fix: it was taken before
+  the §6 advisory clause the ADR proposes exists, which is what it is a
+  baseline *for*
+  ([the record](measurements/0018-unisolated-compliance-baseline.md)).
   ([#103](https://github.com/jitokim/oh-my-graph/issues/103))
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.4.1:
+Called out honestly — these are **not** implemented as of v0.5.2:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause

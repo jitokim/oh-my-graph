@@ -219,8 +219,8 @@ Which qualifier a node can earn depends on the path. A hand-written graph earns
 your own command. A **planned** node cannot: a planner-authored `verify:` is
 engine-run shell outside every ceiling layer, so it is refused outright, which
 is why `auto`'s check nodes have only ever been able to reach `self-reported`.
-That is the gap [ADR 0016 (build
-evidence)](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
+That is the gap
+[ADR 0016](docs/adr/0016-build-evidence-is-a-user-supplied-engine-command.md)
 closes — a build command **you** supply at invocation, attached by trusted code
 to the plan's sink nodes *after* validation and run by the engine, so a
 verification node cannot pass a branch that does not build:
@@ -657,7 +657,7 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   verification that could not be *completed* — carries nothing, and a
   `handoff: session` retry still starts cold and says so. This is on by default
   and it costs money: up to roughly 2k tokens of quoted reply per retry of a
-  judged failure, bounded and flat, never compounding ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0016 (retry)](docs/adr/0016-a-retry-carries-the-attempt-it-is-repeating.md)).
+  judged failure, bounded and flat, never compounding ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0020](docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc. In a run where any node declares one, a **passing** row's
   `COST(USD)` cell also states the share of that node's budget the spend used —

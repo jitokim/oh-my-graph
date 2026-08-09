@@ -201,7 +201,7 @@ type NodeRecord struct {
 	// an additive field, no schema bump.
 	//
 	// It exists because that split is the gate on quoting a failed node's own
-	// reply back into the prompt that retries it (ADR 0016, "a retry carries
+	// reply back into the prompt that retries it (ADR 0020, "a retry carries
 	// the attempt it is repeating"), and a `resume --retry-failed` decides
 	// that in a different PROCESS from the one that judged it. The alternative
 	// was re-deriving the cause by parsing Detail's prose, which would make a

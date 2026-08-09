@@ -15,7 +15,7 @@
 // (ADR 0011 §2), plus coordinator.go's continuation quote of that same
 // `remaining` into the next cycle's planner prompt, repair.go's quote of the
 // validator's refusals into a re-plan prompt, and retryfeedback.go's quote of a
-// node's own rejected attempt into the prompt that retries it (ADR 0016). The
+// node's own rejected attempt into the prompt that retries it (ADR 0020). The
 // refusals one is the least obvious and no less necessary: a refusal is an
 // engine-authored sentence, but it interpolates model-authored fragments — a
 // placeholder token, a node id — and at least one validator does so without

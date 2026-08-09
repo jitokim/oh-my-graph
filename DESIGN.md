@@ -517,7 +517,7 @@ attempt does not resume the parent session either — it starts cold, which
 A retry is no longer a byte-identical re-spawn, though: when the attempt it
 repeats **was judged** — a failed `success_check`, or a verification that ran
 and said no — the retried attempt's prompt carries that attempt's own reply,
-quoted as nonce-fenced data (ADR 0016, `internal/schedule/retryfeedback.go`).
+quoted as nonce-fenced data (ADR 0020, `internal/schedule/retryfeedback.go`).
 Exactly **one** prior attempt is ever carried and it never accumulates: every
 attempt's prompt is rebuilt from the interpolated node prompt, so the added
 cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
@@ -1341,6 +1341,19 @@ depending on its one optional argument:
 The tool therefore renders its own runs: `serve` is the live view, `runs
 list` / `show` / `watch` the terminal ones.
 
+Both pages state, in the footer, **which build is serving them** —
+`v0.5.2 (cef30c6, built 2026-08-09 14:02)`, from `serve.BuildLabel`, rendered
+into the page once per process alongside the gate token. A `serve` process
+outlives the tree it was built from: it holds its port for as long as it runs
+and keeps serving the code it was compiled from while `bin/oh-my-graph` is
+rebuilt underneath it, which from a browser is indistinguishable from the new
+build misbehaving. The version cannot settle that on its own (every build
+between two tags carries the same one), so the label also carries the VCS
+revision the toolchain stamped *and* the running executable's own mtime — the
+second because the first is absent from a `-buildvcs=false` build, a proxy
+module build, and a build from a linked git worktree, which is how this
+project's own graph lanes build.
+
 The structural rule is that rendering gets no privileged access to the
 engine: `serve` is a **consumer of the run-feed contract**
 (docs/RUN-FEED.md) in everything but its two gate routes, living in-repo
@@ -2026,6 +2039,17 @@ cross-node budget accounting (per-node
 mid-node kill via `--max-budget-usd` and post-hoc budget halt ARE both enforced
 — see "Execution engine").
 
+That list is what was never built. The other half — what IS built and still
+falls short of what a reader might assume from this spec — is
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md): the platform notes, and the
+per-feature gaps each shipped mechanism left behind (a `success_check` with no
+`verify` is still self-report; a PASS row does not say which of a two-valued
+verdict passed; `budget_usd` is per node only; isolation stops at the
+invocation repository). This spec says what the design intends; that file says
+where the shipped thing does not reach it, and the two are kept in step
+deliberately rather than merged — a boundary stated once, in the document
+whose subject it is.
+
 ## v1.1 scope
 IN: evidence-grounded `success_check.verify` (#7); `gate` execution +
 `oh-my-graph resume` (#9); the layered tool ceiling for planned nodes and the
@@ -2036,7 +2060,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 ```
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
-internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0016)
+internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
@@ -2050,11 +2074,11 @@ internal/gate/gate.go + _test                  Decision + PauseController/Record
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
-internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
+internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style,pr-publish}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..19}-*.md                       (0016 is taken by TWO records — the retry ADR and the build-evidence ADR — so cite that number by filename)
+docs/adr/00{01..20}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```

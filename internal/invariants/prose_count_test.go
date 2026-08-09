@@ -431,7 +431,7 @@ var fenceCallSiteClaim = claimPattern(`\b%s\s+call[ -]sites\b`)
 // The count is taken REPO-WIDE, not over one package. It used to be scoped to
 // internal/coordinator, which was right while the fence lived there and every
 // caller was a sibling; internal/schedule quotes a rejected attempt back to the
-// node that produced it (ADR 0016), so a package-scoped count would now miss a
+// node that produced it (ADR 0020), so a package-scoped count would now miss a
 // caller and let the sentence quietly go stale by one.
 //
 // Callers are matched syntactically as `fence.Nonce(...)`, which is what every
