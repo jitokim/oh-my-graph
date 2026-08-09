@@ -66,7 +66,7 @@ type UnisolatedPath struct {
 // shell command: a leading `/`, or a `~/` home spelling, followed by at least
 // one more character of a conservative path alphabet.
 //
-// The leading group is what keeps a branch name out: `feat/ingest-hardening`
+// The leading group is what keeps a branch name out: `feat/retry-policy`
 // contains a slash, but that slash is preceded by a word character, so the
 // match never starts there. Go's regexp has no lookbehind, so the preceding
 // character is consumed by a non-capturing group and the path itself is the

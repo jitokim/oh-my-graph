@@ -43,16 +43,16 @@ func scanOf(t *testing.T, invocationDir, goal string, prompts ...[2]string) *Uni
 // goal as well as from the plan.
 func TestScanUnisolated_ForeignCheckoutNamedByGoalAndNode(t *testing.T) {
 	home := t.TempDir()
-	repoA := newCheckout(t, filepath.Join(home, "lbox-argo-applications"))
-	repoB := newCheckout(t, filepath.Join(home, "lbox-ai-memory"))
+	repoA := newCheckout(t, filepath.Join(home, "deploy-config"))
+	repoB := newCheckout(t, filepath.Join(home, "search-index"))
 	if err := os.MkdirAll(repoA, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	scan := scanOf(t, repoA,
-		"harden ingest latency in "+repoB+" and add DLQ alarms here",
-		[2]string{"mem-impl", "Work in " + repoB + " on the feature branch."},
-		[2]string{"argo-impl", "Add the alarms in this repository."},
+		"add the retry policy in "+repoB+" and the alarm rule here",
+		[2]string{"index-impl", "Work in " + repoB + " on the feature branch."},
+		[2]string{"deploy-impl", "Add the alarm rule in this repository."},
 	)
 
 	if scan == nil {
@@ -68,8 +68,8 @@ func TestScanUnisolated_ForeignCheckoutNamedByGoalAndNode(t *testing.T) {
 	if !got.InGoal {
 		t.Error("the goal named it; the warning must say so")
 	}
-	if len(got.NodeIDs) != 1 || got.NodeIDs[0] != "mem-impl" {
-		t.Errorf("nodes = %v, want only mem-impl — argo-impl named no path", got.NodeIDs)
+	if len(got.NodeIDs) != 1 || got.NodeIDs[0] != "index-impl" {
+		t.Errorf("nodes = %v, want only index-impl — deploy-impl named no path", got.NodeIDs)
 	}
 	if !scan.IsRepo || scan.Root != resolveSymlinks(repoA) {
 		t.Errorf("boundary = %s (isRepo %v), want the invocation repository %s", scan.Root, scan.IsRepo, repoA)
@@ -100,7 +100,7 @@ func TestScanUnisolated_QuietOnEverythingThatIsNotAForeignCheckout(t *testing.T)
 		{"a scratch directory that is no checkout", "write the report to " + scratch + "/report.md"},
 		{"a path that does not exist at all", "read " + filepath.Join(home, "nowhere", "at", "all.txt")},
 		{"a system path", "run /usr/bin/make and read /etc/hosts"},
-		{"a branch name", "commit on feat/ingest-latency-hardening, not on main"},
+		{"a branch name", "commit on feat/retry-policy, not on main"},
 		{"a templated worktree path", "git worktree add /tmp/shepherd-{{ inputs.pr }} FETCH_HEAD"},
 		{"a fraction and a date", "roughly 3/4 of the nodes, by 2026/08/06"},
 		{"a URL", "see https://github.com/jitokim/oh-my-graph/pull/103 for context"},
@@ -180,9 +180,9 @@ func TestScanUnisolated_ExpandsTheHomeSpelling(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoA := newCheckout(t, filepath.Join(home, "IdeaProjects", "repo-a"))
-	repoB := newCheckout(t, filepath.Join(home, "IdeaProjects", "lbox-ai-memory"))
+	repoB := newCheckout(t, filepath.Join(home, "IdeaProjects", "search-index"))
 
-	scan := scanOf(t, repoA, "also harden ~/IdeaProjects/lbox-ai-memory")
+	scan := scanOf(t, repoA, "also harden ~/IdeaProjects/search-index")
 
 	if scan == nil || len(scan.Paths) != 1 {
 		t.Fatalf("scan = %+v, want one warning for %s", scan, repoB)
@@ -190,7 +190,7 @@ func TestScanUnisolated_ExpandsTheHomeSpelling(t *testing.T) {
 	if scan.Paths[0].Repo != resolveSymlinks(repoB) {
 		t.Errorf("repo = %s, want %s", scan.Paths[0].Repo, repoB)
 	}
-	if scan.Paths[0].Mention != "~/IdeaProjects/lbox-ai-memory" {
+	if scan.Paths[0].Mention != "~/IdeaProjects/search-index" {
 		t.Errorf("mention = %s, want the path as it was written", scan.Paths[0].Mention)
 	}
 }

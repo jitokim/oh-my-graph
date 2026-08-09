@@ -358,29 +358,29 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 // prompt text — state its own limits rather than reading as a clean bill of
 // health.
 func TestPrintPlan_WarnsAboutUnisolatedCheckouts(t *testing.T) {
-	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"mem-impl","prompt":"p"}]}`))
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"index-impl","prompt":"p"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var out strings.Builder
 	printPlan(&out, coordinator.Plan{Graph: g, Unisolated: &coordinator.UnisolatedScan{
-		Root:   "/home/u/IdeaProjects/lbox-argo-applications",
+		Root:   "/home/u/IdeaProjects/deploy-config",
 		IsRepo: true,
 		Paths: []coordinator.UnisolatedPath{{
-			Repo:    "/home/u/IdeaProjects/lbox-ai-memory",
-			Mention: "/home/u/IdeaProjects/lbox-ai-memory",
+			Repo:    "/home/u/IdeaProjects/search-index",
+			Mention: "/home/u/IdeaProjects/search-index",
 			InGoal:  true,
-			NodeIDs: []string{"mem-impl"},
+			NodeIDs: []string{"index-impl"},
 		}},
 	}}, "/tmp/graph.json")
 	got := out.String()
 
 	for _, want := range []string{
-		"! not isolated: /home/u/IdeaProjects/lbox-ai-memory — a local git checkout\n",
-		`    named by the goal and node "mem-impl"`,
+		"! not isolated: /home/u/IdeaProjects/search-index — a local git checkout\n",
+		`    named by the goal and node "index-impl"`,
 		"isolates no checkout at all",
-		"not even the one it was invoked\n  from (/home/u/IdeaProjects/lbox-argo-applications)",
+		"not even the one it was invoked\n  from (/home/u/IdeaProjects/deploy-config)",
 		"create its own git worktree there first",
 		"heuristic read of the plan's text",
 		"warning, not a refusal",
