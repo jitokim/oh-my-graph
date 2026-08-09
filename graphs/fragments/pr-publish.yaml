@@ -3,9 +3,10 @@
 # ADR 0013's corpus mining named this shape ("the pr-publish node") and the
 # migration then skipped it, on the grounds that `dev` and `pr` "diverge more
 # than they share". That was true of `dev` and measurably false of `pr`: the
-# four shipped PR nodes share 78-89% of their prompt word-for-word (the whole
-# block below), and all four declare the same grant, the same permission mode,
-# the same handoff and the same success_check. What differs is one paragraph.
+# four shipped PR nodes share the 83 words below word-for-word — 75% of the
+# shortest of the four prompts, and pairwise they run 78-89% — and all four
+# declare the same grant, the same permission mode, the same handoff and the
+# same success_check. What differs is one paragraph.
 #
 # So that paragraph is what binds. `publish` is the graph's own instruction —
 # which branch to push, whether the pull request is a DRAFT, and what goes in

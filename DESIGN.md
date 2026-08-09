@@ -903,9 +903,12 @@ clause — and none should, because each writes its own token, its own payload
 and its own "if it is not finished" branch. The fourth whole-reply pin is
 further out of reach still: `coordinator.plannedVerdictPattern` is not in a
 graph at all but a Go string rendered into the planner's prompt for the planner
-to copy character-for-character into JSON, so nothing graph-side can share it —
-this section and that constant's own doc comment are what keep the two spellings
-of one idiom from drifting.
+to copy character-for-character into JSON, so nothing graph-side can share it.
+What keeps the two spellings of that one idiom from drifting is therefore a
+test, not this paragraph: `TestPlannedVerdictPatternMatchesE2EVerifyFragment`
+(`internal/coordinator`) reads `graphs/fragments/e2e-verify.yaml` out of the
+embedded payload and fails unless its `result_matches` is byte-identical to the
+constant. Reuse could not deduplicate them; a `go test` can still pin them.
 
 The rule is stated here and swept for by `lint` and `run --dry-run`
 (`handoff.LintVerdicts`), because a rule only DESIGN.md knows is the same

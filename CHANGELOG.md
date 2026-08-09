@@ -14,9 +14,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 - **The PR node is one shape, so it is a fragment now
   (`graphs/fragments/pr-publish.yaml`, ADR 0013).** A proposal to make
-  `verdict:` a first-class schema key raised the prior question — 22 of the
-  repo's 31 `result_matches` declarations repeat one of four patterns, and
-  only three declarations live in fragments today. Are the other 22 outside
+  `verdict:` a first-class schema key raised the prior question — before this
+  change, 22 of the repo's 31 `result_matches` declarations repeated one of
+  four patterns, and only three lived in fragments. Are the other 22 outside
   because they *cannot* be, or because nobody tried? Measured, by grouping
   every shipped node under its verdict pattern and comparing prompts
   word-for-word (longest common suffix, insensitive to line rewrapping): the
@@ -50,7 +50,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   deduplicates a verdict rule exactly as far as a node shape reaches, and no
   further — including for `coordinator.plannedVerdictPattern`, which is not in
   a graph at all but a Go string rendered into the planner's prompt, out of
-  reach of any graph-side mechanism. The clause sweep
+  reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
+  fragment's identical `result_matches` by a test instead. The clause sweep
   (`grep -c "Anything you need to qualify"`) is restated as what it counts:
   **25 declarations covering 32 runtime nodes**, since a fragment states the
   clause once for every node citing it.

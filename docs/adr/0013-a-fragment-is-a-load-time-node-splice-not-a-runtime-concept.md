@@ -573,16 +573,17 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   > The three groups left are left for one reason, and it is the one
   > that decides the `verdict:` question. **They do not group by node.**
   > `DONE` covers a repo-specific implementer, a docs-lane implementer,
-  > a feedback-loop implementer and an ADR-feedback applier: four
-  > different nodes with four different grants that agree on nothing
+  > a feedback-loop implementer and an ADR-feedback applier: six nodes
+  > of four kinds, with four different grants that agree on nothing
   > but the four characters they must emit — zero shared words. A
   > fragment is a node's behavior; it cannot be a paragraph, so it
-  > cannot express "these four nodes share their last paragraph". The
+  > cannot express "these six nodes share their last paragraph". The
   > closest sub-shapes are real but small: `apply1`/`apply2` share 124
   > words, and they live in ONE file, which is the intra-file case this
   > ADR's Alternatives hand to YAML anchors. The four
-  > `FINDINGS:`/`CLEAN` rounds in `adr-driven-dev` share 21% with the
-  > review fragments and carry `Grep`/`Glob` the fragments deliberately
+  > `FINDINGS:`/`CLEAN` rounds are that same intra-file case — all four
+  > live in `adr-driven-dev.yaml` — and they share 21% with the review
+  > fragments while carrying `Grep`/`Glob` the fragments deliberately
   > do not, so citing them would mean either narrowing four review
   > nodes' grants or overriding `allowed_tools` at every use — a
   > fragment whose grant every caller overrides is not a proven grant.
