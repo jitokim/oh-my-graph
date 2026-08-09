@@ -17,7 +17,7 @@ code path — provided the `claude` CLI and `sh` live inside the distro, since
 every path and every spawn is WSL-side.
 
 Native Windows compiles and a cancelled node still kills its child, but it is
-best-effort. Three things to know before relying on it:
+best-effort. Two things to know before relying on it:
 
 - **`verify` uses each OS's own interpreter.** Build tags select it at compile
   time: `sh -c` on unix (`internal/verify/shell_unix.go`), `cmd /c` on native
@@ -31,11 +31,15 @@ best-effort. Three things to know before relying on it:
   process group on unix (`internal/verify/procgroup_unix.go`); the Windows
   build (`procgroup_windows.go`) keeps stock `os/exec` behaviour and kills only
   the direct child, so descendants can outlive the run that spawned them.
-- **The env scrub is case-sensitive.** Windows treats environment variable names
-  as case-insensitive, but
-  [the scrub](../README.md#bring-your-own-login) matches keys
-  exactly — a lowercase `anthropic_api_key` would survive it and reach the
-  child. The guarantee holds as written only where names are case-sensitive.
+
+Not on that list any more: **the env scrub**. It used to match keys exactly,
+which on Windows — where environment lookups are case-insensitive — meant a
+lowercase `anthropic_api_key` reached the child and billed the run to the
+metered API. [The scrub](../README.md#bring-your-own-login) now compares the
+whole key without regard to case, on every platform, so the unconditional
+sentence in README and SECURITY.md holds here too. It is not a Windows-tagged
+code path: this project's CI is Linux, and a guarantee only Windows executes is
+a guarantee nothing tests.
 
 On Windows, prefer WSL.
 

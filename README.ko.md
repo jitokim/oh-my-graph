@@ -759,8 +759,10 @@ oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 �
 코드 경로를 탑니다 — 단, `claude` CLI와 `sh`가 배포판 안에 있어야 합니다.
 네이티브 Windows는 컴파일되고 실행되지만 best-effort입니다(Windows CI
 없음): `verify`는 `sh -c` 대신 `cmd /c`로 실행되고, 취소는 직접 자식
-프로세스만 종료하며, env scrub은 대소문자를 구분합니다 — WSL을
-권장합니다. 전체 플랫폼 상세, 알려진 제약, 보류(deferred) 목록:
+프로세스만 종료합니다 — WSL을 권장합니다. env scrub은 이 목록에
+**포함되지 않습니다**: 모든 플랫폼에서 키 전체를 대소문자 구분 없이
+비교하므로, 환경변수 이름이 대소문자를 구분하지 않는 곳에서도 그대로
+성립합니다. 전체 플랫폼 상세, 알려진 제약, 보류(deferred) 목록:
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## 개발

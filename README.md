@@ -729,9 +729,11 @@ macOS and Linux are the supported targets; CI builds and tests on Linux.
 **WSL is first-class**: a WSL build *is* a Linux build and takes the identical
 code path — provided the `claude` CLI and `sh` live inside the distro. Native
 Windows compiles and runs, best-effort (no Windows CI): `verify` runs under
-`cmd /c` rather than `sh -c`, cancellation kills only the direct child, and
-the env scrub is case-sensitive — prefer WSL. Full platform detail, known
-limitations and the deferred list: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+`cmd /c` rather than `sh -c`, and cancellation kills only the direct child —
+prefer WSL. The env scrub is **not** on that list: it matches the whole key
+without regard to case, on every platform, so it holds where environment names
+are case-insensitive too. Full platform detail, known limitations and the
+deferred list: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Development
 

@@ -29,7 +29,12 @@ line is.
   to is arbitrary user-configured code) — starts from your environment with
   `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted**. Those variables
   silently switch `claude` from your subscription (OAuth) to metered API
-  billing. The scrub is asserted by a unit test at every call site
+  billing. Deletion matches the whole variable name without regard to case, on
+  every platform, so it holds where environment lookups are case-insensitive
+  (Windows) as well as where they are not — that rule is unconditional rather
+  than platform-tagged so Linux CI executes the guarantee it states. Keys that
+  merely *begin* with one of the names (`ANTHROPIC_API_KEY_BACKUP`) are left
+  alone. The scrub is asserted by a unit test at every call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) that sets
   both variables in the parent process and proves neither survives into the
