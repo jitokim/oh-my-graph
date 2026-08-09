@@ -1612,6 +1612,16 @@ consequence to know when reading the two mapping steps above: **they are
 mutually exclusive.** Agent mapping runs first and an agent-mapped node is
 excluded from activation, so the nodes whose job matches a named role most
 cleanly — the design and doc nodes — are the ones a skill cannot reach.
+**That exclusion is total, and it is measured** (2026-08-09, 8 spawns,
+`docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md`): an
+excluded node's `--tools` never carries `Skill`, so it invokes no skill by any
+route — the definitions its `nil` setting sources load are visible to the CLI
+and unreachable by it, and `permission_denials` is empty because the tool is
+absent rather than denied. The exclusion is kept anyway — the `--agent` +
+`--plugin-dir` + settings composite is unmeasured, and a staged plugin would
+meet the user's own plugins there for the first time — but the plan printout
+now states the cost and names `--no-agent-mapping`, and lifting it is gated on
+ADR 0017's measurement (j) rather than on the argument that it costs little.
 
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git

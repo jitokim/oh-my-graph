@@ -480,6 +480,17 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		`pre-commit-checklist (86.6 KiB, sha256:cd34cd34cd34…)`,
 		"344 tokens",
 		"excluded: verify is agent-mapped",
+		// The exclusion's COST, not a reassurance about it. This printout used
+		// to close that line with "it already sees your real skills", which is
+		// a capability claim and is measured false (2026-08-09, 8 spawns): an
+		// agent-mapped node's argv carries no Skill in --tools, so it invokes
+		// nothing, and the corpus its settings load is unreachable. Both halves
+		// are pinned — that it holds NO Skill tool, and the switch that gets a
+		// node out of the exclusion — because a disclosure naming the exclusion
+		// without naming its cost reads as a trade the user made knowingly.
+		"holds NO Skill tool",
+		"not your own installed skills either",
+		"--no-agent-mapping is the switch",
 		"NOT knowable here",
 		"session transcript",
 		"re-materialized and verified before every node spawn",

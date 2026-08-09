@@ -910,6 +910,15 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 // size of the deduped set, so a collision quietly lowers it and nothing else
 // would ever name the file that lost.
 //
+// The exclusion line says what the exclusion COSTS, and it says it once rather
+// than per node, because until 2026-08-09 it said the opposite: "that composite
+// is unmeasured; it already sees your real skills". That was a capability claim
+// and it is measured false — an agent-mapped node's argv carries no `Skill` in
+// --tools, so the definitions its settings load are unreachable by it. A
+// disclosure that reads as a reassurance while the capability is entirely absent
+// is the same asymmetry §7 convicts ADR 0012's printout of, so the remedy that
+// actually works (--no-agent-mapping) is named on the same lines.
+//
 // scan is nil only when no scan happened (--no-skill-activation, or no
 // configured directories), and then this prints nothing: the user who turned
 // it off does not need to be told twice — and the one case where nobody turned
@@ -932,7 +941,18 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				sk.Name, float64(sk.Bytes)/1024, sk.SHA256, sk.Description)
 		}
 		for _, id := range activation.ExcludedNodeIDs {
-			fmt.Fprintf(w, "    excluded: %s is agent-mapped (that composite is unmeasured; it already sees your real skills)\n", id)
+			fmt.Fprintf(w, "    excluded: %s is agent-mapped\n", id)
+		}
+		if len(activation.ExcludedNodeIDs) > 0 {
+			fmt.Fprint(w,
+				"    An excluded node holds NO Skill tool, so it can invoke NO skill at all — not\n"+
+					"      the staged corpus, and not your own installed skills either, even though its\n"+
+					"      settings do load. Measured 2026-08-09, 8 spawns: 0 of 3 with the shipped argv,\n"+
+					"      3 of 3 with `Skill` added to --tools and nothing else changed\n"+
+					"      (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).\n"+
+					"      Lifting the exclusion is unmeasured; --no-agent-mapping is the switch that\n"+
+					"      keeps a node out of it.\n",
+			)
 		}
 		fmt.Fprint(w,
 			"  Which skill a node uses is chosen by the model at run time from those descriptions.\n"+

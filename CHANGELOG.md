@@ -52,6 +52,34 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   case-sensitivity bullet, leaving native Windows with two caveats (`cmd /c`
   verify syntax, no tree-kill) rather than three.
 
+### Changed
+
+- **An agent-mapped planned node cannot invoke a skill, and every place that
+  said otherwise is corrected (ADR 0017, #130).** The plan printout used to
+  close its exclusion line with *"that composite is unmeasured; it already sees
+  your real skills"*. That is a capability claim and it is now measured false:
+  **8 real spawns, $1.89, claude 2.1.226**, pre-registered, judged only by a raw
+  `{"type":"tool_use","name":"Skill"}` record in the node's own transcript and a
+  planted skill's marker file. Told outright to use the skill, a node fired
+  **0 of 3** under the argv `runner.buildArgs` really emits for an agent-mapped
+  node; the same argv with `Skill` appended to `--tools` and nothing else
+  changed fired **3 of 3**; `permission_denials` was `[]` in all eight — the
+  tool is not denied, it does not exist. So the exclusion is **total**: such a
+  node reaches neither the staged corpus nor your own installed skills, even
+  though its settings load. It is also concentrated, because agent mapping runs
+  first and matches on the same signal activation would — the design, doc and
+  review nodes are exactly the ones it takes. The printout now states that cost
+  once per plan and names `--no-agent-mapping` as the switch that keeps a node
+  out of the exclusion. `docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md`.
+
+  **The exclusion itself is kept**, deliberately and with the measurement in
+  hand: the `--agent` + `--plugin-dir` + settings composite is still unmeasured,
+  and the staged plugin's no-collision argument rests on layer 1 being `""`,
+  which is false for precisely these nodes. Lifting it is gated on ADR 0017's
+  new measurement **(j)** — the composite, run under the same discipline, with
+  ADR 0004's E1 ceiling arm and a plugin-name collision arm — and no behaviour
+  changes here beyond what the plan prints.
+
 ## [v0.5.2] - 2026-08-08
 
 Nothing new to type. No flag, no command, no schema key — every change here

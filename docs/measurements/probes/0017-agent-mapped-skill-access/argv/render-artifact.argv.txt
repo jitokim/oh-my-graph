@@ -1,0 +1,28 @@
+-p
+Use the `omg-probe-standalone-html` skill and follow its procedure exactly, then render the note below into `design.html` — a standalone single-file HTML page — in the current working directory.
+
+# Job runner scheduling
+
+A small local job runner executes short-lived jobs submitted from a CLI. Jobs are
+IO-bound, arrive in bursts, and must not outlive the process that started them.
+Decision: a worker pool, bounded to NCPU-2 workers.
+
+
+A corpus of procedures is available through the Skill tool; consult it if one fits this task.
+--output-format
+json
+--permission-mode
+dontAsk
+--setting-sources
+
+--plugin-dir
+/tmp/omg-agentmap-skill/run/skills-plugin
+--allowedTools
+Write
+--tools
+Write,Skill
+--strict-mcp-config
+--disallowedTools
+Bash,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent
+--session-id
+c26feae0-e3cf-4139-aebd-80bd8432fb05

@@ -111,11 +111,24 @@ contradictory answers to identical argv:
 | `--setting-sources ""` + `--tools Read,Skill` | no — naming the tool does not load the definitions |
 | `--setting-sources user`, no `--tools` | **yes** |
 | `--setting-sources user` + `--tools Read,Skill` | **yes** |
+| the definitions loaded + `--tools` **without** `Skill` | no — the definitions are there and the **tool** is not. **Added 2026-08-09**, 8 spawns, claude 2.1.226: 0 of 3 under the real agent-mapped argv, 3 of 3 with `Skill` appended to `--tools` and nothing else changed, `permission_denials: []` throughout. `docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md` |
 
 Two independent layers block skills for two different reasons: **layer 1
 withholds the definitions, layer 3 withholds the tool.** `Skill(*)` in the
 user's `settings.json` is irrelevant to either — a permission approves a tool,
 it does not supply skill *definitions*.
+
+**The last row went unrun for two days, and it is the row a shipped node lives
+in.** Every original row varies layer 1 while layer 3 either names `Skill` or is
+absent, so the table established that each layer alone blocks and never asked
+what happens when the definitions arrive and the tool list omits the word.
+That combination is not hypothetical: it is exactly the argv
+`runner.buildArgs` emits for an **agent-mapped** planned node, which
+`applyAgentMapping` gives `SettingSources = nil` — rendered by *omitting the
+flag*, so the CLI's default user+project+local loads, wider than the `user` of
+rows 4 and 5 — while `applySkillActivation` skips it before the line that would
+add `Skill`. §Compatibility consoled itself on the missing row's absence for as
+long as it was missing.
 
 That table's only route to the definitions was `--setting-sources user`, and
 the whole of the first draft was built on it. It is dead. What replaces it is
@@ -311,6 +324,35 @@ newly visible. Lifting the exclusion is a widening on a path this ADR does not
 otherwise touch, it requires the composite to be measured first, and — on the
 evidence directly above — it would extend delivery to nodes that, so far, do not
 activate skills when delivered to. §"The next question" argues the ordering.
+
+> **Correction (2026-08-09) — the two mechanisms are not competing for these
+> nodes. One of them is simply absent from them.** This section, and the
+> §Compatibility sentence it cites, both assume an excluded node still *has*
+> skills, just not the staged ones: "agent mapping wins the tie". There is no
+> tie. An agent-mapped node's `--tools` never contains `Skill`, so it invokes
+> **no skill at all** — the definitions its `nil` setting sources load are
+> visible to the CLI and unreachable by the node. Measured, 8 spawns, $1.89,
+> claude 2.1.226, pre-registered, judged only by raw
+> `{"type":"tool_use","name":"Skill"}` records and a planted skill's marker
+> file: 0 of 3 under the shipped agent-mapped argv, **3 of 3** with `Skill`
+> appended to `--tools` and nothing else changed, `permission_denials: []` in
+> every arm — the tool is not denied, it does not exist.
+> `docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md`; the row
+> is now in "The two layers, measured separately".
+>
+> **The cost, restated without the softening.** The exclusion is **total**, and
+> it lands by construction on the node classes a procedure fits best: the two
+> mechanisms match on the same signal from overlapping corpora, agent mapping
+> runs first, and the reward for a node whose job reads cleanly as a named role
+> is that it loses the skill surface entirely. In both of run 2's plans that was
+> the design/doc node. What the paragraph above calls "the less able that node
+> is to reach a procedure for the role" is not a matter of degree.
+>
+> **The exclusion is nevertheless kept**, and that is now a decision rather than
+> an unexamined default — see §Compatibility for what would change it. The
+> argument in this section's last paragraph is untouched by the measurement: it
+> would still be a widening onto nodes that, when delivered to, have not been
+> shown to activate.
 
 ## Decision
 
@@ -982,8 +1024,35 @@ none of it loads under `--plugin-dir`. A future proposal that reaches for
   acceptance test was run…". Cost $3.21 for run 2 (treatment $0.99, control
   $0.96, repeat $1.09, probe $0.17); run 1's costs are in its own record.
 
+**Recorded 2026-08-09 (claude 2.1.226, macOS, one machine):**
+
+- **Can an agent-mapped planned node invoke a skill?** **NO** — and the
+  §Compatibility sentence saying the exclusion "costs it little" is retired on
+  that measurement. 8 spawns, $1.89; 0 of 3 under the shipped argv, 3 of 3 with
+  `Skill` appended to `--tools`, `permission_denials: []` throughout. §Context,
+  "The two layers, measured separately" (last row) and "Agent mapping and skill
+  activation are mutually exclusive" (Correction).
+  `docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md`.
+
 **Still owed before `Accepted`:**
 
+- **(j) What does `--agent` + `--plugin-dir` + `SettingSources = nil` do — to
+  the ceiling, and to plugin name resolution?** **Not owed for `Accepted`; owed
+  before anyone lifts the agent-mapped exclusion**, which the 2026-08-09
+  measurement makes tempting and does not license. Two arms, both required.
+  *Ceiling:* ADR 0004's E1 shape — a node declaring `Bash(git *)` attempting an
+  out-of-scope command, judged by whether the file appears — run with the
+  staged plugin attached, because these are the nodes measurement (g) showed
+  lose the scope ceiling when layer 1 relaxes, and nothing has measured them
+  with a plugin directory as well. *Collision:* a user plugin and the staged
+  plugin loaded together, with a skill name in both, recording which resolves —
+  §"What could not be determined" 4 is latent only while layer 1 is `""`, and
+  it is not `""` here. Same discipline as the probe that produced the finding:
+  pre-registered, judged by a raw `tool_use` record and a marker file, never by
+  a model's account of itself. A cheaper alternative exists and should be priced
+  against it — `--agent` with `Skill` in `--tools` and **no** staged plugin is
+  already measured (n=3) to work over the user's own corpus, and it raises
+  neither arm.
 - ~~**(i) Do the staged descriptions reach a planned node at all — and what
   shape of prompt makes the gate fire?**~~ **ANSWERED 2026-08-08, and no longer
   blocking.** They reach and are matched; the gate is a threshold on how
@@ -1272,6 +1341,55 @@ before today.
   > activation are mutually exclusive". The exclusion itself stands — the
   > composite is still unmeasured — but it is now a known design consequence
   > rather than a cheap safety margin.
+
+  > **Correction (2026-08-09) — "costs it little" is measured FALSE, and the
+  > 2026-08-07 Update above is still too generous to it.** That Update retracted
+  > the sentence on YIELD grounds while keeping its premise: that an agent-mapped
+  > node "sees the user's real skills *as a corpus*". It cannot reach one.
+  > `applyAgentMapping` sets **only** `SettingSources`; `Tools` stays
+  > `narrowedToolsFor(node, false)` — **no `Skill`** — and `applySkillActivation`
+  > skips the node before the line that would add it. So the argv is `--tools
+  > <declared>` with the tool absent, which is measurement (f)'s `NO-SKILL` row
+  > with the definitions arriving from settings instead of from a plugin.
+  > **8 spawns, $1.89, claude 2.1.226**, judged only by a raw
+  > `{"type":"tool_use","name":"Skill"}` record and a planted skill's marker
+  > file, on argv reconstructed by driving `runner.buildArgs` itself: a node told
+  > outright to use the skill fired **0 of 3**; the same argv with `Skill`
+  > appended to `--tools` and nothing else changed fired **3 of 3**;
+  > `permission_denials` was `[]` throughout — **the tool is not denied, it does
+  > not exist.** Two harness controls fire (a bare `-p`, and the activated node's
+  > own argv on 2.1.226). Note also that the real agent-mapped argv omits
+  > `--setting-sources` ENTIRELY rather than passing `user`, so the CLI's default
+  > user+project+local applies — wider than this record has been assuming.
+  > `docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md`.
+  >
+  > **The real cost, stated plainly: the exclusion is total, and it is
+  > concentrated.** An excluded node reaches no skill by any route. It is not a
+  > choice between two corpora, and it does not fall on an arbitrary subset —
+  > agent mapping matches on the same signal activation would, so it takes the
+  > design, doc and review nodes first, which are the classes a procedure fits
+  > best. §Context, "Agent mapping and skill activation are mutually exclusive".
+  >
+  > **The exclusion is KEPT, deliberately, with the measurement in hand.**
+  > Lifting it is a policy change and not a cleanup. Two things it would have to
+  > answer, neither of which this probe touched: the `--agent` + `--plugin-dir`
+  > + `nil` composite is still unmeasured, and `stagedPluginName`'s
+  > no-collision argument ("no other plugin loads") rests on layer 1 being `""`
+  > — which is false for exactly these nodes, so a staged plugin would meet the
+  > user's own loaded plugins for the first time (§"What could not be
+  > determined" 4, which already says this becomes live the moment anyone lifts
+  > the exclusion). **What would change the decision is measurement (j) and
+  > nothing softer** — the composite, pre-registered, judged only by a raw
+  > `Skill` `tool_use` record and a marker file, with ADR 0004's E1 ceiling arm
+  > re-run underneath it, because these are the nodes measurement (g) showed
+  > lose the scope ceiling when layer 1 relaxes. Until (j) is recorded, the
+  > printed plan says what the exclusion costs and names `--no-agent-mapping` as
+  > the switch that keeps a node out of it.
+  >
+  > The follow-up need not be that composite — the measured-working arm is
+  > `--agent` with `Skill` in `--tools` and **no** staged plugin, over the user's
+  > own corpus, which carries neither the collision residual nor a second
+  > definition source.
 - **A follow-up this ADR declines to decide:** `applyAgentMapping`'s
   `SettingSources = nil` is wider than anything decided here, and measurement
   (g) now gives that gap a number rather than a suspicion — an agent-mapped
@@ -1474,14 +1592,22 @@ Named with the measurement that would settle each.
    nothing activates: the exclusion removed a node from every run it touched,
    but the nodes it did *not* remove activated nothing either, so its cost
    cannot be separated from the general zero. It becomes measurable the moment
-   (i) reports a firing arm.
+   (i) reports a firing arm. **Split 2026-08-09:** the *capability* half is no
+   longer open and no longer a matter of degree — an excluded node invokes no
+   skill at all, measured — so what remains here is only the yield question,
+   *how much better the work would have been*, which still waits on (i)'s firing
+   arm plus (e). Do not read the resolved half as resolving this one.
 4. **Whether a staged plugin's skills can shadow or be shadowed.** The probe
    invoked a staged skill by bare name and it resolved, but plugin skills are
    addressable as `<plugin>:<skill>` elsewhere in the CLI and nothing here
    measured a name collision between the staged plugin and another loaded one.
    Under layer 1 = `""` no other plugin loads, so this is latent rather than
    live — and it becomes live the moment anyone lifts the agent-mapped
-   exclusion.
+   exclusion. **2026-08-09:** that condition is no longer distant. The
+   measurement showing the exclusion is a total capability hole is an argument
+   for lifting it, and this is one of the two arms (j) must run first — an
+   agent-mapped node's layer 1 is not `""`, so "no other plugin loads" is the
+   one premise a lift removes.
 5. **Whether any of this reproduces off this machine.** No probe settles it;
    it needs a second machine, ideally one whose `settings.json` grants
    nothing, and one on a different CLI version. #130 already asks for exactly

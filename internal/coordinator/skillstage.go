@@ -298,8 +298,47 @@ type SkillActivation struct {
 	// ExcludedNodeIDs are agent-mapped nodes, which are excluded and said so:
 	// applyAgentMapping drops their layer 1 to nil, so `--agent` plus a staged
 	// plugin plus the user's settings is a different, unmeasured composite.
-	// Under nil such a node already sees the user's real skills, so the
-	// exclusion costs it little.
+	//
+	// THE EXCLUSION IS A CAPABILITY HOLE, NOT A CORPUS PREFERENCE, and the
+	// sentence that used to sit here — "under nil such a node already sees the
+	// user's real skills, so the exclusion costs it little" — is MEASURED FALSE
+	// (2026-08-09, claude 2.1.226, 8 spawns, $1.89,
+	// docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).
+	// applyAgentMapping sets ONLY SettingSources; Tools stays
+	// narrowedToolsFor(node, false), with no Skill, and this loop skips the
+	// node before the line that would add it. Under the real agent-mapped argv
+	// — no --setting-sources flag at all, --agent, --tools Write — a node told
+	// outright to use a planted skill invoked it 0 of 3 times; the same argv
+	// with `Skill` appended to --tools and NOTHING else changed invoked it 3 of
+	// 3. permission_denials was [] in every arm: the tool is not denied, it
+	// does not exist. So measurement (f) — "without the name in --tools the
+	// definitions load and the skill cannot run" — holds when the definitions
+	// come from the user's settings and not from a staged plugin.
+	//
+	// WHAT IT COSTS, stated so nobody has to re-derive it. The exclusion is
+	// TOTAL — an excluded node reaches no skill by any route, staged or the
+	// user's own — and it is not spread evenly: agent mapping runs first and
+	// matches on the same signal skill activation would, so it lands by
+	// construction on the design, doc and review nodes, the classes a procedure
+	// fits best (ADR 0017 §Context, "mutually exclusive"; in BOTH acceptance
+	// plans the design/doc node was mapped and a pre-registered skill could not
+	// be bound to a node at all). The user-visible remedy is --no-agent-mapping,
+	// which is why the plan printout names it on the exclusion lines.
+	//
+	// The exclusion still STANDS, and NOT lifting it is a decision taken with
+	// this measurement in hand, not an omission. Lifting it is a policy change
+	// rather than a cleanup: the composite above is unmeasured, and
+	// stagedPluginName's no-collision argument rests on layer 1 being "" — which
+	// is exactly what is NOT true of these nodes, so a staged plugin would meet
+	// the user's own loaded plugins for the first time (ADR 0017 §"What could
+	// not be determined" 4). What would change the decision is ADR 0017's
+	// measurement (j), and nothing softer: the composite run under the same
+	// discipline as this probe — pre-registered, judged only by a raw Skill
+	// tool_use record and a marker file, with ADR 0004's E1 ceiling arm re-run
+	// under it, since these nodes are the ones measurement (g) showed lose the
+	// scope ceiling when layer 1 relaxes. Note that (j) is not the only shape a
+	// fix could take: the arm measured to WORK here is `--agent` with `Skill` in
+	// --tools and NO staged plugin, over the user's own corpus.
 	ExcludedNodeIDs []string
 	// PluginDir is the staged directory, once bound. Empty for a --plan-only
 	// preview, which stages nothing because nothing runs.

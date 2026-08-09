@@ -1,0 +1,194 @@
+# An agent-mapped planned node cannot invoke a skill — the row ADR 0017 never ran
+
+ADR 0017 §Compatibility excludes agent-mapped planned nodes from skill
+activation and consoles itself that the exclusion is cheap:
+
+> Note that under `nil` such a node already sees the user's real skills, so the
+> exclusion costs it little.
+
+That sentence is **false as a capability claim, and it is now measured false.**
+An agent-mapped planned node holds no `Skill` tool, so it cannot invoke a skill
+at all — the corpus is visible to the CLI and unreachable by the node. The
+exclusion is a **capability hole**, not a corpus preference.
+
+- **Date:** 2026-08-09 (KST). `claude` **2.1.226**, macOS (darwin 22.6.0), one
+  machine. Note the version: every ADR 0017 number is 2.1.223/2.1.224, so this
+  is a third build, and the two harness controls below are what license
+  comparing across them.
+- **Cost:** **$1.8866**, 8 spawns. Budget bound was $6.
+- **Verdict:** **NO.** T fired 0 of 3; the one-token control C1 fired 3 of 3.
+- **Pre-registration:** `probes/0017-agent-mapped-skill-access/PREREG.md`,
+  written before the first spawn, with the prediction, the n, the arms and what
+  each outcome would mean.
+- **Scripts and raw evidence:** `probes/0017-agent-mapped-skill-access/`
+  (`_harness/main.go`, `shim.sh`, `setup.sh`, `replay.py`, `argv/`, `logs/`,
+  `results.jsonl`, `plan-report.json`).
+
+## The argv came out of the code, not out of a shell script
+
+The question is about one flag on one spawn, so transcribing the argv into a
+probe script would have measured the transcription. `_harness/main.go`
+(`//go:build ignore`, run with `go run`) drives the shipped objects instead:
+
+```
+coordinator.Plan            real validation, real applyAgentMapping,
+                            real applySkillActivation
+Plan.BindSkillStaging       the staged plugin dir, as `auto` binds it
+buildInvocation             re-created field for field from
+                            schedule/scheduler.go:1323
+runner.ClaudeCLIRunner.Run  runner.buildArgs — the thing under measurement
+```
+
+Exactly two things are substituted, and both are ends of that chain rather than
+steps in it: the planner is a canned `NodeRunner` returning a fixed graph JSON,
+and the claude binary is `shim.sh` (`runner.WithBinary`), which writes its own
+argv and exits.
+
+One plan, two nodes, identical prompts, both declaring `allowed_tools: [Write]`.
+`omg-probe-writer` matches the planted agent under `agentmap`'s token rule and
+is **agent-mapped**; `render-artifact` shares no token with it and is the
+ordinary **activated** node.
+
+**What `runner.buildArgs` emitted** (verbatim, `argv/*.argv.txt`):
+
+| | agent-mapped `omg-probe-writer` | activated `render-artifact` |
+|---|---|---|
+| `--setting-sources` | **flag absent entirely** | `""` |
+| `--plugin-dir` | absent | `<run>/skills-plugin` |
+| `--agent` | `omg-probe-writer` | absent |
+| `--allowedTools` | `Write` | `Write` |
+| `--tools` | **`Write`** | `Write,Skill` |
+| `--strict-mcp-config` | present | present |
+| `--disallowedTools` | `Bash,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent` | same |
+| activation notice in `-p` | absent | present |
+
+Two things this corrects about how the question was posed. **The agent-mapped
+row is not `--setting-sources user`** — `applyAgentMapping` sets
+`policy.SettingSources = nil` and `buildArgs` renders nil by *omitting the
+flag*, so the CLI's own default (user **and** project **and** local) loads,
+which is wider than `user`. And `Skill` is not in `deniableTools`, so layer 5
+is not what is doing this; `--tools` is the only mechanism in play.
+
+The code path, for a reader checking the claim rather than the argv:
+`toolPolicyFor` sets `Tools: narrowedToolsFor(node, false)`
+(`coordinator.go:619`); `applyAgentMapping` touches **only** `SettingSources`
+(`agentmap.go:322-324`); `applySkillActivation` `continue`s past any node with
+`node.Agent != ""` before reaching the `narrowedToolsFor(node, true)` line
+(`skillstage.go:787-791`). Nothing else can add the name.
+
+## Evidence rule — a marker file and a raw record, never a sentence
+
+The planted skill's step 1 is to write `OMG-PROBE-AGENTMAP-FIRED.txt`
+containing `OMG-AGENTMAP-4417-ZK`. **The node's entire tool set is `Write`** —
+no `Read`, no `Bash`, no `Glob`, no `Grep` — and the token exists only inside
+the `SKILL.md` body, so no tool the node holds can read it. A marker file with
+that token therefore means the skill's *body* reached the model, and the only
+route left is the `Skill` tool.
+
+The verdict signal is the count of raw `{"type":"tool_use","name":"Skill"}`
+objects parsed out of each spawn's own `~/.claude/projects/**/<sid>.jsonl`. The
+marker file corroborates. A model's reply claiming skill use counts for nothing
+and is not parsed — which turned out to matter in the other direction here (see
+the last section).
+
+## Result
+
+Every arm ran the **recorded** argv; an arm is a named single-token edit of it.
+
+| arm | what varied from the recorded agent-mapped argv | n | `Skill` tool_use | marker | verdict |
+|---|---|---|---|---|---|
+| **T** | nothing — verbatim | 3 | **0** | 0 | fired nothing |
+| **C1** | **`--tools Write` → `--tools Write,Skill`. Nothing else.** | 3 | **3** | 3 | fires |
+| **C0** | all ceiling flags and `--agent` removed | 1 | 1 | 1 | fires |
+| **ACT** | (the *activated* node's own recorded argv, verbatim) | 1 | 1 | 1 | fires |
+
+Full `tool_use` census per spawn, from the raw JSONL:
+
+```text
+ACT  9b7586ea  {'Skill': 1, 'Write': 2}   oh-my-graph-staged-skills:omg-probe-standalone-html
+C0   1670de30  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
+C1   d4e1dc53  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
+C1   27f01af4  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
+C1   35d39062  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
+T    cf996342  {'Write': 1}
+T    4907cba2  {'Write': 1}
+T    9a4299e9  {'Write': 1}
+```
+
+`permission_denials` was `[]` in all eight, T included: the tool was never
+**denied**, it did not **exist**. `num_turns` was 2 in every T spawn against 5
+everywhere else — a node that wrote the file and stopped.
+
+**Why the controls are the load-bearing half.** A bare "T fired nothing" proves
+nothing; this project has already once "passed" a ceiling probe that only
+re-proved an undeclared tool does not exist. C1 differs from T by six
+characters in one flag value and fires 3 of 3, which isolates the cause to
+layer 3 and rules out `--agent`, the permission mode, the deny list, the
+prompt, the skill's description and the workspace — all of which C1 holds
+constant. C0 says the planted skill is discoverable in this workspace at all.
+ACT says the whole coordinator→runner activation path still works on 2.1.226,
+which is what makes this comparable to ADR 0017's 2.1.223/224 numbers.
+
+## The answer
+
+**No.** An agent-mapped planned node cannot invoke a skill. Measurement (f)'s
+finding — *"without the name in `--tools` the definitions load and the skill
+cannot run"* — carries over unchanged when the definitions arrive from the
+user's settings instead of from a staged plugin directory. `--tools` bounds the
+tool set the same way in both worlds.
+
+So the two mechanisms are not "activation versus the user's real corpus". They
+are **activation versus nothing**, on exactly the nodes ADR 0017 §Context
+identifies as the ones where a skill fits best. ADR 0017's 2026-08-07 Update to
+that sentence already retracted "costs it little" on *yield* grounds — the
+design/doc node was agent-mapped in both acceptance plans, so a pre-registered
+skill could not be bound at all — but it kept the premise underneath it:
+
+> Under `nil` an agent-mapped node sees the user's real skills *as a corpus*,
+> but it is not the node this ADR is reasoning about
+
+Half of that is now measured false. The node sees the corpus in the sense that
+the CLI has loaded the definitions; it cannot reach a single one of them.
+
+**What this does not settle.** Whether lifting the exclusion is safe. The
+composite `--agent` + `--plugin-dir` + `SettingSources = nil` is still
+unmeasured, and this probe deliberately did not touch it — it measured what the
+shipped exclusion costs the node it excludes, which is the question that had
+never been asked. Note also that a *fix* need not be that composite: C1 is
+`--agent` + no `--plugin-dir` + `Skill` in `--tools`, and it is now measured
+(n=3) to work on the user's own settings-sourced corpus. Sizing that as a
+change belongs to whoever writes the follow-up, with its own ceiling
+re-verification — dropping layer 1 is what measurement (g) breached, and
+nothing here re-opens that.
+
+## One thing the evidence rule caught pointing the other way
+
+Two of the three T spawns *volunteered* that the skill was missing —
+*"`omg-probe-standalone-html` was never loaded and I had no way to call it. I
+followed no procedure"* — and all three produced a plausible `design.html`
+anyway. Had this probe scored the model's own account it would have reached the
+right answer here by luck; had it scored the artifact, it would have reached
+the wrong one, since every T spawn shipped the deliverable. Neither was
+scored. (One T spawn also claimed it had folded in a "prior decision from your
+session context" that was in no input this probe supplied. Unexplained, not
+attributable to any tool it held, and not load-bearing for anything above.)
+
+## Re-deriving this without the scratch directory
+
+```sh
+bash docs/measurements/probes/0017-agent-mapped-skill-access/setup.sh /tmp/omg-agentmap-skill
+WS=/tmp/omg-agentmap-skill
+AM=$(ls $WS/argv/omg-probe-writer/* | head -1)
+ACT=$(ls $WS/argv/render-artifact/* | head -1)
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS ACT "$ACT" 1 verbatim
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS C0  "$AM"  1 bare
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS C1  "$AM"  3 add_skill
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS T   "$AM"  3 verbatim
+```
+
+`setup.sh` re-runs the harness, so the argv is re-derived from the code each
+time rather than replayed from this record. The eight session ids in
+`probes/0017-agent-mapped-skill-access/results.jsonl` are the ones the counts
+above come from; their transcripts are under `~/.claude/projects/` for as long
+as that directory keeps them, and `logs/` holds each spawn's argv and envelope
+independently of it.
