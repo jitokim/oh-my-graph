@@ -527,14 +527,18 @@ settings is a combination nothing here has measured.
 **What that exclusion costs is not small, and the plan printout now says so.**
 An excluded node holds no `Skill` tool, so it invokes **no skill at all** — not
 the staged corpus, and not your own installed skills either, even though its
-settings do load. Measured 2026-08-09 on 8 real spawns: told outright to use a
+settings do load. Measured 2026-08-09 on 10 real spawns: told outright to use a
 skill it fired 0 of 3 under the argv oh-my-graph really sends, and 3 of 3 with
-`Skill` added to that argv's `--tools` and nothing else changed
+`Skill` added to that argv's `--tools` and nothing else changed — and 0 of 1
+against 1 of 1 when the skill sat in `~/.claude/skills` rather than in the
+project
 ([the record](docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md)).
 And the exclusion is not spread evenly: agent mapping runs first and matches on
 the same signal, so it takes the design, doc and review nodes — the ones a
-procedure fits best. If you would rather a node kept the skill surface than
-gained a subagent, `--no-agent-mapping` is the switch. Lifting the exclusion
+procedure fits best. If you would rather those nodes kept the skill surface
+than gained a subagent, `--no-agent-mapping` is the switch — it turns agent
+mapping off for the whole run, so the price is every mapping the plan would
+have made; there is no per-node opt-out. Lifting the exclusion
 itself needs its own measurement first, which is
 [ADR 0017's (j)](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md).
 

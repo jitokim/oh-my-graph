@@ -1,8 +1,18 @@
 # Pre-registration — can an agent-mapped planned node invoke a skill?
 
-Written and committed to before any spawn. claude **2.1.226**, macOS, one
+Written and committed to **before any `claude` spawn, and after the argv
+recording** — the arm table below quotes the recorded argv verbatim, which only
+exists once the harness has run its shim (which spawns no `claude`). The branch
+is one squashed commit, so git carries no ordering evidence for that; it is
+stated here rather than left to be inferred. claude **2.1.226**, macOS, one
 machine. (ADR 0017's numbers are 2.1.223/2.1.224; this is a third version, and
 that is stated rather than smoothed over.)
+
+The **US arm** in the write-up (TU, C1U — the same rows with the corpus in
+`~/.claude/skills` and nowhere else) is **not** covered by this
+pre-registration: it was added after review, once the write-up's "the user's own
+settings-sourced corpus" was found to describe a project-scope plant. Its
+prediction is the T and C1 rows below, unchanged.
 
 ## The row nobody has run
 

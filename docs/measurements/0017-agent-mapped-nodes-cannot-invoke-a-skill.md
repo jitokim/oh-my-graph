@@ -15,14 +15,19 @@ exclusion is a **capability hole**, not a corpus preference.
   machine. Note the version: every ADR 0017 number is 2.1.223/2.1.224, so this
   is a third build, and the two harness controls below are what license
   comparing across them.
-- **Cost:** **$1.8866**, 8 spawns. Budget bound was $6.
+- **Cost:** **$2.4118**, 10 spawns (8 pre-registered, plus the 2-spawn US arm
+  added on review — see "The corpus was project scope"). Budget bound was $6.
 - **Verdict:** **NO.** T fired 0 of 3; the one-token control C1 fired 3 of 3.
+  With the corpus in the user's own `~/.claude/skills` and nowhere else: 0 of 1
+  and 1 of 1.
+- **Model:** `claude-opus-5[1m]` in every spawn's `modelUsage`, T and C1 alike —
+  so the T/C1 difference is not a model difference.
 - **Pre-registration:** `probes/0017-agent-mapped-skill-access/PREREG.md`,
-  written before the first spawn, with the prediction, the n, the arms and what
-  each outcome would mean.
+  written before any `claude` spawn, with the prediction, the n, the arms and
+  what each outcome would mean.
 - **Scripts and raw evidence:** `probes/0017-agent-mapped-skill-access/`
-  (`_harness/main.go`, `shim.sh`, `setup.sh`, `replay.py`, `argv/`, `logs/`,
-  `results.jsonl`, `plan-report.json`).
+  (`_harness/main.go`, `shim.sh`, `setup.sh`, `userscope.sh`, `replay.py`,
+  `census.py`, `argv/`, `logs/`, `results.jsonl`, `plan-report.json`).
 
 ## The argv came out of the code, not out of a shell script
 
@@ -74,7 +79,9 @@ The code path, for a reader checking the claim rather than the argv:
 (`coordinator.go:619`); `applyAgentMapping` touches **only** `SettingSources`
 (`agentmap.go:322-324`); `applySkillActivation` `continue`s past any node with
 `node.Agent != ""` before reaching the `narrowedToolsFor(node, true)` line
-(`skillstage.go:787-791`). Nothing else can add the name.
+(`skillstage.go:826-830`, in `applySkillActivation` — the +39-line comment block
+this commit adds to that function moved it down from the 787-791 the
+pre-registration cites). Nothing else can add the name.
 
 ## Evidence rule — a marker file and a raw record, never a sentence
 
@@ -101,6 +108,8 @@ Every arm ran the **recorded** argv; an arm is a named single-token edit of it.
 | **C1** | **`--tools Write` → `--tools Write,Skill`. Nothing else.** | 3 | **3** | 3 | fires |
 | **C0** | all ceiling flags and `--agent` removed | 1 | 1 | 1 | fires |
 | **ACT** | (the *activated* node's own recorded argv, verbatim) | 1 | 1 | 1 | fires |
+| **TU** | nothing — verbatim, but the corpus is in `~/.claude/skills` only | 1 | **0** | 0 | fired nothing |
+| **C1U** | **`--tools Write` → `--tools Write,Skill`**, same user-scope corpus | 1 | **1** | 1 | fires |
 
 Full `tool_use` census per spawn, from the raw JSONL:
 
@@ -113,9 +122,19 @@ C1   35d39062  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
 T    cf996342  {'Write': 1}
 T    4907cba2  {'Write': 1}
 T    9a4299e9  {'Write': 1}
+TU   c44850e6  {'Write': 1}
+C1U  d97154a1  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
 ```
 
-`permission_denials` was `[]` in all eight, T included: the tool was never
+That table is re-derivable, not transcribed by hand: `census.py` prints it from
+`results.jsonl` by reading each spawn's own transcript back. The first eight
+rows were recorded before `replay.py` carried a `tool_census` field, so their
+census lives **only** in `~/.claude/projects` and will be gone when that
+directory ages the sessions out; `census.py` prints `gone` rather than an empty
+census when that happens. TU and C1U carry it in the row, as every future row
+will.
+
+`permission_denials` was `[]` in all ten, T and TU included: the tool was never
 **denied**, it did not **exist**. `num_turns` was 2 in every T spawn against 5
 everywhere else — a node that wrote the file and stopped.
 
@@ -127,15 +146,47 @@ layer 3 and rules out `--agent`, the permission mode, the deny list, the
 prompt, the skill's description and the workspace — all of which C1 holds
 constant. C0 says the planted skill is discoverable in this workspace at all.
 ACT says the whole coordinator→runner activation path still works on 2.1.226,
-which is what makes this comparable to ADR 0017's 2.1.223/224 numbers.
+which is what makes this comparable to ADR 0017's 2.1.223/224 numbers. The
+`claude --version` behind that comparison is now recorded per spawn by
+`replay.py` for TU and C1U; for the first eight it is this document's word,
+taken from the same shell on the same day.
+
+## The corpus was project scope — so the US arm ran it in user scope
+
+`setup.sh` plants the skill in the probe workspace's `.claude/skills`
+(**project** scope) and in the staging source. The agent-mapped argv omits
+`--setting-sources` entirely, so the CLI default loads user **and** project
+**and** local — the definition T could not reach was therefore a *project*-scope
+one, and the first write-up of this measurement nonetheless called it "the
+user's own settings-sourced corpus". Sloppy, and worth fixing by measurement
+rather than by wording, for two reasons: ADR 0017's retracted sentence is
+literally about "the user's real skills", and the C1 arm is being quoted as a
+cheaper fix, which makes *which directory it resolved from* load-bearing.
+
+**US arm (2026-08-09, added on review — not pre-registered).** `userscope.sh`
+copies the same `SKILL.md` to `~/.claude/skills/omg-probe-standalone-html`,
+**removes** the project-scope copy from the workspace, and reruns the recorded
+agent-mapped argv (which carries no `--plugin-dir`, so settings are the only
+possible source):
+
+- **TU** — verbatim: `{'Write': 1}`, `skill_tool_use: 0`, no marker,
+  `permission_denials: []`, `num_turns: 2`.
+- **C1U** — the same one-token edit: `{'Skill': 1, 'Write': 2}`, resolving
+  `omg-probe-standalone-html`, marker written with the token, `num_turns: 5`.
+
+Same shape as T and C1 at n=1 each. The finding is now measured on the corpus
+the retracted sentence was actually about. `userscope.sh clean` removes the
+planted definition afterwards; nothing else in `~/.claude/skills` is touched.
 
 ## The answer
 
 **No.** An agent-mapped planned node cannot invoke a skill. Measurement (f)'s
 finding — *"without the name in `--tools` the definitions load and the skill
-cannot run"* — carries over unchanged when the definitions arrive from the
-user's settings instead of from a staged plugin directory. `--tools` bounds the
-tool set the same way in both worlds.
+cannot run"* — carries over unchanged when the definitions arrive through the
+node's nil layer 1 (user **and** project **and** local settings, the CLI's own
+default) instead of from a staged plugin directory: measured at project scope
+by T (0 of 3) and at user scope by TU (0 of 1). `--tools` bounds the tool set
+the same way in every one of those worlds.
 
 So the two mechanisms are not "activation versus the user's real corpus". They
 are **activation versus nothing**, on exactly the nodes ADR 0017 §Context
@@ -155,11 +206,21 @@ composite `--agent` + `--plugin-dir` + `SettingSources = nil` is still
 unmeasured, and this probe deliberately did not touch it — it measured what the
 shipped exclusion costs the node it excludes, which is the question that had
 never been asked. Note also that a *fix* need not be that composite: C1 is
-`--agent` + no `--plugin-dir` + `Skill` in `--tools`, and it is now measured
-(n=3) to work on the user's own settings-sourced corpus. Sizing that as a
-change belongs to whoever writes the follow-up, with its own ceiling
-re-verification — dropping layer 1 is what measurement (g) breached, and
-nothing here re-opens that.
+`--agent` + no `--plugin-dir` + `Skill` in `--tools`, measured to fire 3 of 3
+over a project-scope corpus and 1 of 1 (C1U) over the user's own
+`~/.claude/skills`.
+
+**That alternative is cheaper, not free, and the residual is exactly the scope
+its nil layer 1 makes reachable.** The same nil that lets it see
+`~/.claude/skills` also loads **project** and **local** — and in production the
+cwd is the target repository, not a probe workspace. So handing these nodes a
+`Skill` tool makes a `SKILL.md` *committed to the repository being worked on*
+invocable procedure text, on precisely the nodes measurement (g) already showed
+lose the scope ceiling when layer 1 relaxes. C1/C1U measure that the mechanism
+works; they measure nothing about whether that is safe. Sizing it as a change
+belongs to whoever writes the follow-up, with its own ceiling re-verification
+and a decision about repository-supplied definitions — dropping layer 1 is what
+(g) breached, and nothing here re-opens that.
 
 ## One thing the evidence rule caught pointing the other way
 
@@ -184,11 +245,22 @@ python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS AC
 python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS C0  "$AM"  1 bare
 python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS C1  "$AM"  3 add_skill
 python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS T   "$AM"  3 verbatim
+
+# the US arm — the corpus in ~/.claude/skills and nowhere else
+bash docs/measurements/probes/0017-agent-mapped-skill-access/userscope.sh plant $WS
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS TU  "$AM" 1 verbatim
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/replay.py $WS C1U "$AM" 1 add_skill
+bash docs/measurements/probes/0017-agent-mapped-skill-access/userscope.sh clean
+
+# the per-spawn tool_use census, read back out of the transcripts
+python3 docs/measurements/probes/0017-agent-mapped-skill-access/census.py
 ```
 
 `setup.sh` re-runs the harness, so the argv is re-derived from the code each
-time rather than replayed from this record. The eight session ids in
+time rather than replayed from this record. The ten session ids in
 `probes/0017-agent-mapped-skill-access/results.jsonl` are the ones the counts
 above come from; their transcripts are under `~/.claude/projects/` for as long
 as that directory keeps them, and `logs/` holds each spawn's argv and envelope
-independently of it.
+independently of it. `replay.py` records `claude --version` and the envelope's
+`modelUsage` keys per row from now on; for the first eight, the version is this
+document's word and the model is in each envelope under `logs/`.

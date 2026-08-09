@@ -468,7 +468,7 @@ func TestSkillStaging_WritesTheManifestAsARecordOfWhatItStaged(t *testing.T) {
 // plus a staged plugin plus the user's settings is an unmeasured composite.
 //
 // The assertions below are the exclusion's COST, not a formality. Measured
-// 2026-08-09 (8 spawns, claude 2.1.226,
+// 2026-08-09 (10 spawns, claude 2.1.226,
 // docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md): a node
 // missing `Skill` from Tools invokes no skill AT ALL — not the staged corpus,
 // and not the user's own, which its nil setting sources do load. So the two

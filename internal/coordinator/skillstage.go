@@ -302,7 +302,7 @@ type SkillActivation struct {
 	// THE EXCLUSION IS A CAPABILITY HOLE, NOT A CORPUS PREFERENCE, and the
 	// sentence that used to sit here — "under nil such a node already sees the
 	// user's real skills, so the exclusion costs it little" — is MEASURED FALSE
-	// (2026-08-09, claude 2.1.226, 8 spawns, $1.89,
+	// (2026-08-09, claude 2.1.226, 10 spawns, $2.41,
 	// docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).
 	// applyAgentMapping sets ONLY SettingSources; Tools stays
 	// narrowedToolsFor(node, false), with no Skill, and this loop skips the
@@ -313,7 +313,9 @@ type SkillActivation struct {
 	// 3. permission_denials was [] in every arm: the tool is not denied, it
 	// does not exist. So measurement (f) — "without the name in --tools the
 	// definitions load and the skill cannot run" — holds when the definitions
-	// come from the user's settings and not from a staged plugin.
+	// come through this node's nil layer 1 rather than from a staged plugin:
+	// 0 of 3 with the corpus in project scope, and 0 of 1 with it in the
+	// user's own ~/.claude/skills (the US arm).
 	//
 	// WHAT IT COSTS, stated so nobody has to re-derive it. The exclusion is
 	// TOTAL — an excluded node reaches no skill by any route, staged or the

@@ -11,6 +11,10 @@
 #                                                  can see
 #   <ws>/skills-src/<skill>/SKILL.md               what coordinator's scan
 #                                                  stages for the ACTIVATED node
+#
+# The project-scope plant above is what T/C1/C0 resolved. For the US arm — the
+# same rows with the corpus in the user's own ~/.claude/skills and nowhere else
+# — run userscope.sh after this.
 set -eu
 WS="${1:-/tmp/omg-agentmap-skill}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

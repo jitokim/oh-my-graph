@@ -482,7 +482,7 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		"excluded: verify is agent-mapped",
 		// The exclusion's COST, not a reassurance about it. This printout used
 		// to close that line with "it already sees your real skills", which is
-		// a capability claim and is measured false (2026-08-09, 8 spawns): an
+		// a capability claim and is measured false (2026-08-09, 10 spawns): an
 		// agent-mapped node's argv carries no Skill in --tools, so it invokes
 		// nothing, and the corpus its settings load is unreachable. Both halves
 		// are pinned — that it holds NO Skill tool, and the switch that gets a
@@ -490,7 +490,8 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		// without naming its cost reads as a trade the user made knowingly.
 		"holds NO Skill tool",
 		"not your own installed skills either",
-		"--no-agent-mapping is the switch",
+		"--no-agent-mapping is what gets a node",
+		"the WHOLE plan",
 		"NOT knowable here",
 		"session transcript",
 		"re-materialized and verified before every node spawn",
@@ -535,6 +536,49 @@ func TestPrintPlan_SaysWhyActivationIsOff(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "ENABLED") {
 		t.Errorf("nothing was staged, so nothing may claim otherwise:\n%s", out.String())
+	}
+	// Nothing was excluded here — nobody is agent-mapped — so the exclusion's
+	// cost may not print. It is a statement about specific nodes, not a
+	// disclaimer to attach to every OFF.
+	if strings.Contains(out.String(), "holds NO Skill tool") {
+		t.Errorf("no node was excluded, so nothing may describe an exclusion:\n%s", out.String())
+	}
+}
+
+// The OFF branch that matters most: every planned node is agent-mapped, so
+// applySkillActivation activates nobody and disables itself
+// (internal/coordinator/skillstage.go). The exclusion is then TOTAL — not one
+// node out of several, but a plan in which nothing can invoke a skill — and
+// this used to be the one branch that printed the reason and stopped. A user
+// reading "OFF — every planned node is agent-mapped" alone learns that a
+// corpus went unused, which is the smaller half of what happened.
+func TestPrintPlan_SaysWhatTheExclusionCostsWhenItTakesEveryNode(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
+		`{"id":"design","prompt":"p","agent":"architect"},` +
+		`{"id":"review","prompt":"p","agent":"code-reviewer"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g,
+		SkillScan: &coordinator.SkillScan{Dirs: []string{"/home/u/.claude/skills"}, Found: 2},
+		SkillActivation: &coordinator.SkillActivation{
+			DisabledReason:  "every planned node is agent-mapped, and an agent-mapped node is excluded",
+			ExcludedNodeIDs: []string{"design", "review"},
+		},
+	}, "/tmp/graph.json")
+	got := out.String()
+
+	for _, want := range []string{
+		"skill activation: OFF — every planned node is agent-mapped",
+		"holds NO Skill tool",
+		"not your own installed skills either",
+		"--no-agent-mapping is what gets a node",
+		"the WHOLE plan",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the all-excluded printout is missing %q:\n%s", want, got)
+		}
 	}
 }
 

@@ -943,17 +943,7 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 		for _, id := range activation.ExcludedNodeIDs {
 			fmt.Fprintf(w, "    excluded: %s is agent-mapped\n", id)
 		}
-		if len(activation.ExcludedNodeIDs) > 0 {
-			fmt.Fprint(w,
-				"    An excluded node holds NO Skill tool, so it can invoke NO skill at all — not\n"+
-					"      the staged corpus, and not your own installed skills either, even though its\n"+
-					"      settings do load. Measured 2026-08-09, 8 spawns: 0 of 3 with the shipped argv,\n"+
-					"      3 of 3 with `Skill` added to --tools and nothing else changed\n"+
-					"      (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).\n"+
-					"      Lifting the exclusion is unmeasured; --no-agent-mapping is the switch that\n"+
-					"      keeps a node out of it.\n",
-			)
-		}
+		noteExclusionCost(w, activation.ExcludedNodeIDs)
 		fmt.Fprint(w,
 			"  Which skill a node uses is chosen by the model at run time from those descriptions.\n"+
 				"  It is NOT knowable here; each invocation is recorded in that node's session transcript.\n"+
@@ -974,11 +964,45 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 		)
 	} else if activation != nil && activation.DisabledReason != "" {
 		fmt.Fprintf(w, "  skill activation: OFF — %s\n", activation.DisabledReason)
+		// The cost prints on THIS branch too, and this is the branch where it
+		// is largest: when every planned node is agent-mapped, activation
+		// turns itself off (skillstage.go), so the enabled branch above never
+		// runs and the exclusion is total. A user told only "OFF — every
+		// planned node is agent-mapped" would read that as a corpus that went
+		// unused, not as a plan in which no node can invoke any skill at all.
+		noteExclusionCost(w, activation.ExcludedNodeIDs)
 	}
 	fmt.Fprint(w,
 		"  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).\n"+
 			"  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a\n"+
 			"  plugin is not staged — that is a stated limit, not a failure.\n",
+	)
+}
+
+// noteExclusionCost states what skill activation's one exclusion costs the
+// nodes it excludes. It is a function rather than a paragraph inside the
+// enabled branch because it has to print on BOTH branches: an agent-mapped
+// node is excluded whether activation ended up enabled for the others or
+// turned itself off because there was no one left to activate.
+//
+// It states a cost and never a reassurance. This text used to close with "it
+// already sees your real skills", which is a capability claim and is measured
+// false (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md):
+// the node's argv carries no Skill in --tools, so the definitions its settings
+// load are visible to the CLI and unreachable by the node.
+func noteExclusionCost(w io.Writer, excluded []string) {
+	if len(excluded) == 0 {
+		return
+	}
+	fmt.Fprint(w,
+		"    An excluded node holds NO Skill tool, so it can invoke NO skill at all — not a\n"+
+			"      staged corpus, and not your own installed skills either, even though its\n"+
+			"      settings do load. Measured 2026-08-09: 0 of 3 with the shipped argv, 3 of 3\n"+
+			"      with `Skill` added to --tools and nothing else changed\n"+
+			"      (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).\n"+
+			"      Lifting the exclusion is unmeasured. --no-agent-mapping is what gets a node\n"+
+			"      out of it, and it turns agent mapping off for the WHOLE plan — there is no\n"+
+			"      per-node switch, so the price is every mapping the plan would have made.\n",
 	)
 }
 

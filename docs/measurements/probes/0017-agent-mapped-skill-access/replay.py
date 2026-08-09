@@ -10,6 +10,11 @@ the spawn's own session transcript. Corroborating signal: the planted skill's
 marker file, whose token appears nowhere the node's tool set can read.
 A model's sentence about itself is stored and never counted.
 
+Each row also carries the FULL tool_use census, `claude --version` and the
+envelope's modelUsage keys, so the write-up's tables can be re-derived from
+results.jsonl alone rather than from a scratch directory or a transcript
+`~/.claude/projects` may have aged out.
+
 usage: replay.py <ws> <arm> <argv-file> <n> <transform>
        transform ∈ verbatim | add_skill | bare
 """
@@ -54,8 +59,14 @@ def set_session(argv, sid):
 
 
 def skill_calls(sid):
-    """Every Skill tool_use in this session's own transcript, by skill name."""
-    names, found = [], False
+    """Every tool_use in this session's own transcript.
+
+    Returns (Skill skill-names, full {tool: count} census, transcript-found).
+    The census is recorded and never judged: the verdict is the Skill count
+    alone, but a reader re-deriving the write-up's per-spawn table needs the
+    other tools too, and the transcript it came from is not permanent.
+    """
+    names, census, found = [], {}, False
     for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
         found = True
         with open(path) as fh:
@@ -68,9 +79,21 @@ def skill_calls(sid):
                 if not isinstance(content, list):
                     continue
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "Skill":
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    census[block.get("name")] = census.get(block.get("name"), 0) + 1
+                    if block.get("name") == "Skill":
                         names.append(block.get("input", {}).get("skill"))
-    return names, found
+    return names, census, found
+
+
+def claude_version():
+    """`claude --version`. The envelope carries no version field, and every
+    number in this record is version-scoped."""
+    try:
+        return subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.strip()
+    except OSError as err:  # pragma: no cover - only if claude is not installed
+        return f"unavailable: {err}"
 
 
 def main():
@@ -80,8 +103,13 @@ def main():
     os.makedirs(logs, exist_ok=True)
 
     base = transform(read_argv(argv_file), how)
+    version = claude_version()
     env = dict(os.environ)
-    # internal/childenv.Scrub's policy, at the probe layer.
+    # The same two names internal/childenv.Scrub deletes, so neither arm can
+    # fall back to metered API billing. NOT a mirror of Scrub: Scrub matches
+    # case-insensitively (it drops `Anthropic_Api_Key` too), this drops the
+    # exact spelling only. Harmless to the comparison — the env is identical in
+    # every arm — but it is not the shipped policy and must not be read as it.
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("ANTHROPIC_AUTH_TOKEN", None)
 
@@ -107,14 +135,17 @@ def main():
         except ValueError:
             envelope = {}
         marker_ok = os.path.exists(marker) and TOKEN in open(marker).read()
-        names, transcript = skill_calls(sid)
+        names, census, transcript = skill_calls(sid)
         row = {
             "arm": arm,
             "transform": how,
             "sid": sid,
             "exit": proc.returncode,
+            "claude_version": version,
+            "models": sorted((envelope.get("modelUsage") or {}).keys()),
             "skill_tool_use": len(names),
             "skills": names,
+            "tool_census": census,
             "marker": marker_ok,
             "transcript_found": transcript,
             "cost_usd": envelope.get("total_cost_usd"),
