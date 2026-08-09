@@ -12,6 +12,114 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
+- **`merge-shepherd` waits for the checks its own fix restarted, instead of
+  asking the operator to.** The chain was
+  `verify → ready-and-wait → triage → approve-merge → merge`, with the CI and
+  CodeRabbit wait sitting *before* triage. When triage pushed a fix, GitHub
+  restarted the `test` check and sent CodeRabbit back for an incremental
+  review — both after the wait had already gone by — so `merge` met pending
+  checks on a SHA nothing had checked but triage's own `make ... local`. The
+  graph knew: the comment above `approve-merge` named the gap and mitigated it
+  by asking the human to *"confirm CI and review status on the FINAL SHA
+  yourself before approving"*. That mitigation failed five times between
+  2026-08-04 and 2026-08-08, and the loud shape was the rare one. Three times
+  `merge` met the review triage's own push had restarted and answered
+  `WITHHELD` — which *passes*, so the run ended **green having merged nothing**
+  (run `20260804-170325`, PR #111, and `20260807-154947`, PR #137, both on a
+  re-review still `PENDING` on the triage commit; `20260807-144230`, PR #134, on
+  a *new* `CHANGES_REQUESTED` against it). Once it failed in this node's
+  characteristic way — waited in the foreground, ran out of turn, and answered
+  with a promise (*"checks are still running … waiting in the foreground until
+  they conclude"*), which the anchored verdict correctly rejected, halting the
+  run (`20260808-004132`, PR #137). And once the same promise **passed**,
+  because it predates the anchor: `merge`'s `success_check` was still
+  `exit_zero` alone (`20260804-143531`, PR #107, *"CodeRabbit's re-review is
+  mid-flight … poller armed"*).
+
+  The chain is now `triage → recheck → approve-merge → merge`. `recheck` polls
+  synchronously under its own 20m timeout, exactly as `ready-and-wait` does and
+  for the same reason (a node that backgrounds a poll has ended its turn, and
+  its verdict is an interim report); the timeout outlasts the ~17 minutes of
+  polling the prompt budgets, because a node killed by its own timeout produces
+  no verdict at all and discards the run. It judges the **final** SHA and names
+  it, reading everything from one `gh pr view --json
+  headRefOid,statusCheckRollup,reviews` under a `--jq` projection — `headRefOid`
+  is the final SHA, the rollup is that same commit's, and each review carries
+  the `commit.oid` it was submitted against, so "CodeRabbit reviewed the final
+  SHA" is a comparison rather than an inference. The projection is not
+  cosmetic: raw `reviews` carries every review *body*, which measured 6.8 KB
+  per read against 619 B projected, on the one node whose failure mode is a
+  degraded interim reply. Two rules are stated over the data rather than over
+  one check: green requires **every** entry of the rollup to be finished and
+  good (`COMPLETED` with `SUCCESS`/`SKIPPED`/`NEUTRAL`, or a status context in
+  `SUCCESS`) — this repo's own rollup has three entries, and naming one of them
+  would have reported a red `stress` as green — and CodeRabbit's word is its
+  **latest** review on that SHA by `submittedAt`, because a PR routinely
+  collects several against one commit and a `CHANGES_REQUESTED` after an
+  `APPROVED` is the bot changing its mind. `TRIAGED 0` short-circuits the wait
+  only when that first read is *already green*: nothing was pushed, so no check
+  will restart and polling would spend the whole timeout on a state that cannot
+  change. A count of zero says nothing about the checks themselves, so pending
+  or red entries — and a final SHA CodeRabbit has not reviewed yet — poll on
+  exactly as they would after a push. Its grant is
+  `Bash(gh pr view *)` and `Bash(sleep *)` — narrower than `ready-and-wait`'s
+  `Bash(gh *)`, and there is no mutating form of `gh pr view` left to narrow
+  away.
+
+  **The verdict is three-valued, and that is the point.** `RECHECKED <sha>`
+  (both concluded green) and `UNSETTLED <sha>` (still pending when the timeout
+  arrived) pass; `BLOCKED <sha>` (concluded red) is written by the prompt and
+  matched by nothing, so red checks halt the run *before* the gate — the same
+  shape as `triage`'s `BLOCKED`. Collapsing the third outcome into either of
+  the others lies: into `RECHECKED` it merges a PR nothing has checked, into
+  `BLOCKED` it discards a paid pipeline over checks that were merely slow.
+  `merge`'s `WITHHELD` is kept as the **fallback** for `UNSETTLED` alone,
+  rather than the routine answer to pending checks (ADR 0019 §5).
+
+  **What the third verdict costs, stated plainly**, because the shape of the
+  win is easy to overstate: the case where the checks outlast the wait ends the
+  run **green** via `UNSETTLED → WITHHELD`, having merged nothing — but only if
+  the operator approves the gate over it; rejecting the gate is a ledger FAIL,
+  so the green path is the approved one. That is not
+  a state this change introduced — it is the state three of the five hits above
+  already reached, by way of `merge`'s own `WITHHELD`, and the change is that
+  the fact now has a name, a SHA and a place in the chain instead of being
+  discovered at merge time. The green-run-merged-nothing outcome is made
+  *rarer* and *visible*, not removed; the common case, where restarted checks
+  conclude in a few minutes, is what genuinely improves — those runs now merge
+  where they used to withhold. What is contained is the expensive half:
+  `merge` answers `WITHHELD` to anything not beginning `RECHECKED`, so an
+  `UNSETTLED` written without waiting costs an operator's glance and a refused
+  merge, never a merge of unchecked code. Both graph header and DESIGN.md say
+  this in the same words.
+
+  **Why an ordinary node and not a `feedback:` arc.** Both halves were checked
+  against the code, not just the ADRs. An arc fires only on a *judgment failure
+  of the declaring node* (`schedule.judgeFeedback` returns early unless
+  `node.Feedback != nil` and `isJudgmentFailure(cause)`) — but the event that
+  must re-open the wait is triage **succeeding** with a push, and a PASS fires
+  nothing. And ADR 0010's load rule 4 forbids a gate anywhere in a loop body
+  (`graph.validateFeedback` rejects `member.Type == TypeGate`), so an arc aimed
+  back past `approve-merge` would not load at all. A wait that must happen every
+  time a fix lands is not failure recovery; it is a step, so it is a node.
+
+  The gate comment no longer asks for the check — it states what `recheck`
+  found and what to do about it (on `UNSETTLED`, rejecting is cheaper than
+  approving into a `WITHHELD`). One seam is documented rather than closed: an
+  incremental review of triage's own fix that merely `COMMENTED` passes
+  `recheck` untriaged, since there is no arc back to `triage` — those comments
+  reach the operator at the gate and nowhere else. `BLOCKED` halting while
+  `UNSETTLED` passes is likewise now an argued decision rather than an
+  omission: a red conclusion judges the code, and there is nothing to decide
+  at a gate over it; a timeout judges nothing, so it is the operator's call.
+  `TestRecheckVerdictIsThreeValued` pins the chain, the grant, the timeout
+  against the prompt's loop budget, and all three verdicts, including that
+  `BLOCKED` does *not* match and that neither passing token is reachable
+  behind preamble.
+  DESIGN.md's "Verdict patterns" gains the three-outcome shape and the rule it
+  bends: a state word is admissible as a verdict only when the state is an
+  outcome and something downstream bounds a premature one.
+
 - **The env scrub now matches keys without regard to case, so the one
   load-bearing guarantee is true on every platform the binary runs on.**
   `internal/childenv.Scrub` compared keys exactly (`key == scrubbed`). Windows
@@ -126,8 +234,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
   fragment's identical `result_matches` by a test instead. The clause sweep
   (`grep -c "Anything you need to qualify"`) is restated as what it counts:
-  **25 declarations covering 32 runtime nodes**, since a fragment states the
-  clause once for every node citing it.
+  **26 declarations covering 33 runtime nodes**, since a fragment states the
+  clause once for every node citing it. That sweep read 25/32 when the boundary
+  was written; `merge-shepherd`'s new `recheck` node, above, is the 26th
+  declaration, and DESIGN.md and the test that pins it ship the same pair.
 
 ## [v0.5.2] - 2026-08-08
 

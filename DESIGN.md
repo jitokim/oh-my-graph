@@ -710,9 +710,9 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **25
-  declarations, covering 32 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: three of the 25
+  is a sweep that cannot silently miss a node. That sweep counts **26
+  declarations, covering 33 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: three of the 26
   live in `graphs/fragments/` and carry ten of the nodes between them. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
@@ -881,6 +881,51 @@ honestly used for "not yet" — otherwise the alternation re-admits the promise
 it exists to reject. A graph whose green run can mean either outcome must say
 so in its header: the ledger says the node passed, and only its artifact says
 which.
+
+**Three outcomes, two of which pass — and the token that is deliberately
+absent.** A node that *waits* has one more outcome than a node that decides:
+the thing it waited for concluded well, concluded badly, or had not concluded
+when the timeout arrived. `merge-shepherd`'s `recheck` — the re-wait for the
+check rollup and CodeRabbit after triage may have pushed a fix — is the shipped
+case, and it writes all three. The pattern is
+``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'``; the red
+conclusion is `BLOCKED <sha>`, which appears in the prompt and **not** in the
+pattern. Three rules, none of them new:
+
+- **Leaving a token out of the pattern is how a graph halts on purpose.** Red
+  checks must not reach the human gate, so `BLOCKED` is written by the prompt,
+  matched by nothing, and fails the node — the same shape as `triage`'s
+  `BLOCKED`. The absent token is part of the grammar; a reader who sees only
+  the regex sees two thirds of it, which is why the prompt names all three.
+- **Factor the payload, don't weaken a branch.** Both passing branches share
+  one shaped payload rather than each arguing for its own, because the SHA is
+  what the node is *for*: a verdict about "the checks" that cannot say which
+  commit they ran against is precisely the ambiguity the node was added to
+  remove. Contrast `merge`, whose two branches assert different things and so
+  need `MERGED`'s SHA and `WITHHELD`'s `[[:alnum:]]` separately.
+- **A state word is admissible only when the state is an outcome.** The rule
+  above prefers a decision over a state, and `UNSETTLED` is a state — the one
+  exception, and it is bought, not free. It passes, so a run whose checks were
+  merely slow reaches the gate instead of discarding a paid pipeline; and a
+  node that writes it without waiting is not caught by the pattern. What
+  bounds that is what lies downstream: a gate the operator must still open,
+  and a `merge` whose answer to `UNSETTLED` is `WITHHELD`. A premature
+  `UNSETTLED` costs a glance and a refused merge; it can never cost a merge of
+  unchecked code. Where a premature answer *would* be expensive — `RECHECKED`
+  — the token names a completed check, not a state. The rest of that price is
+  paid in the graph's terminal state, and it should be said out loud: an
+  `UNSETTLED` the operator approves over ends the run GREEN, having merged
+  nothing. That outcome is not what the state word bought — before `recheck`
+  existed, `merge` answered `WITHHELD` to those same unfinished reviews, which
+  also passes, and three of the five hits that motivated the node ended exactly
+  there. Only two of those three were slow: a re-review still `PENDING` on the
+  triage commit (PR #111, PR #137). The third (PR #134) was a *new*
+  `CHANGES_REQUESTED` against it — a red review, which `recheck` calls RED and
+  answers `BLOCKED`, halting before the gate rather than reaching it as an
+  `UNSETTLED`. Admitting a state word makes the green-run-merged-nothing class
+  *rarer* — the common case, where restarted checks conclude in minutes, now
+  merges — but it does not remove it, and a graph that buys this exception owes
+  its header that sentence.
 
 Widening the separator class between a token and its payload is the one
 tolerance worth buying node by node, and the currency is what a false FAIL
