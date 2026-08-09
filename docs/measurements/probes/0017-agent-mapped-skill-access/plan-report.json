@@ -1,0 +1,70 @@
+{
+  "activated_node_ids": [
+    "render-artifact"
+  ],
+  "activation_enabled": true,
+  "agent_mappings": [
+    {
+      "NodeID": "omg-probe-writer",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    }
+  ],
+  "excluded_node_ids": [
+    "omg-probe-writer"
+  ],
+  "nodes": {
+    "omg-probe-writer": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-agentmap-skill/argv/omg-probe-writer",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 439,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "render-artifact": {
+      "agent": "",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-agentmap-skill/argv/render-artifact",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": [
+        "/tmp/omg-agentmap-skill/run/skills-plugin"
+      ],
+      "prompt_bytes": 534,
+      "setting_sources": "",
+      "tools": [
+        "Write",
+        "Skill"
+      ]
+    }
+  },
+  "plugin_dir": "/tmp/omg-agentmap-skill/run/skills-plugin",
+  "prompt_notice_bytes": "A corpus of procedures is available through the Skill tool; consult it if one fits this task.",
+  "staged_skill_count": 1
+}

@@ -519,9 +519,28 @@ its tool list, so the node's own model *can* pick the skill its task calls for,
 by description, at run time. Eligible means a planned node that is not
 agent-mapped, on a run where activation is on at all — an empty or missing
 `~/.claude/skills`, or a staging failure, turns it off for the whole run and
-says so on its own line. An **agent-mapped node is excluded** and gets
-neither half: running as one of your subagents already means loading your
-settings to resolve the agent, which is the trade `agent:` has always made.
+says so on its own line. An **agent-mapped node is excluded** and gets neither
+half, because running as one of your subagents already means loading your
+settings to resolve the agent, and `--agent` plus a staged plugin plus your
+settings is a combination nothing here has measured.
+
+**What that exclusion costs is not small, and the plan printout now says so.**
+An excluded node holds no `Skill` tool, so it invokes **no skill at all** — not
+the staged corpus, and not your own installed skills either, even though its
+settings do load. Measured 2026-08-09 on 10 real spawns: told outright to use a
+skill it fired 0 of 3 under the argv oh-my-graph really sends, and 3 of 3 with
+`Skill` added to that argv's `--tools` and nothing else changed — and 0 of 1
+against 1 of 1 when the skill sat in `~/.claude/skills` rather than in the
+project
+([the record](docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md)).
+And the exclusion is not spread evenly: agent mapping runs first and matches on
+the same signal, so it takes the design, doc and review nodes — the ones a
+procedure fits best. If you would rather those nodes kept the skill surface
+than gained a subagent, `--no-agent-mapping` is the switch — it turns agent
+mapping off for the whole run, so the price is every mapping the plan would
+have made; there is no per-node opt-out. Lifting the exclusion
+itself needs its own measurement first, which is
+[ADR 0017's (j)](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md).
 
 **Whether it does is now measured; whether the result is worth the tokens is
 not, and the feature is on by default.** v0.5.1 shipped this recording **1
@@ -552,7 +571,8 @@ The tool ceiling does not move for it. Activation-eligible planned nodes still
 load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared
 scope like `Bash(git *)` is still enforced — the only change is that the `Skill`
 tool now exists for them. (An agent-mapped node still loads your settings, as it
-did before ADR 0017, and is excluded from activation for that very reason.)
+did before ADR 0017, and is excluded from activation for that very reason — it
+does not get the `Skill` tool either way, so those settings buy it no skill.)
 What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
 activation-eligible node invocation of that leg, including retries and feedback

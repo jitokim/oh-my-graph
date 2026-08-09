@@ -466,6 +466,16 @@ func TestSkillStaging_WritesTheManifestAsARecordOfWhatItStaged(t *testing.T) {
 // An agent-mapped node is excluded, and the exclusion is recorded so it can be
 // printed: applyAgentMapping drops that node's layer 1 to nil, so `--agent`
 // plus a staged plugin plus the user's settings is an unmeasured composite.
+//
+// The assertions below are the exclusion's COST, not a formality. Measured
+// 2026-08-09 (10 spawns, claude 2.1.226,
+// docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md): a node
+// missing `Skill` from Tools invokes no skill AT ALL — not the staged corpus,
+// and not the user's own, which its nil setting sources do load. So the two
+// assertions on `review` (no Skill in Tools, no PluginDirs) are asserting a
+// total capability hole, and the fixture is not incidental: `review` maps to
+// `code-reviewer`, which is the shape this lands on by construction — the jobs
+// that match a named role are the jobs a procedure fits.
 func TestPlan_AgentMappedNodeIsExcludedFromActivation(t *testing.T) {
 	agentDir, skillDir := t.TempDir(), t.TempDir()
 	writeAgentFile(t, agentDir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
@@ -735,4 +745,36 @@ type runnerFunc func(context.Context, runner.NodeInvocation) (runner.NodeOutcome
 
 func (f runnerFunc) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	return f(ctx, spec)
+}
+
+// When EVERY planned node is agent-mapped there is nothing to stage, so
+// applySkillActivation returns a disabled SkillActivation. That branch must
+// still carry ExcludedNodeIDs, because the CLI's exclusion-cost paragraph is
+// printed off that field: drop it and a user whose whole plan is agent-mapped
+// reads "OFF — every planned node is agent-mapped" and nothing about the
+// capability hole, which is the disclosure the measurement above exists to
+// force. Verified by mutation: removing the ExcludedNodeIDs assignment from
+// that branch leaves the rest of the suite green.
+func TestPlan_EveryNodeAgentMappedStillNamesWhatItExcluded(t *testing.T) {
+	agentDir, skillDir := t.TempDir(), t.TempDir()
+	writeAgentFile(t, agentDir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
+	writeSkillFile(t, skillDir, "architecture-design", "name: architecture-design", "the body")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"one","version":"1","nodes":[` +
+		`{"id":"review","prompt":"review","allowed_tools":["Read","Grep"]}]}`})
+	plan, err := New(fake, WithAgentDirs(agentDir), WithSkillDirs(skillDir)).Plan(context.Background(), "review", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	act := plan.SkillActivation
+	if act == nil || act.Enabled {
+		t.Fatalf("activation = %+v, want disabled: every node is agent-mapped", act)
+	}
+	if act.DisabledReason == "" {
+		t.Error("a disabled activation must say why")
+	}
+	if !slices.Equal(act.ExcludedNodeIDs, []string{"review"}) {
+		t.Errorf("ExcludedNodeIDs = %v, want [review] — the printout's exclusion-cost paragraph reads off this field, so an empty one silently drops the disclosure", act.ExcludedNodeIDs)
+	}
 }

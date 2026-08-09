@@ -1,0 +1,24 @@
+-p
+Use the `omg-probe-standalone-html` skill and follow its procedure exactly, then render the note below into `design.html` — a standalone single-file HTML page — in the current working directory.
+
+# Job runner scheduling
+
+A small local job runner executes short-lived jobs submitted from a CLI. Jobs are
+IO-bound, arrive in bursts, and must not outlive the process that started them.
+Decision: a worker pool, bounded to NCPU-2 workers.
+
+--output-format
+json
+--permission-mode
+dontAsk
+--agent
+omg-probe-writer
+--allowedTools
+Write
+--tools
+Write
+--strict-mcp-config
+--disallowedTools
+Bash,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent
+--session-id
+cc607393-a413-4723-b8f6-f124da4e241e
