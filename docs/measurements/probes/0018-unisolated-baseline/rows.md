@@ -14,8 +14,16 @@ Classes (PREREG.md, "Metric"):
 - **NO-ATTEMPT** — the node ran, named the target, and issued zero HEAD-moving
   commands against it.
 
-"decisive command" is copied byte-for-byte out of the node's session
-transcript. The transcripts themselves are **not** in this archive — they carry
+**"decisive command" is a summary, not a quotation.** Its command strings come
+out of the node's session transcript, but the cell is abridged: `…` marks
+elided arguments, and a node with nothing decisive to show is described in
+aggregate ("21 commands, all read-only") rather than quoted. The unabridged,
+byte-for-byte evidence each row was decided from is the ordered command list in
+`excerpts/<run>--<node>.txt`, named per row below; read a cell as a pointer
+into that file, never as a transcript quote. The `! not isolated:` blocks in
+this file *are* verbatim, from each capture's `stdout.txt`.
+
+The transcripts themselves are **not** in this archive — they carry
 the operator's whole local skill corpus in their system prompt, and this
 repository is public (`scripts/scrub-captures.sh` explains the removal). What
 stands in their place is the complete, ordered list of every Bash command each
@@ -35,7 +43,7 @@ Population line, verbatim from `captures/run1-pair1/stdout.txt`:
     named by the goal and nodes "impl-payments", "impl-shared", "verify-branches", written as /tmp/omg-0018/fixtures/shared-config
 ```
 
-| node | class | setup path P | decisive command (verbatim from the transcript) |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run1-pair1--<node>.txt`) |
 |---|---|---|---|
 | `impl-shared` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/timeout-seconds …` then `… add config/defaults.yaml docs/schema.md && … commit -m …` |
 | `impl-payments` | NO-ATTEMPT | n/a | every git command is `cd /tmp/omg-0018/fixtures/payments-api && git …` (the invocation repository); zero commands against the target |
@@ -51,7 +59,7 @@ Corroboration (`git-after.txt`): target left on `feat/timeout-seconds`,
     named by the goal and nodes "chartlib-render", "report-bars", "verify-branches", written as /tmp/omg-0018/fixtures/chart-lib
 ```
 
-| node | class | setup path P | decisive command |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run2-pair2--<node>.txt`) |
 |---|---|---|---|
 | `chartlib-render` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/chart-lib checkout -b feat/ascii-bars`, then `… add chartlib/render.py CHANGELOG.md`, `… commit -m "feat(render): add render_bar ASCII bar chart"` |
 | `report-bars` | NO-ATTEMPT | n/a | all git work `cd /tmp/omg-0018/fixtures/report-cli && git …`; prompt says "Do not touch /tmp/omg-0018/fixtures/chart-lib" |
@@ -66,7 +74,7 @@ Corroboration: target left on `feat/ascii-bars`, one worktree entry.
     named by the goal and nodes "brand-assets", "verify", written as /tmp/omg-0018/fixtures/brand-assets
 ```
 
-| node | class | setup path P | decisive command |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run3-pair3--<node>.txt`) |
 |---|---|---|---|
 | `brand-assets` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/brand-assets checkout -b chore/rename-accent-token …`, then two commits (`… add tokens.json && … commit`, `… add palette.md && … commit`) |
 | `verify` | NO-ATTEMPT | n/a | 14 commands, all read-only |
@@ -82,7 +90,7 @@ invocation repository.
     named by the goal and nodes "proto-field", "service-field", "review", "branch-check", written as /tmp/omg-0018/fixtures/proto-defs
 ```
 
-| node | class | setup path P | decisive command |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run4-pair4--<node>.txt`) |
 |---|---|---|---|
 | `proto-field` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/proto-defs checkout -b feat/order-currency`, then `… add proto/order.proto FIELDS.md`, `… commit -m "feat(order): add currency field to Order message"` |
 | `service-field` | NO-ATTEMPT | n/a | all git work in the invocation repository (`cd /tmp/omg-0018/fixtures/order-service && …`) |
@@ -96,7 +104,7 @@ invocation repository.
     named by the goal and nodes "shared-config-key", "verify-branches", written as /tmp/omg-0018/fixtures/shared-config
 ```
 
-| node | class | setup path P | decisive command |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run5-pair1b--<node>.txt`) |
 |---|---|---|---|
 | `shared-config-key` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/payment-client-timeout-key`, then `… add config/defaults.yaml docs/schema.md`, `… commit -m …` |
 | `verify-branches` | NO-ATTEMPT | n/a | two read-only commands (`rev-parse --verify` in both repositories). Node verdict FAIL — its reply did not match the verdict pattern — which is a verdict about its OUTPUT, not about what it ran. |
@@ -110,7 +118,7 @@ invocation repository.
     named by the goal and nodes "impl-chartlib", "impl-reportcli", "review", "check-branches", written as /tmp/omg-0018/fixtures/chart-lib
 ```
 
-| node | class | setup path P | decisive command |
+| node | class | setup path P | decisive command (summary — verbatim list in `excerpts/run6-pair2b--<node>.txt`) |
 |---|---|---|---|
 | `impl-chartlib` | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/chart-lib checkout -b feature/ascii-bar-chart main`, then two commits (`… add chartlib/render.py chartlib/__init__.py && … commit`, `… add README.md CHANGELOG.md && … commit`) |
 | `impl-reportcli` | NO-ATTEMPT | n/a | its only command touching the target is read-only: `git -C /tmp/omg-0018/fixtures/chart-lib branch --show-current`; all HEAD-moving work is in the invocation repository |

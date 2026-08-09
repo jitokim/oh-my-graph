@@ -9,6 +9,14 @@
 set -euo pipefail
 
 FIXROOT="${FIXROOT:-/tmp/omg-0018/fixtures}"
+
+# Same guard as setup-fixtures.sh: this script deletes four subdirectories under
+# FIXROOT, so an unrelated exported value must not survive to the first rm.
+case "$FIXROOT" in
+  /tmp/*) ;;
+  *) echo "setup-fixtures-2.sh: refusing to write under FIXROOT=$FIXROOT — it must be under /tmp." >&2; exit 1 ;;
+esac
+
 mkdir -p "$FIXROOT"
 
 init_repo() {

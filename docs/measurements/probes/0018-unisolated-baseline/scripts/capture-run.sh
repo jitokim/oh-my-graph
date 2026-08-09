@@ -89,8 +89,14 @@ echo "${run_id:-<none>}" >"$cap/run-id.txt"
 
 if [[ -n "$run_id" ]]; then
   run_dir="$OMG_HOME/runs/$run_id"
+  # An `if` block, not `[[ -f ]] && cp`: under `set -e` the loop takes the
+  # status of its last command, so a missing events.jsonl (the last name here,
+  # and absent from several runs in this probe) would abort the capture before
+  # the transcripts are copied.
   for f in state.json graph.json events.jsonl; do
-    [[ -f "$run_dir/$f" ]] && cp "$run_dir/$f" "$cap/runstate/$f"
+    if [[ -f "$run_dir/$f" ]]; then
+      cp "$run_dir/$f" "$cap/runstate/$f"
+    fi
   done
 
   # ---- 4. the transcripts, located via NodeRecord.SessionID ------------

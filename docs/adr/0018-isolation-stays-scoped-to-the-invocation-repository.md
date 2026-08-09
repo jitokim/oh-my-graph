@@ -20,9 +20,12 @@
 - **Baseline measured 2026-08-09: 0%** (0 of 6 HEAD-moving nodes; n = 18
   qualifying nodes over 6 real `auto` runs), taken before the §6 clause exists
   — see §Falsification, *"Result 2026-08-09"*. **The decision does not move and
-  §1 is not built**: the threshold judges §6's advisory, and there was no
-  advisory here to disobey. But the decision is **provisional** from this date,
-  and that section says on what.
+  §1 is not built**: the threshold judges §6's advisory, and **no §6 advisory
+  reached the planner or any node** in this sample, so there was none to
+  disobey. (#129's `! not isolated:` line did print — but it is a warning shown
+  to the *user* after planning, not an instruction given to the party being
+  measured.) But the decision is **provisional** from this date, and that
+  section says on what.
 - Issues: [#103](https://github.com/jitokim/oh-my-graph/issues/103) — the
   second half, the one #123 and #129 did not touch.
 - **Amends nothing.** ADR 0005's single-repository scope is *affirmed*, not
@@ -524,14 +527,29 @@ the exact thing #103's first triage comment could not read from the run feed.
   same compliance; if they cannot be collected, the result is reported as
   prompt-mentions only and says so in the number.
 - **Metric.** The fraction whose transcript records a `git worktree add` (or a
-  clone) in that repository **before** any command that moves that repository's
-  HEAD (`git checkout`, `git switch`, `git reset`, a branch-creating commit in
-  the shared tree), **and** whose every such HEAD-moving command then runs
+  clone) in that repository **before** any command that mutates that
+  repository's state, **and** whose every such mutating command then runs
   *inside the path that setup created* — so the created path is recorded
   alongside each command in the sample, and a node that cuts a worktree and then
   runs `git checkout` back in the shared checkout counts as non-compliant. Setup
   alone proves nothing: the collision this measures is a command landing in the
   shared tree, not the absence of a `worktree add` before it.
+- **Which commands mutate, stated rather than gestured at.** *Not* "whatever
+  moves HEAD": `git stash` and `git branch -f|-m|-D` change the shared tree
+  without moving HEAD, and are in; `git checkout`/`git reset` count in their
+  non-HEAD-moving forms too, because a path checkout is exactly the collision
+  #103 reported. The registered set is the enumerated one in
+  [`probes/0018-unisolated-baseline/PREREG.md`](../measurements/probes/0018-unisolated-baseline/PREREG.md),
+  *"Metric" → "HEAD-moving command"* — `git checkout`, `git switch`,
+  `git reset`, `git commit`, `git merge`, `git rebase`, `git pull`, `git stash`,
+  `git branch -f|-m|-D`, `git branch <new>` followed by entering it — attributed
+  to the target by the directory the command ran in (`-C <path>` or the cwd at
+  that moment). A command is counted **as issued in the transcript**, not as
+  observed to have succeeded: a `git merge` that conflicts still landed in the
+  shared tree. Post-run `git worktree list` / `git log --all` corroborate a row,
+  never decide it. That sentence is the operational definition; the earlier
+  bullet's shorter phrasing is the same rule, not a looser one, and a future
+  sample must re-state this list rather than re-derive it.
 - **Threshold, fixed now — it judges a *post-§6-clause* sample only.** Over
   **at least 10** such nodes measured **after** §6's planner clause has shipped:
   **≥ 80% → advisory works, this decision stands and hardens.** **< 50% →
@@ -542,6 +560,18 @@ the exact thing #103's first triage comment could not read from the run feed.
   bullet) is advisory-free — there is no instruction in it to obey — so it is
   reported as a number and an n, and this threshold is not applied to it however
   low it lands.
+- **Which of the reported readings the threshold is applied to — one, named.**
+  The **headline** reading registered in PREREG.md:
+  `COMPLIANT / (COMPLIANT + NON-COMPLIANT)`. `NO-ATTEMPT` nodes — named the
+  target, moved nothing in it — are a third bucket **excluded from that
+  fraction** and reported as a count beside it; they neither pass nor fail. The
+  strict-literal and lenient-literal readings are published so the
+  disambiguation can be checked, and **decide nothing**. **Zero denominator:**
+  if `COMPLIANT + NON-COMPLIANT = 0` — every qualifying node was `NO-ATTEMPT` —
+  the sample has produced no compliance reading at all, so neither branch fires;
+  it is extended exactly as the 50–80% band is, and "0/0" is never written as
+  0%. The `≥ 10` floor is on the qualifying population, so a sample can clear it
+  and still have a zero denominator.
 - **Confounder to record, not to explain away.** If the §6 planner instruction
   ships first, this measures the instruction and not the status quo, and the
   status quo's number will then never be known. Take a baseline of at least 5

@@ -68,14 +68,21 @@ PY
 done
 
 # grep -Z / xargs -0 is not portable enough here; a plain loop is.
+# $HOME goes through the ENVIRONMENT, never into the perl program text: a home
+# path containing `}` would break the s{}{} delimiters, and one containing `$`
+# or `@` would be interpolated by perl itself — silently, leaving the operator's
+# real path in a capture bound for a public repository.
 while IFS= read -r file; do
-  perl -pi -e "s{\Q$HOME\E}{<home>}g" "$file"
+  HOME_PATH="$HOME" perl -pi -e 's{\Q$ENV{HOME_PATH}\E}{<home>}g' "$file"
 done < <(grep -rl "$HOME" . 2>/dev/null || true)
 
 echo "scrubbed: raw transcripts removed, skill corpus cut from stdout, \$HOME rewritten"
+# This is the last gate before the captures are committed, so a surviving home
+# path has to fail the script — a caller or a hook cannot read a warning.
 if grep -rq "$HOME" . 2>/dev/null; then
   echo "WARNING: home path still present"
   grep -rl "$HOME" .
+  exit 1
 else
   echo "no home path remains"
 fi

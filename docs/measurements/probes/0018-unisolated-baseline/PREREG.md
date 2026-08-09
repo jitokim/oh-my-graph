@@ -164,12 +164,21 @@ confirm a transcript, never replace it.
 - No `--verify-cmd`, no `--no-skill-activation`, no `--no-agent-mapping`:
   the status quo is the default invocation.
 
-## Safety — no real repository is ever named
+## Safety — no real repository is ever a target
 
-Every path in every goal is a **throwaway fixture** under `/tmp/omg-0018/fixtures`,
-created by `scripts/setup-fixtures.sh`, with no remote and no relation to any
-real checkout. Nothing in this measurement references the oh-my-graph
-repository, anything under `~/IdeaProjects`, or any remote. The goals state
+Every path in every goal — and so every path this measurement *measures* — is a
+**throwaway fixture** under `/tmp/omg-0018/fixtures`, created by
+`scripts/setup-fixtures.sh`, with no remote and no relation to any real
+checkout. No goal and no measured target names the oh-my-graph repository,
+anything under `~/IdeaProjects`, or any remote.
+
+The claim stops at the goals and the measured targets, because the captures do
+record one real path: `meta.txt` carries the oh-my-graph worktree the measured
+binary was built from, as `binary:` (home-scrubbed to
+`<home>/.oh-my-graph/runs/…`). That is provenance for the binary, and no run
+touches it.
+
+The goals state
 that there is no remote and no pull request, so `branchEvidenceRule` steers the
 check node to a branch **ref** assertion rather than a `gh pr list` that would
 fail for an unrelated reason.

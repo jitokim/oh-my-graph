@@ -52,18 +52,20 @@ for line in open(path, encoding="utf-8"):
         command = (params.get("command") or "").strip()
         index += 1
         here = tracked
-        # A `cd` on its own — as the whole command, or as the first LINE of a
-        # multi-line command — changes the one shell the Bash tool keeps, so it
-        # persists into later calls. A `cd X && …` prefix does not.
-        first_line = command.split("\n", 1)[0]
-        match = CD_ONLY.match(first_line)
-        if match:
-            tracked = unquote(match.group("dir"))
-            here = tracked
-        else:
-            prefix = CD_PREFIX.match(command)
-            if prefix:
-                here = unquote(prefix.group("dir"))
+        # A `cd` on its own line changes the one shell the Bash tool keeps, so
+        # it persists into later calls. A multi-line command may hold more than
+        # one, and it is the LAST of them the next call inherits — so `tracked`
+        # follows every line, while `here` (what THIS command is attributed to)
+        # still moves only for a `cd` that opens the command. A `cd X && …`
+        # prefix does not persist.
+        lines = command.split("\n")
+        opening = CD_ONLY.match(lines[0]) or CD_PREFIX.match(command)
+        if opening:
+            here = unquote(opening.group("dir"))
+        for command_line in lines:
+            match = CD_ONLY.match(command_line)
+            if match:
+                tracked = unquote(match.group("dir"))
         if GIT_ONLY and "git" not in command:
             continue
         print(f"--- #{index}  [dir: {here}]")

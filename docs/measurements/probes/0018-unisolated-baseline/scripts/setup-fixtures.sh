@@ -15,6 +15,14 @@ set -euo pipefail
 
 FIXROOT="${FIXROOT:-/tmp/omg-0018/fixtures}"
 
+# FIXROOT is overridable, and the next line deletes it recursively. The header
+# above says every fixture lives under /tmp; enforce that before the delete
+# rather than trusting the operator's exported environment.
+case "$FIXROOT" in
+  /tmp/*) ;;
+  *) echo "setup-fixtures.sh: refusing to wipe FIXROOT=$FIXROOT — it must be under /tmp." >&2; exit 1 ;;
+esac
+
 rm -rf "$FIXROOT"
 mkdir -p "$FIXROOT"
 

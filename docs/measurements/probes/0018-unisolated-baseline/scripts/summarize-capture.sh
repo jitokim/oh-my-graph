@@ -22,4 +22,11 @@ echo "-- sessions (node / verdict / session id):"
 [ -f "$cap/sessions.txt" ] && sed 's/^/    /' "$cap/sessions.txt" || echo "    (none)"
 echo
 echo "-- foreign checkout AFTER the run (corroboration only):"
-awk '/^=== /{keep=0} /shared-config|chart-lib/{keep=1} keep' "$cap/git-after.txt" | sed 's/^/    /'
+# Read the checkout from meta.txt rather than hard-coding pair 1 and 2's names:
+# pairs 3 and 4 use brand-assets and proto-defs, and a name filter prints an
+# empty block for exactly the runs the sample was widened with.
+# Compared by last path component: meta.txt resolves the path (`pwd -P`, so
+# /private/tmp on macOS) while git-after.txt prints the argument as given.
+foreign="$(basename "$(sed -n 's/^foreign checkout: *//p' "$cap/meta.txt" | head -1)")"
+awk -v want="$foreign" '/^=== /{n = split($2, p, "/"); keep = (p[n] == want)} keep' \
+  "$cap/git-after.txt" | sed 's/^/    /'

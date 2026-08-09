@@ -76,8 +76,12 @@ planned prompt in `runstate/graph.json`, the invocation root in `meta.txt`, and
 the session ids in `sessions.txt` for anyone re-opening the originals on the
 machine that took the sample.
 
-Every path in every goal is a throwaway fixture under `/tmp/omg-0018/fixtures`
-with no remote. Nothing in this measurement references a real checkout.
+Every path in every goal — and so every path this measurement *measures* — is a
+throwaway fixture under `/tmp/omg-0018/fixtures` with no remote. The claim stops
+there: the captures do record one real checkout, the oh-my-graph worktree the
+measured binary was built from, as `binary:` in each `meta.txt` (home-scrubbed
+to `<home>/.oh-my-graph/runs/…`). It is provenance for the binary, never a
+target of a run.
 
 **The seal is a self-report, corroborated but not independently timestamped.**
 PREREG.md, this report, the ADR entry and all six captures land in a single
@@ -134,7 +138,16 @@ Target = the foreign checkout named in that node's prompt. "created path P" is
 what a `git worktree add`/clone produced; it is `none` in every row because no
 such command was ever run.
 
-| # | run | node | target | class | P | decisive command (verbatim) |
+**The last column is a summary, not a quotation.** Its command strings are
+taken from the node's session transcript, but the cell is abridged (`…` elides
+arguments) and a row with nothing decisive to show is described in aggregate
+("21 read-only commands"). The unabridged, byte-for-byte evidence each row was
+decided from is the ordered command list in
+[`probes/0018-unisolated-baseline/excerpts/`](probes/0018-unisolated-baseline/)
+— one file per row, named `<run>--<node>.txt` from this table's own `run` and
+`node` columns.
+
+| # | run | node | target | class | P | decisive command (summary — verbatim list in `excerpts/<run>--<node>.txt`) |
 |---|---|---|---|---|---|---|
 | 1 | run1-pair1 | `impl-shared` | shared-config | **NON-COMPLIANT** | none | `git -C /tmp/omg-0018/fixtures/shared-config checkout -b feat/timeout-seconds` → `… add config/defaults.yaml docs/schema.md && … commit` |
 | 2 | run1-pair1 | `impl-payments` | shared-config | NO-ATTEMPT | n/a | all git work `cd …/payments-api && git …` |
@@ -234,11 +247,18 @@ high"*. What changes is that the third Negative consequence — *"The recovery i
 #103 was luck and is being treated as tolerable"* — now stands on a measured
 base rate rather than one report.
 
-**It sets the floor the §6 clause must beat.** Any post-clause measurement
-claiming the advisory works has to beat 0 of 6, over a population defined the
-same way and captured the same way. If the clause's own number comes back at
-or near this one over ≥10 such nodes, that is the <50% branch and §1 gets
-built.
+**It sets the floor the §6 clause must beat, and the rule that reads it.** Any
+post-clause measurement claiming the advisory works is judged on the **headline
+reading alone** — `COMPLIANT / (COMPLIANT + NON-COMPLIANT)`, `NO-ATTEMPT`
+excluded from the fraction and reported as a count beside it — over a
+population defined and captured the same way. Strict- and lenient-literal are
+published for checking and decide nothing. Then: **≥80% hardens the decision;
+<50% is the branch that builds §1; between the two extends the sample.** If
+`COMPLIANT + NON-COMPLIANT = 0` there is no compliance reading, "0/0" is not
+written as 0%, and the sample is extended — the ≥10 floor is on the qualifying
+population, which a sample can clear while producing a zero denominator. This
+baseline's own 0 of 6 is not fed into that rule (it is pre-clause, ADR 0018
+§Falsification); it is the floor the post-clause number is compared against.
 
 **One thing it should change immediately, and it is smaller than §1.** The
 failure is not node disobedience — the planner is *prescribing* the
