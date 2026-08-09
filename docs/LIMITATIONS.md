@@ -101,9 +101,15 @@ survived the feature is the paragraph, here.
   unverified.** The isolation and scoped-Bash layers were measured against a
   real `claude` 2.1.220 and hold (see [SECURITY.md](../SECURITY.md)). MCP closure
   was **not** measured: `--strict-mcp-config` is passed because it costs
-  nothing, not because it was observed to work. Skill and slash-command surfaces
-  are not enumerable by any of these mechanisms, and the whole ceiling is
-  coupled to one CLI version's behaviour.
+  nothing, not because it was observed to work. Slash-command surface is not
+  enumerable by any of these mechanisms, and neither is skill surface *by these
+  flags* — but since v0.5.2 it is bounded by a different one: an
+  activation-eligible node reaches only the corpus `auto` stages for it, printed
+  with each skill's size and SHA-256 before the run, and an agent-mapped node
+  reaches no skill at all
+  ([ADR 0017](adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)).
+  The whole
+  ceiling is coupled to one CLI version's behaviour.
   ([#11](https://github.com/jitokim/oh-my-graph/issues/11))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not

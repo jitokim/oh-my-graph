@@ -4,6 +4,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 )
 
 // BuildLabel names the binary that is serving a page: the release version the
@@ -30,11 +31,12 @@ import (
 //     this repo, 2026-08-09, go1.26.5 — a build from a linked git WORKTREE,
 //     which is how this project's own graph lanes build. So it is never the
 //     only thing distinguishing two builds.
-//   - The build time is the running executable's own mtime, read ONCE here at
-//     startup rather than per request: `go build -o` replaces the file at that
+//   - The build time is the running executable's own mtime, stat'd ONCE per
+//     process rather than per request: `go build -o` replaces the file at that
 //     path, so a later stat would report the build that replaced this one — the
-//     exact confusion this label exists to end. It moves on every rebuild,
-//     stamp or no stamp.
+//     exact confusion this label exists to end. That once-ness is held by
+//     buildTime itself, not by where BuildLabel happens to be called from. It
+//     moves on every rebuild, stamp or no stamp.
 //
 // No dependency, no exec seam, and nothing read at request time.
 func BuildLabel(version string) string {
@@ -76,12 +78,24 @@ func buildRevision() string {
 	return revision
 }
 
-// buildTime is the running executable's mtime, to the minute, in local time —
+// buildTime is the running executable's mtime, read once for the life of the
+// process and reused thereafter.
+//
+// The memoization is the guarantee, not an optimization: `go build -o` replaces
+// the file at that path, so a stat taken after a rebuild reports the build that
+// REPLACED this one — a page that names the wrong binary is worse than a page
+// that names none. Leaving that to the call sites would make it a convention
+// two lines in cmd/oh-my-graph/serve.go happen to keep, and Dashboard.serverFor
+// already constructs a Server per request one call away from them; sync.OnceValue
+// makes it this function's property instead, where no future caller can lose it.
+var buildTime = sync.OnceValue(executableMTime)
+
+// executableMTime stats the running executable, to the minute, in local time —
 // the reader is looking at a page served by their own machine, and "is this
 // today's build" is a local-clock question. "" when the executable cannot be
 // located or stat'd, which is not worth an error: the label degrades, the
 // server does not.
-func buildTime() string {
+func executableMTime() string {
 	path, err := os.Executable()
 	if err != nil {
 		return ""

@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The label's shape is what a reader compares against a commit, so it is
@@ -44,6 +46,44 @@ func TestBuildLabel_SaysMoreThanTheVersion(t *testing.T) {
 	}
 	if !strings.Contains(label, "built ") {
 		t.Errorf("label = %q, want the build time — the one detail available with no VCS stamp", label)
+	}
+}
+
+// The published promise is "read once at startup, never per request", and until
+// buildTime memoized it that was a convention two call sites kept — invisible to
+// this suite, since a per-request caller would leave every other test green.
+// Pinned by moving the executable's mtime underneath a live process, which is
+// exactly what `go build -o` does to a running `serve`: the label must not
+// follow it, because the file at that path is no longer the build answering.
+func TestBuildTime_IsStattedOncePerProcessNotPerCall(t *testing.T) {
+	first := buildTime()
+	if first == "" {
+		t.Skip("the executable cannot be stat'd here, so there is no mtime to pin")
+	}
+	path, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Skipf("stat %s: %v", path, err)
+	}
+	was := info.ModTime()
+	rebuilt := was.Add(-72 * time.Hour)
+	if err := os.Chtimes(path, rebuilt, rebuilt); err != nil {
+		t.Skipf("cannot move the executable's mtime here: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chtimes(path, was, was); err != nil {
+			t.Errorf("restore %s mtime: %v", path, err)
+		}
+	})
+
+	if again := buildTime(); again != first {
+		t.Errorf("buildTime() = %q after the first call returned %q: the mtime is being re-read, so a rebuild renames the running build", again, first)
+	}
+	if label := BuildLabel("0.5.2"); !strings.Contains(label, first) {
+		t.Errorf("BuildLabel = %q, want it to carry the startup build time %q", label, first)
 	}
 }
 

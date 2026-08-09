@@ -177,10 +177,13 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   cannot separate two builds of the same tag and the revision is absent more
   often than it looks: `-buildvcs=false`, a proxy module build, and — measured
   here on go1.26.5 — a build from a linked git worktree, which is how this
-  project's own graph lanes build. Read once at startup, never per request:
+  project's own graph lanes build. Read once per process, never per request:
   `go build -o` replaces the file at that path, so a later stat would report
-  the build that replaced this one. No dependency, no fifth exec seam, CSP
-  unchanged.
+  the build that replaced this one. That is `sync.OnceValue` inside
+  `buildTime`, not a convention the two call sites keep — `Dashboard.serverFor`
+  already constructs a server per request, one line away from reintroducing the
+  confusion the label exists to end, and no test would have gone red. No
+  dependency, no fifth exec seam, CSP unchanged.
 - **The PR node is one shape, so it is a fragment now
   (`graphs/fragments/pr-publish.yaml`, ADR 0013).** A proposal to make
   `verdict:` a first-class schema key raised the prior question — before this
@@ -270,10 +273,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   they are tracked, and the issue numbers in it name the closed issue each gap
   was carved out of, which is provenance, not a tracker. Each stamped section's
   claims were re-read before the stamp moved rather than after, on the
-  principle that a version bump on a stale claim dates a lie forward; one had
-  gone stale, and #103's now records the ADR 0018 baseline taken 2026-08-09
-  (**0 of 6**, pre-§6-clause) instead of describing that measurement as
-  outstanding.
+  principle that a version bump on a stale claim dates a lie forward. Two moved:
+  #103's now records the ADR 0018 baseline taken 2026-08-09 (**0 of 6**,
+  pre-§6-clause) instead of describing that measurement as outstanding, and
+  #11's *"skill and slash-command surfaces are not enumerable"* is scoped to the
+  ceiling flags — v0.5.2 is the release that bounds skill surface by a different
+  mechanism and prints the whole staged corpus, size and SHA-256, before the
+  run. The same sentence in `SECURITY.md` is narrowed with it; it had drifted
+  there too.
 - **DESIGN.md points at `docs/LIMITATIONS.md`**, from the MVP DEFERRED list —
   the place a reader of the spec asks what is not here. Deliberately *not* a
   new `## Non-goals` section: the boundary already lives in three documents,

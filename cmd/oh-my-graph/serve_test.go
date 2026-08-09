@@ -136,8 +136,17 @@ func TestServeDashboard_CardsAndTheMountedRunView(t *testing.T) {
 		t.Errorf("/api/cards = %s, want a running card for %s", body, runID)
 	}
 	// The card's link: the single-run view, mounted.
-	if page := getWithRetry(t, base+"/run/"+runID+"/"); !strings.Contains(page, "oh-my-graph") {
+	page := getWithRetry(t, base+"/run/"+runID+"/")
+	if !strings.Contains(page, "oh-my-graph") {
 		t.Errorf("/run/<id>/ did not serve the run view:\n%s", page)
+	}
+	// The footer's build label comes through the CLI's own wiring, so it is
+	// pinned here rather than in internal/serve, whose tests supply their own
+	// label: `Version` is the single literal both `--version` and the page must
+	// report, and a second one introduced here would be invisible until two
+	// surfaces disagreed in front of a reader.
+	if !strings.Contains(page, Version) {
+		t.Errorf("/run/<id>/ does not name the build serving it (want %q in the footer):\n%s", Version, page)
 	}
 
 	cancel()
