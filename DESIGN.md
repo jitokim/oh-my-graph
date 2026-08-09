@@ -916,9 +916,13 @@ pattern. Three rules, none of them new:
   paid in the graph's terminal state, and it should be said out loud: an
   `UNSETTLED` the operator approves over ends the run GREEN, having merged
   nothing. That outcome is not what the state word bought — before `recheck`
-  existed, `merge` answered `WITHHELD` to the same slow checks, which also
-  passes, and three of the five hits that motivated the node ended exactly
-  there. Admitting a state word makes the green-run-merged-nothing class
+  existed, `merge` answered `WITHHELD` to those same unfinished reviews, which
+  also passes, and three of the five hits that motivated the node ended exactly
+  there. Only two of those three were slow: a re-review still `PENDING` on the
+  triage commit (PR #111, PR #137). The third (PR #134) was a *new*
+  `CHANGES_REQUESTED` against it — a red review, which `recheck` calls RED and
+  answers `BLOCKED`, halting before the gate rather than reaching it as an
+  `UNSETTLED`. Admitting a state word makes the green-run-merged-nothing class
   *rarer* — the common case, where restarted checks conclude in minutes, now
   merges — but it does not remove it, and a graph that buys this exception owes
   its header that sentence.

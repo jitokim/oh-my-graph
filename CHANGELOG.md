@@ -56,9 +56,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   would have reported a red `stress` as green — and CodeRabbit's word is its
   **latest** review on that SHA by `submittedAt`, because a PR routinely
   collects several against one commit and a `CHANGES_REQUESTED` after an
-  `APPROVED` is the bot changing its mind. `TRIAGED 0` short-circuits the wait:
-  nothing was pushed, so no check will restart and polling would spend the
-  whole timeout on a state that cannot change. Its grant is
+  `APPROVED` is the bot changing its mind. `TRIAGED 0` short-circuits the wait
+  only when that first read is *already green*: nothing was pushed, so no check
+  will restart and polling would spend the whole timeout on a state that cannot
+  change. A count of zero says nothing about the checks themselves, so pending
+  or red entries — and a final SHA CodeRabbit has not reviewed yet — poll on
+  exactly as they would after a push. Its grant is
   `Bash(gh pr view *)` and `Bash(sleep *)` — narrower than `ready-and-wait`'s
   `Bash(gh *)`, and there is no mutating form of `gh pr view` left to narrow
   away.
@@ -75,7 +78,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
   **What the third verdict costs, stated plainly**, because the shape of the
   win is easy to overstate: the case where the checks outlast the wait ends the
-  run **green** via `UNSETTLED → WITHHELD`, having merged nothing. That is not
+  run **green** via `UNSETTLED → WITHHELD`, having merged nothing — but only if
+  the operator approves the gate over it; rejecting the gate is a ledger FAIL,
+  so the green path is the approved one. That is not
   a state this change introduced — it is the state three of the five hits above
   already reached, by way of `merge`'s own `WITHHELD`, and the change is that
   the fact now has a name, a SHA and a place in the chain instead of being
@@ -198,8 +203,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
   fragment's identical `result_matches` by a test instead. The clause sweep
   (`grep -c "Anything you need to qualify"`) is restated as what it counts:
-  **25 declarations covering 32 runtime nodes**, since a fragment states the
-  clause once for every node citing it.
+  **26 declarations covering 33 runtime nodes**, since a fragment states the
+  clause once for every node citing it. That sweep read 25/32 when the boundary
+  was written; `merge-shepherd`'s new `recheck` node, above, is the 26th
+  declaration, and DESIGN.md and the test that pins it ship the same pair.
 
 ## [v0.5.2] - 2026-08-08
 
