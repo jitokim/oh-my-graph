@@ -260,11 +260,49 @@ fact the relaxation was reaching for: at this one node the standard correction
 for a false FAIL was not safe to apply. Making it safe is a smaller, more honest
 change than widening what the check accepts.
 
+> **Update (2026-08-09) — §5's refusal stands, and `WITHHELD` is now a
+> fallback rather than the routine answer.** The alternative refused above
+> ("`(?m)` plus a world check") turned on a sentence that is still true:
+> `success_check` is a conjunction, so a `verify` command cannot see which
+> verdict the reply carried, and `WITHHELD` is a legitimate PASS whose PR is
+> not merged. Nothing here re-opens that.
+>
+> What changed is upstream of it. The chain
+> `verify → ready-and-wait → triage → approve-merge → merge` had the CI and
+> CodeRabbit wait sitting BEFORE triage, so a fix triage pushed restarted the
+> `test` check and CodeRabbit's review after the wait had gone by, and `merge`
+> met pending checks. The graph's own gate comment said so and mitigated it
+> with a human instruction — *"confirm CI and review status on the FINAL SHA
+> yourself before approving"* — which failed five times in one day, in this
+> node's characteristic way: `merge` waited in the foreground, ran out of turn,
+> and answered with a promise, which the anchored pattern correctly rejected.
+>
+> The repair is a node, not a pattern change and not a feedback arc:
+> `triage → recheck → approve-merge → merge`. `recheck` waits in the
+> foreground under its own 15m timeout, judges the FINAL SHA and names it, and
+> writes a three-valued verdict — `RECHECKED <sha>` (green, passes),
+> `BLOCKED <sha>` (red; absent from the pattern, so the run halts before the
+> gate) and `UNSETTLED <sha>` (still pending at timeout; passes). A
+> `feedback:` arc could not express it: an arc fires only on a judgment
+> FAILURE of the declaring node (`schedule.judgeFeedback`), and the trigger
+> here is triage *succeeding* with a push, while ADR 0010's load rule 4
+> forbids the gate from sitting in any loop body
+> (`graph.validateFeedback`).
+>
+> The consequence for this ADR is narrow and worth stating: `merge` now
+> reaches `WITHHELD` only when `recheck` came back `UNSETTLED` and the
+> operator approved the gate over it. The clause is kept for exactly that
+> case — a recheck that legitimately timed out — instead of being the routine
+> answer to pending checks, which is what would have turned this graph's
+> terminal state into a green run that merged nothing.
+
 ## 6. Consequences
 
 - A green `merge-shepherd` run still does not mean anything landed — the
   verdict is two-valued and `WITHHELD` passes. That was already true and the
-  graph header already says it.
+  graph header already says it. Since 2026-08-09 the routine path no longer
+  relies on it: `recheck` waits for the checks, and `WITHHELD` is the fallback
+  for its `UNSETTLED` timeout (see the update above).
 - DESIGN.md's "no flags the engine adds" sentence stands, and so does "no
   `(?m)` in this repo": a pattern *may* set a flag, and none does.
 - `merge` can now read PR state and test ancestry with `git merge-base`. Any

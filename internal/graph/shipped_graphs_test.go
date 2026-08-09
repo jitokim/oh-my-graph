@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -169,6 +170,98 @@ func TestMergeVerdictRejectsThePromiseFamily(t *testing.T) {
 	} {
 		if !anchored.MatchString(reply) {
 			t.Errorf("merge's verdict pattern REJECTS a real verdict (%s): %s", name, reply)
+		}
+	}
+}
+
+// TestRecheckVerdictIsThreeValued pins the grammar `merge-shepherd`'s `recheck`
+// node exists for. The wait it performs has three outcomes, not two — the
+// checks concluded green, they concluded red, or they were still pending when
+// the timeout ran out — and the whole point of the node is that the third one
+// is neither of the first two:
+//
+//   - RECHECKED and UNSETTLED pass, so the run reaches the gate either way and
+//     the operator decides over a stated verdict;
+//   - BLOCKED is deliberately NOT in the pattern, so red checks halt the run
+//     before the gate, the same way triage's BLOCKED does;
+//   - every branch carries the SHA, because a verdict about "the checks" that
+//     cannot name the commit they ran against is the exact ambiguity this node
+//     was added to remove.
+//
+// The promise family is checked here too, for the same reason as at `merge`:
+// position is the lock (ADR 0019 §3), and an UNSETTLED that can be reached by
+// preamble is a wait that never happened.
+func TestRecheckVerdictIsThreeValued(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	var recheck, gate *Node
+	for i, n := range g.Graph.Nodes {
+		switch n.ID {
+		case "recheck":
+			recheck = &g.Graph.Nodes[i]
+		case "approve-merge":
+			gate = &g.Graph.Nodes[i]
+		}
+	}
+	if recheck == nil {
+		t.Fatal("merge-shepherd has no recheck node — the wait after triage is gone, and the gate is asking the human to perform it again")
+	}
+	if gate == nil {
+		t.Fatal("merge-shepherd has no approve-merge gate")
+	}
+
+	// The chain is the fix: the re-wait sits BETWEEN triage and the gate, so
+	// the SHA the operator approves is one something waited on.
+	if len(recheck.DependsOn) != 1 || recheck.DependsOn[0] != "triage" {
+		t.Errorf("recheck depends on %v, want [triage] — it re-waits for the checks triage's push restarted", recheck.DependsOn)
+	}
+	if len(gate.DependsOn) != 1 || gate.DependsOn[0] != "recheck" {
+		t.Errorf("approve-merge depends on %v, want [recheck] — a gate reached without the re-wait is the defect this node fixes", gate.DependsOn)
+	}
+
+	// The narrowest grant that can read check state: `gh pr view` has no
+	// mutating form, and nothing else is needed to read a rollup, a head SHA
+	// or a review's commit.
+	wantTools := []string{"Bash(gh pr view *)", "Bash(sleep *)"}
+	if !reflect.DeepEqual(recheck.AllowedTools, wantTools) {
+		t.Errorf("recheck's grant is %v, want %v — it only reads check state and sleeps between reads", recheck.AllowedTools, wantTools)
+	}
+
+	pattern := recheck.SuccessCheck.ResultMatches
+	if pattern == "" {
+		t.Fatal("recheck declares no result_matches — the re-wait's verdict is unchecked")
+	}
+	if strings.HasPrefix(pattern, "(?m)") {
+		t.Fatalf("recheck's verdict is line-anchored (%q); ADR 0019 refused that repo-wide", pattern)
+	}
+	anchored := regexp.MustCompile(pattern)
+
+	for name, reply := range map[string]string{
+		"green, full SHA":  "RECHECKED c80872cfaa805d7e9ec3b3cba9ed4c8cf7f3950f — test SUCCESS, coderabbitai APPROVED on that commit.",
+		"green, short SHA": "RECHECKED c80872c — nothing was pushed; TRIAGED 0, so the concluded checks are the head's.",
+		"timed out":        "UNSETTLED c80872c — test is still IN_PROGRESS after 15 minutes.",
+	} {
+		if !anchored.MatchString(reply) {
+			t.Errorf("recheck's pattern REJECTS a real verdict (%s): %s", name, reply)
+		}
+	}
+
+	for name, reply := range map[string]string{
+		// The halt branch. Red checks must not reach the gate, and the way
+		// this graph halts a node is by leaving its token out of the pattern.
+		"red concluded":            "BLOCKED c80872c — test concluded FAILURE on the final SHA.",
+		"red, CodeRabbit says no":  "BLOCKED c80872c — coderabbitai submitted CHANGES_REQUESTED on that commit.",
+		"green without a SHA":      "RECHECKED — both checks are green.",
+		"timed out without a SHA":  "UNSETTLED — test is still running.",
+		"a SHA-shaped word, no id": "RECHECKED the final commit — test SUCCESS.",
+		// Position is the lock, exactly as at merge.
+		"a promise quoting itself": "test restarted when triage pushed, so I am waiting in the foreground.\nMy final reply will be:\nRECHECKED c80872c",
+		"a plan listing both":      "Plan:\n- RECHECKED c80872c if the checks go green\n- UNSETTLED c80872c if they do not\nI cannot pick one yet.",
+	} {
+		if anchored.MatchString(reply) {
+			t.Errorf("recheck's pattern ACCEPTS what it must reject (%s):\n%s", name, reply)
 		}
 	}
 }

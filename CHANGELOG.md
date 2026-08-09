@@ -12,6 +12,65 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
+- **`merge-shepherd` waits for the checks its own fix restarted, instead of
+  asking the operator to.** The chain was
+  `verify → ready-and-wait → triage → approve-merge → merge`, with the CI and
+  CodeRabbit wait sitting *before* triage. When triage pushed a fix, GitHub
+  restarted the `test` check and sent CodeRabbit back for an incremental
+  review — both after the wait had already gone by — so `merge` met pending
+  checks on a SHA nothing had checked but triage's own `make ... local`. The
+  graph knew: the comment above `approve-merge` named the gap and mitigated it
+  by asking the human to *"confirm CI and review status on the FINAL SHA
+  yourself before approving"*. That mitigation failed five times in one day, in
+  this node's characteristic way — `merge` waited in the foreground, ran out of
+  turn, and answered with a promise (*"checks are still running, waiting in the
+  foreground"*), which the anchored verdict correctly rejected, halting the run.
+
+  The chain is now `triage → recheck → approve-merge → merge`. `recheck` polls
+  synchronously under its own 15m timeout, exactly as `ready-and-wait` does and
+  for the same reason (a node that backgrounds a poll has ended its turn, and
+  its verdict is an interim report). It judges the **final** SHA and names it,
+  reading everything from one `gh pr view --json
+  headRefOid,state,statusCheckRollup,reviews` — `headRefOid` is the final SHA,
+  the rollup is that same commit's, and each review carries the `commit.oid` it
+  was submitted against, so "CodeRabbit reviewed the final SHA" is a comparison
+  rather than an inference. `TRIAGED 0` short-circuits the wait: nothing was
+  pushed, so no check will restart and polling would spend fifteen minutes on a
+  state that cannot change. Its grant is `Bash(gh pr view *)` and
+  `Bash(sleep *)` — narrower than `ready-and-wait`'s `Bash(gh *)`, and there is
+  no mutating form of `gh pr view` left to narrow away.
+
+  **The verdict is three-valued, and that is the point.** `RECHECKED <sha>`
+  (both concluded green) and `UNSETTLED <sha>` (still pending when the timeout
+  arrived) pass; `BLOCKED <sha>` (concluded red) is written by the prompt and
+  matched by nothing, so red checks halt the run *before* the gate — the same
+  shape as `triage`'s `BLOCKED`. Collapsing the third outcome into either of
+  the others lies: into `RECHECKED` it merges a PR nothing has checked, into
+  `BLOCKED` it discards a paid pipeline over checks that were merely slow.
+  `merge`'s `WITHHELD` is kept as the **fallback** for `UNSETTLED` alone —
+  making it the routine answer to pending checks would turn this graph's
+  terminal state into a green run that merged nothing, at the one node with a
+  recorded false PASS (ADR 0019 §5).
+
+  **Why an ordinary node and not a `feedback:` arc.** Both halves were checked
+  against the code, not just the ADRs. An arc fires only on a *judgment failure
+  of the declaring node* (`schedule.judgeFeedback` returns early unless
+  `node.Feedback != nil` and `isJudgmentFailure(cause)`) — but the event that
+  must re-open the wait is triage **succeeding** with a push, and a PASS fires
+  nothing. And ADR 0010's load rule 4 forbids a gate anywhere in a loop body
+  (`graph.validateFeedback` rejects `member.Type == TypeGate`), so an arc aimed
+  back past `approve-merge` would not load at all. A wait that must happen every
+  time a fix lands is not failure recovery; it is a step, so it is a node.
+
+  The gate comment no longer asks for the check — it states what `recheck`
+  found and what to do about it (on `UNSETTLED`, rejecting is cheaper than
+  approving into a `WITHHELD`). `TestRecheckVerdictIsThreeValued` pins the
+  chain, the grant and all three verdicts, including that `BLOCKED` does *not*
+  match and that neither passing token is reachable behind preamble.
+  DESIGN.md's "Verdict patterns" gains the three-outcome shape and the rule it
+  bends: a state word is admissible as a verdict only when the state is an
+  outcome and something downstream bounds a premature one.
+
 - **The env scrub now matches keys without regard to case, so the one
   load-bearing guarantee is true on every platform the binary runs on.**
   `internal/childenv.Scrub` compared keys exactly (`key == scrubbed`). Windows

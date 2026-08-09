@@ -116,9 +116,12 @@ oh-my-graph run graphs/self-dev.yaml \
 
 The shipping side of that loop is a graph too: `graphs/merge-shepherd.yaml`
 takes a PR number, verifies its head locally in a throwaway worktree, marks
-it ready, waits for CI and CodeRabbit, triages the review comments, pauses
-at a human approval gate, and merges — the operator's by-hand PR-shepherding
-loop, pinned in YAML. Its merge verdict is deliberately two-valued: the node
+it ready, waits for CI and CodeRabbit, triages the review comments, waits out
+the checks its own fix restarted, pauses at a human approval gate, and merges
+— the operator's by-hand PR-shepherding loop, pinned in YAML. That second wait
+(`recheck`) is why the gate is a decision rather than a chore: it judges the
+FINAL SHA and says which one, so nobody is asked to re-derive CI status by
+hand. Its merge verdict is deliberately two-valued: the node
 passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
 to merge past an unfinished review is the graph working. So a green run of
 this one graph is not proof that anything landed — read `merge`'s artifact

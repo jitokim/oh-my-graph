@@ -1,15 +1,17 @@
 # merge-shepherd — the operator's PR-shipping loop as a graph.
 #
-#   verify ─▶ ready-and-wait ─▶ triage ─▶ approve-merge (gate) ─▶ merge
+#   verify ─▶ ready-and-wait ─▶ triage ─▶ recheck ─▶ approve-merge ─▶ merge
+#                                                       (gate)
 #
 # What this replaces: the loop the human operator runs by hand on every PR —
 # fetch the head, `make local` in a scratch checkout, mark the PR ready, wait
-# for CI and CodeRabbit, work through the review comments, merge, pull,
-# rebuild, prune. Same steps, same order, pinned in YAML — with the merge
-# policy encoded in the graph shape itself: merge happens only AFTER
-# CodeRabbit's review has completed and every comment is triaged, and
-# `--admin` is never a way past an unfinished review (it may only grease
-# merge-queue mechanics once the review is complete — see CONTRIBUTING).
+# for CI and CodeRabbit, work through the review comments, wait out the checks
+# your own fix restarted, merge, pull, rebuild, prune. Same steps, same order,
+# pinned in YAML — with the merge policy encoded in the graph shape itself:
+# merge happens only AFTER CodeRabbit's review has completed on the SHA being
+# merged and every comment is triaged, and `--admin` is never a way past an
+# unfinished review (it may only grease merge-queue mechanics once the review
+# is complete — see CONTRIBUTING).
 #
 # Clean tree required: verify and merge run `git`/`make` inside the repo you
 # point at. The PR itself is only ever touched through THROWAWAY worktrees
@@ -17,22 +19,28 @@
 # node via Bash, not the engine's `worktree:` seam, which branches from the
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
-# Honest note on ready-and-wait: it is a POLL under a timeout, not an event
-# subscription — `sleep 30` loops between `gh pr view` checks, in the
-# FOREGROUND, bounded by the node's 15m timeout. A node's final reply is its
-# verdict, so nothing may be backgrounded: a node that kicks off a polling
-# loop and reports "will follow up" has already ended its turn, and
-# success_check sees the interim report instead of the verdict. If CodeRabbit
-# has not finished by the timeout, the node reports the actual state and fails
-# its READY check; the operator decides.
+# Honest note on the two waits: ready-and-wait and recheck are POLLS under a
+# timeout, not event subscriptions — `sleep 30` loops between `gh pr view`
+# reads, in the FOREGROUND, bounded by each node's 15m timeout. A node's final
+# reply is its verdict, so nothing may be backgrounded: a node that kicks off a
+# polling loop and reports "will follow up" has already ended its turn, and
+# success_check sees the interim report instead of the verdict. The two waits
+# differ only in what an unfinished wait means. ready-and-wait waits BEFORE any
+# fix exists, so not-yet-concluded is a plain failure — it reports the actual
+# state, fails its READY check, and the operator decides. recheck waits AFTER
+# triage may have pushed, where the whole run is already paid for, so its
+# timeout is a third verdict rather than a failure; see its own comment.
 #
 # The merge verdict is two-valued on purpose: MERGED <sha> or WITHHELD
 # <reason>. A deliberate refusal to merge PASSES — refusing to go past an
 # unfinished review is this graph working, not failing — so a green run is
-# not by itself proof that anything landed. Read merge's artifact. What must
-# never pass is the third thing a model writes: a promise to merge later.
-# That reply once ended a real run of this graph green with nothing merged,
-# and the only reason the operator noticed was that `git pull` did not move.
+# not by itself proof that anything landed. Read merge's artifact. WITHHELD is
+# a FALLBACK, not the routine answer to pending checks: recheck is what waits
+# for those now, and merge reaches WITHHELD only when recheck came back
+# UNSETTLED and the operator approved the gate anyway. What must never pass is
+# the third thing a model writes: a promise to merge later. That reply once
+# ended a real run of this graph green with nothing merged, and the only reason
+# the operator noticed was that `git pull` did not move.
 #
 # The mirror failure has happened too, and it is fixed on the OTHER side. Run
 # 20260807-144514 merged PR #135 for real, opened its reply with one line of
@@ -199,19 +207,162 @@ nodes:
     # Anchored and markdown-tolerant (see DESIGN.md "Verdict patterns").
     success_check: { exit_zero: true, result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)' }
 
-  # The human gate: the run stops here with exit 2 after triage's table is
-  # in. Read it, then `oh-my-graph resume <run-id> --approve approve-merge`
-  # (or --reject approve-merge to end the run without merging).
+  # The re-wait, and why it is an ordinary node rather than a feedback arc.
   #
-  # Known limitation to check here: the graph does not loop back to
-  # ready-and-wait after triage. If triage's table says it PUSHED a fix, the
-  # head SHA you are about to merge has only been checked by triage's own
-  # `make ... local` — the GitHub `test` check and CodeRabbit's review both
-  # concluded on the PRE-triage SHA. Confirm CI and review status on the
-  # FINAL SHA yourself before approving.
+  # When triage pushes a fix, GitHub restarts the `test` check and sends
+  # CodeRabbit back for an incremental review — both of which ready-and-wait
+  # already waited out, on the SHA that push replaced. Without this node the
+  # graph asks the human at the gate to perform the wait the graph exists to
+  # perform, and the observed failure is not that the human refuses: `merge`
+  # waits in the foreground instead, runs out of turn, and answers with a
+  # promise ("checks are still running, waiting in the foreground"), which the
+  # anchored verdict correctly rejects, so the run halts. Five times in one day.
+  #
+  # It cannot be a `feedback:` arc, for two independent reasons, both checked
+  # against the code and not just the ADRs:
+  #   - an arc fires only on a JUDGMENT FAILURE OF THE DECLARING NODE
+  #     (`schedule.judgeFeedback` returns early unless `node.Feedback != nil`
+  #     AND `isJudgmentFailure(cause)`; ADR 0010, "What fires the arc"). The
+  #     thing that must re-open the wait is triage SUCCEEDING with a push —
+  #     which is a PASS, and a PASS fires nothing.
+  #   - load rule 4 forbids a gate anywhere in a loop body
+  #     (`graph.validateFeedback`: `member.Type == TypeGate` is a
+  #     GraphValidationError, because replaying a recorded decision on a later
+  #     round would re-approve a round the human never saw). An arc declared on
+  #     `merge` and aimed back before triage would pull approve-merge into the
+  #     body, so the graph would not load at all.
+  # A wait that must happen every time a fix lands is not failure recovery. It
+  # is a step, so it is a node.
+  #
+  # Three verdicts, and the third is the reason this is not two. "Concluded
+  # green" and "concluded red" are not the whole space: the checks may still be
+  # pending when the timeout runs out, and that outcome is neither a pass nor a
+  # judgment that anything is wrong. Collapsing it into either lies. Collapsing
+  # it into RECHECKED merges a PR nothing has checked; collapsing it into
+  # BLOCKED halts a run over checks that were merely slow, discarding a whole
+  # paid pipeline. So it gets its own token, UNSETTLED, which PASSES — it is
+  # the one verdict that reaches merge's WITHHELD fallback, and it is the only
+  # thing that may.
+  #
+  # The honest cost of a passing UNSETTLED: a node that replies it without
+  # waiting is not caught by the pattern. What that buys is bounded, though —
+  # the gate still stands between UNSETTLED and any merge, and merge's answer
+  # to it is WITHHELD, so a premature UNSETTLED costs an operator's glance and
+  # a refused merge, never a merge of unchecked code. RECHECKED is where a
+  # premature answer would be expensive, and that is the token the wait is
+  # actually protecting.
+  - id: recheck
+    type: claude-run
+    depends_on: [triage]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Triage reported:
+      {{ artifacts.triage | inline }}
+
+      If triage PUSHED a fix, the GitHub `test` check and CodeRabbit's review
+      that ready-and-wait waited out concluded on a SHA that no longer exists
+      on this PR. Wait them out again on the FINAL SHA, and say which SHA you
+      judged.
+
+      One read gives you everything:
+        `gh pr view {{ inputs.pr }} --json headRefOid,state,statusCheckRollup,reviews`
+      `headRefOid` IS the final SHA; `statusCheckRollup` is the rollup of that
+      same head commit; and every entry of `reviews` carries the `commit.oid`
+      it was submitted against — so "CodeRabbit reviewed the FINAL SHA" is a
+      comparison you can make, not a guess you have to take.
+
+      GREEN means BOTH of these hold on `headRefOid`:
+        - the `test` check in `statusCheckRollup` has concluded SUCCESS, and
+        - coderabbitai has a submitted review whose `commit.oid` equals
+          `headRefOid` and whose state is not CHANGES_REQUESTED (a "review in
+          progress" placeholder comment is not a submitted review).
+      RED means one of them concluded against you: `test` is FAILURE,
+      CANCELLED or TIMED_OUT, or coderabbitai's review on that SHA is
+      CHANGES_REQUESTED.
+
+      Do that read FIRST. If triage's first line is exactly `TRIAGED 0` and
+      that read is already green, answer immediately: nothing was pushed, so
+      no check will restart and no review will be re-requested — there is
+      nothing to re-wait for, and polling would spend fifteen minutes on a
+      state that cannot change.
+
+      Otherwise poll SYNCHRONOUSLY, in the foreground: run the command, read
+      it, then `sleep 30`, then run it again — one loop iteration per tool
+      call, blocking each time. NEVER background anything: no `&`, no
+      `nohup`, no run_in_background, no "I'll keep polling and report back".
+      Your FINAL reply IS the verdict, so you cannot reply until the poll has
+      actually reached one — an interim report ends the node and fails it.
+      Judge the head SHA of your LAST read, not your first: if someone pushes
+      while you poll, the final SHA moved and the checks you were watching
+      belong to a commit nobody is merging. Start the judgment over on the
+      new head.
+
+      You have 15 minutes. As that timeout comes near (after ~25 loops), stop
+      polling and answer from the state you actually have.
+
+      Your reply must START with exactly one of these three verdicts — the
+      token as the very FIRST characters, with no markdown emphasis
+      (`**RECHECKED**` is WRONG), no heading, no backticks, no preamble —
+      followed immediately by the 40-character head SHA you judged:
+        - RECHECKED <sha> — both concluded and both are green on <sha>.
+        - BLOCKED <sha> — they concluded and they say no; name which one and
+          what it says. This FAILS this node deliberately, so the run halts
+          here rather than offering the operator a gate over a red PR.
+        - UNSETTLED <sha> — the 15 minutes ran out with at least one of the
+          two still pending on <sha>; name which one and its current status.
+      "Still polling" is not a fourth verdict, and neither is a plan to keep
+      going: this node's turn ends the moment you reply, so a poll you promise
+      to continue is a poll nobody runs. UNSETTLED is what an unfinished wait
+      is called here — it asserts that the waiting is OVER and the checks did
+      not conclude, which is an outcome. It is not a way to say "not yet" and
+      keep the node open, and it is not a cheaper RECHECKED: the operator
+      reads it, and the merge that follows a gate approved over it will
+      refuse to merge.
+      Anything you need to qualify — the short-circuit having found nothing
+      to wait for, a caveat, a note — goes AFTER the verdict, never before
+      it: a line of context ahead of the token fails this node even when the
+      wait is done.
+    # Narrower than ready-and-wait's `Bash(gh *)`, which could push, merge or
+    # close: this node only reads check state, and `gh pr view` is the whole
+    # of what reading check state takes — the rollup, the head SHA and every
+    # review's commit come out of one invocation of it. There is no mutating
+    # form of `gh pr view` to be narrowed away from. `sleep` is the poll.
+    allowed_tools: ["Bash(gh pr view *)", "Bash(sleep *)"]
+    permission_mode: dontAsk
+    timeout: 15m
+    handoff: artifact
+    # Two of the three verdicts pass, so this is an anchored alternation like
+    # merge's — but with ONE payload rule factored out of both branches rather
+    # than a strong branch and a weak one: whichever way the wait ended, the
+    # node has to name the SHA it ended on. A verdict about "the checks" that
+    # cannot say which commit they ran against is the exact ambiguity this node
+    # was added to remove, so it is not admitted from either side.
+    # BLOCKED is deliberately absent from the alternation: red checks are not a
+    # passing outcome here, and leaving the token out of the pattern is how the
+    # run halts before the gate — the same shape as triage's BLOCKED.
+    # Anchored and markdown-tolerant, narrow separator class (a false FAIL here
+    # costs one re-run of a read-only poll, so it buys no dashes — see
+    # DESIGN.md "Verdict patterns").
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]*[0-9a-f]{7,40}\b'
+
+  # The human gate: the run stops here with exit 2 after triage's table and
+  # recheck's verdict are in. Read them, then
+  # `oh-my-graph resume <run-id> --approve approve-merge` (or
+  # --reject approve-merge to end the run without merging).
+  #
+  # CI and review status on the FINAL SHA is no longer yours to confirm — that
+  # is what recheck is, and its verdict names the SHA it judged. What is left
+  # here is the decision the gate is for: whether this change should land.
+  # One thing worth knowing before you type --approve: if recheck came back
+  # UNSETTLED, the checks never concluded on that SHA, and merge will answer
+  # WITHHELD rather than merge past them. Rejecting is the cheaper answer to
+  # UNSETTLED — it ends the run without spending merge's session — and a fresh
+  # run once CI has settled is the way back.
   - id: approve-merge
     type: gate
-    depends_on: [triage]
+    depends_on: [recheck]
 
   - id: merge
     type: claude-run
@@ -220,6 +371,14 @@ nodes:
     prompt: |
       The operator has approved the merge of PR #{{ inputs.pr }}. Triage
       reported: {{ artifacts.triage | inline }}.
+      Recheck reported: {{ artifacts.recheck | inline }}.
+      Recheck is the node that waited out the `test` check and CodeRabbit on
+      the FINAL SHA, so you do not wait for anything and you do not re-judge
+      them. If recheck's verdict begins with UNSETTLED, its wait ran out with
+      a check still pending on that SHA: do NOT merge, do NOT poll for it
+      yourself, and answer WITHHELD naming the SHA and the check recheck left
+      pending. If it begins with RECHECKED, the checks concluded green on the
+      SHA named there and you may merge.
         0. Establish the state BEFORE you change it:
            `gh pr view {{ inputs.pr }} --json state,mergeCommit`. If it is
            already MERGED, a previous attempt at this node merged it and then
@@ -256,9 +415,12 @@ nodes:
           (`MERGED 4f2a1c9`), then a one-line ledger of what shipped.
         - WITHHELD <reason> — you decided NOT to merge and the PR is still
           open. The blocking fact comes immediately after the token
-          (`WITHHELD CodeRabbit's re-review has not concluded`). This is a
+          (`WITHHELD recheck left test pending on 4f2a1c9`). This is a
           legitimate outcome and it PASSES: refusing to merge past an
-          unfinished review is this graph working as designed.
+          unfinished review is this graph working as designed. It is now a
+          FALLBACK, not the routine answer — recheck is what waits, so the
+          case that reaches here is an UNSETTLED recheck the operator
+          approved over anyway.
       "Not yet" is not a third verdict. If you are tempted to wait for
       something, the honest answer is WITHHELD naming what you are waiting
       for — the operator decides whether to re-run.
