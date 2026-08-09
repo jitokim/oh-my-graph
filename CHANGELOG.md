@@ -318,7 +318,7 @@ answering. And "ADR 0016" resolves to one file again.
   Earlier CHANGELOG entries are history and keep the number they were written
   with; the v0.5.0 bullet that recorded the collision now records its
   resolution too.
-- **`docs/LIMITATIONS.md` is re-stamped v0.4.1 → v0.5.2, and stops promising a
+- **`docs/LIMITATIONS.md` is re-stamped v0.4.1 → v0.5.3, and stops promising a
   tracker it does not have.** The file said its gaps were *"each tracked as an
   issue rather than left as prose"*; `gh issue list --state open` returns
   nothing. The promise is dropped rather than replaced — this file *is* where
