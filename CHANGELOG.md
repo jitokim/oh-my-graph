@@ -85,19 +85,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   stays inline too: it also applies the last review's flags and gates on an
   engine-run `make local`, which is a second job and a wider grant.
 
-### Documentation
-
-- ADR 0013 gains the measurement above as a dated Migration update, and
-  DESIGN.md's "Verdict patterns" gains the boundary it establishes: reuse
-  deduplicates a verdict rule exactly as far as a node shape reaches, and no
-  further — including for `coordinator.plannedVerdictPattern`, which is not in
-  a graph at all but a Go string rendered into the planner's prompt, out of
-  reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
-  fragment's identical `result_matches` by a test instead. The clause sweep
-  (`grep -c "Anything you need to qualify"`) is restated as what it counts:
-  **25 declarations covering 32 runtime nodes**, since a fragment states the
-  clause once for every node citing it.
-
 - **An agent-mapped planned node cannot invoke a skill, and every place that
   said otherwise is corrected (ADR 0017, #130).** The plan printout used to
   close its exclusion line with *"that composite is unmeasured; it already sees
@@ -128,6 +115,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   new measurement **(j)** — the composite, run under the same discipline, with
   ADR 0004's E1 ceiling arm and a plugin-name collision arm — and no behaviour
   changes here beyond what the plan prints.
+
+### Documentation
+
+- ADR 0013 gains the measurement above as a dated Migration update, and
+  DESIGN.md's "Verdict patterns" gains the boundary it establishes: reuse
+  deduplicates a verdict rule exactly as far as a node shape reaches, and no
+  further — including for `coordinator.plannedVerdictPattern`, which is not in
+  a graph at all but a Go string rendered into the planner's prompt, out of
+  reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
+  fragment's identical `result_matches` by a test instead. The clause sweep
+  (`grep -c "Anything you need to qualify"`) is restated as what it counts:
+  **25 declarations covering 32 runtime nodes**, since a fragment states the
+  clause once for every node citing it.
 
 ## [v0.5.2] - 2026-08-08
 

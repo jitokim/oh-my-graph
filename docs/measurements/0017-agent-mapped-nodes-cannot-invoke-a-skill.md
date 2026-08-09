@@ -27,7 +27,9 @@ exclusion is a **capability hole**, not a corpus preference.
   what each outcome would mean.
 - **Scripts and raw evidence:** `probes/0017-agent-mapped-skill-access/`
   (`_harness/main.go`, `shim.sh`, `setup.sh`, `userscope.sh`, `replay.py`,
-  `census.py`, `argv/`, `logs/`, `results.jsonl`, `plan-report.json`).
+  `census.py`, `argv/`, `logs/`, `results.jsonl`, `plan-report.json`), and
+  **`tool_use/`** — the raw `tool_use` records of all ten spawns, committed, so
+  the verdict does not rest on a directory outside this repository.
 
 ## The argv came out of the code, not out of a shell script
 
@@ -126,13 +128,25 @@ TU   c44850e6  {'Write': 1}
 C1U  d97154a1  {'Skill': 1, 'Write': 2}   omg-probe-standalone-html
 ```
 
-That table is re-derivable, not transcribed by hand: `census.py` prints it from
-`results.jsonl` by reading each spawn's own transcript back. The first eight
-rows were recorded before `replay.py` carried a `tool_census` field, so their
-census lives **only** in `~/.claude/projects` and will be gone when that
-directory ages the sessions out; `census.py` prints `gone` rather than an empty
-census when that happens. TU and C1U carry it in the row, as every future row
-will.
+That table is not transcribed by hand, and it no longer depends on a directory
+this repo does not own. **The raw `tool_use` records are committed**, one file
+per spawn, under `probes/0017-agent-mapped-skill-access/tool_use/` — the
+verdict-bearing evidence itself, not a count derived from it. `T` files carry a
+single `Write`; `C1` files carry a `Skill` naming the planted skill followed by
+its writes. Anyone can read the finding off those ten files without this
+machine.
+
+`census.py` still re-derives the same table from `~/.claude/projects` while the
+sessions survive, so the committed snapshot can be checked against its source
+rather than trusted; it prints `gone` for a session that has aged out. The
+first eight rows were recorded before `replay.py` carried a `tool_census`
+field, and were backfilled from their transcripts on 2026-08-09 — each such row
+says so in `tool_census_source`.
+
+Only the `tool_use` objects are committed, with tool names and input KEY names
+and nothing else: a full transcript would carry prompt and file content that
+has no place in a public repository, and none of it is evidence for this
+claim.
 
 `permission_denials` was `[]` in all ten, T and TU included: the tool was never
 **denied**, it did not **exist**. `num_turns` was 2 in every T spawn against 5
