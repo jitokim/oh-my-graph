@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the oh-my-graph release version printed by `oh-my-graph version`.
-var Version = "0.5.2"
+var Version = "0.5.3"
 
 // printVersion writes the version line to w. Split from the dispatch switch so
 // the output is testable without capturing os.Stdout.
