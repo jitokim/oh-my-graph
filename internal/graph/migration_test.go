@@ -49,11 +49,19 @@ var migratedTemplates = map[string]map[string][]string{
 		// frozen `{ exit_zero: true }` it passed as one.
 		"review-security": {"prompt", "success_check.result_matches"},
 		"review-style":    {"prompt", "success_check.result_matches"},
+		// Converted later than the other three, onto pr-publish, and the
+		// resolved prompt is byte-identical to the one it replaced — the
+		// binding carries this graph's own head verbatim. The mask is still
+		// the pre-migration one: back then the node reported in prose under a
+		// bare `{ exit_zero: true }`, so both fields diverge from the frozen
+		// file for the reason divergedSinceMigration records below.
+		"pr": {"prompt", "success_check.result_matches"},
 	},
 	"dev-review-pr.yaml": {
 		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
 		"review-security": {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
 		"review-style":    {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
+		"pr":              {"prompt", "success_check.result_matches"},                  // onto pr-publish, resolved byte-identical — see self-dev's note
 	},
 }
 
@@ -74,14 +82,18 @@ var migratedTemplates = map[string]map[string][]string{
 // motivated it is in DESIGN.md, "Verdict patterns": a node that ends its turn
 // promising future work passes a bare `{ exit_zero: true }` and writes a
 // success into the ledger for work it never did.
+//
+// `pr` has since moved to migratedTemplates, because it is now a fragment
+// node: the same (node, field) pair, judged against the same frozen file, in
+// the map whose size proves every converted node is masked. `dev` stays here
+// and stays inline — the four shipped implementer prompts share no common
+// suffix at all (measured word-for-word), so there is no shape to cite.
 var divergedSinceMigration = map[string]map[string][]string{
 	"self-dev.yaml": {
 		"dev": {"prompt", "success_check.result_matches"},
-		"pr":  {"prompt", "success_check.result_matches"},
 	},
 	"dev-review-pr.yaml": {
 		"dev": {"prompt", "success_check.result_matches"},
-		"pr":  {"prompt", "success_check.result_matches"},
 	},
 }
 

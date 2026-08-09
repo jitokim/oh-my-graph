@@ -54,6 +54,50 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **The PR node is one shape, so it is a fragment now
+  (`graphs/fragments/pr-publish.yaml`, ADR 0013).** A proposal to make
+  `verdict:` a first-class schema key raised the prior question — before this
+  change, 22 of the repo's 31 `result_matches` declarations repeated one of
+  four patterns, and only three lived in fragments. Are the other 22 outside
+  because they *cannot* be, or because nobody tried? Measured, by grouping
+  every shipped node under its verdict pattern and comparing prompts
+  word-for-word (longest common suffix, insensitive to line rewrapping): the
+  five `PR <url>` nodes share **83 words, 75% of the shortest prompt**, and
+  four of them declare the same grant, mode, handoff and `success_check`. The
+  five-word claim in ADR 0013's Migration section — that `pr`, like `dev`,
+  "diverges more than it shares" — was never measured and is wrong for `pr`.
+  So `self-dev`'s `pr`, `dev-review-pr`'s `pr` and `backlog-batch`'s
+  `pr-a`/`pr-b` now cite one fragment, binding a single substitution point
+  (`publish`: which branch, DRAFT or ready, and a body naming graph-local node
+  ids — wiring, the `evidence` precedent). **No shipped graph changes what it
+  does:** every binding carries its graph's own head verbatim, so the four
+  resolved prompts are byte-identical to the ones they replaced, no using node
+  overrides a key, and the blast-radius goldens did not move.
+
+  What was left, and why it decides the schema question: the other three
+  repeated patterns do not group by *node*. The six nodes declaring
+  ``^[*_`\s]*DONE\b`` — a repo-specific implementer, a docs-lane implementer, a
+  feedback-loop implementer, an ADR-feedback applier — share **zero** words of
+  prompt and carry four different tool grants; the `FINDINGS:`/`CLEAN` rounds
+  in `adr-driven-dev` share 21% with the review fragments and hold `Grep`/`Glob`
+  those fragments deliberately refuse. A fragment is a node's behavior, not a
+  paragraph. `adr-driven-dev`'s `finalize` shares the PR node's 83 words and
+  stays inline too: it also applies the last review's flags and gates on an
+  engine-run `make local`, which is a second job and a wider grant.
+
+### Documentation
+
+- ADR 0013 gains the measurement above as a dated Migration update, and
+  DESIGN.md's "Verdict patterns" gains the boundary it establishes: reuse
+  deduplicates a verdict rule exactly as far as a node shape reaches, and no
+  further — including for `coordinator.plannedVerdictPattern`, which is not in
+  a graph at all but a Go string rendered into the planner's prompt, out of
+  reach of any graph-side mechanism — and therefore pinned to the `e2e-verify`
+  fragment's identical `result_matches` by a test instead. The clause sweep
+  (`grep -c "Anything you need to qualify"`) is restated as what it counts:
+  **25 declarations covering 32 runtime nodes**, since a fragment states the
+  clause once for every node citing it.
+
 - **An agent-mapped planned node cannot invoke a skill, and every place that
   said otherwise is corrected (ADR 0017, #130).** The plan printout used to
   close its exclusion line with *"that composite is unmeasured; it already sees
