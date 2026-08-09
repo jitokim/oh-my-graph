@@ -28,26 +28,62 @@ func TestScrub_RemovesBillingSwitchingVars(t *testing.T) {
 // TestScrub_MatchesOnKeyNotSubstring proves the scrub is surgical: it removes
 // exactly the two keys, not anything that merely mentions them. A blunt
 // substring match would strip a user's unrelated variables out of every child
-// and break real runs.
+// and break real runs. The case-folded survivors pin that matching the key
+// without regard to case did not loosen into prefix matching.
 func TestScrub_MatchesOnKeyNotSubstring(t *testing.T) {
 	got := Scrub([]string{
 		"ANTHROPIC_API_KEY=secret",
 		"MY_NOTE=ANTHROPIC_API_KEY is scrubbed elsewhere",
 		"ANTHROPIC_AUTH_TOKEN_BACKUP=keep-me",
 		"NOT_ANTHROPIC_API_KEY=keep-me-too",
+		"anthropic_api_key_backup=keep-me-three",
+		"not_anthropic_auth_token=keep-me-four",
 	})
 
 	if contains(got, "ANTHROPIC_API_KEY=secret") {
-		t.Error("exact-key ANTHROPIC_API_KEY was not scrubbed")
+		t.Error("whole-key ANTHROPIC_API_KEY was not scrubbed")
 	}
 	for _, want := range []string{
 		"MY_NOTE=ANTHROPIC_API_KEY is scrubbed elsewhere",
 		"ANTHROPIC_AUTH_TOKEN_BACKUP=keep-me",
 		"NOT_ANTHROPIC_API_KEY=keep-me-too",
+		"anthropic_api_key_backup=keep-me-three",
+		"not_anthropic_auth_token=keep-me-four",
 	} {
 		if !contains(got, want) {
 			t.Errorf("wrongly scrubbed %q; got %q", want, got)
 		}
+	}
+}
+
+// TestScrub_MatchesKeyCaseInsensitively is the Windows half of the policy,
+// asserted on every platform. Windows resolves environment variable names
+// case-insensitively, so a child there reads `anthropic_api_key` as the same
+// billing switch as `ANTHROPIC_API_KEY`; a scrub that compared keys exactly
+// would pass it through and put a run the user was told is inside their plan
+// onto metered API billing. The rule is unconditional precisely so this test
+// runs on Linux CI — revert Scrub to an exact-case comparison and every case
+// variant below survives and fails here.
+func TestScrub_MatchesKeyCaseInsensitively(t *testing.T) {
+	variants := []string{
+		"anthropic_api_key=sk-lowercase",
+		"Anthropic_Api_Key=sk-mixed",
+		"ANTHROPIC_API_key=sk-partly-lowered",
+		"anthropic_auth_token=tok-lowercase",
+		"Anthropic_Auth_Token=tok-mixed",
+		"ANTHROPIC_AUTH_token=tok-partly-lowered",
+	}
+
+	got := Scrub(append(append([]string{}, variants...), "PATH=/usr/bin"))
+
+	for _, variant := range variants {
+		if contains(got, variant) {
+			t.Errorf("case variant %q survived the scrub; on Windows the child "+
+				"reads it as the API-billing switch", variant)
+		}
+	}
+	if !contains(got, "PATH=/usr/bin") {
+		t.Errorf("scrub removed a benign variable; got %q", got)
 	}
 }
 

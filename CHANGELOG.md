@@ -8,6 +8,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Fixed
+
+- **The env scrub now matches keys without regard to case, so the one
+  load-bearing guarantee is true on every platform the binary runs on.**
+  `internal/childenv.Scrub` compared keys exactly (`key == scrubbed`). Windows
+  resolves environment variable names case-insensitively, so a child spawned
+  there read `anthropic_api_key` as the same API-billing switch as
+  `ANTHROPIC_API_KEY` — and that spelling walked straight through the scrub.
+  The consequence was not cosmetic: a **metered API bill on a run README and
+  SECURITY.md told the user was inside their subscription**, which is the exact
+  failure the scrub exists to prevent. `docs/LIMITATIONS.md` disclosed it as a
+  best-effort Windows caveat; a limitations bullet is not containment for the
+  invariant CLAUDE.md leads with, so it is closed instead of documented.
+  Matching is now `strings.EqualFold` on the whole key.
+
+  **Unconditional, not `GOOS=windows`-tagged, deliberately.** A build-tagged
+  variant would put the project's load-bearing guarantee on a code path this
+  project's Linux CI can never execute — the same shape as the untested
+  `shell_windows.go` / `procgroup_windows.go` paths, and how the hole survived
+  in the first place. One rule that every `make test` on every platform
+  exercises is worth more than a platform-exact one nobody runs. The cost on
+  unix, where case genuinely distinguishes variables, is that a variable
+  deliberately named as a case-variant of a billing key is also deleted;
+  nothing reads it there, so nothing breaks.
+
+  **Whole-key semantics are unchanged.** The doc comment's deliberate promise
+  that `ANTHROPIC_API_KEY_BACKUP` survives still holds, and so does
+  `anthropic_api_key_backup` — folding was applied to the key comparison, not
+  loosened into a prefix match. No variable was added to the scrubbed set, and
+  no exec seam's call site changed: all four already route their child env
+  through `childenv.Scrub`, so all four inherit the fix.
+
+  Asserted by `TestScrub_MatchesKeyCaseInsensitively`, which runs on Linux CI
+  like every other test: revert `EqualFold` to `==` and its six case variants
+  (lowercase, mixed, and partly-lowered spellings of both variables) survive
+  the scrub and the test fails. `TestScrub_MatchesOnKeyNotSubstring` gained two
+  case-folded survivors to pin that the prefix boundary did not move.
+  `README.md`, `README.ko.md` and `SECURITY.md` keep their unconditional
+  sentences — they are now true — and `docs/LIMITATIONS.md` drops the
+  case-sensitivity bullet, leaving native Windows with two caveats (`cmd /c`
+  verify syntax, no tree-kill) rather than three.
+
 ## [v0.5.2] - 2026-08-08
 
 Nothing new to type. No flag, no command, no schema key — every change here
