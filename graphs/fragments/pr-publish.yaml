@@ -1,0 +1,52 @@
+# pr-publish — the node that opens the pull request and proves it with a URL.
+#
+# ADR 0013's corpus mining named this shape ("the pr-publish node") and the
+# migration then skipped it, on the grounds that `dev` and `pr` "diverge more
+# than they share". That was true of `dev` and measurably false of `pr`: the
+# four shipped PR nodes share 78-89% of their prompt word-for-word (the whole
+# block below), and all four declare the same grant, the same permission mode,
+# the same handoff and the same success_check. What differs is one paragraph.
+#
+# So that paragraph is what binds. `publish` is the graph's own instruction —
+# which branch to push, whether the pull request is a DRAFT, and what goes in
+# the body. The body is the reason it cannot be hardcoded here: it names
+# graph-local node ids (`{{ artifacts.review-a | inline }}`), which is wiring,
+# the same reason review-security binds `evidence` rather than naming an
+# upstream node itself. A bound runtime placeholder survives resolution
+# untouched and interpolates at run time as always.
+#
+# Everything else is the proven shape: the turn-ends-at-the-reply discipline,
+# the URL as the payload that makes the token an assertion, and a grant that
+# lets this node publish but never fix — no Edit, no Write. A node that also
+# has to CHANGE the tree before it opens the PR is a different shape and says
+# so honestly by staying inline; `adr-driven-dev`'s `finalize` is the one in
+# this repo (it applies the last review's remaining flags, and gates on an
+# engine-run `make local`).
+fragment: pr-publish
+description: publish the branch as a pull request — the URL is the payload that makes the verdict an assertion
+substitutions: [publish]
+node:
+  type: claude-run
+  prompt: |
+    {{ with.publish }}
+    Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
+    promise to open afterwards is never opened. START your reply with the
+    bare token PR followed immediately by the pull request's URL
+    (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
+    with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
+    Anything you need to qualify goes AFTER the URL, never before it: a
+    line of context ahead of the token fails this node even when the PR
+    is open.
+  # Publish, never fix: `gh` and `git` to push and open, `Read` to write a body
+  # that describes the diff. No Edit/Write — a node that reaches the end of a
+  # pipeline and starts editing is re-opening work every review upstream has
+  # already judged, and nothing downstream would review the result.
+  allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+  permission_mode: dontAsk
+  handoff: artifact
+  # The URL is the payload that makes this an assertion: `gh` prints one only
+  # once the PR exists, so "I'll open it after CI goes green" cannot match.
+  # Anchored and markdown-tolerant (DESIGN.md "Verdict patterns"), with the
+  # separator class between token and payload kept narrow — a false FAIL here
+  # costs one re-run, which is the currency that buys any widening.
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S' }

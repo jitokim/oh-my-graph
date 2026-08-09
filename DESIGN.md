@@ -706,11 +706,15 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   exception to report — a step that found nothing to do, a caveat — will put
   that sentence somewhere, and if the prompt never names a place, it goes on
   top. That is how run 20260807-144514 opened `merge`'s reply with "no local
-  branch to delete" and was recorded FAIL over a merge that had landed. All 28
-  shipped prefix verdicts now carry the offer: *anything you need to qualify
+  branch to delete" and was recorded FAIL over a merge that had landed. Every
+  shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. The four whole-reply pins
+  is a sweep that cannot silently miss a node. That sweep counts **25
+  declarations, covering 32 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: three of the 25
+  live in `graphs/fragments/` and carry ten of the nodes between them. The
+  four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
   their reply is the token *and nothing else*, so for them the answer to "where
@@ -885,6 +889,23 @@ re-enters `gh pr merge` on an already-merged PR under a grant too narrow to
 look at what happened, so a false FAIL is an operator's morning, not a
 re-run; the SHA still carries the assertion, so nothing is given up. Every
 other node pays a retry, and keeps the narrow class.
+
+**What reuse can and cannot deduplicate here.** A `use:`/`with:` fragment
+(ADR 0013) puts a verdict rule in one place exactly when the whole NODE is one
+shape. Four shipped fragments carry their own — `e2e-verify`, the two review
+shapes and `pr-publish` — and the three with a prefix verdict cover ten runtime
+nodes between them. It reaches no further, and ADR 0013's Migration update is
+the measurement: the patterns still repeated in the templates are shared by
+nodes that share nothing else. The six nodes declaring ``^[*_`\s]*DONE\b`` have
+**zero** words of prompt in common and four different tool grants. A fragment
+is a node's behavior, not a paragraph, so no mechanism hands those six one
+clause — and none should, because each writes its own token, its own payload
+and its own "if it is not finished" branch. The fourth whole-reply pin is
+further out of reach still: `coordinator.plannedVerdictPattern` is not in a
+graph at all but a Go string rendered into the planner's prompt for the planner
+to copy character-for-character into JSON, so nothing graph-side can share it —
+this section and that constant's own doc comment are what keep the two spellings
+of one idiom from drifting.
 
 The rule is stated here and swept for by `lint` and `run --dry-run`
 (`handoff.LintVerdicts`), because a rule only DESIGN.md knows is the same
@@ -1972,7 +1993,7 @@ internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2
 internal/serve/{serve,dashboard,card,resolve,transcript,gate}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014)
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
-graphs/fragments/{e2e-verify,review-security,review-style}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
+graphs/fragments/{e2e-verify,review-security,review-style,pr-publish}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
 docs/adr/00{01..19}-*.md                       (0016 is taken by TWO records — the retry ADR and the build-evidence ADR — so cite that number by filename)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)

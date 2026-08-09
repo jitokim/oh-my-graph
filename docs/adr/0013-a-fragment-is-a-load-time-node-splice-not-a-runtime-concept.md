@@ -535,6 +535,57 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   diverge more than they share; forcing them into fragments would mean
   substitution points bigger than the shared text, which is the smell
   that says "different shape").
+
+  > **Update (2026-08-09): that was true of `dev` and false of `pr`,
+  > and it was never measured.** A proposal to make `verdict:` a
+  > first-class schema field raised the prior question — are the 22 of
+  > 31 `result_matches` declarations that share a pattern outside
+  > fragments because they *cannot* be, or because nobody tried? So
+  > every shipped node was grouped by its verdict pattern and the
+  > prompts compared word-for-word, longest common suffix, insensitive
+  > to line rewrapping (the wrapping differs per file and is not a
+  > divergence):
+  >
+  > | shared pattern | nodes | common suffix, all members | grants |
+  > |---|---:|---|---|
+  > | ``^[*_`\s]*PR[*_`\s:]*https?://\S`` | 5 | **83 words** (75% of the shortest prompt); 4 of the 5 pairwise 86-100 | 4 identical, 1 wider |
+  > | ``^[*_`\s]*(FINDINGS[*_`\s]*:\|CLEAN\b)`` | 6 | 30 words (21%) | 2 kinds |
+  > | ``^[*_`\s]*DONE\b`` | 6 | **0 words** | 4 kinds |
+  > | ``^[*_`\s]*PASS`` | 5 | **0 words** (`apply1`/`apply2` pairwise 124) | 3 kinds |
+  >
+  > `pr` is one shape by any reading, so it was extracted:
+  > `graphs/fragments/pr-publish.yaml`, cited by `self-dev`'s `pr`,
+  > `dev-review-pr`'s `pr` and `backlog-batch`'s `pr-a`/`pr-b`. The
+  > substitution point is `publish` — the graph's own instruction
+  > (which branch, DRAFT or ready, and a body naming graph-local node
+  > ids, which is wiring, the `evidence` precedent). Each binding
+  > carries that head verbatim, so all four **resolved prompts are
+  > byte-identical to the ones they replaced**: the blast-radius
+  > goldens did not move, which is the proof. Nothing is overridden by
+  > any using node.
+  >
+  > `adr-driven-dev`'s `finalize` shares the same 83 words and stays
+  > inline: it also applies the last review's remaining flags and gates
+  > on an engine-run `make local`, so it carries `Edit`/`Write` and a
+  > `verify:`. A node with a second job is a different shape, and the
+  > 83 words it shares are the same 83 an inline node is free to write.
+  >
+  > The three groups left are left for one reason, and it is the one
+  > that decides the `verdict:` question. **They do not group by node.**
+  > `DONE` covers a repo-specific implementer, a docs-lane implementer,
+  > a feedback-loop implementer and an ADR-feedback applier: four
+  > different nodes with four different grants that agree on nothing
+  > but the four characters they must emit — zero shared words. A
+  > fragment is a node's behavior; it cannot be a paragraph, so it
+  > cannot express "these four nodes share their last paragraph". The
+  > closest sub-shapes are real but small: `apply1`/`apply2` share 124
+  > words, and they live in ONE file, which is the intra-file case this
+  > ADR's Alternatives hand to YAML anchors. The four
+  > `FINDINGS:`/`CLEAN` rounds in `adr-driven-dev` share 21% with the
+  > review fragments and carry `Grep`/`Glob` the fragments deliberately
+  > do not, so citing them would mean either narrowing four review
+  > nodes' grants or overriding `allowed_tools` at every use — a
+  > fragment whose grant every caller overrides is not a proven grant.
 - Convert **`backlog-batch.yaml`** too — added at implementation, and
   its omission would have been this ADR's founding complaint surviving
   its own fix: that template held **two more** copies of the cold-safe
