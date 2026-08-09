@@ -1,0 +1,170 @@
+{
+  "schema": 2,
+  "run_id": "20260809-134909.952584000-1",
+  "graph_source_path": "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/graph.json",
+  "graph_sha256": "f62750a4c8b339cc8e4252676ff3231e2fd8eaa4f11f847d3e1ef0926947b1ec",
+  "graph": {
+    "name": "rename-accent-token",
+    "version": "1",
+    "nodes": [
+      {
+        "id": "brand-assets",
+        "prompt": "You are working on the git repository at /tmp/omg-0018/fixtures/brand-assets. It is a DIFFERENT repository from the directory you were started in, so address it with absolute paths and 'git -C /tmp/omg-0018/fixtures/brand-assets ...'. This repository has NO git remote and there is no pull request anywhere: never run gh, never push.\n\nGoal: rename the colour token named 'accent' to 'brand-accent' in tokens.json, and update palette.md so it matches.\n\nSteps:\n1. Create the working branch in that repository: 'git -C /tmp/omg-0018/fixtures/brand-assets checkout -b chore/rename-accent-token'. If that fails because the branch already exists, run 'git -C /tmp/omg-0018/fixtures/brand-assets checkout chore/rename-accent-token' instead. Confirm with 'git -C /tmp/omg-0018/fixtures/brand-assets status' that the tree is clean before editing.\n2. Grep for 'accent' under /tmp/omg-0018/fixtures/brand-assets to see every occurrence, then Read /tmp/omg-0018/fixtures/brand-assets/tokens.json and /tmp/omg-0018/fixtures/brand-assets/palette.md in full.\n3. Rename ONLY the token whose name is exactly 'accent' (its key in tokens.json) to 'brand-accent', plus every reference to that exact token in these two files (forms such as \"accent\", {accent}, $accent, --accent, var(--accent)). Leave alone any DISTINCT token whose name merely contains the substring 'accent' (e.g. 'accent-muted', 'text-accent', 'accent-hover') — inspect each match before changing it. Keep JSON key ordering and file formatting otherwise untouched.\n4. Commit granularity: file-unit — one commit per file, and commit as you go so finished work is never lost. Stage ONLY the files you actually modified, by explicit path; never 'git add -A', 'git add .' or 'git add -u'. For example: 'git -C /tmp/omg-0018/fixtures/brand-assets add tokens.json' then 'git -C /tmp/omg-0018/fixtures/brand-assets commit -m \"chore: rename accent token to brand-accent in tokens.json\"', and likewise a second commit for palette.md.\n5. Finish with 'git -C /tmp/omg-0018/fixtures/brand-assets log --oneline -3 chore/rename-accent-token' and 'git -C /tmp/omg-0018/fixtures/brand-assets status'.\n\nReport: the exact files changed, each commit subject, and the final 'git log --oneline' output for the branch.",
+        "allowed_tools": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Edit",
+          "Bash(git *)"
+        ],
+        "handoff": "artifact"
+      },
+      {
+        "id": "docs-site",
+        "prompt": "You are working on the git repository at /tmp/omg-0018/fixtures/docs-site (this is the directory you were started in). It has NO git remote and there is no pull request anywhere: never run gh, never push.\n\nGoal: update every reference to the old colour token name 'accent' to the new name 'brand-accent' in content/styleguide.md and content/theme.css. The token itself is defined in a separate repository (brand-assets); here you only update references.\n\nSteps:\n1. Create the working branch: 'git -C /tmp/omg-0018/fixtures/docs-site checkout -b chore/rename-accent-token'. If it already exists, check it out instead. Confirm with 'git -C /tmp/omg-0018/fixtures/docs-site status' that the tree is clean before editing.\n2. Grep for 'accent' in /tmp/omg-0018/fixtures/docs-site/content/styleguide.md and /tmp/omg-0018/fixtures/docs-site/content/theme.css, then Read both files in full.\n3. Update every reference to the exact token 'accent' — CSS custom property declarations and uses ('--accent', 'var(--accent)'), any '$accent'/'{accent}'/'tokens.accent' form, and prose mentions of the token name in the styleguide. Leave alone DISTINCT tokens or class names whose names merely contain the substring 'accent' (e.g. '--accent-muted', '.accent-box') unless they are references to this exact token; inspect each match before changing it. Do not restyle or reformat anything else.\n4. Commit granularity: file-unit — one commit per file, and commit as you go so finished work is never lost. Stage ONLY the files you actually modified, by explicit path; never 'git add -A', 'git add .' or 'git add -u'. For example: 'git -C /tmp/omg-0018/fixtures/docs-site add content/theme.css' then 'git -C /tmp/omg-0018/fixtures/docs-site commit -m \"chore: rename accent token to brand-accent in theme.css\"', and likewise a second commit for content/styleguide.md.\n5. Finish with 'git -C /tmp/omg-0018/fixtures/docs-site log --oneline -3 chore/rename-accent-token' and 'git -C /tmp/omg-0018/fixtures/docs-site status'.\n\nReport: the exact files changed, each commit subject, and the final 'git log --oneline' output for the branch.",
+        "allowed_tools": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Edit",
+          "Bash(git *)"
+        ],
+        "handoff": "artifact"
+      },
+      {
+        "id": "verify",
+        "depends_on": [
+          "brand-assets",
+          "docs-site"
+        ],
+        "prompt": "Verify the token rename landed correctly in BOTH repositories. Neither repository has a git remote and there is no pull request anywhere, so NEVER run gh — assert on branch refs only. Never assert on 'git rev-parse --abbrev-ref HEAD'; refs belong to the repository, a checked-out HEAD does not.\n\nUpstream reports:\nbrand-assets node: {{ artifacts.brand-assets }}\ndocs-site node: {{ artifacts.docs-site }}\n\nFor REPO = /tmp/omg-0018/fixtures/brand-assets (files tokens.json, palette.md) and REPO = /tmp/omg-0018/fixtures/docs-site (files content/styleguide.md, content/theme.css), do all of the following:\n1. 'git -C \u003cREPO\u003e rev-parse --verify chore/rename-accent-token' must succeed (the feature branch ref exists in that repository).\n2. Determine that repository's default branch name with 'git -C \u003cREPO\u003e branch --list' (it is main or master).\n3. 'git -C \u003cREPO\u003e log --oneline -5 chore/rename-accent-token' must show at least one new commit that the default branch does not have; confirm with 'git -C \u003cREPO\u003e log --oneline -5 \u003cdefault-branch\u003e' that those rename commits are NOT on the default branch.\n4. For each of that repository's files, run 'git -C \u003cREPO\u003e show chore/rename-accent-token:\u003cfile\u003e' and read the output directly (no shell pipes): it must contain 'brand-accent' and must contain no leftover reference to the old token name 'accent' standing on its own (occurrences that are part of a genuinely different name such as 'accent-muted' or 'text-accent' are fine — 'brand-accent' itself obviously contains the substring, that is expected).\n5. 'git -C \u003cREPO\u003e status --porcelain' should show no uncommitted modifications to those files.\n\nNote you cannot build, compile or test anything here; assert only what these git commands actually show.\n\nIf every check above holds for both repositories, your entire reply must be exactly the four bare characters PASS — no markdown emphasis, no heading, no backticks, no preamble, nothing else. Otherwise reply FAIL followed by exactly which check failed in which repository.",
+        "allowed_tools": [
+          "Read",
+          "Bash(git *)"
+        ],
+        "handoff": "artifact",
+        "success_check": {
+          "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"
+        }
+      }
+    ]
+  },
+  "continue_on_fail": true,
+  "tool_policies": {
+    "brand-assets": {
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash(git *)"
+      ],
+      "disallowed_tools": [
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash",
+        "Skill"
+      ],
+      "setting_sources": "",
+      "strict_mcp_config": true,
+      "plugin_dirs": [
+        "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/skills-plugin"
+      ]
+    },
+    "docs-site": {
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash(git *)"
+      ],
+      "disallowed_tools": [
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash",
+        "Skill"
+      ],
+      "setting_sources": "",
+      "strict_mcp_config": true,
+      "plugin_dirs": [
+        "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/skills-plugin"
+      ]
+    },
+    "verify": {
+      "allowed_tools": [
+        "Read",
+        "Bash(git *)"
+      ],
+      "disallowed_tools": [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "tools": [
+        "Read",
+        "Bash",
+        "Skill"
+      ],
+      "setting_sources": "",
+      "strict_mcp_config": true,
+      "plugin_dirs": [
+        "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/skills-plugin"
+      ]
+    }
+  },
+  "nodes": {
+    "brand-assets": {
+      "verdict": "PASS",
+      "session_id": "d52cb653-bb87-4bf3-9f5f-c433c46082bd",
+      "cost_usd": 0.3260795,
+      "duration": 34179313329,
+      "artifact_path": "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/brand-assets.out",
+      "provenance": "exit-only"
+    },
+    "docs-site": {
+      "verdict": "PASS",
+      "session_id": "16b89572-a1c9-452b-873c-4c01568570bf",
+      "cost_usd": 0.34115999999999996,
+      "duration": 41847014672,
+      "artifact_path": "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/docs-site.out",
+      "provenance": "exit-only"
+    },
+    "verify": {
+      "verdict": "PASS",
+      "session_id": "17010169-ef12-47da-8dc7-94cc7ab87986",
+      "cost_usd": 0.2804285,
+      "duration": 32370479047,
+      "artifact_path": "/tmp/omg-0018/omghome3/runs/20260809-134909.952584000-1/verify.out",
+      "provenance": "self-reported"
+    }
+  },
+  "gate": {}
+}

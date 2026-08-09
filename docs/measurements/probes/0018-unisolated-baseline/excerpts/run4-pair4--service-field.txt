@@ -1,0 +1,15 @@
+# run4-pair4 / node service-field — every Bash command in the session transcript, in order
+# transcript: service-field--f49444df-d605-4b80-9bf0-db59cf731997.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/proto-defs
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /tmp/omg-0018/fixtures/order-service]
+cd /tmp/omg-0018/fixtures/order-service && ls -R && git status --short && git branch -a
+
+--- #2  [dir: /tmp/omg-0018/fixtures/order-service]
+cd /tmp/omg-0018/fixtures/order-service && git rev-parse --verify feat/order-currency 2>&1 || git checkout -b feat/order-currency
+
+--- #3  [dir: /tmp/omg-0018/fixtures/order-service]
+cd /tmp/omg-0018/fixtures/order-service && git add orders/serialize.py tests/test_serialize.py && git commit -q -m "feat(order): serialize currency field" && git log --oneline -1 feat/order-currency && git status --short && git show --stat --oneline HEAD
+

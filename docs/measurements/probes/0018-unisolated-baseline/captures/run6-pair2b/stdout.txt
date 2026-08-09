@@ -1,0 +1,81 @@
+No build verification configured. Detected no build signal in this directory.
+Nothing in this run will compile or test your code — a planned node cannot
+run a build command, and no node's PASS carries build evidence.
+Re-run with
+  --verify-cmd '<your build command>'
+to have the engine verify the result itself.
+Planning a graph for goal "The reporting tool can only print a table. Give the shared rendering library at /tmp/omg-0018/fixtures/chart-lib an ASCII bar-chart renderer, and expose it from the report command in /tmp/omg-0018/fixtures/report-cli with a test. Land each repository's change on its own feature branch, committed. There are no remotes and no pull requests here, so do not use gh."...
+Planned graph "ascii-bar-chart-two-repos" (4 nodes, planning cost $0.5327, saved to /tmp/omg-0018/omghome6/runs/20260809-135510.006736000-1/graph.json):
+  - impl-chartlib [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *)]
+  - impl-reportcli (after impl-chartlib) [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *)]
+  - review (after impl-chartlib, impl-reportcli) [tools: Read, Glob, Grep, Bash(git *), Bash(cat *), Bash(grep *)]
+  - check-branches (after review) [tools: Read, Bash(git *), Bash(cat *), Bash(grep *)]
+  skill scan: 35 skill(s) from <home>/.claude/skills
+  skill activation: ENABLED on 4 of 4 planned node(s)
+    35 skill(s) staged (adds ~6020 tokens to EVERY node invocation, including retries
+    and feedback re-runs)
+    [35 staged-skill description line(s) removed for publication — the operator's local skill corpus, unrelated to this measurement; see scripts/scrub-captures.sh]
+  Which skill a node uses is chosen by the model at run time from those descriptions.
+  It is NOT knowable here; each invocation is recorded in that node's session transcript.
+  MEASURED YIELD (44 spawns against this exact argv — ADR 0017; the raw record is
+    docs/measurements/0017-skill-activation-yield.md): the planner's own prompt reached
+    for a skill 0 of 9 times unaided, and 8 of 9 with the one fixed sentence oh-my-graph
+    now appends to every activated prompt. Whether the WORK is better is NOT measured:
+    the two arms were indistinguishable on the one task checkable mechanically, at
+    $0.205 a spawn against $0.134, and an output-contract node activates under neither.
+    The tokens above are charged either way.
+  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load
+    (ADR 0004 layer 1 stays ""); a declared scope like Bash(git *) is still enforced.
+    The only change is that the Skill tool now exists for these nodes.
+  The staged corpus is re-materialized and verified before every node spawn, so a node
+    cannot leave a skill behind for a later one. Your own skill files are read once, at
+    staging: editing them mid-run neither changes this run nor stops it.
+  Turn it off with --no-skill-activation.
+  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).
+  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a
+  plugin is not staged — that is a stated limit, not a failure.
+  Planned nodes run isolated: none of your user/project/local settings load, so a declared
+  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
+  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
+  ! not isolated: /private/tmp/omg-0018/fixtures/chart-lib — a local git checkout
+    named by the goal and nodes "impl-chartlib", "impl-reportcli", "review", "check-branches", written as /tmp/omg-0018/fixtures/chart-lib
+  in auto mode oh-my-graph isolates no checkout at all — not even the one it was invoked
+  from (/private/tmp/omg-0018/fixtures/report-cli), where every planned node works directly in your tree
+  (cwd: and worktree: are rejected at plan time). The difference is only whose tree it is:
+  the checkouts above are ones you did not open for this run, and oh-my-graph creates no
+  worktree and takes no lock in them, so a node that switches a branch there changes a
+  directory another process may be standing in. If a node must work in one, say in the goal
+  that it has to create its own git worktree there first and stay inside it. See SECURITY.md,
+  "Isolation stops at the invocation repository".
+  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths
+  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It
+  cannot see a path a node builds at run time, one arriving through an --input or a parent's
+  artifact, a repository reached by a relative path, or what a node will actually do once it
+  is there, and it deliberately says nothing about a tool installation's own checkout (a
+  package or version manager under /usr, /opt or a dot-directory of your home) — and it is a
+  warning, not a refusal: a multi-repository goal is legitimate, oh-my-graph simply cannot
+  isolate it.
+
+Running graph "ascii-bar-chart-two-repos" (run 20260809-135510.006736000-1)
+
+▶ impl-chartlib  running…
+✓ impl-chartlib  PASS  $0.3789  59.711s
+▶ impl-reportcli  running…
+✓ impl-reportcli  PASS  $0.3007  54.718s
+▶ review  running…
+✓ review  PASS  $0.5291  1m57.806s
+▶ check-branches  running…
+✎ check-branches  reply saved: /tmp/omg-0018/omghome6/runs/20260809-135510.006736000-1/failed/check-branches.out
+✗ check-branches  FAILED: node "check-branches" failed success_check result_matches: result did not match /^[*_`\s]*PASS[*_`\s]*$/
+
+Run 20260809-135510.006736000-1 — 4 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+check-branches   FAIL                 1d0b1191-ad2f-4…     0.2255  node "check-branches" failed success_check result_matches: result did not match /^[*_`\s]*PASS[*_`\s]*$/
+impl-chartlib    PASS (exit-only)     41fc967c-f9a7-4…     0.3789  
+impl-reportcli   PASS (exit-only)     7796cd4a-457d-4…     0.3007  
+review           PASS (self-reported) c6c34d2d-40c8-4…     0.5291  
+-------------------------------------------------------------------------
+PLANNING COST: $0.5327
+TOTAL COST: $1.9669
+oh-my-graph: run completed with failed node(s): check-branches

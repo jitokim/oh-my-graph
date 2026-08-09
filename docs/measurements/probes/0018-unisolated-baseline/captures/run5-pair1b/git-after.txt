@@ -1,0 +1,26 @@
+=== /tmp/omg-0018/fixtures/payments-api
+-- HEAD:      349860ff97c5446e0571c87caccf635b9347860d
+-- branch:    feat/configurable-request-timeout
+-- branches:
+     * feat/configurable-request-timeout
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/payments-api  349860f [feat/configurable-request-timeout]
+-- log:
+     349860f (HEAD -> feat/configurable-request-timeout) feat(client): make payment request timeout configurable
+     6c11761 (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/shared-config
+-- HEAD:      a251b8dc284232f83670669a957968f088aac559
+-- branch:    feat/payment-client-timeout-key
+-- branches:
+     * feat/payment-client-timeout-key
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/shared-config  a251b8d [feat/payment-client-timeout-key]
+-- log:
+     a251b8d (HEAD -> feat/payment-client-timeout-key) feat(payments): add payment client request timeout setting
+     ac42906 (main) initial fixture state
+-- status:
+

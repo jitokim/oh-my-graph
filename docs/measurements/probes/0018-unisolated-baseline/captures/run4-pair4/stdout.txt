@@ -1,0 +1,79 @@
+No build verification configured. Detected no build signal in this directory.
+Nothing in this run will compile or test your code — a planned node cannot
+run a build command, and no node's PASS carries build evidence.
+Re-run with
+  --verify-cmd '<your build command>'
+to have the engine verify the result itself.
+Planning a graph for goal "In /tmp/omg-0018/fixtures/proto-defs, add a currency field to the Order message in proto/order.proto and describe it in FIELDS.md. In /tmp/omg-0018/fixtures/order-service, carry that field through the hand-written serializer and its test. Commit each repository's own change on a branch named feat/order-currency in that repository. Neither repository has a git remote and there is no pull request anywhere, so do not use gh; check the branch refs instead."...
+Planned graph "order-currency-field" (4 nodes, planning cost $0.3794, saved to /tmp/omg-0018/omghome4/runs/20260809-134922.309154000-1/graph.json):
+  - proto-field [tools: Read, Grep, Glob, Edit, Bash(git *)]
+  - service-field (after proto-field) [tools: Read, Grep, Glob, Edit, Bash(git *), Bash(ls *)]
+  - review (after proto-field, service-field) [tools: Read, Grep, Glob, Bash(git *)]
+  - branch-check (after review) [tools: Bash(git *)]
+  skill scan: 35 skill(s) from <home>/.claude/skills
+  skill activation: ENABLED on 4 of 4 planned node(s)
+    35 skill(s) staged (adds ~6020 tokens to EVERY node invocation, including retries
+    and feedback re-runs)
+    [35 staged-skill description line(s) removed for publication — the operator's local skill corpus, unrelated to this measurement; see scripts/scrub-captures.sh]
+  Which skill a node uses is chosen by the model at run time from those descriptions.
+  It is NOT knowable here; each invocation is recorded in that node's session transcript.
+  MEASURED YIELD (44 spawns against this exact argv — ADR 0017; the raw record is
+    docs/measurements/0017-skill-activation-yield.md): the planner's own prompt reached
+    for a skill 0 of 9 times unaided, and 8 of 9 with the one fixed sentence oh-my-graph
+    now appends to every activated prompt. Whether the WORK is better is NOT measured:
+    the two arms were indistinguishable on the one task checkable mechanically, at
+    $0.205 a spawn against $0.134, and an output-contract node activates under neither.
+    The tokens above are charged either way.
+  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load
+    (ADR 0004 layer 1 stays ""); a declared scope like Bash(git *) is still enforced.
+    The only change is that the Skill tool now exists for these nodes.
+  The staged corpus is re-materialized and verified before every node spawn, so a node
+    cannot leave a skill behind for a later one. Your own skill files are read once, at
+    staging: editing them mid-run neither changes this run nor stops it.
+  Turn it off with --no-skill-activation.
+  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).
+  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a
+  plugin is not staged — that is a stated limit, not a failure.
+  Planned nodes run isolated: none of your user/project/local settings load, so a declared
+  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
+  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
+  ! not isolated: /private/tmp/omg-0018/fixtures/proto-defs — a local git checkout
+    named by the goal and nodes "proto-field", "service-field", "review", "branch-check", written as /tmp/omg-0018/fixtures/proto-defs
+  in auto mode oh-my-graph isolates no checkout at all — not even the one it was invoked
+  from (/private/tmp/omg-0018/fixtures/order-service), where every planned node works directly in your tree
+  (cwd: and worktree: are rejected at plan time). The difference is only whose tree it is:
+  the checkouts above are ones you did not open for this run, and oh-my-graph creates no
+  worktree and takes no lock in them, so a node that switches a branch there changes a
+  directory another process may be standing in. If a node must work in one, say in the goal
+  that it has to create its own git worktree there first and stay inside it. See SECURITY.md,
+  "Isolation stops at the invocation repository".
+  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths
+  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It
+  cannot see a path a node builds at run time, one arriving through an --input or a parent's
+  artifact, a repository reached by a relative path, or what a node will actually do once it
+  is there, and it deliberately says nothing about a tool installation's own checkout (a
+  package or version manager under /usr, /opt or a dot-directory of your home) — and it is a
+  warning, not a refusal: a multi-repository goal is legitimate, oh-my-graph simply cannot
+  isolate it.
+
+Running graph "order-currency-field" (run 20260809-134922.309154000-1)
+
+▶ proto-field  running…
+✓ proto-field  PASS  $0.2787  34.52s
+▶ service-field  running…
+✓ service-field  PASS  $0.2544  38.408s
+▶ review  running…
+✓ review  PASS  $0.5399  1m48.363s
+▶ branch-check  running…
+✓ branch-check  PASS  $0.2751  38.009s
+
+Run 20260809-134922.309154000-1 — 4 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+branch-check     PASS (self-reported) 07a924e4-0b5a-4…     0.2751  
+proto-field      PASS (exit-only)     998bff9f-d762-4…     0.2787  
+review           PASS (self-reported) 47e690ae-5f85-4…     0.5399  
+service-field    PASS (exit-only)     f49444df-d605-4…     0.2544  
+-------------------------------------------------------------------------
+PLANNING COST: $0.3794
+TOTAL COST: $1.7276

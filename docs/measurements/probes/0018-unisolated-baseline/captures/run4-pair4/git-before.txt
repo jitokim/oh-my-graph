@@ -1,0 +1,22 @@
+=== /tmp/omg-0018/fixtures/order-service
+-- HEAD:      95b0d1241acabf7047b7c609c915f55031bc3a4d
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/order-service  95b0d12 [main]
+-- log:
+     95b0d12 (HEAD -> main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/proto-defs
+-- HEAD:      f5a7c9e3d32b353f25e0e5aa0dbac1e6ec9bac95
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/proto-defs  f5a7c9e [main]
+-- log:
+     f5a7c9e (HEAD -> main) initial fixture state
+-- status:
+

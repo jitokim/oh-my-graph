@@ -1,0 +1,82 @@
+{
+  "name": "ascii-bar-chart-two-repos",
+  "version": "1",
+  "nodes": [
+    {
+      "id": "impl-chartlib",
+      "prompt": "You are working in the shared rendering library repository at the absolute path /tmp/omg-0018/fixtures/chart-lib. Always address it with 'git -C /tmp/omg-0018/fixtures/chart-lib ...' and use absolute paths for file reads and writes; do not assume the current working directory is that repository.\n\nCurrent state (read the files yourself to confirm): chartlib/render.py has a module docstring \"Text renderers. Every function returns a string and prints nothing.\", a BLOCKS constant, and a single function render_sparkline(values). chartlib/__init__.py re-exports render_sparkline via __all__. There are also README.md and CHANGELOG.md. The repository has one branch, main, and no remote.\n\nGOAL: add an ASCII bar-chart renderer to this library.\n\n1. Create and switch to a feature branch off main: 'git -C /tmp/omg-0018/fixtures/chart-lib checkout -b feature/ascii-bar-chart main'. If that branch already exists, check it out instead. All commits must land on feature/ascii-bar-chart, never on main.\n2. In chartlib/render.py add a function with this exact public signature:\n     def render_bar_chart(rows, width=40):\n   'rows' is a sequence of (label, value) pairs where value is an int or float. It returns a multi-line string (one line per row, no trailing newline) and prints nothing — match the module docstring contract and the style of render_sparkline (small, dependency-free, pure stdlib). Requirements: empty rows returns \"\"; labels are left-padded to the width of the longest label; each bar is a run of '#' characters scaled so the largest value gets 'width' characters; a max value of 0 (or all-zero values) must not divide by zero and yields empty bars; negative values are clamped to a zero-length bar. Include a short docstring stating the contract.\n3. Re-export it from chartlib/__init__.py: import render_bar_chart alongside render_sparkline and add it to __all__.\n4. Update README.md (document render_bar_chart briefly, in the style already used there) and add a CHANGELOG.md entry.\n\nCOMMIT GRANULARITY: feature-slice. Commit as you go so nothing finished is lost — one commit for the renderer + export slice, one commit for the docs slice. Stage ONLY the files you touched, by explicit path, e.g. 'git -C /tmp/omg-0018/fixtures/chart-lib add chartlib/render.py chartlib/__init__.py' then 'git -C /tmp/omg-0018/fixtures/chart-lib commit -m \"feat: add ASCII bar-chart renderer\"'. Never use 'git add -A', 'git add .' or 'git add -u'.\n\nNo build, test or python command is available to you — do not attempt to run one. Verify your work by re-reading the files and by 'git -C /tmp/omg-0018/fixtures/chart-lib log --oneline -3' and 'git -C /tmp/omg-0018/fixtures/chart-lib status'.\n\nReview feedback follows — empty on the first pass. If it is non-empty, treat it as the list of defects to fix in this repository and address each one on the same feature branch with an additional commit:\n{{ feedback.review }}\n\nEnd your reply with the exact final signature of render_bar_chart, the branch name, and the commit subjects you created, so the downstream node can consume the API without guessing.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)"
+      ],
+      "handoff": "artifact",
+      "timeout": "1h"
+    },
+    {
+      "id": "impl-reportcli",
+      "depends_on": [
+        "impl-chartlib"
+      ],
+      "prompt": "You are working in the reporting CLI repository at the absolute path /tmp/omg-0018/fixtures/report-cli. Always address it with 'git -C /tmp/omg-0018/fixtures/report-cli ...' and use absolute paths for file reads and writes.\n\nThe shared rendering library at /tmp/omg-0018/fixtures/chart-lib just gained an ASCII bar-chart renderer on its own feature branch. The exact API that was added is reported here — read it and use that signature verbatim, and read /tmp/omg-0018/fixtures/chart-lib/chartlib/render.py and /tmp/omg-0018/fixtures/chart-lib/chartlib/__init__.py directly to confirm before writing code:\n{{ artifacts.impl-chartlib }}\n\nCurrent state of report-cli: reportcli/main.py holds render_table(rows) and main(argv=None), which parses a --rows argument of the form 'alpha=1,beta=2' into (name, int) pairs and prints only the table. tests/test_main.py has one test importing render_table from reportcli.main. There is one branch, main, and no remote.\n\nGOAL: expose the bar chart from the report command, with a test.\n\n1. Create and switch to a feature branch off main: 'git -C /tmp/omg-0018/fixtures/report-cli checkout -b feature/report-bar-chart main'. If it already exists, check it out. Nothing may be committed to main.\n2. In reportcli/main.py, import render_bar_chart from chartlib (from chartlib.render import render_bar_chart, or from chartlib — match how the library exports it) and add a '--chart' flag to the argparse parser (action=\"store_true\"). When --chart is passed, main prints the bar chart instead of the table; without it, behaviour is unchanged from today. Keep the existing render_table function and the existing default --rows value untouched. Follow the file's existing style: small functions, no new third-party dependencies.\n3. Add a test to tests/test_main.py covering both a success case and a failure/edge case: that main(['--chart', '--rows', 'alpha=1,beta=2']) produces bar-chart output containing '#' (capture stdout with pytest's capsys, matching the plain-pytest style already in that file), and that the default invocation without --chart still prints the table and no '#'. Import from reportcli.main exactly as the existing test does.\n\nCOMMIT GRANULARITY: feature-slice. Commit as you go — one commit for the --chart wiring, one commit for the test. Stage ONLY the files you touched, by explicit path, e.g. 'git -C /tmp/omg-0018/fixtures/report-cli add reportcli/main.py' then commit; then 'git -C /tmp/omg-0018/fixtures/report-cli add tests/test_main.py' then commit. Never 'git add -A', 'git add .' or 'git add -u'.\n\nNo build, test or python runner is available to you — do not try to execute pytest or python. Verify by re-reading the files and with 'git -C /tmp/omg-0018/fixtures/report-cli log --oneline -3' and 'git -C /tmp/omg-0018/fixtures/report-cli status'.\n\nReview feedback follows — empty on the first pass. If non-empty, fix the items that concern this repository on the same feature branch with an additional commit:\n{{ feedback.review }}\n\nEnd your reply with the branch name, the files changed, and the commit subjects you created.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(ls *)",
+        "Bash(cat *)"
+      ],
+      "handoff": "artifact",
+      "timeout": "1h"
+    },
+    {
+      "id": "review",
+      "depends_on": [
+        "impl-chartlib",
+        "impl-reportcli"
+      ],
+      "prompt": "You are reviewing a two-repository change, read-only. Do not edit, stage or commit anything.\n\nWhat was reported by the two implementing nodes:\nchart-lib: {{ artifacts.impl-chartlib }}\nreport-cli: {{ artifacts.impl-reportcli }}\n\nInspect the ACTUAL committed state rather than trusting those reports. Use git to read the branch content, e.g.:\n  git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main..feature/ascii-bar-chart\n  git -C /tmp/omg-0018/fixtures/chart-lib diff main..feature/ascii-bar-chart\n  git -C /tmp/omg-0018/fixtures/report-cli log --oneline main..feature/report-bar-chart\n  git -C /tmp/omg-0018/fixtures/report-cli diff main..feature/report-bar-chart\n  git -C /tmp/omg-0018/fixtures/report-cli status\nand read the working files under /tmp/omg-0018/fixtures/chart-lib and /tmp/omg-0018/fixtures/report-cli.\n\nNo build or test runner exists here, so judge only what you can observe by reading code and git history. Check:\n1. chartlib/render.py defines render_bar_chart(rows, width=40), returns a string, prints nothing, handles empty rows, an all-zero maximum without ZeroDivisionError, and negative values.\n2. chartlib/__init__.py re-exports render_bar_chart and lists it in __all__; README.md and CHANGELOG.md mention it.\n3. reportcli/main.py imports render_bar_chart from chartlib with the same name and arity the library actually defines (a mismatched import name or signature is a defect), adds a --chart flag, and leaves the default no-flag table output unchanged.\n4. tests/test_main.py has a test asserting bar-chart output for --chart and a test asserting the unchanged default path; the assertions must be consistent with the characters the renderer actually emits.\n5. Both repositories have at least one commit on their feature branch (feature/ascii-bar-chart, feature/report-bar-chart), main is untouched in both, each working tree is clean, and no unrelated files were swept into any commit.\n\nWrite a short report listing every concrete defect you find, each naming the repository, the file and what to change. Then end your reply with a single final verdict line.\nIf and only if all five checks pass, that last line must be exactly: VERDICT: APPROVED\nOtherwise the last line must be exactly: VERDICT: CHANGES-REQUESTED\nNever write the string 'VERDICT: APPROVED' anywhere else in your reply, including when explaining what would be needed to approve.",
+      "allowed_tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash(git *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "success_check": {
+        "result_matches": "VERDICT: APPROVED"
+      },
+      "feedback": {
+        "rerun": "impl-chartlib",
+        "max": 2
+      }
+    },
+    {
+      "id": "check-branches",
+      "depends_on": [
+        "review"
+      ],
+      "prompt": "Final verification, read-only. Do not edit, stage, commit, checkout or create anything. Judge only repository refs and committed content — never 'git rev-parse --abbrev-ref HEAD', since a node may have worked in a separate worktree. There are no remotes and no pull requests here, so do not use gh.\n\nRun exactly these observations and evaluate them:\n\nchart-lib (/tmp/omg-0018/fixtures/chart-lib):\n  a) git -C /tmp/omg-0018/fixtures/chart-lib rev-parse --verify feature/ascii-bar-chart   -> must succeed\n  b) git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main..feature/ascii-bar-chart  -> must list at least one commit\n  c) git -C /tmp/omg-0018/fixtures/chart-lib show feature/ascii-bar-chart:chartlib/render.py -> must contain 'def render_bar_chart'\n  d) git -C /tmp/omg-0018/fixtures/chart-lib show feature/ascii-bar-chart:chartlib/__init__.py -> must mention render_bar_chart\n  e) git -C /tmp/omg-0018/fixtures/chart-lib show main:chartlib/render.py -> must NOT contain 'def render_bar_chart' (the work must not have landed on the default branch)\n\nreport-cli (/tmp/omg-0018/fixtures/report-cli):\n  f) git -C /tmp/omg-0018/fixtures/report-cli rev-parse --verify feature/report-bar-chart  -> must succeed\n  g) git -C /tmp/omg-0018/fixtures/report-cli log --oneline main..feature/report-bar-chart -> must list at least one commit\n  h) git -C /tmp/omg-0018/fixtures/report-cli show feature/report-bar-chart:reportcli/main.py -> must reference render_bar_chart and a '--chart' argument\n  i) git -C /tmp/omg-0018/fixtures/report-cli show feature/report-bar-chart:tests/test_main.py -> must contain a test exercising the chart output\n  j) git -C /tmp/omg-0018/fixtures/report-cli show main:reportcli/main.py -> must NOT reference render_bar_chart\n\nThis is a static assertion about committed content and branch refs only; nothing here executes or tests the code, so do not treat it as evidence that the code runs.\n\nIf every one of a)-j) holds, your whole reply must be exactly the four bare characters PASS and nothing else — no markdown emphasis, no heading, no backticks, no preamble. Otherwise reply FAIL followed by the specific observations that failed.",
+      "allowed_tools": [
+        "Read",
+        "Bash(git *)",
+        "Bash(cat *)",
+        "Bash(grep *)"
+      ],
+      "handoff": "artifact",
+      "success_check": {
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"
+      }
+    }
+  ]
+}

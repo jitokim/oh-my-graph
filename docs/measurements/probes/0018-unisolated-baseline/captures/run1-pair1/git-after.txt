@@ -1,0 +1,26 @@
+=== /tmp/omg-0018/fixtures/payments-api
+-- HEAD:      c284d217b1da48cb8b16089c95f72c2d33d1cce0
+-- branch:    feat/timeout-seconds
+-- branches:
+     * feat/timeout-seconds
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/payments-api  c284d21 [feat/timeout-seconds]
+-- log:
+     c284d21 (HEAD -> feat/timeout-seconds) feat: make request timeout configurable via timeout_seconds
+     67144b3 (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/shared-config
+-- HEAD:      9114a72fa214b14374ea2abee38fbb5e9939e271
+-- branch:    feat/timeout-seconds
+-- branches:
+     * feat/timeout-seconds
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/shared-config  9114a72 [feat/timeout-seconds]
+-- log:
+     9114a72 (HEAD -> feat/timeout-seconds) feat: add timeout_seconds default and schema docs
+     19a39e9 (main) initial fixture state
+-- status:
+

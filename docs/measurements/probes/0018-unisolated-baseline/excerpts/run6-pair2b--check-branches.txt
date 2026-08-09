@@ -1,0 +1,36 @@
+# run6-pair2b / node check-branches — every Bash command in the session transcript, in order
+# transcript: check-branches--1d0b1191-ad2f-4bef-9995-fe2cbf3e16e1.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib rev-parse --verify feature/ascii-bar-chart; echo "--- exit=$?"
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main..feature/ascii-bar-chart; echo "--- exit=$?"
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib show feature/ascii-bar-chart:chartlib/render.py; echo "--- exit=$?"
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib show feature/ascii-bar-chart:chartlib/__init__.py; echo "--- exit=$?"
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib show main:chartlib/render.py; echo "--- exit=$?"
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli rev-parse --verify feature/report-bar-chart; echo "--- exit=$?"
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli log --oneline main..feature/report-bar-chart; echo "--- exit=$?"
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli show feature/report-bar-chart:reportcli/main.py; echo "--- exit=$?"
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli show feature/report-bar-chart:tests/test_main.py; echo "--- exit=$?"
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli show main:reportcli/main.py; echo "--- exit=$?"
+

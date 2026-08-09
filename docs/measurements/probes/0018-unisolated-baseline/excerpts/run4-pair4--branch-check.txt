@@ -1,0 +1,42 @@
+# run4-pair4 / node branch-check — every Bash command in the session transcript, in order
+# transcript: branch-check--07a924e4-0b5a-4e79-838e-32354b427bad.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/proto-defs
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency; echo "EXIT=$?"; echo "---"; git -C /tmp/omg-0018/fixtures/order-service rev-parse --verify feat/order-currency; echo "EXIT=$?"
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/order-service]
+echo "=== proto-defs branches ==="; git -C /tmp/omg-0018/fixtures/proto-defs branch --list main master; echo "=== order-service branches ==="; git -C /tmp/omg-0018/fixtures/order-service branch --list main master
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service rev-parse --verify feat/order-currency
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency:proto/order.proto
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency:FIELDS.md
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency --stat
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs show main:proto/order.proto
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/proto-defs show main:FIELDS.md
+
+--- #11  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service show main:orders/serialize.py
+
+--- #12  [dir: /private/tmp/omg-0018/fixtures/order-service]
+git -C /tmp/omg-0018/fixtures/order-service show main:tests/test_serialize.py
+

@@ -1,0 +1,75 @@
+No build verification configured. Detected no build signal in this directory.
+Nothing in this run will compile or test your code — a planned node cannot
+run a build command, and no node's PASS carries build evidence.
+Re-run with
+  --verify-cmd '<your build command>'
+to have the engine verify the result itself.
+Planning a graph for goal "In /tmp/omg-0018/fixtures/payments-api, make the request timeout configurable: have the config loader read a timeout_seconds setting (default 30), use it in the client, and cover it with a test. In /tmp/omg-0018/fixtures/shared-config, add the matching timeout_seconds key to config/defaults.yaml and document it in docs/schema.md. In each of the two repositories, commit that repository's own change on a branch named feat/timeout-seconds. Neither repository has a git remote and there is no pull request anywhere, so do not use gh; check the branch refs instead."...
+Planned graph "timeout-seconds-two-repos" (3 nodes, planning cost $0.3587, saved to /tmp/omg-0018/omghome/runs/20260809-134427.657374000-1/graph.json):
+  - impl-payments [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *), Bash(grep *)]
+  - impl-shared [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *)]
+  - verify-branches (after impl-payments, impl-shared) [tools: Read, Bash(git *), Bash(cat *), Bash(grep *)]
+  skill scan: 35 skill(s) from <home>/.claude/skills
+  skill activation: ENABLED on 3 of 3 planned node(s)
+    35 skill(s) staged (adds ~6020 tokens to EVERY node invocation, including retries
+    and feedback re-runs)
+    [35 staged-skill description line(s) removed for publication — the operator's local skill corpus, unrelated to this measurement; see scripts/scrub-captures.sh]
+  Which skill a node uses is chosen by the model at run time from those descriptions.
+  It is NOT knowable here; each invocation is recorded in that node's session transcript.
+  MEASURED YIELD (44 spawns against this exact argv — ADR 0017; the raw record is
+    docs/measurements/0017-skill-activation-yield.md): the planner's own prompt reached
+    for a skill 0 of 9 times unaided, and 8 of 9 with the one fixed sentence oh-my-graph
+    now appends to every activated prompt. Whether the WORK is better is NOT measured:
+    the two arms were indistinguishable on the one task checkable mechanically, at
+    $0.205 a spawn against $0.134, and an output-contract node activates under neither.
+    The tokens above are charged either way.
+  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load
+    (ADR 0004 layer 1 stays ""); a declared scope like Bash(git *) is still enforced.
+    The only change is that the Skill tool now exists for these nodes.
+  The staged corpus is re-materialized and verified before every node spawn, so a node
+    cannot leave a skill behind for a later one. Your own skill files are read once, at
+    staging: editing them mid-run neither changes this run nor stops it.
+  Turn it off with --no-skill-activation.
+  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).
+  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a
+  plugin is not staged — that is a stated limit, not a failure.
+  Planned nodes run isolated: none of your user/project/local settings load, so a declared
+  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
+  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
+  ! not isolated: /private/tmp/omg-0018/fixtures/shared-config — a local git checkout
+    named by the goal and nodes "impl-payments", "impl-shared", "verify-branches", written as /tmp/omg-0018/fixtures/shared-config
+  in auto mode oh-my-graph isolates no checkout at all — not even the one it was invoked
+  from (/private/tmp/omg-0018/fixtures/payments-api), where every planned node works directly in your tree
+  (cwd: and worktree: are rejected at plan time). The difference is only whose tree it is:
+  the checkouts above are ones you did not open for this run, and oh-my-graph creates no
+  worktree and takes no lock in them, so a node that switches a branch there changes a
+  directory another process may be standing in. If a node must work in one, say in the goal
+  that it has to create its own git worktree there first and stay inside it. See SECURITY.md,
+  "Isolation stops at the invocation repository".
+  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths
+  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It
+  cannot see a path a node builds at run time, one arriving through an --input or a parent's
+  artifact, a repository reached by a relative path, or what a node will actually do once it
+  is there, and it deliberately says nothing about a tool installation's own checkout (a
+  package or version manager under /usr, /opt or a dot-directory of your home) — and it is a
+  warning, not a refusal: a multi-repository goal is legitimate, oh-my-graph simply cannot
+  isolate it.
+
+Running graph "timeout-seconds-two-repos" (run 20260809-134427.657374000-1)
+
+▶ impl-shared  running…
+▶ impl-payments  running…
+✓ impl-shared  PASS  $0.2776  29.999s
+✓ impl-payments  PASS  $0.4027  54.686s
+▶ verify-branches  running…
+✓ verify-branches  PASS  $0.3662  45.912s
+
+Run 20260809-134427.657374000-1 — 3 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+impl-payments    PASS (exit-only)     82ec21ec-7d32-4…     0.4027  
+impl-shared      PASS (exit-only)     0a0e43aa-ba26-4…     0.2776  
+verify-branches  PASS (self-reported) 35957631-89ed-4…     0.3662  
+-------------------------------------------------------------------------
+PLANNING COST: $0.3587
+TOTAL COST: $1.4052

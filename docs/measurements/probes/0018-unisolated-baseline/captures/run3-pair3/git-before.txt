@@ -1,0 +1,22 @@
+=== /tmp/omg-0018/fixtures/docs-site
+-- HEAD:      5c96937762ac475d3548625bd41e2240257285cc
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/docs-site  5c96937 [main]
+-- log:
+     5c96937 (HEAD -> main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/brand-assets
+-- HEAD:      512ebd7a5047709e4d293ee2c8dadeaae0610944
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/brand-assets  512ebd7 [main]
+-- log:
+     512ebd7 (HEAD -> main) initial fixture state
+-- status:
+

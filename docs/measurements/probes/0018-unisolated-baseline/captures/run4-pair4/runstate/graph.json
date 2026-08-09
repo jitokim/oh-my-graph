@@ -1,0 +1,68 @@
+{
+  "name": "order-currency-field",
+  "version": "1",
+  "nodes": [
+    {
+      "id": "proto-field",
+      "prompt": "You are working in the git repository at /tmp/omg-0018/fixtures/proto-defs (use absolute paths; the current working directory is a DIFFERENT repository, so always pass -C /tmp/omg-0018/fixtures/proto-defs to git).\n\nGoal: add a `currency` field to the `Order` message in /tmp/omg-0018/fixtures/proto-defs/proto/order.proto and document it in /tmp/omg-0018/fixtures/proto-defs/FIELDS.md.\n\nSteps:\n1. Read /tmp/omg-0018/fixtures/proto-defs/proto/order.proto and /tmp/omg-0018/fixtures/proto-defs/FIELDS.md in full. Note the proto syntax version, the existing fields of `Order`, and the highest field number already used in that message.\n2. Create and switch to the branch: `git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency` first; if it does not exist run `git -C /tmp/omg-0018/fixtures/proto-defs checkout -b feat/order-currency`, otherwise `git -C /tmp/omg-0018/fixtures/proto-defs checkout feat/order-currency`. Never commit on main/master.\n3. Add to the `Order` message a field named `currency` of type `string`, using the next unused field number in that message. Match the surrounding formatting, indentation and comment style exactly. Do not renumber or reorder existing fields.\n4. Add a matching entry for `currency` to FIELDS.md, following the exact structure of the entries already there (same table columns or same heading shape). Describe it as the ISO 4217 currency code for the order's monetary amounts.\n5. Commit granularity: feature-slice — this whole change is one feature slice, so make exactly ONE commit, and make it before you finish. Stage only the two files you edited, by explicit path: `git -C /tmp/omg-0018/fixtures/proto-defs add proto/order.proto FIELDS.md`. Never use `git add -A`, `git add .` or `git add -u`. Then commit with a Conventional Commits message such as `feat(order): add currency field to Order message`.\n6. Confirm with `git -C /tmp/omg-0018/fixtures/proto-defs log --oneline -1 feat/order-currency` and `git -C /tmp/omg-0018/fixtures/proto-defs status --short`.\n\nReview feedback follows — it is empty on the first pass. If it is non-empty, it is a critique of an earlier attempt at this graph's work; address only the parts of it that concern proto-defs (order.proto / FIELDS.md), amend or add commits on feat/order-currency accordingly, and leave the rest to the downstream node:\n{{ feedback.review }}\n\nNothing here can compile or lint proto. Do not claim the proto builds.\n\nFinal reply: report the exact field name, field type, field number, the full text of the line you added to order.proto, the FIELDS.md entry you added, and the commit hash and subject. This text is consumed by the next node, so be precise and factual.",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash(git *)"
+      ],
+      "timeout": "30m"
+    },
+    {
+      "id": "service-field",
+      "depends_on": [
+        "proto-field"
+      ],
+      "prompt": "You are working in the git repository at /tmp/omg-0018/fixtures/order-service (this is the directory oh-my-graph was invoked from). It is a SEPARATE repository from proto-defs; commit here only.\n\nThe proto change that was just made in /tmp/omg-0018/fixtures/proto-defs is described here:\n\n{{ artifacts.proto-field | inline }}\n\nGoal: carry that same `currency` field through the hand-written serializer in this repository and through its test.\n\nSteps:\n1. Explore this repository to find the hand-written serializer for the Order message and its test file (look for files mentioning `Order`, `Marshal`, `Serialize`, `Encode`, field numbers, or the other Order fields). Read both files in full before editing. This serializer is hand-written — there is no code generation step here, so the field must be wired in by hand.\n2. Create and switch to the branch: `git -C /tmp/omg-0018/fixtures/order-service rev-parse --verify feat/order-currency` first; if it does not exist run `git -C /tmp/omg-0018/fixtures/order-service checkout -b feat/order-currency`, otherwise check it out. Never commit on main/master.\n3. Add `currency` to the Order struct/type and to the serializer, using EXACTLY the field name, wire type and field number reported above. Keep the field ordering, error handling and helper functions consistent with how the existing fields are handled — reuse the existing per-field helpers rather than writing new encoding logic.\n4. Update the existing test so it covers `currency`: set a currency value on the fixture Order and extend the expected serialized bytes / assertions to match, in the same style the other fields are asserted. Include at least one case for the empty/unset currency if the existing tests treat unset fields that way.\n5. Commit granularity: feature-slice — one commit for this slice, made before you finish. Stage only the files you edited, by explicit path (`git -C /tmp/omg-0018/fixtures/order-service add <path> <path>`). Never use `git add -A`, `git add .` or `git add -u`. Commit message e.g. `feat(order): serialize currency field`.\n6. Confirm with `git -C /tmp/omg-0018/fixtures/order-service log --oneline -1 feat/order-currency` and `git -C /tmp/omg-0018/fixtures/order-service status --short`.\n\nReview feedback follows — empty on the first pass; if non-empty, address the parts of it that concern this repository's serializer and test:\n{{ feedback.review }}\n\nNo build or test command is available to you: you cannot run `go build` or `go test` here, so do NOT claim the code compiles or the test passes. Verify by careful reading only.\n\nFinal reply: list the files you changed, the exact serializer lines added, the test changes, and the commit hash and subject.",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Bash(git *)",
+        "Bash(ls *)"
+      ],
+      "timeout": "30m"
+    },
+    {
+      "id": "review",
+      "depends_on": [
+        "proto-field",
+        "service-field"
+      ],
+      "prompt": "Review, by reading only, the `currency` field change made across two repositories on the branch feat/order-currency.\n\nWhat the proto-defs node reported:\n{{ artifacts.proto-field | inline }}\n\nWhat the order-service node reported:\n{{ artifacts.service-field | inline }}\n\nInspect the actual committed state, not just those reports:\n- `git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency --stat` and `git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency`\n- `git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency --stat` and `git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency`\n- Read the current on-disk files as needed.\n\nCheck exactly these things:\n1. `currency` exists in the `Order` message in proto/order.proto with a field number that collides with no existing field and does not renumber existing fields.\n2. FIELDS.md documents `currency` and matches the structure of the neighbouring entries.\n3. The hand-written serializer in order-service encodes `currency` with the SAME field name, wire type and field number as the proto, and follows the file's existing per-field pattern.\n4. The test actually exercises `currency` and its expectations are internally consistent with the serializer's encoding (byte-level reasoning, since nothing can be run).\n5. Each repository has a commit on its own feat/order-currency branch, staged files are limited to the files the task required, and nothing landed on main/master.\n\nYou cannot compile or run tests; judge by reading and never claim otherwise.\n\nIf everything above holds, your entire reply is the single word APPROVED and nothing else. Otherwise reply with a concise, specific, actionable critique: for each problem give the repository, file, and the concrete correction required. Do not write APPROVED anywhere in a critique.",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git *)"
+      ],
+      "success_check": {
+        "result_matches": "^[*_`\\s]*APPROVED[*_`\\s]*$"
+      },
+      "feedback": {
+        "rerun": "proto-field",
+        "max": 2
+      }
+    },
+    {
+      "id": "branch-check",
+      "depends_on": [
+        "review"
+      ],
+      "prompt": "Verify, using git refs only, that the currency work landed on the feature branch in BOTH repositories. Neither repository has a git remote and there is no pull request anywhere, so do not use gh. Never inspect `git rev-parse --abbrev-ref HEAD` — assert on repository refs, not on what any working directory has checked out.\n\nRun and evaluate:\n1. `git -C /tmp/omg-0018/fixtures/proto-defs rev-parse --verify feat/order-currency` — must succeed.\n2. `git -C /tmp/omg-0018/fixtures/order-service rev-parse --verify feat/order-currency` — must succeed.\n3. `git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency:proto/order.proto` and `git -C /tmp/omg-0018/fixtures/proto-defs show feat/order-currency:FIELDS.md` — both must mention `currency`.\n4. `git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency --stat` and `git -C /tmp/omg-0018/fixtures/order-service show feat/order-currency` — the diff must add `currency` to both the serializer and its test.\n5. Determine each repository's default branch (`git -C <path> branch --list main master`) and show the same files from it (`git -C <path> show main:proto/order.proto`, etc.). The default branch must NOT contain `currency` — the work must exist only on feat/order-currency in each repository.\n\nYou cannot build or test anything, so assert nothing about compilation or passing tests — only about refs and file contents.\n\nIf every one of those checks holds, your entire reply is exactly the four bare characters PASS and nothing else: no markdown emphasis, no heading, no backticks, no preamble. Otherwise reply FAIL followed by which check failed and the exact command output that shows it.",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "success_check": {
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"
+      }
+    }
+  ]
+}

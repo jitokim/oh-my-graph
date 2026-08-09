@@ -1,0 +1,21 @@
+# run6-pair2b / node impl-chartlib — every Bash command in the session transcript, in order
+# transcript: impl-chartlib--41fc967c-f9a7-47f6-bd3d-c99c2a348aa6.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib status && git -C /tmp/omg-0018/fixtures/chart-lib branch -a && git -C /tmp/omg-0018/fixtures/chart-lib log --oneline -3
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib checkout -b feature/ascii-bar-chart main
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib add chartlib/render.py chartlib/__init__.py && git -C /tmp/omg-0018/fixtures/chart-lib commit -m "feat: add ASCII bar-chart renderer"
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib add README.md CHANGELOG.md && git -C /tmp/omg-0018/fixtures/chart-lib commit -m "docs: document render_bar_chart in README and CHANGELOG"
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib log --oneline -3 && echo "---" && git -C /tmp/omg-0018/fixtures/chart-lib status && echo "---" && git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main -1
+

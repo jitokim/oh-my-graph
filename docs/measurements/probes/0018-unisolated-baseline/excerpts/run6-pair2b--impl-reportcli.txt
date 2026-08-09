@@ -1,0 +1,15 @@
+# run6-pair2b / node impl-reportcli — every Bash command in the session transcript, in order
+# transcript: impl-reportcli--7796cd4a-457d-4707-97fc-0dcf8c4b4ac5.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli checkout -b feature/report-bar-chart main 2>&1; git -C /tmp/omg-0018/fixtures/chart-lib branch --show-current
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli add reportcli/main.py && git -C /tmp/omg-0018/fixtures/report-cli commit -q -m "feat: add --chart flag to render rows as an ASCII bar chart" && git -C /tmp/omg-0018/fixtures/report-cli log --oneline -2
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli add tests/test_main.py && git -C /tmp/omg-0018/fixtures/report-cli commit -q -m "test: cover --chart output and the default table path" && git -C /tmp/omg-0018/fixtures/report-cli log --oneline -3 && git -C /tmp/omg-0018/fixtures/report-cli status && git -C /tmp/omg-0018/fixtures/report-cli branch -v
+

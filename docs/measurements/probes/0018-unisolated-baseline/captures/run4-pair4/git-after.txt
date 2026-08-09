@@ -1,0 +1,26 @@
+=== /tmp/omg-0018/fixtures/order-service
+-- HEAD:      ab306fb2447a30c4018f91244ae42db6c73d7981
+-- branch:    feat/order-currency
+-- branches:
+     * feat/order-currency
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/order-service  ab306fb [feat/order-currency]
+-- log:
+     ab306fb (HEAD -> feat/order-currency) feat(order): serialize currency field
+     95b0d12 (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/proto-defs
+-- HEAD:      26ded5443ada470e80f340f68d30e1d1f517d7fa
+-- branch:    feat/order-currency
+-- branches:
+     * feat/order-currency
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/proto-defs  26ded54 [feat/order-currency]
+-- log:
+     26ded54 (HEAD -> feat/order-currency) feat(order): add currency field to Order message
+     f5a7c9e (main) initial fixture state
+-- status:
+

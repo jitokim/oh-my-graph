@@ -1,0 +1,40 @@
+# run2-pair2 / node verify-branches — every Bash command in the session transcript, in order
+# transcript: verify-branches--0e316c29-5e88-460e-a518-f0ac5ce93660.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib rev-parse --verify feat/ascii-bars; echo "---branches---"; git -C /tmp/omg-0018/fixtures/chart-lib branch --list main master
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli rev-parse --verify feat/ascii-bars; echo "---branches---"; git -C /tmp/omg-0018/fixtures/report-cli branch --list main master
+
+--- #3  [dir: /tmp/omg-0018/fixtures/chart-lib]
+cd /tmp/omg-0018/fixtures/chart-lib
+echo "=== sha feat ==="; git rev-parse feat/ascii-bars
+echo "=== sha main ==="; git rev-parse main
+echo "=== log main..feat ==="; git log --oneline main..feat/ascii-bars
+echo "=== diff names ==="; git diff --name-only main..feat/ascii-bars
+echo "=== render.py render_bar ==="; git show feat/ascii-bars:chartlib/render.py | grep -n "def render_bar("
+echo "=== CHANGELOG render_bar ==="; git show feat/ascii-bars:CHANGELOG.md | grep -n "render_bar"
+
+--- #4  [dir: /tmp/omg-0018/fixtures/report-cli]
+cd /tmp/omg-0018/fixtures/report-cli
+echo "=== sha feat ==="; git rev-parse feat/ascii-bars
+echo "=== sha main ==="; git rev-parse main
+echo "=== log main..feat ==="; git log --oneline main..feat/ascii-bars
+echo "=== diff names ==="; git diff --name-only main..feat/ascii-bars
+echo "=== diff bars ==="; git diff main..feat/ascii-bars | grep -n -- "--bars" | head -20
+echo "=== diff render_bar ==="; git diff main..feat/ascii-bars | grep -n "render_bar" | head -20
+
+--- #5  [dir: /tmp/omg-0018/fixtures/report-cli]
+echo "=== sha feat ==="; git -C /tmp/omg-0018/fixtures/chart-lib rev-parse feat/ascii-bars
+echo "=== sha main ==="; git -C /tmp/omg-0018/fixtures/chart-lib rev-parse main
+echo "=== log main..feat ==="; git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main..feat/ascii-bars
+echo "=== diff names ==="; git -C /tmp/omg-0018/fixtures/chart-lib diff --name-only main..feat/ascii-bars
+
+--- #6  [dir: /tmp/omg-0018/fixtures/report-cli]
+echo "=== render.py def render_bar ==="; git -C /tmp/omg-0018/fixtures/chart-lib show feat/ascii-bars:chartlib/render.py | grep -n "def render_bar("
+echo "=== CHANGELOG render_bar ==="; git -C /tmp/omg-0018/fixtures/chart-lib show feat/ascii-bars:CHANGELOG.md | grep -n "render_bar"
+

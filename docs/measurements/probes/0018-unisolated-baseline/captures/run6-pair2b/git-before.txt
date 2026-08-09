@@ -1,0 +1,22 @@
+=== /tmp/omg-0018/fixtures/report-cli
+-- HEAD:      c2c5d3dc3ed70bdad90e6119a1d5ccbb886e10df
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/report-cli  c2c5d3d [main]
+-- log:
+     c2c5d3d (HEAD -> main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/chart-lib
+-- HEAD:      54aa60663f9aa5fd0922dfc19df6f5757a1af0a3
+-- branch:    main
+-- branches:
+     * main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/chart-lib  54aa606 [main]
+-- log:
+     54aa606 (HEAD -> main) initial fixture state
+-- status:
+

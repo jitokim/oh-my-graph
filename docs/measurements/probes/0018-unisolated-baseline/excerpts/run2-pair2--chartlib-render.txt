@@ -1,0 +1,24 @@
+# run2-pair2 / node chartlib-render — every Bash command in the session transcript, in order
+# transcript: chartlib-render--59cfe637-4286-4c1a-a494-36e4bf3140a6.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib status && echo "---BRANCHES---" && git -C /tmp/omg-0018/fixtures/chart-lib branch -a && echo "---TREE---" && ls -R /tmp/omg-0018/fixtures/chart-lib
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib status --short --branch
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib checkout -b feat/ascii-bars
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib add chartlib/render.py CHANGELOG.md && git -C /tmp/omg-0018/fixtures/chart-lib status --short
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib commit -m "feat(render): add render_bar ASCII bar chart" -m "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib log --oneline -1 feat/ascii-bars && git -C /tmp/omg-0018/fixtures/chart-lib rev-parse feat/ascii-bars && git -C /tmp/omg-0018/fixtures/chart-lib status --short --branch
+

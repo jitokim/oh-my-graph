@@ -1,0 +1,12 @@
+# run5-pair1b / node verify-branches — every Bash command in the session transcript, in order
+# transcript: verify-branches--27c1f038-02ed-4492-859c-9ea41f135922.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/shared-config
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+git -C /tmp/omg-0018/fixtures/payments-api rev-parse --verify feat/configurable-request-timeout; echo "rc=$?"; git -C /tmp/omg-0018/fixtures/shared-config rev-parse --verify feat/payment-client-timeout-key; echo "rc=$?"
+
+--- #2  [dir: /private/tmp/omg-0018/fixtures/payments-api]
+for r in /tmp/omg-0018/fixtures/payments-api /tmp/omg-0018/fixtures/shared-config; do echo "== $r"; git -C "$r" rev-parse --verify main 2>&1; echo "main rc=$?"; git -C "$r" rev-parse --verify master 2>&1; echo "master rc=$?"; done
+

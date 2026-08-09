@@ -1,0 +1,36 @@
+# run6-pair2b / node review — every Bash command in the session transcript, in order
+# transcript: review--c6c34d2d-40c8-4cb4-9f7c-567e1bdab417.jsonl
+# target (foreign checkout): /private/tmp/omg-0018/fixtures/chart-lib
+# [dir: …] is the shell's working directory, tracked through persistent `cd`s;
+# a `git -C <path>` argument overrides it and is what actually decides the repository.
+
+--- #1  [dir: /tmp/omg-0018/fixtures/chart-lib]
+cd /tmp/omg-0018/fixtures/chart-lib && git log --oneline --all --decorate | head -30 && echo "=== STATUS ===" && git status --porcelain && echo "=== BRANCHES ===" && git branch -av
+
+--- #2  [dir: /tmp/omg-0018/fixtures/report-cli]
+cd /tmp/omg-0018/fixtures/report-cli && git log --oneline --all --decorate | head -30 && echo "=== STATUS ===" && git status --porcelain && echo "=== BRANCHES ===" && git branch -av
+
+--- #3  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+cat /tmp/omg-0018/omghome6/runs/20260809-135510.006736000-1/impl-chartlib.out; echo "=========== REPORTCLI ==========="; cat /tmp/omg-0018/omghome6/runs/20260809-135510.006736000-1/impl-reportcli.out
+
+--- #4  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib log --oneline --all --decorate | head -30; echo "=== STATUS ==="; git -C /tmp/omg-0018/fixtures/chart-lib status --porcelain; echo "=== BRANCHES ==="; git -C /tmp/omg-0018/fixtures/chart-lib branch -av
+
+--- #5  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib diff main..feature/ascii-bar-chart
+
+--- #6  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli diff main..feature/report-bar-chart
+
+--- #7  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+echo "--- chart-lib commit contents ---"; git -C /tmp/omg-0018/fixtures/chart-lib log --stat --oneline main..feature/ascii-bar-chart; echo; echo "--- report-cli commit contents ---"; git -C /tmp/omg-0018/fixtures/report-cli log --stat --oneline main..feature/report-bar-chart; echo; echo "--- chart-lib tree ---"; git -C /tmp/omg-0018/fixtures/chart-lib ls-tree -r --name-only feature/ascii-bar-chart; echo "--- report-cli tree ---"; git -C /tmp/omg-0018/fixtures/report-cli ls-tree -r --name-only feature/report-bar-chart; echo "--- untracked/ignored files on disk ---"; git -C /tmp/omg-0018/fixtures/chart-lib status --porcelain --ignored; git -C /tmp/omg-0018/fixtures/report-cli status --porcelain --ignored
+
+--- #8  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+for r in chart-lib report-cli; do echo "=== $r ==="; git -C /tmp/omg-0018/fixtures/$r log --oneline main; echo "-- remotes:"; git -C /tmp/omg-0018/fixtures/$r remote -v; echo "-- stash:"; git -C /tmp/omg-0018/fixtures/$r stash list; echo "-- main reflog:"; git -C /tmp/omg-0018/fixtures/$r reflog show main 2>/dev/null | head -5; done
+
+--- #9  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/chart-lib log --oneline main; git -C /tmp/omg-0018/fixtures/chart-lib remote -v; git -C /tmp/omg-0018/fixtures/chart-lib stash list
+
+--- #10  [dir: /private/tmp/omg-0018/fixtures/report-cli]
+git -C /tmp/omg-0018/fixtures/report-cli log --oneline main; git -C /tmp/omg-0018/fixtures/report-cli remote -v; git -C /tmp/omg-0018/fixtures/report-cli stash list
+

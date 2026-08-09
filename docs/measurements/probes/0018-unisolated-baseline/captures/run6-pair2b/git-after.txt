@@ -1,0 +1,28 @@
+=== /tmp/omg-0018/fixtures/report-cli
+-- HEAD:      bee3d741c108c3fa33e37a1cb8333286dcc94927
+-- branch:    feature/report-bar-chart
+-- branches:
+     * feature/report-bar-chart
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/report-cli  bee3d74 [feature/report-bar-chart]
+-- log:
+     bee3d74 (HEAD -> feature/report-bar-chart) test: cover --chart output and the default table path
+     0fd3e89 feat: add --chart flag to render rows as an ASCII bar chart
+     c2c5d3d (main) initial fixture state
+-- status:
+
+=== /tmp/omg-0018/fixtures/chart-lib
+-- HEAD:      e3e5db6ebbd07185ab6758ec1780ea9ef16ccc73
+-- branch:    feature/ascii-bar-chart
+-- branches:
+     * feature/ascii-bar-chart
+       main
+-- worktrees:
+     /private/tmp/omg-0018/fixtures/chart-lib  e3e5db6 [feature/ascii-bar-chart]
+-- log:
+     e3e5db6 (HEAD -> feature/ascii-bar-chart) docs: document render_bar_chart in README and CHANGELOG
+     5fac810 feat: add ASCII bar-chart renderer
+     54aa606 (main) initial fixture state
+-- status:
+

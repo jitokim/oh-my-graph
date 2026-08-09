@@ -1,0 +1,77 @@
+No build verification configured. Detected no build signal in this directory.
+Nothing in this run will compile or test your code — a planned node cannot
+run a build command, and no node's PASS carries build evidence.
+Re-run with
+  --verify-cmd '<your build command>'
+to have the engine verify the result itself.
+Planning a graph for goal "The payment client's request timeout is hard-coded. Make it configurable in /tmp/omg-0018/fixtures/payments-api, and add the matching key with its documentation to the shared settings repository at /tmp/omg-0018/fixtures/shared-config. Land each repository's change on its own feature branch, committed. There are no remotes and no pull requests here, so do not use gh."...
+Planned graph "configurable-payment-timeout" (3 nodes, planning cost $0.3487, saved to /tmp/omg-0018/omghome5/runs/20260809-135421.003180000-1/graph.json):
+  - client-timeout [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *), Bash(grep *)]
+  - shared-config-key (after client-timeout) [tools: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(ls *), Bash(cat *), Bash(grep *)]
+  - verify-branches (after shared-config-key) [tools: Bash(git *)]
+  skill scan: 35 skill(s) from <home>/.claude/skills
+  skill activation: ENABLED on 3 of 3 planned node(s)
+    35 skill(s) staged (adds ~6020 tokens to EVERY node invocation, including retries
+    and feedback re-runs)
+    [35 staged-skill description line(s) removed for publication — the operator's local skill corpus, unrelated to this measurement; see scripts/scrub-captures.sh]
+  Which skill a node uses is chosen by the model at run time from those descriptions.
+  It is NOT knowable here; each invocation is recorded in that node's session transcript.
+  MEASURED YIELD (44 spawns against this exact argv — ADR 0017; the raw record is
+    docs/measurements/0017-skill-activation-yield.md): the planner's own prompt reached
+    for a skill 0 of 9 times unaided, and 8 of 9 with the one fixed sentence oh-my-graph
+    now appends to every activated prompt. Whether the WORK is better is NOT measured:
+    the two arms were indistinguishable on the one task checkable mechanically, at
+    $0.205 a spawn against $0.134, and an output-contract node activates under neither.
+    The tokens above are charged either way.
+  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load
+    (ADR 0004 layer 1 stays ""); a declared scope like Bash(git *) is still enforced.
+    The only change is that the Skill tool now exists for these nodes.
+  The staged corpus is re-materialized and verified before every node spawn, so a node
+    cannot leave a skill behind for a later one. Your own skill files are read once, at
+    staging: editing them mid-run neither changes this run nor stops it.
+  Turn it off with --no-skill-activation.
+  Not scanned: plugin-provided skills (~/.claude/plugins) and project skills (./.claude/skills).
+  Both are out of scope (ADR 0012, held by ADR 0017), so a skill you installed through a
+  plugin is not staged — that is a stated limit, not a failure.
+  Planned nodes run isolated: none of your user/project/local settings load, so a declared
+  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
+  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
+  ! not isolated: /private/tmp/omg-0018/fixtures/shared-config — a local git checkout
+    named by the goal and nodes "shared-config-key", "verify-branches", written as /tmp/omg-0018/fixtures/shared-config
+  in auto mode oh-my-graph isolates no checkout at all — not even the one it was invoked
+  from (/private/tmp/omg-0018/fixtures/payments-api), where every planned node works directly in your tree
+  (cwd: and worktree: are rejected at plan time). The difference is only whose tree it is:
+  the checkouts above are ones you did not open for this run, and oh-my-graph creates no
+  worktree and takes no lock in them, so a node that switches a branch there changes a
+  directory another process may be standing in. If a node must work in one, say in the goal
+  that it has to create its own git worktree there first and stay inside it. See SECURITY.md,
+  "Isolation stops at the invocation repository".
+  This is a heuristic read of the plan's text, not a guarantee: it reports absolute paths
+  written in the goal or in a planned prompt that resolve into a git checkout elsewhere. It
+  cannot see a path a node builds at run time, one arriving through an --input or a parent's
+  artifact, a repository reached by a relative path, or what a node will actually do once it
+  is there, and it deliberately says nothing about a tool installation's own checkout (a
+  package or version manager under /usr, /opt or a dot-directory of your home) — and it is a
+  warning, not a refusal: a multi-repository goal is legitimate, oh-my-graph simply cannot
+  isolate it.
+
+Running graph "configurable-payment-timeout" (run 20260809-135421.003180000-1)
+
+▶ client-timeout  running…
+✓ client-timeout  PASS  $0.4088  1m17.618s
+▶ shared-config-key  running…
+✓ shared-config-key  PASS  $0.3254  37.571s
+▶ verify-branches  running…
+✎ verify-branches  reply saved: /tmp/omg-0018/omghome5/runs/20260809-135421.003180000-1/failed/verify-branches.out
+✗ verify-branches  FAILED: node "verify-branches" failed success_check result_matches: result did not match /^[*_`\s]*PASS[*_`\s]*$/
+
+Run 20260809-135421.003180000-1 — 3 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+client-timeout   PASS (exit-only)     b6ba72e5-5cda-4…     0.4088  
+shared-config-key PASS (exit-only)     0a246de0-a5f8-4…     0.3254  
+verify-branches  FAIL                 27c1f038-02ed-4…     0.1697  node "verify-branches" failed success_check result_matches: result did not match /^[*_`\s]*PASS[*_`\s]*$/
+-------------------------------------------------------------------------
+PLANNING COST: $0.3487
+TOTAL COST: $1.2526
+oh-my-graph: run completed with failed node(s): verify-branches
