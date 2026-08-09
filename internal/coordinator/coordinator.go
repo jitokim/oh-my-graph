@@ -1293,6 +1293,11 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 // (validatePlannedNodes), so this pattern is the whole gate with no evidence
 // command behind it.
 //
+// No graph-side mechanism can share this with the YAML spelling of the same
+// pin (`graphs/fragments/e2e-verify.yaml`), so a test does it instead:
+// TestPlannedVerdictPatternMatchesE2EVerifyFragment fails unless the two stay
+// byte-identical.
+//
 // It reaches the planner through strconv.Quote, not hand-doubled backslashes:
 // the reply is JSON, where a lone \s is not a valid string escape, so the
 // literal the planner must copy is "^[*_`\\s]*PASS[*_`\\s]*$" — one place to

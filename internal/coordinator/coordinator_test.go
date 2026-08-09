@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/jitokim/oh-my-graph/graphs"
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -1067,5 +1070,40 @@ func TestPlan_ContinuationFencesRemainingWithAPerCallNonce(t *testing.T) {
 	}
 	if got := countEngineFences(hostile, hostileNonce); got != want {
 		t.Errorf("a hostile remaining raised the engine fence count to %d, want %d — the quote forged a fence", got, want)
+	}
+}
+
+// TestPlannedVerdictPatternMatchesE2EVerifyFragment pins the one whole-reply
+// verdict rule that no graph-side mechanism can deduplicate.
+// plannedVerdictPattern is a Go string rendered into the planner's prompt;
+// `graphs/fragments/e2e-verify.yaml` spells the same idiom in YAML, and a
+// fragment cannot reach into a Go constant (ADR 0013: a fragment is a node's
+// behavior, and the planner's check node is not a shipped node at all). So
+// without this test the only thing holding the two spellings together is prose
+// — a rule only DESIGN.md knows, which is the failure mode that same section
+// names. Byte equality is the assertion: if the shipped idiom is corrected, the
+// planner's copy is corrected in the same commit or this fails.
+func TestPlannedVerdictPatternMatchesE2EVerifyFragment(t *testing.T) {
+	const fragment = "fragments/e2e-verify.yaml"
+	raw, err := graphs.FS.ReadFile(fragment)
+	if err != nil {
+		t.Fatalf("reading the shipped fragment: %v", err)
+	}
+	var frag struct {
+		Node struct {
+			SuccessCheck struct {
+				ResultMatches string `yaml:"result_matches"`
+			} `yaml:"success_check"`
+		} `yaml:"node"`
+	}
+	if err := yaml.Unmarshal(raw, &frag); err != nil {
+		t.Fatalf("parsing %s: %v", fragment, err)
+	}
+	got := frag.Node.SuccessCheck.ResultMatches
+	if got == "" {
+		t.Fatalf("%s declares no success_check.result_matches — the pin this test compares against is gone", fragment)
+	}
+	if got != plannedVerdictPattern {
+		t.Errorf("the two spellings of the whole-reply PASS pin drifted:\n  %s: %q\n  coordinator.plannedVerdictPattern: %q", fragment, got, plannedVerdictPattern)
 	}
 }

@@ -128,27 +128,14 @@ nodes:
         could own. The e2e verdict was: {{ artifacts.e2e-a | inline }}
 
   - id: pr-a
-    type: claude-run
+    use: pr-publish
     depends_on: [review-a]
     worktree: lane-a
-    prompt: |
-      Push this worktree's branch and open a DRAFT pull request with
-      `gh pr create --draft`. Put the review in the PR body:
-        {{ artifacts.review-a | inline }}
-      Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
-      promise to open afterwards is never opened. START your reply with the
-      bare token PR followed immediately by the pull request's URL
-      (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
-      with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
-      Anything you need to qualify goes AFTER the URL, never before it: a
-      line of context ahead of the token fails this node even when the PR
-      is open.
-    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
-    permission_mode: dontAsk
-    handoff: artifact
-    # The URL is the payload that makes this an assertion: gh prints one only
-    # once the PR exists, so a promise to open it later cannot match.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S' }
+    with:
+      publish: |-
+        Push this worktree's branch and open a DRAFT pull request with
+        `gh pr create --draft`. Put the review in the PR body:
+          {{ artifacts.review-a | inline }}
 
   # ---- lane B: docs lane (worktree lane-b) ----------------------------------
   - id: dev-b
@@ -210,24 +197,13 @@ nodes:
         scope: docs files only — flag anything that strays into code another
         lane could own. The e2e verdict was: {{ artifacts.e2e-b | inline }}
 
+  # Same fragment as lane A's PR node — only the review it quotes differs.
   - id: pr-b
-    type: claude-run
+    use: pr-publish
     depends_on: [review-b]
     worktree: lane-b
-    prompt: |
-      Push this worktree's branch and open a DRAFT pull request with
-      `gh pr create --draft`. Put the review in the PR body:
-        {{ artifacts.review-b | inline }}
-      Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
-      promise to open afterwards is never opened. START your reply with the
-      bare token PR followed immediately by the pull request's URL
-      (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
-      with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
-      Anything you need to qualify goes AFTER the URL, never before it: a
-      line of context ahead of the token fails this node even when the PR
-      is open.
-    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
-    permission_mode: dontAsk
-    handoff: artifact
-    # Same shape as lane A's pr node.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S' }
+    with:
+      publish: |-
+        Push this worktree's branch and open a DRAFT pull request with
+        `gh pr create --draft`. Put the review in the PR body:
+          {{ artifacts.review-b | inline }}

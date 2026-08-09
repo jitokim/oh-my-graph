@@ -94,25 +94,12 @@ nodes:
       focus: Also check adherence to DESIGN.md's invariants (the four exec seams, env scrub, no Agent SDK).
 
   - id: pr
-    type: claude-run
+    use: pr-publish
     depends_on: [review-security, review-style]
     cwd: "{{ inputs.repo }}"
-    prompt: |
-      Push the current branch and open a DRAFT pull request with `gh pr create --draft`.
-      Put both reviews in the PR body:
-        Security review: {{ artifacts.review-security | inline }}
-        Style review:    {{ artifacts.review-style | inline }}
-      Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
-      promise to open afterwards is never opened. START your reply with the
-      bare token PR followed immediately by the pull request's URL
-      (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
-      with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
-      Anything you need to qualify goes AFTER the URL, never before it: a
-      line of context ahead of the token fails this node even when the PR
-      is open.
-    allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
-    permission_mode: dontAsk
-    handoff: artifact
-    # The URL is the payload that makes this an assertion: gh prints one only
-    # once the PR exists, so a promise to open it later cannot match.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S' }
+    with:
+      publish: |-
+        Push the current branch and open a DRAFT pull request with `gh pr create --draft`.
+        Put both reviews in the PR body:
+          Security review: {{ artifacts.review-security | inline }}
+          Style review:    {{ artifacts.review-style | inline }}
