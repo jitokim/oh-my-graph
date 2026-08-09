@@ -913,13 +913,15 @@ pattern. Three rules, none of them new:
   `UNSETTLED` costs a glance and a refused merge; it can never cost a merge of
   unchecked code. Where a premature answer *would* be expensive — `RECHECKED`
   — the token names a completed check, not a state. The rest of that price is
-  paid in the graph's terminal state, and it should be said out loud: the case
-  where the checks outlast the wait used to end the run RED (`merge` promised,
-  and the anchored verdict rejected the promise); it now ends GREEN, having
-  merged nothing. Admitting a state word makes the green-run-merged-nothing
-  class *rarer* — the common case, where restarted checks conclude in minutes,
-  is genuinely fixed — but it does not remove it, and a graph that buys this
-  exception owes its header that sentence.
+  paid in the graph's terminal state, and it should be said out loud: an
+  `UNSETTLED` the operator approves over ends the run GREEN, having merged
+  nothing. That outcome is not what the state word bought — before `recheck`
+  existed, `merge` answered `WITHHELD` to the same slow checks, which also
+  passes, and three of the five hits that motivated the node ended exactly
+  there. Admitting a state word makes the green-run-merged-nothing class
+  *rarer* — the common case, where restarted checks conclude in minutes, now
+  merges — but it does not remove it, and a graph that buys this exception owes
+  its header that sentence.
 
 Widening the separator class between a token and its payload is the one
 tolerance worth buying node by node, and the currency is what a false FAIL

@@ -273,9 +273,16 @@ change than widening what the check accepts.
 > `test` check and CodeRabbit's review after the wait had gone by, and `merge`
 > met pending checks. The graph's own gate comment said so and mitigated it
 > with a human instruction — *"confirm CI and review status on the FINAL SHA
-> yourself before approving"* — which failed five times in one day, in this
-> node's characteristic way: `merge` waited in the foreground, ran out of turn,
-> and answered with a promise, which the anchored pattern correctly rejected.
+> yourself before approving"* — which failed five times between 2026-08-04 and
+> 2026-08-08. Only once did it fail in this node's characteristic way: `merge`
+> waited in the foreground, ran out of turn, and answered with a promise, which
+> the anchored pattern correctly rejected (run `20260808-004132`, PR #137).
+> Three times it failed in the way §5 is actually about — `merge` answered
+> `WITHHELD` to a review triage's own push had restarted, which PASSES, so the
+> run ended green having merged nothing (`20260804-170325` PR #111,
+> `20260807-144230` PR #134, `20260807-154947` PR #137). The fifth predates the
+> anchor entirely: the same promise passed under `exit_zero` alone
+> (`20260804-143531`, PR #107) — the run this ADR's §1 already cites.
 >
 > The repair is a node, not a pattern change and not a feedback arc:
 > `triage → recheck → approve-merge → merge`. `recheck` waits in the
@@ -295,8 +302,9 @@ change than widening what the check accepts.
 > case — a recheck that legitimately timed out — instead of being the routine
 > answer to pending checks. Not that the green-run-merged-nothing outcome is
 > gone: an `UNSETTLED` the operator approves over still ends the run green
-> having merged nothing, where before the same slow checks ended it RED on
-> `merge`'s rejected promise. It is made RARE (the common case — restarted
+> having merged nothing — which is exactly where three of the five hits above
+> already ended, by way of `merge`'s own `WITHHELD`. It is made RARE (the
+> common case — restarted
 > checks that conclude in minutes — is what `recheck` actually fixes) and it is
 > made VISIBLE (a stated verdict naming the SHA and the pending entry, rather
 > than a promise). Rare and visible is the whole claim; the header and DESIGN.md

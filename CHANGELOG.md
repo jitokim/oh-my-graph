@@ -21,10 +21,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   checks on a SHA nothing had checked but triage's own `make ... local`. The
   graph knew: the comment above `approve-merge` named the gap and mitigated it
   by asking the human to *"confirm CI and review status on the FINAL SHA
-  yourself before approving"*. That mitigation failed five times in one day, in
-  this node's characteristic way — `merge` waited in the foreground, ran out of
-  turn, and answered with a promise (*"checks are still running, waiting in the
-  foreground"*), which the anchored verdict correctly rejected, halting the run.
+  yourself before approving"*. That mitigation failed five times between
+  2026-08-04 and 2026-08-08, and the loud shape was the rare one. Three times
+  `merge` met the review triage's own push had restarted and answered
+  `WITHHELD` — which *passes*, so the run ended **green having merged nothing**
+  (run `20260804-170325`, PR #111, and `20260807-154947`, PR #137, both on a
+  re-review still `PENDING` on the triage commit; `20260807-144230`, PR #134, on
+  a *new* `CHANGES_REQUESTED` against it). Once it failed in this node's
+  characteristic way — waited in the foreground, ran out of turn, and answered
+  with a promise (*"checks are still running … waiting in the foreground until
+  they conclude"*), which the anchored verdict correctly rejected, halting the
+  run (`20260808-004132`, PR #137). And once the same promise **passed**,
+  because it predates the anchor: `merge`'s `success_check` was still
+  `exit_zero` alone (`20260804-143531`, PR #107, *"CodeRabbit's re-review is
+  mid-flight … poller armed"*).
 
   The chain is now `triage → recheck → approve-merge → merge`. `recheck` polls
   synchronously under its own 20m timeout, exactly as `ready-and-wait` does and
@@ -64,12 +74,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   rather than the routine answer to pending checks (ADR 0019 §5).
 
   **What the third verdict costs, stated plainly**, because the shape of the
-  win is easy to overstate: the case where the checks outlast the wait used to
-  end the run **red** — `merge` waited, promised, and the anchored verdict
-  rejected the promise — and now ends **green** via `UNSETTLED → WITHHELD`,
-  having merged nothing. The green-run-merged-nothing outcome is made *rarer*,
-  not removed; the common case, where restarted checks conclude in a few
-  minutes, is what genuinely improves. What is contained is the expensive half:
+  win is easy to overstate: the case where the checks outlast the wait ends the
+  run **green** via `UNSETTLED → WITHHELD`, having merged nothing. That is not
+  a state this change introduced — it is the state three of the five hits above
+  already reached, by way of `merge`'s own `WITHHELD`, and the change is that
+  the fact now has a name, a SHA and a place in the chain instead of being
+  discovered at merge time. The green-run-merged-nothing outcome is made
+  *rarer* and *visible*, not removed; the common case, where restarted checks
+  conclude in a few minutes, is what genuinely improves — those runs now merge
+  where they used to withhold. What is contained is the expensive half:
   `merge` answers `WITHHELD` to anything not beginning `RECHECKED`, so an
   `UNSETTLED` written without waiting costs an operator's glance and a refused
   merge, never a merge of unchecked code. Both graph header and DESIGN.md say

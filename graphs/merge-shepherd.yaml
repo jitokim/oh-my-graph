@@ -42,12 +42,16 @@
 # a FALLBACK, not the routine answer to pending checks: recheck is what waits
 # for those now, and merge reaches WITHHELD only when recheck came back
 # UNSETTLED and the operator approved the gate anyway. Say the trade plainly:
-# before recheck existed, a wait that outlasted the run ended it RED (merge
-# waited, ran out of turn, promised, and the anchored verdict rejected the
-# promise). Now the checks-outlast-the-wait case ends GREEN — UNSETTLED passes
-# and merge answers WITHHELD. The common case (a fix pushed, checks restart and
-# conclude in minutes) genuinely improves; the slow case is rarer than it was
-# and still terminates green having merged nothing. What must never pass is
+# the checks-outlast-the-wait case ends GREEN having merged nothing — UNSETTLED
+# passes and merge answers WITHHELD — and it ended green before recheck too,
+# because WITHHELD was then the ROUTINE answer to a review triage's own push had
+# restarted, and WITHHELD passes. Three of the five observed hits ended exactly
+# that way (see the recheck comment). So this node does not turn a red
+# terminal state green; it makes that state RARER — the common case, a fix
+# pushed and checks that restart and conclude in minutes, now merges where it
+# used to withhold — and VISIBLE, since recheck names the SHA and the pending
+# entry before the gate instead of merge discovering it after. What must never
+# pass is
 # the third thing a model writes: a promise to merge later. That reply once
 # ended a real run of this graph green with nothing merged, and the only reason
 # the operator noticed was that `git pull` did not move.
@@ -223,10 +227,23 @@ nodes:
   # CodeRabbit back for an incremental review — both of which ready-and-wait
   # already waited out, on the SHA that push replaced. Without this node the
   # graph asks the human at the gate to perform the wait the graph exists to
-  # perform, and the observed failure is not that the human refuses: `merge`
-  # waits in the foreground instead, runs out of turn, and answers with a
-  # promise ("checks are still running, waiting in the foreground"), which the
-  # anchored verdict correctly rejects, so the run halts. Five times in one day.
+  # perform, and the observed failure is not that the human refuses — it is
+  # that `merge` meets the restarted check itself. Five runs between 2026-08-04
+  # and 2026-08-08 hit it, and the loud shape was the rare one:
+  #   - THREE times merge answered WITHHELD to the review this push restarted,
+  #     which PASSES, so the run ended green having merged nothing —
+  #     20260804-170325 (PR #111) and 20260807-154947 (PR #137), both on a
+  #     re-review still PENDING on the triage commit; 20260807-144230 (PR #134),
+  #     on a new CHANGES_REQUESTED against it.
+  #   - ONCE it waited in the foreground instead, ran out of turn, and answered
+  #     with a promise ("checks are still running ... waiting in the foreground
+  #     until they conclude"), which the anchored verdict correctly rejected, so
+  #     the run halted — 20260808-004132 (PR #137).
+  #   - ONCE that same promise PASSED, because it predates the anchor: merge's
+  #     success_check was `exit_zero` alone — 20260804-143531 (PR #107). That is
+  #     the run the header's "git pull did not move" sentence is about.
+  # Three of the five are therefore the quiet failure, not the halt: the graph
+  # went green and shipped nothing.
   #
   # It cannot be a `feedback:` arc, for two independent reasons, both checked
   # against the code and not just the ADRs:
