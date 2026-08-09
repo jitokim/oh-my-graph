@@ -53,6 +53,17 @@ every node's session transcript located through `NodeRecord.SessionID`.
 **Judged from the transcripts.** No row rests on a node's own summary, and
 none rests on the run feed. `git-after.txt` is corroboration only.
 
+**The capability was there — the precondition of reading 0% as a choice.** All
+twenty nodes' persisted `tool_policies` in `captures/*/runstate/state.json`
+carry `Bash(git *)` in `allowed_tools`, so `git worktree add` was permitted in
+every row of the population; nothing here is a node that wanted to isolate and
+could not. The same twenty carry `Task` **and** `Agent` in `disallowed_tools`,
+so no node could delegate a command to a sidechain — which is what makes
+`scripts/extract-commands.py`'s Bash-only extraction complete rather than
+merely convenient. ADR 0017's measurement is the precedent for stating this
+rather than assuming it: a 0-of-3 there read as disobedience until the
+capability hole behind it was found.
+
 The raw transcripts are **not** committed: a node's system prompt contains the
 operator's entire local skill corpus, and this repository is public and keeps
 personal paths out of tracked files. `scripts/scrub-captures.sh` removes them,
@@ -67,6 +78,15 @@ machine that took the sample.
 
 Every path in every goal is a throwaway fixture under `/tmp/omg-0018/fixtures`
 with no remote. Nothing in this measurement references a real checkout.
+
+**The seal is a self-report, corroborated but not independently timestamped.**
+PREREG.md, this report, the ADR entry and all six captures land in a single
+commit taken after the last run, so "sealed before the first spawn" rests on
+the file's own assertion plus internal corroboration — its fixture table names
+only pairs 1 and 2 and its stop rule targets ≥5, staleness a document written
+afterwards would not have. That is the one claim in this archive of the class
+PREREG.md forbids for its own rows. The post-clause sample fixes it for the
+price of one commit: PREREG.md alone, committed before the first spawn.
 
 ## The number
 
@@ -170,8 +190,14 @@ Recorded here, never edited into PREREG.md.
    `goals/pair3.txt`, `goals/pair4.txt`). Same shape as pairs 1 and 2 — A is the
    invocation repository, B is the foreign checkout named by absolute path —
    differing only in domain and wording. The metric, population rule and stop
-   rule were untouched. PREREG's stop rule anticipated up to 8 runs and
-   "a different fixture pair"; the table listing only two pairs did not.
+   rule were untouched. But PREREG's different-pair clause is conditioned on
+   *"If a run produces no qualifying node"*, which never happened here, and its
+   8-run rule is a give-up ceiling, not a licence to keep going: the floor (≥5
+   qualifying nodes) was met at run 2. So **runs 3 and 4 are the same class of
+   post-hoc extension as runs 5 and 6 in the next item**, and are labelled that
+   way rather than read back into the stop rule. The mitigation is that it costs
+   nothing to say so: runs 1–2 alone are 0 / 2 over a population of 6, itself
+   above the floor, and every later run only added non-compliant rows.
 2. **Runs 5 and 6 were added after the floor was reached.** PREREG says "Runs
    are added until the floor is reached", and the floor (≥5 qualifying nodes)
    was met at run 2. They were added as a **post-hoc robustness arm**: every

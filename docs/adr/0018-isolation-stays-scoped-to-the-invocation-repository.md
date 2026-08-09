@@ -532,12 +532,16 @@ the exact thing #103's first triage comment could not read from the run feed.
   runs `git checkout` back in the shared checkout counts as non-compliant. Setup
   alone proves nothing: the collision this measures is a command landing in the
   shared tree, not the absence of a `worktree add` before it.
-- **Threshold, fixed now.** Over **at least 10** such nodes: **≥ 80% →
-  advisory works, this decision stands and hardens.** **< 50% → advisory has
-  failed on its own terms, and §1's user-named `--repo` form is built**, with
-  §2's lazy provisioning and §3's two cleanup obligations as blocking
-  requirements rather than nice-to-haves. Between 50% and 80% → the sample is
-  extended, not reinterpreted.
+- **Threshold, fixed now — it judges a *post-§6-clause* sample only.** Over
+  **at least 10** such nodes measured **after** §6's planner clause has shipped:
+  **≥ 80% → advisory works, this decision stands and hardens.** **< 50% →
+  advisory has failed on its own terms, and §1's user-named `--repo` form is
+  built**, with §2's lazy provisioning and §3's two cleanup obligations as
+  blocking requirements rather than nice-to-haves. Between 50% and 80% → the
+  sample is extended, not reinterpreted. A **pre**-clause baseline (the next
+  bullet) is advisory-free — there is no instruction in it to obey — so it is
+  reported as a number and an n, and this threshold is not applied to it however
+  low it lands.
 - **Confounder to record, not to explain away.** If the §6 planner instruction
   ships first, this measures the instruction and not the status quo, and the
   status quo's number will then never be known. Take a baseline of at least 5

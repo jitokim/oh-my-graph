@@ -21,7 +21,17 @@ bin="${OMG_BIN:?set OMG_BIN to the ABSOLUTE path of the binary built from this w
 export OMG_HOME="${OMG_HOME:-/tmp/omg-0018/omghome}"
 
 cap="$probe_dir/captures/$label"
-rm -rf "$cap"
+# A capture is evidence, and a re-used label must never destroy it silently.
+# Deliberate replacement is still possible, but it has to be asked for.
+if [[ -e "$cap" ]]; then
+  if [[ "${OMG_CAPTURE_FORCE:-}" != "1" ]]; then
+    echo "capture-run.sh: $cap already exists — refusing to overwrite a capture." >&2
+    echo "  use a new label, or set OMG_CAPTURE_FORCE=1 to replace it deliberately." >&2
+    exit 1
+  fi
+  echo "capture-run.sh: OMG_CAPTURE_FORCE=1 — replacing existing capture $cap" >&2
+  rm -rf "$cap"
+fi
 mkdir -p "$cap/runstate" "$cap/transcripts"
 
 goal="$(cat "$goal_file")"
