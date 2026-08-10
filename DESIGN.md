@@ -956,18 +956,22 @@ embedded payload and fails unless its `result_matches` is byte-identical to the
 constant. Reuse could not deduplicate them; a `go test` can still pin them.
 
 The same limit holds outside this repo's templates, and it was asked once more
-of a hand-written corpus: 75 lane graphs on one machine, all built around one
-`review` → `apply` → `pr` scaffold, proposed as a fifth fragment. **Nothing was
-extracted** (ADR 0013's 2026-08-10 update;
+of a hand-written corpus: 75 lane graphs on one machine ending in a `pr` node,
+33 of them carrying a full `review` → `apply` → `pr` scaffold, proposed as a
+fifth fragment. **Nothing was extracted** (ADR 0013's 2026-08-10 update;
 `docs/measurements/0013-lane-corpus-has-no-extractable-fragment.md`). The
 repeated part is `worktree`/`cwd`/`depends_on`/`id`, which a fragment may not
 carry; the one candidate with enough shared prose declares neither half of the
 verdict convention — `result_matches` 0 of 35, verdict clause 0 of 35 — so both
 halves would have been *written* rather than extracted, which is the silent
-mismatch this section exists to prevent, not an instance of reuse. Those lanes
-declare `result_matches` nowhere at all and `use:` zero times: they are a
-corpus that never adopted the four shipped shapes, and their fix is to cite
-them.
+mismatch this section exists to prevent, not an instance of reuse. Nor is the
+corpus merely innocent of the convention: no `apply`, `review` or `pr` node in
+it declares `result_matches`, `use:` appears zero times, and the 32 nodes that
+do declare one (in other roles) are hand-retyped `e2e-verify` patterns of which
+**all 32 drifted** — 19 to a bare `PASS`, which, since `result_matches` is a
+search, passes on "the suite did not PASS". That is what a corpus that adopted
+the shapes by copy-paste instead of by `use:` looks like from the inside, and
+it is the argument for the fix being to cite the four shipped shapes.
 
 The rule is stated here and swept for by `lint` and `run --dry-run`
 (`handoff.LintVerdicts`), because a rule only DESIGN.md knows is the same

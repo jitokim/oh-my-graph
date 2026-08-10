@@ -592,30 +592,42 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   > hand-written lanes — NO EXTRACTION, and the arrow points the other
   > way.** Full numbers:
   > [`docs/measurements/0013-lane-corpus-has-no-extractable-fragment.md`](../measurements/0013-lane-corpus-has-no-extractable-fragment.md).
-  > This machine's run corpus holds **75 distinct lane graphs** built by
-  > hand around one `review` → `apply` → `pr` scaffold, and the proposal
-  > was to ship that scaffold as a fragment. It does not survive this
-  > ADR's own standard, on three counts:
+  > This machine's run corpus holds **75 distinct lane graphs** that end
+  > in a `pr` node, **33** of them built by hand around a full
+  > `review` → `apply` → `pr` scaffold, and the proposal was to ship that
+  > scaffold as a fragment. It does not survive this ADR's own standard,
+  > on three counts:
   >
   > - **What repeats is wiring.** `worktree:`, `cwd:`, the `depends_on`
   >   chain and the ids — the exact list Semantics makes a load error in
   >   a fragment. What is left to carry is `type` and a timeout.
   > - **The one prose candidate carries no proof.** The 35 `apply` nodes
-  >   collapse to 9 texts whose top two share 82% of their words, which
-  >   clears the bar `pr-publish` was extracted on. But they declare
+  >   collapse to 9 texts whose top two share 82% of their words
+  >   (Jaccard) — agreement of the order `pr-publish` was extracted on,
+  >   though measured differently (see the correction below). But they declare
   >   `result_matches` **0/35**, a verdict-first clause **0/35**, and
   >   `allowed_tools` **0/35** — so both halves of the verdict convention
-  >   and the grant would have to be *authored*, not extracted. And their
-  >   first sentence keys off a `NO FINDINGS` contract neither shipped
-  >   review fragment emits (`CLEAN`/`FINDINGS:`), so shipping it beside
+  >   and the grant would have to be *authored*, not extracted. And all
+  >   35 key their second sentence off a `NO FINDINGS` contract neither
+  >   shipped review fragment emits (`CLEAN`/`FINDINGS:`), so shipping it beside
   >   them would manufacture the silent mismatch this repo keeps closing.
   >   No shipped template has an apply stage to cite it, either.
   > - **The corpus is a consumer, not a supplier.** Across those 75
   >   lanes, `result_matches` is declared by 0 of 35 `apply`, 0 of 47
   >   `review` and 0 of 75 `pr` nodes, and `use:` appears **zero** times.
   >   Every one of those lanes published a PR with nothing asserting the
-  >   PR exists — the failure `pr-publish` was extracted to abolish. The
-  >   fix for those lanes is `use: pr-publish`, not a new fragment.
+  >   PR exists — the failure `pr-publish` was extracted to abolish. And
+  >   where the corpus *does* declare a verdict pattern — 32 of its 349
+  >   nodes, all in other roles — every one is a retyped `e2e-verify`
+  >   pattern and **all 32 drifted from the shipped one**: 19 to a bare
+  >   `PASS` (unanchored, and `result_matches` is a search, so *"the
+  >   suite did not PASS"* passes — the merge-shepherd failure class,
+  >   live), 7 missing the trailing anchor, 6 intolerant of `**PASS**`.
+  >   Sixteen more nodes are *named* `review-security` / `review-style`
+  >   after shipped fragments while carrying no pattern at all. These
+  >   lanes did not fail to hear about the shapes; they copied them by
+  >   hand and lost the anchors. The fix for those lanes is
+  >   `use: pr-publish`, not a new fragment.
   >
   > One methodological correction to the update above, from the same
   > measurement: the longest-common-**suffix** metric only works where

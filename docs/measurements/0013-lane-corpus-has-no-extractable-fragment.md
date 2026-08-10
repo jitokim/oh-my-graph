@@ -13,7 +13,10 @@ proof did not exist yet.
   (210 run directories), deduplicated by the full resolved graph JSON —
   so a lane re-run collapses to one row and two lanes differing by one
   prompt word are two rows. **75 distinct lane graphs** carry a node with
-  id `pr`; those are the operator lanes this question is about.
+  id `pr`; those are the operator lanes this question is about. **33** of
+  them carry all three of `review` / `apply` / `pr` — 40 have no `apply`
+  node and 28 no `review` node, and they run 2–9 nodes each. So "the
+  scaffold" below means the shape 33 lanes carry in full, not all 75.
 - **Cost:** zero `claude` spawns. This is a corpus read, not a probe.
 - **Re-derivable:** the script is in "Method", below. It reads only
   `state.json` files, which hold the **resolved** graph (ADR 0013
@@ -31,8 +34,10 @@ sympathetic reading.
 ## Finding 1 — what repeats is wiring, and a fragment may not carry it
 
 The repeated part of the scaffold is `worktree:`, `cwd: {{ inputs.wt }}`,
-the `depends_on` chain and the ids. Those five keys are precisely the list
-ADR 0013 §Semantics and DESIGN.md make a **load error** in a fragment's
+the `depends_on` chain and the ids — four of the five keys
+(`id`, `depends_on`, `cwd`, `worktree`, `feedback`;
+`internal/graph/fragment.go`, `fragmentWiringFields`) that ADR 0013
+§Semantics and DESIGN.md make a **load error** in a fragment's
 `node:` block. A fragment is portable because it says nothing about where
 it sits; the scaffold is nothing *but* where things sit.
 
@@ -46,15 +51,17 @@ the reader a second file to open and returns two lines.
 Among the 75 lanes, **35** carry a node with id `apply`. Their prompts
 collapse to **9 distinct texts**; the top two account for 26 of 35 and
 share **82%** of their words (Jaccard) — the divergence is one sentence
-saying the same thing two ways. By word count that clears the bar ADR
-0013's 2026-08-09 update used to extract `pr-publish` (83 shared words =
-75% of the shortest prompt). So the prose case is real. It fails on four
+saying the same thing two ways. That is agreement of the order ADR 0013's
+2026-08-09 update extracted `pr-publish` on, but it is **not the same
+yardstick**: that bar was a longest-common-**suffix** count (83 shared
+words = 75% of the shortest prompt), and the two metrics do not convert
+(Finding 4). So the prose case is real on its own metric. It fails on four
 other counts, any one of which is disqualifying:
 
 | what a shipped fragment needs | what the 35 `apply` nodes declare |
 |---|---:|
 | `result_matches` (the verdict pattern) | **0 / 35** |
-| a verdict-first prompt clause | **0 / 35** |
+| a verdict-first prompt clause (`handoff.demandsVerdict`) | **0 / 35** |
 | `allowed_tools` (the grant the prompt was written against) | **0 / 35** |
 | a shipped caller | **0** |
 
@@ -77,8 +84,11 @@ is not a proven grant — and a grant *no* caller ever declared is not even
 that.
 
 **c. Its first sentence is coupled to a contract this repo does not
-ship.** All 35 begin: *"If it said exactly NO FINDINGS, change nothing and
-reply NO CHANGES."* That keys off the lanes' own hand-written `review`
+ship.** All 35 carry, as their **second** sentence: *"If it said exactly
+NO FINDINGS, change nothing and reply NO CHANGES."* (The first sentence is
+`The deep review said: {{ artifacts.review | inline }}` in 32 of 35, with
+three one-off rewordings — so the contract is universal, its position is
+second, not first.) That keys off the lanes' own hand-written `review`
 node. The shipped review fragments — `review-security`, `review-style` —
 emit `CLEAN` / `FINDINGS:`, never `NO FINDINGS`. A fragment placed in
 `graphs/fragments/` beside them would instruct a stranger's apply node to
@@ -91,7 +101,8 @@ in the PR body. The only shipped apply nodes are `adr-driven-dev`'s
 `adr-apply` / `apply1` / `apply2`, all in **one file**, which is the
 intra-file case ADR 0013 §Alternatives hands to YAML anchors, and which
 that ADR's 2026-08-09 update already ruled on by name. The corpus `apply`
-text overlaps `apply1` by ~17% — a different shape, not a caller.
+text overlaps `apply1` by **13%** (Jaccard, the same measure as the 82%
+above — 54 words against 161) — a different shape, not a caller.
 
 ## Finding 3 — the corpus opted out of the discipline it would be donating
 
@@ -102,6 +113,28 @@ Across the 75 lanes:
 - `review` nodes: 47, with `result_matches` — **0**
 - `pr` nodes: 75, with `result_matches` — **0**
 - nodes using `use:` at all — **0**
+
+The corpus is not *innocent* of the convention, which is the sharper
+version of this finding. Of the 349 nodes in those 75 lanes, **32 do**
+declare `result_matches` — all outside the three scaffold roles (`e2e` 24,
+`measure` 4, `verify` 3, `accept` 1), and every one of them a hand-typed
+`PASS` verdict patterned after the shipped `e2e-verify`. **All 32 drifted
+from the pattern that fragment ships** (``^[*_`\s]*PASS[*_`\s]*$``):
+
+| what the copy says | nodes | how it fails |
+|---|---:|---|
+| `PASS` | 19 | unanchored — `result_matches` is a **search** (`regexp.MatchString`, `internal/schedule/scheduler.go`), so *"the suite did not PASS"* passes |
+| ``^[*_`\s]*PASS`` | 7 | no tail anchor — passes on `PASS is what we did not get` |
+| `^PASS$` | 6 | emphasis-intolerant — a false FAIL on `**PASS**` |
+
+And 16 nodes *named* after shipped fragments (`review-security` 8,
+`review-style` 8) carry no `result_matches` at all: the fragment's name
+copied without the pattern that makes the name mean anything.
+
+That is the whole argument in one measurement. The shapes were not
+unknown to these lanes — they were retyped, and retyping lost the anchors.
+`use:` is the mechanism that would have made the loss impossible, and it
+appears zero times.
 
 Every one of those 75 lanes ran its `pr` node with no assertion that a PR
 exists. The shipped `pr-publish` fragment's entire reason for existing is
@@ -167,8 +200,26 @@ ap = [n for g in lanes for n in g['nodes'] if n.get('id') == 'apply']
 print(len(lanes), len(ap))
 print(sum(1 for n in ap if (n.get('success_check') or {}).get('result_matches')))
 print(sum(1 for n in ap if n.get('allowed_tools')))
-print(collections.Counter(' '.join(n['prompt'].split()) for n in ap).most_common(2))
+top = collections.Counter(' '.join(n['prompt'].split()) for n in ap).most_common(2)
+print(top[0][1], top[1][1])
+
+def jaccard(a, b):                       # the measure behind 82% and 13%
+    A, B = set(a.split()), set(b.split())
+    return len(A & B) / len(A | B)
+print('%.3f' % jaccard(top[0][0], top[1][0]))
+
+ids = [set(n['id'] for n in g['nodes']) for g in lanes]      # Finding 0: 33/75
+print(sum(1 for s in ids if {'review', 'apply', 'pr'} <= s))
+
+nodes = [n for g in lanes for n in g['nodes']]               # Finding 3: 32/349
+rm = [n for n in nodes if (n.get('success_check') or {}).get('result_matches')]
+print(len(nodes), len(rm), collections.Counter(n['id'] for n in rm))
+print(collections.Counter((n['success_check'])['result_matches'] for n in rm))
 ```
+
+The 13% figure compares `top[0][0]` with `adr-driven-dev.yaml`'s `apply1`
+prompt under the same `jaccard`; the drift table compares the patterns
+that last `Counter` prints against `graphs/fragments/e2e-verify.yaml`.
 
 `state.json` stores the resolved graph, so no fragment resolution or
 `{{ inputs }}` interpolation is re-done here — the numbers are what ran.
