@@ -458,8 +458,41 @@ reads `feedback exhausted after N rounds of <target> → <declarer>: <cause>`
 declarer's FAIL also clears its body's retained PASSes and resets the rounds
 budget — never by re-running the declarer alone against unchanged
 artifacts). Worst case is legible from the file: `(1 + max) × |body|` runs
-per arc, each under its own timeout/budget/tool ceiling; the ledger prices
+per arc — rounds, not attempts, so a body node that declares `retry` is
+charged on top of every round it runs in — each under its own
+timeout/budget/tool ceiling; the ledger prices
 every execution with a `feedback round k/N` note.
+
+**A review gates only when its caller pairs a narrowed check with an arc
+(issue #151).** The shipped review fragments pass on *both* their verdicts
+(`CLEAN` and `FINDINGS:`) — judging, not being clean, is the job — and nothing
+else in the engine reads a verdict: `depends_on` is a success edge, and
+`retry`, `feedback` and `on_fail` all hang off failure. So a passing
+`FINDINGS:` gates nothing and every node below the review runs anyway, a `pr`
+node included. *Stopping* on findings is therefore one shape, and it is a
+**pair**: the using
+node narrows `success_check.result_matches` to the clean verdict *and*
+declares `feedback: { rerun: <implementing node>, max: N }`. The narrowing
+alone would make the run where the reviewer did its job the run that reports
+FAIL with nothing repaired; the arc turns that same failure into a repair
+round carrying the findings in `{{ feedback.<id> }}`, so only an exhausted loop
+is final. Both keys belong to the calling graph — ADR 0013 forbids a fragment
+from declaring `feedback`, so a fragment cannot gate on its caller's behalf —
+and `internal/graph`'s `TestAGatingReviewCarriesItsRecoveryArc` holds the
+shipped graphs to the pair by matching a real `FINDINGS:` reply against each
+review node's *effective* pattern rather than reading how it was spelled.
+`backlog-batch`'s lane A gates (`rerun: dev-a, max: 1`, body of 3, so 6 body
+runs over its 2 rounds — and 8 executions worst case, because `e2e-a` inherits
+`retry: { max: 1 }` from `e2e-verify` and a retry is charged on top of its
+round: 2 `dev-a`, 4 `e2e-a`, 2 `review-a`); lane B, `dev-review-pr` and
+`self-dev` stay advisory by recorded
+choice — the last two also because their parallel review fan-out cannot hold
+an arc at all without tripping rule 3's side-exit refusal, each review's
+sibling sitting outside any body that contains `e2e`. *Repairing* findings has
+a second shape that is not this one and does not stop anything:
+`adr-driven-dev`'s unconditional apply node after each review round, which
+fixes what the round found without a verdict ever failing — it costs a node on
+every clean run, where an arc costs nothing unless the review fails.
 
 **A fan-in reviewer's arc reaches one branch — `lint` says which
 (`graph.LintFeedbackReach`, advisory).** When the declarer fans in from

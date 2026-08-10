@@ -81,6 +81,28 @@ survived the feature is the paragraph, here.
   engine has no notion of a "partial" verdict to print instead, and inventing
   one would mean the engine parsing verdict semantics out of a regex it
   deliberately treats as opaque.
+  The review fragments are the asymmetric case of the same gap, and worth
+  naming separately: `review-style` and `review-security` answer `CLEAN` or
+  `FINDINGS:`, both PASS, and unlike `WITHHELD` — where refusing to merge *is*
+  the graph working — a `FINDINGS:` is the one signal in a run saying the diff
+  has a defect. `dev-review-pr` and `self-dev` open a pull request downstream
+  of exactly that, on purpose: the findings are interpolated into the PR body,
+  which is where the human deciding the merge will read them. So a green run
+  of either is not evidence the diff was clean, and their review nodes now say
+  so at the node. What is *not* a limitation is the choice: a graph that wants
+  findings to stop its pipeline narrows the review's `success_check` to the
+  clean verdict and declares a `feedback:` arc on the same node, so the
+  rejection re-runs the implementation with the findings instead of reading as
+  a broken run (`backlog-batch`'s lane A does this; lane B advises). Both keys
+  are the graph's — a fragment may not declare `feedback` at all (ADR 0013).
+  The ledger still prints PASS for the advisory case, for the reason above —
+  and note that "read the node's artifact" is the advisory remedy only: a
+  gating review that found something FAILS, and a failed node writes no
+  `<run-id>/<node>.out` at all. Its findings are in `<run-id>/feedback/<node>.out`
+  while the loop is running (an engine payload, not a consumer contract), and
+  in `<run-id>/failed/<node>.out` once the loop is exhausted — the copy meant
+  for a human, whose path the run prints as it saves it
+  (`✎ <node>  reply saved: …`).
 - **`budget_usd` is enforced per node, but not sub-call or across nodes.**
   A positive budget is passed to claude as `--max-budget-usd`, so claude aborts a
   node the moment its own spend crosses the budget (a real mid-run kill), and the

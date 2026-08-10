@@ -8,6 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Changed
+
+- **`backlog-batch`'s lane A now stops on review findings and re-runs the
+  implementation with them. Lane B, `dev-review-pr` and `self-dev` behave
+  exactly as before — deliberately, and each now says why at its own review
+  node.** If you installed these graphs with `oh-my-graph init`, lane A is the
+  one run you will see behave differently, and the new outcome is a
+  `node_retried` event and a `feedback round 1/1` row rather than a failure.
+
+  The defect (issue #151) was that a review's verdict reached nothing. The
+  `review-style` and `review-security` fragments pass on **both** of their
+  verdicts — `CLEAN` and `FINDINGS:` — because a review's job is to judge, not
+  to be clean. But nothing else in the engine reads a verdict: `depends_on` is
+  a success edge, and all three "the work was rejected" mechanisms — `retry`,
+  `feedback`, `on_fail` — hang off *failure*. So a `FINDINGS:` reply passed,
+  the PR node below it opened anyway, and the run ended green with the defect
+  quoted in the PR body instead of fixed. No shipped graph had ever chosen
+  otherwise, so the one graph shape the engine supports for this was
+  undemonstrated.
+
+  Gating is a **pair**, and lane A now ships both halves: `review-a`'s
+  `success_check` is narrowed to the clean verdict
+  (`result_matches: '^[*_`\s]*CLEAN\b'`, announced in the run's disclosure
+  line like any override), and the same node declares
+  `feedback: { rerun: dev-a, max: 1 }`, with `dev-a`'s prompt now reading
+  `{{ feedback.review-a }}`. The arc is not decoration: a narrowed check
+  *alone* would make the run where the reviewer did its job the run that
+  reports FAIL, with the lane discarded and nothing repaired — the same
+  mistake this project already closed for merge-shepherd's `WITHHELD`. With
+  the arc, findings send the lane back through `dev-a → e2e-a → review-a`
+  once, and a second round that comes back clean ends the lane **green with
+  the defect fixed**. Only an exhausted loop FAILs, which is an honest report
+  of a finding nobody repaired, and the graph's `on_fail: continue` keeps the
+  other lane running. The price is in the header where the other rules are:
+  worst case `(1 + max) × 3` = **6 node runs** for lane A, up from 3 — and
+  that formula counts rounds, not attempts, so `e2e-a`'s inherited
+  `retry: { max: 1 }` can add one run per round on top of it (8 in the true
+  worst case). `max: 1`, not 2, because an unattended batch buys one repair
+  round and the second belongs to a human who has read the first.
+
+  Lane B is left advisory *as a decision* rather than as an unexamined
+  default — a docs review's findings reach the draft PR body, which is where a
+  human reads them, and a wording flag does not earn a second dev round — so
+  one file now teaches both dispositions. `dev-review-pr` and `self-dev` stay
+  advisory too, and for them it is also structural: their two reviews fan out
+  of one `e2e`, so any feedback body reaching a review contains `e2e` while
+  the sibling review depends on it from outside, and ADR 0010's side-exit rule
+  refuses the graph at load (`feedback body has a side exit: "review-security"
+  depends on body node "e2e" but is outside the loop`) — measured on both
+  templates. Serializing the reviews to make room for one arc would spend the
+  parallel fan-in those templates exist to demonstrate and still leave the
+  other review ungated.
+
+  What a green run of an advisory review still does **not** tell you is that
+  the diff was clean; `docs/LIMITATIONS.md` ("A PASS row does not say which
+  outcome passed") now names the review fragments as the asymmetric case, and
+  says what a caller does about it. `internal/graph`'s
+  `TestAGatingReviewCarriesItsRecoveryArc` keeps the pair from coming apart: it
+  matches a realistic `FINDINGS:` reply against the *effective* pattern of
+  every node that spliced a `review-*` fragment and fails any whose pattern
+  rejects it without a `feedback:` arc — behaviour, not authoring form. ADR
+  0010 carries the decision and the reasoning for why this is a test over
+  `graphs/` rather than an eighth load rule.
+
 ## [v0.5.3] - 2026-08-10
 
 Nothing new to type. No flag, no command, no schema key — every change here

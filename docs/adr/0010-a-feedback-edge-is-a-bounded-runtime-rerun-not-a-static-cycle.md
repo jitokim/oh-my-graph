@@ -472,6 +472,125 @@ into an ordinary failure on resume. Instead:
 - **Sessions:** a re-run is a fresh session, like a retry (stated above;
   the already-documented cold-start rule applies).
 
+> **Update (2026-08-10) — a narrowed review check and an arc are ONE
+> guardrail, not two independent choices (issue #151).** The seven load rules
+> and the four guardrails above all judge an arc that *exists*. What this
+> amendment adds is the arc that is **missing**, on a node whose verdict check
+> was narrowed to make one necessary. No decision above changes; this is an
+> application of the construct, plus the price rule 3 turns out to charge.
+>
+> The shipped review fragments (`review-style`, `review-security`) pass on
+> both of their verdicts — `CLEAN` and `FINDINGS:` — because a review's job is
+> to judge, not to be clean. Nothing else in the engine reads a verdict:
+> `depends_on` is a success edge, and all three "the work was rejected"
+> mechanisms — `retry`, this ADR's `feedback`, and `on_fail` — hang off
+> FAILURE. So a passing `FINDINGS:` reaches none of them, and every node below
+> the review runs regardless, a `pr` node included. A graph that wants findings
+> to stop it therefore has exactly one spelling available: narrow the review's
+> `success_check` on its own node until `FINDINGS:` fails.
+>
+> That narrowing **alone** is a defect, and this ADR's construct is what
+> repairs it. Without an arc, the run that most deserves to be believed — the
+> one where the reviewer did its job and found something — is the run that
+> reports FAIL, the whole pipeline discarded and nothing repaired. This project
+> already settled the principle for merge-shepherd's `WITHHELD`: a deliberate
+> refusal must not read as a broken run. With the arc, the same failure is a
+> repair round — the implementing node re-runs with the findings in
+> `{{ feedback.<id> }}`, a second round that comes back clean ends the lane
+> green with the defect *fixed* rather than merely quoted, and only an
+> exhausted loop is final, which is an honest report of a finding nobody
+> repaired. Ship the pair or neither.
+>
+> The narrowing does **not** break the two-halves verdict convention
+> (DESIGN.md, "Verdict patterns"). Both halves still hold for the token the
+> node accepts: the fragment prompt demands a bare `CLEAN` first, names
+> `` `**CLEAN**` `` as wrong and offers the qualifier its place, and the
+> narrowed pattern carries the decoration class. What the narrowing states is
+> which verdict the **caller accepts**, not which verdicts the reviewer may
+> emit — a different axis, so the two do not drift together. The prompt is
+> deliberately *not* told that `FINDINGS:` will fail the node: a reviewer that
+> knows the cost of finding something is a reviewer biased toward `CLEAN`.
+>
+> That bias has a **second door, and it is `retry:` on the gating node** —
+> worth naming because the prompt vector is the obvious one and this is not.
+> A retried attempt is handed its own previous reply under *"that attempt did
+> NOT pass: the engine ran your reply against this node's success check, the
+> check did not accept it"* (`retryFeedbackTemplate`,
+> `internal/schedule/retryfeedback.go`), which on a gating review is the
+> withheld sentence delivered anyway, in the one place the reviewer cannot
+> miss it. So a gating review declares the arc and **not** a retry: a rejected
+> review is work for the implementing node, not a second opinion solicited
+> from the same reviewer with the first one quoted back as a failure. Lane A's
+> review node says so at the node; nothing enforces it, because a retry is
+> legitimate on every non-gating review and the engine cannot tell them apart
+> for the same reason it cannot tell the narrowed patterns apart.
+>
+> **Not an eighth load rule**, for the reason the fan-in amendment above
+> gives: it is not decidable in the direction that matters. A narrowed
+> `result_matches` is the ordinary shape of every strict verdict in the repo —
+> `e2e`'s `PASS`, `merge-shepherd`'s three-valued `recheck` — and none of those
+> owe an arc. The engine cannot see that *this* narrowed pattern is a
+> reviewer's findings being refused. Where the intent IS knowable is `graphs/`,
+> at the point a node splices a review fragment, so the rule is enforced there:
+> `TestAGatingReviewCarriesItsRecoveryArc` (`internal/graph`) matches a
+> realistic `FINDINGS:` reply against the effective pattern of every node that
+> used a `review-*` fragment and requires a `feedback:` block on each node
+> whose pattern rejects it — judged by behaviour, not by authoring form, and
+> failing loudly if no shipped graph gates any more so the test cannot quietly
+> start asserting nothing. That the test is load-bearing was measured rather
+> than assumed: strip lane A's arc *and* its `{{ feedback.review-a }}`
+> placeholder and the half-pair graph is **`lint`-valid** — no load rule sees
+> it — while the test names it. (Stripping the arc alone is already refused,
+> but by rule 5's placeholder check, which is a different guarantee: it catches
+> the prompt that asks for a payload nothing produces, not the review that
+> rejects findings with nowhere to send them.)
+>
+> The pair lives in the **calling** graph by construction rather than by
+> convention: ADR 0013 counts `feedback` as graph-local wiring
+> (`fragmentWiringFields`), so a fragment may not declare it, and therefore
+> cannot gate on its caller's behalf even if it wanted to.
+>
+> **Applied, and priced.** `backlog-batch`'s lane A is the second shipped arc
+> after `review-loop`'s, and the first inside a lane:
+> `feedback: { rerun: dev-a, max: 1 }` over the body `dev-a → e2e-a →
+> review-a`, `(1 + 1) × 3 = 6` body runs — which is the ROUND count, not the
+> execution count: `e2e-a` inherits `retry: { max: 1 }` from `e2e-verify`, and
+> a retry is charged on top of its round, so the worst case is 2 `dev-a` + 4
+> `e2e-a` + 2 `review-a` = 8 executions. Lane A is the first shipped body to
+> contain a retrying node, which is why the formula needed a qualifier it
+> never did in `review-loop`, and the file's header
+> now prices it the way this ADR's `max` guardrail asks. `max: 1`, not 2 — an
+> unattended batch buys one repair round; a second belongs to a human who has
+> read the first.
+>
+> **And rule 3 charges a measured price.** `dev-review-pr` and `self-dev`
+> cannot carry an arc at all. Their two reviews fan out of one `e2e`, so any
+> body reaching a review from `dev` contains `e2e` while the sibling review
+> depends on `e2e` from outside it, and the loader refuses the graph:
+> `feedback body has a side exit: "review-security" depends on body node "e2e"
+> but is outside the loop` — measured on both templates, 2026-08-10, and aiming
+> `rerun` at `e2e` instead trips the same rule plus rule 6 on `e2e`'s
+> `handoff: session`. Accepted, not worked around: serializing the two reviews
+> to make room for one arc would spend the parallel fan-in those templates
+> exist to demonstrate, and would still leave the other review ungated. A
+> third shape was on the scale too, and it is already shipped rather than
+> hypothetical: `adr-driven-dev`'s unconditional `round1 → apply1` repair
+> node — the chain `review-loop`'s header already names as the one an arc
+> hand-unrolls. An apply node between the fan-in and `pr` would repair
+> findings before the PR with the parallel reviews left intact and no arc at
+> all — so *repairing* findings is not one shape. It is rejected here on
+> price and on intent, not on structure: it pays a node on every clean run
+> where the arc costs nothing unless the review fails, and for these two
+> templates the draft PR is the intended human touchpoint, so findings
+> reaching a reader is the design. Both
+> stay advisory by recorded choice, their pipelines ending at a pull request
+> whose body carries the findings to the human making the merge decision. This
+> is the negative trade-off below — "the side-exit-free rule rejects some
+> legitimate-looking graphs" — meeting shipped templates rather than a
+> hypothetical, and the consolation the bullet claims ("the fix is mechanical")
+> does not apply here. What does hold is that the refusal is at load, before
+> any spend.
+
 ## Consequences
 
 **Positive**
