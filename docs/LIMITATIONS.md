@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.5.3**, and what is deliberately deferred. Where a gap has
+gaps as of **v0.5.4**, and what is deliberately deferred. Where a gap has
 already been closed on `main` but not in a tagged release, this file says so
 in the paragraph that describes it rather than in the stamp.
 
@@ -51,12 +51,20 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.5.3. **This file is where they are tracked** — there is
-no open issue behind any of them (`gh issue list --state open` returns
-nothing, and has since 2026-08-09). The issue numbers below name the *closed*
-issue each gap was carved out of, which is provenance, not a tracker: those
-issues asked for the feature that shipped, and were closed when it did. What
-survived the feature is the paragraph, here.
+Honest gaps as of v0.5.4. **This file is where they are tracked** — the issue
+numbers below name the *closed* issue each gap was carved out of, which is
+provenance, not a tracker: those issues asked for the feature that shipped,
+and were closed when it did. What survived the feature is the paragraph, here.
+
+One number is not provenance, and saying so is the point of this paragraph:
+**#151 is open**, and it is behind the review-fragment half of *"A PASS row
+does not say which outcome passed"* below — the issue says as much itself. It
+asked for a gating shape for the review fragments; `backlog-batch`'s lane A
+answers it in this release, and `dev-review-pr` and `self-dev` were left
+advisory *as a decision*, so a green run of either is still not evidence the
+diff was clean. That residual is the part of the gap this release did not
+close, and the paragraph below is where it is described. Every other gap here
+has no open issue behind it.
 
 - **A `success_check` without `verify` is still self-report.** `success_check.verify`
   closes this for graphs that opt in: the engine runs a command of your choosing
@@ -166,7 +174,7 @@ See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.5.3:
+Called out honestly — these are **not** implemented as of v0.5.4:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause

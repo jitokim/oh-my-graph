@@ -8,7 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.4] - 2026-08-11
+
+Nothing new to type. No flag, no command, no schema key — and both changes
+here are the same question asked of two different bodies of graphs: what does a
+graph owe the verdict its own nodes produce? The shipped review fragments pass
+on **both** their verdicts, `CLEAN` and `FINDINGS:`, because a review's job is
+to judge rather than to be clean — but nothing else in the engine reads a
+verdict, so a `FINDINGS:` reply passed, the PR node below it opened anyway, and
+the run ended green with the defect quoted in the PR body instead of fixed.
+`backlog-batch`'s lane A now answers with mechanism instead of prose: its
+review is narrowed to the clean verdict **and** carries the `feedback:` arc
+that sends the findings back to the implementation, because a narrowed check
+without an arc only turns the run where the reviewer did its job into the run
+that reports FAIL. Lane B, `dev-review-pr` and `self-dev` keep the advisory
+default — as a recorded decision now, said at each review node, and for the
+last two also because their parallel review fan-out cannot hold an arc without
+tripping ADR 0010's side-exit refusal. The same question, asked of a corpus
+this repo does not ship: an operator's hand-written `review` → `apply` → `pr`
+lane was proposed as a fifth entry in `graphs/fragments/`, and measured over
+75 lanes against ADR 0013's own standard it does not survive. **Nothing was
+extracted.** What the corpus does say about the shapes it copied *by hand* —
+32 retyped verdict patterns, all 32 drifted — is the sharper finding, and the
+better argument for `use:`.
 
 ### Changed
 
@@ -73,6 +95,68 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   rejects it without a `feedback:` arc — behaviour, not authoring form. ADR
   0010 carries the decision and the reasoning for why this is a test over
   `graphs/` rather than an eighth load rule.
+
+### Documentation
+
+- **The operator lane corpus has no extractable fragment — NO EXTRACTION,
+  measured over 75 lanes (#150).** A prior pass proposed shipping the
+  operator's hand-written lane scaffold (`review` → `apply` → `pr`, with a
+  worktree) as a fifth entry in `graphs/fragments/`. Held to ADR 0013's own
+  standard over this machine's run corpus — 210 run directories deduplicated
+  by resolved graph JSON, of which **75 distinct lane graphs** carry a `pr`
+  node and **33** carry the full three-role scaffold (40 have no `apply`, 28
+  no `review`) — it does not survive, so **nothing was extracted** and the
+  conclusion is what ships:
+  `docs/measurements/0013-lane-corpus-has-no-extractable-fragment.md`, with
+  ADR 0013 and DESIGN.md carrying the verdict. Three independent reasons, any
+  one disqualifying. What repeats is *wiring* — `worktree`, `cwd`, the
+  `depends_on` chain and the ids — which §Semantics makes a load error inside
+  a fragment; what would be left to carry is `type` and a timeout. The one
+  candidate whose *prose* repeats hard enough (35 `apply` nodes, 9 distinct
+  texts, the top two accounting for 26 of 35 and sharing **82%** of their
+  words by Jaccard) declares `result_matches` **0 of 35**, a verdict-first
+  clause **0 of 35** and `allowed_tools` **0 of 35** — so both halves of the
+  verdict convention *and* the grant would have been authored rather than
+  extracted, which is designing a new node and calling it an extraction. Its
+  second sentence keys off a `NO FINDINGS` contract neither shipped review
+  fragment emits (they answer `CLEAN` / `FINDINGS:`), so it would have shipped
+  the silent mismatch beside the fragments it sat next to, and no shipped
+  template has an `apply` stage to cite it (`adr-driven-dev`'s three are the
+  intra-file case, and overlap the corpus text by **13%** on the same Jaccard).
+  And the corpus is a consumer, not a supplier: `result_matches` is declared
+  by 0 of 35 `apply`, 0 of 47 `review` and 0 of 75 `pr` nodes, and `use:`
+  appears **zero** times.
+
+  Not innocent of the convention, though, which is the finding that decides
+  it: **32** of those lanes' 349 nodes *do* declare a `result_matches` — all
+  outside the three scaffold roles, every one a hand-retyped `e2e-verify`
+  pattern, and **all 32 drifted** from the pattern that fragment ships. 19
+  dropped to a bare `PASS`, which — since `result_matches` is a *search* —
+  passes on *"the suite did not PASS"*; 7 kept the head anchor and lost the
+  tail; 6 lost the emphasis class and take a false FAIL on `**PASS**`. A
+  further 16 nodes are *named* after shipped fragments and carry no pattern at
+  all. The shapes were not unknown to these lanes — they were retyped, and
+  retyping lost the anchors, which is what `use:` exists to make impossible.
+  Also recorded: a caveat on ADR 0013's own longest-common-suffix metric,
+  which measures tail agreement and so understates convergence on prompts that
+  diverge mid-body (8 words of suffix here against 82% word agreement) — the
+  two metrics do not convert, and the document says so where it would
+  otherwise have compared them.
+
+- **`docs/LIMITATIONS.md` is re-stamped v0.5.3 → v0.5.4, and the tracker
+  sentence v0.5.3 wrote is corrected: one gap now has an open issue behind
+  it.** That release dropped a promise the file could not keep (*"each tracked
+  as an issue"*) and replaced it with a measurement — `gh issue list --state
+  open` *"returns nothing, and has since 2026-08-09"*. #151 opened
+  2026-08-10, so the replacement went stale in a day, and the same principle
+  applies to it: a version bump on a stale claim dates a lie forward. #151 is
+  not an unrelated open issue, either — it is behind the review-fragment half
+  of *"A PASS row does not say which outcome passed"*, the gap lane A's arc
+  answers for one graph while `dev-review-pr` and `self-dev` stay advisory by
+  decision, so the file now names the issue, the gap it sits under, and which
+  part of it this release did not close. One `v0.5.3` in the file does **not**
+  move: *"the fix ships in v0.5.3"* is provenance for the env-scrub fix,
+  naming the release that first carried it.
 
 ## [v0.5.3] - 2026-08-10
 
@@ -2086,7 +2170,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...HEAD
+[v0.5.4]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/jitokim/oh-my-graph/compare/v0.5.0...v0.5.1
