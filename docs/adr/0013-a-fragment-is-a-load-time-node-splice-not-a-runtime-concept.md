@@ -587,6 +587,43 @@ cold-safe sweep, done once, on purpose, in review. In the same PR:
   > do not, so citing them would mean either narrowing four review
   > nodes' grants or overriding `allowed_tools` at every use — a
   > fragment whose grant every caller overrides is not a proven grant.
+  >
+  > **Update (2026-08-10): the same question asked of the operator's own
+  > hand-written lanes — NO EXTRACTION, and the arrow points the other
+  > way.** Full numbers:
+  > [`docs/measurements/0013-lane-corpus-has-no-extractable-fragment.md`](../measurements/0013-lane-corpus-has-no-extractable-fragment.md).
+  > This machine's run corpus holds **75 distinct lane graphs** built by
+  > hand around one `review` → `apply` → `pr` scaffold, and the proposal
+  > was to ship that scaffold as a fragment. It does not survive this
+  > ADR's own standard, on three counts:
+  >
+  > - **What repeats is wiring.** `worktree:`, `cwd:`, the `depends_on`
+  >   chain and the ids — the exact list Semantics makes a load error in
+  >   a fragment. What is left to carry is `type` and a timeout.
+  > - **The one prose candidate carries no proof.** The 35 `apply` nodes
+  >   collapse to 9 texts whose top two share 82% of their words, which
+  >   clears the bar `pr-publish` was extracted on. But they declare
+  >   `result_matches` **0/35**, a verdict-first clause **0/35**, and
+  >   `allowed_tools` **0/35** — so both halves of the verdict convention
+  >   and the grant would have to be *authored*, not extracted. And their
+  >   first sentence keys off a `NO FINDINGS` contract neither shipped
+  >   review fragment emits (`CLEAN`/`FINDINGS:`), so shipping it beside
+  >   them would manufacture the silent mismatch this repo keeps closing.
+  >   No shipped template has an apply stage to cite it, either.
+  > - **The corpus is a consumer, not a supplier.** Across those 75
+  >   lanes, `result_matches` is declared by 0 of 35 `apply`, 0 of 47
+  >   `review` and 0 of 75 `pr` nodes, and `use:` appears **zero** times.
+  >   Every one of those lanes published a PR with nothing asserting the
+  >   PR exists — the failure `pr-publish` was extracted to abolish. The
+  >   fix for those lanes is `use: pr-publish`, not a new fragment.
+  >
+  > One methodological correction to the update above, from the same
+  > measurement: the longest-common-**suffix** metric only works where
+  > the shared text collects at the tail, which is true of shipped nodes
+  > because their verdict clause is last. The `apply` nodes diverge
+  > mid-body, so their suffix reads 8 words against 82% word agreement.
+  > Suffix length understates convergence off this repo's own templates;
+  > it is not a general similarity measure.
 - Convert **`backlog-batch.yaml`** too — added at implementation, and
   its omission would have been this ADR's founding complaint surviving
   its own fix: that template held **two more** copies of the cold-safe

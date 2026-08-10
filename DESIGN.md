@@ -955,6 +955,20 @@ test, not this paragraph: `TestPlannedVerdictPatternMatchesE2EVerifyFragment`
 embedded payload and fails unless its `result_matches` is byte-identical to the
 constant. Reuse could not deduplicate them; a `go test` can still pin them.
 
+The same limit holds outside this repo's templates, and it was asked once more
+of a hand-written corpus: 75 lane graphs on one machine, all built around one
+`review` → `apply` → `pr` scaffold, proposed as a fifth fragment. **Nothing was
+extracted** (ADR 0013's 2026-08-10 update;
+`docs/measurements/0013-lane-corpus-has-no-extractable-fragment.md`). The
+repeated part is `worktree`/`cwd`/`depends_on`/`id`, which a fragment may not
+carry; the one candidate with enough shared prose declares neither half of the
+verdict convention — `result_matches` 0 of 35, verdict clause 0 of 35 — so both
+halves would have been *written* rather than extracted, which is the silent
+mismatch this section exists to prevent, not an instance of reuse. Those lanes
+declare `result_matches` nowhere at all and `use:` zero times: they are a
+corpus that never adopted the four shipped shapes, and their fix is to cite
+them.
+
 The rule is stated here and swept for by `lint` and `run --dry-run`
 (`handoff.LintVerdicts`), because a rule only DESIGN.md knows is the same
 "a prompt is not a mechanism" shape one level up. Two advisories, both cheap
