@@ -458,7 +458,9 @@ reads `feedback exhausted after N rounds of <target> → <declarer>: <cause>`
 declarer's FAIL also clears its body's retained PASSes and resets the rounds
 budget — never by re-running the declarer alone against unchanged
 artifacts). Worst case is legible from the file: `(1 + max) × |body|` runs
-per arc, each under its own timeout/budget/tool ceiling; the ledger prices
+per arc — rounds, not attempts, so a body node that declares `retry` is
+charged on top of every round it runs in — each under its own
+timeout/budget/tool ceiling; the ledger prices
 every execution with a `feedback round k/N` note.
 
 **A review gates only when its caller pairs a narrowed check with an arc
@@ -479,8 +481,11 @@ from declaring `feedback`, so a fragment cannot gate on its caller's behalf —
 and `internal/graph`'s `TestAGatingReviewCarriesItsRecoveryArc` holds the
 shipped graphs to the pair by matching a real `FINDINGS:` reply against each
 review node's *effective* pattern rather than reading how it was spelled.
-`backlog-batch`'s lane A gates (`rerun: dev-a, max: 1`, body of 3, so 6 runs
-worst case); lane B, `dev-review-pr` and `self-dev` stay advisory by recorded
+`backlog-batch`'s lane A gates (`rerun: dev-a, max: 1`, body of 3, so 6 body
+runs over its 2 rounds — and 8 executions worst case, because `e2e-a` inherits
+`retry: { max: 1 }` from `e2e-verify` and a retry is charged on top of its
+round: 2 `dev-a`, 4 `e2e-a`, 2 `review-a`); lane B, `dev-review-pr` and
+`self-dev` stay advisory by recorded
 choice — the last two also because their parallel review fan-out cannot hold
 an arc at all without tripping rule 3's side-exit refusal, each review's
 sibling sitting outside any body that contains `e2e`. *Repairing* findings has

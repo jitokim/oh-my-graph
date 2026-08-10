@@ -553,8 +553,13 @@ into an ordinary failure on resume. Instead:
 > **Applied, and priced.** `backlog-batch`'s lane A is the second shipped arc
 > after `review-loop`'s, and the first inside a lane:
 > `feedback: { rerun: dev-a, max: 1 }` over the body `dev-a → e2e-a →
-> review-a`, worst case `(1 + 1) × 3 = 6` node runs, which the file's header
-> now prices the way this ADR's `max` guardrail asks. `max: 1`, not 2 — an
+> review-a`, `(1 + 1) × 3 = 6` body runs — which is the ROUND count, not the
+> execution count: `e2e-a` inherits `retry: { max: 1 }` from `e2e-verify`, and
+> a retry is charged on top of its round, so the worst case is 2 `dev-a` + 4
+> `e2e-a` + 2 `review-a` = 8 executions. Lane A is the first shipped body to
+> contain a retrying node, which is why the formula needed a qualifier it
+> never did in `review-loop`, and the file's header
+> now prices it the way this ADR's `max` guardrail asks. `max: 1`, not 2 — an
 > unattended batch buys one repair round; a second belongs to a human who has
 > read the first.
 >
