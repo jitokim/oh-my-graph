@@ -4,7 +4,7 @@
 corpus is *wiring* ADR 0013 refuses to let a fragment carry, and the one
 shape whose *prose* repeats hard enough to qualify — the `apply` node —
 declares **neither half** of this repo's verdict convention, has **zero**
-shipped callers, and keys its first sentence off a review contract no
+shipped callers, and keys its second sentence off a review contract no
 shipped fragment emits. Extracting it would have shipped a fragment whose
 proof did not exist yet.
 
@@ -18,9 +18,12 @@ proof did not exist yet.
   node and 28 no `review` node, and they run 2–9 nodes each. So "the
   scaffold" below means the shape 33 lanes carry in full, not all 75.
 - **Cost:** zero `claude` spawns. This is a corpus read, not a probe.
-- **Re-derivable:** the script is in "Method", below. It reads only
-  `state.json` files, which hold the **resolved** graph (ADR 0013
-  §Versioning), so what it measures is what actually ran.
+- **Re-derivable:** the script is in "Method", below, and every number
+  quoted here is an `assert` in it, so it fails rather than reports if the
+  corpus has moved. Its corpus input is `state.json`, which holds the
+  **resolved** graph (ADR 0013 §Versioning), so what it measures is what
+  actually ran; the two comparisons against shipped shapes read
+  `graphs/adr-driven-dev.yaml` and `graphs/fragments/e2e-verify.yaml`.
 
 ## What the question was
 
@@ -83,7 +86,7 @@ one that no lane ever proved. Constraint: a grant every caller overrides
 is not a proven grant — and a grant *no* caller ever declared is not even
 that.
 
-**c. Its first sentence is coupled to a contract this repo does not
+**c. Its second sentence is coupled to a contract this repo does not
 ship.** All 35 carry, as their **second** sentence: *"If it said exactly
 NO FINDINGS, change nothing and reply NO CHANGES."* (The first sentence is
 `The deep review said: {{ artifacts.review | inline }}` in 32 of 35, with
@@ -181,45 +184,111 @@ fragments that already ship.
 
 ## Method
 
-Run from `~/.oh-my-graph/runs`:
+Run from `~/.oh-my-graph/runs`, with this repo checked out at `REPO`. Every
+number quoted above is an `assert` here, so the script fails loudly rather
+than printing a plausible table if the corpus has moved under it. It reads
+three inputs: the corpus `state.json` files, `graphs/adr-driven-dev.yaml`
+(the 13% comparison and the shipped-caller count) and
+`graphs/fragments/e2e-verify.yaml` (the drift baseline). `PyYAML` is needed
+only for those last two.
 
 ```python
-import json, glob, collections
-seen = {}
-for p in sorted(glob.glob('*/state.json')):
-    try:
-        g = json.load(open(p)).get('graph')
-    except Exception:
-        continue
-    if isinstance(g, str):
-        g = json.loads(g)
-    if isinstance(g, dict) and any(n.get('id') == 'pr' for n in g.get('nodes', [])):
-        seen.setdefault(json.dumps(g, sort_keys=True), g)   # dedupe re-runs
-lanes = list(seen.values())
-ap = [n for g in lanes for n in g['nodes'] if n.get('id') == 'apply']
-print(len(lanes), len(ap))
-print(sum(1 for n in ap if (n.get('success_check') or {}).get('result_matches')))
-print(sum(1 for n in ap if n.get('allowed_tools')))
-top = collections.Counter(' '.join(n['prompt'].split()) for n in ap).most_common(2)
-print(top[0][1], top[1][1])
+import collections, glob, json, os, yaml
 
+REPO = os.path.expanduser('~/IdeaProjects/oh-my-graph')
+norm = lambda s: ' '.join(s.split())
 def jaccard(a, b):                       # the measure behind 82% and 13%
     A, B = set(a.split()), set(b.split())
     return len(A & B) / len(A | B)
-print('%.3f' % jaccard(top[0][0], top[1][0]))
 
-ids = [set(n['id'] for n in g['nodes']) for g in lanes]      # Finding 0: 33/75
-print(sum(1 for s in ids if {'review', 'apply', 'pr'} <= s))
+seen, unreadable = {}, []
+for p in sorted(glob.glob('*/state.json')):
+    try:
+        with open(p, encoding='utf-8') as f:
+            g = json.load(f).get('graph')
+        if isinstance(g, str):
+            g = json.loads(g)            # same diagnostic path as the load above
+    except (OSError, ValueError) as exc:
+        unreadable.append(f'{p}: {exc}')
+        continue
+    if isinstance(g, dict) and any(n.get('id') == 'pr' for n in g.get('nodes', [])):
+        seen.setdefault(json.dumps(g, sort_keys=True), g)   # dedupe re-runs
+# A skipped input silently shrinks every count below, so report before totals.
+assert not unreadable, 'unreadable corpus inputs:\n' + '\n'.join(unreadable)
 
-nodes = [n for g in lanes for n in g['nodes']]               # Finding 3: 32/349
-rm = [n for n in nodes if (n.get('success_check') or {}).get('result_matches')]
-print(len(nodes), len(rm), collections.Counter(n['id'] for n in rm))
-print(collections.Counter((n['success_check'])['result_matches'] for n in rm))
+lanes = list(seen.values())
+nodes = [n for g in lanes for n in g['nodes']]
+rm = lambda n: (n.get('success_check') or {}).get('result_matches')
+role = lambda r: [n for n in nodes if n.get('id') == r]
+apply_, review, pr = role('apply'), role('review'), role('pr')
+ids = [set(n['id'] for n in g['nodes']) for g in lanes]
+sizes = [len(g['nodes']) for g in lanes]
+
+# The corpus (header bullet): 75 lanes, 349 nodes, 33 carrying all three roles.
+assert (len(lanes), len(nodes)) == (75, 349)
+assert sum(1 for s in ids if {'review', 'apply', 'pr'} <= s) == 33
+assert sum(1 for s in ids if 'apply' not in s) == 40
+assert sum(1 for s in ids if 'review' not in s) == 28
+assert (min(sizes), max(sizes)) == (2, 9)
+
+# Finding 2 — the apply prose repeats: 9 texts, top two 26 of 35, 82% agreement.
+texts = collections.Counter(norm(n['prompt']) for n in apply_)
+top = texts.most_common(2)
+assert (len(apply_), len(texts)) == (35, 9)
+assert top[0][1] + top[1][1] == 26
+assert round(jaccard(top[0][0], top[1][0]), 2) == 0.82
+
+# Finding 2, the four-row table — every cell is 0 of 35. `DEMANDS` is the
+# verdictDemands list from internal/handoff/verdict_lint.go, which is what
+# `handoff.demandsVerdict` matches on.
+DEMANDS = ('start your reply with', 'start the reply with', 'begin your reply with',
+           'your reply must start', 'your reply is exactly',
+           'first characters of the reply', 'reply with exactly')
+assert sum(1 for n in apply_ if rm(n)) == 0
+assert sum(1 for n in apply_ if n.get('allowed_tools')) == 0
+assert sum(1 for n in apply_ if any(d in n['prompt'].lower() for d in DEMANDS)) == 0
+# (a) one success_check, identical in all 35; (c) the contract is universal
+# and sits second, behind a first sentence 32 of the 35 share.
+assert len({json.dumps(n.get('success_check'), sort_keys=True) for n in apply_}) == 1
+assert apply_[0]['success_check'] == {
+    'exit_zero': True, 'verify': {'command': 'make local', 'timeout': '10m'}}
+assert sum(1 for n in apply_ if 'NO FINDINGS' in n['prompt']) == 35
+assert sum(1 for n in apply_ if norm(n['prompt']).startswith('The deep review said:')) == 32
+
+# Finding 3 — the roles opt out, and the 32 that do declare a pattern drifted.
+assert (len(review), len(pr)) == (47, 75)
+assert sum(1 for n in review + pr if rm(n)) == 0
+assert sum(1 for n in nodes if n.get('use')) == 0
+assert sum(1 for n in pr if (n.get('success_check') or {}).get('verify')) == 0
+declared = [n for n in nodes if rm(n)]
+assert len(declared) == 32
+assert collections.Counter(n['id'] for n in declared) == {
+    'e2e': 24, 'measure': 4, 'verify': 3, 'accept': 1}
+patterns = collections.Counter(rm(n) for n in declared)
+assert patterns == {'PASS': 19, r'^[*_`\s]*PASS': 7, '^PASS$': 6}
+named = [n for n in nodes if n['id'] in ('review-security', 'review-style')]
+assert (len(named), sum(1 for n in named if rm(n))) == (16, 0)
+
+# The two shipped-file comparisons.
+shipped = lambda rel: yaml.safe_load(open(os.path.join(REPO, rel)))
+e2e = shipped('graphs/fragments/e2e-verify.yaml')['node']['success_check']
+assert e2e['result_matches'] == r'^[*_`\s]*PASS[*_`\s]*$'
+assert all(p != e2e['result_matches'] for p in patterns)   # 32 of 32 drifted
+
+adr = shipped('graphs/adr-driven-dev.yaml')['nodes']
+apply1 = norm([n for n in adr if n['id'] == 'apply1'][0]['prompt'])
+assert round(jaccard(top[0][0], apply1), 2) == 0.13    # a different shape
+assert (len(top[0][0].split()), len(apply1.split())) == (54, 161)
+
+# Finding 2d — the shipped-caller count: one file holds every apply stage
+# `graphs/` ships, which is the intra-file case ADR 0013 hands to anchors.
+stages = {os.path.basename(f): [n['id'] for n in yaml.safe_load(open(f))['nodes']
+                                if 'apply' in n['id']]
+          for f in glob.glob(os.path.join(REPO, 'graphs', '*.yaml'))}
+assert {f: s for f, s in stages.items() if s} == {
+    'adr-driven-dev.yaml': ['adr-apply', 'apply1', 'apply2']}
+print('all assertions hold')
 ```
-
-The 13% figure compares `top[0][0]` with `adr-driven-dev.yaml`'s `apply1`
-prompt under the same `jaccard`; the drift table compares the patterns
-that last `Counter` prints against `graphs/fragments/e2e-verify.yaml`.
 
 `state.json` stores the resolved graph, so no fragment resolution or
 `{{ inputs }}` interpolation is re-done here — the numbers are what ran.
