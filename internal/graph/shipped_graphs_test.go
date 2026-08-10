@@ -307,6 +307,18 @@ const findingsVerdict = "**FINDINGS:**\n\n- the persisting branch returns withou
 // So the rule is judged by BEHAVIOR, not by authoring form: any node that
 // spliced a review fragment and whose effective pattern rejects the findings
 // verdict is gating, however it was spelled, and must declare an arc.
+//
+// Two limits, stated so the name "RecoveryArc" does not over-promise. First,
+// this pins the pair's PRESENCE, never that the arc can recover: an arc whose
+// `rerun` names a node that cannot repair what the review found passes here,
+// and that is the non-converging loop ADR 0010 paid for once (#118). Nothing
+// decides it mechanically — `LintFeedbackReach` is the nearest thing and it is
+// advisory and fan-in-only; in these graphs it is load rules 3 and 6 that
+// happen to refuse every arc that could not reach back. Second, the sweep is
+// keyed on the RESOLUTIONS, so it sees only nodes that spliced a `review-*`
+// fragment: a review node written out by hand — `adr-driven-dev`'s four
+// rounds — is outside it, and would need the fragment (or a widened sweep)
+// before this test could speak for it.
 func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 	gating := 0
 	for _, name := range shippedTemplateNames(t) {

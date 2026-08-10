@@ -48,7 +48,12 @@
 #      reviewer that did its job into a failed run. Lane A gates, lane B
 #      advises, and each says why at its own review node. Price of the arc:
 #      the body is (1 + max) × 3 lane nodes — 6 for lane A's `max: 1` — and
-#      the ledger prices every round ("feedback round k/N" in DETAIL).
+#      the ledger prices every round ("feedback round k/N" in DETAIL). That
+#      formula counts ROUNDS, not attempts: `e2e-a` brings `retry: {max: 1}`
+#      from its fragment, and a retry is charged on top of its round, so the
+#      honest worst case here is 8. Lane A is the first shipped feedback body
+#      to contain a node that retries, which is why the formula needed the
+#      qualifier it never did in `review-loop`.
 #
 # `checks_command` is the command the ENGINE runs as each gate's evidence
 # (success_check.verify) — your stack's full-check target, e.g. `make local`,
@@ -74,10 +79,12 @@ nodes:
     type: claude-run
     worktree: lane-a
     prompt: |
-      You are in an isolated git worktree of the repo {{ inputs.repo }},
-      on a fresh branch. Implement this task, keeping the diff focused and
-      touching ONLY the files this task owns (another lane edits other files
-      in parallel — do not stray into its territory):
+      You are in an isolated git worktree of the repo {{ inputs.repo }}, on
+      this lane's own branch — fresh on the first pass, and already carrying
+      the previous round's commits on a feedback round (rule 6). Implement
+      this task, keeping the diff focused and touching ONLY the files this
+      task owns (another lane edits other files in parallel — do not stray
+      into its territory):
         {{ inputs.task_a }}
       Add or update tests. Choose a commit granularity that fits the work —
       one commit per refactoring unit for refactors, per file for sweeps, per
@@ -157,6 +164,13 @@ nodes:
     # announced in the run's disclosure line, so a lane that gates says so at
     # every run. The reviewer's PROMPT is deliberately left alone: a reviewer
     # told that findings will fail it is a reviewer biased toward CLEAN.
+    # No `retry:` here, and that is a decision rather than an omission: the
+    # same bias has a second door. A retried attempt is handed its own reply
+    # under "that attempt did NOT pass … the check did not accept it"
+    # (internal/schedule/retryfeedback.go) — which is precisely the sentence
+    # the prompt is protected from, delivered to the reviewer instead. A
+    # rejected review belongs to dev-a via the arc below, never to a second
+    # opinion from the same reviewer.
     success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }
     # ...and the arc is the other half, without which the narrowing would be a
     # lie about what happened: findings fail this node, the failure re-runs

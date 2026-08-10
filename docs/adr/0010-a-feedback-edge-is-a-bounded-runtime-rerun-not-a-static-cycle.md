@@ -511,6 +511,20 @@ into an ordinary failure on resume. Instead:
 > deliberately *not* told that `FINDINGS:` will fail the node: a reviewer that
 > knows the cost of finding something is a reviewer biased toward `CLEAN`.
 >
+> That bias has a **second door, and it is `retry:` on the gating node** —
+> worth naming because the prompt vector is the obvious one and this is not.
+> A retried attempt is handed its own previous reply under *"that attempt did
+> NOT pass: the engine ran your reply against this node's success check, the
+> check did not accept it"* (`retryFeedbackTemplate`,
+> `internal/schedule/retryfeedback.go`), which on a gating review is the
+> withheld sentence delivered anyway, in the one place the reviewer cannot
+> miss it. So a gating review declares the arc and **not** a retry: a rejected
+> review is work for the implementing node, not a second opinion solicited
+> from the same reviewer with the first one quoted back as a failure. Lane A's
+> review node says so at the node; nothing enforces it, because a retry is
+> legitimate on every non-gating review and the engine cannot tell them apart
+> for the same reason it cannot tell the narrowed patterns apart.
+>
 > **Not an eighth load rule**, for the reason the fan-in amendment above
 > gives: it is not decidable in the direction that matters. A narrowed
 > `result_matches` is the ordinary shape of every strict verdict in the repo —
@@ -553,7 +567,17 @@ into an ordinary failure on resume. Instead:
 > `rerun` at `e2e` instead trips the same rule plus rule 6 on `e2e`'s
 > `handoff: session`. Accepted, not worked around: serializing the two reviews
 > to make room for one arc would spend the parallel fan-in those templates
-> exist to demonstrate, and would still leave the other review ungated. Both
+> exist to demonstrate, and would still leave the other review ungated. A
+> third shape was on the scale too, and it is already shipped rather than
+> hypothetical: `adr-driven-dev`'s unconditional `round1 → apply1` repair
+> node — the chain `review-loop`'s header already names as the one an arc
+> hand-unrolls. An apply node between the fan-in and `pr` would repair
+> findings before the PR with the parallel reviews left intact and no arc at
+> all — so *repairing* findings is not one shape. It is rejected here on
+> price and on intent, not on structure: it pays a node on every clean run
+> where the arc costs nothing unless the review fails, and for these two
+> templates the draft PR is the intended human touchpoint, so findings
+> reaching a reader is the design. Both
 > stay advisory by recorded choice, their pipelines ending at a pull request
 > whose body carries the findings to the human making the merge decision. This
 > is the negative trade-off below — "the side-exit-free rule rejects some

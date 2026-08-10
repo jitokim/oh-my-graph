@@ -44,9 +44,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the defect fixed**. Only an exhausted loop FAILs, which is an honest report
   of a finding nobody repaired, and the graph's `on_fail: continue` keeps the
   other lane running. The price is in the header where the other rules are:
-  worst case `(1 + max) × 3` = **6 node runs** for lane A, up from 3. `max: 1`,
-  not 2, because an unattended batch buys one repair round and the second
-  belongs to a human who has read the first.
+  worst case `(1 + max) × 3` = **6 node runs** for lane A, up from 3 — and
+  that formula counts rounds, not attempts, so `e2e-a`'s inherited
+  `retry: { max: 1 }` can add one run per round on top of it (8 in the true
+  worst case). `max: 1`, not 2, because an unattended batch buys one repair
+  round and the second belongs to a human who has read the first.
 
   Lane B is left advisory *as a decision* rather than as an unexamined
   default — a docs review's findings reach the draft PR body, which is where a

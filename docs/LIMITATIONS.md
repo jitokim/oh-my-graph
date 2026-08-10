@@ -95,7 +95,14 @@ survived the feature is the paragraph, here.
   rejection re-runs the implementation with the findings instead of reading as
   a broken run (`backlog-batch`'s lane A does this; lane B advises). Both keys
   are the graph's — a fragment may not declare `feedback` at all (ADR 0013).
-  The ledger still prints PASS for the advisory case, for the reason above.
+  The ledger still prints PASS for the advisory case, for the reason above —
+  and note that "read the node's artifact" is the advisory remedy only: a
+  gating review that found something FAILS, and a failed node writes no
+  `<run-id>/<node>.out` at all. Its findings are in `<run-id>/feedback/<node>.out`
+  while the loop is running (an engine payload, not a consumer contract), and
+  in `<run-id>/failed/<node>.out` once the loop is exhausted — the copy meant
+  for a human, whose path the run prints as it saves it
+  (`✎ <node>  reply saved: …`).
 - **`budget_usd` is enforced per node, but not sub-call or across nodes.**
   A positive budget is passed to claude as `--max-budget-usd`, so claude aborts a
   node the moment its own spend crosses the budget (a real mid-run kill), and the

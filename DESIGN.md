@@ -467,7 +467,8 @@ every execution with a `feedback round k/N` note.
 else in the engine reads a verdict: `depends_on` is a success edge, and
 `retry`, `feedback` and `on_fail` all hang off failure. So a passing
 `FINDINGS:` gates nothing and every node below the review runs anyway, a `pr`
-node included. Gating is therefore one shape, and it is a **pair**: the using
+node included. *Stopping* on findings is therefore one shape, and it is a
+**pair**: the using
 node narrows `success_check.result_matches` to the clean verdict *and*
 declares `feedback: { rerun: <implementing node>, max: N }`. The narrowing
 alone would make the run where the reviewer did its job the run that reports
@@ -482,7 +483,11 @@ review node's *effective* pattern rather than reading how it was spelled.
 worst case); lane B, `dev-review-pr` and `self-dev` stay advisory by recorded
 choice — the last two also because their parallel review fan-out cannot hold
 an arc at all without tripping rule 3's side-exit refusal, each review's
-sibling sitting outside any body that contains `e2e`.
+sibling sitting outside any body that contains `e2e`. *Repairing* findings has
+a second shape that is not this one and does not stop anything:
+`adr-driven-dev`'s unconditional apply node after each review round, which
+fixes what the round found without a verdict ever failing — it costs a node on
+every clean run, where an arc costs nothing unless the review fails.
 
 **A fan-in reviewer's arc reaches one branch — `lint` says which
 (`graph.LintFeedbackReach`, advisory).** When the declarer fans in from
