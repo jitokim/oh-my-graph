@@ -282,6 +282,64 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	}
 }
 
+// findingsVerdict is the reply a review fragment makes when it found a real
+// defect — the token its prompt demands, wearing the markdown emphasis a model
+// adds unbidden, so a pattern is judged here the way a real reply judges it.
+const findingsVerdict = "**FINDINGS:**\n\n- the persisting branch returns without refreshing the projection\n"
+
+// TestAGatingReviewCarriesItsRecoveryArc pins the pair, not the instance
+// (issue #151). A review fragment passes on BOTH its verdicts, so `FINDINGS:`
+// reaches none of the engine's three "the reviewer rejected the work"
+// mechanisms — `retry`, `feedback` and `on_fail` all hang off FAILURE — and a
+// graph that wants findings to stop it has exactly one spelling available:
+// narrow the review's success_check until `FINDINGS:` fails.
+//
+// The moment a shipped graph does that, it owes the other half. A narrowed
+// check ALONE means the run that most deserves to be believed — the one where
+// the reviewer did its job and found something — is the run that reports FAIL,
+// with the whole pipeline discarded and nothing repaired. The `feedback:` arc
+// is what makes the same failure a repair round instead: dev re-runs with the
+// findings, and only an exhausted loop is final. This project already decided
+// (merge-shepherd's WITHHELD, docs/LIMITATIONS.md) that a deliberate refusal
+// must not read as a broken run; a gating review with no arc is that decision
+// reversed by omission.
+//
+// So the rule is judged by BEHAVIOR, not by authoring form: any node that
+// spliced a review fragment and whose effective pattern rejects the findings
+// verdict is gating, however it was spelled, and must declare an arc.
+func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
+	gating := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		for _, res := range loaded.Resolutions {
+			if !strings.HasPrefix(res.Fragment, "review-") {
+				continue
+			}
+			node, ok := loaded.Graph.byID[res.NodeID]
+			if !ok {
+				t.Fatalf("%s: resolution names node %q, which the graph does not have", name, res.NodeID)
+			}
+			// Validate compiled this pattern already, so MustCompile cannot
+			// fire here — and the match is a SEARCH, the same call the
+			// scheduler makes (internal/schedule).
+			if regexp.MustCompile(node.SuccessCheck.ResultMatches).MatchString(findingsVerdict) {
+				continue // advisory: findings pass, nothing downstream is gated
+			}
+			gating++
+			if node.Feedback == nil {
+				t.Errorf("%s: node %q gates on findings (its pattern %q rejects a FINDINGS: reply) but declares no feedback arc — a review that did its job would fail the run instead of buying a repair round; add feedback: { rerun: <implementing node>, max: 1 } or restore the fragment's either-verdict check",
+					name, res.NodeID, node.SuccessCheck.ResultMatches)
+			}
+		}
+	}
+	if gating == 0 {
+		t.Error("no shipped graph gates on review findings any more — this test now asserts nothing; either a lane lost its narrowed success_check, or the gating shape is no longer demonstrated anywhere in graphs/")
+	}
+}
+
 // qualifierClause is the one unbroken line every shipped prefix verdict carries
 // (DESIGN.md, "Verdict patterns"), written on one line precisely so that
 // grepping for it is a sweep that cannot silently miss a node.

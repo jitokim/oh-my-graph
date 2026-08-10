@@ -77,6 +77,20 @@ nodes:
         single run; determinism is the claim under test.
       verify_command: make local
 
+  # Both reviews are ADVISORY — chosen, not inherited. The fragment passes on
+  # `CLEAN` and on `FINDINGS:` alike, and nothing else in the engine reads a
+  # verdict, so `pr` opens on either; here that is what we want, because it
+  # opens a DRAFT carrying both reviews in its body, and a draft PR with the
+  # findings in it is exactly where a human should meet them. The PASS rows do
+  # not claim the diff was clean (docs/LIMITATIONS.md, "A PASS row does not say
+  # which outcome passed") — `<run-id>/review-style.out` does.
+  #
+  # Gating means narrowing this node's `success_check` to the clean verdict AND
+  # declaring a `feedback:` arc on it — the pair, never the first alone, or a
+  # working reviewer reads as a broken run. `backlog-batch`'s lane A is the
+  # worked example; this fan-out shape cannot carry an arc at all (ADR 0010's
+  # side-exit rule, since the sibling review sits outside any body containing
+  # `e2e`), which the loader refuses at load rather than at spend.
   - id: review-security
     use: review-security
     depends_on: [e2e]

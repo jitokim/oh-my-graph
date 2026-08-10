@@ -35,6 +35,20 @@
 #      should declare `on_fail: continue` (as this graph does): one lane's
 #      failure must not halt the others' unrelated work. Dependency edges
 #      still hold — a failed node's own downstream nodes never run.
+#   6. A review is ADVISORY unless the lane says otherwise. The `review-style`
+#      fragment passes on BOTH its verdicts — `CLEAN` and `FINDINGS:` —
+#      because a review's job is to judge, not to be clean. Nothing else reads
+#      a verdict: `depends_on` is a success edge, and `retry`, `feedback` and
+#      `on_fail` all hang off FAILURE, so a passing `FINDINGS:` reaches none
+#      of them and the lane opens its PR regardless. A lane that wants
+#      findings to stop it therefore has exactly one spelling, and it is a
+#      PAIR: narrow the review's `success_check` to the clean verdict, and
+#      give that same node a `feedback:` arc saying what to do about the
+#      failure. Ship both or neither — a narrowed check with no arc turns a
+#      reviewer that did its job into a failed run. Lane A gates, lane B
+#      advises, and each says why at its own review node. Price of the arc:
+#      the body is (1 + max) × 3 lane nodes — 6 for lane A's `max: 1` — and
+#      the ledger prices every round ("feedback round k/N" in DETAIL).
 #
 # `checks_command` is the command the ENGINE runs as each gate's evidence
 # (success_check.verify) — your stack's full-check target, e.g. `make local`,
@@ -84,6 +98,13 @@ nodes:
       work is done.
       If it is not finished, do NOT write DONE: start with a bare BLOCKED and
       the current state, so this lane stops instead of shipping half a task.
+
+      Review findings from the previous round follow — they are empty on the
+      first pass (rule 6: this lane gates, so a review that found something
+      comes back here). If present, fix every one before anything else, and
+      note that this lane's branch already carries the previous round's
+      commits: amend the work, do not restart it.
+      {{ feedback.review-a }}
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
@@ -126,6 +147,28 @@ nodes:
         Judge correctness as well, and scope: the diff must serve only this
         lane's task — flag anything that strays into files another lane
         could own. The e2e verdict was: {{ artifacts.e2e-a | inline }}
+    # Rule 6, lane A's half: this lane GATES. The narrowing lives here, on the
+    # using node, because this is the only file that knows whether findings
+    # should stop this lane — the fragment ships the reviewer's contract, not
+    # the caller's policy. `CLEAN` is the fragment's own clean token and the
+    # decoration class is DESIGN.md's ("Verdict patterns"), so this states
+    # which verdict the lane ACCEPTS rather than restating which verdicts the
+    # reviewer may emit — the two do not drift together. The override is
+    # announced in the run's disclosure line, so a lane that gates says so at
+    # every run. The reviewer's PROMPT is deliberately left alone: a reviewer
+    # told that findings will fail it is a reviewer biased toward CLEAN.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }
+    # ...and the arc is the other half, without which the narrowing would be a
+    # lie about what happened: findings fail this node, the failure re-runs
+    # dev-a → e2e-a → review-a with the findings in {{ feedback.review-a }},
+    # and a second round that comes back CLEAN ends the lane green with the
+    # defect FIXED instead of merely quoted in the PR body. Only an exhausted
+    # loop FAILs, and that report is honest — a finding nobody repaired, with
+    # rule 5 keeping the other lanes running. `max: 1`, not 2: an unattended
+    # batch buys one repair round; a second belongs to a human who has read
+    # the first. `feedback` can only be declared HERE — ADR 0013 counts it as
+    # graph-local wiring, so no fragment can gate on a caller's behalf.
+    feedback: { rerun: dev-a, max: 1 }
 
   - id: pr-a
     use: pr-publish
@@ -196,6 +239,12 @@ nodes:
         Judge accuracy against the code it documents, tone consistency, and
         scope: docs files only — flag anything that strays into code another
         lane could own. The e2e verdict was: {{ artifacts.e2e-b | inline }}
+    # Rule 6, lane B's half: this lane ADVISES. Left exactly as the fragment
+    # ships — either verdict passes — but as a decision rather than an
+    # unexamined default: the findings reach the draft PR's body, which is
+    # where a human reads a docs review anyway, and a wording flag does not
+    # earn a second dev round. So `pr-b` opens on `FINDINGS:`, deliberately,
+    # and lane B's PASS row does not claim the docs were clean.
 
   # Same fragment as lane A's PR node — only the review it quotes differs.
   - id: pr-b

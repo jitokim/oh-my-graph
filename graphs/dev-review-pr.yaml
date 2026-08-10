@@ -72,6 +72,26 @@ nodes:
         the claim under test.
       verify_command: make local
 
+  # Both reviews are ADVISORY, and that is this graph's choice rather than the
+  # fragment's default going unexamined. The fragment passes on `CLEAN` and on
+  # `FINDINGS:` alike — a review's job is to judge, not to be clean — and
+  # nothing else in the engine reads a verdict, so `pr` below opens on either.
+  # That is right for this shape: the pipeline ends at a pull request, both
+  # reviews are interpolated into its body, and a real defect is therefore
+  # delivered to the human at the point the merge decision is made. What the
+  # ledger's PASS rows do NOT say is that the diff was clean — read the PR, or
+  # `<run-id>/review-style.out` (docs/LIMITATIONS.md, "A PASS row does not say
+  # which outcome passed").
+  #
+  # To gate instead: narrow the review's `success_check` to the clean verdict
+  # AND declare a `feedback:` arc on the same node — the pair, never the first
+  # alone. `backlog-batch`'s lane A is the worked example. It cannot be done in
+  # THIS shape without restructuring: the two reviews fan out of `e2e`, so any
+  # arc's body contains `e2e` while the sibling review sits outside it, and
+  # ADR 0010's side-exit rule refuses the graph at load ("review-security
+  # depends on body node e2e but is outside the loop"). Serializing the reviews
+  # to make room for one arc would spend the parallel fan-in this template
+  # exists to demonstrate and would still leave the other review ungated.
   - id: review-security
     use: review-security
     depends_on: [e2e]

@@ -13,7 +13,7 @@
     {
       "id": "dev-a",
       "type": "claude-run",
-      "prompt": "You are in an isolated git worktree of the repo {{ inputs.repo }},\non a fresh branch. Implement this task, keeping the diff focused and\ntouching ONLY the files this task owns (another lane edits other files\nin parallel — do not stray into its territory):\n  {{ inputs.task_a }}\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go, staging only the files you changed, by\nexplicit path (`git add \u003cpath\u003e ...`) — never `git add -A`, `git add .`,\nor `git add -u`. End every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this lane's node ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state, so this lane stops instead of shipping half a task.\n",
+      "prompt": "You are in an isolated git worktree of the repo {{ inputs.repo }},\non a fresh branch. Implement this task, keeping the diff focused and\ntouching ONLY the files this task owns (another lane edits other files\nin parallel — do not stray into its territory):\n  {{ inputs.task_a }}\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go, staging only the files you changed, by\nexplicit path (`git add \u003cpath\u003e ...`) — never `git add -A`, `git add .`,\nor `git add -u`. End every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this lane's node ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state, so this lane stops instead of shipping half a task.\n\nReview findings from the previous round follow — they are empty on the\nfirst pass (rule 6: this lane gates, so a review that found something\ncomes back here). If present, fix every one before anything else, and\nnote that this lane's branch already carries the previous round's\ncommits: amend the work, do not restart it.\n{{ feedback.review-a }}\n",
       "allowed_tools": [
         "Read",
         "Edit",
@@ -84,9 +84,13 @@
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
+        "result_matches": "^[*_`\\s]*CLEAN\\b"
       },
-      "worktree": "lane-a"
+      "worktree": "lane-a",
+      "feedback": {
+        "rerun": "dev-a",
+        "max": 1
+      }
     },
     {
       "id": "pr-a",

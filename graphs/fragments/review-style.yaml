@@ -35,4 +35,19 @@ node:
   # a reply that is neither (an interim "still reviewing") fails. Anchored,
   # and tolerant of emphasis on either side of the colon, `**FINDINGS:**` and
   # `**FINDINGS**:` alike (DESIGN.md "Verdict patterns").
+  #
+  # That makes this fragment ADVISORY, and it says so here because the
+  # consequence is not local: a passing `FINDINGS:` reaches none of the engine's
+  # three "the reviewer rejected the work" mechanisms — `retry`, `feedback` and
+  # `on_fail` all hang off FAILURE — so every node downstream of a using node
+  # runs regardless, including a PR node. Whether that is right is the CALLER's
+  # question, and the caller is the only one who can answer it: a graph that
+  # wants findings to stop its pipeline narrows this check on its own node
+  # (`success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }`,
+  # announced in the run's disclosure line) AND gives that node a `feedback:`
+  # arc back to the implementing node — which no fragment may declare, ADR 0013
+  # counting feedback as graph-local wiring. Ship the pair or neither: a
+  # narrowed check with no arc makes a reviewer that did its job report a
+  # broken run. `backlog-batch` shows both dispositions — lane A gates, lane B
+  # keeps this default deliberately.
   success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
