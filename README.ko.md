@@ -349,6 +349,14 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
+**`allowed_tools`가 주는 것.** 이건 힌트가 아니라 그 노드의 권한 자체입니다:
+생략한 노드는 당신의 Claude Code 설정을 그대로 물려받으므로, 거기서 미리
+허용해 두지 않은 도구는 그 노드가 쓸 수 없는 도구입니다. 요란하게 실패하지도
+않습니다 — 노드는 거부당했다고 산문으로 설명하고 정상 종료하며,
+`result_matches: '^DONE'` 같은 체크는 그 산문에 그대로 통과합니다. 각 노드에
+필요한 도구를 명시하세요. 그리고 그 일이 노드 자신의 응답 밖에서 확인돼야 한다면
+`success_check.verify` 커맨드를 붙이세요 — 그건 엔진이 직접 실행합니다.
+
 시작부터 알아 둘 만한 셋, 각각 YAML 한 줄입니다:
 
 - **gate 노드** — `type: gate`로 선언한 노드는 사람의 승인을 위해 run을 멈추고,
@@ -440,7 +448,14 @@ session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
 존재하지 않거나 ancestor가 아닌 노드를 가리키는 `artifacts.<id>` — 그리고
 `handoff: session` 노드에 대해서는, session-parent와 다른
 `cwd`/`worktree`, 또는 `retry` 블록(재시도된 attempt는 cold로 시작)도
-포함합니다. warning은 종료 코드를 절대 바꾸지 않습니다. 런타임에는 형식이
+포함합니다. 그리고 `allowed_tools`도 `success_check.verify`도 선언하지 않은
+노드에 대해서는, 그 노드가 도구 거부를 관측할 수단이 하나도 없다는 것도
+경고합니다 — 당신의 Claude Code 설정이 미리 승인하지 않은 도구는 거부되고,
+노드는 그 사실을 산문으로 설명하며, 그 노드 자신의 `result_matches`는 그
+산문을 그대로 통과시킬 수 있습니다. 노드가 필요로 하는 도구를 이름으로
+선언하거나, 엔진이 직접 실행하는 `verify` 명령을 주세요. (gate 노드와
+`permission_mode: bypassPermissions` 노드는 제외됩니다: 둘 다 무엇도 거부당할
+수 없으니까요.) warning은 종료 코드를 절대 바꾸지 않습니다. 런타임에는 형식이
 잘못된 토큰은 그대로 통과하는 반면(프롬프트에 literal `{{ }}` 텍스트가
 정당하게 들어갈 수 있으므로), 바인딩되지 않은 input이나 알 수 없는 노드를
 가리키는 올바른 형식의 참조는 interpolation이 실행될 때 해당 노드를

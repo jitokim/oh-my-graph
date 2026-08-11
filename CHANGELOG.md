@@ -8,6 +8,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Added
+
+- **`lint` and `run --dry-run` now warn when a node can observe no tool
+  denial — it declares neither an `allowed_tools` grant nor a
+  `success_check.verify`.** Advisory only: it never changes an exit code and
+  never makes a graph invalid, for the standing reason a hand-written graph is
+  your own reviewed artifact.
+
+  The defect (issue #154) is that `allowed_tools` is the node's own grant, not
+  a hint. A node that omits it inherits your Claude Code settings, so a tool
+  you have not pre-authorised there is a tool the node cannot use — and
+  nothing fails loudly. The subprocess explains the refusal in prose, exits 0,
+  and a `result_matches` written for the happy path (`^DONE`) passes on that
+  prose. The node is paid for, the ledger prints PASS, and the push, the `gh`
+  call or the build never happened. Nobody who hits this learns anything from
+  the run: the node "succeeded".
+
+  The predicate is structural rather than a reading of the prompt. A node with
+  a grant has authorised what it needs; a node with a `success_check.verify`
+  has a check the *engine* runs, outside the node's own reply, so a denial
+  that stops the work also fails the node. A node with neither has no
+  mechanism of either kind. Two exemptions, because the warning's premise is
+  false there rather than to quiet it: a gate node spawns no subprocess, and
+  `permission_mode: bypassPermissions` grants every tool regardless.
+
+  It was measured before it shipped, over the shipped graphs and fragments
+  plus a 30-lane operator corpus — 150 claude nodes, **62 hits**. Reading each
+  one: 21 `pr` nodes told to `git push` and run `gh pr create`, 4 `push` nodes
+  checked only for a `PUSHED|BLOCKED` token, 8 measure/verify nodes told to
+  build a binary and write files, and 28 review nodes whose prompts demand
+  "verify by running commands, not by reading the diff". **61 of 62 were nodes
+  reaching for tools they never declared**; noise was 1 in 62. That one was
+  this repo's own `review-loop.yaml::review`, a pure judgment node — which now
+  declares the read tools it reads the working tree with, because declaring is
+  what the advisory asks of everyone else.
+
+  The warning names the fix, not just the absence: name the tools in
+  `allowed_tools`, and where the work must be visible outside the node's own
+  reply, add a `success_check.verify` command.
+
+### Changed
+
+- **`graphs/review-loop.yaml`'s `review` node now declares
+  `allowed_tools: [Read, Grep, Glob]`.** Behaviour is unchanged on a machine
+  that already pre-authorises reading — `--allowedTools` adds a grant, it
+  takes none away — but the node reads a working tree, so it says so.
+
+- **README, README.ko and `docs/EXAMPLES.md` now say what `allowed_tools`
+  buys you** at the first hand-written YAML a reader meets, and at the exact
+  sentence in the auto/hand-written comparison where "keeps your settings"
+  reads as a pure upside. It cuts both ways, and that is the half nobody was
+  told.
+
 ## [v0.5.4] - 2026-08-11
 
 Nothing new to type. No flag, no command, no schema key — and both changes

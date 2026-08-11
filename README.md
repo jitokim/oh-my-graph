@@ -331,6 +331,14 @@ nodes:
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
+**What `allowed_tools` buys you.** It is the node's own grant, not a hint: a
+node that omits it inherits your Claude Code settings, so a tool you have not
+pre-authorised there is a tool the node cannot use. Nothing fails loudly — the
+node explains the denial in prose and finishes, and a check like
+`result_matches: '^DONE'` passes on that prose. Name what each node needs; where
+the work must be visible outside the node's own reply, add a
+`success_check.verify` command, which the engine runs itself.
+
 Three things worth knowing about from the start, each one line of YAML:
 
 - **gates** — a node declared `type: gate` stops the run for human approval,
@@ -422,7 +430,14 @@ its session-parent's, or a `retry` block (a retried attempt starts cold) —
 plus, for any node, a verdict nothing reads: a prompt that demands a token
 (`START your reply with …`) under a `success_check` with no `result_matches`,
 or a `result_matches` written without `exit_zero` (which drops the exit-code
-guard a node has for free only while it declares no check at all).
+guard a node has for free only while it declares no check at all) —
+plus, for a node that declares neither `allowed_tools` nor a
+`success_check.verify`, that nothing it does can observe a tool denial: a tool
+your Claude Code settings do not pre-authorise is refused, the node says so in
+prose, and its own `result_matches` is free to pass on that prose. Name the
+tools the node needs, or give it a `verify` command the engine runs itself.
+(A gate node and a `permission_mode: bypassPermissions` node are exempt:
+neither can be denied anything.)
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
 while a well-formed reference to an unbound input or unknown node fails
