@@ -165,6 +165,46 @@ ADR 0021 §3 argues each.
   told. Their YAML examples declare grants too — a reader who copies the
   block above the paragraph should not then be warned about it.
 
+- **`oh-my-graph init` tops a tree up instead of refusing it.** A target file
+  that already exists is kept exactly as it is and reported as `kept`; only the
+  payload files that are missing are written, and a second `init` over a
+  complete tree writes nothing and exits 0. Before this, one existing file
+  aborted the whole command — so a `go install` user who ran `init` between
+  v0.4.1 and v0.5.2 had **no command at all** that could hand them
+  `graphs/fragments/pr-publish.yaml`, which shipped at v0.5.3. The no-overwrite
+  promise is stronger, not weaker: skipping modifies no existing file, so it
+  cannot produce the half-replaced set the refusal existed to prevent; the
+  write still uses `O_EXCL`; a failure still rolls back what that run created
+  (`graphs/` included, when that run created it); and a kept edit is now named
+  on stdout rather than inferred from a command that did nothing. Because a
+  top-up can pair a file this release added with a kept copy of one it depends
+  on, a kept file whose bytes differ from the binary's copy is marked
+  `DIFFERS` and counted in the summary — otherwise the mismatch (a fresh
+  template binding a `with:` key an older fragment does not declare) first
+  appears as a load error naming a node, arbitrarily far from the `init` that
+  assembled it. What refusing also bought, and is deliberately given up here,
+  is a wrong-directory guard: `init` aimed at a directory that already held
+  your own `graphs/` used to abort naming your file, and now writes the
+  payload beside it and exits 0. The guard could not distinguish that mistake
+  from the legitimate top-up it fires on, and the per-file `wrote` lines are
+  the replacement — the list of what to delete is on screen.
+
+- **Where a graph file is saved decides whether it can cite a fragment — and
+  the product now says so.** A `use:` resolves against the graph's own
+  `fragments/` sibling and nowhere else (ADR 0013 §Trust, unchanged), which
+  means a graph written to a directory with no `fragments/` beside it — a bare
+  `/tmp/lane.yaml` — can cite nothing. Measured against this machine's run
+  corpus, that is **86 of 87** lanes, 84 of them directly in `/tmp`
+  ([measurement](docs/measurements/0013-fragment-reach-is-decided-by-where-a-graph-is-saved.md)),
+  so the corpus's zero adoption of `use:` was a reachability fact and not a
+  preference. README, README.ko, DESIGN.md and the plugin agent brief state the
+  consequence next to the rule, and the unresolved-fragment error now names the
+  two fixes (author the graph in a directory that has a `fragments/` sibling —
+  `oh-my-graph init <dir>`, then `<dir>/graphs/` — or put a `fragments/`, or a
+  symlink to one, beside the graph) instead of restating the rule that already
+  failed to help. Resolution itself is untouched: no search path, no flag, no
+  embedded tier.
+
 ## [v0.5.4] - 2026-08-11
 
 Nothing new to type. No flag, no command, no schema key — and both changes

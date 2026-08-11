@@ -406,7 +406,7 @@ func loadFragmentFile(name, source string) *loadedFragment {
 
 	data, err := os.ReadFile(source)
 	if os.IsNotExist(err) {
-		return fileErr(fmt.Sprintf("no fragment file at the fragment location %q — a use: resolves against the graph file's own fragments/ sibling, and nowhere else", source))
+		return fileErr(fmt.Sprintf("no fragment file at the fragment location %q — a use: resolves against the graph file's own fragments/ sibling, and nowhere else, so a graph stored where no fragments/ directory sits beside it can cite nothing: put the fragment there, or author this graph next to a fragments/ that already has it (`oh-my-graph init <dir>` unpacks the shipped shapes into <dir>/graphs/fragments/, for graphs written in <dir>/graphs/)", source))
 	}
 	if err != nil {
 		return fileErr(fmt.Sprintf("read fragment file %q: %v", source, err))
