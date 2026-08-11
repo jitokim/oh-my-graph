@@ -310,6 +310,64 @@ change than widening what the check accepts.
 > than a promise). Rare and visible is the whole claim; the header and DESIGN.md
 > say so too.
 
+> **Update (2026-08-11) — the grammar was the wrong place to look for the
+> cause, and this is the ADR that has to say so.** ADR 0021 supersedes the
+> verdict vocabulary the update above introduced: `recheck`'s red verdict
+> `BLOCKED <sha>` is now `LATCHED <sha> — <what>; unblock: <act>`. Nothing in
+> §1–§5 is re-opened — no pattern changed, `^` stands, and the `(?m)`
+> counter-experiment is untouched. What changed is the diagnosis underneath
+> the token.
+>
+> **This ADR is where the record of a misattribution belongs, because this ADR
+> is the misattribution.** Two backlog items were opened on 2026-08-04 within
+> hours of each other. One was about markdown emphasis and verdict anchoring;
+> it became this document, and it was correct. The other read *"merge-shepherd
+> should distinguish a CodeRabbit rate limit from a slow review"* — filed as a
+> one-off policy note about one bot's rate limiter, prioritized exactly that
+> way, and never shipped. Being right about its own symptom is what made it
+> read as small. Nothing in it says *the graph waits for conditions a timer
+> does not release*, and that sentence is the general fact; the item was not
+> deprioritized so much as **under-generalized**, which is a different failure
+> and a harder one to catch in a backlog sweep.
+>
+> **What was NOT one cause.** Three symptoms were proposed as a single latch
+> story. It does not hold, so it is written down here refuted rather than
+> repeated:
+>
+> | symptom | latched? | polled? | what it actually was |
+> |---|---|---|---|
+> | 2026-08-04, rate limit | yes | yes, ~14 min | a latch nobody could see — the read projected `reviews`, and the notice was an issue comment |
+> | the five `merge` hits (§5 update) | **3 of 5 no** | n/a | checks triage's own push restarted — self-resolving, and already fixed by `recheck` |
+> | 2026-08-10/11, ×4 | yes | **no** | `recheck` halted correctly, in seconds. The repeat was not a hang; the verdict named no act |
+>
+> The middle row is the one that kills the unified story: the incident this
+> ADR's own §5 update is about was mostly *not* a latch. And the third row
+> spends no time and no money — what repeated four times was an operator
+> re-deriving the same three-step repair, which is a legibility cost, not a
+> waiting cost. The minimum fix the backlog proposed (`RATE_LIMITED <n>` in
+> `ready-and-wait`'s grammar) would have prevented none of the four: wrong
+> node, wrong condition, and a reporting change that still fails and still
+> halts.
+>
+> **What IS one cause, and it is narrower and worse.** Both waits modelled "is
+> this PR ready" as **one bot's opinion plus a check rollup**, while GitHub
+> computes the real answer in two fields the graph never read —
+> `reviewDecision` (every reviewer, including humans) and `mergeStateStatus`.
+> Latch-blindness is a consequence of that keyhole, not an independent
+> property. And the keyhole's worst outcome is none of the three symptoms: a
+> HUMAN's `CHANGES_REQUESTED` was invisible to the whole chain, so `recheck`
+> answered `RECHECKED`, the gate comment told the operator that review status
+> was no longer theirs to confirm, and `merge` held an `--admin` licence
+> justified by a review that was "complete by construction" — a construction
+> that counted CodeRabbit and no human. That is a false GREEN and a merge, not
+> a hang, which is precisely why no incident report exists for it. ADR 0021 §1
+> has the trace and ADR 0021 §2 the fix — which is the unfiltered review list,
+> not `reviewDecision` itself: that field is PR-level and never SHA-scoped, so
+> it is reported rather than judged by. `merge`'s `--admin` clause now rests on
+> `recheck` having read every reviewer's own review, named a mechanical
+> `mergeable:` state, and not reported `review_decision: REVIEW_REQUIRED`;
+> §4's grant change (step 0's two read-only commands) is untouched by any of it.
+
 ## 6. Consequences
 
 - A green `merge-shepherd` run still does not mean anything landed — the
