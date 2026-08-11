@@ -81,8 +81,11 @@ has no open issue behind it.
   ships two of them: `merge` answers `MERGED <sha>` or `WITHHELD <reason>` —
   refusing to merge past an unfinished review is the graph working — and
   `recheck` answers `RECHECKED <sha>` or `UNSETTLED <sha>`, which is the
-  difference between checks that concluded green and checks that never
-  concluded at all. So a green run of that graph is **not** by itself evidence
+  difference between checks that concluded green and checks that were still
+  moving when the wait ran out. (Its third verdict, `LATCHED <sha>`, is not in
+  this gap: it fails the node on purpose, so it shows up as a red row that
+  names the act on its first line.) So a green run of that graph is **not** by
+  itself evidence
   that anything landed, or even that anything was checked. The ledger prints
   `PASS` either way; only the node's artifact (`<run-id>/merge.out`,
   `<run-id>/recheck.out`) says which. Read it, or `git log`. The

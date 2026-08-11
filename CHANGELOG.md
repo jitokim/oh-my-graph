@@ -10,6 +10,94 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+Nothing new to type here either. `merge-shepherd` gains no node, no flag and no
+schema key, and no `result_matches` pattern in the repo changes — what changes
+is what its two waits LOOK AT, and what they are allowed to call a timeout.
+
+### Fixed
+
+- **`merge-shepherd` no longer merges past a review it cannot see.** Both waits
+  now project EVERY review with its author, and read `mergeStateStatus` and
+  GitHub's `reviewDecision` alongside them. Until now
+  `recheck` filtered the review list down to `coderabbitai`, so a **human**
+  reviewer's `CHANGES_REQUESTED` was invisible to the entire chain:
+  `ready-and-wait` passed (its condition named only the bot), `recheck`
+  answered `RECHECKED <sha>` — green — the gate comment told the operator that
+  review status was no longer theirs to confirm, and `merge` held a licence to
+  `--admin` justified by a review that was "complete by construction", a
+  construction with no human in it. The outcome was not a hang but a **merge**,
+  which is why it never appeared in an incident log; it was found by tracing
+  the chain (ADR 0021 §1). The same keyhole hid a conflicting PR:
+  `mergeStateStatus: DIRTY` reached `merge`, failed there, answered `WITHHELD`
+  — which PASSES — and ended the run green with nothing shipped.
+  The review rules are written **per reviewer**, not over `reviewDecision`,
+  which is reported rather than judged by: that field is PR-level, is never
+  scoped to a SHA, and is not cleared by a `COMMENTED` review, so gating on it
+  fails in both directions. At `ready-and-wait` it flips the instant CodeRabbit
+  submits the `CHANGES_REQUESTED` that is this graph's ordinary path into
+  `triage`, halting every normal run before its core automated step; at
+  `recheck` it stays set over a review a later push superseded, naming an act
+  that has already been performed and cannot clear it (PR #145, which merged
+  correctly). So the bot's rule is SHA-scoped — its latest review on `head` is
+  its current word — and a person's is not: theirs stands until that reviewer
+  approves or a maintainer dismisses it, which is a different `unblock:` act.
+- **`ready-and-wait` judged the check rollup by the name `test`.** `recheck`'s
+  own comment has explained since 2026-08-09 why that is wrong — this repo
+  carries three rollup entries, and a red one of the other two read as green —
+  but the fix had only ever been applied to the newer node. Both waits now
+  classify every entry.
+
+### Changed
+
+- **A latched condition is reported as itself, not as a timeout.** A poll is
+  only honest over a *self-resolving* condition — one a machine already at work
+  will clear with nobody doing anything. The other kind is **latched**: a review
+  that requested changes, a workflow run awaiting a maintainer's approval, a
+  required context with no reporter, a branch that conflicts with its base, a
+  rate-limited bot that will not review again until asked. Both waits now
+  classify before they poll, and answer `LATCHED <what>; unblock: <act>` at
+  once. `LATCHED` fails its node on purpose, so the run halts and the act is on
+  the first line of `<run-id>/failed/<node>.out`. ADR 0021 is the rule;
+  `gh pr ready` in `ready-and-wait`'s step 1 was always its first instance.
+- **`recheck`'s halting verdict is renamed** from `BLOCKED <sha>` to
+  `LATCHED <sha> — <what>; unblock: <act>`, and re-defined. `BLOCKED` meant RED
+  — "a judgment that something is wrong with the code" — which filed a workflow
+  awaiting a click as a code defect, and filed four conditions that need a
+  person as `UNSETTLED`, a word meaning *wait longer*. `triage` keeps its own
+  `BLOCKED` for the different thing it means there ("I could not finish"), and
+  the two verdicts no longer share a word. The pass/fail behaviour is
+  unchanged: the token is absent from the pattern, which is how this graph
+  halts on purpose.
+- **`UNSETTLED` narrows** to "time ran out while something was still MOVING",
+  and it still passes. Eight classes of condition that used to be able to reach
+  it now halt instead.
+- **`merge`'s `--admin` licence is narrowed and re-justified.** It may be
+  reached only when the plain merge failed on protection or queue mechanics,
+  `recheck` answered `RECHECKED` naming a mechanical `mergeable:` state
+  (`BEHIND`, `BLOCKED`, `UNSTABLE`, `HAS_HOOKS`), AND that same line does not
+  say `review_decision: REVIEW_REQUIRED` — the state where protection is
+  holding the PR because nobody has approved it, which `mergeStateStatus`
+  reports as `BLOCKED` like any other hold and over which `--admin` is exactly
+  "a way past a review". `merge` answers `WITHHELD` there instead. The old
+  justification — "the review is complete by construction (verify passed, CI
+  and CodeRabbit concluded, comments triaged)" — is gone, because it was false
+  about humans.
+- **The unified diagnosis is recorded where the next reader will look**: the
+  graph's header, and ADR 0019 as a dated update — the ADR that was written
+  about verdict grammar in 2026-08-04 while the second backlog item filed the
+  same day, about a rate limit, held the general fact nobody generalized. That
+  update also states, refuted, the three-symptoms-one-cause story that does
+  **not** hold, and the narrower one that does.
+
+### Not automated, deliberately
+
+The graph names the act; it does not perform it. It does not resolve a review
+thread (a GraphQL mutation needing `Bash(gh api graphql *)`, and a node closing
+a reviewer's verdict on its own judgement — four times the operator read the
+reason before closing, and once closing blind would have been wrong), it does
+not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
+ADR 0021 §3 argues each.
+
 ### Added
 
 - **`lint` and `run --dry-run` now warn when a node can observe no tool

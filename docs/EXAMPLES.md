@@ -127,8 +127,13 @@ it ready, waits for CI and CodeRabbit, triages the review comments, waits out
 the checks its own fix restarted, pauses at a human approval gate, and merges
 — the operator's by-hand PR-shepherding loop, pinned in YAML. That second wait
 (`recheck`) is why the gate is a decision rather than a chore: it judges the
-FINAL SHA and says which one, so nobody is asked to re-derive CI status by
-hand. Its merge verdict is deliberately two-valued: the node
+FINAL SHA and says which one, reading every reviewer's own review rather than
+one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
+— so nobody is asked to re-derive CI or review status by hand. Neither wait polls a condition a clock cannot clear: a review
+that requested changes, a run awaiting approval, a conflicting branch and a
+rate-limited bot are reported as `LATCHED <what>; unblock: <act>`, which fails
+the node at once instead of spending the timeout (ADR 0021).
+Its merge verdict is deliberately two-valued: the node
 passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
 to merge past an unfinished review is the graph working. So a green run of
 this one graph is not proof that anything landed — read `merge`'s artifact

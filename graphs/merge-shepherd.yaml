@@ -8,14 +8,22 @@
 # for CI and CodeRabbit, work through the review comments, wait out the checks
 # your own fix restarted, merge, pull, rebuild, prune. Same steps, same order,
 # pinned in YAML — with the merge policy encoded in the graph shape itself:
-# merge happens only AFTER CodeRabbit's review has completed on the SHA being
-# merged and said something other than "changes requested" there, every comment
-# it had made when triage ran is actioned, and `--admin` is never a way past an
-# unfinished review (it may only grease merge-queue mechanics once the review is
-# complete — see CONTRIBUTING). Note the seam that wording leaves, because the
-# graph does not close it: an incremental review of triage's OWN fix that merely
-# COMMENTS passes recheck untriaged, since there is no arc back to triage. Its
-# notes reach the operator at the gate and nowhere else.
+# merge happens only AFTER the review is settled over EVERY reviewer, bot and
+# human. GitHub's own `reviewDecision` counts them all, but it is PR-LEVEL and
+# never scoped to a SHA — and a COMMENTED review does not clear a
+# CHANGES_REQUESTED — so it stays set over a review a later push superseded,
+# and the graph reads the reviews themselves rather than that one field. No
+# reviewer other than the bot may hold an OPEN request for changes (a person's
+# does not clear on a push: only that reviewer approving, or a maintainer
+# dismissing it, clears one), CodeRabbit's LATEST review on the SHA being
+# merged is not one, every comment it had made when triage ran is actioned,
+# and `--admin` is
+# never a way past an unfinished review (it may only grease merge-queue
+# mechanics once the review is complete — see CONTRIBUTING). Note the seam that
+# wording leaves, because the graph does not close it: an incremental review of
+# triage's OWN fix that merely COMMENTS passes recheck untriaged, since there is
+# no arc back to triage. Its notes reach the operator at the gate and nowhere
+# else.
 #
 # Clean tree required: verify and merge run `git`/`make` inside the repo you
 # point at. The PR itself is only ever touched through THROWAWAY worktrees
@@ -31,9 +39,48 @@
 # success_check sees the interim report instead of the verdict. The two waits
 # differ only in what an unfinished wait means. ready-and-wait waits BEFORE any
 # fix exists, so not-yet-concluded is a plain failure — it reports the actual
-# state, fails its READY check, and the operator decides. recheck waits AFTER
-# triage may have pushed, where the whole run is already paid for, so its
-# timeout is a third verdict rather than a failure; see its own comment.
+# state as NOT READY, fails its READY check, and the operator decides. recheck
+# waits AFTER triage may have pushed, where the whole run is already paid for,
+# so its timeout is a third verdict rather than a failure; see its own comment.
+#
+# A poll is only honest over a SELF-RESOLVING condition — one a machine that is
+# already working will clear with nobody doing anything: a check run
+# IN_PROGRESS, a status context PENDING with a reporter behind it, a
+# mergeability GitHub has not finished computing. The other kind is LATCHED:
+# the clock will never clear it, because what clears it is an ACT by a person —
+# a review that requested changes, a workflow run awaiting a maintainer's
+# approval, a required context nobody reports, a branch that conflicts with its
+# base, a bot that will not review again until it is asked. Waiting out a latch
+# spends the whole timeout to learn nothing and then reports the latch as if it
+# were slowness. So both waits CLASSIFY before they poll, and a latch gets a
+# verdict that names the act rather than a polling budget: the token is
+# `LATCHED` at both nodes, it carries `unblock:` and the act, and it FAILS, so
+# the run halts and the operator reads what to do in the node's own artifact
+# (`<run-id>/failed/<node>.out`). ADR 0021 is the rule. `gh pr ready` in
+# ready-and-wait's own step 1 is this graph's oldest instance of it: a DRAFT PR
+# is a latch, and the graph has always acted on that one instead of waiting.
+#
+# What the waits look AT, and the keyhole that was widened on 2026-08-11. Both
+# waits used to model "is this PR ready" as ONE BOT'S OPINION plus a check
+# rollup: recheck filtered `reviews` down to `coderabbitai` and read neither
+# `reviewDecision` nor `mergeStateStatus` — the two fields GitHub computes for
+# exactly this question. A HUMAN reviewer's CHANGES_REQUESTED was therefore
+# invisible to the entire chain: ready-and-wait's condition never mentioned it,
+# recheck filtered it out and answered RECHECKED, the gate comment told the
+# operator that review status was no longer theirs to confirm, and merge held a
+# licence to `--admin` justified by a review that was "complete by
+# construction" — a construction with no human in it. Not a hang: a MERGE. A
+# conflicting PR was invisible the same way and ended the run green, because
+# merge met the conflict, answered WITHHELD, and WITHHELD passes. Both waits now
+# project EVERY review with its author, read `reviewDecision` and
+# `mergeStateStatus` alongside them, and judge the WHOLE check
+# rollup instead of an entry named `test`. The unfiltered review list is what
+# does the work: `reviewDecision` is reported, not judged by, because it is
+# PR-level and one word for two different latches — the bot's, which a
+# re-request clears, and a person's, which only that person or a maintainer
+# does. See ADR 0019's 2026-08-11 update for
+# how that keyhole, and not the latch story alone, is what ties the incidents
+# together.
 #
 # The merge verdict is two-valued on purpose: MERGED <sha> or WITHHELD
 # <reason>. A deliberate refusal to merge PASSES — refusing to go past an
@@ -126,36 +173,139 @@ nodes:
     prompt: |
       Local verify said: {{ artifacts.verify | inline }}.
       Mark PR #{{ inputs.pr }} ready for review: `gh pr ready {{ inputs.pr }}`.
-      Then poll SYNCHRONOUSLY, in the foreground, and wait out every check:
-      run `gh pr view {{ inputs.pr }} --json reviews,statusCheckRollup`,
-      read it, then `sleep 30`, then run it again — one loop iteration per
-      tool call, blocking each time. NEVER background anything: no `&`, no
-      `nohup`, no run_in_background, no "I'll keep polling and report
-      back". Your FINAL reply IS the verdict, so you cannot reply until
-      the poll has actually reached a verdict — an interim report ends the
-      node and fails it.
-      Keep looping until BOTH hold:
-        - the `test` check has concluded with SUCCESS, and
+
+      One read gives you everything, and it is the same read `recheck` makes
+      later. Project it down to the fields the rules below use — the raw
+      `reviews` and `comments` arrays carry every body, which is kilobytes of
+      text per poll that no rule reads:
+        gh pr view {{ inputs.pr }} \
+          --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
+          --jq '{head: .headRefOid,
+                 review_decision: .reviewDecision,
+                 merge_state: .mergeStateStatus,
+                 checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
+                 reviews: [.reviews[] | {who: .author.login, oid: .commit.oid,
+                                         state, at: .submittedAt}],
+                 last_bot_note: ([.comments[] | select(.author.login == "coderabbitai")] | last
+                                 | {at: .createdAt,
+                                    limited: ((.body // "") | test("review limit|rate limit"; "i")),
+                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "")
+                                              | (([scan("(?i).{0,40}(?:review limit|rate limit).{0,240}"; "m")] | first)
+                                                 // (sub("^\\s+"; "") | .[0:240])))})}'
+
+      `reviews` is EVERY reviewer's, not just the bot's — a human's
+      CHANGES_REQUESTED is the one this graph used to be blind to, so the
+      projection names `who`. The `excerpt` is the region AROUND the rate-limit
+      phrase, not the head of the comment: the bot's notice sits ten lines
+      under a walkthrough image, and the head of the body is that image.
+
+      Read it, then `sleep 30`, then run it again — one loop iteration per
+      tool call, blocking each time, in the FOREGROUND. NEVER background
+      anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
+      polling and report back". Your FINAL reply IS the verdict, so you cannot
+      reply until the poll has actually reached one — an interim report ends
+      the node and fails it.
+
+      READY means BOTH hold:
+        - EVERY entry of `checks` is finished and good — `status` COMPLETED
+          with `conclusion` SUCCESS, SKIPPED or NEUTRAL, or `state` SUCCESS.
+          Judge the WHOLE rollup and NEVER one check by name: this graph runs
+          against whatever repo you point it at, whose checks are named
+          whatever they are named, and the repo it was written in carries
+          three entries. A red one of the other two must not read as green.
         - coderabbitai has a COMPLETED review on the PR (a submitted review
-          in the reviews list; a "review in progress" placeholder comment
-          does not count).
-      When both hold, your reply must START with the bare word READY — those
-      five characters as the very FIRST characters, with no markdown emphasis
-      (`**READY**` is WRONG), no heading, no preamble — plus a one-line
-      status after it.
+          in `reviews`; a "review in progress" placeholder comment is not one).
+
+      Before you poll, and again on EVERY read, classify what is missing.
+      A condition is SELF-RESOLVING — poll it — when a machine already at work
+      will clear it with nobody doing anything: a check run IN_PROGRESS, a
+      status context PENDING, `merge_state` UNKNOWN (GitHub computes
+      mergeability asynchronously), a "review in progress" placeholder.
+      A condition is LATCHED when the clock will never clear it, because what
+      clears it is an ACT by a person. Do not poll a latch; answer at once:
+        - a `checks` entry finished and BAD (COMPLETED with FAILURE,
+          CANCELLED, TIMED_OUT, STARTUP_FAILURE or STALE; or `state` FAILURE
+          or ERROR) → read that job's log, fix and push.
+        - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
+          workflow run or deployment in the repo's Actions tab.
+        - a reviewer OTHER than coderabbitai holds an OPEN request for changes
+          — in `reviews`, that person's latest CHANGES_REQUESTED is not
+          followed by an APPROVED from the SAME person → read that review. It
+          clears only when that reviewer re-reviews with APPROVED or a
+          maintainer dismisses it: a push does not clear one, a COMMENTED does
+          not, and `triage` actions CodeRabbit's comments only, so nothing
+          downstream of here clears it either. Name the person and the commit
+          their review sits on.
+          coderabbitai's OWN CHANGES_REQUESTED is NOT a latch: it is this
+          graph's ordinary path, and `triage` is the node whose entire job is
+          to action it. Every PR this graph has shepherded opened with exactly
+          that review. Note what that means for `review_decision`, which is why
+          this rule reads `reviews` instead: the field flips to
+          CHANGES_REQUESTED at the very instant the bot submits one, which is
+          the same instant the READY condition above is met, so gating on the
+          field alone would halt the normal run before triage ever ran.
+        - `merge_state` is DIRTY → the PR conflicts with its base: rebase or
+          merge the base in, and push.
+        - `last_bot_note.limited` is true AND `last_bot_note.at` is NEWER than
+          the newest `at` in `reviews` — the bot's most recent word is that its
+          review limit is reached, and `excerpt` carries that notice, which
+          says "next review available in N minutes" → the clock opens the
+          WINDOW, not the review: the operator waits the stated N minutes and
+          then posts `@coderabbitai review` on the PR. Nothing arrives if
+          nobody asks. If a review is NEWER than the note, the bot already
+          reviewed past that limit and the note is spent — not a latch.
+          (`limited` is a regex over the whole comment, so it can fire on a
+          comment that merely discusses a rate limit. That costs the operator
+          one glance; missing a real one costs the whole timeout, which is what
+          happened on 2026-08-04.)
+      Every act named in that list is the OPERATOR's, and you REPORT it — this
+      graph does not resolve a review thread, re-request a review or sleep out
+      a rate-limit window on its own judgement (ADR 0021 §3). Your grant is
+      wide enough to do all three. Do not. `gh pr ready` in step 1 is the one
+      act this node performs, and only because a DRAFT PR is its own
+      precondition.
+      Two conditions are only distinguishable by not moving — a `checks` entry
+      stuck at QUEUED (a fork or first-contributor run awaiting approval) and
+      no coderabbitai review at all. Poll those; if the budget runs out with
+      them exactly as they started, they are LATCHED, not slow.
+
+      Your reply must START with exactly one of these three verdicts — the
+      token as the very FIRST characters, with no markdown emphasis
+      (`**READY**` is WRONG), no heading, no backticks, no preamble:
+        - READY — both conditions above hold; a one-line status after it.
+        - LATCHED <what is stuck>; unblock: <the act> — a latch is present.
+          Name the entry or the field, then the act from the list above, on
+          that first line. This FAILS this node deliberately, so the run halts
+          before anything is paid for triage.
+        - NOT READY <what is still in flight> — the 15 minutes ran out with
+          only self-resolving conditions outstanding; name the entry and its
+          current status. This also FAILS; the difference from LATCHED is the
+          only thing the operator has to read: NOT READY means re-run once it
+          settles, LATCHED means do the named act first.
+      LATCHED and NOT READY are two words for two different next actions. Do
+      not write NOT READY over a latch — that is the mistake this grammar
+      exists to stop, and it once spent fourteen minutes polling for a review
+      a rate-limited bot was never going to submit.
       Anything you need to qualify — a check that had nothing to report, a
       caveat, a note — goes AFTER the verdict, never before it: a line of
       context ahead of the token fails this node even when both conditions
       hold.
-      You have 15 minutes: as that timeout comes near (after ~25 loops),
-      stop polling and reply with the honest current state — which
-      condition is still missing and what it says — as your final answer.
-      The operator decides what to do next. NEVER reply READY early.
+      You have 15 minutes: as that timeout comes near (after ~20 loops), stop
+      polling and answer from the state you actually have. NEVER reply READY
+      early.
     allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]
     permission_mode: dontAsk
     timeout: 15m
     handoff: artifact
     # Same shape as verify's: anchored, but tolerant of leading emphasis.
+    # Three tokens, one of them in the pattern. LATCHED and NOT READY are both
+    # written by the prompt and matched by nothing, which is how this graph
+    # halts on purpose — the same shape as triage's BLOCKED. They are two
+    # tokens rather than one because they are two different next actions, and
+    # the operator must be able to tell them apart from the first word of the
+    # artifact rather than from a paragraph inside it. Note that `NOT READY`
+    # is rejected by POSITION, not by a negative rule: `N` is not in the
+    # decoration class, so the anchor never reaches the `READY` inside it.
     success_check: { exit_zero: true, result_matches: '^[*_`\s]*READY' }
 
   - id: triage
@@ -262,14 +412,14 @@ nodes:
   # is a step, so it is a node.
   #
   # Three verdicts, and the third is the reason this is not two. "Concluded
-  # green" and "concluded red" are not the whole space: the checks may still be
+  # green" and "did not conclude" are not the whole space either, which is what
+  # the 2026-08-11 revision of this node is about. The checks may still be
   # pending when the timeout runs out, and that outcome is neither a pass nor a
-  # judgment that anything is wrong. Collapsing it into either lies. Collapsing
-  # it into RECHECKED merges a PR nothing has checked; collapsing it into
-  # BLOCKED halts a run over checks that were merely slow, discarding a whole
-  # paid pipeline. So it gets its own token, UNSETTLED, which PASSES — it is
-  # the one verdict that reaches merge's WITHHELD fallback, and it is the only
-  # thing that may.
+  # judgment that anything is wrong. Collapsing it into RECHECKED merges a PR
+  # nothing has checked; collapsing it into the halting verdict stops a run over
+  # checks that were merely slow, discarding a whole paid pipeline. So it gets
+  # its own token, UNSETTLED, which PASSES — it is the one verdict that reaches
+  # merge's WITHHELD fallback, and it is the only thing that may.
   #
   # The honest cost of a passing UNSETTLED: a node that replies it without
   # waiting is not caught by the pattern. What that buys is bounded, though —
@@ -279,16 +429,32 @@ nodes:
   # premature answer would be expensive, and that is the token the wait is
   # actually protecting.
   #
-  # The asymmetry between BLOCKED and UNSETTLED is deliberate, and it is worth
-  # stating rather than leaving to be inferred, because BLOCKED is the LIKELIER
+  # What the halting verdict is called, and why it changed. It used to be
+  # BLOCKED and to mean RED — "a judgment that something is WRONG with the code
+  # being merged". That framing filed the wrong things in both directions. A
+  # workflow run stuck on ACTION_REQUIRED halted as if the code were bad, when
+  # what it needed was a click; and four conditions that need an operator and
+  # nothing else — a required context with no reporter, a run awaiting a
+  # maintainer's approval, a bot that will not review again until asked, a
+  # branch that conflicts with its base — were polled for twenty minutes and
+  # then passed to the gate as UNSETTLED, which says "wait longer" about things
+  # no waiting reaches. The axis that actually matters is not red-vs-slow, it is
+  # LATCHED-vs-SELF-RESOLVING: will the clock clear this, or will only a person?
+  # So the token is LATCHED, it carries the ACT that clears it, and it is
+  # absent from the pattern exactly as BLOCKED was, so the run still halts.
+  # `triage` keeps its own BLOCKED for a different thing — "I could not finish
+  # my own work" — and the two no longer share a word.
+  #
+  # The asymmetry between LATCHED and UNSETTLED is deliberate, and it is worth
+  # stating rather than leaving to be inferred, because LATCHED is the LIKELIER
   # of the two: CodeRabbit re-requesting changes on the fix triage just pushed
-  # is an ordinary post-triage outcome, not an exotic one. A red conclusion is
-  # a judgment that something is WRONG with the code being merged, and there is
-  # nothing for the operator to decide at a gate over it — the fix is another
-  # round, which is a fresh run. A timeout judges nothing about the code, so it
-  # is the operator's call and reaches the gate. That is why one halts and the
-  # other passes, even though halting discards the same paid pipeline in both
-  # cases.
+  # is an ordinary post-triage outcome, not an exotic one — it happened four
+  # times on 2026-08-10 and 2026-08-11 alone. A latch has nothing for the
+  # operator to DECIDE at a gate: there is an act, and until someone performs
+  # it nothing lands, so a gate over it is a question with one answer. A timeout
+  # over something still moving is the operator's call and reaches the gate.
+  # That is why one halts and the other passes, even though halting discards the
+  # same paid pipeline in both cases. ADR 0021 is the rule this instantiates.
   #
   # A word on what this node does NOT do: it judges the SHA, not the content of
   # the review on it. An incremental review that COMMENTS on triage's fix passes
@@ -308,18 +474,51 @@ nodes:
       on this PR. Wait them out again on the FINAL SHA, and say which SHA you
       judged.
 
-      One read gives you everything. Project it down to the fields the rules
-      below actually use — the raw `reviews` array carries every review BODY,
-      which is kilobytes per poll of text no rule reads:
-        gh pr view {{ inputs.pr }} --json headRefOid,statusCheckRollup,reviews \
+      One read gives you everything, and it is the same read ready-and-wait
+      made earlier. Project it down to the fields the rules below actually use
+      — the raw `reviews` and `comments` arrays carry every body, which is
+      kilobytes per poll of text no rule reads:
+        gh pr view {{ inputs.pr }} \
+          --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
           --jq '{head: .headRefOid,
+                 review_decision: .reviewDecision,
+                 merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
-                 reviews: [.reviews[] | select(.author.login == "coderabbitai")
-                           | {oid: .commit.oid, state, at: .submittedAt}]}'
+                 reviews: [.reviews[] | {who: .author.login, oid: .commit.oid,
+                                         state, at: .submittedAt}],
+                 last_bot_note: ([.comments[] | select(.author.login == "coderabbitai")] | last
+                                 | {at: .createdAt,
+                                    limited: ((.body // "") | test("review limit|rate limit"; "i")),
+                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "")
+                                              | (([scan("(?i).{0,40}(?:review limit|rate limit).{0,240}"; "m")] | first)
+                                                 // (sub("^\\s+"; "") | .[0:240])))})}'
       `head` IS the final SHA; `checks` is the rollup of that same head commit;
-      and every review carries the `oid` it was submitted against — so
-      "CodeRabbit reviewed the FINAL SHA" is a comparison you can make, not a
-      guess you have to take.
+      and every review carries the `who` who left it and the `oid` it was
+      submitted against — so "CodeRabbit reviewed the FINAL SHA" and "somebody
+      else is asking for changes" are both comparisons you can make, not
+      guesses you have to take. The `excerpt` is the region AROUND the
+      rate-limit phrase rather than the head of the comment, because the bot's
+      notice sits ten lines under a walkthrough image.
+
+      `reviews` covers EVERY reviewer, not just the bot. Filtering it down to
+      `coderabbitai` is what let a human's CHANGES_REQUESTED reach `merge`
+      labelled RECHECKED — not a hang but a merge, and the reason `who` is in
+      the projection.
+      `review_decision` is GitHub's rollup of that same list, and you REPORT it
+      rather than judge by it, because it answers a coarser question than this
+      node asks. It is PR-LEVEL and never scoped to a SHA, and a COMMENTED
+      review does not clear a CHANGES_REQUESTED — so it stays set over a review
+      a later push superseded. PR #145 merged correctly with `review_decision`
+      CHANGES_REQUESTED: the only request for changes sat on a commit that no
+      longer existed, and the act that field would have named — resolve the
+      threads and re-request — had already been performed, answered COMMENTED,
+      and left the field exactly where it was. A verdict whose named act cannot
+      clear it is the failure ADR 0021 exists to stop, so the judgment below is
+      made PER REVIEWER: who is asking, and about which commit.
+      `merge_state` is GitHub's mergeability: CLEAN, BEHIND (base moved),
+      BLOCKED (branch protection wants something), UNSTABLE (a non-required
+      check is unhappy), HAS_HOOKS, DIRTY (conflicts with base), DRAFT, or
+      UNKNOWN while GitHub is still computing it.
 
       A rollup entry is either a check run (it has `status` and `conclusion`)
       or a status context (it has `state`). Classify EVERY entry:
@@ -336,8 +535,11 @@ nodes:
       where an earlier draft of this node looked only at `test`, and a red one
       of the other two would have been reported green.
 
-      GREEN means BOTH of these hold on `head`:
-        - every entry of `checks` is finished and good, and
+      GREEN means ALL THREE of these hold on `head`:
+        - every entry of `checks` is finished and good,
+        - no reviewer OTHER than coderabbitai holds an OPEN request for changes
+          — for each such person, their latest CHANGES_REQUESTED is followed by
+          an APPROVED from that SAME person, and
         - coderabbitai's LATEST review on `head` — among the reviews whose
           `oid` equals `head`, the one with the greatest `at` — is not
           CHANGES_REQUESTED. Recency is the whole rule, not an "is there an
@@ -346,10 +548,80 @@ nodes:
           APPROVED is CodeRabbit changing its mind, which is the answer that
           counts. A "review in progress" placeholder comment is not a
           submitted review and is not in this list.
-      RED means at least one entry of `checks` is finished and bad, or
-      coderabbitai's latest review on `head` is CHANGES_REQUESTED.
-      Anything else — an entry not finished, no coderabbitai review on `head`
-      yet — is neither, and is what you keep polling for.
+      Those last two rules differ on purpose, and the difference is who
+      re-reviews WITHOUT being asked. CodeRabbit reviews every push, so its word
+      on `head` is its current word and an older CHANGES_REQUESTED on a replaced
+      commit is spent — which is why the bot's rule is SHA-scoped. A person does
+      not: theirs stands on whatever commit it was left against until that
+      person approves or a maintainer dismisses it, so the SHA is not what
+      settles it, and the act that clears it is a different act.
+      `merge_state` does not decide GREEN — it is mechanics, and you REPORT it
+      rather than judge it, with the one exception below (DIRTY and DRAFT are
+      latches). BEHIND, BLOCKED, UNSTABLE and HAS_HOOKS on an otherwise green
+      PR are what `merge` may answer with `--admin`, and it may do that only
+      because you named the state and found no OPEN request for changes. One
+      exception rides on the field you report rather than on the state: a
+      BLOCKED whose `review_decision` is REVIEW_REQUIRED is protection waiting
+      for an approval nobody has given, and `merge` refuses `--admin` over it.
+      Report the field and it decides correctly; omit it and it cannot.
+
+      Now the part that decides whether you POLL AT ALL. Not everything
+      unfinished is slow. A condition is SELF-RESOLVING when a machine already
+      at work will clear it with nobody doing anything: a check run
+      IN_PROGRESS, a status context PENDING, `merge_state` UNKNOWN, a "review
+      in progress" placeholder. Those are what a poll is FOR.
+      A condition is LATCHED when the clock will never clear it, because what
+      clears it is an ACT by a person. Polling one spends the whole timeout to
+      learn nothing. Answer LATCHED at once — zero polls — for any of:
+        - a `checks` entry finished and BAD → read that job's log; fix and
+          push. That is a fresh run of this graph, not a wait.
+        - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
+          workflow run or deployment in the repo's Actions tab. (This is a
+          latch, not a verdict on the code — it is finished-and-bad by the
+          rollup rule, and the act, not the code, is what it needs.)
+        - coderabbitai's LATEST review on `head` is CHANGES_REQUESTED → read
+          the review. Resolve the threads or push a fix, then re-request the
+          review (`@coderabbitai review`). The bot reviews what it is asked to,
+          so this one does clear from that act.
+        - a reviewer OTHER than coderabbitai holds an open request for changes
+          (the GREEN rule above) → read that review. This one does NOT clear
+          from a re-request or a push: `unblock:` is that reviewer re-reviewing
+          with APPROVED, or a maintainer dismissing the review. Name the person
+          and the commit their review sits on, so the act names somebody who
+          can actually perform it.
+          Neither of these two is `review_decision`: that field is set by
+          either of them and cleared by neither on its own, so a verdict
+          written off it would name an act that cannot clear it.
+          This graph does not resolve a thread or re-trigger a reviewer
+          on its own judgement: closing a reviewer's verdict is the reviewer's
+          business and the operator's, and one of the four times an operator
+          did it by hand, closing blind would have been wrong.
+        - `merge_state` is DIRTY → the PR conflicts with its base: rebase or
+          merge the base in, and push.
+        - `merge_state` is DRAFT → `gh pr ready {{ inputs.pr }}` (ready-and-wait
+          did this once already, so someone converted it back).
+        - `last_bot_note.limited` is true AND `last_bot_note.at` is NEWER than
+          the newest `at` in `reviews` — the bot's most recent word is that its
+          review limit is reached, and `excerpt` carries that notice, which
+          says "next review available in N minutes" → the clock opens the
+          WINDOW, not the review: wait the stated N minutes, then post
+          `@coderabbitai review` on the PR. Nothing arrives if nobody asks,
+          which is why waiting out the N minutes on its own is not the answer.
+          A note OLDER than the newest review is spent — the bot already
+          reviewed past that limit — and is not a latch. (`limited` is a regex
+          over the whole comment and can fire on one that merely discusses a
+          rate limit; that costs a glance, and missing a real one costs the
+          whole timeout.)
+      Two conditions are only distinguishable from a self-resolving one by NOT
+      MOVING: a `checks` entry stuck at QUEUED or EXPECTED (a run awaiting a
+      maintainer's approval, or a required context with no reporter behind it
+      at all), and no coderabbitai review on `head` (the bot was never
+      re-invoked — a force-push does that). Poll those. If your budget runs out
+      with them byte-for-byte as they started, they are LATCHED, not slow: say
+      LATCHED and name the act — approve the run in the Actions tab, drop the
+      dead required context, or post `@coderabbitai review`.
+      A latch DOMINATES: if anything is latched, the answer is LATCHED even
+      when other entries are still legitimately in flight.
 
       Do that read FIRST. If triage reported a count of zero (its first line
       is `TRIAGED 0`, however it is decorated) and that read is already green,
@@ -381,21 +653,35 @@ nodes:
       (`**RECHECKED**` is WRONG), no heading, no backticks, no preamble —
       followed immediately by the 40-character head SHA you judged:
         - RECHECKED <sha> — GREEN on <sha>: every rollup entry finished good,
-          and CodeRabbit's latest word on that commit is not a request for
-          changes.
-        - BLOCKED <sha> — RED on <sha>; name the entry (or the review) and
-          what it says. This FAILS this node deliberately, so the run halts
-          here rather than offering the operator a gate over a red PR.
-        - UNSETTLED <sha> — the time ran out with the rollup or the review
-          still unfinished on <sha>; name which entry and its current status.
+          nobody has an open request for changes, and CodeRabbit's latest word
+          on that commit is not one either. Put BOTH `mergeable: <merge_state>`
+          and `review_decision: <review_decision>` on that same first line
+          after the SHA — merge reads them, and together they are the only
+          thing that licenses `--admin` there. Report `review_decision` as GitHub
+          gave it, including a CHANGES_REQUESTED you judged spent: merge is
+          entitled to see the field you overrode and why the first line says
+          green anyway.
+        - LATCHED <sha> — a condition on <sha> that the clock will not clear.
+          Name what is stuck, then `unblock:` and the act, on that first line:
+          `LATCHED c80872c — coderabbitai CHANGES_REQUESTED; unblock: resolve
+          the review threads, then post @coderabbitai review`. This FAILS this
+          node deliberately, so the run halts here rather than offering the
+          operator a gate over a PR that cannot land.
+        - UNSETTLED <sha> — the time ran out while a SELF-RESOLVING condition
+          was still moving on <sha>; name which entry and its current status.
+      LATCHED and UNSETTLED are the same fact — "this did not conclude" — split
+      by the only question the operator actually has to answer: do I do
+      something, or do I wait? That answer must be the FIRST WORD of your
+      reply, not a sentence inside it. An UNSETTLED written over a latch is
+      worse than useless: it costs twenty minutes, passes, and hands the
+      operator a gate over a PR nothing will ever unstick.
       "Still polling" is not a fourth verdict, and neither is a plan to keep
       going: this node's turn ends the moment you reply, so a poll you promise
-      to continue is a poll nobody runs. UNSETTLED is what an unfinished wait
-      is called here — it asserts that the waiting is OVER and the checks did
-      not conclude, which is an outcome. It is not a way to say "not yet" and
-      keep the node open, and it is not a cheaper RECHECKED: the operator
-      reads it, and the merge that follows a gate approved over it will
-      refuse to merge.
+      to continue is a poll nobody runs. UNSETTLED asserts that the waiting is
+      OVER and the checks did not conclude, which is an outcome. It is not a
+      way to say "not yet" and keep the node open, and it is not a cheaper
+      RECHECKED: the operator reads it, and the merge that follows a gate
+      approved over it will refuse to merge.
       Anything you need to qualify — the short-circuit having found nothing
       to wait for, a caveat, a note — goes AFTER the verdict, never before
       it: a line of context ahead of the token fails this node even when the
@@ -423,9 +709,15 @@ nodes:
     # node has to name the SHA it ended on. A verdict about "the checks" that
     # cannot say which commit they ran against is the exact ambiguity this node
     # was added to remove, so it is not admitted from either side.
-    # BLOCKED is deliberately absent from the alternation: red checks are not a
-    # passing outcome here, and leaving the token out of the pattern is how the
-    # run halts before the gate — the same shape as triage's BLOCKED.
+    # LATCHED is deliberately absent from the alternation: a condition only a
+    # person can clear is not a passing outcome here, and leaving the token out
+    # of the pattern is how the run halts before the gate — the same shape as
+    # triage's BLOCKED, and the same shape as ready-and-wait's two failing
+    # tokens. What the pattern CANNOT enforce is LATCHED's second half, the
+    # `unblock:` act: a token the regex rejects is a token the regex cannot
+    # shape. That half is prompt-side only, pinned in
+    # `internal/graph/shipped_graphs_test.go` instead, and it is the honest
+    # limit of "the convention is two halves" for any halting verdict.
     # Anchored and markdown-tolerant, narrow separator class (a false FAIL here
     # costs one re-run of a read-only poll, so it buys no dashes — see
     # DESIGN.md "Verdict patterns"). The separator is `+`, not `*`: a SHA fused
@@ -450,13 +742,25 @@ nodes:
   # --reject approve-merge to end the run without merging).
   #
   # CI and review status on the FINAL SHA is no longer yours to confirm — that
-  # is what recheck is, and its verdict names the SHA it judged. What is left
-  # here is the decision the gate is for: whether this change should land.
-  # One thing worth knowing before you type --approve: if recheck came back
-  # UNSETTLED, the checks never concluded on that SHA, and merge will answer
-  # WITHHELD rather than merge past them. Rejecting is the cheaper answer to
-  # UNSETTLED — it ends the run without spending merge's session — and a fresh
-  # run once CI has settled is the way back.
+  # is what recheck is, and its verdict names the SHA it judged, GitHub's
+  # `reviewDecision` as it found it, and the mergeability state, having judged
+  # every reviewer's own review rather than one bot's. One thing that sentence
+  # does NOT cover, because no node can: a reviewer who has not looked yet.
+  # `review_decision: REVIEW_REQUIRED` on recheck's line means nobody has
+  # approved — the merge below will refuse `--admin` over it, and whether to
+  # wait for that approval is yours.
+  # Until 2026-08-11 that sentence promised more than the
+  # node delivered: recheck filtered reviews down to one bot, so a human's
+  # CHANGES_REQUESTED reached this gate labelled RECHECKED, with the comment
+  # above telling the operator not to look. It is true now.
+  # What is left here is the decision the gate is for: whether this change
+  # should land. One thing worth knowing before you type --approve: if recheck
+  # came back UNSETTLED, the checks never concluded on that SHA, and merge will
+  # answer WITHHELD rather than merge past them. Rejecting is the cheaper answer
+  # to UNSETTLED — it ends the run without spending merge's session — and a
+  # fresh run once CI has settled is the way back. A LATCHED recheck never
+  # reaches this gate at all: it fails the node and halts the run, and the act
+  # that unsticks the PR is on the first line of `<run-id>/failed/recheck.out`.
   - id: approve-merge
     type: gate
     depends_on: [recheck]
@@ -487,11 +791,24 @@ nodes:
            that really landed and send this node into a second false FAIL.
            Then report MERGED <sha> for the merge that already landed.
         1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
-           plain merge first; add `--admin` ONLY if merge-queue mechanics
-           require it — that is legitimate here because the review is
-           complete by construction (verify passed, CI and CodeRabbit
-           concluded, comments triaged), and `--admin` must never be used
-           to bypass an unfinished review.
+           plain merge FIRST, with no `--admin`. Add `--admin` only when ALL
+           THREE hold: the plain merge failed on branch-protection or
+           merge-queue mechanics; recheck's verdict is RECHECKED naming a
+           mechanical state — its first line says `mergeable:` BEHIND, BLOCKED,
+           UNSTABLE or HAS_HOOKS; and that same line does NOT say
+           `review_decision: REVIEW_REQUIRED`. That third one is the case where
+           protection is holding the PR because NOBODY has approved it yet, and
+           BLOCKED is what it reports — `--admin` there is precisely "a way
+           past a review", so the honest answer is WITHHELD naming the missing
+           approval. What makes the rest legitimate is NOT "CodeRabbit
+           concluded": it is that recheck read every reviewer's own review, not
+           one bot's, and found no OPEN request for changes — a human's
+           CHANGES_REQUESTED counts there and does not clear on a push.
+           `--admin` must never be used to get past a review. An open request
+           for changes cannot reach you — recheck answers LATCHED to it and the
+           run halts — so if you are reaching for `--admin` without a
+           `mergeable:` state to point at, the honest answer is WITHHELD naming
+           what refused the merge.
         2. In {{ inputs.repo }}: `git pull --ff-only origin main`.
         3. `make build` — SYNCHRONOUSLY, waiting for the exit code, never
            in the background.
