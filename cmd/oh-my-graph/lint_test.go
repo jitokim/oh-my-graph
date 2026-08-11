@@ -162,14 +162,16 @@ nodes:
 
 // TestLintGraph_CleanPlaceholdersStaySilent pins the silent side: declared
 // inputs, ancestor artifacts, and deliberate literal {{ }} text produce no
-// warnings at all.
+// warnings at all. Both nodes declare an `allowed_tools` grant so the fixture
+// is clean for EVERY sweep, not just the placeholder one — a graph that trips
+// the tool-grant advisory would prove nothing about placeholders here.
 func TestLintGraph_CleanPlaceholdersStaySilent(t *testing.T) {
 	path := writeGraphFile(t, `
 name: clean
 inputs: [repo]
 nodes:
-  - { id: dev, prompt: "work in {{ inputs.repo }}; explain {{ mustache }} syntax" }
-  - { id: review, prompt: "read {{ artifacts.dev | inline }}", depends_on: [dev] }
+  - { id: dev, prompt: "work in {{ inputs.repo }}; explain {{ mustache }} syntax", allowed_tools: [Read] }
+  - { id: review, prompt: "read {{ artifacts.dev | inline }}", depends_on: [dev], allowed_tools: [Read] }
 `)
 	var out, warnings strings.Builder
 	if err := lintGraph(&out, &warnings, path); err != nil {
@@ -223,6 +225,47 @@ nodes:
 	}
 	if code := mainExitCode([]string{"lint", path}); code != 0 {
 		t.Errorf("lint with only session warnings exited %d, want 0", code)
+	}
+}
+
+// --- tool-grant warnings -----------------------------------------------------
+
+// TestLintGraph_ToolGrantWarningKeepsExitZero is issue #154 at the CLI
+// boundary: a node that declares neither an `allowed_tools` grant nor a
+// `success_check.verify` can observe no tool denial — the reply explains the
+// refusal in prose and its own `result_matches` passes on it. The graph is
+// still valid, so the finding rides the warning writer and exit 0, and the
+// line must tell the author what to declare, not only what is absent.
+func TestLintGraph_ToolGrantWarningKeepsExitZero(t *testing.T) {
+	path := writeGraphFile(t, `
+name: ungranted
+nodes:
+  - id: pr
+    prompt: "Push this branch and open a PR with gh"
+    success_check: { exit_zero: true, result_matches: '^DONE' }
+  - id: granted
+    prompt: "Read the diff"
+    depends_on: [pr]
+    allowed_tools: [Read]
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("a tool-grant advisory must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	if !strings.Contains(warnings.String(), "warning: "+path+`: node "pr": allowed_tools: `) {
+		t.Errorf("warning writer should carry the node-scoped line:\n%s", warnings.String())
+	}
+	if !strings.Contains(warnings.String(), "name the tools this node needs") {
+		t.Errorf("the line should say what to do about it:\n%s", warnings.String())
+	}
+	if strings.Contains(warnings.String(), `node "granted"`) {
+		t.Errorf("a node with a declared grant must stay silent:\n%s", warnings.String())
+	}
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only a tool-grant warning exited %d, want 0", code)
 	}
 }
 

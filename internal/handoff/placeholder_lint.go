@@ -9,10 +9,10 @@ import (
 )
 
 // Warning is one advisory finding from this package's lint sweeps
-// (LintPlaceholders, LintSessions): something a valid graph declares that
-// will — or may — not behave as written at run time. It is advice, never an
-// error, and must never affect whether a graph is valid or what any command
-// exits with.
+// (LintPlaceholders, LintSessions, LintVerdicts, LintToolGrants): something a
+// valid graph declares that will — or may — not behave as written at run time.
+// It is advice, never an error, and must never affect whether a graph is valid
+// or what any command exits with.
 type Warning struct {
 	NodeID string
 	Field  string // which node field the finding is about, e.g. "prompt", "cwd", "worktree", "retry"

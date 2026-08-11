@@ -98,6 +98,73 @@ reason before closing, and once closing blind would have been wrong), it does
 not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
 ADR 0021 §3 argues each.
 
+### Added
+
+- **`lint` and `run --dry-run` now warn when a node can observe no tool
+  denial — it declares neither an `allowed_tools` grant nor a
+  `success_check.verify`.** Advisory only: it never changes an exit code and
+  never makes a graph invalid, for the standing reason a hand-written graph is
+  your own reviewed artifact.
+
+  The defect (issue #154) is that `allowed_tools` is the node's own grant, not
+  a hint. A node that omits it inherits your Claude Code settings, so a tool
+  you have not pre-authorised there is a tool the node cannot use — and
+  nothing fails loudly. The subprocess explains the refusal in prose, exits 0,
+  and a `result_matches` written for the happy path (`^DONE`) passes on that
+  prose. The node is paid for, the ledger prints PASS, and the push, the `gh`
+  call or the build never happened. Nobody who hits this learns anything from
+  the run: the node "succeeded".
+
+  The predicate is structural rather than a reading of the prompt. A node with
+  a grant has authorised what it needs; a node with a `success_check.verify`
+  has a check the *engine* runs, outside the node's own reply, so a denial
+  that stops the work also fails the node. A node with neither has no
+  mechanism of either kind. Two exemptions, because the warning's premise is
+  false there rather than to quiet it: a gate node spawns no subprocess, and
+  `permission_mode: bypassPermissions` grants every tool regardless.
+
+  It was measured before it shipped, over the shipped graphs and fragments
+  plus a 30-lane operator corpus — 164 claude nodes counted after fragment
+  resolution, because that is the population the predicate is evaluated over —
+  **62 hits**. Reading each one: 23 `pr` nodes told to `git push` and run
+  `gh pr create`, 4 `push` nodes checked only for a `PUSHED|BLOCKED` token,
+  9 measure/verify/accept nodes told to build a binary and write files, and
+  25 review nodes whose prompts demand "verify by running commands, not by
+  reading the diff". **61 of 62 were nodes reaching for tools they never
+  declared**; noise was 1 in 62. That one was this repo's own
+  `review-loop.yaml::review`, a pure judgment node — which now declares the
+  read tools it reads the working tree with, because declaring is what the
+  advisory asks of everyone else.
+
+  One caveat the number does not carry: those 61 had never yet *failed* for
+  want of a grant, because the machine that runs them pre-authorises broadly
+  (`Bash(*)`). The finding is not that they were broken — it is that none of
+  them could have told you if they had been.
+
+  The warning names the fix, not just the absence: name the tools in
+  `allowed_tools`, and where the work must be visible outside the node's own
+  reply, add a `success_check.verify` command. A node that genuinely reaches
+  for nothing declares that with an empty grant, `allowed_tools: []`, which
+  the sweep reads as the author saying so (an absent key is no declaration).
+  It is a declaration, not a sandbox: run-time behaviour is identical either
+  way, since a hand-written node runs under your own settings by design.
+
+### Changed
+
+- **`graphs/review-loop.yaml`'s `review` node now declares
+  `allowed_tools: [Read, Grep, Glob, "Bash(git diff*)", "Bash(git log*)"]`** —
+  the same git reads the shipped review fragments grant for the same job.
+  Behaviour is unchanged on a machine that already pre-authorises reading —
+  `--allowedTools` adds a grant, it takes none away — but the node reads a
+  working tree, so it says so.
+
+- **README, README.ko and `docs/EXAMPLES.md` now say what `allowed_tools`
+  buys you** at the first hand-written YAML a reader meets, and at the exact
+  sentence in the auto/hand-written comparison where "keeps your settings"
+  reads as a pure upside. It cuts both ways, and that is the half nobody was
+  told. Their YAML examples declare grants too — a reader who copies the
+  block above the paragraph should not then be warned about it.
+
 ## [v0.5.4] - 2026-08-11
 
 Nothing new to type. No flag, no command, no schema key — and both changes

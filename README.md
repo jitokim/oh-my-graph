@@ -328,8 +328,19 @@ nodes:
   - id: review
     depends_on: [e2e]
     permission_mode: plan     # read-only
+    allowed_tools: [Read, "Bash(git diff*)"]
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
+
+**What `allowed_tools` buys you.** It is the node's own grant, not a hint: a
+node that omits it inherits your Claude Code settings, so a tool you have not
+pre-authorised there is a tool the node cannot use. Nothing fails loudly — the
+node explains the denial in prose and finishes, and a check like
+`result_matches: '^DONE'` passes on that prose. Name what each node needs; where
+the work must be visible outside the node's own reply, add a
+`success_check.verify` command, which the engine runs itself. A node that
+reaches for nothing at all — one that only judges or summarises what it was
+handed — says so with an empty grant, `allowed_tools: []`.
 
 Three things worth knowing about from the start, each one line of YAML:
 
@@ -362,16 +373,21 @@ instead of restating the goal and the format — see
 name: daily-triage
 nodes:
   - id: collect             # the careful goal/format/rules prompt lives here, once
+    # what it collects with — undeclared is undelivered, and the two reads it
+    # needs are all it gets: no mutating `gh` form is in reach
+    allowed_tools: ["Bash(gh issue list *)", "Bash(gh pr checks *)"]
     prompt: >
       Collect today's open issues and failing checks; list each with a
       one-line status.
   - id: analyze
     depends_on: [collect]
     handoff: session        # continues collect's conversation
+    allowed_tools: []       # reasons over what collect already put in the session
     prompt: Analyze what you just collected and rank by urgency.
   - id: report
     depends_on: [analyze]
     handoff: session        # the chain keeps flowing
+    allowed_tools: []       # the reply IS the report
     prompt: Write the ranked findings up as a short report.
 ```
 
@@ -422,7 +438,15 @@ its session-parent's, or a `retry` block (a retried attempt starts cold) —
 plus, for any node, a verdict nothing reads: a prompt that demands a token
 (`START your reply with …`) under a `success_check` with no `result_matches`,
 or a `result_matches` written without `exit_zero` (which drops the exit-code
-guard a node has for free only while it declares no check at all).
+guard a node has for free only while it declares no check at all) —
+plus, for a node that declares neither `allowed_tools` nor a
+`success_check.verify`, that nothing it does can observe a tool denial: a tool
+your Claude Code settings do not pre-authorise is refused, the node says so in
+prose, and its own `result_matches` is free to pass on that prose. Name the
+tools the node needs (`allowed_tools: []` if it needs none), or give it a
+`verify` command the engine runs itself. (A gate node and a
+`permission_mode: bypassPermissions` node are exempt: neither can be denied
+anything.)
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
 while a well-formed reference to an unbound input or unknown node fails

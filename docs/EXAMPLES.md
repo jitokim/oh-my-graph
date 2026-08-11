@@ -93,7 +93,14 @@ Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. See
 [SECURITY.md](../SECURITY.md). Hand-written YAML is unaffected by all of this:
 it is your own reviewed artifact, it keeps your settings and hooks and MCP
-servers, and it remains the path for precise control.
+servers, and it remains the path for precise control. Inheriting your settings
+cuts both ways, which is why `allowed_tools` is the node's grant rather than a
+hint: a hand-written node that omits it can use only what you have already
+pre-authorised, and a tool it lacks is refused in prose the node then finishes
+on — a `result_matches: '^DONE'` will pass on that prose. Declare each node's
+tools (an empty `allowed_tools: []` declares one that needs none), and put
+anything that must be true outside the reply in a `success_check.verify`
+command, which the engine runs itself.
 
 **Custom YAML vs. auto, in one line:** reach for `graphs/*.yaml` when you know
 exactly which tools each node should have and how they should hand off to
@@ -277,6 +284,7 @@ nodes:
     depends_on: [dev-a]
     worktree: lane-a          # same name -> the same checkout dev-a edited
     permission_mode: plan
+    allowed_tools: [Read, "Bash(git diff*)"]
     prompt: Review the diff in this worktree.
 
   - id: dev-b
