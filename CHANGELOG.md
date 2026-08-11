@@ -174,9 +174,20 @@ ADR 0021 §3 argues each.
   `graphs/fragments/pr-publish.yaml`, which shipped at v0.5.3. The no-overwrite
   promise is stronger, not weaker: skipping modifies no existing file, so it
   cannot produce the half-replaced set the refusal existed to prevent; the
-  write still uses `O_EXCL`; a failure still rolls back what that run created;
-  and a kept edit is now named on stdout rather than inferred from a command
-  that did nothing.
+  write still uses `O_EXCL`; a failure still rolls back what that run created
+  (`graphs/` included, when that run created it); and a kept edit is now named
+  on stdout rather than inferred from a command that did nothing. Because a
+  top-up can pair a file this release added with a kept copy of one it depends
+  on, a kept file whose bytes differ from the binary's copy is marked
+  `DIFFERS` and counted in the summary — otherwise the mismatch (a fresh
+  template binding a `with:` key an older fragment does not declare) first
+  appears as a load error naming a node, arbitrarily far from the `init` that
+  assembled it. What refusing also bought, and is deliberately given up here,
+  is a wrong-directory guard: `init` aimed at a directory that already held
+  your own `graphs/` used to abort naming your file, and now writes the
+  payload beside it and exits 0. The guard could not distinguish that mistake
+  from the legitimate top-up it fires on, and the per-file `wrote` lines are
+  the replacement — the list of what to delete is on screen.
 
 - **Where a graph file is saved decides whether it can cite a fragment — and
   the product now says so.** A `use:` resolves against the graph's own

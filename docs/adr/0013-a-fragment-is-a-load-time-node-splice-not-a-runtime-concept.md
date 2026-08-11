@@ -468,7 +468,18 @@ hostile fragment could just as easily plant the hostile node inline.
 >    prevent (it modifies no existing file at all), the write still uses
 >    `O_EXCL`, a failure still rolls back what that run created, and a kept
 >    edit is now *named on stdout* instead of being inferred from a command
->    that did nothing.
+>    that did nothing. Two consequences of topping up are carried explicitly
+>    rather than left implicit. A top-up can pair a file this release added
+>    with a kept copy of one it depends on — a fresh template binding a
+>    `with:` key an older fragment does not declare — so a kept file whose
+>    bytes differ from the payload is marked `DIFFERS` and counted; without
+>    that, the pairing first speaks as a load error naming a node, far from
+>    the `init` that made it. And refusing incidentally guarded against a
+>    mistyped target: `init` aimed at a directory that already held the
+>    user's own `graphs/` aborted naming their file, where it now writes the
+>    payload beside it and exits 0. That guard is given up knowingly — it
+>    fires on exactly the tree a legitimate top-up walks and cannot tell the
+>    two apart — with the per-file `wrote` listing as what replaces it.
 >
 > Deliberately not done: no `--fragments <dir>` flag or search path (this
 > section's decision, unchanged); no shipped/embedded tier (still deferred —

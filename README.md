@@ -148,7 +148,10 @@ with `use:`, without which they would not load. Pass a directory
 overwrites: a file that is already there is kept exactly as it is and named on
 stdout as kept, and only the payload files that are missing are written — so
 re-running `init` is also how you collect a template or fragment a later
-release added, without your edits being touched.
+release added, without your edits being touched. A kept file whose bytes
+differ from the binary's copy is marked `DIFFERS`, so a tree carrying an old
+fragment under a freshly written template is visible in the listing rather
+than something you find out about at load time.
 
 No `ANTHROPIC_API_KEY` needed — the smoke test runs on your logged-in `claude`
 subscription; if the key (or `ANTHROPIC_AUTH_TOKEN`) is set in your shell,

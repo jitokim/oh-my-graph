@@ -162,7 +162,9 @@ oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 `<dir>/graphs/`에 씁니다. 절대 덮어쓰지 않습니다: 이미 있는 파일은 그대로 두고
 kept로 표시해 출력하며, 없는 파일만 씁니다 — 그래서 나중 릴리스가 추가한
 템플릿이나 fragment를 받는 방법도 `init`을 다시 실행하는 것이고, 그 과정에서
-직접 수정한 파일은 손대지 않습니다.
+직접 수정한 파일은 손대지 않습니다. 그대로 둔 파일이 바이너리가 가진 사본과
+바이트가 다르면 `DIFFERS`로 표시되므로, 새로 쓴 템플릿 아래에 옛 fragment가
+남아 있는 트리를 로드 에러가 아니라 이 출력에서 먼저 보게 됩니다.
 
 `ANTHROPIC_API_KEY`는 필요 없습니다 — smoke test는 로그인된 `claude`
 subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOKEN`)가

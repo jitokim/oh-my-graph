@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -364,16 +365,68 @@ func TestInitGraphs_SecondRunIsANoOp(t *testing.T) {
 	if !strings.Contains(out.String(), fmt.Sprintf("%d file(s) were already there", len(names))) {
 		t.Errorf("a second init should report the whole payload kept:\n%s", out.String())
 	}
+	// The skew marker has to stay silent on a tree that matches the payload,
+	// or it is noise on the most common re-run there is.
+	if strings.Contains(out.String(), "DIFFERS") {
+		t.Errorf("an unchanged tree must not be reported as differing:\n%s", out.String())
+	}
 }
 
-// TestInitGraphs_RollsBackWhenAWriteFailsMidLoop covers the case the pre-flight
-// sweep structurally cannot: a path that is free when the sweep looks at it but
-// occupied by the time the loop reaches it. A dangling symlink is the
-// deterministic stand-in — os.Stat follows it and reports "not there", so the
-// sweep passes, while O_EXCL refuses it, so the write fails after earlier files
-// have already landed. Without rollback the user is left with exactly the
-// half-unpacked graphs/ the docstring, README and DESIGN.md all promise they
-// cannot get.
+// TestInitGraphs_MarksAKeptFileThatDiffersFromThePayload is the version-skew
+// case a top-up creates and a refusal could not: `init` writes the file a
+// later release added while KEEPING the older copy of one it depends on, and
+// the mismatch — a template binding a `with:` key the kept fragment does not
+// declare — surfaces at graph.LoadFile, naming a node, nowhere near the `init`
+// that assembled it. Marking the kept file is what turns that into a hint the
+// user already has on screen; without it they must diff the tree against the
+// binary to find out which of their kept files is merely stale.
+func TestInitGraphs_MarksAKeptFileThatDiffersFromThePayload(t *testing.T) {
+	names := embeddedGraphNames(t)
+	if len(names) < 2 {
+		t.Skip("needs two embedded graphs to tell a marked file from an unmarked one")
+	}
+	dir := t.TempDir()
+	if err := initGraphs(io.Discard, dir); err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+	target := filepath.Join(dir, "graphs")
+	stale := filepath.Join(target, filepath.FromSlash(names[0]))
+	if err := os.WriteFile(stale, []byte("name: mine\nnodes:\n  - { id: a, prompt: a }\n"), 0o644); err != nil {
+		t.Fatalf("rewrite %s: %v", names[0], err)
+	}
+
+	var out strings.Builder
+	if err := initGraphs(&out, dir); err != nil {
+		t.Fatalf("a top-up over a differing file must still succeed: %v", err)
+	}
+	if want := "kept  " + stale + " (already there — not replaced; DIFFERS from this binary's copy)"; !strings.Contains(out.String(), want) {
+		t.Errorf("the differing file should be marked, want %q:\n%s", want, out.String())
+	}
+	if !strings.Contains(out.String(), "1 of those differ from this binary's copy") {
+		t.Errorf("the summary should count the differing files:\n%s", out.String())
+	}
+	// Every other file matches the payload byte for byte, so marking any of
+	// them would make the mark meaningless.
+	for _, name := range names[1:] {
+		path := filepath.Join(target, filepath.FromSlash(name))
+		if want := "kept  " + path + " (already there — not replaced)\n"; !strings.Contains(out.String(), want) {
+			t.Errorf("an identical file must be kept unmarked, want %q:\n%s", want, out.String())
+		}
+	}
+	// The mark is a report, not an action: the file itself is still theirs.
+	if got, err := os.ReadFile(stale); err != nil || !strings.Contains(string(got), "name: mine") {
+		t.Errorf("the differing file must be left untouched, got %q (err %v)", got, err)
+	}
+}
+
+// TestInitGraphs_RollsBackWhenAWriteFailsMidLoop covers the case the per-file
+// existence check structurally cannot: a path that is free when the check
+// looks at it but occupied by the time the write reaches it. A dangling
+// symlink is the deterministic stand-in — os.Stat follows it and reports "not
+// there", so the check routes the path to written-not-kept, while O_EXCL
+// refuses it, so the write fails after earlier files have already landed.
+// Without rollback the user is left with exactly the half-unpacked graphs/ the
+// docstring, README and DESIGN.md all promise they cannot get.
 func TestInitGraphs_RollsBackWhenAWriteFailsMidLoop(t *testing.T) {
 	names := embeddedGraphNames(t)
 	if len(names) < 2 {
@@ -459,6 +512,49 @@ func TestInitGraphs_TopUpRestoresAFragmentTheTreeIsMissing(t *testing.T) {
 		if _, err := graph.LoadFile(filepath.Join(target, name)); err != nil {
 			t.Errorf("template %s does not load after a top-up: %v", name, err)
 		}
+	}
+}
+
+// TestUnpackedTree_UndoRemovesTheDirectoriesThisRunCreated pins the half of
+// the rollback promise the init-level test structurally cannot stage: to make
+// a write fail that test must pre-create graphs/ to put the blocker inside,
+// which is precisely the case where graphs/ is the user's and must survive.
+// Here the run creates graphs/ itself, so a failure has to take it back out —
+// an empty graphs/ left behind is the "leaves no tree it made" claim broken.
+func TestUnpackedTree_UndoRemovesTheDirectoriesThisRunCreated(t *testing.T) {
+	root := t.TempDir()
+	found := filepath.Join(root, "mine")
+	if err := os.MkdirAll(found, 0o755); err != nil {
+		t.Fatalf("pre-create %s: %v", found, err)
+	}
+
+	u := &unpackedTree{}
+	created := filepath.Join(root, "graphs")
+	if err := u.mkdirAll(created); err != nil {
+		t.Fatalf("create %s: %v", created, err)
+	}
+	nested := filepath.Join(created, "fragments")
+	if err := u.mkdirAll(nested); err != nil {
+		t.Fatalf("create %s: %v", nested, err)
+	}
+	if err := u.mkdirAll(found); err != nil { // already there: never a cleanup candidate
+		t.Fatalf("stat %s: %v", found, err)
+	}
+	file := filepath.Join(nested, "e2e-verify.yaml")
+	if err := os.WriteFile(file, []byte("id: a\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", file, err)
+	}
+	u.files = append(u.files, file)
+
+	cause := fmt.Errorf("the write that failed")
+	if got := u.undo(cause); got != cause {
+		t.Errorf("undo must return the cause unchanged, got %v", got)
+	}
+	if _, err := os.Stat(created); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("graphs/ was created by this run and must not survive, got %v", err)
+	}
+	if _, err := os.Stat(found); err != nil {
+		t.Errorf("a directory the run only found must survive undo: %v", err)
 	}
 }
 
