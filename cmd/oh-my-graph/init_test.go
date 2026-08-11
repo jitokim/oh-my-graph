@@ -547,14 +547,86 @@ func TestUnpackedTree_UndoRemovesTheDirectoriesThisRunCreated(t *testing.T) {
 	u.files = append(u.files, file)
 
 	cause := fmt.Errorf("the write that failed")
-	if got := u.undo(cause); got != cause {
-		t.Errorf("undo must return the cause unchanged, got %v", got)
+	// errors.Is rather than identity: a removal that fails is joined onto the
+	// cause, so what undo promises is that the cause stays REACHABLE, not that
+	// it is the only thing returned. Nothing fails to remove here, so this run
+	// gets the cause itself back — asserting the weaker claim keeps the test
+	// about the rollback instead of about the error's shape.
+	if got := u.undo(cause); !errors.Is(got, cause) {
+		t.Errorf("undo must still carry the cause, got %v", got)
 	}
 	if _, err := os.Stat(created); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("graphs/ was created by this run and must not survive, got %v", err)
 	}
 	if _, err := os.Stat(found); err != nil {
 		t.Errorf("a directory the run only found must survive undo: %v", err)
+	}
+}
+
+// TestUnpackedTree_UndoReportsARemovalItCouldNotMake is the failure half: when
+// cleanup cannot take a file back out, the tree is left partial, and an error
+// that named only the original write would say `init` rolled back when it did
+// not. The cause must survive alongside it — the caller still has to be able
+// to see WHY the run stopped.
+func TestUnpackedTree_UndoReportsARemovalItCouldNotMake(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory permissions this test uses to make a removal fail")
+	}
+	root := t.TempDir()
+	u := &unpackedTree{}
+	created := filepath.Join(root, "graphs")
+	if err := u.mkdirAll(created); err != nil {
+		t.Fatalf("create %s: %v", created, err)
+	}
+	file := filepath.Join(created, "haiku-smoke.yaml")
+	if err := os.WriteFile(file, []byte("id: a\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", file, err)
+	}
+	u.files = append(u.files, file)
+	// A directory the run cannot write is a removal it cannot make.
+	if err := os.Chmod(created, 0o555); err != nil {
+		t.Fatalf("chmod %s: %v", created, err)
+	}
+	t.Cleanup(func() { os.Chmod(created, 0o755) })
+
+	cause := fmt.Errorf("the write that failed")
+	got := u.undo(cause)
+	if !errors.Is(got, cause) {
+		t.Fatalf("the cause must stay reachable through a failed cleanup, got %v", got)
+	}
+	if !strings.Contains(got.Error(), file) {
+		t.Errorf("a file cleanup could not remove must be named:\n%v", got)
+	}
+	// graphs/ itself is still there and non-empty, which os.Remove refuses on
+	// purpose (never RemoveAll) — that refusal is the documented choice, so it
+	// must NOT be reported as a second failure.
+	if strings.Contains(got.Error(), "remove "+created+":") {
+		t.Errorf("a non-empty directory left alone by design is not a cleanup failure:\n%v", got)
+	}
+}
+
+// TestInitGraphs_RefusesANonRegularEntryOnAPayloadPath pins that `kept` means
+// "your copy of this file is already here". A directory standing where a
+// template belongs satisfies a plain existence check, so reporting it kept
+// would exit 0 over a tree in which that template cannot load at all.
+func TestInitGraphs_RefusesANonRegularEntryOnAPayloadPath(t *testing.T) {
+	names := embeddedGraphNames(t)
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "graphs", filepath.FromSlash(names[0]))
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatalf("pre-create %s: %v", blocked, err)
+	}
+
+	var out strings.Builder
+	err := initGraphs(&out, dir)
+	if err == nil {
+		t.Fatalf("a directory on a payload path must be an error, got success:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), blocked) {
+		t.Errorf("the offending path must be named, got: %v", err)
+	}
+	if strings.Contains(out.String(), "kept") {
+		t.Errorf("a directory must never be reported kept:\n%s", out.String())
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/jitokim/oh-my-graph/graphs"
 )
@@ -73,7 +74,8 @@ func runInit(args []string) error {
 // the write is refused rather than clobbered; because that refusal happens
 // mid-loop, a failing write also removes what this run created — the files,
 // the subdirectories opened for them, and graphs/ itself when this run made
-// it — so a failed `init` leaves graphs/ as it found it. It does not undo the
+// it — so a failed `init` leaves graphs/ as it found it, and says so in the
+// returned error when a removal itself fails. It does not undo the
 // parents above the target that `init a/b/c` had to create on the way, so the
 // promise is about graphs/ and its contents, not about the whole path. The
 // listing is buffered for the same reason: it names files only once they are
@@ -100,8 +102,15 @@ func initGraphs(w io.Writer, dir string) error {
 	for _, name := range names {
 		path := filepath.Join(target, filepath.FromSlash(name))
 		// Existing means kept, never replaced: see the top-up contract above.
-		switch _, err := os.Stat(path); {
+		// Lstat rather than Stat, and only a regular file counts as the copy
+		// already there: a directory or a symlink on a payload path is not
+		// that file, and calling it `kept` would exit 0 over a tree where the
+		// template it stands for cannot load.
+		switch info, err := os.Lstat(path); {
 		case err == nil:
+			if !info.Mode().IsRegular() {
+				return unpacked.undo(fmt.Errorf("init: %s exists and is not a regular file (%s) — move it aside and run `init` again", path, info.Mode().Type()))
+			}
 			kept++
 			note := "already there — not replaced"
 			if keptFileDiffers(name, path) {
@@ -128,20 +137,26 @@ func initGraphs(w io.Writer, dir string) error {
 		fmt.Fprintf(&listing, "wrote %s\n", path)
 	}
 
-	io.WriteString(w, listing.String())
-	fmt.Fprintf(w, "%d file(s) written to %s\n", written, target)
+	// The summary joins the listing in the same buffer, so the whole report
+	// reaches w in ONE write: a writer that fails is then a single error to
+	// return rather than a half-printed report `init` claimed to have made.
+	// Writes to a strings.Builder cannot fail, so nothing is swallowed here.
+	fmt.Fprintf(&listing, "%d file(s) written to %s\n", written, target)
 	if kept > 0 {
-		fmt.Fprintf(w, "%d file(s) were already there and were left untouched — to take the shipped copy of one, move yours aside and run `init` again\n", kept)
+		fmt.Fprintf(&listing, "%d file(s) were already there and were left untouched — to take the shipped copy of one, move yours aside and run `init` again\n", kept)
 	}
 	if differing > 0 {
-		fmt.Fprintf(w, "%d of those differ from this binary's copy (marked DIFFERS above) — your own edit, or a file left from an older release; the second kind can fail a template this run just wrote, at load time rather than here\n", differing)
+		fmt.Fprintf(&listing, "%d of those differ from this binary's copy (marked DIFFERS above) — your own edit, or a file left from an older release; the second kind can fail a template this run just wrote, at load time rather than here\n", differing)
 	}
 	// The cheapest real end-to-end check, quoted from the Quickstart — but only
 	// when that graph is part of the payload this binary carries. After a
 	// top-up it is on disk either way, written by this run or kept from an
 	// earlier one.
 	if smoke := filepath.Join(target, smokeGraphFile); payloadCarries(names, smokeGraphFile) {
-		fmt.Fprintf(w, "next: mkdir -p /tmp/omg-smoke && oh-my-graph run %s --input dir=/tmp/omg-smoke\n", smoke)
+		fmt.Fprintf(&listing, "next: mkdir -p /tmp/omg-smoke && oh-my-graph run %s --input dir=/tmp/omg-smoke\n", smoke)
+	}
+	if _, err := io.WriteString(w, listing.String()); err != nil {
+		return fmt.Errorf("init: write report: %w", err)
 	}
 	return nil
 }
@@ -180,9 +195,10 @@ func embeddedPaths() ([]string, error) {
 // contract: nothing is touched, the user is simply spared having to diff to
 // learn which kept file is their own edit and which is merely stale.
 //
-// An unreadable side (a directory sitting on a payload path, a permission
-// error) reports no difference: the mark is an aid, and one that cannot be
-// substantiated must not be printed.
+// An unreadable side (a permission error, a file that vanished between the
+// check and the read) reports no difference: the mark is an aid, and one that
+// cannot be substantiated must not be printed. A non-regular entry never gets
+// this far — the caller rejects it outright rather than describing it.
 func keptFileDiffers(name, path string) bool {
 	onDisk, err := os.ReadFile(path)
 	if err != nil {
@@ -241,19 +257,37 @@ func (u *unpackedTree) mkdirAll(dir string) error {
 	return nil
 }
 
-// undo removes what this run created and returns cause unchanged. Removal
-// errors are deliberately dropped — the caller's problem is cause, and
-// reporting a failed cleanup instead would hide why `init` stopped. The
-// directory removals use os.Remove rather than RemoveAll: a directory that
-// somehow gained a file this run did not write is left alone.
+// undo removes what this run created and returns an error that still carries
+// cause: `errors.Is(undo(cause), cause)` holds, so the caller's problem — why
+// `init` stopped — is never displaced by the cleanup. A removal that FAILS is
+// joined onto it rather than dropped, because that is the one case where the
+// rollback promise above ("a failed `init` leaves graphs/ as it found it") is
+// false, and a partial tree the user is not told about is worse than a longer
+// error.
+//
+// Two removal outcomes are not failures. A path already gone is the state undo
+// wanted. And the directory removals use os.Remove rather than RemoveAll, so a
+// directory that somehow gained a file this run did not write is left alone —
+// that is the deliberate choice, not an error to report.
 func (u *unpackedTree) undo(cause error) error {
+	failures := []error{cause}
+	remove := func(path string) {
+		err := os.Remove(path)
+		if err == nil || errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTEMPTY) {
+			return
+		}
+		failures = append(failures, fmt.Errorf("init: rollback could not remove %s: %w", path, err))
+	}
 	for _, path := range u.files {
-		os.Remove(path)
+		remove(path)
 	}
 	for i := len(u.dirs) - 1; i >= 0; i-- {
-		os.Remove(u.dirs[i])
+		remove(u.dirs[i])
 	}
-	return cause
+	if len(failures) == 1 {
+		return cause
+	}
+	return errors.Join(failures...)
 }
 
 // writeNewFile creates path with data, failing if path already exists. The
