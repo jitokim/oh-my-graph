@@ -290,7 +290,7 @@ nodes:
       caveat, a note — goes AFTER the verdict, never before it: a line of
       context ahead of the token fails this node even when both conditions
       hold.
-      You have 15 minutes: as that timeout comes near (after ~25 loops), stop
+      You have 15 minutes: as that timeout comes near (after ~20 loops), stop
       polling and answer from the state you actually have. NEVER reply READY
       early.
     allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]

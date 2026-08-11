@@ -302,13 +302,14 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 // spends the whole timeout to learn nothing and then reports it as slowness.
 // ADR 0021 is the rule; this is its enforcement.
 //
-// Three things are asserted, and none of them is expressible in the
+// Four things are asserted, and none of them is expressible in the
 // `result_matches` pattern:
 //
-//  1. Both waits read the fields GitHub computes for "is this PR ready" —
-//     `reviewDecision`, which counts every reviewer including humans, and
-//     `mergeStateStatus`. Reading only a `reviews` array filtered to one bot
-//     is what let a human's CHANGES_REQUESTED reach `merge` as a RECHECKED.
+//  1. Both waits READ the whole review list plus the two fields GitHub
+//     computes alongside it — `reviewDecision` and `mergeStateStatus`.
+//     Reading only a `reviews` array filtered to one bot is what let a
+//     human's CHANGES_REQUESTED reach `merge` as a RECHECKED. What the
+//     waits JUDGE by is item 4.
 //  2. Both waits judge the WHOLE check rollup rather than an entry named
 //     `test`. The repo this graph was written in carries three entries.
 //  3. Both waits name the latch class AND the act that clears it, because a

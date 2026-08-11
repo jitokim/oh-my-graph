@@ -923,7 +923,7 @@ reaches, or it had not concluded when the timeout arrived.
 after triage may have pushed a fix — is the shipped case, and it writes all
 three. The pattern is
 ``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'``; the stuck
-outcome is `LATCHED <sha> — <what> ; unblock: <act>`, which appears in the
+outcome is `LATCHED <sha> — <what>; unblock: <act>`, which appears in the
 prompt and **not** in the pattern. Three rules, none of them new:
 
 - **Leaving a token out of the pattern is how a graph halts on purpose.** A PR
