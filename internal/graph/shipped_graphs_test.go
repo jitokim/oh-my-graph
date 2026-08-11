@@ -314,6 +314,14 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 //  3. Both waits name the latch class AND the act that clears it, because a
 //     halting verdict that says only what is wrong is what cost this project
 //     four hand-repairs in two days.
+//  4. Neither wait judges BY `reviewDecision`, which is why the review rules
+//     are written per reviewer. That field is PR-level, is never scoped to a
+//     SHA, and is not cleared by a `COMMENTED` review, so gating on it fails
+//     in both directions — measured, not reasoned: at `ready-and-wait` it
+//     flips the instant CodeRabbit submits the CHANGES_REQUESTED that is this
+//     graph's ordinary path into `triage` (4/4 sampled PRs opened that way),
+//     and at `recheck` it stays set over a superseded review whose named act
+//     has already been performed (PR #145, which merged correctly anyway).
 func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
 	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
 	if err != nil {
@@ -341,6 +349,9 @@ func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
 	required["LATCHED"] = "the token that reports a latch as itself instead of as a timeout"
 	required["unblock:"] = "a halting verdict that does not name the act is the four-times cost"
 	required["@coderabbitai review"] = "the rate-limit latch's act: the clock opens the window, only a re-request opens the review"
+	required["OTHER than coderabbitai"] = "the review rules are per reviewer; a rule written over `review_decision` alone latches the bot's own CHANGES_REQUESTED, which is the ordinary path"
+	required["maintainer dismisses"] = "a person's CHANGES_REQUESTED is not cleared by a push, a COMMENTED or a re-request, so an act naming one is an act that cannot clear the latch"
+	required["newest `at` in `reviews`"] = "a rate-limit note older than the newest review is spent — the bot already reviewed past it — and `| last` picks it up forever otherwise"
 
 	for id, node := range waits {
 		for needle, why := range required {
@@ -348,6 +359,20 @@ func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
 				t.Errorf("%s's prompt never mentions %q — %s", id, needle, why)
 			}
 		}
+		// Neither wait may project the review list through the filter that
+		// hid the human of ADR 0021 §1.
+		if strings.Contains(node.Prompt, `.reviews[] | select(.author.login == "coderabbitai")`) {
+			t.Errorf("%s filters `reviews` down to coderabbitai — that filter is the keyhole a human's CHANGES_REQUESTED went through, and the per-reviewer rules above cannot be evaluated without `who`", id)
+		}
+	}
+
+	// The regression this graph paid for once: `ready-and-wait` must NOT
+	// treat the bot's own CHANGES_REQUESTED as a latch. It arrives at the
+	// same instant the READY condition is met, and `triage` — the node
+	// immediately downstream — is what actions it. A latch there halts the
+	// run before the graph's core automated step on every ordinary PR.
+	if !strings.Contains(waits["ready-and-wait"].Prompt, "coderabbitai's OWN CHANGES_REQUESTED is NOT a latch") {
+		t.Error("ready-and-wait does not say the bot's own CHANGES_REQUESTED is not a latch — with only the generic review rule written down, the normal path (bot reviews, triage actions it) halts before triage")
 	}
 
 	// The two failing tokens at ready-and-wait are two tokens on purpose: the
@@ -388,11 +413,26 @@ func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
 	if merge == nil {
 		t.Fatal("merge-shepherd has no merge node")
 	}
-	if !strings.Contains(merge.Prompt, "mergeable:") {
-		t.Error("merge's --admin clause does not require recheck's mergeable: state — the licence is back to being self-justified")
-	}
 	if strings.Contains(merge.Prompt, "complete by construction") {
 		t.Error("merge still claims the review is \"complete by construction\"; that construction counted CodeRabbit and no human, and it is what licensed --admin past a human's CHANGES_REQUESTED")
+	}
+	// The licence has two payloads and both ends have to declare them: merge
+	// reads them off recheck's first line, and the pattern cannot require
+	// either (`RECHECKED <sha> …` matches without them), so this is the only
+	// place the two ends are held together.
+	for needle, why := range map[string]string{
+		"mergeable:":        "the mechanical merge state --admin is narrowed to; without it the licence is self-justified again",
+		"review_decision: ": "REVIEW_REQUIRED means protection is holding the PR because NOBODY approved, and --admin over that is exactly a way past a review (ADR 0021 §3)",
+	} {
+		if !strings.Contains(merge.Prompt, needle) {
+			t.Errorf("merge's --admin clause never mentions %q — %s", needle, why)
+		}
+		if !strings.Contains(waits["recheck"].Prompt, needle) {
+			t.Errorf("recheck never tells its RECHECKED line to carry %q — %s, and merge reads it from nowhere else", needle, why)
+		}
+	}
+	if !strings.Contains(merge.Prompt, "REVIEW_REQUIRED") {
+		t.Error("merge admits --admin over any mechanical state, REVIEW_REQUIRED included — that is a merge past a required approval, which ADR 0021 §3 claims the graph does not do")
 	}
 }
 

@@ -17,7 +17,8 @@ is what its two waits LOOK AT, and what they are allowed to call a timeout.
 ### Fixed
 
 - **`merge-shepherd` no longer merges past a review it cannot see.** Both waits
-  now read GitHub's own `reviewDecision` and `mergeStateStatus`. Until now
+  now project EVERY review with its author, and read `mergeStateStatus` and
+  GitHub's `reviewDecision` alongside them. Until now
   `recheck` filtered the review list down to `coderabbitai`, so a **human**
   reviewer's `CHANGES_REQUESTED` was invisible to the entire chain:
   `ready-and-wait` passed (its condition named only the bot), `recheck`
@@ -29,6 +30,17 @@ is what its two waits LOOK AT, and what they are allowed to call a timeout.
   the chain (ADR 0021 §1). The same keyhole hid a conflicting PR:
   `mergeStateStatus: DIRTY` reached `merge`, failed there, answered `WITHHELD`
   — which PASSES — and ended the run green with nothing shipped.
+  The review rules are written **per reviewer**, not over `reviewDecision`,
+  which is reported rather than judged by: that field is PR-level, is never
+  scoped to a SHA, and is not cleared by a `COMMENTED` review, so gating on it
+  fails in both directions. At `ready-and-wait` it flips the instant CodeRabbit
+  submits the `CHANGES_REQUESTED` that is this graph's ordinary path into
+  `triage`, halting every normal run before its core automated step; at
+  `recheck` it stays set over a review a later push superseded, naming an act
+  that has already been performed and cannot clear it (PR #145, which merged
+  correctly). So the bot's rule is SHA-scoped — its latest review on `head` is
+  its current word — and a person's is not: theirs stands until that reviewer
+  approves or a maintainer dismisses it, which is a different `unblock:` act.
 - **`ready-and-wait` judged the check rollup by the name `test`.** `recheck`'s
   own comment has explained since 2026-08-09 why that is wrong — this repo
   carries three rollup entries, and a red one of the other two read as green —
@@ -60,11 +72,16 @@ is what its two waits LOOK AT, and what they are allowed to call a timeout.
   and it still passes. Eight classes of condition that used to be able to reach
   it now halt instead.
 - **`merge`'s `--admin` licence is narrowed and re-justified.** It may be
-  reached only when the plain merge failed on protection or queue mechanics AND
+  reached only when the plain merge failed on protection or queue mechanics,
   `recheck` answered `RECHECKED` naming a mechanical `mergeable:` state
-  (`BEHIND`, `BLOCKED`, `UNSTABLE`, `HAS_HOOKS`). The old justification — "the
-  review is complete by construction (verify passed, CI and CodeRabbit
-  concluded, comments triaged)" — is gone, because it was false about humans.
+  (`BEHIND`, `BLOCKED`, `UNSTABLE`, `HAS_HOOKS`), AND that same line does not
+  say `review_decision: REVIEW_REQUIRED` — the state where protection is
+  holding the PR because nobody has approved it, which `mergeStateStatus`
+  reports as `BLOCKED` like any other hold and over which `--admin` is exactly
+  "a way past a review". `merge` answers `WITHHELD` there instead. The old
+  justification — "the review is complete by construction (verify passed, CI
+  and CodeRabbit concluded, comments triaged)" — is gone, because it was false
+  about humans.
 - **The unified diagnosis is recorded where the next reader will look**: the
   graph's header, and ADR 0019 as a dated update — the ADR that was written
   about verdict grammar in 2026-08-04 while the second backlog item filed the

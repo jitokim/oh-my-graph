@@ -8,10 +8,16 @@
 # for CI and CodeRabbit, work through the review comments, wait out the checks
 # your own fix restarted, merge, pull, rebuild, prune. Same steps, same order,
 # pinned in YAML — with the merge policy encoded in the graph shape itself:
-# merge happens only AFTER GitHub's own `reviewDecision` on the SHA being merged
-# says something other than CHANGES_REQUESTED — that field counts every
-# reviewer, bot and human — and CodeRabbit's review has completed on that same
-# SHA, every comment it had made when triage ran is actioned, and `--admin` is
+# merge happens only AFTER the review is settled over EVERY reviewer, bot and
+# human. GitHub's own `reviewDecision` counts them all, but it is PR-LEVEL and
+# never scoped to a SHA — and a COMMENTED review does not clear a
+# CHANGES_REQUESTED — so it stays set over a review a later push superseded,
+# and the graph reads the reviews themselves rather than that one field. No
+# reviewer other than the bot may hold an OPEN request for changes (a person's
+# does not clear on a push: only that reviewer approving, or a maintainer
+# dismissing it, clears one), CodeRabbit's LATEST review on the SHA being
+# merged is not one, every comment it had made when triage ran is actioned,
+# and `--admin` is
 # never a way past an unfinished review (it may only grease merge-queue
 # mechanics once the review is complete — see CONTRIBUTING). Note the seam that
 # wording leaves, because the graph does not close it: an incremental review of
@@ -66,8 +72,13 @@
 # construction" — a construction with no human in it. Not a hang: a MERGE. A
 # conflicting PR was invisible the same way and ended the run green, because
 # merge met the conflict, answered WITHHELD, and WITHHELD passes. Both waits now
-# read `reviewDecision` and `mergeStateStatus`, and both judge the WHOLE check
-# rollup instead of an entry named `test`. See ADR 0019's 2026-08-11 update for
+# project EVERY review with its author, read `reviewDecision` and
+# `mergeStateStatus` alongside them, and judge the WHOLE check
+# rollup instead of an entry named `test`. The unfiltered review list is what
+# does the work: `reviewDecision` is reported, not judged by, because it is
+# PR-level and one word for two different latches — the bot's, which a
+# re-request clears, and a person's, which only that person or a maintainer
+# does. See ADR 0019's 2026-08-11 update for
 # how that keyhole, and not the latch story alone, is what ties the incidents
 # together.
 #
@@ -173,12 +184,20 @@ nodes:
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
-                 reviews: [.reviews[] | select(.author.login == "coderabbitai")
-                           | {oid: .commit.oid, state, at: .submittedAt}],
+                 reviews: [.reviews[] | {who: .author.login, oid: .commit.oid,
+                                         state, at: .submittedAt}],
                  last_bot_note: ([.comments[] | select(.author.login == "coderabbitai")] | last
                                  | {at: .createdAt,
                                     limited: ((.body // "") | test("review limit|rate limit"; "i")),
-                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "") | sub("^\\s+"; "") | .[0:240])})}'
+                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "")
+                                              | (([scan("(?i).{0,40}(?:review limit|rate limit).{0,240}"; "m")] | first)
+                                                 // (sub("^\\s+"; "") | .[0:240])))})}'
+
+      `reviews` is EVERY reviewer's, not just the bot's — a human's
+      CHANGES_REQUESTED is the one this graph used to be blind to, so the
+      projection names `who`. The `excerpt` is the region AROUND the rate-limit
+      phrase, not the head of the comment: the bot's notice sits ten lines
+      under a walkthrough image, and the head of the body is that image.
 
       Read it, then `sleep 30`, then run it again — one loop iteration per
       tool call, blocking each time, in the FOREGROUND. NEVER background
@@ -209,19 +228,42 @@ nodes:
           or ERROR) → read that job's log, fix and push.
         - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
           workflow run or deployment in the repo's Actions tab.
-        - `review_decision` is CHANGES_REQUESTED → read the review, whoever
-          left it. Resolve the threads or push a fix, then re-request the
-          review (`@coderabbitai review` for the bot).
+        - a reviewer OTHER than coderabbitai holds an OPEN request for changes
+          — in `reviews`, that person's latest CHANGES_REQUESTED is not
+          followed by an APPROVED from the SAME person → read that review. It
+          clears only when that reviewer re-reviews with APPROVED or a
+          maintainer dismisses it: a push does not clear one, a COMMENTED does
+          not, and `triage` actions CodeRabbit's comments only, so nothing
+          downstream of here clears it either. Name the person and the commit
+          their review sits on.
+          coderabbitai's OWN CHANGES_REQUESTED is NOT a latch: it is this
+          graph's ordinary path, and `triage` is the node whose entire job is
+          to action it. Every PR this graph has shepherded opened with exactly
+          that review. Note what that means for `review_decision`, which is why
+          this rule reads `reviews` instead: the field flips to
+          CHANGES_REQUESTED at the very instant the bot submits one, which is
+          the same instant the READY condition above is met, so gating on the
+          field alone would halt the normal run before triage ever ran.
         - `merge_state` is DIRTY → the PR conflicts with its base: rebase or
           merge the base in, and push.
-        - `last_bot_note.limited` is true — the bot's last comment says its
-          review limit is reached, and `excerpt` will say "next review in N
-          minutes" → the clock opens the WINDOW, not the review: wait the
-          stated N minutes and then post `@coderabbitai review` on the PR.
-          Nothing arrives if nobody asks. (`limited` is a regex over the whole
-          comment, so it can fire on a comment that merely discusses a rate
-          limit. That costs the operator one glance; missing a real one costs
-          the whole timeout, which is what happened on 2026-08-04.)
+        - `last_bot_note.limited` is true AND `last_bot_note.at` is NEWER than
+          the newest `at` in `reviews` — the bot's most recent word is that its
+          review limit is reached, and `excerpt` carries that notice, which
+          says "next review available in N minutes" → the clock opens the
+          WINDOW, not the review: the operator waits the stated N minutes and
+          then posts `@coderabbitai review` on the PR. Nothing arrives if
+          nobody asks. If a review is NEWER than the note, the bot already
+          reviewed past that limit and the note is spent — not a latch.
+          (`limited` is a regex over the whole comment, so it can fire on a
+          comment that merely discusses a rate limit. That costs the operator
+          one glance; missing a real one costs the whole timeout, which is what
+          happened on 2026-08-04.)
+      Every act named in that list is the OPERATOR's, and you REPORT it — this
+      graph does not resolve a review thread, re-request a review or sleep out
+      a rate-limit window on its own judgement (ADR 0021 §3). Your grant is
+      wide enough to do all three. Do not. `gh pr ready` in step 1 is the one
+      act this node performs, and only because a DRAFT PR is its own
+      precondition.
       Two conditions are only distinguishable by not moving — a `checks` entry
       stuck at QUEUED (a fork or first-contributor run awaiting approval) and
       no coderabbitai review at all. Poll those; if the budget runs out with
@@ -442,25 +484,37 @@ nodes:
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
-                 reviews: [.reviews[] | select(.author.login == "coderabbitai")
-                           | {oid: .commit.oid, state, at: .submittedAt}],
+                 reviews: [.reviews[] | {who: .author.login, oid: .commit.oid,
+                                         state, at: .submittedAt}],
                  last_bot_note: ([.comments[] | select(.author.login == "coderabbitai")] | last
                                  | {at: .createdAt,
                                     limited: ((.body // "") | test("review limit|rate limit"; "i")),
-                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "") | sub("^\\s+"; "") | .[0:240])})}'
+                                    excerpt: ((.body // "") | gsub("<!--[^>]*-->"; "")
+                                              | (([scan("(?i).{0,40}(?:review limit|rate limit).{0,240}"; "m")] | first)
+                                                 // (sub("^\\s+"; "") | .[0:240])))})}'
       `head` IS the final SHA; `checks` is the rollup of that same head commit;
-      and every review carries the `oid` it was submitted against — so
-      "CodeRabbit reviewed the FINAL SHA" is a comparison you can make, not a
-      guess you have to take.
+      and every review carries the `who` who left it and the `oid` it was
+      submitted against — so "CodeRabbit reviewed the FINAL SHA" and "somebody
+      else is asking for changes" are both comparisons you can make, not
+      guesses you have to take. The `excerpt` is the region AROUND the
+      rate-limit phrase rather than the head of the comment, because the bot's
+      notice sits ten lines under a walkthrough image.
 
-      `review_decision` is GitHub's own answer to "has this PR been asked to
-      change", over EVERY reviewer — a human's CHANGES_REQUESTED counts, and
-      the `reviews` projection above cannot see one, because it filters to
-      coderabbitai. Read both: the filtered list is what proves the BOT
-      reviewed the final SHA; `review_decision` is what proves NOBODY has an
-      open request for changes. A recheck that reads only the first will
-      answer RECHECKED over a human's blocking review — that is not a hang,
-      it is a merge, and it is the reason this field is here.
+      `reviews` covers EVERY reviewer, not just the bot. Filtering it down to
+      `coderabbitai` is what let a human's CHANGES_REQUESTED reach `merge`
+      labelled RECHECKED — not a hang but a merge, and the reason `who` is in
+      the projection.
+      `review_decision` is GitHub's rollup of that same list, and you REPORT it
+      rather than judge by it, because it answers a coarser question than this
+      node asks. It is PR-LEVEL and never scoped to a SHA, and a COMMENTED
+      review does not clear a CHANGES_REQUESTED — so it stays set over a review
+      a later push superseded. PR #145 merged correctly with `review_decision`
+      CHANGES_REQUESTED: the only request for changes sat on a commit that no
+      longer existed, and the act that field would have named — resolve the
+      threads and re-request — had already been performed, answered COMMENTED,
+      and left the field exactly where it was. A verdict whose named act cannot
+      clear it is the failure ADR 0021 exists to stop, so the judgment below is
+      made PER REVIEWER: who is asking, and about which commit.
       `merge_state` is GitHub's mergeability: CLEAN, BEHIND (base moved),
       BLOCKED (branch protection wants something), UNSTABLE (a non-required
       check is unhappy), HAS_HOOKS, DIRTY (conflicts with base), DRAFT, or
@@ -483,7 +537,9 @@ nodes:
 
       GREEN means ALL THREE of these hold on `head`:
         - every entry of `checks` is finished and good,
-        - `review_decision` is not CHANGES_REQUESTED, and
+        - no reviewer OTHER than coderabbitai holds an OPEN request for changes
+          — for each such person, their latest CHANGES_REQUESTED is followed by
+          an APPROVED from that SAME person, and
         - coderabbitai's LATEST review on `head` — among the reviews whose
           `oid` equals `head`, the one with the greatest `at` — is not
           CHANGES_REQUESTED. Recency is the whole rule, not an "is there an
@@ -492,11 +548,22 @@ nodes:
           APPROVED is CodeRabbit changing its mind, which is the answer that
           counts. A "review in progress" placeholder comment is not a
           submitted review and is not in this list.
+      Those last two rules differ on purpose, and the difference is who
+      re-reviews WITHOUT being asked. CodeRabbit reviews every push, so its word
+      on `head` is its current word and an older CHANGES_REQUESTED on a replaced
+      commit is spent — which is why the bot's rule is SHA-scoped. A person does
+      not: theirs stands on whatever commit it was left against until that
+      person approves or a maintainer dismisses it, so the SHA is not what
+      settles it, and the act that clears it is a different act.
       `merge_state` does not decide GREEN — it is mechanics, and you REPORT it
       rather than judge it, with the one exception below (DIRTY and DRAFT are
       latches). BEHIND, BLOCKED, UNSTABLE and HAS_HOOKS on an otherwise green
       PR are what `merge` may answer with `--admin`, and it may do that only
-      because you named the state and found no request for changes.
+      because you named the state and found no OPEN request for changes. One
+      exception rides on the field you report rather than on the state: a
+      BLOCKED whose `review_decision` is REVIEW_REQUIRED is protection waiting
+      for an approval nobody has given, and `merge` refuses `--admin` over it.
+      Report the field and it decides correctly; omit it and it cannot.
 
       Now the part that decides whether you POLL AT ALL. Not everything
       unfinished is slow. A condition is SELF-RESOLVING when a machine already
@@ -512,10 +579,20 @@ nodes:
           workflow run or deployment in the repo's Actions tab. (This is a
           latch, not a verdict on the code — it is finished-and-bad by the
           rollup rule, and the act, not the code, is what it needs.)
-        - `review_decision` is CHANGES_REQUESTED, or coderabbitai's latest
-          review on `head` is → read the review. Resolve the threads or push a
-          fix, then re-request the review (`@coderabbitai review` for the
-          bot). This graph does not resolve a thread or re-trigger a reviewer
+        - coderabbitai's LATEST review on `head` is CHANGES_REQUESTED → read
+          the review. Resolve the threads or push a fix, then re-request the
+          review (`@coderabbitai review`). The bot reviews what it is asked to,
+          so this one does clear from that act.
+        - a reviewer OTHER than coderabbitai holds an open request for changes
+          (the GREEN rule above) → read that review. This one does NOT clear
+          from a re-request or a push: `unblock:` is that reviewer re-reviewing
+          with APPROVED, or a maintainer dismissing the review. Name the person
+          and the commit their review sits on, so the act names somebody who
+          can actually perform it.
+          Neither of these two is `review_decision`: that field is set by
+          either of them and cleared by neither on its own, so a verdict
+          written off it would name an act that cannot clear it.
+          This graph does not resolve a thread or re-trigger a reviewer
           on its own judgement: closing a reviewer's verdict is the reviewer's
           business and the operator's, and one of the four times an operator
           did it by hand, closing blind would have been wrong.
@@ -523,15 +600,18 @@ nodes:
           merge the base in, and push.
         - `merge_state` is DRAFT → `gh pr ready {{ inputs.pr }}` (ready-and-wait
           did this once already, so someone converted it back).
-        - `last_bot_note.limited` is true — the bot's last comment says its
-          review limit is reached, and `excerpt` will say "next review in N
-          minutes" → the clock opens the WINDOW, not the review: wait the
-          stated N minutes, then post `@coderabbitai review` on the PR.
-          Nothing arrives if nobody asks, which is why waiting out the N
-          minutes on its own is not the answer. (`limited` is a regex over the
-          whole comment and can fire on one that merely discusses a rate
-          limit; that costs a glance, and missing a real one costs the whole
-          timeout.)
+        - `last_bot_note.limited` is true AND `last_bot_note.at` is NEWER than
+          the newest `at` in `reviews` — the bot's most recent word is that its
+          review limit is reached, and `excerpt` carries that notice, which
+          says "next review available in N minutes" → the clock opens the
+          WINDOW, not the review: wait the stated N minutes, then post
+          `@coderabbitai review` on the PR. Nothing arrives if nobody asks,
+          which is why waiting out the N minutes on its own is not the answer.
+          A note OLDER than the newest review is spent — the bot already
+          reviewed past that limit — and is not a latch. (`limited` is a regex
+          over the whole comment and can fire on one that merely discusses a
+          rate limit; that costs a glance, and missing a real one costs the
+          whole timeout.)
       Two conditions are only distinguishable from a self-resolving one by NOT
       MOVING: a `checks` entry stuck at QUEUED or EXPECTED (a run awaiting a
       maintainer's approval, or a required context with no reporter behind it
@@ -574,9 +654,13 @@ nodes:
       followed immediately by the 40-character head SHA you judged:
         - RECHECKED <sha> — GREEN on <sha>: every rollup entry finished good,
           nobody has an open request for changes, and CodeRabbit's latest word
-          on that commit is not one either. Put `mergeable: <merge_state>` on
-          that same first line after the SHA — merge reads it, and it is the
-          only thing that licenses `--admin` there.
+          on that commit is not one either. Put BOTH `mergeable: <merge_state>`
+          and `review_decision: <review_decision>` on that same first line
+          after the SHA — merge reads them, and together they are the only
+          thing that licenses `--admin` there. Report `review_decision` as GitHub
+          gave it, including a CHANGES_REQUESTED you judged spent: merge is
+          entitled to see the field you overrode and why the first line says
+          green anyway.
         - LATCHED <sha> — a condition on <sha> that the clock will not clear.
           Name what is stuck, then `unblock:` and the act, on that first line:
           `LATCHED c80872c — coderabbitai CHANGES_REQUESTED; unblock: resolve
@@ -658,9 +742,14 @@ nodes:
   # --reject approve-merge to end the run without merging).
   #
   # CI and review status on the FINAL SHA is no longer yours to confirm — that
-  # is what recheck is, and its verdict names the SHA it judged, GitHub's own
-  # `reviewDecision` over every reviewer (not just CodeRabbit), and the
-  # mergeability state. Until 2026-08-11 that sentence promised more than the
+  # is what recheck is, and its verdict names the SHA it judged, GitHub's
+  # `reviewDecision` as it found it, and the mergeability state, having judged
+  # every reviewer's own review rather than one bot's. One thing that sentence
+  # does NOT cover, because no node can: a reviewer who has not looked yet.
+  # `review_decision: REVIEW_REQUIRED` on recheck's line means nobody has
+  # approved — the merge below will refuse `--admin` over it, and whether to
+  # wait for that approval is yours.
+  # Until 2026-08-11 that sentence promised more than the
   # node delivered: recheck filtered reviews down to one bot, so a human's
   # CHANGES_REQUESTED reached this gate labelled RECHECKED, with the comment
   # above telling the operator not to look. It is true now.
@@ -702,18 +791,24 @@ nodes:
            that really landed and send this node into a second false FAIL.
            Then report MERGED <sha> for the merge that already landed.
         1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
-           plain merge FIRST, with no `--admin`. Add `--admin` only when BOTH
-           hold: the plain merge failed on branch-protection or merge-queue
-           mechanics, AND recheck's verdict is RECHECKED naming a mechanical
-           state — its first line says `mergeable:` BEHIND, BLOCKED, UNSTABLE
-           or HAS_HOOKS. What makes that legitimate is NOT "CodeRabbit
-           concluded": it is that recheck read GitHub's own `reviewDecision`,
-           which counts every reviewer including humans, and found no open
-           request for changes. `--admin` must never be used to get past a
-           review. A CHANGES_REQUESTED cannot reach you — recheck answers
-           LATCHED to it and the run halts — so if you are reaching for
-           `--admin` without a `mergeable:` state to point at, the honest
-           answer is WITHHELD naming what refused the merge.
+           plain merge FIRST, with no `--admin`. Add `--admin` only when ALL
+           THREE hold: the plain merge failed on branch-protection or
+           merge-queue mechanics; recheck's verdict is RECHECKED naming a
+           mechanical state — its first line says `mergeable:` BEHIND, BLOCKED,
+           UNSTABLE or HAS_HOOKS; and that same line does NOT say
+           `review_decision: REVIEW_REQUIRED`. That third one is the case where
+           protection is holding the PR because NOBODY has approved it yet, and
+           BLOCKED is what it reports — `--admin` there is precisely "a way
+           past a review", so the honest answer is WITHHELD naming the missing
+           approval. What makes the rest legitimate is NOT "CodeRabbit
+           concluded": it is that recheck read every reviewer's own review, not
+           one bot's, and found no OPEN request for changes — a human's
+           CHANGES_REQUESTED counts there and does not clear on a push.
+           `--admin` must never be used to get past a review. An open request
+           for changes cannot reach you — recheck answers LATCHED to it and the
+           run halts — so if you are reaching for `--admin` without a
+           `mergeable:` state to point at, the honest answer is WITHHELD naming
+           what refused the merge.
         2. In {{ inputs.repo }}: `git pull --ff-only origin main`.
         3. `make build` — SYNCHRONOUSLY, waiting for the exit code, never
            in the background.

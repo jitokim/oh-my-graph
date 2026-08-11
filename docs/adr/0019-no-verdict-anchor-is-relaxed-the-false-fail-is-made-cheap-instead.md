@@ -361,10 +361,12 @@ change than widening what the check accepts.
 > justified by a review that was "complete by construction" — a construction
 > that counted CodeRabbit and no human. That is a false GREEN and a merge, not
 > a hang, which is precisely why no incident report exists for it. ADR 0021 §1
-> has the trace and ADR 0021 §2 the fix. `merge`'s `--admin` clause now rests
-> on `recheck` having read `reviewDecision` and named a mechanical
-> `mergeable:` state; §4's grant change (step 0's two read-only commands) is
-> untouched by any of it.
+> has the trace and ADR 0021 §2 the fix — which is the unfiltered review list,
+> not `reviewDecision` itself: that field is PR-level and never SHA-scoped, so
+> it is reported rather than judged by. `merge`'s `--admin` clause now rests on
+> `recheck` having read every reviewer's own review, named a mechanical
+> `mergeable:` state, and not reported `review_decision: REVIEW_REQUIRED`;
+> §4's grant change (step 0's two read-only commands) is untouched by any of it.
 
 ## 6. Consequences
 

@@ -73,15 +73,38 @@ PASSES — and ended the run green with nothing shipped and no red row anywhere.
 
 **Two rules, one at the read and one at the verdict.**
 
-**Read what the platform already computed.** Both waits now project
-`reviewDecision` and `mergeStateStatus` out of the same single `gh pr view`
-call they already made. `reviewDecision` is GitHub's own answer to "has anyone
-asked this PR to change", over every reviewer, bot and human. The filtered
-`coderabbitai` list stays — it is what proves the *bot* reviewed the final SHA,
-which is a different assertion — but it is no longer the only thing consulted.
-Both waits also judge the **whole** check rollup instead of an entry named
-`test`; `recheck` already did, and `ready-and-wait` had been left behind by
-that fix (the repo this graph was written in carries three rollup entries).
+**Read what the platform already computed, and read it at the grain the
+verdict needs.** Both waits now project `reviewDecision` and `mergeStateStatus`
+out of the same single `gh pr view` call they already made, and both drop the
+`select(.author.login == "coderabbitai")` filter, projecting every review's
+`{who, oid, state, at}`. The filter is what hid the human of §1; the fields are
+what GitHub computes for exactly this question.
+
+`reviewDecision` is *reported, not judged by*, and that is a correction to this
+ADR's first draft, which gated on it. The field is PR-level, never scoped to a
+SHA, and a `COMMENTED` review does not clear a `CHANGES_REQUESTED` — so it is
+one word for two conditions that need different acts, and it stays set over a
+review a later push superseded. Both failure modes were measured before this
+was written:
+
+- Gating `ready-and-wait` on it halts the graph's **normal path**. The field
+  flips to `CHANGES_REQUESTED` the instant CodeRabbit submits one, which is the
+  same instant that node's READY condition ("the bot has a completed review")
+  is met, and `triage` is the node whose entire job is to action it. All four
+  sampled PRs (#144, #145, #148, #153) opened with exactly that review.
+- Gating `recheck` on it produces an **unclearable latch**. PR #145 merged
+  correctly with `reviewDecision: CHANGES_REQUESTED`: the request sat on
+  `386b669`, a commit the head no longer was, and the act the field would name
+  — resolve the threads, re-request — had already been performed and answered
+  `COMMENTED`, which leaves the decision where it was forever.
+
+So the judgment is made per reviewer. The bot's rule is SHA-scoped (it reviews
+every push, so its latest word on `head` is its current word); a person's is
+not (theirs stands until that person approves or a maintainer dismisses it),
+and each names a different act. Both waits also judge the **whole** check
+rollup instead of an entry named `test`; `recheck` already did, and
+`ready-and-wait` had been left behind by that fix (the repo this graph was
+written in carries three rollup entries).
 
 **Split the failing verdicts by the operator's next action.** Every polling
 node writes three verdicts:
@@ -104,8 +127,9 @@ The classification, as the prompts state it:
 | check run `IN_PROGRESS`; status context `PENDING`; `mergeStateStatus: UNKNOWN`; a "review in progress" placeholder | self-resolving | — |
 | a rollup entry finished bad (`FAILURE`, `CANCELLED`, `TIMED_OUT`, `STARTUP_FAILURE`, `STALE`, `state: ERROR`) | latched | read the job log; fix and push |
 | a rollup entry `ACTION_REQUIRED` | latched | approve the run or deployment in the Actions tab |
-| `reviewDecision: CHANGES_REQUESTED`, or the bot's latest review on head is | latched | read the review; resolve the threads or push a fix, then re-request (`@coderabbitai review`) |
-| the bot's last comment says the review limit is reached | latched | wait the stated N minutes, **then** post `@coderabbitai review` |
+| the bot's latest review **on head** is `CHANGES_REQUESTED` | latched at `recheck`; **not** at `ready-and-wait`, where it is the ordinary path into `triage` | read the review; resolve the threads or push a fix, then re-request (`@coderabbitai review`) |
+| a reviewer other than the bot holds an open `CHANGES_REQUESTED` (no later `APPROVED` from that same person) | latched at both | that reviewer re-reviews with `APPROVED`, or a maintainer dismisses it — a push and a `COMMENTED` clear neither |
+| the bot's last comment says the review limit is reached, **and no review is newer than it** | latched | wait the stated N minutes, **then** post `@coderabbitai review` |
 | `mergeStateStatus: DIRTY` | latched | rebase or merge the base in, and push |
 | `mergeStateStatus: DRAFT` | latched | `gh pr ready` |
 | a rollup entry at `QUEUED` or `EXPECTED`; no bot review on head | **latched only if it never moves** | approve the workflow run; drop the dead required context; post `@coderabbitai review` |
@@ -119,10 +143,12 @@ verdict is `LATCHED` even when other entries are legitimately still in flight.
 
 `mergeStateStatus` is otherwise *reported, not judged*. `BEHIND`, `BLOCKED`,
 `UNSTABLE` and `HAS_HOOKS` on an otherwise-green PR ride along on the
-`RECHECKED` line as `mergeable: <state>`, and that line is what now licenses
-`--admin` at `merge` — replacing the "complete by construction" clause, which
-was false about humans. `--admin` may be reached only when the plain merge
-failed on protection or queue mechanics AND `recheck` named a mechanical state.
+`RECHECKED` line as `mergeable: <state>`, next to `review_decision: <state>`,
+and that line is what now licenses `--admin` at `merge` — replacing the
+"complete by construction" clause, which was false about humans. `--admin` may
+be reached only when the plain merge failed on protection or queue mechanics,
+`recheck` named a mechanical state, AND that line does not say
+`review_decision: REVIEW_REQUIRED` (§3).
 
 **`gh pr ready` is the precedent, not the exception.** `ready-and-wait`'s
 step 1 has always been an act, not a wait: a DRAFT PR is a latch, and this
@@ -152,11 +178,23 @@ nothing is queued behind the limit — the graph would have re-learned the
 original defect at a fourteen-minute price.
 
 **It does not `--admin` past `REVIEW_REQUIRED`.** `--admin` is narrowed to a
-named mechanical merge state. It was *not* narrowed all the way to `BEHIND`
-alone, which the diagnosis proposed: a repo whose protection reports `BLOCKED`
-for a bot-only review would then fail its `merge` node on every ordinary green
-PR, which trades a real defect for a daily one. The defect was the false
-*justification*, and that is what was removed.
+named mechanical merge state, and `REVIEW_REQUIRED` is excluded by name: when
+`recheck`'s line says `review_decision: REVIEW_REQUIRED`, protection is holding
+the PR because *nobody has approved it*, `mergeStateStatus` reports that as
+`BLOCKED` like any other protection hold, and `--admin` over it is exactly "a
+way past a review". `merge` answers `WITHHELD` naming the missing approval
+instead. This repo's `main` requires one approving review and conversation
+resolution, so the case is live rather than theoretical.
+
+That exclusion is by decision, not by state name: `--admin` was *not* narrowed
+all the way to `BEHIND` alone, which the diagnosis proposed. A repo whose
+protection reports `BLOCKED` for a bot-only review would then fail its `merge`
+node on every ordinary green PR, which trades a real defect for a daily one.
+`BLOCKED` stays admissible; what is excluded is the one review state that says
+the block IS the review. The `CHANGES_REQUESTED` a `RECHECKED` line may still
+carry is a different thing — `recheck` judged it per reviewer and found it
+spent (§2), and it says so on that line, so `merge` is admining past a
+*superseded* review, not an open one.
 
 ## 4. Falsification
 
