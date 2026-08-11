@@ -373,7 +373,9 @@ instead of restating the goal and the format — see
 name: daily-triage
 nodes:
   - id: collect             # the careful goal/format/rules prompt lives here, once
-    allowed_tools: ["Bash(gh *)"]   # what it collects with — undeclared is undelivered
+    # what it collects with — undeclared is undelivered, and the two reads it
+    # needs are all it gets: no mutating `gh` form is in reach
+    allowed_tools: ["Bash(gh issue list *)", "Bash(gh pr checks *)"]
     prompt: >
       Collect today's open issues and failing checks; list each with a
       one-line status.
