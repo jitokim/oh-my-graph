@@ -587,7 +587,13 @@ func TestUnpackedTree_UndoReportsARemovalItCouldNotMake(t *testing.T) {
 	if err := os.Chmod(created, 0o555); err != nil {
 		t.Fatalf("chmod %s: %v", created, err)
 	}
-	t.Cleanup(func() { os.Chmod(created, 0o755) })
+	// Restoring the mode is what lets t.TempDir's own cleanup remove the tree:
+	// a failure here leaves the temp directory behind, so it is reported.
+	t.Cleanup(func() {
+		if err := os.Chmod(created, 0o755); err != nil {
+			t.Errorf("restore permissions on %s: %v", created, err)
+		}
+	})
 
 	cause := fmt.Errorf("the write that failed")
 	got := u.undo(cause)
