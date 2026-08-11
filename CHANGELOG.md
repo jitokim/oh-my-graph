@@ -10,27 +10,33 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [v0.5.5] - 2026-08-12
 
-Nothing new to type here either. No flag, no command, no schema key — and all
-three changes are one blind spot in different clothes: something a graph could
-not see, and so could not be stopped by. `merge-shepherd` gains no node, and no
-`result_matches` pattern in the repo changes; what changes is what its two
-waits LOOK AT, and what they are allowed to call a timeout. They modelled "is
-this PR ready" as one bot's opinion plus a check rollup and never read
+Nothing new to type here either. No flag, no command, no schema key. **Two** of
+the three changes are one blind spot in different clothes: something a graph
+could not see, and so could not be stopped by. `merge-shepherd` gains no node,
+and no `result_matches` pattern in the repo changes; what changes is what its
+two waits LOOK AT, and what they are allowed to call a timeout. They modelled
+"is this PR ready" as one bot's opinion plus a check rollup and never read
 `reviewDecision` or `mergeStateStatus`, so a **human** reviewer's
 `CHANGES_REQUESTED` was invisible to the entire chain and the run **merged**
 past it — a false GREEN rather than a hang, which is why it left no failed row
 for anyone to report. `lint` gains the advisory for the same shape one level
 down: a node declaring neither an `allowed_tools` grant nor a
 `success_check.verify` has no mechanism of either kind that can observe a tool
-denial, and over 164 nodes it fires **62** times — 61 of them nodes reaching
-for tools they never declared, 23 of those `pr` nodes told to `git push` and
-open a pull request while declaring nothing at all. And `use:` turns out to
-have been unreachable rather than unwanted: a fragment resolves against the
-graph file's own `fragments/` sibling and nowhere else, so **86 of 87** lanes
-on this machine — 84 written straight into `/tmp` — could cite nothing.
-Reaching them cost **zero lines** of resolution code: the boundary stays
-exactly as ADR 0013 wrote it, `init` stops refusing a tree it could top up
-instead, and the rest is a convention about where a graph is saved.
+denial, and measured over 164 nodes before it shipped it fired **62** times —
+61 of them nodes reaching for tools they never declared, 23 of those `pr` nodes
+told to `git push` and open a pull request while declaring nothing at all (the
+62nd was this repo's own review node, fixed here rather than silenced). The
+third change is the **mirror image**, not a third instance: nothing was hidden
+from the graph, and everything was hidden from the author. A `use:` a graph
+cannot reach fails loudly — it is a load error, not an unchosen option — and
+still nothing in the product had ever said that where you save a graph decides
+what it can cite. A fragment resolves against the graph file's own `fragments/`
+sibling and nowhere else, so **86 of 87** lanes on this machine — 84 written
+straight into `/tmp` — could cite nothing, and the corpus's zero adoption of
+`use:` was reachability rather than preference. Reaching them cost **zero
+lines** of resolution code: the boundary stays exactly as ADR 0013 wrote it,
+`init` stops refusing a tree it could top up instead, and the rest is a
+convention about where a graph is saved.
 
 ### Fixed
 
@@ -65,6 +71,15 @@ instead, and the rest is a convention about where a graph is saved.
   but the fix had only ever been applied to the newer node. Both waits now
   classify every entry.
 
+### Not automated, deliberately — `merge-shepherd`
+
+The graph names the act; it does not perform it. It does not resolve a review
+thread (a GraphQL mutation needing `Bash(gh api graphql *)`, and a node closing
+a reviewer's verdict on its own judgement — four times the operator read the
+reason before closing, and once closing blind would have been wrong), it does
+not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
+ADR 0021 §3 argues each.
+
 ### Added
 
 - **`lint` and `run --dry-run` now warn when a node can observe no tool
@@ -98,9 +113,9 @@ instead, and the rest is a convention about where a graph is saved.
   9 measure/verify/accept nodes told to build a binary and write files, and
   25 review nodes whose prompts demand "verify by running commands, not by
   reading the diff". **61 of 62 were nodes reaching for tools they never
-  declared**; noise was 1 in 62. Those 61 are the maintainer's own lanes —
-  `pr` nodes that push and open pull requests while declaring no tools at
-  all — so the ratio is a statement about the graphs this project writes, not
+  declared**; noise was 1 in 62. Those 61 are the maintainer's own lanes (23 of
+  them `pr` nodes that push and open pull requests while declaring nothing at
+  all) — so the ratio is a statement about the graphs this project writes, not
   about somebody else's. The one noise hit was this repo's own
   `review-loop.yaml::review`, a pure judgment node — fixed in the graph rather
   than silenced, by declaring the read tools it reads the working tree with,
@@ -166,21 +181,18 @@ instead, and the rest is a convention about where a graph is saved.
   keyhole above — both waits judged PR readiness by one bot's opinion plus a
   check rollup — and its worst outcome is none of those three, but the human
   review nobody found, which cost nothing anyone could count.
-
 - **`graphs/review-loop.yaml`'s `review` node now declares
   `allowed_tools: [Read, Grep, Glob, "Bash(git diff*)", "Bash(git log*)"]`** —
   the same git reads the shipped review fragments grant for the same job.
   Behaviour is unchanged on a machine that already pre-authorises reading —
   `--allowedTools` adds a grant, it takes none away — but the node reads a
   working tree, so it says so.
-
 - **README, README.ko and `docs/EXAMPLES.md` now say what `allowed_tools`
   buys you** at the first hand-written YAML a reader meets, and at the exact
   sentence in the auto/hand-written comparison where "keeps your settings"
   reads as a pure upside. It cuts both ways, and that is the half nobody was
   told. Their YAML examples declare grants too — a reader who copies the
   block above the paragraph should not then be warned about it.
-
 - **`oh-my-graph init` tops a tree up instead of refusing it.** A target file
   that already exists is kept exactly as it is and reported as `kept`; only the
   payload files that are missing are written, and a second `init` over a
@@ -204,7 +216,6 @@ instead, and the rest is a convention about where a graph is saved.
   payload beside it and exits 0. The guard could not distinguish that mistake
   from the legitimate top-up it fires on, and the per-file `wrote` lines are
   the replacement — the list of what to delete is on screen.
-
 - **Where a graph file is saved decides whether it can cite a fragment — and
   the product now says so.** A `use:` resolves against the graph's own
   `fragments/` sibling and nowhere else (ADR 0013 §Trust, unchanged), which
@@ -220,15 +231,6 @@ instead, and the rest is a convention about where a graph is saved.
   symlink to one, beside the graph) instead of restating the rule that already
   failed to help. Resolution itself is untouched: no search path, no flag, no
   embedded tier.
-
-### Not automated, deliberately — `merge-shepherd`
-
-The graph names the act; it does not perform it. It does not resolve a review
-thread (a GraphQL mutation needing `Bash(gh api graphql *)`, and a node closing
-a reviewer's verdict on its own judgement — four times the operator read the
-reason before closing, and once closing blind would have been wrong), it does
-not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
-ADR 0021 §3 argues each.
 
 ## [v0.5.4] - 2026-08-11
 
