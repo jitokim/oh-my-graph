@@ -220,10 +220,10 @@ func TestChatLoop_BlankLinesAreSkipped(t *testing.T) {
 	}
 }
 
-// chat accepts exactly two flags, --no-agent-mapping and --no-skill-mapping
-// (a chat graph turn is an auto run and must honor the same opt-outs); every
-// other flag and any positional argument is still rejected before the loop
-// starts.
+// chat accepts the mapping opt-outs only — --no-agent-mapping, its per-agent
+// form --no-agent, and --no-skill-mapping (a chat graph turn is an auto run
+// and must honor the same opt-outs); every other flag and any positional
+// argument is still rejected before the loop starts.
 func TestRunChat_RejectsArguments(t *testing.T) {
 	if err := runChat([]string{"--concurrency", "2"}); err == nil {
 		t.Fatal("want an error for a flag chat does not define")
@@ -231,5 +231,18 @@ func TestRunChat_RejectsArguments(t *testing.T) {
 	err := runChat([]string{"stray"})
 	if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
 		t.Fatalf("err = %v, want an unexpected-argument error", err)
+	}
+}
+
+// A chat turn plans and runs unattended on the same terms as `auto`, so the
+// opt-out that keeps one node's ceiling has to be sayable here too — the
+// granular one, not only the all-or-nothing one.
+func TestChatFlags_AcceptsPerAgentOptOut(t *testing.T) {
+	f := newChatFlags()
+	if err := f.parse([]string{"--no-agent", "architect"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := []string(f.noAgents); len(got) != 1 || got[0] != "architect" {
+		t.Errorf("noAgents = %v, want [architect]", got)
 	}
 }

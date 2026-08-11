@@ -342,8 +342,10 @@ user's own agents by a deliberately conservative name-token rule: exact token
 or ≥4-rune prefix between node id and agent name, exactly one candidate or
 nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
 matching). Scan failures are silent so zero-config stays zero-config;
-`--no-agent-mapping` turns the whole thing off; every decision made is shown
-in the printed plan before execution. ADR 0004 §4 originally deferred this
+`--no-agent-mapping` turns the whole thing off and `--no-agent <name>` declines
+one agent while the rest still map; every decision made — including a decline —
+is shown in the printed plan before execution, with what each mapped node gave
+up named on its own line. ADR 0004 §4 originally deferred this
 pending E6 and a tool bound — both now hold for the mapped configuration (see
 the previous paragraph); its third condition, an explicit opt-in flag, was
 traded for the printed-disclosure-plus-opt-out above, accepting that an `auto`
@@ -1680,7 +1682,8 @@ candidate or nothing), and a refusal to map any agent whose frontmatter tools
 exceed the node's own `allowed_tools`. A mapped node runs `--agent <name>` and
 drops ceiling Layer 1 (agent resolution needs the user's settings loaded; the
 other layers stay), every decision is shown in the printed plan, and
-`--no-agent-mapping` turns it off. The full rule and its trade live in
+`--no-agent-mapping` turns it off run-wide while `--no-agent <name>` declines a
+single agent. The full rule and its trade live in
 "Node-as-subagent"; the raw plan itself still may not carry `agent:`.
 
 Strictly after agent mapping, the coordinator stages the user's own Claude
@@ -1782,7 +1785,7 @@ rather than denied. The exclusion is kept anyway — the `--agent` +
 `--plugin-dir` + settings composite is unmeasured, and a staged plugin would
 meet the user's own plugins there for the first time — but the plan printout
 now states the cost and names `--no-agent-mapping` (which turns agent mapping
-off for the whole plan; there is no per-node switch), and lifting it is gated
+off for the whole plan), and lifting it is gated
 on ADR 0017's measurement (j) rather than on the argument that it costs little.
 **(j) was run on 2026-08-12 — 18 spawns, $3.86, claude 2.1.228 — and the
 exclusion stays** (`docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`).
@@ -1796,6 +1799,22 @@ repository-committed `SKILL.md` was invoked 3 of 3 by a prompt that never
 mentions skills. Both candidate fixes carry that, since both keep Layer 1 at
 `nil` — so the thing to change is `applyAgentMapping`'s `SettingSources`, not
 the exclusion.
+
+**What shipped instead of the lift is disclosure and a cheaper way out.** The
+exclusion's two costs — no `Skill` tool, and a declared scope enforced only as
+far as the user's own settings enforce it — are now printed **per node**, by
+name, on the plan screen, together with the one-line ceiling exception on
+`noteCeiling`'s summary; and `--no-agent <name>` (`WithoutAgentsNamed`) declines
+a single agent while every other mapping stands. The agent is the unit because
+it is the only identifier that exists before the planner is paid: node ids are
+bought, agent names are the user's own files, and the plan names the agent on
+the node line it took. The decline is applied **after** `candidateFor` picks a
+single candidate, never by removing the definition before matching, so it can
+only ever remove a mapping — dropping it earlier would let declining one of two
+ambiguous agents promote the other and *create* a mapping. A declined node keeps
+Layer 1 and is therefore activated like any other planned node: exactly the
+configuration (j)'s `ACT`/`G-ACT` arms measured, which held the ceiling and
+invoked the staged skill under an attributable name.
 
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git

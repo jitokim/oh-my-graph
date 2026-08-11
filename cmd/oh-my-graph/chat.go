@@ -23,18 +23,23 @@ import (
 // (cmd/oh-my-graph/usage_test.go).
 type chatFlags struct {
 	noAgentMapping    bool
+	noAgents          agentNameFlag
 	noSkillActivation bool
 
 	set *flag.FlagSet
 }
 
-// newChatFlags builds a chatFlags with its FlagSet configured. Two flags only:
-// --no-agent-mapping and --no-skill-activation (whose deprecated alias parse
-// rewrites), because a chat graph turn IS an auto run and must honor the same
-// opt-outs.
+// newChatFlags builds a chatFlags with its FlagSet configured. The mapping
+// opt-outs only — --no-agent-mapping, its per-agent form --no-agent, and
+// --no-skill-activation (whose deprecated alias parse rewrites) — because a
+// chat graph turn IS an auto run and must honor the same opt-outs. --no-agent
+// is registered here for exactly that reason: a chat turn plans and runs
+// unattended too, so the ceiling an agent mapping costs (agentmap.go) is
+// bought on the same terms and has to be refusable on the same terms.
 func newChatFlags() *chatFlags {
 	f := &chatFlags{set: flag.NewFlagSet("chat", flag.ContinueOnError)}
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	f.set.Var(&f.noAgents, "no-agent", "do not auto-map this ONE agent, by its frontmatter name (repeatable) — the per-agent form of --no-agent-mapping")
 	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "do not stage your Claude Code skills (~/.claude/skills) for planned nodes")
 	return f
 }
@@ -46,7 +51,7 @@ func (f *chatFlags) parse(args []string) error {
 		return err
 	}
 	if f.set.NArg() > 0 {
-		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-skill-activation])", f.set.Arg(0))
+		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-agent <name>] [--no-skill-activation])", f.set.Arg(0))
 	}
 	return nil
 }
@@ -68,7 +73,7 @@ func runChat(args []string) error {
 	defer stop()
 
 	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillActivation)...)
+	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)...)
 	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
 }
 

@@ -8,6 +8,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+One flag, and a paragraph deleted from the plan screen because it was not true.
+ADR 0017's measurement (j) — 18 spawns, $3.86, claude 2.1.228, pre-registered in
+its own commit — asked whether the agent-mapped skill exclusion could be lifted.
+It cannot, and **not for the reason the ADR expected**: adding the `Skill` tool
+to those nodes works, 3 of 3, and it costs the ceiling nothing because the
+ceiling is already gone there. It stays because on a node that loads your
+settings, a skill name resolves against definitions **the repository you are
+working in can write** — a same-named `.claude/skills` file committed to the
+fixture repo beat oh-my-graph's own staged corpus 3 of 3, and a
+repository-committed `SKILL.md` fired 3 of 3 in a node whose prompt never
+mentioned skills. So nothing was lifted. What shipped is the thing the same
+measurement made unavoidable: the plan screen used to say a mapped node's
+"declared tool list still binds", and the argv this build emits says otherwise —
+a mapped node declaring `Bash(git *)` ran an out-of-scope command with
+`permission_denials: []` while an unmapped one denied it. That clause is gone,
+each mapped node now says on its own line what it gave up, and `--no-agent
+<name>` makes getting one node out of it cost one agent instead of every mapping
+in the plan.
+
+### Added
+
+- **`--no-agent <name>` (repeatable, on `auto` and `chat`): decline ONE agent
+  from auto-mapping and keep the rest.** `--no-agent-mapping` remains the
+  all-or-nothing form. This exists because measurement (j) changed what the
+  opt-out is *for*: it used to be the remedy for a capability loss (a mapped
+  node holds no `Skill` tool), and it is now also the only way to keep a node's
+  declared scope enforced — an all-or-nothing switch carrying that weight
+  prices one node's ceiling at every mapping the plan would have made. The
+  **agent** is the unit because it is the only identifier that exists before the
+  planner is paid: node ids are bought, agent names are your own files, and the
+  plan prints the agent on the node line it took. The decline is applied after
+  the single-candidate rule, never before it, so it can only ever remove a
+  mapping — declining one of two ambiguous agents does not promote the other. A
+  declined node keeps ceiling layer 1 and is activated like any other planned
+  node, which is exactly the configuration (j) measured holding the scope
+  ceiling and invoking the staged skill under an attributable name.
+
+### Changed
+
+- **The plan printout no longer promises a mapped node's declared scope binds,
+  and names what each mapped node lost, by node.** The retired clause was
+  "(their declared tool list still binds)". Which tools *exist* is still bound;
+  the scope inside them is not, because your standing permission grants load
+  with your settings. In its place each mapped node gets its own line — no
+  `Skill` tool, and a scope enforced only as far as your settings enforce it —
+  the ceiling summary carries the same exception when the plan contains such a
+  node, and the exclusion paragraph no longer calls lifting "unmeasured": it
+  says lifting was measured and refused, and that the refusal was **not** about
+  capability, since a user told "it does not work" would never think to check
+  what their repository can supply. `README.md`, `docs/LIMITATIONS.md`,
+  `DESIGN.md` and ADR 0017 (Decision §9) carry the same bound.
+  `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md` is the record.
+  Restoring the ceiling for these nodes is a change to agent mapping itself and
+  stays ADR 0017 §Compatibility's declined follow-up — now with a direct
+  measurement behind it rather than an analogue.
+
 ## [v0.5.5] - 2026-08-12
 
 Nothing new to type here either. No flag, no command, no schema key. **Two** of

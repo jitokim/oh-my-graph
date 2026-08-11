@@ -227,6 +227,11 @@ type Coordinator struct {
 	// and no mapping, ever: a Coordinator only reads the filesystem when its
 	// constructor was explicitly told where.
 	agentDirs []string
+	// declinedAgents are agent names that may not be mapped onto any node —
+	// the `--no-agent <name>` opt-out, set via WithoutAgentsNamed. Keys are
+	// lowercased; nil means nothing is declined. This is the per-agent half of
+	// agentMappingOff, and it can only ever REMOVE a mapping (agentmap.go).
+	declinedAgents map[string]bool
 	// skillActivationOff disables skill activation (skillstage.go) — the
 	// --no-skill-activation opt-out, set via WithoutSkillActivation.
 	skillActivationOff bool
@@ -259,6 +264,40 @@ func WithoutAgentMapping() Option {
 // DefaultAgentDirs; tests pass temp dirs.
 func WithAgentDirs(dirs ...string) Option {
 	return func(c *Coordinator) { c.agentDirs = dirs }
+}
+
+// WithoutAgentsNamed declines the named agents from auto-mapping while leaving
+// mapping on for every other agent — the `--no-agent <name>` flag's
+// implementation, and the granular form of WithoutAgentMapping.
+//
+// It exists because ADR 0017's measurement (j) changed what the opt-out is
+// FOR. Before it, `--no-agent-mapping` was the remedy for a capability loss (a
+// mapped node holds no Skill tool). After it, it is also the only way to keep
+// a node's declared scope enforced, since a mapped node's dropped layer 1 lets
+// the user's own standing grants back in
+// (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md, the ceiling
+// arm). An all-or-nothing switch on a control that now carries that weight
+// prices one node's isolation at every mapping in the plan, so there is a
+// per-agent price too.
+//
+// The AGENT is the unit rather than the node because it is the only one that
+// exists before the planner is called: node ids are bought, agent names are
+// the user's own files, and the plan printout names the agent on the node line
+// it took. Comparison is case-insensitive on the frontmatter `name:`; a name
+// matching no agent declines nothing and is not an error, exactly like a
+// scanned directory that is not there.
+func WithoutAgentsNamed(names ...string) Option {
+	return func(c *Coordinator) {
+		for _, name := range names {
+			if name = strings.TrimSpace(name); name == "" {
+				continue
+			}
+			if c.declinedAgents == nil {
+				c.declinedAgents = make(map[string]bool)
+			}
+			c.declinedAgents[strings.ToLower(name)] = true
+		}
+	}
 }
 
 // WithoutSkillActivation turns off skill activation for every Plan call — the

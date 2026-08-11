@@ -44,12 +44,39 @@
 // user's own Claude Code session could do, as the user's own agent. That trade
 // is disclosed in the plan printout rather than discovered later.
 //
+// WHAT THAT TRADE COSTS IS NOW A MEASUREMENT, not a description. On 2026-08-12
+// (claude 2.1.228, docs/measurements/0017-lifting-the-agent-mapped-exclusion.md,
+// the ceiling arm) the argv this file's mapping produces — a node declaring
+// `Bash(git *)`, run unattended under --permission-mode dontAsk — executed an
+// out-of-scope `touch /tmp/...` with `permission_denials: []`, while the same
+// probe's UNMAPPED node denied the identical command and its in-scope `git`
+// control ran. So "the declared tool list still binds" is true only of WHICH
+// TOOLS EXIST (E4): the SCOPE inside a declared tool binds no further than the
+// user's own settings do, and the measuring machine's settings granted
+// `Bash(*)`. ADR 0004's headline claim about an unattended planned node
+// therefore does not hold for a mapped one, and has not since mapping shipped.
+// Restoring it means giving `--agent` a way to resolve without dropping layer 1
+// — ADR 0017 §Compatibility's declined follow-up, a change to THIS file, not to
+// any layer above it. Until then the honest moves are to say so on the plan
+// printout (cmd/oh-my-graph/main.go, noteAgentMappings) and to make the opt-out
+// cost less than the whole plan (WithoutAgentsNamed).
+//
 // Filesystem scan failures — missing directories, unreadable files, broken
 // frontmatter — are silent no-mapping, never an error: zero-config stays
 // zero-config. The directories scanned are the caller's to choose
 // (WithAgentDirs; the CLI passes DefaultAgentDirs, tests pass temp dirs), so a
 // Coordinator built with neither never touches the filesystem at all. Opt out
-// entirely with `--no-agent-mapping` (WithoutAgentMapping).
+// entirely with `--no-agent-mapping` (WithoutAgentMapping), or one agent at a
+// time with `--no-agent <name>` (WithoutAgentsNamed).
+//
+// A declined agent is refused AFTER candidateFor has picked it, not removed
+// from the scanned set before matching, and the order is the whole point: an
+// opt-out must only ever REMOVE a mapping. Dropping the definition earlier
+// would change what ambiguity means — two agents matching a node is silence
+// today, and declining one of them would promote the other, so a flag that
+// says "not this agent" would have mapped a node that nothing mapped before.
+// The refusal is recorded like any other skip, so the printout names the node
+// that would have been taken.
 
 package coordinator
 
@@ -202,15 +229,29 @@ func parseAgentFile(path string) (agentDef, bool) {
 	return def, true
 }
 
+// declinedReason is the SkippedReason of a candidate refused by
+// `--no-agent <name>`. It names the flag because the printout's whole job on
+// this line is to let the user tell their own opt-out apart from the tool
+// ceiling's refusal.
+const declinedReason = "declined by --no-agent"
+
 // mapAgents applies the package's matching rule to every node of a validated
 // plan and returns the decisions in node order. It only decides; the caller
 // applies the mappings (applyAgentMapping), so this stays a pure function of
-// graph × agents that tests can read straight off.
-func mapAgents(g *graph.Graph, agents map[string]agentDef) []AgentMapping {
+// graph × agents × declined that tests can read straight off.
+func mapAgents(g *graph.Graph, agents map[string]agentDef, declined map[string]bool) []AgentMapping {
 	var mappings []AgentMapping
 	for _, node := range g.Nodes {
 		def, ok := candidateFor(node.ID, agents)
 		if !ok {
+			continue
+		}
+		if declined[strings.ToLower(def.Name)] {
+			mappings = append(mappings, AgentMapping{
+				NodeID:        node.ID,
+				Agent:         def.Name,
+				SkippedReason: declinedReason,
+			})
 			continue
 		}
 		if wider := toolsBeyondCeiling(def.Tools, node.AllowedTools); len(wider) > 0 {
@@ -303,7 +344,7 @@ func (c *Coordinator) applyAgentMapping(plan *Plan) error {
 	if len(agents) == 0 {
 		return nil
 	}
-	mappings := mapAgents(plan.Graph, agents)
+	mappings := mapAgents(plan.Graph, agents, c.declinedAgents)
 	plan.AgentMappings = mappings
 
 	applied := false

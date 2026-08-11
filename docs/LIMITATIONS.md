@@ -151,6 +151,23 @@ has no open issue behind it.
   the exception: the coordinator refuses to map an agent whose frontmatter
   declares a tool outside the node's planned `allowed_tools`, and the node's
   `--tools` ceiling still binds — DESIGN.md, E6.)
+- **The scoped-`Bash` promise does NOT hold for an agent-mapped planned node.**
+  Everywhere else this project says an unattended planned node declaring
+  `Bash(git *)` cannot run an out-of-scope command, that claim rests on Layer 1
+  (`--setting-sources ""`). An auto-MAPPED node drops Layer 1, because `--agent`
+  cannot resolve without the user's settings loaded, and with the settings comes
+  the user's own standing permission scope. Measured on 2026-08-12 against the
+  argv this build emits: a mapped node declaring `Bash(git *)`, unattended under
+  `--permission-mode dontAsk`, ran `touch /tmp/...` with `permission_denials:
+  []`, while the same probe's unmapped node denied the identical command and its
+  in-scope `git` control ran
+  ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md)).
+  **Which tools exist is still bound; the scope inside them is not.** The plan
+  printout says so per mapped node; `--no-agent-mapping`, or `--no-agent <name>`
+  for one agent, is what keeps a node out of it. Restoring the ceiling for these
+  nodes is a change to agent mapping itself and is
+  [ADR 0017](adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
+  §Compatibility's declined follow-up.
 - **Isolation stops at the invocation repository.** `auto` provisions no
   managed worktree anywhere (`cwd:` and `worktree:` are both rejected at plan
   time), and a managed worktree — a hand-written-graph feature,

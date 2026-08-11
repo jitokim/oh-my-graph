@@ -511,6 +511,51 @@ func TestPlan_AgentMappedNodeIsExcludedFromActivation(t *testing.T) {
 	}
 }
 
+// Declining that same agent (--no-agent code-reviewer) buys the node back:
+// mapping stays on for everything else, `review` is never mapped, so it keeps
+// layer 1 and is activated like any other planned node.
+//
+// This is the end-to-end claim the plan printout now makes — "--no-agent
+// <name> ... is how a single node buys back its ceiling and the Skill tool" —
+// and it is asserted here rather than inferred, because it spans two features
+// that are ordered but otherwise unaware of each other: applySkillActivation
+// reads node.Agent, and only applyAgentMapping writes it. This is the exact
+// configuration measurement (j)'s ACT/G-ACT arms ran, the one that both held
+// the scope ceiling and invoked the STAGED skill by an attributable name
+// (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).
+func TestPlan_DecliningTheAgentReturnsTheNodeToActivation(t *testing.T) {
+	agentDir, skillDir := t.TempDir(), t.TempDir()
+	writeAgentFile(t, agentDir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
+	writeSkillFile(t, skillDir, "architecture-design", "name: architecture-design", "the body")
+
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: `{"name":"two","version":"1","nodes":[` +
+		`{"id":"review","prompt":"review","allowed_tools":["Read","Grep"]},` +
+		`{"id":"write-up","prompt":"write it up","allowed_tools":["Write"],"depends_on":["review"]}]}`})
+	plan, err := New(fake, WithAgentDirs(agentDir), WithoutAgentsNamed("code-reviewer"),
+		WithSkillDirs(skillDir)).Plan(context.Background(), "review", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Fatalf("node agent = %q, want empty — the decline did not take", node.Agent)
+	}
+	if got := plan.SkillActivation.ExcludedNodeIDs; len(got) != 0 {
+		t.Errorf("ExcludedNodeIDs = %v, want none: nothing is agent-mapped", got)
+	}
+	if got := plan.SkillActivation.NodeIDs; !slices.Equal(got, []string{"review", "write-up"}) {
+		t.Errorf("NodeIDs = %v, want both nodes activated", got)
+	}
+	policy := plan.ToolPolicies["review"]
+	if !slices.Contains(policy.Tools, SkillToolName) {
+		t.Errorf("Tools = %v, want %s — the declined node gets the tool the mapping would have cost it", policy.Tools, SkillToolName)
+	}
+	if policy.SettingSources == nil || *policy.SettingSources != "" {
+		t.Errorf("SettingSources = %v, want layer 1 held at \"\" — the other half of what the decline buys", policy.SettingSources)
+	}
+}
+
 // WithoutSkillActivation (the --no-skill-activation flag) wins even over a
 // directory holding a perfectly stageable corpus: nothing is scanned, nothing
 // is staged, and no node's ceiling moves.

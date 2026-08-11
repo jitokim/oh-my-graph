@@ -513,9 +513,21 @@ clearly matches an agent's name — your review node runs as *your*
 `code-reviewer`. The match is deliberately conservative (one clear candidate or
 nothing, and an agent wanting tools beyond the node's planned allowlist is
 skipped with a note), every mapping is shown in the printed plan before
-anything runs, and `--no-agent-mapping` turns it off. The trade, stated
-up front: a mapped node loads your settings so the agent can resolve, instead
-of running fully settings-isolated — its declared tool list still binds.
+anything runs, and `--no-agent-mapping` turns it off.
+
+**The trade, stated up front and measured rather than described.** A mapped node
+loads your settings so the agent can resolve, instead of running fully
+settings-isolated, and that costs it two things. It holds no `Skill` tool, so it
+can invoke no skill at all. And its declared scope is enforced only as far as
+*your own settings* enforce it: which tools exist is still bound by the node's
+tool list, but a node declaring `Bash(git *)` can run a non-git command if your
+settings grant one — measured on 2026-08-12 against the argv this build emits
+([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)),
+where the mapped node ran an out-of-scope command with `permission_denials: []`
+and the unmapped node denied the same one. The plan printout says both, per node,
+by name. If you want one node to keep its ceiling and its skills without losing
+every mapping in the plan, `--no-agent <name>` declines that one agent —
+`--no-agent-mapping` remains the all-or-nothing form.
 
 Want to see all of that before you let it run? `auto --plan-only` plans, prints
 the graph with every agent mapping, the staged skill corpus and the tool ceiling, and stops —
