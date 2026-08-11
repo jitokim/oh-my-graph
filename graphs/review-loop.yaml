@@ -68,13 +68,15 @@ nodes:
     depends_on: [impl]
     cwd: "{{ inputs.repo }}"
     permission_mode: plan     # read-only: the reviewer judges, never edits
-    # Named even though these three are what a reviewer would reach for
-    # anyway: `allowed_tools` is the node's own grant, not a hint, and a node
-    # that omits it inherits whatever your Claude Code settings happen to
+    # Named even though these are what a reviewer would reach for anyway:
+    # `allowed_tools` is the node's own grant, not a hint, and a node that
+    # omits it inherits whatever your Claude Code settings happen to
     # pre-authorise. A denial there is silent — the reply explains it in prose
     # and `result_matches` is free to pass on that prose — so the grant is
-    # declared here rather than assumed.
-    allowed_tools: [Read, Grep, Glob]
+    # declared here rather than assumed. The two git reads match what the
+    # shipped review fragments grant for the same job: this node reviews a
+    # working tree, and a diff is how you read one.
+    allowed_tools: [Read, Grep, Glob, "Bash(git diff*)", "Bash(git log*)"]
     prompt: |
       Review the working tree against this task: {{ inputs.task }}
       The implementer reported: {{ artifacts.impl | inline }}

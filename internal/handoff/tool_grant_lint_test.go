@@ -31,8 +31,19 @@ func TestLintToolGrants_ObservabilityOfADenial(t *testing.T) {
 			warns: true,
 		},
 		{
-			name:  "an empty grant list is no grant",
-			node:  "prompt: \"Push this branch\"\n    allowed_tools: []",
+			// The opt-out the docstring promises: an EXPLICIT empty grant is
+			// the author saying this node reaches for nothing. yaml.v3 keeps it
+			// distinguishable from an absent key, which is what makes the
+			// declaration expressible at all.
+			name:  "an explicit empty grant declares needing nothing",
+			node:  "prompt: \"Summarise what you were handed\"\n    allowed_tools: []",
+			warns: false,
+		},
+		{
+			// The other side of that distinction: a key with no value parses to
+			// nil, exactly as if it were absent, so it declares nothing.
+			name:  "a null grant is not a declaration",
+			node:  "prompt: \"Push this branch\"\n    allowed_tools:",
 			warns: true,
 		},
 		{

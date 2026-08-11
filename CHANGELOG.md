@@ -36,32 +36,46 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `permission_mode: bypassPermissions` grants every tool regardless.
 
   It was measured before it shipped, over the shipped graphs and fragments
-  plus a 30-lane operator corpus — 150 claude nodes, **62 hits**. Reading each
-  one: 21 `pr` nodes told to `git push` and run `gh pr create`, 4 `push` nodes
-  checked only for a `PUSHED|BLOCKED` token, 8 measure/verify nodes told to
-  build a binary and write files, and 28 review nodes whose prompts demand
-  "verify by running commands, not by reading the diff". **61 of 62 were nodes
-  reaching for tools they never declared**; noise was 1 in 62. That one was
-  this repo's own `review-loop.yaml::review`, a pure judgment node — which now
-  declares the read tools it reads the working tree with, because declaring is
-  what the advisory asks of everyone else.
+  plus a 30-lane operator corpus — 164 claude nodes counted after fragment
+  resolution, because that is the population the predicate is evaluated over —
+  **62 hits**. Reading each one: 23 `pr` nodes told to `git push` and run
+  `gh pr create`, 4 `push` nodes checked only for a `PUSHED|BLOCKED` token,
+  9 measure/verify/accept nodes told to build a binary and write files, and
+  25 review nodes whose prompts demand "verify by running commands, not by
+  reading the diff". **61 of 62 were nodes reaching for tools they never
+  declared**; noise was 1 in 62. That one was this repo's own
+  `review-loop.yaml::review`, a pure judgment node — which now declares the
+  read tools it reads the working tree with, because declaring is what the
+  advisory asks of everyone else.
+
+  One caveat the number does not carry: those 61 had never yet *failed* for
+  want of a grant, because the machine that runs them pre-authorises broadly
+  (`Bash(*)`). The finding is not that they were broken — it is that none of
+  them could have told you if they had been.
 
   The warning names the fix, not just the absence: name the tools in
   `allowed_tools`, and where the work must be visible outside the node's own
-  reply, add a `success_check.verify` command.
+  reply, add a `success_check.verify` command. A node that genuinely reaches
+  for nothing declares that with an empty grant, `allowed_tools: []`, which
+  the sweep reads as the author saying so (an absent key is no declaration).
+  It is a declaration, not a sandbox: run-time behaviour is identical either
+  way, since a hand-written node runs under your own settings by design.
 
 ### Changed
 
 - **`graphs/review-loop.yaml`'s `review` node now declares
-  `allowed_tools: [Read, Grep, Glob]`.** Behaviour is unchanged on a machine
-  that already pre-authorises reading — `--allowedTools` adds a grant, it
-  takes none away — but the node reads a working tree, so it says so.
+  `allowed_tools: [Read, Grep, Glob, "Bash(git diff*)", "Bash(git log*)"]`** —
+  the same git reads the shipped review fragments grant for the same job.
+  Behaviour is unchanged on a machine that already pre-authorises reading —
+  `--allowedTools` adds a grant, it takes none away — but the node reads a
+  working tree, so it says so.
 
 - **README, README.ko and `docs/EXAMPLES.md` now say what `allowed_tools`
   buys you** at the first hand-written YAML a reader meets, and at the exact
   sentence in the auto/hand-written comparison where "keeps your settings"
   reads as a pure upside. It cuts both ways, and that is the half nobody was
-  told.
+  told. Their YAML examples declare grants too — a reader who copies the
+  block above the paragraph should not then be warned about it.
 
 ## [v0.5.4] - 2026-08-11
 

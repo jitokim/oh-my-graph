@@ -21,12 +21,13 @@ import (
 // has a check the ENGINE runs itself, outside the node's own reply, so a denial
 // that stops the work also fails the node. A node with neither has no
 // mechanism of either kind. It was measured before it shipped, over the shipped
-// graphs plus a 30-lane operator corpus (150 claude nodes): 62 hits, of which
-// 61 were nodes whose prompts demand pushes, `gh` calls, builds and file writes
-// they never declared. The one node that was not — a pure judgment node — is
-// the shipped `review-loop.yaml::review`, which now declares the read tools it
-// reads the working tree with, because declaring is what this advisory asks of
-// everyone else.
+// graphs plus a 30-lane operator corpus — 164 claude nodes, counted after
+// fragment resolution because that is the population the predicate is
+// evaluated over: 62 hits, of which 61 were nodes whose prompts demand pushes,
+// `gh` calls, builds and file writes they never declared. The one node that was
+// not — a pure judgment node — is the shipped `review-loop.yaml::review`, which
+// now declares the read tools it reads the working tree with, because declaring
+// is what this advisory asks of everyone else.
 //
 // Two structural exemptions, both because the warning's premise is false there
 // rather than to quiet it:
@@ -35,25 +36,37 @@ import (
 //   - `permission_mode: bypassPermissions` grants every tool regardless of
 //     `allowed_tools`, so nothing the node reaches for can be denied.
 //
+// The 61 were nodes that had never yet FAILED for want of a grant, because the
+// machine that ran them pre-authorises broadly (`Bash(*)`); the hit is that
+// none of them could have told you if it had.
+//
 // It stays a warning rather than a load error for the standing reason every
 // sweep in this package does: a hand-written graph is the user's own reviewed
-// artifact. Omitting the grant is expressible on purpose — a node that only
-// summarises its inputs needs nothing, and a machine with a blanket grant
-// (`Bash(*)`) runs these nodes today — and the cost of turning the advice down
-// is one line of YAML.
+// artifact. Turning the advice down costs one line of YAML: a node that only
+// summarises its inputs and reaches for nothing declares that with an EMPTY
+// grant, `allowed_tools: []`, which is read here as the author saying so —
+// while an absent key is no declaration at all. The two shapes are
+// indistinguishable at run time (the runner emits `--allowedTools` only for a
+// non-empty grant, so both inherit the user's settings), which is exactly why
+// `[]` is safe to spend on saying it, and also why it must not be read as a
+// sandbox: on the hand-written path the ceiling is the user's own settings by
+// design (ADR 0004).
 func LintToolGrants(g *graph.Graph) []Warning {
 	var warnings []Warning
 	for _, node := range g.Nodes {
 		if node.Type == graph.TypeGate || node.PermissionMode == graph.PermissionBypass {
 			continue
 		}
-		if len(node.AllowedTools) > 0 || node.SuccessCheck.Verify != nil {
+		// Non-nil is the test, not non-empty: yaml.v3 leaves an absent key nil
+		// and an explicit `[]` empty-but-present, so the declaration of needing
+		// nothing survives as something this sweep can see.
+		if node.AllowedTools != nil || node.SuccessCheck.Verify != nil {
 			continue
 		}
 		warnings = append(warnings, Warning{
 			NodeID: node.ID,
 			Field:  "allowed_tools",
-			Detail: "no allowed_tools and no success_check.verify — the node inherits your Claude Code settings, so a tool you have not pre-authorised there is denied silently and the node describes the denial in prose that result_matches passes on; name the tools this node needs in `allowed_tools`, and where its work must be visible outside its own reply add a `success_check.verify` command the engine runs itself",
+			Detail: "no allowed_tools and no success_check.verify — a tool your settings do not pre-authorise is denied silently, and the node's own result_matches passes on the prose explaining it; name the tools this node needs (`[]` if none), or add a verify command the engine runs itself",
 		})
 	}
 	return warnings

@@ -346,6 +346,7 @@ nodes:
   - id: review
     depends_on: [e2e]
     permission_mode: plan     # read-only
+    allowed_tools: [Read, "Bash(git diff*)"]
     prompt: "Review the diff. e2e said: {{ artifacts.e2e | inline }}"
 ```
 
@@ -356,6 +357,8 @@ nodes:
 `result_matches: '^DONE'` 같은 체크는 그 산문에 그대로 통과합니다. 각 노드에
 필요한 도구를 명시하세요. 그리고 그 일이 노드 자신의 응답 밖에서 확인돼야 한다면
 `success_check.verify` 커맨드를 붙이세요 — 그건 엔진이 직접 실행합니다.
+아무 도구도 쓰지 않는 노드 — 건네받은 것을 판단하거나 요약하기만 하는 노드 —
+는 빈 권한 `allowed_tools: []`로 그렇다고 선언합니다.
 
 시작부터 알아 둘 만한 셋, 각각 YAML 한 줄입니다:
 
@@ -389,16 +392,19 @@ DESIGN.md입니다.
 name: daily-triage
 nodes:
   - id: collect             # the careful goal/format/rules prompt lives here, once
+    allowed_tools: ["Bash(gh *)"]   # what it collects with — undeclared is undelivered
     prompt: >
       Collect today's open issues and failing checks; list each with a
       one-line status.
   - id: analyze
     depends_on: [collect]
     handoff: session        # continues collect's conversation
+    allowed_tools: []       # reasons over what collect already put in the session
     prompt: Analyze what you just collected and rank by urgency.
   - id: report
     depends_on: [analyze]
     handoff: session        # the chain keeps flowing
+    allowed_tools: []       # the reply IS the report
     prompt: Write the ranked findings up as a short report.
 ```
 
@@ -453,7 +459,8 @@ session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
 경고합니다 — 당신의 Claude Code 설정이 미리 승인하지 않은 도구는 거부되고,
 노드는 그 사실을 산문으로 설명하며, 그 노드 자신의 `result_matches`는 그
 산문을 그대로 통과시킬 수 있습니다. 노드가 필요로 하는 도구를 이름으로
-선언하거나, 엔진이 직접 실행하는 `verify` 명령을 주세요. (gate 노드와
+선언하거나(필요한 도구가 없다면 `allowed_tools: []`), 엔진이 직접 실행하는
+`verify` 명령을 주세요. (gate 노드와
 `permission_mode: bypassPermissions` 노드는 제외됩니다: 둘 다 무엇도 거부당할
 수 없으니까요.) warning은 종료 코드를 절대 바꾸지 않습니다. 런타임에는 형식이
 잘못된 토큰은 그대로 통과하는 반면(프롬프트에 literal `{{ }}` 텍스트가

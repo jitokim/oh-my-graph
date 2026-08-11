@@ -98,8 +98,9 @@ cuts both ways, which is why `allowed_tools` is the node's grant rather than a
 hint: a hand-written node that omits it can use only what you have already
 pre-authorised, and a tool it lacks is refused in prose the node then finishes
 on — a `result_matches: '^DONE'` will pass on that prose. Declare each node's
-tools, and put anything that must be true outside the reply in a
-`success_check.verify` command, which the engine runs itself.
+tools (an empty `allowed_tools: []` declares one that needs none), and put
+anything that must be true outside the reply in a `success_check.verify`
+command, which the engine runs itself.
 
 **Custom YAML vs. auto, in one line:** reach for `graphs/*.yaml` when you know
 exactly which tools each node should have and how they should hand off to
@@ -278,6 +279,7 @@ nodes:
     depends_on: [dev-a]
     worktree: lane-a          # same name -> the same checkout dev-a edited
     permission_mode: plan
+    allowed_tools: [Read, "Bash(git diff*)"]
     prompt: Review the diff in this worktree.
 
   - id: dev-b
