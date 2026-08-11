@@ -286,7 +286,7 @@ from source there.
 Pick a tag from the Releases page, then:
 
 ```sh
-VERSION=0.5.4 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.5.5 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"

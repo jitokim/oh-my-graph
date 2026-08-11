@@ -8,11 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.5.5] - 2026-08-12
 
-Nothing new to type here either. `merge-shepherd` gains no node, no flag and no
-schema key, and no `result_matches` pattern in the repo changes — what changes
-is what its two waits LOOK AT, and what they are allowed to call a timeout.
+Nothing new to type here either. No flag, no command, no schema key — and all
+three changes are one blind spot in different clothes: something a graph could
+not see, and so could not be stopped by. `merge-shepherd` gains no node, and no
+`result_matches` pattern in the repo changes; what changes is what its two
+waits LOOK AT, and what they are allowed to call a timeout. They modelled "is
+this PR ready" as one bot's opinion plus a check rollup and never read
+`reviewDecision` or `mergeStateStatus`, so a **human** reviewer's
+`CHANGES_REQUESTED` was invisible to the entire chain and the run **merged**
+past it — a false GREEN rather than a hang, which is why it left no failed row
+for anyone to report. `lint` gains the advisory for the same shape one level
+down: a node declaring neither an `allowed_tools` grant nor a
+`success_check.verify` has no mechanism of either kind that can observe a tool
+denial, and over 164 nodes it fires **62** times — 61 of them nodes reaching
+for tools they never declared, 23 of those `pr` nodes told to `git push` and
+open a pull request while declaring nothing at all. And `use:` turns out to
+have been unreachable rather than unwanted: a fragment resolves against the
+graph file's own `fragments/` sibling and nowhere else, so **86 of 87** lanes
+on this machine — 84 written straight into `/tmp` — could cite nothing.
+Reaching them cost **zero lines** of resolution code: the boundary stays
+exactly as ADR 0013 wrote it, `init` stops refusing a tree it could top up
+instead, and the rest is a convention about where a graph is saved.
 
 ### Fixed
 
@@ -46,6 +64,60 @@ is what its two waits LOOK AT, and what they are allowed to call a timeout.
   carries three rollup entries, and a red one of the other two read as green —
   but the fix had only ever been applied to the newer node. Both waits now
   classify every entry.
+
+### Added
+
+- **`lint` and `run --dry-run` now warn when a node can observe no tool
+  denial — it declares neither an `allowed_tools` grant nor a
+  `success_check.verify`.** Advisory only: it never changes an exit code and
+  never makes a graph invalid, for the standing reason a hand-written graph is
+  your own reviewed artifact.
+
+  The defect (issue #154) is that `allowed_tools` is the node's own grant, not
+  a hint. A node that omits it inherits your Claude Code settings, so a tool
+  you have not pre-authorised there is a tool the node cannot use — and
+  nothing fails loudly. The subprocess explains the refusal in prose, exits 0,
+  and a `result_matches` written for the happy path (`^DONE`) passes on that
+  prose. The node is paid for, the ledger prints PASS, and the push, the `gh`
+  call or the build never happened. Nobody who hits this learns anything from
+  the run: the node "succeeded".
+
+  The predicate is structural rather than a reading of the prompt. A node with
+  a grant has authorised what it needs; a node with a `success_check.verify`
+  has a check the *engine* runs, outside the node's own reply, so a denial
+  that stops the work also fails the node. A node with neither has no
+  mechanism of either kind. Two exemptions, because the warning's premise is
+  false there rather than to quiet it: a gate node spawns no subprocess, and
+  `permission_mode: bypassPermissions` grants every tool regardless.
+
+  It was measured before it shipped, over the shipped graphs and fragments
+  plus a 30-lane operator corpus — 164 claude nodes counted after fragment
+  resolution, because that is the population the predicate is evaluated over —
+  **62 hits**. Reading each one: 23 `pr` nodes told to `git push` and run
+  `gh pr create`, 4 `push` nodes checked only for a `PUSHED|BLOCKED` token,
+  9 measure/verify/accept nodes told to build a binary and write files, and
+  25 review nodes whose prompts demand "verify by running commands, not by
+  reading the diff". **61 of 62 were nodes reaching for tools they never
+  declared**; noise was 1 in 62. Those 61 are the maintainer's own lanes —
+  `pr` nodes that push and open pull requests while declaring no tools at
+  all — so the ratio is a statement about the graphs this project writes, not
+  about somebody else's. The one noise hit was this repo's own
+  `review-loop.yaml::review`, a pure judgment node — fixed in the graph rather
+  than silenced, by declaring the read tools it reads the working tree with,
+  because declaring is what the advisory asks of everyone else.
+
+  One caveat the number does not carry: those 61 had never yet *failed* for
+  want of a grant, because the machine that runs them pre-authorises broadly
+  (`Bash(*)`). The finding is not that they were broken — it is that none of
+  them could have told you if they had been.
+
+  The warning names the fix, not just the absence: name the tools in
+  `allowed_tools`, and where the work must be visible outside the node's own
+  reply, add a `success_check.verify` command. A node that genuinely reaches
+  for nothing declares that with an empty grant, `allowed_tools: []`, which
+  the sweep reads as the author saying so (an absent key is no declaration).
+  It is a declaration, not a sandbox: run-time behaviour is identical either
+  way, since a hand-written node runs under your own settings by design.
 
 ### Changed
 
@@ -82,74 +154,18 @@ is what its two waits LOOK AT, and what they are allowed to call a timeout.
   justification — "the review is complete by construction (verify passed, CI
   and CodeRabbit concluded, comments triaged)" — is gone, because it was false
   about humans.
-- **The unified diagnosis is recorded where the next reader will look**: the
-  graph's header, and ADR 0019 as a dated update — the ADR that was written
+- **The diagnosis that survived is recorded where the next reader will look**:
+  the graph's header, and ADR 0019 as a dated update — the ADR that was written
   about verdict grammar in 2026-08-04 while the second backlog item filed the
-  same day, about a rate limit, held the general fact nobody generalized. That
-  update also states, refuted, the three-symptoms-one-cause story that does
-  **not** hold, and the narrower one that does.
-
-### Not automated, deliberately
-
-The graph names the act; it does not perform it. It does not resolve a review
-thread (a GraphQL mutation needing `Bash(gh api graphql *)`, and a node closing
-a reviewer's verdict on its own judgement — four times the operator read the
-reason before closing, and once closing blind would have been wrong), it does
-not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
-ADR 0021 §3 argues each.
-
-### Added
-
-- **`lint` and `run --dry-run` now warn when a node can observe no tool
-  denial — it declares neither an `allowed_tools` grant nor a
-  `success_check.verify`.** Advisory only: it never changes an exit code and
-  never makes a graph invalid, for the standing reason a hand-written graph is
-  your own reviewed artifact.
-
-  The defect (issue #154) is that `allowed_tools` is the node's own grant, not
-  a hint. A node that omits it inherits your Claude Code settings, so a tool
-  you have not pre-authorised there is a tool the node cannot use — and
-  nothing fails loudly. The subprocess explains the refusal in prose, exits 0,
-  and a `result_matches` written for the happy path (`^DONE`) passes on that
-  prose. The node is paid for, the ledger prints PASS, and the push, the `gh`
-  call or the build never happened. Nobody who hits this learns anything from
-  the run: the node "succeeded".
-
-  The predicate is structural rather than a reading of the prompt. A node with
-  a grant has authorised what it needs; a node with a `success_check.verify`
-  has a check the *engine* runs, outside the node's own reply, so a denial
-  that stops the work also fails the node. A node with neither has no
-  mechanism of either kind. Two exemptions, because the warning's premise is
-  false there rather than to quiet it: a gate node spawns no subprocess, and
-  `permission_mode: bypassPermissions` grants every tool regardless.
-
-  It was measured before it shipped, over the shipped graphs and fragments
-  plus a 30-lane operator corpus — 164 claude nodes counted after fragment
-  resolution, because that is the population the predicate is evaluated over —
-  **62 hits**. Reading each one: 23 `pr` nodes told to `git push` and run
-  `gh pr create`, 4 `push` nodes checked only for a `PUSHED|BLOCKED` token,
-  9 measure/verify/accept nodes told to build a binary and write files, and
-  25 review nodes whose prompts demand "verify by running commands, not by
-  reading the diff". **61 of 62 were nodes reaching for tools they never
-  declared**; noise was 1 in 62. That one was this repo's own
-  `review-loop.yaml::review`, a pure judgment node — which now declares the
-  read tools it reads the working tree with, because declaring is what the
-  advisory asks of everyone else.
-
-  One caveat the number does not carry: those 61 had never yet *failed* for
-  want of a grant, because the machine that runs them pre-authorises broadly
-  (`Bash(*)`). The finding is not that they were broken — it is that none of
-  them could have told you if they had been.
-
-  The warning names the fix, not just the absence: name the tools in
-  `allowed_tools`, and where the work must be visible outside the node's own
-  reply, add a `success_check.verify` command. A node that genuinely reaches
-  for nothing declares that with an empty grant, `allowed_tools: []`, which
-  the sweep reads as the author saying so (an absent key is no declaration).
-  It is a declaration, not a sandbox: run-time behaviour is identical either
-  way, since a hand-written node runs under your own settings by design.
-
-### Changed
+  same day, about a rate limit, held the general fact nobody generalized. It is
+  narrower than the story it replaces, and that story is written down refuted
+  rather than repeated: the three symptoms this was chased for do **not** share
+  one cause (one rate limit that was never observed, one class of restarted
+  checks `recheck` had already fixed and that was mostly self-resolving, and
+  four halts whose verdict was correct and incomplete). What does hold is the
+  keyhole above — both waits judged PR readiness by one bot's opinion plus a
+  check rollup — and its worst outcome is none of those three, but the human
+  review nobody found, which cost nothing anyone could count.
 
 - **`graphs/review-loop.yaml`'s `review` node now declares
   `allowed_tools: [Read, Grep, Glob, "Bash(git diff*)", "Bash(git log*)"]`** —
@@ -204,6 +220,15 @@ ADR 0021 §3 argues each.
   symlink to one, beside the graph) instead of restating the rule that already
   failed to help. Resolution itself is untouched: no search path, no flag, no
   embedded tier.
+
+### Not automated, deliberately — `merge-shepherd`
+
+The graph names the act; it does not perform it. It does not resolve a review
+thread (a GraphQL mutation needing `Bash(gh api graphql *)`, and a node closing
+a reviewer's verdict on its own judgement — four times the operator read the
+reason before closing, and once closing blind would have been wrong), it does
+not post `@coderabbitai review`, and it does not sleep out a rate-limit window.
+ADR 0021 §3 argues each.
 
 ## [v0.5.4] - 2026-08-11
 
@@ -2367,7 +2392,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...HEAD
+[v0.5.5]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/jitokim/oh-my-graph/compare/v0.5.1...v0.5.2
