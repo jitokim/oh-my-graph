@@ -917,19 +917,35 @@ which.
 
 **Three outcomes, two of which pass — and the token that is deliberately
 absent.** A node that *waits* has one more outcome than a node that decides:
-the thing it waited for concluded well, concluded badly, or had not concluded
-when the timeout arrived. `merge-shepherd`'s `recheck` — the re-wait for the
-check rollup and CodeRabbit after triage may have pushed a fix — is the shipped
-case, and it writes all three. The pattern is
-``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'``; the red
-conclusion is `BLOCKED <sha>`, which appears in the prompt and **not** in the
-pattern. Three rules, none of them new:
+the thing it waited for concluded well, it is stuck on something no waiting
+reaches, or it had not concluded when the timeout arrived.
+`merge-shepherd`'s `recheck` — the re-wait for the check rollup and the review
+after triage may have pushed a fix — is the shipped case, and it writes all
+three. The pattern is
+``'^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'``; the stuck
+outcome is `LATCHED <sha> — <what> ; unblock: <act>`, which appears in the
+prompt and **not** in the pattern. Three rules, none of them new:
 
-- **Leaving a token out of the pattern is how a graph halts on purpose.** Red
-  checks must not reach the human gate, so `BLOCKED` is written by the prompt,
-  matched by nothing, and fails the node — the same shape as `triage`'s
-  `BLOCKED`. The absent token is part of the grammar; a reader who sees only
-  the regex sees two thirds of it, which is why the prompt names all three.
+- **Leaving a token out of the pattern is how a graph halts on purpose.** A PR
+  only a person can unstick must not reach the human gate, so `LATCHED` is
+  written by the prompt, matched by nothing, and fails the node — the same
+  shape as `triage`'s `BLOCKED`. The absent token is part of the grammar; a
+  reader who sees only the regex sees two thirds of it, which is why the prompt
+  names all three. It also bounds what the two-halves rule can deliver: a
+  pattern cannot *shape* a token it must reject, so `LATCHED`'s second half —
+  the `unblock:` act — is prompt-side only, and what holds it is a test
+  (`internal/graph/shipped_graphs_test.go`), not a regex.
+- **Split the failing outcomes by the operator's next ACTION, not by
+  severity.** This node used to call its halting verdict `BLOCKED` and define
+  it as RED — "a judgment that something is wrong with the code". That filed
+  things wrongly in both directions: a workflow run awaiting a maintainer's
+  click halted as if the code were bad, while four conditions that need a
+  person and nothing else — a required context with no reporter, a queued run
+  nobody approved, a rate-limited bot that will not review again until asked, a
+  branch that conflicts with its base — were polled for the full timeout and
+  then passed to the gate as `UNSETTLED`, a word that means *wait longer*. The
+  axis that decides a wait's honesty is LATCHED vs SELF-RESOLVING (ADR 0021),
+  so that is the axis the tokens split on, and the halting one carries the act.
 - **Factor the payload, don't weaken a branch.** Both passing branches share
   one shaped payload rather than each arguing for its own, because the SHA is
   what the node is *for*: a verdict about "the checks" that cannot say which
@@ -953,12 +969,14 @@ pattern. Three rules, none of them new:
   also passes, and three of the five hits that motivated the node ended exactly
   there. Only two of those three were slow: a re-review still `PENDING` on the
   triage commit (PR #111, PR #137). The third (PR #134) was a *new*
-  `CHANGES_REQUESTED` against it — a red review, which `recheck` calls RED and
-  answers `BLOCKED`, halting before the gate rather than reaching it as an
-  `UNSETTLED`. Admitting a state word makes the green-run-merged-nothing class
-  *rarer* — the common case, where restarted checks conclude in minutes, now
-  merges — but it does not remove it, and a graph that buys this exception owes
-  its header that sentence.
+  `CHANGES_REQUESTED` against it — a latch, which `recheck` answers `LATCHED`,
+  halting before the gate rather than reaching it as an `UNSETTLED`. Admitting
+  a state word makes the green-run-merged-nothing class *rarer* — the common
+  case, where restarted checks conclude in minutes, now merges — but it does
+  not remove it, and a graph that buys this exception owes its header that
+  sentence. The exception is also narrower than it was: since 2026-08-11
+  `UNSETTLED` may only be written over something that was still MOVING, so the
+  latched conditions that used to reach it now halt instead.
 
 Widening the separator class between a token and its payload is the one
 tolerance worth buying node by node, and the currency is what a false FAIL

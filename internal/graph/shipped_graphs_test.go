@@ -177,14 +177,14 @@ func TestMergeVerdictRejectsThePromiseFamily(t *testing.T) {
 
 // TestRecheckVerdictIsThreeValued pins the grammar `merge-shepherd`'s `recheck`
 // node exists for. The wait it performs has three outcomes, not two — the
-// checks concluded green, they concluded red, or they were still pending when
-// the timeout ran out — and the whole point of the node is that the third one
-// is neither of the first two:
+// checks concluded green, something latched that only a person can clear, or a
+// self-resolving condition was still moving when the timeout ran out — and the
+// whole point of the node is that the third one is neither of the first two:
 //
 //   - RECHECKED and UNSETTLED pass, so the run reaches the gate either way and
 //     the operator decides over a stated verdict;
-//   - BLOCKED is deliberately NOT in the pattern, so red checks halt the run
-//     before the gate, the same way triage's BLOCKED does;
+//   - LATCHED is deliberately NOT in the pattern, so a PR that cannot land
+//     halts the run before the gate, the same way triage's BLOCKED does;
 //   - every branch carries the SHA, because a verdict about "the checks" that
 //     cannot name the commit they ran against is the exact ambiguity this node
 //     was added to remove.
@@ -262,13 +262,22 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	}
 
 	for name, reply := range map[string]string{
-		// The halt branch. Red checks must not reach the gate, and the way
-		// this graph halts a node is by leaving its token out of the pattern.
-		"red concluded":            "BLOCKED c80872c — test concluded FAILURE on the final SHA.",
-		"red, CodeRabbit says no":  "BLOCKED c80872c — coderabbitai submitted CHANGES_REQUESTED on that commit.",
-		"green without a SHA":      "RECHECKED — both checks are green.",
-		"timed out without a SHA":  "UNSETTLED — test is still running.",
-		"a SHA-shaped word, no id": "RECHECKED the final commit — test SUCCESS.",
+		// The halt branch. A PR nothing but a person can unstick must not
+		// reach the gate, and the way this graph halts a node is by leaving
+		// its token out of the pattern. Every one of these carries a
+		// well-formed `unblock:` act, so what is being pinned is that the
+		// HALT survives a perfectly written LATCHED — not that a malformed
+		// one happens to miss.
+		"latched on a red check":      "LATCHED c80872c — test concluded FAILURE on the final SHA; unblock: read the job log, fix and push.",
+		"latched on the bot's review": "LATCHED c80872c — coderabbitai CHANGES_REQUESTED on that commit; unblock: resolve the review threads, then post @coderabbitai review.",
+		"latched on a human's review": "LATCHED c80872c — reviewDecision CHANGES_REQUESTED; unblock: address the review and re-request it.",
+		"latched on a rate limit":     "LATCHED c80872c — coderabbitai says the review limit is reached, next review in 14 minutes; unblock: wait 14 minutes, then post @coderabbitai review.",
+		"latched on a conflict":       "LATCHED c80872c — mergeStateStatus DIRTY; unblock: rebase onto main and push.",
+		"latched on an approval":      "LATCHED c80872c — build_test is QUEUED and never moved; unblock: approve the workflow run in the Actions tab.",
+		"the retired halting token":   "BLOCKED c80872c — test concluded FAILURE on the final SHA.",
+		"green without a SHA":         "RECHECKED — both checks are green.",
+		"timed out without a SHA":     "UNSETTLED — test is still running.",
+		"a SHA-shaped word, no id":    "RECHECKED the final commit — test SUCCESS.",
 		// A SHA fused to its token is not a verdict anyone writes, and the
 		// separator class is `+` rather than `*` so it cannot be read as one.
 		"SHA fused to the token": "RECHECKEDc80872c",
@@ -279,6 +288,111 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 		if anchored.MatchString(reply) {
 			t.Errorf("recheck's pattern ACCEPTS what it must reject (%s):\n%s", name, reply)
 		}
+	}
+}
+
+// TestBothWaitsSeparateLatchesFromTimeouts pins the half of the latch grammar
+// that no regex can hold, which is most of it.
+//
+// `merge-shepherd` has two polling nodes, and a poll is only honest over a
+// condition a machine already at work will clear on its own. The other kind —
+// a review that requested changes, a run awaiting a maintainer's approval, a
+// required context with no reporter, a conflicting branch, a bot that will not
+// review again until it is asked — is cleared by a PERSON, and polling it
+// spends the whole timeout to learn nothing and then reports it as slowness.
+// ADR 0021 is the rule; this is its enforcement.
+//
+// Three things are asserted, and none of them is expressible in the
+// `result_matches` pattern:
+//
+//  1. Both waits read the fields GitHub computes for "is this PR ready" —
+//     `reviewDecision`, which counts every reviewer including humans, and
+//     `mergeStateStatus`. Reading only a `reviews` array filtered to one bot
+//     is what let a human's CHANGES_REQUESTED reach `merge` as a RECHECKED.
+//  2. Both waits judge the WHOLE check rollup rather than an entry named
+//     `test`. The repo this graph was written in carries three entries.
+//  3. Both waits name the latch class AND the act that clears it, because a
+//     halting verdict that says only what is wrong is what cost this project
+//     four hand-repairs in two days.
+func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	waits := map[string]*Node{}
+	for i, n := range g.Graph.Nodes {
+		switch n.ID {
+		case "ready-and-wait", "recheck":
+			waits[n.ID] = &g.Graph.Nodes[i]
+		}
+	}
+	if len(waits) != 2 {
+		t.Fatalf("merge-shepherd has %d of its two polling nodes; the latch grammar is stated at both or at neither", len(waits))
+	}
+
+	// What both waits must READ. A latch is only classifiable from state the
+	// node actually fetched.
+	required := map[string]string{
+		"reviewDecision":   "GitHub's own answer over EVERY reviewer — a `reviews` array filtered to coderabbitai cannot see a human's CHANGES_REQUESTED",
+		"mergeStateStatus": "DIRTY is a latch and BEHIND/BLOCKED is what licenses merge's --admin; neither is visible in the check rollup",
+	}
+	// What both waits must SAY.
+	required["NEVER one check by name"] = "judging an entry called `test` reports a red non-test check as green"
+	required["LATCHED"] = "the token that reports a latch as itself instead of as a timeout"
+	required["unblock:"] = "a halting verdict that does not name the act is the four-times cost"
+	required["@coderabbitai review"] = "the rate-limit latch's act: the clock opens the window, only a re-request opens the review"
+
+	for id, node := range waits {
+		for needle, why := range required {
+			if !strings.Contains(node.Prompt, needle) {
+				t.Errorf("%s's prompt never mentions %q — %s", id, needle, why)
+			}
+		}
+	}
+
+	// The two failing tokens at ready-and-wait are two tokens on purpose: the
+	// operator has to tell "do something" from "wait longer" from the first
+	// word of the artifact, not from a sentence inside it. Both are rejected
+	// by POSITION — neither `L` nor `N` is in the decoration class — so the
+	// pattern needs no negative rule to keep them out.
+	readyPattern := waits["ready-and-wait"].SuccessCheck.ResultMatches
+	if readyPattern == "" {
+		t.Fatal("ready-and-wait declares no result_matches — its verdict is unchecked")
+	}
+	ready := regexp.MustCompile(readyPattern)
+	for name, reply := range map[string]string{
+		"latched, with the act named": "LATCHED coderabbitai's review limit is reached, next review in 14 minutes; unblock: wait 14 minutes, then post @coderabbitai review.",
+		"still in flight":             "NOT READY the `test` check is IN_PROGRESS on 2be7c58 after 15 minutes.",
+	} {
+		if ready.MatchString(reply) {
+			t.Errorf("ready-and-wait's pattern ACCEPTS a failing verdict (%s):\n%s", name, reply)
+		}
+	}
+	if !ready.MatchString("READY test SUCCESS, coderabbitai submitted a review 4 minutes ago.") {
+		t.Error("ready-and-wait's pattern REJECTS its own passing verdict")
+	}
+	if !strings.Contains(waits["ready-and-wait"].Prompt, "NOT READY") {
+		t.Error("ready-and-wait names no token for the self-resolving timeout — with only LATCHED written down, a slow check gets reported as a latch or as nothing")
+	}
+
+	// merge's --admin licence is the far end of the same read. It may no
+	// longer rest on "CodeRabbit concluded", which was true of a construction
+	// with no human in it; it rests on recheck having named a mechanical
+	// merge state.
+	var merge *Node
+	for i, n := range g.Graph.Nodes {
+		if n.ID == "merge" {
+			merge = &g.Graph.Nodes[i]
+		}
+	}
+	if merge == nil {
+		t.Fatal("merge-shepherd has no merge node")
+	}
+	if !strings.Contains(merge.Prompt, "mergeable:") {
+		t.Error("merge's --admin clause does not require recheck's mergeable: state — the licence is back to being self-justified")
+	}
+	if strings.Contains(merge.Prompt, "complete by construction") {
+		t.Error("merge still claims the review is \"complete by construction\"; that construction counted CodeRabbit and no human, and it is what licensed --admin past a human's CHANGES_REQUESTED")
 	}
 }
 
