@@ -1,7 +1,7 @@
 {
   "name": "oh-my-graph",
   "description": "Run oh-my-graph DAG workflows on your Claude subscription from a Claude Code session.",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "author": {
     "name": "jitokim"
   }
