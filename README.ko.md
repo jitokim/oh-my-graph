@@ -159,8 +159,10 @@ oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 예제 그래프를 `./graphs/`에 풀어 놓습니다 — 템플릿들이 `use:`로 인용하는 공유
 노드 shape 디렉토리 `./graphs/fragments/`까지 함께 풀립니다(없으면 그 템플릿들은
 로드되지 않습니다). 디렉토리를 넘기면(`oh-my-graph init <dir>`)
-`<dir>/graphs/`에 씁니다. 절대 덮어쓰지 않습니다: 대상 파일이 하나라도 이미
-존재하면 그 경로를 알려주고 아무것도 쓰지 않습니다.
+`<dir>/graphs/`에 씁니다. 절대 덮어쓰지 않습니다: 이미 있는 파일은 그대로 두고
+kept로 표시해 출력하며, 없는 파일만 씁니다 — 그래서 나중 릴리스가 추가한
+템플릿이나 fragment를 받는 방법도 `init`을 다시 실행하는 것이고, 그 과정에서
+직접 수정한 파일은 손대지 않습니다.
 
 `ANTHROPIC_API_KEY`는 필요 없습니다 — smoke test는 로그인된 `claude`
 subscription으로 실행됩니다. 셸에 해당 키(또는 `ANTHROPIC_AUTH_TOKEN`)가
@@ -427,7 +429,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 | subcommand | 용도 |
 |---|---|
-| `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 쓴 파일을 하나씩 출력. 절대 덮어쓰지 않습니다 — 대상 파일이 하나라도 존재하면 그 경로를 알리며 실패하고 아무것도 쓰지 않습니다. |
+| `init [dir]` | 바이너리에 임베드된 예제 그래프를 `<dir>/graphs/`에 쓰고(`dir` 기본값은 `.`), 템플릿이 `use:`로 인용하는 `fragments/` 하위 디렉토리까지 포함해 각 파일을 `wrote`/`kept`로 출력. 절대 덮어쓰지 않습니다 — 이미 있는 파일은 손대지 않고 kept로 보고하며 없는 것만 씁니다. 그래서 `init`을 다시 실행하면 나중 릴리스가 추가한 파일만 채워집니다. |
 | `run <graph.yaml>` | 손으로 작성한 DAG를 실행 — 정밀 제어 경로. `--dry-run`은 검증하고, `--input` interpolation을 해석하고, 플랜을 출력하며, 아무것도 실행하지 않습니다. |
 | `auto "<goal>"` | 평문 목표로부터 DAG를 설계한 뒤 같은 엔진으로 실행 — zero-config 기본 경로. `--plan-only`은 플랜과 에이전트/스킬 매핑, tool ceiling을 출력한 뒤 노드를 하나도 실행하지 않고 멈춥니다(최소 한 번의 플래너 호출 비용은 그대로 들고, validation 거부가 나면 수정된 호출 한 번이 그 위에 더해집니다 — `run --dry-run`과 달리 공짜가 아닙니다). `--max-cycles N`은 plan→run→assess를 최대 N번 반복합니다 — validation으로 거부된 플랜이 수정된 플래너 호출 한 번을 사므로 플래너 호출 최악은 `2 × N`입니다(`--max-goal-budget-usd`는 cycle 사이에 검사되는 soft 지출 상한을 더하며, `--max-cycles`가 2 이상이어야 합니다). `--verify-cmd 'CMD'`는 당신의 빌드 명령을 플랜의 sink 노드에 붙여 엔진이 직접 실행하고 판정하게 하므로, 체크 노드가 빌드되지 않는 브랜치를 통과시킬 수 없습니다. `--verify-timeout D`는 한 번의 실행을 제한합니다(기본값이자 상한 10m). `--verify-cmd`로 시작한 run은 resume할 수 없습니다. |
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
@@ -727,6 +729,13 @@ ADR 0017이 `Proposed`인 이유가 그것입니다. 이 숫자들은 매 run �
   shape의 다음 수정은 복사본 전수 수작업이 아니라 한 번의 편집이 됩니다.
   resolve된 그래프는 손으로 쓴 그래프와 구별되지 않습니다 (제공 shape:
   `graphs/fragments/` · [ADR 0013](docs/adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md)).
+  탐색 경로 없이 그 한 위치가 규칙의 전부이므로, **그래프 파일을 어디에
+  저장하느냐가 fragment를 인용할 수 있는지를 결정합니다**: 옆에 `fragments/`
+  디렉토리가 없는 곳에 저장한 그래프 — 예를 들어 `/tmp/lane.yaml` — 는 어떤
+  fragment도 쓸 수 없습니다. `oh-my-graph init <dir>`를 실행하고 그런 그래프를
+  `<dir>/graphs/`에 쓰거나(그러면 풀린 `<dir>/graphs/fragments/`가 형제가 됩니다),
+  그래프 옆에 `fragments/` 디렉토리를 두십시오 — resolve는 경로만 읽으므로
+  심볼릭 링크도 됩니다.
 - **gates** — `type: gate` 노드는 사람의 승인을 위해 run을 일시정지시키며,
   `oh-my-graph resume`으로 계속됩니다 ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **실패 복구** — `resume <run-id> --retry-failed`는 실패한 run에서 실패·취소된

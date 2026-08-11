@@ -145,8 +145,10 @@ example graphs embedded in that executable into `./graphs/` — including
 `./graphs/fragments/`, the shared node shapes three of those templates cite
 with `use:`, without which they would not load. Pass a directory
 (`oh-my-graph init <dir>`) to write to `<dir>/graphs/` instead. It never
-overwrites: if any target file already exists it names that path and writes
-nothing at all.
+overwrites: a file that is already there is kept exactly as it is and named on
+stdout as kept, and only the payload files that are missing are written — so
+re-running `init` is also how you collect a template or fragment a later
+release added, without your edits being touched.
 
 No `ANTHROPIC_API_KEY` needed — the smoke test runs on your logged-in `claude`
 subscription; if the key (or `ANTHROPIC_AUTH_TOKEN`) is set in your shell,
@@ -406,7 +408,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 
 | subcommand | purpose |
 |---|---|
-| `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file written. Never overwrites — if any target file exists, the command fails naming it and writes nothing. |
+| `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file as `wrote` or `kept`. Never overwrites — an existing file is kept untouched and reported, and only the missing ones are written, so re-running `init` tops a tree up with whatever a later release added. |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` cannot be resumed. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
@@ -706,6 +708,13 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   one edit instead of a hand-sweep across every copy; the resolved graph is
   indistinguishable from a hand-written one (shipped shapes:
   `graphs/fragments/` · [ADR 0013](docs/adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md)).
+  That one location is the whole rule, so **where you keep a graph file decides
+  whether it can cite anything**: a graph saved somewhere with no `fragments/`
+  directory beside it — a bare `/tmp/lane.yaml` — can use no fragment at all.
+  Run `oh-my-graph init <dir>` and write such graphs in `<dir>/graphs/` (the
+  unpacked `<dir>/graphs/fragments/` is then their sibling), or put a
+  `fragments/` directory next to the graph — a symlink to one is fine, since
+  resolution only reads the path.
 - **gates** — a `type: gate` node pauses the run for human approval, continued
   with `oh-my-graph resume` ([spec](DESIGN.md#gate-nodes-and-resume-v11)).
 - **failure salvage** — `resume <run-id> --retry-failed` re-executes only a

@@ -425,6 +425,60 @@ fragment lives in the same repo, at the same trust level, under the
 same review as the graph file that names it — a repo that could plant a
 hostile fragment could just as easily plant the hostile node inline.
 
+> **Update (2026-08-12): the rule holds; its unstated consequence was the
+> whole adoption story. 86 of 87 lanes are stored where it cannot reach.**
+> Full numbers:
+> [`docs/measurements/0013-fragment-reach-is-decided-by-where-a-graph-is-saved.md`](../measurements/0013-fragment-reach-is-decided-by-where-a-graph-is-saved.md).
+> The 2026-08-10 pass above measured `use:` at **zero** across the operator
+> lane corpus and prescribed `use: pr-publish` for those lanes. Asking the
+> prior question — *can* they? — of the same corpus: of **87** distinct lanes
+> with a publishing node, **86** sit in a directory with no `fragments/`
+> beside it (84 of them directly in `/tmp`), and the one that can resolve is
+> this repo's own shipped template. So the zero was never a judgment about
+> the shapes; for those lanes `use:` is a load error, and the prescription
+> was advice that does not run.
+>
+> **This is not evidence against the boundary, and the boundary did not
+> move.** One location, no search path, bare names only, resolution a pure
+> function of the entry file's path — unchanged, for the reasons this section
+> already gives; a search tier would still buy a precedence order, a
+> shadowing lint and a local-wins narrative. What the measurement indicts is
+> that reuse silently became a function of **where an author saves a file**
+> and nothing in the product said so. Three changes, none of them touching
+> resolution:
+>
+> 1. **The consequence is documented next to the rule** (README, README.ko,
+>    DESIGN.md, the plugin agent brief): a graph saved where no `fragments/`
+>    sits beside it can cite nothing, and the two fixes are to author it in a
+>    directory that has one (`oh-my-graph init <dir>`, then `<dir>/graphs/`)
+>    or to put a `fragments/` — a symlink is fine, resolution only reads the
+>    path — beside the graph.
+> 2. **The unresolved-fragment error carries the prescription**, not only the
+>    rule. It named the location and stopped; it now names the two fixes,
+>    because the rule alone reads as "you typed the name wrong" to an author
+>    whose real problem is the directory they are standing in.
+> 3. **`oh-my-graph init` became a top-up** so fix (1) is obtainable. It
+>    refused wholesale on the first existing target, which meant a
+>    `go install` user who ran `init` before v0.5.3 had **no command** that
+>    could give them `fragments/pr-publish.yaml` — the very fragment the
+>    2026-08-10 update told them to cite. It now keeps every existing file
+>    untouched, reports each as `kept`, and writes only the missing ones. The
+>    no-overwrite promise is strictly stronger than before, not weaker:
+>    skipping cannot produce the half-replaced set the refusal existed to
+>    prevent (it modifies no existing file at all), the write still uses
+>    `O_EXCL`, a failure still rolls back what that run created, and a kept
+>    edit is now *named on stdout* instead of being inferred from a command
+>    that did nothing.
+>
+> Deliberately not done: no `--fragments <dir>` flag or search path (this
+> section's decision, unchanged); no shipped/embedded tier (still deferred —
+> and note this measurement is not the evidence that earns one, since
+> unpacking already puts the shipped shapes on disk where the one rule finds
+> them); and no lint advising "this node should have cited `e2e-verify`" —
+> that sweep is attractive against the 32 drifted patterns the 2026-08-10
+> update found, but until a lane is stored somewhere a `use:` resolves, it
+> would advise a change that fails to load. Reach first, advice after.
+
 **Planned (auto) graphs: the planner may not emit `use:` in v1 — and
 mechanically cannot.** The value case is real and worth stating: a
 planner that *cites proven fragments* instead of inventing prompts from

@@ -185,7 +185,14 @@ resolution is a pure function of the entry file's path (no cwd dependence,
 no shipped/embedded tier in v1). The name must be **bare** —
 `^[A-Za-z0-9][A-Za-z0-9._-]*$`, refused before any file is opened — so a
 separator, a leading dot or a `..` cannot walk out of the `fragments/`
-sibling (`filepath.Join` cleans, so an unconstrained name would). Resolution happens on a **path-aware load
+sibling (`filepath.Join` cleans, so an unconstrained name would). The
+operational consequence, which follows from the rule and is the thing authors
+actually hit: **a graph file stored where no `fragments/` sits beside it can
+cite no fragment at all** — a lane written to `/tmp/lane.yaml` has no reachable
+fragment and never will, and the unresolved-fragment error says so with the two
+fixes (author the graph inside a directory that has a `fragments/` sibling —
+`oh-my-graph init <dir>` unpacks one at `<dir>/graphs/fragments/` — or put a
+`fragments/` directory, or a symlink to one, beside the graph). Resolution happens on a **path-aware load
 stage** — `graph.LoadFile` (fail-fast; also returns the entry file's raw
 bytes and one `FragmentResolution` per resolved `use:`) and its collect-all
 counterpart `graph.LintLoadFile` (every fragment issue plus every structural
@@ -240,7 +247,9 @@ scheduler, handoff, the event stream and every consumer reading it see
 exactly the graphs they see today.
 Shipped shapes live in `graphs/fragments/` and ship inside the binary
 alongside the templates (`//go:embed *.yaml fragments/*.yaml`), so
-`oh-my-graph init` unpacks a tree whose `use:` nodes resolve;
+`oh-my-graph init` unpacks a tree whose `use:` nodes resolve — and re-running
+it tops that tree up with payload files it does not have yet (a fragment added
+by a later release), keeping every file already there;
 `internal/graph/testdata/golden/` holds the resolved goldens — one per
 fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`) — that
 turn any fragment edit into a reviewed multi-template diff.
@@ -2145,7 +2154,7 @@ internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycl
 internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
-graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: one existing target aborts the whole command, writing nothing, and a failure partway through removes the files AND subdirectories it created
+graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), and a failure partway through removes the files AND subdirectories it created
 graphs/fragments/{e2e-verify,review-security,review-style,pr-publish}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
 docs/adr/00{01..20}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable

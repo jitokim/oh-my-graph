@@ -34,7 +34,8 @@ func runInit(args []string) error {
 
 // initGraphs writes every file embedded in the binary (see package graphs) to
 // <dir>/graphs/, creating the directory tree if needed, and prints one line
-// per file written. It exists because `go install` ships only an executable:
+// per payload file: `wrote` for one it created, `kept` for one that was
+// already there. It exists because `go install` ships only an executable:
 // this is what turns a bare binary into the working tree the README's first
 // command assumes.
 //
@@ -42,20 +43,26 @@ func runInit(args []string) error {
 // (ADR 0013) resolves it against its own fragments/ sibling on disk, so
 // unpacking graphs/*.yaml without graphs/fragments/*.yaml would leave the user
 // with templates that fail to load. The walk therefore mirrors the embedded
-// tree verbatim, and the count reports every file it wrote, nested ones
-// included.
+// tree verbatim, and the counts report every file, nested ones included.
 //
-// It never overwrites. If any target file already exists the whole command
-// fails naming that path and nothing at all is written — the existence sweep
-// runs to completion before the first byte lands, so a user who runs `init`
-// twice, or into a directory holding their own edited copies, cannot end up
-// with a half-replaced set. The writes themselves use O_EXCL so a file that
-// appears between the sweep and the write is still refused rather than
-// clobbered; because that refusal happens mid-loop, a failing write also
-// removes the files this run already created — and the subdirectories it
-// created for them — so "nothing at all is written" holds for the whole
-// command and not just for the sweep. The listing is buffered for the same
-// reason: it names files only once they are all there to stay.
+// It never overwrites, and it is a TOP-UP: a target path that already exists
+// is left exactly as it is and named on stdout, while the payload files that
+// are missing are written. Re-running `init` is therefore the way a user gets
+// a file the binary gained after their first one — `fragments/pr-publish.yaml`
+// shipped at v0.5.3, two releases after fragments/ itself, and until this a
+// `go install` user who had ever run `init` had NO command that could hand it
+// to them: the whole command failed on the first path that existed. Skipping
+// cannot produce the half-replaced set that all-or-nothing refusal existed to
+// prevent, because it modifies no existing file at all — an edited template is
+// kept, said so on stdout, and the shipped copy is the user's to fetch by
+// moving theirs aside and re-running.
+//
+// The writes still use O_EXCL, so a file that appears between the check and
+// the write is refused rather than clobbered; because that refusal happens
+// mid-loop, a failing write also removes the files this run created — and the
+// subdirectories it created for them — so a failed `init` leaves the tree as
+// it found it. The listing is buffered for the same reason: it names files
+// only once they are all there to stay.
 //
 // Nothing here spawns a process: unpacking is pure file I/O over bytes already
 // linked into the binary.
@@ -69,28 +76,27 @@ func initGraphs(w io.Writer, dir string) error {
 	}
 	target := filepath.Join(dir, initGraphsDir)
 
-	// Refuse first, write second: see the all-or-nothing contract above.
-	for _, name := range names {
-		path := filepath.Join(target, filepath.FromSlash(name))
-		switch _, err := os.Stat(path); {
-		case err == nil:
-			return fmt.Errorf("init: %s already exists — nothing was written (move or delete it, or run `oh-my-graph init <dir>` somewhere else)", path)
-		case !errors.Is(err, fs.ErrNotExist):
-			return fmt.Errorf("init: check %s: %w", path, err)
-		}
-	}
-
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("init: create %s: %w", target, err)
 	}
 	var listing strings.Builder
 	unpacked := &unpackedTree{}
+	written, kept := 0, 0
 	for _, name := range names {
+		path := filepath.Join(target, filepath.FromSlash(name))
+		// Existing means kept, never replaced: see the top-up contract above.
+		switch _, err := os.Stat(path); {
+		case err == nil:
+			kept++
+			fmt.Fprintf(&listing, "kept  %s (already there — not replaced)\n", path)
+			continue
+		case !errors.Is(err, fs.ErrNotExist):
+			return unpacked.undo(fmt.Errorf("init: check %s: %w", path, err))
+		}
 		data, err := graphs.FS.ReadFile(name)
 		if err != nil {
 			return unpacked.undo(fmt.Errorf("init: read embedded graph %q: %w", name, err))
 		}
-		path := filepath.Join(target, filepath.FromSlash(name))
 		if err := unpacked.mkdirAll(filepath.Dir(path)); err != nil {
 			return unpacked.undo(fmt.Errorf("init: create %s: %w", filepath.Dir(path), err))
 		}
@@ -98,14 +104,20 @@ func initGraphs(w io.Writer, dir string) error {
 			return unpacked.undo(fmt.Errorf("init: write %s: %w", path, err))
 		}
 		unpacked.files = append(unpacked.files, path)
+		written++
 		fmt.Fprintf(&listing, "wrote %s\n", path)
 	}
 
 	io.WriteString(w, listing.String())
-	fmt.Fprintf(w, "%d file(s) written to %s\n", len(names), target)
+	fmt.Fprintf(w, "%d file(s) written to %s\n", written, target)
+	if kept > 0 {
+		fmt.Fprintf(w, "%d file(s) were already there and were left untouched — to take the shipped copy of one, move yours aside and run `init` again\n", kept)
+	}
 	// The cheapest real end-to-end check, quoted from the Quickstart — but only
-	// when that graph is actually part of what was just written.
-	if smoke := filepath.Join(target, smokeGraphFile); fileWasWritten(names, smokeGraphFile) {
+	// when that graph is part of the payload this binary carries. After a
+	// top-up it is on disk either way, written by this run or kept from an
+	// earlier one.
+	if smoke := filepath.Join(target, smokeGraphFile); payloadCarries(names, smokeGraphFile) {
 		fmt.Fprintf(w, "next: mkdir -p /tmp/omg-smoke && oh-my-graph run %s --input dir=/tmp/omg-smoke\n", smoke)
 	}
 	return nil
@@ -137,9 +149,9 @@ func embeddedPaths() ([]string, error) {
 // points at it as the next step.
 const smokeGraphFile = "haiku-smoke.yaml"
 
-// fileWasWritten reports whether name is among the embedded paths, so the
+// payloadCarries reports whether name is among the embedded paths, so the
 // next-step hint cannot name a graph this binary does not carry.
-func fileWasWritten(names []string, name string) bool {
+func payloadCarries(names []string, name string) bool {
 	for _, candidate := range names {
 		if candidate == name {
 			return true
@@ -150,9 +162,9 @@ func fileWasWritten(names []string, name string) bool {
 
 // unpackedTree records what this run created — files, and the subdirectories
 // created to hold them — so a failure partway through can put the target
-// directory back the way it found it. It is the rollback half of the
-// all-or-nothing contract: the pre-flight sweep cannot see a file that appears
-// while the loop is running, so the loop has to be able to undo itself. A
+// directory back the way it found it. It is the rollback half of the top-up
+// contract: what the run keeps it never touched, and what the run wrote it can
+// undo, so a failed `init` is indistinguishable from one that never ran. A
 // nested payload makes the directories part of that promise: leaving an empty
 // graphs/fragments/ behind is still a half-unpacked tree.
 type unpackedTree struct {
@@ -193,8 +205,9 @@ func (u *unpackedTree) undo(cause error) error {
 
 // writeNewFile creates path with data, failing if path already exists. The
 // O_EXCL is the enforcement half of the no-overwrite promise: the caller's
-// pre-flight sweep decides all-or-nothing, this makes the individual write
-// itself incapable of destroying a file.
+// per-file check decides written-or-kept, this makes the individual write
+// itself incapable of destroying a file — including one that appeared after
+// that check looked.
 func writeNewFile(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {

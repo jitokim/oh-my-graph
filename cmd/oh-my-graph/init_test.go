@@ -59,8 +59,8 @@ func embeddedFragmentNames(t *testing.T) []string {
 
 // remainingTree lists every path under root — directories included — relative
 // to root and slash-separated. Directories count because a nested payload
-// makes them part of the all-or-nothing promise: an empty graphs/fragments/
-// left behind is still a half-unpacked tree.
+// makes them part of the rollback promise: an empty graphs/fragments/ left
+// behind is still a half-unpacked tree.
 func remainingTree(t *testing.T, root string) []string {
 	t.Helper()
 	var found []string
@@ -84,8 +84,8 @@ func remainingTree(t *testing.T, root string) []string {
 }
 
 // pathAndAncestors expands a payload-relative path into itself plus every
-// directory above it, so a test that pre-creates one occupied file knows the
-// full set of paths that legitimately survive a refusal.
+// directory above it, so a test that pre-creates one blocked path knows the
+// full set of paths that legitimately survive a rolled-back failure.
 func pathAndAncestors(name string) []string {
 	parts := strings.Split(name, "/")
 	paths := make([]string, 0, len(parts))
@@ -230,14 +230,14 @@ func TestInitGraphs_UnpacksTheFragmentsDirectory(t *testing.T) {
 	}
 }
 
-// --- the refusal case ---------------------------------------------------------
+// --- the occupied-path case ----------------------------------------------------
 
-// TestInitGraphs_RefusesToOverwrite is the destructive-mistake guard: a user
-// who edited a shipped template and re-runs `init` (or runs it in a repo
-// checkout) must get an error, not a silent restore of their file. The
-// assertion checks the surviving bytes, not just the error, because "it
-// failed" is satisfiable by a command that clobbered the file and then failed.
-func TestInitGraphs_RefusesToOverwrite(t *testing.T) {
+// TestInitGraphs_KeepsEveryExistingFile is the destructive-mistake guard: a
+// user who edited a shipped template and re-runs `init` (or runs it in a repo
+// checkout) must keep their file, and be told it was kept. The assertion
+// checks the surviving bytes, not just the exit, because "it succeeded" is
+// equally satisfiable by a command that restored the shipped copy.
+func TestInitGraphs_KeepsEveryExistingFile(t *testing.T) {
 	cases := []struct {
 		name     string
 		occupied string
@@ -245,7 +245,7 @@ func TestInitGraphs_RefusesToOverwrite(t *testing.T) {
 		{name: "first file taken", occupied: embeddedGraphNames(t)[0]},
 		{name: "last file taken", occupied: embeddedGraphNames(t)[len(embeddedGraphNames(t))-1]},
 		{name: "smoke graph taken", occupied: "haiku-smoke.yaml"},
-		// A nested payload path: the sweep must judge fragments/ too, or a
+		// A nested payload path: the check must judge fragments/ too, or a
 		// user's edited fragment is silently restored to the shipped one.
 		{name: "fragment taken", occupied: embeddedFragmentNames(t)[0]},
 	}
@@ -263,12 +263,8 @@ func TestInitGraphs_RefusesToOverwrite(t *testing.T) {
 			}
 
 			var out strings.Builder
-			err := initGraphs(&out, dir)
-			if err == nil {
-				t.Fatal("init must refuse to write over an existing file")
-			}
-			if !strings.Contains(err.Error(), occupied) {
-				t.Errorf("error should name the offending path %q: %v", occupied, err)
+			if err := initGraphs(&out, dir); err != nil {
+				t.Fatalf("init over an existing file should top up, not fail: %v", err)
 			}
 
 			survived, readErr := os.ReadFile(occupied)
@@ -278,24 +274,31 @@ func TestInitGraphs_RefusesToOverwrite(t *testing.T) {
 			if string(survived) != mine {
 				t.Errorf("the pre-existing file was overwritten:\n%s", survived)
 			}
+			// Losing an edit is impossible, but a user must never have to
+			// DIFF to find out which of their files `init` left alone.
+			if !strings.Contains(out.String(), "kept  "+occupied) {
+				t.Errorf("listing should name %q as kept:\n%s", occupied, out.String())
+			}
 		})
 	}
 }
 
-// TestInitGraphs_WritesNothingWhenItRefuses pins the all-or-nothing half of
-// the refusal: one occupied path aborts the whole command before any file is
-// created, so the user is never left with a half-unpacked directory to clean
-// up by hand.
-func TestInitGraphs_WritesNothingWhenItRefuses(t *testing.T) {
+// TestInitGraphs_TopsUpWhatIsMissing is the other half, and the reason the
+// refusal became a top-up: one occupied path must not stop the payload files
+// that are NOT there from landing. Without this, a user who ran `init` once
+// could never receive a fragment the binary gained later — which is exactly
+// what happened to graphs/fragments/pr-publish.yaml at v0.5.3 (ADR 0013,
+// update of 2026-08-12).
+func TestInitGraphs_TopsUpWhatIsMissing(t *testing.T) {
 	names := embeddedGraphNames(t)
 	if len(names) < 2 {
-		t.Skip("needs at least two embedded graphs to distinguish partial writes")
+		t.Skip("needs at least two embedded graphs to distinguish a top-up from a refusal")
 	}
 	dir := t.TempDir()
 	target := filepath.Join(dir, "graphs")
-	// Occupy the last path in walk order: a command that wrote as it went
-	// would have created every earlier file before noticing.
-	occupied := names[len(names)-1]
+	// Occupy the FIRST path in walk order: a command that still refused on
+	// sight of an existing file would stop before reaching any other.
+	occupied := names[0]
 	occupiedPath := filepath.Join(target, filepath.FromSlash(occupied))
 	if err := os.MkdirAll(filepath.Dir(occupiedPath), 0o755); err != nil {
 		t.Fatalf("prepare target dir: %v", err)
@@ -305,16 +308,61 @@ func TestInitGraphs_WritesNothingWhenItRefuses(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := initGraphs(&out, dir); err == nil {
-		t.Fatal("init must refuse when a target file exists")
+	if err := initGraphs(&out, dir); err != nil {
+		t.Fatalf("init must top up around an existing file: %v", err)
 	}
 
-	want := pathAndAncestors(occupied)
-	if got := remainingTree(t, target); !reflect.DeepEqual(got, want) {
-		t.Errorf("refusal must write nothing, %s holds %v, want %v", target, got, want)
+	for _, name := range names[1:] {
+		path := filepath.Join(target, filepath.FromSlash(name))
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("init did not write the missing %s: %v", name, err)
+			continue
+		}
+		want, err := graphs.FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read embedded %s: %v", name, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s on disk differs from the embedded copy", name)
+		}
 	}
-	if out.String() != "" {
-		t.Errorf("a refused init should print no listing:\n%s", out.String())
+	if got, err := os.ReadFile(occupiedPath); err != nil || string(got) != "mine\n" {
+		t.Errorf("the occupied file must be untouched, got %q (err %v)", got, err)
+	}
+	if !strings.Contains(out.String(), fmt.Sprintf("%d file(s) written to %s", len(names)-1, target)) {
+		t.Errorf("summary should count only the files written:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "1 file(s) were already there") {
+		t.Errorf("summary should count what it kept:\n%s", out.String())
+	}
+}
+
+// TestInitGraphs_SecondRunIsANoOp pins idempotence, the property that makes
+// re-running `init` the supported way to collect a payload addition: over a
+// directory that already holds the whole payload it writes nothing, keeps
+// everything, and succeeds — so a user can run it without first working out
+// whether they need to.
+func TestInitGraphs_SecondRunIsANoOp(t *testing.T) {
+	names := embeddedGraphNames(t)
+	dir := t.TempDir()
+	if err := initGraphs(io.Discard, dir); err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+	before := remainingTree(t, filepath.Join(dir, "graphs"))
+
+	var out strings.Builder
+	if err := initGraphs(&out, dir); err != nil {
+		t.Fatalf("a second init must succeed: %v", err)
+	}
+	if after := remainingTree(t, filepath.Join(dir, "graphs")); !reflect.DeepEqual(after, before) {
+		t.Errorf("a second init changed the tree:\n%v\n%v", before, after)
+	}
+	if !strings.Contains(out.String(), "0 file(s) written to ") {
+		t.Errorf("a second init should report nothing written:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), fmt.Sprintf("%d file(s) were already there", len(names))) {
+		t.Errorf("a second init should report the whole payload kept:\n%s", out.String())
 	}
 }
 
@@ -365,6 +413,55 @@ func TestInitGraphs_RollsBackWhenAWriteFailsMidLoop(t *testing.T) {
 	}
 }
 
+// TestInitGraphs_TopUpRestoresAFragmentTheTreeIsMissing is the end-to-end
+// version of the top-up, on the payload half that actually broke: a tree that
+// predates a shipped fragment. Deleting one stands in for the v0.5.3 user
+// whose `init` ran before `pr-publish.yaml` existed — after re-running `init`
+// the fragment is back AND every template still loads, which is the promise a
+// bare "the file appeared" assertion does not make.
+func TestInitGraphs_TopUpRestoresAFragmentTheTreeIsMissing(t *testing.T) {
+	fragments := embeddedFragmentNames(t)
+	if len(fragments) == 0 {
+		t.Fatal("no fragments are embedded — the fragments/*.yaml pattern in graphs/embed.go matched nothing")
+	}
+	dir := t.TempDir()
+	if err := initGraphs(io.Discard, dir); err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+	target := filepath.Join(dir, "graphs")
+	absent := filepath.Join(target, filepath.FromSlash(fragments[0]))
+	if err := os.Remove(absent); err != nil {
+		t.Fatalf("remove %s: %v", fragments[0], err)
+	}
+
+	var out strings.Builder
+	if err := initGraphs(&out, dir); err != nil {
+		t.Fatalf("re-running init must deliver the missing fragment: %v", err)
+	}
+	if !strings.Contains(out.String(), "wrote "+absent) {
+		t.Errorf("listing should name the restored fragment:\n%s", out.String())
+	}
+	got, err := os.ReadFile(absent)
+	if err != nil {
+		t.Fatalf("the missing fragment was not restored: %v", err)
+	}
+	want, err := graphs.FS.ReadFile(fragments[0])
+	if err != nil {
+		t.Fatalf("read embedded %s: %v", fragments[0], err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("%s on disk differs from the embedded copy", fragments[0])
+	}
+	for _, name := range embeddedGraphNames(t) {
+		if strings.Contains(name, "/") {
+			continue // a fragment loads through the template that cites it
+		}
+		if _, err := graph.LoadFile(filepath.Join(target, name)); err != nil {
+			t.Errorf("template %s does not load after a top-up: %v", name, err)
+		}
+	}
+}
+
 // --- argv and exit codes -------------------------------------------------------
 
 func TestRunInit_ArgvErrors(t *testing.T) {
@@ -375,14 +472,16 @@ func TestRunInit_ArgvErrors(t *testing.T) {
 
 // TestMainExitCode_InitMapsToZeroAndOne pins the shell contract end to end
 // through run()'s subcommand switch: exit 0 unpacking into a fresh directory,
-// exit 1 when a target file already exists.
+// exit 0 again over the same directory (a top-up that writes nothing is a
+// success — scripting `init` before a run must not need an `|| true`), exit 1
+// on a usage error.
 func TestMainExitCode_InitMapsToZeroAndOne(t *testing.T) {
 	dir := t.TempDir()
 	if code := mainExitCode([]string{"init", dir}); code != 0 {
 		t.Errorf("init into a fresh directory exited %d, want 0", code)
 	}
-	if code := mainExitCode([]string{"init", dir}); code != 1 {
-		t.Errorf("a second init over the same directory exited %d, want 1", code)
+	if code := mainExitCode([]string{"init", dir}); code != 0 {
+		t.Errorf("a second init over the same directory exited %d, want 0", code)
 	}
 	if code := mainExitCode([]string{"init", dir, "extra"}); code != 1 {
 		t.Errorf("init with an extra argument exited %d, want 1", code)

@@ -33,8 +33,10 @@ oh-my-graph version
 Four of those are worth knowing precisely:
 
 - `init` unpacks the example graphs embedded in the binary into `./graphs/`
-  (including `./graphs/fragments/`). It never overwrites — if any target
-  exists it names that path and writes nothing at all.
+  (including `./graphs/fragments/`). It never overwrites — a file that is
+  already there is kept and reported as `kept`, and only the missing payload
+  files are written, so re-running it tops a tree up with what a later release
+  added.
 - `auto --plan-only` prints the planned graph with every agent/skill mapping
   and the tool ceiling, then exits without running a node. Unlike
   `run --dry-run` it is **not free**: it still pays for one real planner call.
@@ -101,7 +103,10 @@ when authoring or debugging:
   bindings; the loader splices it in before validation, so the resolved graph
   is indistinguishable from a hand-written one. Lookup is exactly one place —
   the entry graph's own `fragments/` sibling — and `use:` must be a bare name,
-  so a fragment can never reach outside that directory. An override is judged
+  so a fragment can never reach outside that directory. That makes storage
+  location decide reuse: a graph written to `/tmp/lane.yaml` can cite nothing,
+  so author graphs that should cite shipped shapes inside a directory that has
+  a `fragments/` sibling (`oh-my-graph init <dir>`, then `<dir>/graphs/`). An override is judged
   by key presence and replaces the whole top-level subtree (never a deep
   merge). Reach for this when authoring the third copy of the same node.
 
