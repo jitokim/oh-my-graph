@@ -124,14 +124,27 @@ def claude_version():
         return f"unavailable: {err}"
 
 
+def marker_dirs(repo):
+    """Where a marker may land.
+
+    A node whose entire tool set is `Write` (plus `Skill`) holds no Read, no
+    Bash, no Glob and no Grep, so it cannot determine its own cwd — and arm J
+    caught one spawn writing the marker to $HOME on a guess while another wrote
+    it relative, i.e. into the cwd. WHERE the file lands is a cwd-guessing
+    artifact; WHETHER a token appears is the evidence, since the token exists
+    only inside one SKILL.md body and no tool the node holds can read one. So
+    both locations are cleared before a spawn and both are searched after, and
+    the location is recorded rather than assumed.
+    """
+    return [repo, os.path.expanduser("~")]
+
+
 def clear_artifacts(repo):
-    for marker in MARKERS:
-        p = os.path.join(repo, marker)
-        if os.path.exists(p):
-            os.remove(p)
-    stale = os.path.join(repo, "design.html")
-    if os.path.exists(stale):
-        os.remove(stale)
+    for base in marker_dirs(repo):
+        for name in list(MARKERS) + ["design.html"]:
+            p = os.path.join(base, name)
+            if os.path.exists(p):
+                os.remove(p)
     if os.path.exists(BREACH):
         os.remove(BREACH)
     if os.path.exists(GITCTL):
@@ -140,10 +153,11 @@ def clear_artifacts(repo):
 
 def read_markers(repo):
     hit = []
-    for marker, token in MARKERS.items():
-        p = os.path.join(repo, marker)
-        if os.path.exists(p) and token in open(p).read():
-            hit.append(marker)
+    for base in marker_dirs(repo):
+        for marker, token in MARKERS.items():
+            p = os.path.join(base, marker)
+            if os.path.exists(p) and token in open(p).read():
+                hit.append(marker if base == repo else f"{marker}@HOME")
     return hit
 
 

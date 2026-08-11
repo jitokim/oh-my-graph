@@ -1784,6 +1784,18 @@ meet the user's own plugins there for the first time — but the plan printout
 now states the cost and names `--no-agent-mapping` (which turns agent mapping
 off for the whole plan; there is no per-node switch), and lifting it is gated
 on ADR 0017's measurement (j) rather than on the argument that it costs little.
+**(j) was run on 2026-08-12 — 18 spawns, $3.86, claude 2.1.228 — and the
+exclusion stays** (`docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`).
+Not because the composite fails: `--agent` + `--plugin-dir` + `Skill` invoked
+the staged skill 3 of 3, and it costs the ceiling nothing because an
+agent-mapped node's ceiling is already breached without it. It stays because
+`Skill` on these nodes resolves against a corpus the **repository under work**
+can write: with the staged copy and a repository-committed `.claude/skills` copy
+loaded under one name, the bare name resolved to the repository's 3 of 3, and a
+repository-committed `SKILL.md` was invoked 3 of 3 by a prompt that never
+mentions skills. Both candidate fixes carry that, since both keep Layer 1 at
+`nil` — so the thing to change is `applyAgentMapping`'s `SettingSources`, not
+the exclusion.
 
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git
@@ -1855,7 +1867,16 @@ an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** �
 identical node declaration ran an out-of-scope `touch` without Layer 1 and had
 it denied with Layer 1, while in-scope `git` kept working. The gap "a node
 declaring a scoped `Bash(...)` keeps the whole `Bash` tool" is closed for
-planned nodes.
+planned nodes — **except the agent-mapped ones, which drop Layer 1 to `nil` so
+`--agent` can resolve (E2), and for which it is therefore not closed at all.**
+That is not an inference either: on 2026-08-12, claude 2.1.228, the argv
+`runner.buildArgs` really emits for an agent-mapped planned node declaring
+`Bash(git *)` ran the out-of-scope `touch` under `dontAsk` with
+`permission_denials: []`, while the same probe's non-mapped node denied the
+identical command and its in-scope `git` control ran
+(`docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`, the ceiling
+arm). Closing it is ADR 0017 §Compatibility's declined follow-up, and it is a
+change to agent mapping rather than to any layer above.
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,

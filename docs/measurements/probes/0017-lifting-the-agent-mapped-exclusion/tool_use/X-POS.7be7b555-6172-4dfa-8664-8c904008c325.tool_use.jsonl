@@ -1,0 +1,3 @@
+{"name": "Skill", "input_keys": ["skill"], "skill": "omg-probe-user-plugin:omg-probe-userplugin-only"}
+{"name": "Write", "input_keys": ["content", "file_path"], "skill": null}
+{"name": "Write", "input_keys": ["content", "file_path"], "skill": null}

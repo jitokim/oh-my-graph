@@ -1064,6 +1064,41 @@ costs.
   (g) showed lose the scope ceiling. Whoever prices this must decide what
   happens to repository-supplied definitions before, not after.
 
+  > **RECORDED 2026-08-12 — (j) was run, and the exclusion is KEPT on the two
+  > grounds it did NOT expect.** 18 spawns, $3.86, claude **2.1.228** (a fourth
+  > build), macOS, one machine; pre-registration in its own commit before the
+  > first spawn; judged only by a raw `{"type":"tool_use","name":"Skill"}`
+  > record, a planted marker token and the filesystem.
+  > `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
+  >
+  > - **The composite DELIVERS.** `--agent` + `SettingSources = nil` +
+  >   `--plugin-dir` + `Skill` in `--tools`: **3 of 3**, resolving
+  >   `oh-my-graph-staged-skills:omg-probe-standalone-html`. Controls `ACT` and
+  >   `C0` fire on 2.1.228.
+  > - **The ceiling arm refutes the sentence above it.** ADR 0004's E1 shape
+  >   under the composite created the out-of-scope file **2 of 2** — and so did
+  >   the **shipped agent-mapped argv, verbatim, with no plugin and no `Skill`
+  >   anywhere** (`G-T`, 1 of 1, `permission_denials: []`). The activated node's
+  >   own argv denied it, with the denial in the envelope, and the in-scope
+  >   `git` positive control ran, so `Bash` existed in every arm. **The lift
+  >   does not cost the ceiling; the ceiling is already gone in shipped code for
+  >   these nodes.** That makes the last bullet of §Compatibility — the
+  >   follow-up this ADR declines to decide — the urgent finding, not this one.
+  > - **The collision arm is what kills the lift.** With the staged copy, a
+  >   repository-committed `.claude/skills` copy and a repository-enabled
+  >   plugin's copy all loaded under one name, the bare name resolved to the
+  >   **repository's** copy **3 of 3**. Plugin names stay namespaced, so
+  >   `stagedPluginName`'s literal claim survives; the argument it was making
+  >   does not — the staged corpus §5 hashes, seals and re-materializes is the
+  >   one the node does not read.
+  > - **The caveat arm fired.** A `SKILL.md` **committed to the fixture
+  >   repository**, under the cheaper arm and a prompt that never mentions
+  >   skills, was invoked **3 of 3** and its procedure obeyed. Phase B showed
+  >   the surface is wider than a skills directory: a repository's own
+  >   `.claude/settings.json` can enable a plugin from a path, and an
+  >   agent-mapped node loads it. **Both** candidate fixes carry this, since
+  >   both keep layer 1 at nil.
+
 **Still owed before `Accepted`:**
 
 - ~~**(i) Do the staged descriptions reach a planned node at all — and what
@@ -1413,12 +1448,38 @@ before today.
   > repository — so that arm makes a repository-supplied `SKILL.md` invocable
   > procedure text on exactly the nodes (g) showed lose the scope ceiling.
   > Cheaper than the composite; not free.
+  >
+  > **2026-08-12 — (j) is RECORDED and the exclusion STAYS, on grounds this
+  > paragraph did not predict.** The composite delivers (3 of 3) and costs the
+  > ceiling nothing — because `G-T`, the **shipped** agent-mapped argv with no
+  > plugin and no `Skill`, breached ADR 0004's E1 on its own. What kills the
+  > lift is the other two arms: the staged corpus lost its own name to a
+  > repository-committed definition **3 of 3**, and a repository-committed
+  > `SKILL.md` fired **3 of 3** on a prompt that never mentions skills. The
+  > cheaper arm's caveat above is therefore **measured true**, and it is not
+  > cheaper on it — the composite carries the same nil layer 1. Every finding
+  > traces to that one field, which is the bullet immediately below.
+  > 18 spawns, $3.86, claude 2.1.228;
+  > `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
 - **A follow-up this ADR declines to decide:** `applyAgentMapping`'s
   `SettingSources = nil` is wider than anything decided here, and measurement
   (g) now gives that gap a number rather than a suspicion — an agent-mapped
   node declaring `Bash(git *)` is the shape (g) breached. It is a change to a
   shipped mechanism on a path this ADR does not otherwise touch, so it gets
   its own issue and its own measurement rather than riding along.
+
+  > **2026-08-12 — it is no longer an analogue. (j)'s ceiling arm measured this
+  > shape directly and it BREACHED.** The argv `runner.buildArgs` emits today
+  > for an agent-mapped planned node declaring `Bash(git *)` — no plugin
+  > directory, no `Skill`, nothing (j) proposes — ran `touch /tmp/…` under
+  > `dontAsk`, `permission_denials: []`, judged by the file appearing. The same
+  > probe's activated node denied the identical command with the denial in the
+  > envelope, and its in-scope `git` control ran, so `Bash` existed in both.
+  > ADR 0004's headline claim does not hold for agent-mapped planned nodes and
+  > has not since agent mapping shipped. This bullet is now the more urgent of
+  > the two findings, and (j) is downstream of it: with layer 1 relaxed there is
+  > no safe way to add `Skill`, and with layer 1 restored there is nothing left
+  > to exclude. `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
 - **Hand-written graphs: no change.** They never carried layers 1 or 3, and
   they are not given a staged directory — the user's own skills already load.
 - **The four exec seams are unchanged.** Nothing here spawns a process.
@@ -1630,7 +1691,14 @@ Named with the measurement that would settle each.
    measurement showing the exclusion is a total capability hole is an argument
    for lifting it, and this is one of the two arms (j) must run first — an
    agent-mapped node's layer 1 is not `""`, so "no other plugin loads" is the
-   one premise a lift removes.
+   one premise a lift removes. **ANSWERED 2026-08-12, and the answer is worse
+   than shadowing between plugins.** Plugin skills stay namespaced
+   (`oh-my-graph-staged-skills:x`, `omg-probe-user-plugin:x`), so two plugins
+   cannot collide on a bare name — but a **settings-scope** definition can, and
+   wins: with all three sources loaded under one name, the bare name resolved to
+   the **repository's** `.claude/skills` copy 3 of 3. The staged corpus §5
+   hashes, seals and re-materializes before every spawn is the one the node does
+   not read. `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
 5. **Whether any of this reproduces off this machine.** No probe settles it;
    it needs a second machine, ideally one whose `settings.json` grants
    nothing, and one on a different CLI version. #130 already asks for exactly

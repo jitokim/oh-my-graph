@@ -341,6 +341,27 @@ type SkillActivation struct {
 	// scope ceiling when layer 1 relaxes. Note that (j) is not the only shape a
 	// fix could take: the arm measured to WORK here is `--agent` with `Skill` in
 	// --tools and NO staged plugin, over the user's own corpus.
+	//
+	// (j) IS NOW RECORDED — 2026-08-12, 18 spawns, $3.86, claude 2.1.228,
+	// docs/measurements/0017-lifting-the-agent-mapped-exclusion.md — AND THE
+	// EXCLUSION STAYS, on neither of the two grounds the paragraph above
+	// expected. The composite DELIVERS (3 of 3, resolving
+	// oh-my-graph-staged-skills:<skill>) and it costs the ceiling NOTHING,
+	// because the shipped agent-mapped argv already breaches ADR 0004's E1 on
+	// its own: with no plugin dir and no Skill anywhere, a node declaring
+	// Bash(git *) ran an out-of-scope `touch` under dontAsk with
+	// permission_denials: [], while the activated node denied the identical
+	// command and the in-scope `git` control ran. What kills the lift is the
+	// other two arms. stagedPluginName's LITERAL claim survives — plugin skills
+	// stay namespaced, so two plugins cannot collide on a bare name — but a
+	// SETTINGS-scope definition can and wins: with the staged copy, a
+	// repository-committed .claude/skills copy and a repository-enabled plugin's
+	// copy all loaded under one name, the bare name resolved to the
+	// REPOSITORY's 3 of 3, so the corpus Materialize re-materializes before
+	// every spawn is the one the node does not read. And a SKILL.md committed to
+	// the repository under work fired 3 of 3 on a prompt that never mentions
+	// skills. Both carry over to the cheaper `--agent` + Skill arm, since both
+	// rest on the same nil layer 1 — which is what to change, not this guard.
 	ExcludedNodeIDs []string
 	// PluginDir is the staged directory, once bound. Empty for a --plan-only
 	// preview, which stages nothing because nothing runs.
