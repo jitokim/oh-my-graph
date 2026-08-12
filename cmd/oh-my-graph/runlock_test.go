@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -44,7 +45,7 @@ func TestRun_FirstLegHoldsRunLockAgainstConcurrentResume(t *testing.T) {
 
 	firstLeg := make(chan error, 1)
 	go func() {
-		firstLeg <- executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-race.yaml", []byte("name: lock-race\n"), false, nil, nil)
+		firstLeg <- executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-race.yaml", []byte("name: lock-race\n"), false, nil, nil, nil)
 	}()
 	<-rec.started
 
@@ -94,6 +95,89 @@ func readLegStream(t *testing.T, path string) legStream {
 		t.Fatalf("read the leg's event stream: %v", err)
 	}
 	return seen
+}
+
+// TestRunLeg_LockBracketsAPlanningPhaseToo widens the invariant above to the
+// phase ADR 0023 adds, and it is the harder half: the leg now opens BEFORE the
+// planner call and closes inside executeGraph, so the lexical `defer` that used
+// to guarantee the bracket cannot reach across it. This test judges the same
+// two instants — the acquire, and the release — over an auto run that plans and
+// then executes.
+//
+// The failure it exists to catch is not a missing lock but a MISORDERED one: a
+// leg whose first event lands before its flock reads ABANDONED for those
+// milliseconds, and ABANDONED prints an orphaned-subprocess warning. Nothing
+// else fails.
+func TestRunLeg_LockBracketsAPlanningPhaseToo(t *testing.T) {
+	isolateRunHome(t)
+
+	var atAcquire, atRelease legStream
+	var livenessAtRelease runstate.Liveness
+	var feedPath string
+	acquired, released := 0, 0
+
+	previous := acquireRunLock
+	t.Cleanup(func() { acquireRunLock = previous })
+	acquireRunLock = func(path string) (func() error, error) {
+		feedPath = filepath.Join(filepath.Dir(path), runfeed.FileName)
+		atAcquire = readLegStream(t, feedPath)
+		acquired++
+		release, err := previous(path)
+		if err != nil {
+			return nil, err
+		}
+		return func() error {
+			atRelease = readLegStream(t, feedPath)
+			livenessAtRelease = runstate.ProbeLock(path)
+			released++
+			return release()
+		}, nil
+	}
+
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1": {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+	var out strings.Builder
+	captureStdout(t, func() {
+		coord := coordinator.New(fake)
+		if err := planAndExecute(context.Background(), &out, coord, fake,
+			commonRunFlags{inputs: inputFlag{}}, "add a README section", singleCycle, false, nil, nil); err != nil {
+			t.Fatalf("planAndExecute: %v", err)
+		}
+	})
+
+	// ONE lock for the whole run, planning phase included. A second acquire
+	// would not merely be redundant: flock conflicts per open file description,
+	// so it would fail with LockHeldError against this process's own fd.
+	if acquired != 1 || released != 1 {
+		t.Fatalf("the run took the lock %d time(s) and gave it back %d; want exactly one of each", acquired, released)
+	}
+	// Before the first event — which is now the PLANNING run_started, not the
+	// scheduler's.
+	if atAcquire.events != 0 {
+		t.Errorf("the leg had already written %d event(s) when it took the lock", atAcquire.events)
+	}
+	// After the last: run_finished is on disk before the lock goes back, and
+	// the lock still reads held at that instant.
+	if want := string(runfeed.EventRunFinished); atRelease.last != want {
+		t.Errorf("the leg's last event when it released the lock = %q, want %q", atRelease.last, want)
+	}
+	requireLiveness(t, livenessAtRelease, runstate.LivenessHeld)
+	// The stream the lock bracketed carries the planning open, so the phase was
+	// genuinely inside the bracket rather than beside it.
+	sawPlanning := false
+	if err := runfeed.Walk(feedPath, func(ev runfeed.Event) error {
+		if ev.Type == runfeed.EventRunStarted && ev.Phase == runfeed.PhasePlanning {
+			sawPlanning = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("read the leg's stream: %v", err)
+	}
+	if !sawPlanning {
+		t.Error("the bracketed stream carries no planning phase; this test judged the wrong window")
+	}
 }
 
 // lockProbingRunner probes the run's lock from INSIDE the only node's Run —
@@ -173,7 +257,7 @@ func TestRunLeg_LockBracketsTheEventStream(t *testing.T) {
 
 	g := mustParse(t, `{"name":"lock-brackets","nodes":[{"id":"a","prompt":"a"}]}`)
 	rec := &lockProbingRunner{lockPath: lockPath, feedPath: feedPath}
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-brackets.yaml", []byte("name: lock-brackets\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "lock-brackets.yaml", []byte("name: lock-brackets\n"), false, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("executeGraph: %v", err)
 	}

@@ -97,7 +97,7 @@ func TestResume_MidLoopMarkerReEntersTheLoop(t *testing.T) {
 	}}
 	runID := "run-loop-limit"
 
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil, nil)
 	var limited *schedule.LimitPausedError
 	if !errors.As(err, &limited) {
 		t.Fatalf("expected leg 1 to pause on the session limit, got %T: %v", err, err)
@@ -173,7 +173,7 @@ func TestResume_RetryFailedReArmsAnExhaustedLoop(t *testing.T) {
 	}}
 	runID := "run-loop-exhausted"
 
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil, nil)
 	var halted *schedule.HaltError
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected leg 1 to halt on exhaustion, got %T: %v", err, err)
@@ -236,7 +236,7 @@ func TestResume_RetryFailedRoundZeroFailureRetriesDeclarerAlone(t *testing.T) {
 	}}
 	runID := "run-loop-round0"
 
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil, nil)
 	var halted *schedule.HaltError
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected leg 1 to halt on the budget fault, got %T: %v", err, err)

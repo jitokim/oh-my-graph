@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -94,11 +95,15 @@ func TestRunAutoWith_PlanOnlyIsSilentWhenNoRePlanHappened(t *testing.T) {
 	}
 }
 
-// A twice-refused plan keeps what it paid for. Until now a rejected planner
+// A twice-refused plan keeps what it paid for. Before v0.5 a rejected planner
 // call left NOTHING on disk: the user paid, saw an error, and had no artifact
-// to hand-edit or re-run. The spec goes under plans/ — nothing ran, so it is
-// not a run — beside a preview's, under its own name so no reader walking the
-// tree for graph.json mistakes it for a graph the engine would run.
+// to hand-edit or re-run. Since ADR 0023 §3.1 the spec goes into THE RUN
+// DIRECTORY, not plans/, and the reason is two premises rather than one: `auto`
+// is non-interactive, so its commitment to execute existed before the planner
+// call and a run already exists; and the engine judged the material it was
+// handed and produced a finding about it, which is a FAIL in the same sense a
+// failed node is. It keeps its own file name so no reader walking the tree for
+// graph.json mistakes it for a graph the engine would run.
 func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	isolateRunHome(t)
 	// The two replies differ, so "the saved spec is the LAST rejected one"
@@ -124,8 +129,8 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 		t.Fatalf("made %d calls, want exactly two — the refusal and its one correction", got)
 	}
 
-	planDir := solePlanDir(t)
-	specPath := filepath.Join(planDir, rejectedSpecFileName)
+	runDir := soleRunDir(t)
+	specPath := filepath.Join(runDir, rejectedSpecFileName)
 	info, statErr := os.Stat(specPath)
 	if statErr != nil {
 		t.Fatalf("a rejected plan must keep the spec it paid for: %v", statErr)
@@ -145,16 +150,37 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	}
 	// It is NOT the accepted plan's name: a reader of the tree must not be
 	// able to load it as a graph that was going to run.
-	if _, statErr := os.Stat(filepath.Join(planDir, generatedSpecFileName)); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(runDir, generatedSpecFileName)); statErr == nil {
 		t.Errorf("a rejected plan was saved as %s — nothing may mistake it for an accepted plan", generatedSpecFileName)
 	}
-	// And nothing was left where the run readers look: nothing ran.
-	entries, readDirErr := os.ReadDir(runsRoot())
-	if readDirErr != nil && !errors.Is(readDirErr, fs.ErrNotExist) {
-		t.Fatalf("read runs root: %v", readDirErr)
+	// The directory is the ADR 0023 §2.1.1 shape exactly: a lock, a two-line
+	// stream, a rejected spec, and NO snapshot — settled, with no verdict about
+	// work because no work happened.
+	if _, statErr := os.Stat(filepath.Join(runDir, stateFileName)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("a refused plan must leave no snapshot, got %v", statErr)
 	}
-	if len(entries) != 0 {
-		t.Errorf("a rejected plan left %d director(ies) under runs/", len(entries))
+	// And it renders — as a FAIL row, not a WARNING+skip. That is the
+	// regression ADR 0023 §9 names as the one that would otherwise ship this
+	// change as a net loss.
+	var listed, warned strings.Builder
+	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+		t.Fatalf("listRuns: %v", listErr)
+	}
+	if warned.Len() != 0 {
+		t.Errorf("a refused plan must not be skipped as damage: %q", warned.String())
+	}
+	row := lineContaining(t, listed.String(), filepath.Base(runDir))
+	if fields := strings.Fields(row); fields[len(fields)-1] != "FAIL" {
+		t.Errorf("a refused plan's row = %q, want a FAIL status", row)
+	}
+	// Nothing under plans/: that tree keeps one honest meaning — specs that
+	// never belonged to a run (§3.1).
+	planEntries, readDirErr := os.ReadDir(filepath.Join(os.Getenv("OMG_HOME"), "plans"))
+	if readDirErr != nil && !errors.Is(readDirErr, fs.ErrNotExist) {
+		t.Fatalf("read plans root: %v", readDirErr)
+	}
+	if len(planEntries) != 0 {
+		t.Errorf("a refused auto plan left %d director(ies) under plans/; it belongs to its run", len(planEntries))
 	}
 
 	for _, want := range []string{
@@ -183,9 +209,12 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 // assessment's own cost is. It has no ledger of its own to hide behind:
 // nothing ran.
 //
-// The rejected spec's directory also carries the lineage: a fresh id would
-// leave plans/<id>/rejected.json beside the goal's runs with nothing saying
-// which goal, or which cycle, bought it.
+// The rejected spec's directory also carries the lineage, and since ADR 0023
+// §3.1 it carries it by BEING that cycle's run directory rather than by
+// encoding "<first-run>-cycle2" into a plans/ name. The per-cycle planning hook
+// mints the id and opens the leg before the planner call, so the refusal has a
+// run of its own to be recorded in — which is also what makes the cycle's own
+// planner call visible while it is happening.
 func TestPlanAndExecute_ARefusedCyclesPlanningSpendIsInTheGoalTotal(t *testing.T) {
 	isolateRunHome(t)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
@@ -224,13 +253,54 @@ func TestPlanAndExecute_ARefusedCyclesPlanningSpendIsInTheGoalTotal(t *testing.T
 		t.Errorf("a refused plan is still reported as an unaccounted incomplete cycle:\n%s", out)
 	}
 
-	// Lineage: the plan directory names the goal's first run and the cycle.
+	// Lineage: the refused cycle has its own run directory, newer than cycle
+	// 1's, holding rejected.json and no snapshot.
 	cycleOneRunID := goalSnapshots(t)[0].RunID
-	planDir := filepath.Base(solePlanDir(t))
-	if planDir != cycleOneRunID+"-cycle2" {
-		t.Errorf("rejected plan dir = %q, want %q — the path must say which goal and cycle bought it",
-			planDir, cycleOneRunID+"-cycle2")
+	runDirs := runDirNames(t)
+	if len(runDirs) != 2 {
+		t.Fatalf("want two run directories (the run cycle and the refused one), got %v", runDirs)
 	}
+	if runDirs[0] != cycleOneRunID {
+		t.Errorf("first run directory = %q, want cycle 1's run %q", runDirs[0], cycleOneRunID)
+	}
+	refusedDir := filepath.Join(runsRoot(), runDirs[1])
+	if _, statErr := os.Stat(filepath.Join(refusedDir, rejectedSpecFileName)); statErr != nil {
+		t.Errorf("the refused cycle must keep its spec in its own run directory: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(refusedDir, stateFileName)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("a refused cycle must leave no snapshot, got %v", statErr)
+	}
+	// And nothing under plans/: a goal cycle always has a run.
+	if _, statErr := os.Stat(filepath.Join(os.Getenv("OMG_HOME"), "plans")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("a refused goal cycle wrote under plans/, got %v", statErr)
+	}
+}
+
+// runDirNames lists the run directory names under runs/, oldest first (run ids
+// are timestamps that sort lexically).
+func runDirNames(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(runsRoot())
+	if err != nil {
+		t.Fatalf("read runs root: %v", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// soleRunDir returns the one run directory under runs/, failing if there is not
+// exactly one.
+func soleRunDir(t *testing.T) string {
+	t.Helper()
+	names := runDirNames(t)
+	if len(names) != 1 {
+		t.Fatalf("want exactly one run directory, got %v", names)
+	}
+	return filepath.Join(runsRoot(), names[0])
 }
 
 // A fault the reply's content did not cause buys nothing and leaves no spec —

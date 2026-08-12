@@ -23,7 +23,7 @@ func completedRun(t *testing.T, runID, spec string, outcomes map[string]runner.N
 	t.Helper()
 	g := mustParse(t, spec)
 	err := executeGraph(context.Background(), runID, g, runner.NewFakeRunner(outcomes),
-		commonRunFlags{inputs: inputFlag{}}, nil, 0, runID+".yaml", []byte("name: "+runID+"\n"), false, nil, nil)
+		commonRunFlags{inputs: inputFlag{}}, nil, 0, runID+".yaml", []byte("name: "+runID+"\n"), false, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("fixture run %q should complete cleanly: %v", runID, err)
 	}
@@ -49,7 +49,7 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 		runner.NewFakeRunner(map[string]runner.NodeOutcome{
 			"boom": {SessionID: "s-boom", Result: "FAIL", ExitCode: 1, TotalCostUSD: 0.05},
 		}),
-		commonRunFlags{inputs: inputFlag{}}, nil, 0, "beta.yaml", []byte("name: beta\n"), false, nil, nil)
+		commonRunFlags{inputs: inputFlag{}}, nil, 0, "beta.yaml", []byte("name: beta\n"), false, nil, nil, nil)
 	var halted *schedule.HaltError
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected the beta fixture run to fail, got %T: %v", err, err)
@@ -101,7 +101,7 @@ func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 	isolateRunHome(t)
 	g := mustParse(t, `{"name":"gated","nodes":[{"id":"approve","type":"gate"}]}`)
 	err := executeGraph(context.Background(), "run-paused", g, &capturingRunner{},
-		commonRunFlags{inputs: inputFlag{}}, nil, 0, "gated.yaml", []byte("name: gated\n"), false, nil, nil)
+		commonRunFlags{inputs: inputFlag{}}, nil, 0, "gated.yaml", []byte("name: gated\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the fixture run to pause, got %T: %v", err, err)

@@ -44,7 +44,7 @@ func (r *legRecorder) promptsOf(nodePrompt string) []string {
 func runOneFailingLeg(t *testing.T, runID, spec string, rec *legRecorder) {
 	t.Helper()
 	g := mustParse(t, spec)
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "g.yaml", []byte(spec), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "g.yaml", []byte(spec), false, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected leg 1 to fail")
 	}

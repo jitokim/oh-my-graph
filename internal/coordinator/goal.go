@@ -42,6 +42,23 @@ type GoalOptions struct {
 	// accumulates as it happens). Purely observational: the loop's control
 	// flow never depends on it.
 	OnCycleAssessed func(CycleReport)
+	// OnCyclePlanning, when non-nil, is called immediately BEFORE each cycle's
+	// planner call — the "planning begins" hook ADR 0023 §9 requires so the
+	// CLI can mint that cycle's run id and open its leg before a call that is
+	// the longest single wait in the tool. Without it, PLANNING would exist for
+	// a single-cycle `auto` and not for an iterated one, and a status that
+	// depends on a flag is worse than no status.
+	//
+	// The loop mints nothing itself and takes on no closing obligation: run ids
+	// stay the CLI's, as they already are, and so does the leg. That is what
+	// lets the CLI's own deferred close-if-open cover the exits this function
+	// may grow later, instead of an enumeration here that a maintainer would
+	// have to remember to extend (ADR 0023 §2.7).
+	//
+	// An error stops the loop with that error before anything is spent: failing
+	// to take the run lock means another leg holds this run, and planning past
+	// that would spend on a cycle with nowhere to record itself.
+	OnCyclePlanning func(cycle int) error
 }
 
 // ExecuteCycle is the hand-off-to-caller seam: it receives one cycle's
@@ -131,6 +148,12 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 		if cycle > 1 && opts.MaxGoalBudgetUSD > 0 && spentUSD >= opts.MaxGoalBudgetUSD {
 			result.Stop = StopBudgetExceeded
 			return result, nil
+		}
+
+		if opts.OnCyclePlanning != nil {
+			if err := opts.OnCyclePlanning(cycle); err != nil {
+				return result, err
+			}
 		}
 
 		plan, err := c.plan(ctx, goal, opts.InputKeys, remaining)

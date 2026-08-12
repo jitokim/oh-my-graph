@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,6 +89,13 @@ func goalSnapshots(t *testing.T) []runstate.Snapshot {
 	var snaps []runstate.Snapshot
 	for _, entry := range entries {
 		snap, err := runstate.Load(filepath.Join(runsRoot(), entry.Name(), stateFileName))
+		if errors.Is(err, fs.ErrNotExist) {
+			// A cycle whose plan was REFUSED has a run directory (its leg opened
+			// before the planner call — ADR 0023 §2.4) and never a snapshot: no
+			// node ever settled. That is a fact about the cycle, not damage, so
+			// it contributes no row here rather than failing the helper.
+			continue
+		}
 		if err != nil {
 			t.Fatalf("load %s snapshot: %v", entry.Name(), err)
 		}

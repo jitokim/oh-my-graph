@@ -70,6 +70,26 @@ func main() {
 // place and the mapping itself is testable without calling os.Exit.
 func mainExitCode(args []string) int {
 	err := run(args)
+	code := exitCodeForError(err)
+	if code == 1 {
+		fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
+	}
+	return code
+}
+
+// exitCodeForError is the mapping itself, separated from mainExitCode so it can
+// be judged directly against a run's derived STATUS — ADR 0023 §2.6 asserts
+// their agreement for a single-run invocation rather than assuming it, and an
+// assertion that had to go through run() and os.Args could not be written.
+//
+// The distinction the ADR draws, and the reason the agreement is narrow: an
+// exit code is the WRITER's answer about the process it just ran, and a status
+// is a READER's answer about a directory on disk. They are computed from
+// different facts. Where they can be made to agree the implementation asserts
+// it; for the goal loop they cannot even in principle, because the exit code is
+// goal-level (ADR 0011 §2) and one invocation makes N run directories against
+// one code.
+func exitCodeForError(err error) int {
 	if err == nil {
 		return 0
 	}
@@ -81,7 +101,6 @@ func mainExitCode(args []string) int {
 	if errors.As(err, &limited) {
 		return 2
 	}
-	fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
 	return 1
 }
 
@@ -228,8 +247,10 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
+	// nil leg: `run` has no planning phase, so it opens its leg at executeGraph
+	// exactly as it always has (ADR 0023 §2.2).
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
-		len(loaded.Resolutions) > 0, webOpener(flags.noWeb, stdout, opener), nil)
+		len(loaded.Resolutions) > 0, webOpener(flags.noWeb, stdout, opener), nil, nil)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -344,10 +365,23 @@ var singleCycle = goalCycleOptions{maxCycles: 1}
 
 // planAndExecute is one goal's full auto sequence — plan, save the spec, print
 // the topology, execute. It is shared verbatim by `auto` and a chat graph turn
-// so the sequence that must stay identical between them has exactly one home:
-// a graph started from chat is indistinguishable on disk (saved spec,
-// state.json, events.jsonl) from one started at the shell. confirm is the one
-// permitted divergence: nil proceeds straight to execution (`auto` stays fully
+// so the sequence that must stay identical between them has exactly one home.
+//
+// THE INVARIANT IT KEEPS, restated by ADR 0023 §2.4 rather than quietly
+// weakened: a graph started from chat is identical on disk (saved spec,
+// state.json, events.jsonl) to one started at the shell GIVEN THE SAME
+// COMMITMENT POINT — and confirm is the one thing that moves that point. It
+// used to read "indistinguishable on disk", full stop, with confirm named as
+// the one permitted divergence. That is no longer true in the letter, and the
+// reason is confirm itself observed on disk: `auto` is non-interactive, so its
+// commitment to execute exists BEFORE the planner call and it legitimately
+// opens a run directory (and a planning run_started) there; chat's commitment
+// does not exist until a human answers [y/N], which happens AFTER the planner
+// call, so a chat-started run's events.jsonl carries one run_started where an
+// auto run's carries two. The extra line is confirm's recorded consequence, and
+// it is written here rather than left for a reader to discover.
+//
+// confirm: nil proceeds straight to execution (`auto` stays fully
 // non-interactive), while a non-nil hook is asked between printing the
 // topology and executing — false discards the plan with a note, which is not
 // an error. A hook error aborts before execution and propagates as-is, so a
@@ -386,31 +420,66 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return planAndExecuteCycles(ctx, out, coord, nodeRunner, flags, goal, cycles, confirm, web)
 	}
 
-	fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
+	// A run directory is created by the COMMITMENT TO EXECUTE, and nothing else
+	// (ADR 0023 §2.4). `auto` is non-interactive: if the plan validates, it
+	// runs, so the commitment exists before the planner call and its leg opens
+	// here — which is what makes the whole planner call visible to `runs list`,
+	// the dashboard and any external consumer, instead of the silence #163
+	// reported. The two paths without that commitment get no run id at all
+	// until they have one: `--plan-only` never executes, and `chat`'s plan is
+	// gated behind a [y/N] a human may answer `n`.
+	committed := !planOnly && confirm == nil
+
+	var leg *runLeg
+	runID := ""
+	if committed {
+		runID = newRunID()
+		opened, err := openRunLeg(runID)
+		if err != nil {
+			return err
+		}
+		leg = opened
+		if err := leg.beginPlanning(); err != nil {
+			leg.Close(runfeed.OutcomeFailed)
+			return err
+		}
+		// The bracket, restored lexically over every exit below — including the
+		// ones inside executePlan. Close is idempotent, so executeGraph's own
+		// close on the happy path wins and this is a no-op there (ADR 0023 §2.7).
+		defer leg.Close(runfeed.OutcomeFailed)
+		fmt.Fprintf(out, "Planning a graph for goal %q (run %s)...\n", goal, runID)
+	} else {
+		fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
+	}
+
 	plan, err := coord.Plan(ctx, goal, inputKeys(flags.inputs))
 	if err != nil {
-		return noteRejectedPlan(out, newRunID(), err)
+		// A refused plan's spec goes into the run directory when a run leg
+		// already exists, and into plans/ when none does (ADR 0023 §3.1). The
+		// leg is closed FIRST, with outcome "failed", so the run has settled by
+		// the time anything reads it: the engine judged the material it was
+		// given and diagnosed it, which is what a FAIL is. "paused" would make
+		// it print a resume command for a run with nothing to resume.
+		if leg != nil {
+			leg.Close(runfeed.OutcomeFailed)
+			return noteRejectedPlan(out, runDirFor(runID), err)
+		}
+		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
 
-	runID := newRunID()
-	// A plan-only preview keeps its paid-for spec OUTSIDE runs/. A directory
-	// under runs/ holding a graph.json and nothing else is, to every reader of
-	// that tree, a run whose state.json never appeared: `runs list` reports it
-	// through the same WARNING+skip channel as a corrupt snapshot, and the
-	// `serve` dashboard enumerates the same tree, so the preview would show up
-	// as a card for a run that never ran. A preview never ran, so it is not a
-	// run.
-	specDir := runDirFor(runID)
 	if planOnly {
-		specDir = planDirFor(runID)
-	}
-	specPath, err := saveGeneratedSpec(specDir, plan.Spec)
-	if err != nil {
-		return err
-	}
-	printPlan(out, plan, specPath)
-
-	if planOnly {
+		// A preview is still not a run (ADR 0023 §3), and the reason is no
+		// longer the old mechanism argument — that a runs/ directory holding a
+		// graph.json and no state.json reads as damage, which §2.5 dissolved.
+		// The reason that survives is the enumeration: a preview has none of the
+		// six statuses and cannot be given one. It is not PLANNING (it
+		// finished), not RUNNING, not ABANDONED (its process left on purpose),
+		// and it has no verdict about work, because there was no work.
+		specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+		if err != nil {
+			return err
+		}
+		printPlan(out, plan, specPath)
 		fmt.Fprintf(out,
 			"plan only: no node was executed. The %s still paid for ($%.4f) —\n"+
 				"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
@@ -420,18 +489,43 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return nil
 	}
 
-	if confirm != nil {
+	if !committed {
+		// The chat path: the plan is printed, the human decides, and only then
+		// does the spec land anywhere. Saving into the run directory BEFORE the
+		// prompt is what made every declined chat plan leave behind a runs/<id>/
+		// holding a graph.json and no state.json — a corrupt run manufactured by
+		// saying `n` (ADR 0023 §2.4). The topology therefore prints without a
+		// path, and the path is announced by whichever branch claims the spec.
+		printPlan(out, plan, "")
 		ok, err := confirm()
 		if err != nil {
 			return err
 		}
 		if !ok {
-			fmt.Fprintln(out, "plan discarded.")
+			path, saveErr := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+			if saveErr != nil {
+				fmt.Fprintf(os.Stderr, "save the declined plan's spec: %v\n", saveErr)
+				fmt.Fprintln(out, "plan discarded.")
+				return nil
+			}
+			fmt.Fprintf(out, "plan discarded. Its spec was paid for either way and is kept at %s —\n"+
+				"run it later with `oh-my-graph run %s`.\n", path, path)
 			return nil
 		}
+		runID = newRunID()
 	}
 
-	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web, nil)
+	specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
+	if err != nil {
+		return err
+	}
+	if !committed {
+		fmt.Fprintf(out, "plan accepted, saved to %s\n\n", specPath)
+	} else {
+		printPlan(out, plan, specPath)
+	}
+
+	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web, nil, leg)
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
@@ -447,8 +541,11 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // already the re-parseable JSON the resumable snapshot needs, so it is reused
 // as-is rather than re-marshaling plan.Graph the way a hand-written `run` has
 // to (see buildRecorder). goal is the run's goal-lineage block for an
-// iterated auto cycle (ADR 0011 §4), nil on every single-cycle run.
-func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener, goal *runstate.GoalRef) error {
+// iterated auto cycle (ADR 0011 §4), nil on every single-cycle run. leg is the
+// already-open planning leg this run continues, or nil for a caller that had no
+// planning phase — it is forwarded rather than re-opened, and see executeGraph
+// for why re-opening would fail rather than merely duplicate.
+func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeRunner runner.NodeRunner, flags commonRunFlags, specPath string, web browser.Opener, goal *runstate.GoalRef, leg *runLeg) error {
 	// The staged skill corpus is bound to THIS run's directory here, and not
 	// in the coordinator, because the run id does not exist until the plan has
 	// been bought (ADR 0017 §5). Binding is what puts --plugin-dir into
@@ -478,7 +575,7 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
 	// fragment-free by construction and stays reusable verbatim.
-	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, false, web, goal)
+	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, false, web, goal, leg)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
@@ -510,21 +607,37 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // auto cycle stamps into its snapshot (ADR 0011 §4); nil — the only value
 // `run` and single-cycle auto ever pass — keeps the snapshot byte-identical
 // to today's.
-func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, fragmentsResolved bool, web browser.Opener, goal *runstate.GoalRef) error {
-	// The first leg holds the run's resume.lock for its whole duration — the
-	// same flock every `resume` takes (internal/runstate.AcquireLock).
-	// Without it, a `resume <run-id> --retry-failed` raced against a
-	// still-in-flight first leg would open a second scheduler over the same
-	// state.json/events.jsonl and double-spawn (double-bill) nodes; instead
-	// the concurrent resume fails on this lock with its usual LockHeldError.
-	// It is taken here, before the event stream below, and released by a defer
-	// registered before the stream's: the ordering invariant a reader's
-	// abandoned-run derivation rests on (acquireRunLock, ADR 0015 §2).
-	release, err := acquireRunLock(filepath.Join(runDirFor(runID), lockFileName))
-	if err != nil {
-		return err
+func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, fragmentsResolved bool, web browser.Opener, goal *runstate.GoalRef, leg *runLeg) error {
+	// The leg holds the run's resume.lock for its whole duration — the same
+	// flock every `resume` takes (internal/runstate.AcquireLock). Without it, a
+	// `resume <run-id> --retry-failed` raced against a still-in-flight first leg
+	// would open a second scheduler over the same state.json/events.jsonl and
+	// double-spawn (double-bill) nodes; instead the concurrent resume fails on
+	// this lock with its usual LockHeldError.
+	//
+	// A leg may arrive ALREADY OPEN since ADR 0023: an auto run opens it before
+	// its planner call, so the planning phase is visible, and this function
+	// continues that same leg — the scheduler's untagged run_started is what
+	// marks the transition from PLANNING to RUNNING on the stream. `run` and a
+	// chat-started graph have no planning phase and open theirs here, exactly as
+	// before. Re-acquiring would not merely be redundant: flock conflicts per
+	// open file description, so a second AcquireLock from this process would take
+	// a LOCK_EX against an fd this process already holds and fail with
+	// LockHeldError (ADR 0015 §1's measured table).
+	//
+	// The close is deferred with an EMPTY outcome, and that is deliberate: the
+	// scheduler writes this leg's run_finished itself, so emitting another here
+	// would close one leg twice. A leg the scheduler never closed (an infra
+	// error before it ran) therefore stays open and reads ABANDONED once the
+	// process exits — today's behaviour, unchanged.
+	if leg == nil {
+		opened, err := openRunLeg(runID)
+		if err != nil {
+			return err
+		}
+		leg = opened
 	}
-	defer release()
+	defer leg.Close("")
 
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
@@ -541,16 +654,6 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	if err := recorder.WriteInitial(); err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
-
-	// The consumer event stream (docs/RUN-FEED.md) lives next to state.json.
-	// Failing to open it is fatal up front — unlike a mid-run emit failure,
-	// which the Scheduler downgrades to a progress warning — because a run
-	// that never had a stream at all is silently invisible to fleetops.
-	feed, err := runfeed.NewStreamWriter(filepath.Join(runDirFor(runID), runfeed.FileName), runID)
-	if err != nil {
-		return fmt.Errorf("prepare run event stream: %w", err)
-	}
-	defer feed.Close()
 
 	// The worktree manager is per-run: nodes declaring `worktree:` get their
 	// managed checkouts under this run's directory, created off the invocation
@@ -589,7 +692,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		ToolPolicies:          toolPolicies,
 		SerializedVerifyNodes: serializedVerify,
 		Recorder:              recorder,
-		EventSink:             feed,
+		EventSink:             leg.feed,
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
@@ -714,9 +817,17 @@ func saveSpecAs(dir, name string, spec []byte) (string, error) {
 // prints both halves. noteVerifyAttachments adds the one thing on this screen
 // the ceiling does NOT cover: the user's own --verify-cmd, which the engine
 // runs at each sink outside every layer of it (ADR 0016 §2).
+// An EMPTY specPath means the plan has not been saved yet, which is the chat
+// path since ADR 0023 §2.4: where the spec lands depends on the answer to the
+// [y/N] this screen is being printed for, so the header cannot name a path it
+// does not know. The caller announces the location once the answer picks one.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	g := plan.Graph
-	fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
+	if specPath == "" {
+		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f):\n", g.Name, len(g.Nodes), plan.CostUSD)
+	} else {
+		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
+	}
 	for _, node := range g.Nodes {
 		line := "  - " + node.ID
 		if len(node.DependsOn) > 0 {
@@ -867,19 +978,26 @@ func plannerCallsPhrase(plan coordinator.Plan) string {
 
 // noteRejectedPlan persists a refused plan's spec before returning the
 // refusal. A planner call is paid for whether or not its graph loads, and
-// until now a rejected one left NOTHING on disk: the user paid, saw an error,
-// and had no artifact to hand-edit or re-run. The spec is written beside a
-// plan-only preview's, under plans/, for the same reason that one is not under
-// runs/ — nothing ran, so it is not a run.
+// until v0.5 a rejected one left NOTHING on disk: the user paid, saw an error,
+// and had no artifact to hand-edit or re-run.
 //
-// planID names the directory it goes into, so a caller that knows more about
-// where the refusal came from than "a plan was bought" can say so in the path
-// (the goal loop names the goal's first run and the refused cycle).
+// dir is where the spec goes, and the rule is one sentence (ADR 0023 §3.1):
+// INTO THE RUN DIRECTORY WHEN A RUN LEG ALREADY EXISTS, and into plans/ when
+// none does. Two independent premises put it there rather than one. A
+// commitment to execute is what creates a run — `auto` and every goal cycle have
+// one before the planner call, so their run id already exists and the rejection
+// belongs beside it. A diagnosis about judged material is what gives a run a
+// verdict — the engine was handed material, judged it, and produced a finding,
+// which is a FAIL in the same sense a failed node is. `--plan-only` has the
+// second without the first: its diagnosis prints, but it minted no run id at any
+// point, so there is no run directory to write into and the spec goes to
+// plans/ — which thereby keeps one honest meaning, "specs that never belonged
+// to a run".
 //
 // The refusal itself is returned unchanged; this only adds a line naming where
 // the rejected spec went. A failure to write it is reported and swallowed:
 // losing the artifact must not replace the diagnosis the user actually needs.
-func noteRejectedPlan(w io.Writer, planID string, err error) error {
+func noteRejectedPlan(w io.Writer, dir string, err error) error {
 	var rejection *coordinator.PlanRejection
 	if !errors.As(err, &rejection) {
 		return err
@@ -890,7 +1008,7 @@ func noteRejectedPlan(w io.Writer, planID string, err error) error {
 	if len(rejection.Spec) == 0 {
 		return err
 	}
-	path, saveErr := saveSpecAs(planDirFor(planID), rejectedSpecFileName, rejection.Spec)
+	path, saveErr := saveSpecAs(dir, rejectedSpecFileName, rejection.Spec)
 	if saveErr != nil {
 		fmt.Fprintf(os.Stderr, "save rejected plan spec: %v\n", saveErr)
 		return err
