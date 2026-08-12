@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.6.0**, and what is deliberately deferred. Where a gap has
+gaps as of **v0.6.1**, and what is deliberately deferred. Where a gap has
 already been closed on `main` but not in a tagged release, this file says so
 in the paragraph that describes it rather than in the stamp.
 
@@ -51,7 +51,7 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.6.0. **This file is where they are tracked** — the issue
+Honest gaps as of v0.6.1. **This file is where they are tracked** — the issue
 numbers below name the *closed* issue each gap was carved out of, which is
 provenance, not a tracker: those issues asked for the feature that shipped,
 and were closed when it did. What survived the feature is the paragraph, here.
@@ -224,7 +224,7 @@ See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.6.0:
+Called out honestly — these are **not** implemented as of v0.6.1:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause
