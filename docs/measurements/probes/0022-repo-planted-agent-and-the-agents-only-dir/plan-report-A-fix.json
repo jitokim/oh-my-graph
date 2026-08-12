@@ -1,0 +1,83 @@
+{
+  "agent_dirs": [
+    "/tmp/omg-repo-agent/user-agents"
+  ],
+  "agent_mappings": [
+    {
+      "NodeID": "omg-probe-scribe",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-ceiling",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-gitctl",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    }
+  ],
+  "agent_staging": {
+    "agents": [
+      {
+        "bytes": 293,
+        "name": "omg-probe-writer",
+        "sha256": "83137cd13c2d630ddae144480be854433052f991d50ec7d07b008a1fdfacad6d",
+        "source_path": "/tmp/omg-repo-agent/user-agents/omg-probe-writer.md"
+      }
+    ],
+    "dir": "/tmp/omg-repo-agent/run-fix/agents-plugin",
+    "nodes": [
+      "omg-probe-scribe",
+      "omg-probe-ceiling",
+      "omg-probe-gitctl"
+    ]
+  },
+  "nodes": {
+    "omg-probe-ceiling": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-fix/omg-probe-ceiling",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-fix/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-gitctl": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-fix/omg-probe-gitctl",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-fix/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-scribe": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-fix/omg-probe-scribe",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-fix/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Write"
+      ]
+    }
+  },
+  "scope": "fix"
+}
