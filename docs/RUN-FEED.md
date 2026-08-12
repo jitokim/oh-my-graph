@@ -12,6 +12,7 @@ the very same files, and an external consumer reads exactly what they read:
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
   <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
   graph.json     the planned spec (auto runs only)
+  rejected.json  a REFUSED planner reply, kept because the call was paid for (ADR 0023 §3.1)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
   failed/        per-node reply of a node that FAILED (ADR 0020) — never an artifact
   feedback/      INTERNAL — feedback-arc payloads (ADR 0010); not this contract
@@ -24,6 +25,23 @@ whether the parent's result is persisted (`Handoff.PersistOutput` is called on
 the one passing path, with no handoff branch). A consumer must not skip the
 `.out` beside a `handoff: session` node — it is there, and it holds that
 node's real result. A gate node spawns nothing and so has no `.out`.
+
+**A run directory may legitimately hold NEITHER `graph.json` NOR `state.json`,
+and this is not damage** (ADR 0023). Two shapes reach it. While an `auto` run is
+inside its planner call, its directory holds only `resume.lock` and a one-line
+`events.jsonl` — the run id is minted before the call, so the phase is visible
+from the moment it starts. And a run whose planner reply was REFUSED keeps that
+shape permanently, plus `rejected.json`: the call was paid for, the engine
+judged the material it was given and diagnosed it, and nothing ever ran. A
+consumer must not read a missing snapshot as a broken run at any status — the
+ABSENCE of a file is a fact about the run, while the UNREADABILITY of one is a
+fact about the reader, and only the second is damage.
+
+`rejected.json` lands in the run directory when a run exists (`auto`, and every
+cycle of an iterated one) and under `~/.oh-my-graph/plans/<id>/` when none does
+(`auto --plan-only`, which mints no run id at any point — a preview is not a
+run). It is deliberately NOT named `graph.json`: nothing walking the tree for a
+graph the engine would run may pick it up.
 
 The converse does not hold: a `.out` is not proof of a PASS. `PersistOutput`
 runs *before* the post-hoc budget check, deliberately, so a node that did its
@@ -265,7 +283,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 
 | `event` | Extra fields | Emitted when |
 |---|---|---|
-| `run_started` | — | A scheduler leg begins, before any node launches. |
+| `run_started` | `phase` *(optional)* | A leg begins. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
 | `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
@@ -375,6 +393,29 @@ to pause).
   `state.json`. Feedback rounds (ADR 0010) extend the same rule *within* a
   leg: a body node emits one terminal event per round, and the latest —
   the highest `round` — is authoritative.
+- **Two `run_started`s per auto run, and one `run_finished` closing them**
+  (ADR 0023). An `auto` run's stream opens with
+  `run_started {phase:"planning"}` while its planner call runs, and the plan
+  committing is marked by the ordinary untagged `run_started` — same leg, same
+  lock, no `run_finished` between them. Three consequences a consumer must
+  know, because the `phase` field disambiguates only the first:
+    - **Count legs by `run_started` events with NO `phase`.** A reader that
+      counts every `run_started` now counts one extra per auto run.
+    - **A committed auto run has one close for two opens.** A consumer keeping
+      a stack of legs must know the planning open is closed by the untagged
+      open, not by a `run_finished` of its own. `run_finished` carries no
+      `phase` and gains none: on the committed path the close that ends a
+      planning phase is not a `run_finished` at all.
+    - **`run_finished {outcome:"failed"}` with ZERO node events** is a shape no
+      stream had before: a refused plan. A consumer that assumes a failed leg
+      names a failed node has to stop assuming it.
+
+  A reader that simply ignores the unknown field still improves: it sees a leg
+  that opens at planning and closes once, so "the last leg is open" reports the
+  run in flight for the whole planner call, where it previously saw no run
+  directory at all. That is a less precise answer than distinguishing planning
+  from running, not a wrong one — which is why this is an additive optional
+  field and **`schema` stays 2**.
 - **Short lines.** Every event line the writer emits is small (a handful of
   short fields; well under a few kilobytes even with a long `detail`). The
   in-repo readers enforce a shared 1 MiB per-line cap and refuse — with an
@@ -410,6 +451,13 @@ channel.
   the run is in flight; a *succeeding* probe means the writer is gone — the
   run is **abandoned**, and no event will ever be appended to it. Beside a
   closed leg the lock says nothing and is not worth probing.
+- **A PLANNING phase holds the lock like any other leg** (ADR 0023). It takes
+  the flock before writing its `run_started {phase:"planning"}` and still holds
+  it after its last event, so everything above applies unchanged: a planner call
+  in progress is in flight, and one whose process died is abandoned, cleaned up
+  by the kernel with no repair path. There is no second liveness mechanism, and
+  a consumer needs no new rule — only the `phase` field, if it wants to tell
+  "thinking about a graph" from "running one".
 - **A missing file, a filesystem whose `flock` is not the kernel's own (linux
   emulates it over NFS as POSIX record locks), and any probe error all mean
   *unknown*, and unknown means the open-leg rule** — the answer this tool gave

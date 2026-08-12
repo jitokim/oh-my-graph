@@ -1,7 +1,7 @@
 # ADR 0023 — A run has ONE status, and PLANNING is one of its values
 
-- Status: **Accepted — decision taken, not yet implemented.** §9 lists what the
-  implementation owes.
+- Status: **Accepted — implemented 2026-08-13.** §9 listed what the
+  implementation owed; it is delivered, with two notes recorded in §12.
 - Date: 2026-08-12
 - **Revised 2026-08-12 after a design review, before any code existed.** The
   decision did not change; the specification did, in ten places recorded in §11.
@@ -1027,3 +1027,31 @@ the same token), §2.3's stream-shape claim holds for `runfeed.InFlight` and
 `walkNodeStates`, the refusal to derive `PLANNING` from an absence is right for
 ADR 0015 §1's reason, and the budget check sitting *before* `c.plan` means
 `StopBudgetExceeded` leaks no leg.
+
+## 12. Implementation notes (2026-08-13)
+
+The implementation followed §9 without reopening the decision. Two things it
+learned that a later reader should not have to rediscover:
+
+1. **`show` needed a boundary move §2.6 did not name.** The section says `show`
+   "gains the run's status line", which is true, but `show` used to fail with
+   `unknown run "<id>"` whenever `state.json` was missing — and §3 makes
+   snapshot-less run directories ordinary (a planning phase, permanently a
+   refused plan). Calling one of those "unknown" would be a lie about a
+   directory the same binary just derived a status for, so the error moved to
+   the RUN DIRECTORY's absence, which is what a mistyped id actually produces.
+   A directory with no snapshot prints its status and a sentence saying why
+   there is no per-node record yet.
+2. **The exit-code mapping was extracted from `mainExitCode`.** §2.6's narrow
+   invariant is turned into a test by §9, and a test that had to go through
+   `run()` and `os.Args` could not assert it. `exitCodeForError` is that
+   mapping alone; `mainExitCode` is it plus the stderr line and `os.Exit`.
+   Nothing about the contract moved — 0 all passed, 1 failed, 2 paused and
+   resumable.
+
+The `PAUSED` hint names BOTH resume shapes (`--retry-failed` and
+`--approve`/`--reject`) rather than picking one, because the reading surfaces
+genuinely cannot tell a gate pause from a session-limit pause without asking the
+snapshot's gate block — which §9 forbids as the re-entry point for the §1.2
+defect. Naming the wrong one costs a command that refuses itself; naming neither
+costs the reader the whole row.

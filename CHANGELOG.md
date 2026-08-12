@@ -8,6 +8,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+Implements [ADR 0023](docs/adr/0023-a-run-has-one-status-and-planning-is-one-of-its-values.md),
+closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
+
+### Added
+
+- **`auto` is visible while it plans.** The run id is minted BEFORE the planner
+  call, not after it, and the planning phase is a real leg: it takes the run
+  lock and opens `events.jsonl` with a `run_started {phase: "planning"}`. For
+  the whole of the longest single wait in the tool — and the first one a new
+  user meets — `runs list` printed `No runs found.` and the `serve` dashboard
+  showed no card, because there was no run directory for any reader to find.
+  There is one now, and it reads `PLANNING`. The same applies per cycle of
+  `--max-cycles N`, through a new `RunGoal` planning hook, because a status
+  that depends on a flag is worse than no status.
+- **A planner call whose process dies is `ABANDONED`**, with the correct
+  recovery advice and the orphaned-subprocess warning — using ADR 0015's
+  existing liveness machinery, with no second mechanism, no timer and no
+  cleanup path.
+- **`show` prints the run's status**, which it never had. Re-opening a paused
+  run after the fact used to say nothing at all about it being paused, and a
+  run directory that exists but has no snapshot is no longer reported as an
+  unknown run.
+
+### Changed
+
+- **A paused run stops reading as a failure, on every surface at once.** A
+  shepherd stopped at its approval gate — exit 2, resumable, working exactly as
+  designed — was listed as `FAIL` by `runs list`, which said so in its own
+  words: *"a failed, paused, or interrupted run all render as FAIL"*. The
+  dashboard had the same hole by a different route: it asked the snapshot's
+  `gate.paused_at`, so ADR 0009's session-limit pause — which has no gate to
+  point at — fell through and painted the card RED. Both now read `PAUSED`,
+  derived from the leg's own `run_finished` outcome, which is the only
+  formulation that covers both pause shapes.
+- **One status, derived once.** `runstatus.Status` becomes the six-valued
+  enumeration `PLANNING → RUNNING → { PASS | FAIL | PAUSED | ABANDONED }`, and
+  the verdict half moves INSIDE it. `runs list`, the dashboard card, `watch`,
+  `show`, `serve`'s `ResolveRun` and the single-run view had each been composing
+  liveness with a verdict their own way — which is exactly what
+  `internal/runstatus` was created to stop.
+- **`runs list`'s column header is `STATUS`, not `VERDICT`.** `PLANNING`,
+  `PAUSED` and `ABANDONED` are not verdicts, and leaving them under that header
+  would keep the conflation in the one place a user reads it. A `PAUSED` row
+  carries its resume command under the table, beside the `ABANDONED` hint.
+- **A declined `chat` plan no longer manufactures a corrupt run.** The spec save
+  moved after the `[y/N]`: answering `n` used to leave a `runs/<id>/` holding a
+  `graph.json` and no `state.json`, which `runs list` reported as
+  `WARNING: skipping run …` and the dashboard painted `unknown`. Its paid-for
+  spec now goes to `plans/`, where a spec that never belonged to a run belongs.
+- **A refused `auto` plan's `rejected.json` moves into its run directory**
+  (`plans/<id>/rejected.json` → `runs/<id>/rejected.json`), for `auto` and for
+  every goal cycle, and the cycle's lineage is now the run id itself rather than
+  a `<first-run>-cycleK` name. `--plan-only` is unchanged: it mints no run id at
+  any point, so its rejection stays under `plans/`.
+- **`--plan-only` stays out of `runs/`**, and the reason changed. The old one
+  was that a directory with no `state.json` reads as damage; such directories
+  are now ordinary. The reason that survives is the enumeration: a preview has
+  none of the six statuses and cannot be given one.
+
+### Consumer contract (docs/RUN-FEED.md)
+
+**No schema bump. `events.jsonl` stays 2 and `state.json` stays 2.** An
+unmodified consumer improves without acting — through the planner call it sees
+a leg that is open, where it previously saw nothing at all. Three things it may
+want to know, all documented:
+
+- `run_started` gains one optional additive field, `phase`, with one defined
+  value, `"planning"`. **Count legs by `run_started` events with NO `phase`** —
+  an auto run's stream now carries two.
+- **A committed auto run has one close for two opens.** The planning open is
+  closed by the untagged open, not by a `run_finished` of its own.
+- **`run_finished {outcome: "failed"}` with ZERO node events** is a new shape: a
+  refused plan. A consumer that assumes a failed leg names a failed node has to
+  stop assuming it.
+- **A run directory may hold neither `graph.json` nor `state.json`** — through
+  a planning phase, and permanently for a refused plan. A v0.6.x binary reading
+  one reports it through its `WARNING`+skip / `unknown` channels: the *stream*
+  downgrades cleanly, the *directory shape* does not. The affected directories
+  are ones an old binary calls damaged rather than misreports as healthy.
+- **`run_started`'s timestamp moves earlier** for auto runs, so any elapsed
+  clock derived from it — the dashboard's included — now covers the planner call
+  too.
+
+### Known limits
+
+- `runs/` accumulates a directory per `auto` invocation, refused plans included,
+  and there is still no `runs prune`. Those calls were paid for, so this is
+  information rather than litter — but it is a visible change in what
+  `runs list` accumulates.
+- The goal loop's ASSESSMENT call is still invisible: it happens after cycle
+  *k*'s leg closed and before cycle *k+1*'s id exists, so it belongs to no run.
+  Same shape as #163; fixing it needs a phase that belongs to the *goal*.
+- The embedded live view still starts at execution — during planning there is
+  no graph to render. A separately running `oh-my-graph serve` shows the
+  `PLANNING` card immediately, which is the surface #163 names.
+- A run that never wrote a snapshot shows `-` for its cost, a refused plan's
+  real planner spend included. That figure is printed when it is incurred.
+
 ## [v0.6.1] - 2026-08-12
 
 **Patch because nothing new is typed** — `git diff v0.6.0..HEAD --
