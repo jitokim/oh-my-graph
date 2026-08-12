@@ -406,7 +406,7 @@ python3 $P/replay.py $WS X-ACT $P/argv/render-artifact.argv.txt    3 verbatim   
 
 # census the RE-RUN's own pair — the results file and the tool_use dump it just
 # wrote. Bare `python3 $P/census.py` censuses the COMMITTED records instead.
-python3 $P/census.py $WS/logs/results.jsonl $WS/tool_use
+python3 "$P/census.py" "$WS/logs/results.jsonl" "$WS/tool_use"
 ```
 
 `setup.sh` re-runs the harness, so the argv is re-derived from the code each

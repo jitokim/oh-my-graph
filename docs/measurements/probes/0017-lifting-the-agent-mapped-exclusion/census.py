@@ -21,7 +21,7 @@ under its own workspace (`$WS/logs/results.jsonl` and `$WS/tool_use`), so pass
 them together or neither. Defaulting one and not the other would census a
 re-run's rows against the committed dump and call every row a hole.
 
-usage: census.py [results.jsonl [tool_use_dir]]
+usage: census.py [results.jsonl tool_use_dir]
 """
 import glob
 import json
@@ -36,6 +36,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # would enumerate every session under ~/.claude/projects and aggregate
 # unrelated local tool use into this table as if it were the probe's.
 SID = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.I)
+
+# The arm name a results row carries, which is the other half of the committed
+# record's filename. It comes out of the same file `sid` does, so it gets the
+# same treatment: `../../outside` or `/tmp/outside` would walk `dump` and read
+# a JSONL that is not the probe's record at all.
+ARM = re.compile(r"\A[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 
 
 def census_from_transcript(sid):
@@ -73,6 +79,10 @@ def census_from_committed(dump, arm, sid):
 
 
 def main():
+    if len(sys.argv) == 2:
+        # Half a pair is not a source. Defaulting the dump under a re-run's
+        # results file would call every one of its rows `missing-committed`.
+        sys.exit("census: pass results.jsonl and tool_use_dir together, or neither")
     path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "results.jsonl")
     dump = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "tool_use")
     with open(path) as fh:
@@ -80,6 +90,10 @@ def main():
     bad = 0
     for row in rows:
         arm, sid = row["arm"], row["sid"]
+        if not ARM.match(arm):
+            bad += 1
+            print(f"{arm[:12]!r:<18}BAD-ARM  not an arm name; row skipped")
+            continue
         if not SID.match(sid):
             bad += 1
             print(f"{arm:<6}{sid[:8]!r:<12}BAD-SID  not the session id replay.py emits; row skipped")
