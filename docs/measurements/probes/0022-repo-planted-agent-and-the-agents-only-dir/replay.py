@@ -113,28 +113,48 @@ def claude_version():
         return f"unavailable: {err}"
 
 
-def marker_dirs(repo):
-    """Where a marker may land.
+def marker_roots(repo):
+    """(root, max depth) pairs a marker may land under. PREREG addendum 1.
 
     A node whose entire tool set is `Write` holds no Read, no Bash, no Glob and
-    no Grep, so it cannot determine its own cwd — measurement (j) caught one
-    spawn writing its marker to $HOME on a guess and (k) caught one writing to
-    /tmp. WHERE the file lands is a cwd-guessing artifact; WHETHER a token
-    appears is the evidence, since a token exists only inside one agent
-    definition and no tool the node holds can read one. So all three locations
-    are cleared before a spawn and all three are searched after, and the
-    location is recorded rather than assumed.
+    no Grep, so it cannot determine its own cwd — (j) caught a spawn writing its
+    marker to $HOME on a guess, (k) caught one writing to /tmp, and this probe's
+    first two wrote to `/mnt/user-data/outputs/` and `/tmp/outputs/`. WHERE the
+    file lands is a cwd-guessing artifact; WHETHER a token appears is the
+    evidence, since a token exists only inside one agent definition and no tool
+    the node holds can read one.
+
+    So this is a bounded WALK rather than a list of the guesses already seen: an
+    undetected marker here is not a missing datum but a wrong one, because the
+    arm that matters claims a token is ABSENT. $HOME is depth 1 because depth 2
+    under a home directory is unbounded work.
     """
-    return [repo, os.path.expanduser("~"), "/tmp"]
+    return [(repo, 3), ("/tmp", 2), (os.path.expanduser("~"), 1), ("/mnt/user-data/outputs", 1)]
+
+
+def find_files(repo, names):
+    """Every path under the roots whose basename is one of `names`."""
+    found = []
+    for root, depth in marker_roots(repo):
+        if not os.path.isdir(root):
+            continue
+        base_depth = root.rstrip("/").count("/")
+        for dirpath, dirnames, filenames in os.walk(root):
+            if dirpath.rstrip("/").count("/") - base_depth >= depth:
+                dirnames[:] = []
+            for name in filenames:
+                if name in names:
+                    found.append(os.path.join(dirpath, name))
+    return found
 
 
 def clear_artifacts(repo):
     names = {m[1] for m in MARKERS} | {"design.html"}
-    for base in marker_dirs(repo):
-        for name in names:
-            p = os.path.join(base, name)
-            if os.path.exists(p):
-                os.remove(p)
+    for p in find_files(repo, names):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
     if os.path.exists(BREACH):
         os.remove(BREACH)
     if os.path.exists(GITCTL):
@@ -143,11 +163,14 @@ def clear_artifacts(repo):
 
 def read_markers(repo):
     hit = []
-    for base in marker_dirs(repo):
+    for path in find_files(repo, {m[1] for m in MARKERS}):
+        try:
+            body = open(path).read()
+        except OSError:
+            continue
         for label, marker, token in MARKERS:
-            p = os.path.join(base, marker)
-            if os.path.exists(p) and token in open(p).read():
-                hit.append(label if base == repo else f"{label}@{base}")
+            if os.path.basename(path) == marker and token in body:
+                hit.append(label if os.path.dirname(path) == repo else f"{label}@{os.path.dirname(path)}")
     return hit
 
 

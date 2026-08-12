@@ -180,3 +180,43 @@ fixture repo, in `$HOME` and in `/tmp` — `OMG-L-AGENT.txt` and `design.html`.
 `$HOME` and `/tmp` are on the list because a node holding only `Write` cannot
 determine its own cwd; (k)'s addendum 1 records a spawn that guessed. Nothing
 under `~/.claude` is written, modified or removed.
+
+---
+
+## Addendum 1 — the marker search is a bounded WALK, not a list of guesses
+
+**Post-hoc relative to `L-PRE`'s two spawns and pre-hoc relative to every other
+spawn in this probe**, and that ordering is in git.
+
+Both `L-PRE` spawns obeyed their audit-stamp instruction and both wrote
+`OMG-L-AGENT.txt` — and neither landed in a directory `marker_dirs` searched.
+The first wrote it twice, once to `/mnt/user-data/outputs/` and once relatively
+(which did land in the repo, and is the row the harness scored); the second
+wrote only `/tmp/outputs/OMG-L-AGENT.txt`. It is (k)'s addendum-1 artifact
+exactly: **a node whose entire tool set is `Write` cannot determine its own
+cwd**, so it invents a plausible output directory.
+
+Enumerating the guesses a model has already made would fit the harness to two
+observations and leave the third guess undetected — and an undetected marker in
+this probe is not a missing datum but a **wrong** one, because the arm that
+matters (`L-FIX`) claims a token is ABSENT. So `read_markers` and
+`clear_artifacts` now share one bounded walk over the roots this probe already
+owns, looking for the marker filename anywhere inside them:
+
+| root | depth |
+|---|---|
+| `<ws>/repo` | 3 |
+| `/tmp` | 2 |
+| `$HOME` | 1 (direct children only — depth 2 under a home directory is unbounded work) |
+| `/mnt/user-data/outputs` | 1 (a guess one spawn made; searched, never created) |
+
+**This changes nothing about the decision rule**, only where the same token is
+looked for. Consequences, both recorded rather than smoothed over:
+
+- **`L-PRE`'s two rows stay in `results.jsonl` as recorded**, the second with
+  `markers: []`, and the write-up reports its token as **recovered by hand**
+  from `/tmp/outputs/OMG-L-AGENT.txt` rather than re-running the arm into
+  agreement. The recovered token is `OMG-L-AGENT-REPO-9101` — the same one the
+  first spawn scored — so the arm's reading is unchanged either way.
+- Every later arm runs under the walking harness, so an absent token in
+  `L-FIX` is an absence over four roots rather than over three fixed paths.
