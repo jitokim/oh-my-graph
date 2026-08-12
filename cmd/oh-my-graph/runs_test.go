@@ -90,12 +90,15 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 	}
 }
 
-// --- a paused run is not a PASS ----------------------------------------------
+// --- a paused run is neither a PASS nor a FAIL -------------------------------
 
-func TestListRuns_PausedRunRendersAsFail(t *testing.T) {
+// TestListRuns_APausedRunRendersAsPaused is #163's second defect, end to end
+// through the real engine rather than a fixture. A graph whose only node is a
+// root gate pauses immediately, touching no runner at all: the run stopped
+// exactly as designed and is resumable, and until ADR 0023 `runs list` printed
+// FAIL for it — indistinguishable from a run whose work failed.
+func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 	isolateRunHome(t)
-	// A graph whose only node is a root gate pauses immediately, touching no
-	// runner at all — the run is resumable, but it did not pass.
 	g := mustParse(t, `{"name":"gated","nodes":[{"id":"approve","type":"gate"}]}`)
 	err := executeGraph(context.Background(), "run-paused", g, &capturingRunner{},
 		commonRunFlags{inputs: inputFlag{}}, nil, 0, "gated.yaml", []byte("name: gated\n"), false, nil, nil)
@@ -108,9 +111,25 @@ func TestListRuns_PausedRunRendersAsFail(t *testing.T) {
 	if err := listRuns(&out, &warn, runsRoot()); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
-	row := lineContaining(t, out.String(), "run-paused")
-	if !strings.Contains(row, "FAIL") {
-		t.Errorf("a paused run must not render as PASS: %q", row)
+	got := out.String()
+	row := lineContaining(t, got, "run-paused")
+	if !strings.Contains(row, "PAUSED") {
+		t.Errorf("a paused run must render as PAUSED: %q", row)
+	}
+	for _, forbidden := range []string{"FAIL", "PASS"} {
+		if strings.Contains(row, forbidden) {
+			t.Errorf("a paused run must not render as %s: %q", forbidden, row)
+		}
+	}
+	// A PAUSED row is one a reader cannot act on without being told how, which
+	// is the same argument that puts a hint under an ABANDONED one.
+	if !strings.Contains(got, "oh-my-graph resume run-paused") {
+		t.Errorf("a PAUSED row must carry its resume command under the table:\n%s", got)
+	}
+	// And the header must not still call the column a verdict: PAUSED is not
+	// one (ADR 0023 §2.6).
+	if !strings.Contains(got, "STATUS") || strings.Contains(got, "VERDICT") {
+		t.Errorf("the column header must read STATUS, not VERDICT:\n%s", got)
 	}
 }
 
@@ -194,7 +213,14 @@ func writeEventFixture(t *testing.T, dir, runID string, events []runfeed.Event) 
 	}
 }
 
-func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
+// TestListRuns_StatusFollowsRunLifecycle walks the STATUS column through every
+// shape a run directory can be in. Two rows here are ADR 0023's whole point:
+// the gate pause and the session-limit pause used to render FAIL — "a failed,
+// paused, or interrupted run all render as FAIL", as the code said in its own
+// words — so a shepherd stopped at its approval gate, exit 2 and resumable, was
+// listed as a failure. Two more are new shapes the ADR creates: a run inside its
+// planner call, and a refused plan that settles with no snapshot at all.
+func TestListRuns_StatusFollowsRunLifecycle(t *testing.T) {
 	const runID = "run-under-test"
 	const twoNode = `{"name":"demo","nodes":[{"id":"a","prompt":"a"},{"id":"b","prompt":"b","depends_on":["a"]}]}`
 	const gated = `{"name":"gated","nodes":[{"id":"g","type":"gate"}]}`
@@ -214,9 +240,9 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 		// hand-built on purpose, because only a hand-built line can carry a
 		// schema today's StreamWriter cannot stamp.
 		rawEvents []byte
-		// wantVerdict is the row's VERDICT cell; "" means the run must be
+		// wantStatus is the row's STATUS cell; "" means the run must be
 		// skipped with a warning instead of listed.
-		wantVerdict string
+		wantStatus string
 	}{
 		{
 			name: "open leg with no snapshot yet renders RUNNING",
@@ -224,7 +250,7 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 				{Type: runfeed.EventRunStarted},
 				{Type: runfeed.EventNodeStarted, NodeID: "a"},
 			},
-			wantVerdict: verdictRunning,
+			wantStatus: "RUNNING",
 		},
 		{
 			name: "open leg with a partial snapshot renders RUNNING, not FAIL",
@@ -238,7 +264,7 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 				Graph: json.RawMessage(twoNode),
 				Nodes: map[string]runstate.NodeRecord{"a": passA},
 			},
-			wantVerdict: verdictRunning,
+			wantStatus: "RUNNING",
 		},
 		{
 			name: "closed passed leg renders PASS",
@@ -251,7 +277,7 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 				Graph: json.RawMessage(twoNode),
 				Nodes: map[string]runstate.NodeRecord{"a": passA, "b": passB},
 			},
-			wantVerdict: "PASS",
+			wantStatus: "PASS",
 		},
 		{
 			name: "closed failed leg renders FAIL",
@@ -265,10 +291,11 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 				Graph: json.RawMessage(twoNode),
 				Nodes: map[string]runstate.NodeRecord{"a": failA},
 			},
-			wantVerdict: "FAIL",
+			wantStatus: "FAIL",
 		},
 		{
-			name: "paused leg is closed, so it keeps today's FAIL, not RUNNING",
+			// THE DEFECT, fixed. This row printed FAIL until ADR 0023.
+			name: "a gate pause is PAUSED, not FAIL",
 			events: []runfeed.Event{
 				{Type: runfeed.EventRunStarted},
 				{Type: runfeed.EventGatePaused, NodeID: "g"},
@@ -282,25 +309,63 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 					Decisions: map[string]runstate.GateDecision{"g": runstate.GatePause},
 				},
 			},
-			wantVerdict: "FAIL",
+			wantStatus: "PAUSED",
 		},
 		{
-			name:        "corrupt snapshot with no stream still warns and skips",
-			rawState:    []byte("not json"),
-			wantVerdict: "",
+			// The same value by the other route, and the one the dashboard
+			// painted red: ADR 0009's session-limit pause has NO gate block at
+			// all, which is why PAUSED is read off the stream's outcome.
+			name: "a session-limit pause is PAUSED too, with no gate anywhere",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted},
+				{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+			},
+			snapshot: &runstate.Snapshot{
+				RunID: runID,
+				Graph: json.RawMessage(twoNode),
+				Nodes: map[string]runstate.NodeRecord{"a": passA},
+			},
+			wantStatus: "PAUSED",
 		},
 		{
-			name:        "a stream schema newer than this binary warns and skips",
-			rawEvents:   []byte(`{"schema":99,"ts":"2026-08-01T00:00:00Z","run_id":"run-under-test","event":"run_started"}` + "\n"),
-			wantVerdict: "",
+			// #163 itself: through the planner call the directory holds a lock
+			// and a one-line stream and nothing else.
+			name: "a planner call in progress renders PLANNING",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+			},
+			wantStatus: "PLANNING",
+		},
+		{
+			// ADR 0023 §2.1.1's newest cell, and §9's named regression: a
+			// settled run with NO snapshot at all must be a FAIL row, not a
+			// WARNING+skip. The excuse for a missing snapshot is keyed on the
+			// error, not on the status, precisely so this row exists.
+			name: "a refused plan is a FAIL row, not a skipped directory",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+			},
+			wantStatus: "FAIL",
+		},
+		{
+			name:       "corrupt snapshot with no stream still warns and skips",
+			rawState:   []byte("not json"),
+			wantStatus: "",
+		},
+		{
+			name:       "a stream schema newer than this binary warns and skips",
+			rawEvents:  []byte(`{"schema":99,"ts":"2026-08-01T00:00:00Z","run_id":"run-under-test","event":"run_started"}` + "\n"),
+			wantStatus: "",
 		},
 		{
 			name: "corrupt snapshot is broken even under an open leg",
 			events: []runfeed.Event{
 				{Type: runfeed.EventRunStarted},
 			},
-			rawState:    []byte("not json"),
-			wantVerdict: "",
+			rawState:   []byte("not json"),
+			wantStatus: "",
 		},
 	}
 
@@ -339,7 +404,7 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 			}
 			got := out.String()
 
-			if tc.wantVerdict == "" {
+			if tc.wantStatus == "" {
 				if !strings.Contains(warn.String(), runID) {
 					t.Errorf("the broken run must be named in a warning, got %q", warn.String())
 				}
@@ -353,8 +418,8 @@ func TestListRuns_VerdictFollowsRunLifecycle(t *testing.T) {
 			}
 			row := lineContaining(t, got, runID)
 			fields := strings.Fields(row)
-			if verdict := fields[len(fields)-1]; verdict != tc.wantVerdict {
-				t.Errorf("verdict = %q, want %q (row %q)", verdict, tc.wantVerdict, row)
+			if status := fields[len(fields)-1]; status != tc.wantStatus {
+				t.Errorf("status = %q, want %q (row %q)", status, tc.wantStatus, row)
 			}
 			if !strings.Contains(got, "1 run(s)") {
 				t.Errorf("the row must count toward the run count:\n%s", got)

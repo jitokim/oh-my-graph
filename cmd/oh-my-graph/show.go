@@ -13,6 +13,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // runShow is the `show` subcommand: parse argv and render one persisted run's
@@ -30,21 +31,80 @@ func runShow(args []string) error {
 	return showRun(os.Stdout, runDirFor(runID), runID)
 }
 
-// showRun loads runDir's snapshot and prints the run's per-node ledger and
-// total. An unknown run id — no snapshot on disk — is a distinct, clearly
-// worded error rather than a raw file-not-found, because it is the one
-// failure the user causes by mistyping an id.
+// showRun prints the run's STATUS and then its per-node ledger and total. An
+// unknown run id — no run directory on disk — is a distinct, clearly worded
+// error rather than a raw file-not-found, because it is the one failure the
+// user causes by mistyping an id.
+//
+// The status line is ADR 0023 §2.6's addition, and it closes the hole that made
+// `show` the surface with NO run-level answer at all: re-opening a paused run
+// after the fact used to say nothing whatsoever about it being paused, since the
+// per-node table has no row for "the run stopped and is waiting for you".
+//
+// A run directory that EXISTS but has no snapshot is no longer the unknown-run
+// error either, and that distinction is the point: a run inside its planner call
+// and a refused plan both live there permanently (ADR 0023 §2.1.1), and telling
+// their owner "unknown run" about a directory this binary just derived a status
+// for would be a lie the enumeration exists to stop. A mistyped id still has no
+// directory, so it still gets the error.
 func showRun(w io.Writer, runDir, runID string) error {
+	if _, err := os.Stat(runDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("unknown run %q: no run directory at %s (see the run ids under %s)", runID, runDir, filepath.Dir(runDir))
+		}
+		return fmt.Errorf("stat run %q: %w", runID, err)
+	}
+	// The shared derivation, so `show` cannot disagree with `runs list`, the
+	// dashboard, `watch` or ResolveRun about the same directory. An
+	// unanswerable one (an unreadable stream or a corrupt snapshot) is reported
+	// below by the reader that actually needs the bytes, so this one stays
+	// silent rather than printing the same damage twice.
+	status, statusErr := runstatus.Of(runDir)
+
 	statePath := filepath.Join(runDir, stateFileName)
 	snap, err := runstate.Load(statePath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("unknown run %q: no snapshot at %s (see the run ids under %s)", runID, statePath, filepath.Dir(runDir))
+			if statusErr != nil {
+				return fmt.Errorf("read run %q: %w", runID, statusErr)
+			}
+			fmt.Fprintf(w, "Run %s — %s\n", runID, status)
+			fmt.Fprintf(w, "No per-node record yet: %s\n", noRecordReason(status))
+			return nil
 		}
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
-	printRunDetail(w, runID, showRecords(snap))
+	printRunDetail(w, runID, statusWord(status, statusErr), showRecords(snap))
 	return nil
+}
+
+// statusWord is the status for `show`'s header, or "" when the derivation could
+// not answer — in which case the header simply omits it, because the reader
+// that needed those bytes reports the damage itself and one directory should
+// not produce two complaints.
+func statusWord(status runstatus.Status, err error) string {
+	if err != nil {
+		return ""
+	}
+	return status.String()
+}
+
+// noRecordReason says WHY a run directory holds no state.json, in terms of the
+// status that was derived for it — the same split runstatus.Recovery makes,
+// asked in the present tense. Without it the line reads as damage, which is
+// exactly the misreading ADR 0023 §2.5 spends itself preventing: a missing
+// snapshot is normal at three of the six statuses and permanent at one.
+func noRecordReason(status runstatus.Status) string {
+	switch status {
+	case runstatus.Planning:
+		return "this run is still inside its planner call, so it has no graph yet"
+	case runstatus.Abandoned:
+		return "its leg died before any node settled, so there is nothing to resume from — run the graph again"
+	case runstatus.Fail:
+		return "no node ever settled — for a run that ends here, its planner call was refused and the spec it rejected is kept as rejected.json in this directory"
+	default:
+		return "the snapshot is written after a node's first terminal verdict, and none has landed yet"
+	}
 }
 
 // showRecords converts the snapshot's per-node records into ledger.Record rows
@@ -98,8 +158,18 @@ const (
 // `show` is the surface someone opens to re-read a finished run — the surface
 // #119's reporter would have opened — so it is the last place a self-reported
 // PASS should be able to read as a verified one.
-func printRunDetail(w io.Writer, runID string, records []ledger.Record) {
-	fmt.Fprintf(w, "Run %s — %d node(s)\n", runID, len(records))
+//
+// status is the RUN-level word from the shared enumeration (ADR 0023 §2.6), on
+// the header line beside the node count because that is the line a reader's eye
+// already lands on; empty means the derivation could not answer and the header
+// says only what it knows. It is deliberately not a column: it describes the
+// run, and every row below it describes a node.
+func printRunDetail(w io.Writer, runID, status string, records []ledger.Record) {
+	if status != "" {
+		fmt.Fprintf(w, "Run %s — %s, %d node(s)\n", runID, status, len(records))
+	} else {
+		fmt.Fprintf(w, "Run %s — %d node(s)\n", runID, len(records))
+	}
 	fmt.Fprintf(w, "%-*s %-*s %-*s %*s %*s  %s\n",
 		showNodeWidth, "NODE",
 		ledger.VerdictWidth, "VERDICT",

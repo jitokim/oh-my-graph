@@ -99,8 +99,8 @@ func TestListRuns_AbandonedRunIsLabelledAndHinted(t *testing.T) {
 
 	row := lineContaining(t, got, "run-dead")
 	fields := strings.Fields(row)
-	if verdict := fields[len(fields)-1]; verdict != verdictAbandoned {
-		t.Errorf("verdict = %q, want %q (row %q)", verdict, verdictAbandoned, row)
+	if status, want := fields[len(fields)-1], runstatus.Abandoned.String(); status != want {
+		t.Errorf("status = %q, want %q (row %q)", status, want, row)
 	}
 	// Not FAIL: a FAIL is a verdict about the work, and the work has none.
 	if strings.Contains(row, "FAIL") {
@@ -137,8 +137,8 @@ func TestListRuns_ASnapshotlessAbandonedRunIsStillListed(t *testing.T) {
 		t.Fatalf("a snapshot-less abandoned run must not be skipped, got warnings: %q", warn.String())
 	}
 	row := lineContaining(t, got, "run-dead-early")
-	if !strings.Contains(row, verdictAbandoned) {
-		t.Errorf("row = %q, want an %s row with placeholders", row, verdictAbandoned)
+	if !strings.Contains(row, runstatus.Abandoned.String()) {
+		t.Errorf("row = %q, want an %v row with placeholders", row, runstatus.Abandoned)
 	}
 	// GRAPH, NODES and COST are unknowable without a snapshot, so the row must
 	// carry three "-" placeholders between the run id and the verdict. Asserted
@@ -157,11 +157,13 @@ func TestListRuns_ASnapshotlessAbandonedRunIsStillListed(t *testing.T) {
 	}
 }
 
-// TestListRuns_VerdictAgreesWithTheSharedRule is the CLI arm of the
+// TestListRuns_StatusAgreesWithTheSharedRule is the CLI arm of the
 // cross-surface agreement test: the same open-leg stream must read RUNNING or
 // ABANDONED strictly according to runstatus, never by a rule this command
-// composes for itself.
-func TestListRuns_VerdictAgreesWithTheSharedRule(t *testing.T) {
+// composes for itself. Since ADR 0023 the column IS the shared answer, with no
+// per-surface word left to disagree with it — which is what the assertion
+// against Status.String() says.
+func TestListRuns_StatusAgreesWithTheSharedRule(t *testing.T) {
 	for _, lock := range []string{"no lock file", "lock held", "lock free"} {
 		t.Run(lock, func(t *testing.T) {
 			root := t.TempDir()
@@ -183,8 +185,8 @@ func TestListRuns_VerdictAgreesWithTheSharedRule(t *testing.T) {
 			}
 			row := lineContaining(t, out.String(), "run-1")
 			fields := strings.Fields(row)
-			if verdict, want := fields[len(fields)-1], unsettledVerdict(shared); verdict != want {
-				t.Errorf("verdict = %q, want %q (the shared rule says %v)", verdict, want, shared)
+			if status, want := fields[len(fields)-1], shared.String(); status != want {
+				t.Errorf("status = %q, want %q (the shared rule says %v)", status, want, shared)
 			}
 		})
 	}
@@ -210,6 +212,30 @@ func TestWatchRun_RefusesToTailAnAbandonedRun(t *testing.T) {
 	}
 	if !strings.Contains(warn.String(), runstatus.OrphanWarning) {
 		t.Errorf("the refusal must carry the recovery hint: %q", warn.String())
+	}
+}
+
+// TestWatchRun_PrintsTheStatusItIsTailingToward is ADR 0023 §2.6's addition to
+// this surface. A tail alone cannot tell a watcher which silence they are
+// sitting in — a planner call, a running node, or a stream that is already over
+// — because all three look like "no new lines". The word is printed once,
+// before the first event, from the same derivation every other surface uses.
+func TestWatchRun_PrintsTheStatusItIsTailingToward(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "run-planning")
+	writeEventFixture(t, dir, "run-planning", []runfeed.Event{
+		{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+	})
+	liveLegLock(t, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	var out, warn strings.Builder
+	if err := watchRun(ctx, &out, &warn, dir, "run-planning", testPoll); err != nil {
+		t.Fatalf("watchRun refused a planning run: %v", err)
+	}
+	if !strings.Contains(out.String(), "run run-planning is PLANNING") {
+		t.Errorf("watch must name the status it is tailing toward:\n%s", out.String())
 	}
 }
 

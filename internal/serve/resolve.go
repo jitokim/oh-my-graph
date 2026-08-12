@@ -15,13 +15,21 @@ import (
 //  1. An explicit run id wins. It must exist on disk — a mistyped id is the
 //     one failure the user causes, so it is a clearly worded error rather
 //     than an empty page.
-//  2. Otherwise the newest run that is actually in flight (runstatus.Of — the
-//     same shared derivation `runs list` renders RUNNING from: an open leg AND
-//     a held lock), because "the run happening right now" is what a live view
+//
+//  2. Otherwise the newest run that is actually in flight (runstatus.Status's
+//     own InFlight predicate over the same shared derivation `runs list`
+//     renders from), because "the run happening right now" is what a live view
 //     is for. An ABANDONED run is deliberately NOT preferred: its leg is open
 //     only because the process that opened it died, and parking a live view on
 //     a corpse instead of the newest real run is exactly what ADR 0015 §4
 //     fixes here.
+//
+//     It is the PREDICATE and not an equality test, and ADR 0023 §2.1.1 names
+//     this line as the one place a mechanical rewrite of that ADR would have
+//     lost silently: PLANNING splits the in-flight side, so `== Running` would
+//     stop preferring a run that is inside its planner call — withholding the
+//     very state ADR 0023 exists to make visible, on the surface #163 names.
+//
 //  3. Otherwise the newest run directory.
 //
 // The CLI only ever takes branch 1: since the dashboard landed, `oh-my-graph
@@ -66,7 +74,7 @@ func ResolveRun(root, explicit string) (string, error) {
 
 	for _, runID := range runIDs {
 		status, err := runstatus.Of(filepath.Join(root, runID))
-		if err == nil && status == runstatus.InFlight {
+		if err == nil && status.InFlight() {
 			return runID, nil
 		}
 	}

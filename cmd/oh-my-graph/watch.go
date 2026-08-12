@@ -67,9 +67,17 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	// error below, and a stream this binary refuses to read is Follow's — so an
 	// unanswerable probe simply falls through to the tail, which is the
 	// pre-ADR-0015 behaviour.
-	if status, err := runstatus.Of(runDir); err == nil && status == runstatus.Abandoned {
-		fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
-		return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
+	if status, err := runstatus.Of(runDir); err == nil {
+		if status == runstatus.Abandoned {
+			fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
+			return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
+		}
+		// The word this tail is heading toward, printed before the first event
+		// rather than inferred from what scrolls past (ADR 0023 §2.6). It is
+		// what tells a watcher whether the silence they are about to sit in is
+		// a planner call, a running node, or a stream that is already over —
+		// the three cases that look identical from a tail alone.
+		fmt.Fprintf(w, "run %s is %s\n", runID, status)
 	}
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE

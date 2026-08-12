@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
@@ -14,61 +15,223 @@ import (
 // --- the rule itself ---------------------------------------------------------
 
 // TestDerive_AbandonedNeedsTwoAffirmativeFacts walks the whole product of the
-// two inputs, because the value of stating the rule once is that its table is
-// the table — ADR 0015 §2's, exactly.
+// liveness inputs against an open and a closed leg, because the value of stating
+// the rule once is that its table is the table — ADR 0015 §2's, exactly, which
+// ADR 0023 imports whole rather than reopening.
 func TestDerive_AbandonedNeedsTwoAffirmativeFacts(t *testing.T) {
+	// A settled shape with everything a PASS needs, so the closed-leg rows below
+	// isolate the lock as the only variable.
+	passed := Facts{HasSnapshot: true, CompletedNodes: 2, TotalNodes: 2}
+	open := Facts{OpenLeg: true}
+
 	cases := []struct {
-		openLeg bool
-		lock    runstate.Liveness
-		want    Status
+		facts Facts
+		lock  runstate.Liveness
+		want  Status
 	}{
-		// A closed leg is settled whatever the lock says: the lock is not
+		// A closed leg settles whatever the lock says: the lock is not
 		// consulted at all for a run that reported an end.
-		{false, runstate.LivenessFree, Settled},
-		{false, runstate.LivenessHeld, Settled},
-		{false, runstate.LivenessUnknown, Settled},
+		{passed, runstate.LivenessFree, Pass},
+		{passed, runstate.LivenessHeld, Pass},
+		{passed, runstate.LivenessUnknown, Pass},
 		// An open leg whose holder is alive is the ordinary running run.
-		{true, runstate.LivenessHeld, InFlight},
+		{open, runstate.LivenessHeld, Running},
 		// Every doubt — a missing lock file, an unmarked one, a filesystem
 		// whose flock is not this flock, a probe error — arrives here as
 		// unknown and must read as today's answer, never as abandoned.
-		{true, runstate.LivenessUnknown, InFlight},
+		{open, runstate.LivenessUnknown, Running},
 		// The one abandoned arm: two affirmative facts.
-		{true, runstate.LivenessFree, Abandoned},
+		{open, runstate.LivenessFree, Abandoned},
+		// And the split PLANNING introduces is INSIDE the in-flight side: a free
+		// lock still answers first, so a planner call whose process died is
+		// abandoned rather than stuck reading PLANNING forever.
+		{Facts{OpenLeg: true, Phase: runfeed.PhasePlanning}, runstate.LivenessHeld, Planning},
+		{Facts{OpenLeg: true, Phase: runfeed.PhasePlanning}, runstate.LivenessUnknown, Planning},
+		{Facts{OpenLeg: true, Phase: runfeed.PhasePlanning}, runstate.LivenessFree, Abandoned},
 	}
 	for _, tc := range cases {
-		if got := Derive(tc.openLeg, tc.lock); got != tc.want {
-			t.Errorf("Derive(openLeg=%v, lock=%v) = %v, want %v", tc.openLeg, tc.lock, got, tc.want)
+		if got := Derive(tc.facts, tc.lock); got != tc.want {
+			t.Errorf("Derive(%+v, lock=%v) = %v, want %v", tc.facts, tc.lock, got, tc.want)
 		}
 	}
 }
 
-func TestStatus_ZeroValueIsSettled(t *testing.T) {
-	// A Status nobody set must not be able to claim a run is abandoned — the
-	// same reason runstate.Liveness's zero value is unknown.
-	var s Status
-	if s != Settled {
-		t.Fatalf("zero Status = %v, want %v", s, Settled)
+// TestDerive_IsTotalOverTheSixValues is ADR 0023 §2.1's precedence table, cell
+// by cell, including the two cells that are the whole reason the enumeration is
+// six rather than four and the one §3 makes common.
+func TestDerive_IsTotalOverTheSixValues(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		facts Facts
+		lock  runstate.Liveness
+		want  Status
+	}{
+		{
+			name:  "inside the planner call",
+			facts: Facts{OpenLeg: true, Phase: runfeed.PhasePlanning},
+			lock:  runstate.LivenessHeld,
+			want:  Planning,
+		},
+		{
+			// Affirmative in BOTH directions: the plan committed, so the LATEST
+			// run_started carries no phase. Deriving this from "no node has
+			// started yet" would paint the first instants of every hand-written
+			// run PLANNING (ADR 0023 §2.3).
+			name:  "the plan committed, before the first node launches",
+			facts: Facts{OpenLeg: true},
+			lock:  runstate.LivenessHeld,
+			want:  Running,
+		},
+		{
+			// The defect ADR 0023 §1.2 measures. PAUSED comes off the stream's
+			// outcome, so this fixture carries NO gate anywhere — it is ADR
+			// 0009's session-limit pause, the one the dashboard painted red.
+			name:  "a session-limit pause, with no gate in sight",
+			facts: Facts{LastOutcome: runfeed.OutcomePaused, HasSnapshot: true, CompletedNodes: 1, TotalNodes: 3},
+			want:  Paused,
+		},
+		{
+			// "paused" answers before the completed-count, so a pause that
+			// happens to have finished every node is still PAUSED, not PASS.
+			name:  "the pause outcome beats the completed count",
+			facts: Facts{LastOutcome: runfeed.OutcomePaused, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
+			want:  Paused,
+		},
+		{
+			name:  "every node of the graph passed",
+			facts: Facts{LastOutcome: runfeed.OutcomePassed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
+			want:  Pass,
+		},
+		{
+			name:  "a node failed",
+			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 2, TotalNodes: 3},
+			want:  Fail,
+		},
+		{
+			// §2.1.1's newest cell, and the one §3 makes the shape of every
+			// refused plan: a closed leg with no snapshot at all.
+			name:  "a refused plan: settled, no snapshot",
+			facts: Facts{LastOutcome: runfeed.OutcomeFailed},
+			want:  Fail,
+		},
+		{
+			// PASS is the ONE value that requires the snapshot, so the
+			// conservative direction is forced: a passed leg whose snapshot
+			// write was lost reads FAIL rather than claiming a PASS from a
+			// stream token while the record that proves it is missing (§5).
+			name:  "a passed outcome whose snapshot is missing cannot claim PASS",
+			facts: Facts{LastOutcome: runfeed.OutcomePassed},
+			want:  Fail,
+		},
+		{
+			// The counts alone must not manufacture a PASS out of nothing:
+			// 0 == 0 is true, and a snapshot-less directory has both.
+			name:  "zero of zero is not a pass",
+			facts: Facts{HasSnapshot: true},
+			want:  Fail,
+		},
+		{
+			// An open leg answers before ANY snapshot question — mid-run the
+			// snapshot holds only the nodes completed so far.
+			name:  "an open leg beats a completed-looking snapshot",
+			facts: Facts{OpenLeg: true, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
+			lock:  runstate.LivenessHeld,
+			want:  Running,
+		},
+		{
+			// ...and beats a stale outcome from a leg that already closed once,
+			// which is exactly a resumed run's stream.
+			name:  "an open leg beats the previous leg's paused outcome",
+			facts: Facts{OpenLeg: true, LastOutcome: runfeed.OutcomePaused},
+			lock:  runstate.LivenessHeld,
+			want:  Running,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Derive(tc.facts, tc.lock); got != tc.want {
+				t.Errorf("Derive(%+v, lock=%v) = %v, want %v", tc.facts, tc.lock, got, tc.want)
+			}
+		})
 	}
 }
 
-// TestStatus_StringIsTheLabelEverySurfaceRenders pins the three words, because
-// String is what `runs list`, the dashboard card and every log line put in front
-// of an operator: changing one of them silently changes what the tool says a run
-// is. The default arm is asserted through Settled deliberately — an unset Status
-// must read as the harmless one (see TestStatus_ZeroValueIsSettled).
-func TestStatus_StringIsTheLabelEverySurfaceRenders(t *testing.T) {
+// TestStatus_ZeroValueIsNoStatusAtAll pins the choice ADR 0023 makes about the
+// enumeration's zero: it is NOT one of the six. Nothing derives it, so a Status
+// that was never derived cannot masquerade as a run's real answer — and in
+// particular cannot claim a run passed, is abandoned, or is settled.
+func TestStatus_ZeroValueIsNoStatusAtAll(t *testing.T) {
+	var s Status
+	for _, real := range []Status{Planning, Running, Abandoned, Paused, Pass, Fail} {
+		if s == real {
+			t.Fatalf("zero Status equals %v — the zero value must not be one of the six", real)
+		}
+	}
+	if s.Settled() || s.InFlight() {
+		t.Errorf("zero Status: Settled=%v InFlight=%v, want both false", s.Settled(), s.InFlight())
+	}
+	if got := s.String(); got != "UNKNOWN" {
+		t.Errorf("zero Status.String() = %q, want %q", got, "UNKNOWN")
+	}
+}
+
+// TestStatus_StringIsTheWordEverySurfaceRenders pins the six words, because
+// String is what the `runs list` STATUS column, `show`'s header, `watch`'s
+// opening line and the dashboard's state token all put in front of an operator:
+// changing one of them silently changes what the tool says a run is.
+func TestStatus_StringIsTheWordEverySurfaceRenders(t *testing.T) {
 	cases := []struct {
 		status Status
 		want   string
 	}{
-		{Settled, "settled"},
-		{InFlight, "in flight"},
-		{Abandoned, "abandoned"},
+		{Planning, "PLANNING"},
+		{Running, "RUNNING"},
+		{Abandoned, "ABANDONED"},
+		{Paused, "PAUSED"},
+		{Pass, "PASS"},
+		{Fail, "FAIL"},
 	}
+	seen := map[string]bool{}
 	for _, tc := range cases {
-		if got := tc.status.String(); got != tc.want {
+		got := tc.status.String()
+		if got != tc.want {
 			t.Errorf("Status(%d).String() = %q, want %q", int(tc.status), got, tc.want)
+		}
+		if seen[got] {
+			t.Errorf("two statuses render as %q — the six words must be distinguishable", got)
+		}
+		seen[got] = true
+	}
+}
+
+// TestStatus_PredicatesPartitionTheSix is the symmetry ADR 0023 §2.1.1 demands:
+// PLANNING splits the IN-FLIGHT side, so a predicate on only the settled side
+// would leave every in-flight call site to re-derive membership by hand — and
+// ResolveRun rewritten as `== Running` would silently stop preferring a planning
+// run. Every value is on exactly one side.
+func TestStatus_PredicatesPartitionTheSix(t *testing.T) {
+	for _, tc := range []struct {
+		status       Status
+		wantSettled  bool
+		wantInFlight bool
+	}{
+		{Planning, false, true},
+		{Running, false, true},
+		{Paused, true, false},
+		{Pass, true, false},
+		{Fail, true, false},
+		// ABANDONED is on NEITHER side, and that is the point of it: the leg is
+		// open (so it never settled) and no process is working on it (so it is
+		// not in flight). Folding it into either would erase ADR 0015 §4.
+		{Abandoned, false, false},
+	} {
+		if got := tc.status.Settled(); got != tc.wantSettled {
+			t.Errorf("%v.Settled() = %v, want %v", tc.status, got, tc.wantSettled)
+		}
+		if got := tc.status.InFlight(); got != tc.wantInFlight {
+			t.Errorf("%v.InFlight() = %v, want %v", tc.status, got, tc.wantInFlight)
+		}
+		if tc.status.Settled() && tc.status.InFlight() {
+			t.Errorf("%v is both settled and in flight", tc.status)
 		}
 	}
 }
@@ -90,31 +253,53 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
 	)
 
+	planningLeg := []runfeed.Event{{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning}}
+	refusedPlan := []runfeed.Event{
+		{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+	}
+	pausedLeg := []runfeed.Event{
+		{Type: runfeed.EventRunStarted},
+		{Type: runfeed.EventNodeStarted, NodeID: "a"},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+	}
+
 	cases := []struct {
 		name   string
 		events []runfeed.Event
 		lock   string // "none", "held", "free", "legacy-gone", "legacy-alive"
+		snap   string // "" for none; otherwise the node id that passed
 		want   Status
 	}{
-		{"no stream at all", nil, "none", Settled},
-		{"closed leg, free lock", closedLeg, "free", Settled},
-		{"open leg, no lock file", openLeg, "none", InFlight},
-		{"open leg, lock held", openLeg, "held", InFlight},
-		{"open leg, lock free", openLeg, "free", Abandoned},
+		{name: "no stream and no snapshot at all", lock: "none", want: Fail},
+		{name: "closed leg, free lock, every node passed", events: closedLeg, lock: "free", snap: "a", want: Pass},
+		{name: "closed leg whose snapshot is missing cannot read PASS", events: closedLeg, lock: "free", want: Fail},
+		{name: "open leg, no lock file", events: openLeg, lock: "none", want: Running},
+		{name: "open leg, lock held", events: openLeg, lock: "held", want: Running},
+		{name: "open leg, lock free", events: openLeg, lock: "free", want: Abandoned},
 		// The shape both preserved specimens of ADR 0015's Context are on disk.
 		// It reads exactly like a released marked lock here, and it has to: a
 		// run abandoned before the upgrade has no other route to a verdict,
 		// because no live binary will ever write the marker into its file.
-		{"open leg, a pre-flock lock whose pid is gone", openLeg, "legacy-gone", Abandoned},
+		{name: "open leg, a pre-flock lock whose pid is gone", events: openLeg, lock: "legacy-gone", want: Abandoned},
 		// The same file with a pid that still names something is the in-flight
 		// arm, because alive is inconclusive on a pre-flock lock.
-		{"open leg, a pre-flock lock whose pid still names a process", openLeg, "legacy-alive", InFlight},
+		{name: "open leg, a pre-flock lock whose pid still names a process", events: openLeg, lock: "legacy-alive", want: Running},
+		// The three cells ADR 0023 adds, over real bytes.
+		{name: "a planner call in progress", events: planningLeg, lock: "held", want: Planning},
+		{name: "a planner call whose process died", events: planningLeg, lock: "free", want: Abandoned},
+		{name: "a refused plan: two events, no graph.json, no state.json", events: refusedPlan, lock: "free", want: Fail},
+		{name: "a paused leg, snapshot present but incomplete", events: pausedLeg, lock: "free", snap: "a", want: Paused},
+		{name: "a paused leg with no snapshot at all", events: pausedLeg, lock: "free", want: Paused},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			runDir := t.TempDir()
 			if len(tc.events) > 0 {
 				writeEvents(t, runDir, "run-1", tc.events)
+			}
+			if tc.snap != "" {
+				writeSnapshot(t, runDir, tc.snap)
 			}
 			switch tc.lock {
 			case "held":
@@ -134,17 +319,74 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("Of = %v, want %v", got, tc.want)
 			}
-			// Probe is the same answer for a caller that already knows the leg
-			// state — the dashboard card's path — and the two must never differ.
-			open, err := runfeed.InFlight(filepath.Join(runDir, runfeed.FileName))
-			if err != nil {
-				t.Fatalf("runfeed.InFlight returned error: %v", err)
-			}
-			if probed := Probe(runDir, open); probed != got {
+			// Probe is the same answer for a caller that already gathered the
+			// facts — the dashboard card's path, which must not pay a second
+			// read of either file — and the two must never differ.
+			if probed := Probe(runDir, factsOf(t, runDir)); probed != got {
 				t.Errorf("Probe = %v but Of = %v; the two forms of the rule disagree", probed, got)
 			}
 		})
 	}
+}
+
+// TestOf_MissingSnapshotIsNeverAnErrorButAnUnreadableOneAlwaysIs is ADR 0023
+// §2.1.1's central distinction, at the layer that decides it: the ABSENCE of a
+// file is a fact about the run (derivable, and since §3 permanent for a refused
+// plan), while the UNREADABILITY of one is a fact about the reader (an error,
+// and the only kind that may make a row disappear).
+func TestOf_MissingSnapshotIsNeverAnErrorButAnUnreadableOneAlwaysIs(t *testing.T) {
+	settled := []runfeed.Event{
+		{Type: runfeed.EventRunStarted},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeEvents(t, runDir, "run-1", settled)
+		got, err := Of(runDir)
+		if err != nil {
+			t.Fatalf("Of over a settled run with no snapshot = error %v, want a status", err)
+		}
+		if got != Fail {
+			t.Errorf("Of = %v, want %v", got, Fail)
+		}
+	})
+
+	t.Run("corrupt", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeEvents(t, runDir, "run-1", settled)
+		if err := os.WriteFile(filepath.Join(runDir, runstate.SnapshotFileName), []byte("{not json"), 0o600); err != nil {
+			t.Fatalf("write corrupt snapshot: %v", err)
+		}
+		if _, err := Of(runDir); err == nil {
+			t.Fatal("Of over a corrupt snapshot = nil error, want the reader's own refusal")
+		}
+	})
+
+	t.Run("schema this binary refuses", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeEvents(t, runDir, "run-1", settled)
+		if err := os.WriteFile(filepath.Join(runDir, runstate.SnapshotFileName), []byte(`{"schema":99}`), 0o600); err != nil {
+			t.Fatalf("write incompatible snapshot: %v", err)
+		}
+		if _, err := Of(runDir); err == nil {
+			t.Fatal("Of over an incompatible snapshot schema = nil error, want a refusal")
+		}
+	})
+
+	t.Run("graph bytes that will not parse", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeEvents(t, runDir, "run-1", settled)
+		// Valid JSON, valid snapshot schema, and graph bytes that are not a
+		// graph — the one shape runstate.Write itself cannot produce.
+		body := `{"schema":` + strconv.Itoa(runstate.Schema) + `,"run_id":"run-1","graph":{"name":"x","nodes":"not a list"}}`
+		if err := os.WriteFile(filepath.Join(runDir, runstate.SnapshotFileName), []byte(body), 0o600); err != nil {
+			t.Fatalf("write snapshot: %v", err)
+		}
+		if _, err := Of(runDir); err == nil {
+			t.Fatal("Of over unparseable graph bytes = nil error, want a refusal")
+		}
+	})
 }
 
 // TestOf_UnreadableStreamIsTheCallersProblem pins that a stream this binary
@@ -191,7 +433,68 @@ func TestHint_SplitsOnWhetherThereIsAnythingToResumeFrom(t *testing.T) {
 	}
 }
 
+// TestPausedHint_NamesBothResumeShapes pins the wording ADR 0023 adds beside the
+// value it un-collapses. PAUSED is derived from the stream's outcome, which
+// covers a gate pause and a session-limit pause alike, so the hint must name
+// both commands rather than guessing — asking the snapshot's gate block which
+// one it was is the derivation re-entry §9 forbids.
+func TestPausedHint_NamesBothResumeShapes(t *testing.T) {
+	hint := PausedHint("run-9")
+	for _, want := range []string{"run-9", "--retry-failed", "--approve", "--reject"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("PausedHint must mention %q: %q", want, hint)
+		}
+	}
+	// It must not read as damage: a paused run stopped exactly as designed, and
+	// the whole defect being fixed is that it was reported as a failure.
+	for _, forbidden := range []string{"FAIL", "ABANDONED"} {
+		if strings.Contains(hint, forbidden) {
+			t.Errorf("PausedHint must not describe a paused run as %q: %q", forbidden, hint)
+		}
+	}
+}
+
 // --- fixtures ----------------------------------------------------------------
+
+// writeSnapshot writes a real snapshot for a one-node graph whose only node
+// passed, through runstate.Write — so Of's snapshot load and its graph.Parse
+// both run against bytes a real run would have left.
+func writeSnapshot(t *testing.T, runDir, passedNodeID string) {
+	t.Helper()
+	if err := runstate.Write(filepath.Join(runDir, runstate.SnapshotFileName), runstate.Snapshot{
+		RunID: "run-1",
+		Graph: []byte(`{"name":"fixture","nodes":[{"id":"` + passedNodeID + `","prompt":"p"}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			passedNodeID: {Verdict: runstate.VerdictPass},
+		},
+	}); err != nil {
+		t.Fatalf("write fixture snapshot: %v", err)
+	}
+}
+
+// factsOf gathers the facts a caller with both files already open would hold —
+// the dashboard card's position — so Probe can be judged against Of over the
+// same directory.
+func factsOf(t *testing.T, runDir string) Facts {
+	t.Helper()
+	leg, err := runfeed.LastLeg(filepath.Join(runDir, runfeed.FileName))
+	if err != nil {
+		t.Fatalf("runfeed.LastLeg: %v", err)
+	}
+	facts := Facts{OpenLeg: leg.Open, Phase: leg.Phase, LastOutcome: leg.LastOutcome}
+	snap, err := runstate.Load(filepath.Join(runDir, runstate.SnapshotFileName))
+	if err != nil {
+		return facts
+	}
+	g, err := graph.Parse(snap.Graph)
+	if err != nil {
+		t.Fatalf("graph.Parse: %v", err)
+	}
+	facts.HasSnapshot = true
+	facts.CompletedNodes = len(snap.CompletedNodes())
+	facts.TotalNodes = len(g.Nodes)
+	return facts
+}
 
 // writeEvents writes a run's events.jsonl through the real StreamWriter, so the
 // fixture's bytes are exactly what a real leg emits.

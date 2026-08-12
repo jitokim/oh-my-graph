@@ -138,14 +138,18 @@ function setBanner(text) {
 // --- rendering ---------------------------------------------------------------
 
 // In flight first, everything else below: the dashboard's whole premise is
-// that the runs happening now are the working surface. An abandoned run is not
-// one of them — its leg is open only because the process that opened it died —
-// so it groups with the settled runs, carrying its hint. Within each group,
-// newest first: run ids are timestamps that sort lexically.
+// that the runs happening now are the working surface. A PLANNING run is one of
+// them — it is the longest single wait in the tool, and the one #163 reported
+// as invisible — so it groups with the running ones. An abandoned run is not:
+// its leg is open only because the process that opened it died, so it groups
+// with the settled runs, carrying its hint. Within each group, newest first:
+// run ids are timestamps that sort lexically.
+const LIVE_STATES = new Set(["running", "planning"]);
+
 function render() {
   const all = [...cards.values()].sort((a, b) => (a.run_id < b.run_id ? 1 : -1));
-  const live = all.filter((c) => c.state === "running");
-  const settled = all.filter((c) => c.state !== "running");
+  const live = all.filter((c) => LIVE_STATES.has(c.state));
+  const settled = all.filter((c) => !LIVE_STATES.has(c.state));
 
   paintGroup($("live-cards"), live);
   paintGroup($("settled-cards"), settled);
@@ -165,7 +169,7 @@ function paintCounts(all) {
   for (const card of all) by.set(card.state, (by.get(card.state) || 0) + 1);
   const host = $("dash-counts");
   host.replaceChildren();
-  for (const state of ["running", "gate-paused", "abandoned", "passed", "failed", "unknown"]) {
+  for (const state of ["planning", "running", "paused", "abandoned", "passed", "failed", "unknown"]) {
     const n = by.get(state) || 0;
     if (!n) continue;
     const chip = el("span", "chip");
@@ -225,9 +229,13 @@ function cardEl(card) {
   return a;
 }
 
-// A paused run says so; everything else uses its state word directly.
+// The card's state word is the enumeration's own, lower-cased by the server
+// (ADR 0023). It used to translate "gate-paused" into "paused" here, because
+// the run level borrowed the NODE's token; the run level now has its own, which
+// is what lets a session-limit pause — a pause with no gate — say "paused"
+// rather than paint red.
 function stateWord(card) {
-  return card.state === "gate-paused" ? "paused" : card.state;
+  return card.state;
 }
 
 // Only the states a run actually has get a chip — an all-passed card should
@@ -250,7 +258,7 @@ function countChips(card) {
 function elapsedText(card) {
   const start = Date.parse(card.started_at || "");
   if (Number.isNaN(start)) return "—";
-  const end = card.state === "running" ? Date.now() : Date.parse(card.ended_at || "");
+  const end = LIVE_STATES.has(card.state) ? Date.now() : Date.parse(card.ended_at || "");
   if (Number.isNaN(end)) return "—";
   return formatDuration(Math.max(0, end - start));
 }
@@ -268,7 +276,7 @@ function formatDuration(ms) {
 // often a live card's clock needs to move. Nothing else re-renders here — the
 // cards themselves change only when the server says they did.
 setInterval(() => {
-  if ([...cards.values()].some((c) => c.state === "running")) render();
+  if ([...cards.values()].some((c) => LIVE_STATES.has(c.state))) render();
 }, 1000);
 
 // --- the mini-DAG ------------------------------------------------------------
