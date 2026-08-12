@@ -1,0 +1,3 @@
+{"name": "Skill", "input_keys": ["args", "skill"], "skill": "omg-repo-house-html"}
+{"name": "Write", "input_keys": ["content", "file_path"], "skill": null}
+{"name": "Write", "input_keys": ["content", "file_path"], "skill": null}

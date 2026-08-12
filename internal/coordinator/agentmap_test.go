@@ -168,6 +168,76 @@ func TestPlan_WithoutAgentMappingDisablesMapping(t *testing.T) {
 	}
 }
 
+// WithoutAgentsNamed (the --no-agent flag) refuses ONE agent while mapping
+// stays on: the node keeps its settings isolation and therefore its scope
+// ceiling and its Skill tool, the refusal is recorded so the printout can name
+// it, and the Spec stays the planner's own bytes because nothing applied.
+func TestPlan_DeclinedAgentIsRefusedWithMappingStillOn(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read, Grep")
+
+	plan := planWithAgents(t, WithAgentDirs(dir), WithoutAgentsNamed("code-reviewer"))
+
+	if len(plan.AgentMappings) != 1 || plan.AgentMappings[0].SkippedReason != declinedReason {
+		t.Fatalf("mappings = %+v, want one entry skipped by the flag", plan.AgentMappings)
+	}
+	if plan.AgentMappings[0].Agent != "code-reviewer" || plan.AgentMappings[0].NodeID != "review" {
+		t.Errorf("the skip must name the agent and the node it would have taken: %+v", plan.AgentMappings[0])
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q, want empty after a decline", node.Agent)
+	}
+	// The whole point of the flag: this node keeps layer 1, which is what its
+	// declared scope is enforced by and what keeps it eligible for skill
+	// activation (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).
+	if plan.ToolPolicies["review"].SettingSources == nil {
+		t.Error("a declined node must keep its settings isolation")
+	}
+	if string(plan.Spec) != reviewSpec {
+		t.Errorf("spec must stay untouched when nothing applied, got %s", plan.Spec)
+	}
+}
+
+// The name is matched case-insensitively, and a name matching no agent is not
+// an error: it declines nothing and every other mapping stands, exactly like a
+// scanned directory that is not there.
+func TestPlan_DeclineMatchesCaseInsensitivelyAndToleratesUnknownNames(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read")
+
+	folded := planWithAgents(t, WithAgentDirs(dir), WithoutAgentsNamed("Code-Reviewer"))
+	if len(folded.AgentMappings) != 1 || folded.AgentMappings[0].SkippedReason != declinedReason {
+		t.Fatalf("mappings = %+v, want the decline to match regardless of case", folded.AgentMappings)
+	}
+
+	unknown := planWithAgents(t, WithAgentDirs(dir), WithoutAgentsNamed("architect"))
+	if len(unknown.AgentMappings) != 1 || unknown.AgentMappings[0].SkippedReason != "" {
+		t.Fatalf("mappings = %+v, want an unknown decline to change nothing", unknown.AgentMappings)
+	}
+}
+
+// The ordering guard: a decline may only REMOVE a mapping, never cause one.
+// Two agents match "review", so today nothing maps. Declining one of them must
+// leave it that way — if the decline were applied by dropping the definition
+// before matching, the survivor would become the single candidate and this
+// opt-out would have MAPPED a node that nothing mapped before.
+func TestPlan_DecliningOneOfTwoAmbiguousAgentsStillMapsNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ntools: Read")
+	writeAgentFile(t, dir, "review-bot.md", "name: review-bot\ntools: Read")
+
+	plan := planWithAgents(t, WithAgentDirs(dir), WithoutAgentsNamed("review-bot"))
+
+	if len(plan.AgentMappings) != 0 {
+		t.Fatalf("mappings = %+v, want none — the match is still ambiguous", plan.AgentMappings)
+	}
+	node, _ := plan.Graph.NodeByID("review")
+	if node.Agent != "" {
+		t.Errorf("node agent = %q — an opt-out promoted the other candidate", node.Agent)
+	}
+}
+
 // A short shared token must not match by prefix: "dev" (under minMatchPrefix)
 // against "developer" and "devops" would be a guess, and — belt and braces —
 // even textually it is ambiguous, which already yields no mapping.

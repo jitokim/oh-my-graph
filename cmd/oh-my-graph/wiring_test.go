@@ -300,7 +300,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // CLAUDE.md, hooks or MCP servers.
 func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 	var out strings.Builder
-	noteCeiling(&out)
+	noteCeiling(&out, false)
 	got := out.String()
 
 	for _, want := range []string{"settings", "enforced", "hooks", "MCP"} {
@@ -314,14 +314,68 @@ func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 	if strings.Contains(got, "not an enforced") {
 		t.Errorf("pre-run note still claims declared scopes are unenforced:\n%s", got)
 	}
+	// A plan with no mapped node must not carry the exception either: it is a
+	// statement about specific nodes, and printing it where there are none
+	// would teach a reader to skip the line that matters when there are.
+	if strings.Contains(got, "EXCEPT any node marked") {
+		t.Errorf("nothing was agent-mapped, so nothing may claim an exception:\n%s", got)
+	}
+}
+
+// The other half, and the one the measurement forced. ADR 0004's E1 claim —
+// a declared scope is enforced rather than merely requested — is FALSE for an
+// agent-mapped node, measured on this build's own argv (2026-08-12,
+// docs/measurements/0017-lifting-the-agent-mapped-exclusion.md): the mapped
+// node ran an out-of-scope command with permission_denials: [], the unmapped
+// one denied it. This summary is what a reader takes as the plan's ceiling, so
+// when the plan contains such a node the exception has to be ON this paragraph
+// and not only in the mapping lines above it.
+func TestNoteCeiling_NamesTheAgentMappedException(t *testing.T) {
+	var out strings.Builder
+	noteCeiling(&out, true)
+	got := out.String()
+
+	for _, want := range []string{
+		"EXCEPT any node marked [agent: ...]",
+		"DO load your settings",
+		"0017-lifting-the-agent-mapped-exclusion.md",
+		// The exception has to cancel BOTH halves of the paragraph, not just
+		// the scope half. The blanket line's other clause — CLAUDE.md, hooks
+		// and MCP servers are unavailable — reads as a COST, and for a mapped
+		// node it is false in the direction that matters: those load, and so
+		// does the repository's project scope. Narrowing only the guarantee
+		// and leaving the reassurance standing is the same half-truth this
+		// commit convicts the retired parenthesis of, one clause over.
+		"CLAUDE.md and hooks ARE available to them",
+		"the repository's own",
+		// ...but NOT one clause too far. Layer 4 is a flag, not a settings
+		// scope: --strict-mcp-config is on a mapped node's argv too (see the
+		// measurement's argv/omg-probe-writer.argv.txt) with no --mcp-config
+		// beside it, so its MCP servers stay shut while its CLAUDE.md and
+		// hooks do not. An exception that swept MCP in with them would
+		// overstate the surface in the one direction a reader cannot check.
+		"MCP servers are the one part that stays shut",
+		"--strict-mcp-config with no --mcp-config",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the ceiling summary does not carry the measured exception %q:\n%s", want, got)
+		}
+	}
 }
 
 // TestPrintPlan_ShowsAgentMappingsAndSkips pins the disclosure contract of
 // subagent auto-mapping: every mapping made appears on its node's line, every
-// refused candidate prints its reason, and an applied mapping's isolation
-// trade (the node loads your settings so --agent can resolve) plus the
-// opt-out flag are stated — because a mapping the human never saw before
+// refused candidate prints its reason, and an applied mapping states its cost
+// PER NODE plus both opt-outs — because a mapping the human never saw before
 // execution would defeat the reason the mapping lives in trusted code.
+//
+// The per-node half is what measurement (j) added, and it is the half a
+// paragraph cannot carry. What a mapped node gives up is not uniform prose:
+// THIS node, by name, holds no Skill tool and has a scope that binds only as
+// far as the user's own settings do. The old text said "they load your
+// settings so the agent can resolve (their declared tool list still binds)",
+// which named no node and, in its parenthesis, made a promise the argv does
+// not keep.
 func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
 		`{"id":"review","prompt":"p","agent":"code-reviewer"},` +
@@ -341,11 +395,64 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 	for _, want := range []string{
 		"[agent: code-reviewer]",
 		`agent "scanner" not applied to scan: tools exceed ceiling: Bash`,
-		"--no-agent-mapping",
+		// Which node lost what, by name — not a paragraph about "nodes".
+		`review runs as your "code-reviewer"`,
+		"holds NO Skill tool",
+		"enforced only as far as YOUR settings enforce it",
+		// The scope loss is a measurement, and the record travels with it.
+		"permission_denials: []",
+		"0017-lifting-the-agent-mapped-exclusion.md",
+		// The surface a mapped node inherits is not only the scope half. The
+		// same measurement showed the REPOSITORY under work supplying skill
+		// definitions and enabling plugins into such a node, which is strictly
+		// wider than "a non-git command can run" — and the two things it also
+		// implies but did not measure are labelled as implied, so the printout
+		// never invents a number it does not have.
+		"plugins its own .claude/settings.json enables",
+		"implied by the loading, NOT measured here",
+		// Both ways out, with their prices distinguished. The decline is per
+		// AGENT: it frees every node that agent would have taken, and calling
+		// that "a single node" understates it by however many nodes matched.
+		"--no-agent-mapping turns all of it off",
+		"--no-agent <name> declines one agent",
+		"every node that agent would have taken",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)
 		}
+	}
+	// The retired reassurance must not come back in any spelling: it is the
+	// clause measurement (j) refuted, and it sat on the screen a human reads
+	// before letting an unattended run start.
+	if strings.Contains(got, "declared tool list still binds") {
+		t.Errorf("the printout re-asserts a scope guarantee the mapped argv does not keep:\n%s", got)
+	}
+}
+
+// A candidate refused by --no-agent prints like any other skip, and says which
+// flag refused it. The two skip reasons mean opposite things — the tool
+// ceiling refusing an agent is oh-my-graph protecting the node, the user
+// refusing one is the user spending a mapping to keep the ceiling — and a line
+// that did not distinguish them would leave the user unable to tell their own
+// opt-out from a mapping that was never available.
+func TestPrintPlan_NamesAnAgentDeclinedByFlag(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[{"id":"design","prompt":"p"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	printPlan(&out, coordinator.Plan{Graph: g, AgentMappings: []coordinator.AgentMapping{
+		{NodeID: "design", Agent: "architect", SkippedReason: "declined by --no-agent"},
+	}}, "/tmp/graph.json")
+	got := out.String()
+
+	if !strings.Contains(got, `! agent "architect" not applied to design: declined by --no-agent`) {
+		t.Errorf("a declined agent must be named with the flag that declined it:\n%s", got)
+	}
+	// Nothing was mapped, so none of the mapped-node cost may print — and the
+	// ceiling summary keeps its unqualified claim, which for this plan is true.
+	if strings.Contains(got, "holds NO Skill tool") || strings.Contains(got, "EXCEPT any node marked") {
+		t.Errorf("no mapping applied, so nothing may describe one:\n%s", got)
 	}
 }
 
@@ -701,14 +808,14 @@ func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
 	}
 
 	var on strings.Builder
-	mappingOptions(&on, false, false)
+	mappingOptions(&on, false, nil, false)
 	if !strings.Contains(on.String(), "no skill directory") || !strings.Contains(on.String(), "--no-skill-activation") {
 		t.Errorf("activation is on and can never stage: say so, and name the way to mean it:\n%s", on.String())
 	}
 
 	// Turning it off is a choice, and a choice is not a warning.
 	var off strings.Builder
-	mappingOptions(&off, false, true)
+	mappingOptions(&off, false, nil, true)
 	if off.Len() != 0 {
 		t.Errorf("--no-skill-activation must stay silent:\n%s", off.String())
 	}
@@ -716,7 +823,7 @@ func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
 	// Neither is the normal case a warning.
 	t.Setenv("HOME", t.TempDir())
 	var quiet strings.Builder
-	mappingOptions(&quiet, false, false)
+	mappingOptions(&quiet, false, nil, false)
 	if quiet.Len() != 0 {
 		t.Errorf("a resolvable home has nothing to report:\n%s", quiet.String())
 	}

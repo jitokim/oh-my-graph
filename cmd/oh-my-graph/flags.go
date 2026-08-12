@@ -66,6 +66,7 @@ type autoFlags struct {
 	goal              string
 	planOnly          bool
 	noAgentMapping    bool
+	noAgents          agentNameFlag
 	noSkillActivation bool
 	// The DEPRECATED `--no-skill-mapping` spelling has no field of its own:
 	// it is rewritten to `--no-skill-activation` before parsing, by
@@ -107,6 +108,7 @@ func newAutoFlags() *autoFlags {
 	f.register(f.set)
 	f.set.BoolVar(&f.planOnly, "plan-only", false, "plan the graph, print it with every agent/skill mapping and the tool ceiling, then exit without running any node — NOT free, unlike `run --dry-run`: it still pays for at least one real planner call, and a validation refusal buys one corrected call on top of it")
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
+	f.set.Var(&f.noAgents, "no-agent", "do not auto-map this ONE agent, by its frontmatter name (repeatable), leaving every other mapping in place — the per-agent form of --no-agent-mapping. A mapped node loads your settings, so it holds no Skill tool AND its declared scope binds only as far as your own settings do (measured: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md); this is how one node buys that back without the plan losing every mapping. A name matching no agent declines nothing")
 	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "do not stage your Claude Code skills (~/.claude/skills) for planned nodes — they then get no Skill tool and no --plugin-dir, exactly as before ADR 0017")
 	f.set.IntVar(&f.maxCycles, "max-cycles", 1, "iterate the goal for up to N plan→run→assess cycles (ADR 0011); 1 (the default) is exactly today's single plan and run, with no assessment call. N has no upper bound, and a validation-refused plan buys one corrected planner call, so the planner-call worst case is 2 × N")
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")

@@ -8,14 +8,14 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-//	oh-my-graph chat [--no-agent-mapping] [--no-skill-activation]
+//	oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph version
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
@@ -96,14 +96,14 @@ func mainExitCode(args []string) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-       oh-my-graph chat [--no-agent-mapping] [--no-skill-activation]
+       oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph version`
 
 // run parses argv and dispatches to the subcommand. It returns an error rather
@@ -152,6 +152,22 @@ func (f inputFlag) Set(pair string) error {
 		return fmt.Errorf("invalid --input %q (want key=value)", pair)
 	}
 	f[key] = value
+	return nil
+}
+
+// agentNameFlag collects repeated --no-agent <name> values in the order they
+// were typed. A blank name is rejected rather than collected: `--no-agent ""`
+// is a typo that would otherwise decline nothing while reading like an opt-out
+// that took.
+type agentNameFlag []string
+
+func (f *agentNameFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *agentNameFlag) Set(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("invalid --no-agent %q (want an agent name, as written in its frontmatter)", name)
+	}
+	*f = append(*f, name)
 	return nil
 }
 
@@ -257,7 +273,7 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
 	// re-enters the same coordinator and plans afresh, so every cycle's sinks
 	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
-	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noSkillActivation),
+	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation),
 		coordinator.WithVerifyCommand(verifyCommand))
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
@@ -272,6 +288,11 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 // its flag. This is the only place the real filesystem locations enter the
 // coordinator — tests construct theirs with temp dirs instead.
 //
+// noAgents (--no-agent) is read only on the branch where mapping is ON, and
+// that is not an oversight: with --no-agent-mapping there is no mapping left
+// for it to decline, so passing both is redundancy rather than a conflict and
+// gets no warning it would have to earn.
+//
 // w takes the one thing this function knows and the plan printout cannot: a
 // coordinator built with ZERO skill directories never scans, so it records no
 // SkillScan and noteSkillActivation prints nothing — correct for the library
@@ -281,12 +302,15 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 // home directory (no $HOME: containers, launchd, some CI), and that is a
 // misconfiguration nobody chose — the one silence this disclosure exists to
 // remove. Said here rather than by giving every library caller a non-nil scan.
-func mappingOptions(w io.Writer, noAgentMapping, noSkillActivation bool) []coordinator.Option {
+func mappingOptions(w io.Writer, noAgentMapping bool, noAgents []string, noSkillActivation bool) []coordinator.Option {
 	var opts []coordinator.Option
 	if noAgentMapping {
 		opts = append(opts, coordinator.WithoutAgentMapping())
 	} else {
 		opts = append(opts, coordinator.WithAgentDirs(coordinator.DefaultAgentDirs()...))
+		if len(noAgents) > 0 {
+			opts = append(opts, coordinator.WithoutAgentsNamed(noAgents...))
+		}
 	}
 	if noSkillActivation {
 		opts = append(opts, coordinator.WithoutSkillActivation())
@@ -699,7 +723,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
-	noteCeiling(w)
+	noteCeiling(w, anyAgentMapped(g))
 	// Last, and deliberately after the ceiling: that paragraph says planned
 	// nodes "run isolated", meaning settings and tools. This one narrows it —
 	// filesystem isolation is a different isolation, and in auto mode there is
@@ -866,27 +890,55 @@ func noteRejectedPlan(w io.Writer, planID string, err error) error {
 
 // noteAgentMappings discloses every subagent auto-mapping decision before the
 // run starts: skipped candidates with their reason, and — when any mapping
-// applied — the isolation trade a mapped node makes (agent resolution needs
-// the user's settings loaded, so such a node gives up the "no settings load"
-// half of the ceiling; the declared tool list still binds). The mappings
-// themselves are already visible as [agent: ...] on the node lines above;
-// silence here means no candidate matched and nothing changed.
+// applied — what a mapped node traded for its agent, named node by node.
+// Silence here means no candidate matched and nothing changed.
+//
+// The paragraph this prints USED to end "(their declared tool list still
+// binds)", and that clause is the reason this function is worth reading twice.
+// It is true of which tools EXIST and false of the scope inside them, and the
+// difference is now measured rather than argued: on 2026-08-12 the argv a
+// mapped node really gets ran an out-of-scope `touch` under dontAsk with
+// permission_denials: [], while the same probe's unmapped node denied it
+// (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md). A reassuring
+// half-truth on the one screen a human reads before an unattended run is the
+// exact failure ADR 0017 §7 convicts ADR 0012's printout of, so the cost is
+// stated in full — and per node, because "which nodes lost what" is not
+// recoverable from a paragraph that names none of them.
 func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
-	applied := false
+	var applied []coordinator.AgentMapping
 	for _, m := range mappings {
 		if m.SkippedReason != "" {
 			fmt.Fprintf(w, "  ! agent %q not applied to %s: %s\n", m.Agent, m.NodeID, m.SkippedReason)
 			continue
 		}
-		applied = true
+		applied = append(applied, m)
 	}
-	if applied {
-		fmt.Fprint(w,
-			"  Nodes marked [agent: ...] were auto-mapped onto your own Claude Code agents; they load\n"+
-				"  your settings so the agent can resolve (their declared tool list still binds).\n"+
-				"  Pass --no-agent-mapping to turn this off.\n",
-		)
+	if len(applied) == 0 {
+		return
 	}
+	fmt.Fprint(w, "  Auto-mapped onto your own Claude Code agents — each of these loads your settings so\n"+
+		"  the agent can resolve, and pays for it twice:\n")
+	for _, m := range applied {
+		fmt.Fprintf(w, "    %s runs as your %q — it holds NO Skill tool, and its declared scope is\n"+
+			"      enforced only as far as YOUR settings enforce it\n", m.NodeID, m.Agent)
+	}
+	fmt.Fprint(w,
+		"  Which tools EXIST is still bound by the node's tool list. The SCOPE inside them is not:\n"+
+			"    your standing permission grants load with your settings, so a mapped node declaring\n"+
+			"    Bash(git *) can run a non-git command if your own settings allow one. Measured\n"+
+			"    2026-08-12 on this build's argv — an out-of-scope command ran with\n"+
+			"    permission_denials: [], while an unmapped node denied the same one\n"+
+			"    (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).\n"+
+			"  And \"your settings\" includes THE REPOSITORY'S. A mapped node loads project scope too,\n"+
+			"    so the checkout it runs in supplies configuration to it: its .claude/skills and the\n"+
+			"    plugins its own .claude/settings.json enables are both MEASURED to reach such a node,\n"+
+			"    and by the same mechanism its project CLAUDE.md and its hooks do — that last pair is\n"+
+			"    implied by the loading, NOT measured here. Weigh it like any code you would run from\n"+
+			"    this checkout.\n"+
+			"  --no-agent-mapping turns all of it off; --no-agent <name> declines one agent and keeps\n"+
+			"    the rest — every node that agent would have taken gets its ceiling and its Skill tool\n"+
+			"    back, and no other node changes.\n",
+	)
 }
 
 // noteSkillActivation discloses skill activation before the run starts
@@ -954,9 +1006,11 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				"    the two arms were indistinguishable on the one task checkable mechanically, at\n"+
 				"    $0.205 a spawn against $0.134, and an output-contract node activates under neither.\n"+
 				"    The tokens above are charged either way.\n"+
-				"  ceiling: UNCHANGED. Your settings, CLAUDE.md, hooks and MCP servers still do not load\n"+
-				"    (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still enforced.\n"+
-				"    The only change is that the Skill tool now exists for these nodes.\n"+
+				"  ceiling: UNCHANGED — for the activated node(s) named above, which is all this line\n"+
+				"    has ever been about. Their settings, CLAUDE.md, hooks and MCP servers still do not\n"+
+				"    load (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still\n"+
+				"    enforced. The only change is that the Skill tool now exists for them. An EXCLUDED\n"+
+				"    node is a different case in both halves — see its lines above.\n"+
 				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
 				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
 				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
@@ -990,6 +1044,15 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 // false (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md):
 // the node's argv carries no Skill in --tools, so the definitions its settings
 // load are visible to the CLI and unreachable by the node.
+//
+// It also used to say "lifting the exclusion is unmeasured", and that stopped
+// being true on 2026-08-12. Lifting it was measured and REFUSED, so the line
+// now says which of the two it is: a decision with a number behind it, not a
+// gap waiting on one. What the printout must not do is imply the refusal was
+// about capability — adding the tool works, 3 of 3 — because a user who reads
+// "it does not work" will never think to check whether their repository can
+// supply the procedure text a node obeys, which is the thing that was actually
+// found.
 func noteExclusionCost(w io.Writer, excluded []string) {
 	if len(excluded) == 0 {
 		return
@@ -1000,9 +1063,16 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 			"      settings do load. Measured 2026-08-09: 0 of 3 with the shipped argv, 3 of 3\n"+
 			"      with `Skill` added to --tools and nothing else changed\n"+
 			"      (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).\n"+
-			"      Lifting the exclusion is unmeasured. --no-agent-mapping is what gets a node\n"+
-			"      out of it, and it turns agent mapping off for the WHOLE plan — there is no\n"+
-			"      per-node switch, so the price is every mapping the plan would have made.\n",
+			"      Lifting the exclusion was MEASURED on 2026-08-12 and REFUSED — not because\n"+
+			"      adding the tool fails (it works, 3 of 3) but because on these nodes a skill\n"+
+			"      name resolves against definitions the REPOSITORY UNDER WORK can write: a\n"+
+			"      same-named .claude/skills file beat the staged corpus 3 of 3, and a\n"+
+			"      repository-committed SKILL.md ran 3 of 3 in a node whose prompt never\n"+
+			"      mentioned skills\n"+
+			"      (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).\n"+
+			"      --no-agent-mapping is what gets a node out of the exclusion, and it turns\n"+
+			"      agent mapping off for the WHOLE plan; --no-agent <name> declines one agent,\n"+
+			"      so only the nodes that agent would have taken change.\n",
 	)
 }
 
@@ -1013,12 +1083,59 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // servers. Nodes are more isolated and less capable here than in a
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
-func noteCeiling(w io.Writer) {
+//
+// mapped narrows it, and has to — in BOTH directions, because this paragraph
+// makes two claims and a mapped node falsifies each one the other way round.
+// The sentence "a declared scope like Bash(git *) is enforced rather than
+// merely requested" is this project's headline ceiling claim (ADR 0004, E1),
+// and on 2026-08-12 it was measured FALSE for an agent-mapped node — the one
+// node shape that does load your settings. The other clause, "your CLAUDE.md,
+// hooks and MCP servers are unavailable to them", is a COST, and it is untrue
+// there in two of its three parts: the same loading that lets --agent resolve
+// hands those nodes the user's CLAUDE.md and hooks, and the repository's, since
+// project scope loads with the rest. MCP is the part that survives — layer 4 is
+// a FLAG, not a settings scope, so --strict-mcp-config ships on a mapped node's
+// argv exactly as on any other planned node's, with no --mcp-config beside it,
+// and no MCP server loads for it either. Widening the exception to MCP would
+// understate the surface in the one direction the reader cannot check, so the
+// two are named apart. Printing the blanket version under a plan that contains
+// such a node would overstate the guarantee and understate the surface at
+// once, on the screen where that matters most, so the exception is stated here
+// as well as in noteAgentMappings: this paragraph is the one a reader takes as
+// the summary, and a summary that a paragraph above it contradicts is read as
+// the summary.
+func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
 		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
 			"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n"+
 			"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n",
 	)
+	if mapped {
+		fmt.Fprint(w,
+			"  EXCEPT any node marked [agent: ...] above: those DO load your settings — that is what\n"+
+				"  lets --agent resolve at all — so BOTH halves of the sentence above are off for them.\n"+
+				"  Their declared scope is enforced only as far as your own settings enforce it (measured,\n"+
+				"  not inferred: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md), and your\n"+
+				"  CLAUDE.md and hooks ARE available to them — as are the repository's own, since project\n"+
+				"  scope loads with the rest. MCP servers are the one part that stays shut: those nodes\n"+
+				"  still get --strict-mcp-config with no --mcp-config. See the per-node lines above.\n",
+		)
+	}
+}
+
+// anyAgentMapped reports whether the printed topology contains a node marked
+// [agent: ...]. It reads the GRAPH rather than plan.AgentMappings on purpose:
+// the exception noteCeiling states is about the nodes the reader can see the
+// marker on, and node.Agent is what puts it there. A plan carrying a mapping
+// record whose node somehow lost its agent would otherwise get a warning about
+// a node the screen does not show.
+func anyAgentMapped(g *graph.Graph) bool {
+	for _, node := range g.Nodes {
+		if node.Agent != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // inputKeys lists the bound --input names — what the planner is allowed to

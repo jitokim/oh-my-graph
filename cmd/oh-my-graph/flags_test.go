@@ -84,6 +84,37 @@ func TestAutoFlags_RejectsUnquotedMultiWordGoal(t *testing.T) {
 	}
 }
 
+// --no-agent is repeatable and order-preserving: it names one agent, and a
+// user with two agents to decline has to be able to say so without giving up
+// every mapping in the plan (which is what --no-agent-mapping costs).
+func TestAutoFlags_CollectsRepeatedNoAgent(t *testing.T) {
+	f := newAutoFlags()
+	err := f.parse([]string{"write the design doc", "--no-agent", "architect", "--no-agent", "doc-writer"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := []string(f.noAgents); len(got) != 2 || got[0] != "architect" || got[1] != "doc-writer" {
+		t.Errorf("noAgents = %v, want both names in order", got)
+	}
+	// The two opt-outs are independent: naming one agent must not read as
+	// turning mapping off.
+	if f.noAgentMapping {
+		t.Error("--no-agent must not set --no-agent-mapping")
+	}
+}
+
+// A blank name is a typo, and a typo that silently declined nothing would read
+// exactly like an opt-out that took.
+func TestAgentNameFlag_RejectsABlankName(t *testing.T) {
+	var f agentNameFlag
+	if err := f.Set("  "); err == nil {
+		t.Fatal("expected an error for a blank --no-agent value")
+	}
+	if len(f) != 0 {
+		t.Errorf("noAgents = %v, want nothing collected from a rejected value", f)
+	}
+}
+
 func TestInputFlag_RejectsMalformedPair(t *testing.T) {
 	f := make(inputFlag)
 	if err := f.Set("no-equals-sign"); err == nil {
