@@ -464,6 +464,17 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	if plan.SkillActivation != nil {
 		nodeRunner = coordinator.GuardStaging(nodeRunner, plan.SkillActivation.Staging)
 	}
+	// The matched agent definitions are bound the same way and for the same
+	// reason (ADR 0022). This one is not a downgrade either, and less so: a
+	// mapped node's policy already carries --setting-sources "" beside its
+	// --agent, so an unbound directory would mean the CLI cannot resolve the
+	// agent and exits 1 — every mapped node, every time.
+	if err := plan.BindAgentStaging(runDirFor(runID)); err != nil {
+		return err
+	}
+	if plan.AgentStaging != nil {
+		nodeRunner = coordinator.GuardAgentStaging(nodeRunner, plan.AgentStaging)
+	}
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
 	// fragment-free by construction and stays reusable verbatim.
@@ -893,17 +904,23 @@ func noteRejectedPlan(w io.Writer, planID string, err error) error {
 // applied — what a mapped node traded for its agent, named node by node.
 // Silence here means no candidate matched and nothing changed.
 //
-// The paragraph this prints USED to end "(their declared tool list still
-// binds)", and that clause is the reason this function is worth reading twice.
-// It is true of which tools EXIST and false of the scope inside them, and the
-// difference is now measured rather than argued: on 2026-08-12 the argv a
-// mapped node really gets ran an out-of-scope `touch` under dontAsk with
-// permission_denials: [], while the same probe's unmapped node denied it
-// (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md). A reassuring
-// half-truth on the one screen a human reads before an unattended run is the
-// exact failure ADR 0017 §7 convicts ADR 0012's printout of, so the cost is
-// stated in full — and per node, because "which nodes lost what" is not
-// recoverable from a paragraph that names none of them.
+// WHAT THIS PARAGRAPH SAID UNTIL ADR 0022, and why the reversal is not a
+// softening. As shipped in v0.6.0 it told the user that a mapped node "loads
+// your settings" and that its "declared scope is enforced only as far as YOUR
+// settings enforce it". Both were true and both were measured. The
+// code under them changed: the definition now arrives from a staged
+// --plugin-dir, so layer 1 stays "" and the same ceiling arm that breached 2 of
+// 2 under the old argv was denied 3 of 3 under this one
+// (docs/measurements/0017-staged-agent-restores-layer-1.md). LEAVING THE OLD
+// TEXT IN PLACE WOULD BE THE SAME DEFECT POINTING THE OTHER WAY — a disclosure
+// that under-promises is still a wrong disclosure, and a user who reads "your
+// repository can supply configuration to this node" will make decisions about
+// what they check into it.
+//
+// What survives unchanged is the SHAPE: a per-node line, because "which nodes
+// got what" is not recoverable from a paragraph that names none of them, and a
+// cost stated in full — which is now a real loss of capability rather than a
+// loss of isolation.
 func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 	var applied []coordinator.AgentMapping
 	for _, m := range mappings {
@@ -916,28 +933,30 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 	if len(applied) == 0 {
 		return
 	}
-	fmt.Fprint(w, "  Auto-mapped onto your own Claude Code agents — each of these loads your settings so\n"+
-		"  the agent can resolve, and pays for it twice:\n")
+	fmt.Fprint(w, "  Auto-mapped onto your own Claude Code agents — oh-my-graph copies each definition into\n"+
+		"  this run's directory and hands the node that copy, so your settings stay unloaded:\n")
 	for _, m := range applied {
-		fmt.Fprintf(w, "    %s runs as your %q — it holds NO Skill tool, and its declared scope is\n"+
-			"      enforced only as far as YOUR settings enforce it\n", m.NodeID, m.Agent)
+		fmt.Fprintf(w, "    %s runs as your %q — same ceiling as any other planned node, and it\n"+
+			"      holds NO Skill tool\n", m.NodeID, m.Agent)
 	}
 	fmt.Fprint(w,
-		"  Which tools EXIST is still bound by the node's tool list. The SCOPE inside them is not:\n"+
-			"    your standing permission grants load with your settings, so a mapped node declaring\n"+
-			"    Bash(git *) can run a non-git command if your own settings allow one. Measured\n"+
-			"    2026-08-12 on this build's argv — an out-of-scope command ran with\n"+
-			"    permission_denials: [], while an unmapped node denied the same one\n"+
-			"    (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).\n"+
-			"  And \"your settings\" includes THE REPOSITORY'S. A mapped node loads project scope too,\n"+
-			"    so the checkout it runs in supplies configuration to it: its .claude/skills and the\n"+
-			"    plugins its own .claude/settings.json enables are both MEASURED to reach such a node,\n"+
-			"    and by the same mechanism its project CLAUDE.md and its hooks do — that last pair is\n"+
-			"    implied by the loading, NOT measured here. Weigh it like any code you would run from\n"+
-			"    this checkout.\n"+
+		"  The ceiling BINDS on these nodes, in scope and not only in tool names: none of your\n"+
+			"    user/project/local settings load, so a node declaring Bash(git *) cannot run a\n"+
+			"    non-git command even if your own settings would allow one. Measured 2026-08-12 on\n"+
+			"    this build's argv — denied 3 of 3, with the same argv minus the staging breaching\n"+
+			"    2 of 2 and an in-scope control still running\n"+
+			"    (docs/measurements/0017-staged-agent-restores-layer-1.md).\n"+
+			"  What that COSTS these nodes: your CLAUDE.md, your hooks, your MCP servers and your\n"+
+			"    standing permission grants are all unavailable to them, exactly as for every other\n"+
+			"    planned node. Until 2026-08-12 a mapped node was the one exception; if your agents\n"+
+			"    lean on your environment, that is what changed.\n"+
+			"  The agent file is read ONCE, at plan time, and pinned by hash: the copy the node\n"+
+			"    resolves is the one whose declared tools were checked against this node's ceiling,\n"+
+			"    and editing the original mid-run neither changes this run nor stops it. A resumed\n"+
+			"    leg maps nothing at all and says so.\n"+
 			"  --no-agent-mapping turns all of it off; --no-agent <name> declines one agent and keeps\n"+
-			"    the rest — every node that agent would have taken gets its ceiling and its Skill tool\n"+
-			"    back, and no other node changes.\n",
+			"    the rest — every node that agent would have taken gets its Skill tool back, and no\n"+
+			"    other node changes.\n",
 	)
 }
 
@@ -1006,11 +1025,11 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				"    the two arms were indistinguishable on the one task checkable mechanically, at\n"+
 				"    $0.205 a spawn against $0.134, and an output-contract node activates under neither.\n"+
 				"    The tokens above are charged either way.\n"+
-				"  ceiling: UNCHANGED — for the activated node(s) named above, which is all this line\n"+
-				"    has ever been about. Their settings, CLAUDE.md, hooks and MCP servers still do not\n"+
-				"    load (ADR 0004 layer 1 stays \"\"); a declared scope like Bash(git *) is still\n"+
-				"    enforced. The only change is that the Skill tool now exists for them. An EXCLUDED\n"+
-				"    node is a different case in both halves — see its lines above.\n"+
+				"  ceiling: UNCHANGED — for every planned node in this run, excluded ones included since\n"+
+				"    2026-08-12. Their settings, CLAUDE.md, hooks and MCP servers do not load (ADR 0004\n"+
+				"    layer 1 stays \"\"); a declared scope like Bash(git *) is enforced. The only change\n"+
+				"    activation makes is that the Skill tool exists for the node(s) named above, which is\n"+
+				"    the one half an EXCLUDED node still differs in — see its lines above.\n"+
 				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
 				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
 				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
@@ -1046,30 +1065,38 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 // load are visible to the CLI and unreachable by the node.
 //
 // It also used to say "lifting the exclusion is unmeasured", and that stopped
-// being true on 2026-08-12. Lifting it was measured and REFUSED, so the line
-// now says which of the two it is: a decision with a number behind it, not a
-// gap waiting on one. What the printout must not do is imply the refusal was
-// about capability — adding the tool works, 3 of 3 — because a user who reads
-// "it does not work" will never think to check whether their repository can
-// supply the procedure text a node obeys, which is the thing that was actually
-// found.
+// being true on 2026-08-12. Lifting it was measured and REFUSED, and the line
+// said which of the two it was: a decision with a number behind it, not a gap
+// waiting on one.
+//
+// ADR 0022 MOVED THE GROUND OUT FROM UNDER THAT REFUSAL, and the text has to
+// move with it or it becomes the reassuring half-truth pointing the other way.
+// The refusal rested on what a mapped node's `nil` layer 1 loaded — a
+// repository-committed skill beating the staged corpus 3 of 3 — and layer 1 is
+// now "" on those nodes, where the same repository-supplied definitions were
+// measured NOT to load at all. So the exclusion is no longer a refusal with a
+// number behind it; it is a decision that has not been re-taken, which is a
+// third thing, and the printout says exactly that. What it must NOT say is
+// either "it does not work" (adding the tool works, 3 of 3) or "it is coming"
+// (nothing has decided that).
 func noteExclusionCost(w io.Writer, excluded []string) {
 	if len(excluded) == 0 {
 		return
 	}
 	fmt.Fprint(w,
 		"    An excluded node holds NO Skill tool, so it can invoke NO skill at all — not a\n"+
-			"      staged corpus, and not your own installed skills either, even though its\n"+
-			"      settings do load. Measured 2026-08-09: 0 of 3 with the shipped argv, 3 of 3\n"+
-			"      with `Skill` added to --tools and nothing else changed\n"+
+			"      staged corpus, and not your own installed skills. Measured 2026-08-09: told\n"+
+			"      outright to use one it fired 0 of 3 without `Skill` in --tools, and 3 of 3\n"+
+			"      with it added and nothing else changed\n"+
 			"      (docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).\n"+
-			"      Lifting the exclusion was MEASURED on 2026-08-12 and REFUSED — not because\n"+
-			"      adding the tool fails (it works, 3 of 3) but because on these nodes a skill\n"+
-			"      name resolves against definitions the REPOSITORY UNDER WORK can write: a\n"+
-			"      same-named .claude/skills file beat the staged corpus 3 of 3, and a\n"+
-			"      repository-committed SKILL.md ran 3 of 3 in a node whose prompt never\n"+
-			"      mentioned skills\n"+
-			"      (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).\n"+
+			"      Lifting the exclusion was measured on 2026-08-12 and refused, on the ground\n"+
+			"      that a mapped node then loaded your settings and a skill name resolved against\n"+
+			"      definitions the REPOSITORY UNDER WORK can write. That ground is GONE since\n"+
+			"      2026-08-12: such a node now loads no settings at all, and the same\n"+
+			"      repository-supplied definitions were measured not to reach it\n"+
+			"      (docs/measurements/0017-staged-agent-restores-layer-1.md). The exclusion\n"+
+			"      stands as a decision nobody has re-taken, not as a refusal with a number\n"+
+			"      behind it — it will be re-decided in its own record, or not at all.\n"+
 			"      --no-agent-mapping is what gets a node out of the exclusion, and it turns\n"+
 			"      agent mapping off for the WHOLE plan; --no-agent <name> declines one agent,\n"+
 			"      so only the nodes that agent would have taken change.\n",
@@ -1084,26 +1111,21 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
 //
-// mapped narrows it, and has to — in BOTH directions, because this paragraph
-// makes two claims and a mapped node falsifies each one the other way round.
-// The sentence "a declared scope like Bash(git *) is enforced rather than
-// merely requested" is this project's headline ceiling claim (ADR 0004, E1),
-// and on 2026-08-12 it was measured FALSE for an agent-mapped node — the one
-// node shape that does load your settings. The other clause, "your CLAUDE.md,
-// hooks and MCP servers are unavailable to them", is a COST, and it is untrue
-// there in two of its three parts: the same loading that lets --agent resolve
-// hands those nodes the user's CLAUDE.md and hooks, and the repository's, since
-// project scope loads with the rest. MCP is the part that survives — layer 4 is
-// a FLAG, not a settings scope, so --strict-mcp-config ships on a mapped node's
-// argv exactly as on any other planned node's, with no --mcp-config beside it,
-// and no MCP server loads for it either. Widening the exception to MCP would
-// understate the surface in the one direction the reader cannot check, so the
-// two are named apart. Printing the blanket version under a plan that contains
-// such a node would overstate the guarantee and understate the surface at
-// once, on the screen where that matters most, so the exception is stated here
-// as well as in noteAgentMappings: this paragraph is the one a reader takes as
-// the summary, and a summary that a paragraph above it contradicts is read as
-// the summary.
+// mapped no longer narrows the CEILING half, and that is ADR 0022's whole
+// effect on this function. This paragraph makes two claims — "a declared scope
+// like Bash(git *) is enforced rather than merely requested" (ADR 0004's E1,
+// this project's headline claim) and "your CLAUDE.md, hooks and MCP servers are
+// unavailable to them" (a cost). From 2026-08-12 both hold for EVERY planned
+// node, mapped included, because a mapped node no longer loads any settings:
+// its agent definition comes from a directory oh-my-graph staged, not from
+// discovery. The exception that stood here for one release is deleted rather
+// than softened — a warning kept past its cause teaches readers to discount the
+// next one.
+//
+// What mapped still prints is a NOTE and not an exception: the node runs under
+// someone else's system prompt, which is a fact about the plan a reader should
+// carry into the per-node lines above, and the one thing about a mapped node
+// that is still different.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
 		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
@@ -1112,13 +1134,12 @@ func noteCeiling(w io.Writer, mapped bool) {
 	)
 	if mapped {
 		fmt.Fprint(w,
-			"  EXCEPT any node marked [agent: ...] above: those DO load your settings — that is what\n"+
-				"  lets --agent resolve at all — so BOTH halves of the sentence above are off for them.\n"+
-				"  Their declared scope is enforced only as far as your own settings enforce it (measured,\n"+
-				"  not inferred: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md), and your\n"+
-				"  CLAUDE.md and hooks ARE available to them — as are the repository's own, since project\n"+
-				"  scope loads with the rest. MCP servers are the one part that stays shut: those nodes\n"+
-				"  still get --strict-mcp-config with no --mcp-config. See the per-node lines above.\n",
+			"  That INCLUDES any node marked [agent: ...] above, since 2026-08-12: its agent definition\n"+
+				"  is copied into this run's directory and supplied as a plugin, so nothing about it\n"+
+				"  reopens your settings (measured, not inferred:\n"+
+				"  docs/measurements/0017-staged-agent-restores-layer-1.md). What is still different about\n"+
+				"  those nodes is that each runs under one of YOUR agents' system prompts, and holds no\n"+
+				"  Skill tool. See the per-node lines above.\n",
 		)
 	}
 }

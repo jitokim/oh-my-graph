@@ -297,12 +297,30 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// terminal. It also means no injected check can reach this leg at all,
 	// which is why the scheduler below is handed no SerializedVerifyNodes —
 	// the set would be empty by construction.
+	//
+	// A planned graph's `agent:` is dropped here for a neighbouring reason
+	// (ADR 0022 §5): a mapped node's ceiling now depends on a definition this
+	// run staged, and a second process has no in-memory manifest to re-stage
+	// from — only a record in the run directory the previous leg's nodes could
+	// write. So a resumed leg maps nothing and runs those nodes as ordinary
+	// planned nodes: isolated, under their own unchanged tool ceiling, without
+	// the user's agent persona. The discriminator is the same as above, and it
+	// matters as much: a HAND-WRITTEN graph's `agent:` is the user's own
+	// reviewed artifact, its node loads the user's settings by design, and it
+	// must keep round-tripping untouched.
+	var unmapped []string
 	if len(snap.ToolPolicies) > 0 {
 		reattached, _, err := coordinator.ReattachVerifyCommand(g, coordinator.VerifyCommand{})
 		if err != nil {
 			return fmt.Errorf("resume run %q: %w", runID, err)
 		}
 		g = reattached
+
+		dropped, droppedIDs, err := coordinator.DropAgentMapping(g)
+		if err != nil {
+			return fmt.Errorf("resume run %q: %w", runID, err)
+		}
+		g, unmapped = dropped, droppedIDs
 	}
 	// A resumed leg re-warns exactly as `run` did at load: the warning is
 	// promised to be loud and never silent (DESIGN.md), and a resume may be
@@ -407,7 +425,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// get, so the de-escalation persists into the snapshot instead of being
 	// re-decided by every later leg.
 	policies := toRunnerToolPolicies(snap.ToolPolicies)
-	dropSkillActivation(os.Stdout, snap.ToolPolicies, policies, flags.noSkillActivation)
+	noteAgentDeescalation(os.Stdout, unmapped)
+	dropSkillActivation(os.Stdout, snap.ToolPolicies, policies, flags.noSkillActivation, unmapped)
 
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:           runID,
@@ -602,6 +621,24 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 	return out
 }
 
+// noteAgentDeescalation says which planned nodes lost their `agent:` to the
+// resume, and why. coordinator.DropAgentMapping has already done it to the
+// graph; this is the half that must not be silent.
+//
+// It is a cost and not a reassurance, so it names both directions: the node
+// keeps its whole ceiling — it never had less of one, since ADR 0022 — and
+// loses the system prompt the first leg's node ran under. A leg that behaves
+// differently from the one it continues and does not say so is the same
+// unexplained-absence shape ADR 0017 §6's own de-escalation prints against.
+func noteAgentDeescalation(w io.Writer, unmapped []string) {
+	if len(unmapped) == 0 {
+		return
+	}
+	sorted := append([]string(nil), unmapped...)
+	sort.Strings(sorted)
+	fmt.Fprintf(w, "agent mapping is off for this leg: re-staging an agent definition could only read a record inside the run directory, which this run's own nodes could have rewritten, and there is no integrity anchor outside it yet — %s run(s) as an ordinary planned node, isolated and under the same tool ceiling, without your agent's system prompt (ADR 0022 §5).\n", strings.Join(sorted, ", "))
+}
+
 // dropSkillActivation takes skill activation OFF a resumed leg, in place on
 // policies, and says so. It is unconditional (ADR 0017 §6, amended
 // 2026-08-07), and the reason is a hazard the first leg does not have:
@@ -646,10 +683,18 @@ func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[strin
 // durable record that a run was activation-enabled at all — the grant is
 // invisible in graph.json by design (ADR 0017 §2) — and toRunnerToolPolicies
 // deliberately does not rehydrate it.
-func dropSkillActivation(w io.Writer, snapPolicies map[string]runstate.NodeToolPolicy, policies map[string]runner.ToolPolicy, off bool) {
+func dropSkillActivation(w io.Writer, snapPolicies map[string]runstate.NodeToolPolicy, policies map[string]runner.ToolPolicy, off bool, unmapped []string) {
+	// A mapped node's snapshot carries a PluginDirs too — the staged AGENT
+	// directory, not the corpus (ADR 0022) — and noteAgentDeescalation has
+	// already said what happens to it. Counting those nodes here would report
+	// them as losing a Skill tool they never had.
+	wasMapped := make(map[string]bool, len(unmapped))
+	for _, id := range unmapped {
+		wasMapped[id] = true
+	}
 	activated := make([]string, 0, len(snapPolicies))
 	for id, p := range snapPolicies {
-		if len(p.PluginDirs) == 0 {
+		if len(p.PluginDirs) == 0 || wasMapped[id] {
 			continue
 		}
 		activated = append(activated, id)

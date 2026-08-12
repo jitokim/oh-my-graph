@@ -174,6 +174,17 @@ type Plan struct {
 	// execution would defeat the reason the mapping lives in trusted code.
 	// Empty when nothing matched or mapping is off.
 	AgentMappings []AgentMapping
+	// AgentStaging carries the agent definitions the applied mappings resolved
+	// to (agentstage.go, ADR 0022): the manifest that pins each one's bytes,
+	// and the nodes that will be handed the staged --plugin-dir. nil when
+	// nothing mapped — including when a definition could not be staged, in
+	// which case every mapping carries a SkippedReason saying so.
+	//
+	// It is what lets a mapped node keep ceiling layer 1. The caller must bind
+	// it (Plan.BindAgentStaging) before handing ToolPolicies to the scheduler,
+	// and must guard the runner with it (GuardAgentStaging) so the definition
+	// is re-verified before every spawn.
+	AgentStaging *AgentStaging
 	// SkillActivation is the skill-activation decision (skillstage.go,
 	// ADR 0017): whether this run's planned nodes get the Skill tool and a
 	// staged plugin directory of the user's own skills, over which corpus, on

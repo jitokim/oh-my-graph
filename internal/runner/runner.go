@@ -63,23 +63,28 @@ type ToolPolicy struct {
 	// for a planned node this means no MCP servers at all.
 	StrictMCPConfig bool
 	// PluginDirs renders as one --plugin-dir <dir> per entry. It is NOT a sixth
-	// ceiling layer and must not be read as one: it ADDS instruction material
-	// (a staged Claude Code plugin holding skill definitions) and grants no
-	// capability at all. A skill's body can only reach tools this policy's
-	// other five layers already permit, and the Skill tool itself exists only
-	// when layer 3's Tools names it — measured in ADR 0017 (f): --plugin-dir
-	// with --tools Read and no Skill loads the definitions and cannot run them.
+	// ceiling layer and must not be read as one: it ADDS definitions — skill
+	// bodies (ADR 0017) or the one agent a node was mapped onto (ADR 0022) —
+	// and grants no capability at all. A skill's body can only reach tools this
+	// policy's other five layers already permit, the Skill tool itself exists
+	// only when layer 3's Tools names it (ADR 0017 (f): --plugin-dir with
+	// --tools Read and no Skill loads the definitions and cannot run them), and
+	// a staged agent's frontmatter does not widen past --tools either
+	// (DESIGN.md E6; ADR 0022's K-FM-GIT re-ran it on a staged definition).
 	//
 	// It exists because layer 1 stays "": --setting-sources "" withholds the
-	// skill DEFINITIONS along with the user's settings, and a plugin directory
-	// is the one source of definitions that does not reopen layer 1 (ADR 0017,
-	// measurements (f) and (g)). Empty omits the flag, which is every
-	// hand-written graph and every planned run with activation off.
+	// DEFINITIONS along with the user's settings — skills and agents alike —
+	// and a plugin directory is the one source of definitions that does not
+	// reopen layer 1 (ADR 0017, measurements (f) and (g); ADR 0022,
+	// measurement (k)). Empty omits the flag, which is every hand-written graph
+	// and every planned run that neither activated nor mapped.
 	//
-	// A directory that does not exist is accepted silently by the CLI, so a
-	// value here is only as good as whatever guarantees the directory is
-	// present — see coordinator.SkillStaging, which re-materializes it before
-	// every spawn rather than trusting the path.
+	// A directory that does not exist is accepted silently by the CLI for
+	// SKILLS — the node simply has none — and is a NODE FAILURE for an agent,
+	// since `--agent <name>` then resolves nothing and the CLI exits 1. Either
+	// way a value here is only as good as whatever guarantees the directory is
+	// present: see coordinator.SkillStaging and coordinator.AgentStaging, both
+	// of which re-materialize before every spawn rather than trusting the path.
 	PluginDirs []string
 }
 
@@ -112,10 +117,17 @@ type NodeInvocation struct {
 	// An unresolvable name is a NODE FAILURE, not a fallback: claude exits
 	// non-zero having printed nothing on stdout (measured on 2.1.220), so the
 	// node fails with a *NodeOutputError carrying the CLI's own stderr, which
-	// names every agent that IS available. Hand-written graphs only — a
-	// planned node may not set it (coordinator.validatePlannedNodes), and it is
-	// mutually exclusive with ToolPolicy.SettingSources = "" anyway, which
-	// disables discovery of the user's agent definitions (DESIGN.md, E2).
+	// names every agent that IS available. A PLAN may not set it
+	// (coordinator.validatePlannedNodes) — it arrives on a planned node only
+	// from trusted code, after validation (coordinator.applyAgentMapping).
+	//
+	// It is NOT mutually exclusive with ToolPolicy.SettingSources = "", and the
+	// comment here said otherwise until 2026-08-12. `--setting-sources ""`
+	// disables DISCOVERY of agent definitions (DESIGN.md, E2), which a
+	// ToolPolicy.PluginDirs entry carrying the definition routes around: a
+	// mapped planned node runs both flags together and resolves the staged copy
+	// (ADR 0022). A hand-written node's agent is still discovered, because
+	// oh-my-graph stages nothing for it and its policy imposes no layer 1.
 	Agent string
 	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none.
 	// A positive value is passed to claude as --max-budget-usd, which makes the

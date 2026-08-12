@@ -322,43 +322,50 @@ func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 	}
 }
 
-// The other half, and the one the measurement forced. ADR 0004's E1 claim —
-// a declared scope is enforced rather than merely requested — is FALSE for an
-// agent-mapped node, measured on this build's own argv (2026-08-12,
-// docs/measurements/0017-lifting-the-agent-mapped-exclusion.md): the mapped
-// node ran an out-of-scope command with permission_denials: [], the unmapped
-// one denied it. This summary is what a reader takes as the plan's ceiling, so
-// when the plan contains such a node the exception has to be ON this paragraph
-// and not only in the mapping lines above it.
-func TestNoteCeiling_NamesTheAgentMappedException(t *testing.T) {
+// The other half, and the one ADR 0022 reversed. Between v0.6.0 and ADR 0022
+// this test asserted the OPPOSITE: that the summary carried an EXCEPTION for
+// agent-mapped nodes, because ADR 0004's E1 claim was measured FALSE for them.
+// The code under it changed — the agent definition now arrives from a staged
+// --plugin-dir, so layer 1 stays "" — and the same ceiling arm that breached
+// 2 of 2 was denied 3 of 3
+// (docs/measurements/0017-staged-agent-restores-layer-1.md).
+//
+// So this test now guards the OTHER direction, which is the one that is easy to
+// get wrong: a warning kept past its cause is still a false disclosure, and it
+// teaches readers to discount the next one. The negative assertions below are
+// the load-bearing half.
+func TestNoteCeiling_TheMappedNodeIsNoLongerAnException(t *testing.T) {
 	var out strings.Builder
 	noteCeiling(&out, true)
 	got := out.String()
 
 	for _, want := range []string{
-		"EXCEPT any node marked [agent: ...]",
-		"DO load your settings",
-		"0017-lifting-the-agent-mapped-exclusion.md",
-		// The exception has to cancel BOTH halves of the paragraph, not just
-		// the scope half. The blanket line's other clause — CLAUDE.md, hooks
-		// and MCP servers are unavailable — reads as a COST, and for a mapped
-		// node it is false in the direction that matters: those load, and so
-		// does the repository's project scope. Narrowing only the guarantee
-		// and leaving the reassurance standing is the same half-truth this
-		// commit convicts the retired parenthesis of, one clause over.
-		"CLAUDE.md and hooks ARE available to them",
-		"the repository's own",
-		// ...but NOT one clause too far. Layer 4 is a flag, not a settings
-		// scope: --strict-mcp-config is on a mapped node's argv too (see the
-		// measurement's argv/omg-probe-writer.argv.txt) with no --mcp-config
-		// beside it, so its MCP servers stay shut while its CLAUDE.md and
-		// hooks do not. An exception that swept MCP in with them would
-		// overstate the surface in the one direction a reader cannot check.
-		"MCP servers are the one part that stays shut",
-		"--strict-mcp-config with no --mcp-config",
+		"That INCLUDES any node marked [agent: ...]",
+		"copied into this run's directory",
+		"0017-staged-agent-restores-layer-1.md",
+		// What is STILL different about a mapped node has to survive the
+		// reversal: it runs under someone else's system prompt and holds no
+		// Skill tool. Deleting the exception must not delete the note.
+		"runs under one of YOUR agents' system prompts",
+		"holds no",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the ceiling summary does not carry the measured exception %q:\n%s", want, got)
+			t.Errorf("the ceiling summary does not carry %q:\n%s", want, got)
+		}
+	}
+	// The retired exception must not come back. Each of these was true of the
+	// shipped argv until 2026-08-12 and is false of it now, and re-asserting
+	// one would understate the ceiling — a conservative lie is still a lie,
+	// and this one tells a user their repository can configure an unattended
+	// node when it cannot.
+	for _, gone := range []string{
+		"EXCEPT any node marked",
+		"DO load your settings",
+		"CLAUDE.md and hooks ARE available to them",
+		"0017-lifting-the-agent-mapped-exclusion.md",
+	} {
+		if strings.Contains(got, gone) {
+			t.Errorf("the ceiling summary still carries the retired exception %q:\n%s", gone, got)
 		}
 	}
 }
@@ -369,13 +376,13 @@ func TestNoteCeiling_NamesTheAgentMappedException(t *testing.T) {
 // PER NODE plus both opt-outs — because a mapping the human never saw before
 // execution would defeat the reason the mapping lives in trusted code.
 //
-// The per-node half is what measurement (j) added, and it is the half a
-// paragraph cannot carry. What a mapped node gives up is not uniform prose:
-// THIS node, by name, holds no Skill tool and has a scope that binds only as
-// far as the user's own settings do. The old text said "they load your
-// settings so the agent can resolve (their declared tool list still binds)",
-// which named no node and, in its parenthesis, made a promise the argv does
-// not keep.
+// The per-node half is what measurement (j) added, and ADR 0022 kept the shape
+// while inverting what it says: THIS node, by name, runs under the same ceiling
+// as any other planned node and holds no Skill tool. What it used to say — that
+// the node loads the user's settings and has a scope enforced only as far as
+// those settings enforce it — was true of the argv v0.6.0 shipped and is false
+// of this one, so the negative assertions at the end of this test are as
+// load-bearing as the positive ones.
 func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
 		`{"id":"review","prompt":"p","agent":"code-reviewer"},` +
@@ -395,21 +402,27 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 	for _, want := range []string{
 		"[agent: code-reviewer]",
 		`agent "scanner" not applied to scan: tools exceed ceiling: Bash`,
-		// Which node lost what, by name — not a paragraph about "nodes".
+		// Which node got what, by name — not a paragraph about "nodes".
 		`review runs as your "code-reviewer"`,
+		"same ceiling as any other planned node",
 		"holds NO Skill tool",
-		"enforced only as far as YOUR settings enforce it",
-		// The scope loss is a measurement, and the record travels with it.
-		"permission_denials: []",
-		"0017-lifting-the-agent-mapped-exclusion.md",
-		// The surface a mapped node inherits is not only the scope half. The
-		// same measurement showed the REPOSITORY under work supplying skill
-		// definitions and enabling plugins into such a node, which is strictly
-		// wider than "a non-git command can run" — and the two things it also
-		// implies but did not measure are labelled as implied, so the printout
-		// never invents a number it does not have.
-		"plugins its own .claude/settings.json enables",
-		"implied by the loading, NOT measured here",
+		// The ceiling claim is a measurement, and the record travels with it —
+		// including the counterfactual, because "denied 3 of 3" on its own is
+		// consistent with a machine that stopped breaching.
+		"denied 3 of 3",
+		"minus the staging breaching",
+		"0017-staged-agent-restores-layer-1.md",
+		// What the fix COSTS the node has to print beside what it buys. A
+		// mapped node was the one planned node that saw the user's
+		// environment, and anyone whose agents leaned on that is who this
+		// release changes behaviour for.
+		"your CLAUDE.md, your hooks, your MCP servers",
+		"was the one exception",
+		// The definition is pinned, which is what makes the ceiling check
+		// non-vacuous, and a resumed leg maps nothing — both are behaviour a
+		// user finds surprising if they meet it without being told.
+		"pinned by hash",
+		"A resumed",
 		// Both ways out, with their prices distinguished. The decline is per
 		// AGENT: it frees every node that agent would have taken, and calling
 		// that "a single node" understates it by however many nodes matched.
@@ -421,11 +434,18 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)
 		}
 	}
-	// The retired reassurance must not come back in any spelling: it is the
-	// clause measurement (j) refuted, and it sat on the screen a human reads
-	// before letting an unattended run start.
-	if strings.Contains(got, "declared tool list still binds") {
-		t.Errorf("the printout re-asserts a scope guarantee the mapped argv does not keep:\n%s", got)
+	// Neither retired claim may come back, and they were retired in opposite
+	// directions: the first was refuted by measurement (j), the second by the
+	// code change measurement (k) recommended. Both sat on the screen a human
+	// reads before letting an unattended run start.
+	for _, gone := range []string{
+		"declared tool list still binds",
+		"enforced only as far as YOUR settings enforce it",
+		"plugins its own .claude/settings.json enables",
+	} {
+		if strings.Contains(got, gone) {
+			t.Errorf("the printout still carries the retired claim %q:\n%s", gone, got)
+		}
 	}
 }
 
@@ -596,7 +616,13 @@ func TestPrintPlan_ShowsTheStagedCorpusAndWhatItCosts(t *testing.T) {
 		// node out of the exclusion — because a disclosure naming the exclusion
 		// without naming its cost reads as a trade the user made knowingly.
 		"holds NO Skill tool",
-		"not your own installed skills either",
+		"not your own installed skills",
+		// ADR 0022 removed the GROUND the refusal to lift stood on, and the
+		// line has to say so or it becomes the same half-truth pointing the
+		// other way: a user told "measured and refused" would not think to ask
+		// whether the reason still applies.
+		"That ground is GONE",
+		"a decision nobody has re-taken",
 		"--no-agent-mapping is what gets a node",
 		"the WHOLE plan",
 		"NOT knowable here",
@@ -679,7 +705,8 @@ func TestPrintPlan_SaysWhatTheExclusionCostsWhenItTakesEveryNode(t *testing.T) {
 	for _, want := range []string{
 		"skill activation: OFF — every planned node is agent-mapped",
 		"holds NO Skill tool",
-		"not your own installed skills either",
+		"not your own installed skills",
+		"That ground is GONE",
 		"--no-agent-mapping is what gets a node",
 		"the WHOLE plan",
 	} {

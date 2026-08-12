@@ -37,8 +37,16 @@ func planWithAgents(t *testing.T, opts ...Option) Plan {
 
 // The happy path: one agent, one clear token match, tools inside the node's
 // ceiling — the node gets agent:, the decision lands on AgentMappings, the
-// node's policy drops layer 1 so --agent can resolve, and the re-encoded Spec
-// carries the mapping so a saved/resumed plan keeps it.
+// definition is staged, and the re-encoded Spec carries the mapping so a
+// saved/resumed plan keeps it.
+//
+// The SettingSources assertion is inverted from what it was until ADR 0022,
+// and it is the load-bearing cell of this whole file: a mapped node used to
+// drop layer 1 so `--agent` could resolve from the user's own directories, and
+// measurement (k) showed what that cost — the shipped argv breached ADR 0004's
+// E1 ceiling 2 of 2 while the staged-definition argv was denied 3 of 3
+// (docs/measurements/0017-staged-agent-restores-layer-1.md). A nil here again
+// would mean the fix was silently reverted, so the message says so.
 func TestPlan_AgentMappingHit(t *testing.T) {
 	dir := t.TempDir()
 	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ndescription: reviews code\ntools: Read, Grep")
@@ -52,8 +60,15 @@ func TestPlan_AgentMappingHit(t *testing.T) {
 	if len(plan.AgentMappings) != 1 || plan.AgentMappings[0].Agent != "code-reviewer" || plan.AgentMappings[0].SkippedReason != "" {
 		t.Fatalf("mappings = %+v, want one applied code-reviewer mapping", plan.AgentMappings)
 	}
-	if plan.ToolPolicies["review"].SettingSources != nil {
-		t.Error("a mapped node must drop SettingSources so --agent can resolve")
+	ss := plan.ToolPolicies["review"].SettingSources
+	if ss == nil || *ss != "" {
+		t.Errorf("SettingSources = %v, want a pointer to \"\": a mapped node keeps ceiling layer 1 since ADR 0022, and its agent resolves from the staged --plugin-dir instead", ss)
+	}
+	if plan.AgentStaging == nil {
+		t.Fatal("an applied mapping must carry AgentStaging: without it --agent has nothing to resolve against under layer 1")
+	}
+	if agents := plan.AgentStaging.Agents(); len(agents) != 1 || agents[0].Name != "code-reviewer" {
+		t.Errorf("staged agents = %+v, want exactly code-reviewer", agents)
 	}
 	if !strings.Contains(string(plan.Spec), `"agent":"code-reviewer"`) {
 		t.Errorf("spec must carry the mapping for save/resume, got %s", plan.Spec)
@@ -188,11 +203,15 @@ func TestPlan_DeclinedAgentIsRefusedWithMappingStillOn(t *testing.T) {
 	if node.Agent != "" {
 		t.Errorf("node agent = %q, want empty after a decline", node.Agent)
 	}
-	// The whole point of the flag: this node keeps layer 1, which is what its
-	// declared scope is enforced by and what keeps it eligible for skill
-	// activation (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).
+	// Since ADR 0022 layer 1 is no longer what a decline buys back — a mapped
+	// node keeps it too — so what is asserted here is that the decline changed
+	// nothing about the ceiling, and the capability it does buy back (skill
+	// activation eligibility) is asserted in skillstage_test.go.
 	if plan.ToolPolicies["review"].SettingSources == nil {
 		t.Error("a declined node must keep its settings isolation")
+	}
+	if plan.AgentStaging != nil {
+		t.Error("nothing applied, so nothing may be staged")
 	}
 	if string(plan.Spec) != reviewSpec {
 		t.Errorf("spec must stay untouched when nothing applied, got %s", plan.Spec)

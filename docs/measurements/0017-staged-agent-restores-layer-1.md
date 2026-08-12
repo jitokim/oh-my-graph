@@ -1,5 +1,18 @@
 # ADR 0017 measurement (k) — staging the matched agent beside the corpus restores layer 1, and all three of (j)'s findings close
 
+> **Acted on, 2026-08-12.** The recommendation below was taken:
+> `applyAgentMapping` no longer sets `SettingSources = nil`, and the matched
+> agent is staged into a plugin directory of the run's own
+> (`docs/adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md`).
+> **This record is unchanged and is not to be edited to match what shipped** —
+> including its "NO POLICY WAS TOUCHED" line, which describes the lane that
+> produced it. Two places where the implementation departs from what was
+> measured are recorded in ADR 0022 rather than here: the staged agent gets its
+> OWN directory (so it does not depend on the user having a skill corpus, item 2
+> below), which means the shipped directory carries `agents/` and no `skills/`
+> while every arm below carried both; and item 3's exclusion is kept, not
+> lifted.
+
 ADR 0017 §9 names one direction and proposes nothing about it:
 
 > A plugin directory can carry `agents/` as well as `skills/`, so staging the

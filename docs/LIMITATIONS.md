@@ -151,41 +151,34 @@ has no open issue behind it.
   the exception: the coordinator refuses to map an agent whose frontmatter
   declares a tool outside the node's planned `allowed_tools`, and the node's
   `--tools` ceiling still binds — DESIGN.md, E6.)
-- **The scoped-`Bash` promise does NOT hold for an agent-mapped planned node.**
-  Everywhere else this project says an unattended planned node declaring
-  `Bash(git *)` cannot run an out-of-scope command, that claim rests on Layer 1
-  (`--setting-sources ""`). An auto-MAPPED node drops Layer 1, because `--agent`
-  cannot resolve without the user's settings loaded, and with the settings comes
-  the user's own standing permission scope. Measured on 2026-08-12 against the
-  argv this build emits: a mapped node declaring `Bash(git *)`, unattended under
-  `--permission-mode dontAsk`, ran `touch /tmp/...` with `permission_denials:
-  []`, while the same probe's unmapped node denied the identical command and its
-  in-scope `git` control ran
-  ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md)).
-  **Which tools exist is still bound; the scope inside them is not.** The plan
-  printout says so per mapped node; `--no-agent-mapping`, or `--no-agent <name>`
-  for one agent, is what keeps a node out of it. Restoring the ceiling for these
-  nodes is a change to agent mapping itself and is
-  [ADR 0017](adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
-  §Compatibility's declined follow-up.
-- **An agent-mapped node loads the REPOSITORY's configuration, not only yours.**
-  The bullet above is about permission scope; this is the wider half of the same
-  cause. "Loads your settings" means the CLI's own default sources — user,
-  project and local — so the `.claude/` of the checkout the node is working in
-  is one of them. Measured in the same probe, on the same argv: a `SKILL.md`
-  **committed to that repository** was invoked **3 of 3** by a node whose prompt
-  never mentioned skills, procedure text and all, and a plugin enabled by that
-  repository's own committed `.claude/settings.json` (`extraKnownMarketplaces` +
-  `enabledPlugins`) loaded, with its skill firing. By the same loading — and
-  **implied, not measured here** — the repository's project `CLAUDE.md` and its
-  **hooks**, which are command execution at tool events, reach such a node too.
-  None of this needs an attacker to be clever: it arrives with a `git clone`.
-  An activated (non-mapped) node is not exposed to it — `--setting-sources ""`
-  keeps project scope out, and the staged corpus won the same three-way name
-  collision 3 of 3 under that flag
-  ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md), arm
-  `X-ACT`). So the boundary is agent mapping, and the way out is the same two
-  flags.
+- **An agent-mapped node loses your environment, and that is the change of
+  2026-08-12.** Until then a mapped node dropped Layer 1 — `--agent` could not
+  resolve without the user's settings loaded — and it was the one planned node
+  that saw your `CLAUDE.md`, your hooks and your standing permission grants.
+  It no longer does: the matched agent definition is copied into the run's own
+  directory and supplied with `--plugin-dir`, so Layer 1 stays `""` and a
+  mapped node is as isolated, and as limited, as every other planned node
+  ([ADR 0022](adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
+  If your agents lean on your environment, `--no-agent-mapping` (or
+  `--no-agent <name>`) is the way back — and it gives back the old behaviour,
+  including the two bullets this one replaced.
+  <br>What that fixes, measured on the same machine and CLI build minutes
+  apart: the **shipped** mapped argv ran an out-of-scope `touch` with
+  `permission_denials: []` **2 of 2**, the new one was **denied 3 of 3** with
+  the refusal recorded, and an in-scope `git init` control still ran
+  ([the record](measurements/0017-staged-agent-restores-layer-1.md)). It also
+  shuts the wider half: a `SKILL.md` **committed to the repository under work**
+  used to be invoked **3 of 3** by a mapped node whose prompt never mentioned
+  skills, and a plugin enabled by that repository's own `.claude/settings.json`
+  loaded into it; under the new argv the repository's copy fired **0 of 3**, and
+  where the model did call `Skill` the CLI answered `Unknown skill: …` with
+  `is_error: true`. The repository's project `CLAUDE.md` and its **hooks**
+  arrive by the same default source list and are **implied, not measured**, in
+  both directions.
+  <br>**What is not measured** is in ADR 0022 §7: the staged directory this
+  build writes carries `agents/` and no `skills/`, and the measured one carried
+  both. A directory the CLI declined to load would fail the node loudly — exit
+  1, `--agent 'x' not found` — rather than running it unisolated.
 - **Isolation stops at the invocation repository.** `auto` provisions no
   managed worktree anywhere (`cwd:` and `worktree:` are both rejected at plan
   time), and a managed worktree — a hand-written-graph feature,

@@ -33,33 +33,38 @@
 // frontmatter declares no tools inherits the node's own (already-ceilinged)
 // tool set, so it is mappable.
 //
-// THE ONE DELIBERATE TRADE: `--agent` cannot resolve under ceiling layer 1 —
-// `--setting-sources ""` disables discovery of the user's agent definitions
-// (DESIGN.md, E2) — so a MAPPED node drops layer 1 and loads the user's
-// settings again. Layers 2-5 stay: --tools still decides which tools exist
-// (E4), the resolved agent's frontmatter cannot widen past it (E6), and the
-// residual deny list still beats standing grants. What returns with the
-// settings is the user's own standing permission scope within the declared
-// tools, plus their hooks and CLAUDE.md — the node runs with at most what the
-// user's own Claude Code session could do, as the user's own agent. That trade
-// is disclosed in the plan printout rather than discovered later.
+// THE TRADE THAT USED TO BE HERE IS PAID OFF (ADR 0022, 2026-08-12). `--agent`
+// cannot resolve under ceiling layer 1 from the USER'S OWN directories —
+// `--setting-sources ""` disables discovery of them (DESIGN.md, E2; measurement
+// (k)'s K-NEG re-confirms it at claude 2.1.228, where the CLI listed the five
+// built-ins it could still see and neither the user's nor the repository's
+// agents) — so until this ADR a mapped node dropped layer 1 and loaded the
+// user's settings again. That was measured to cost the whole scope ceiling: the
+// argv this file produced ran an out-of-scope `touch` under dontAsk with
+// `permission_denials: []`, 2 of 2, while the same probe's isolated node denied
+// the identical command.
 //
-// WHAT THAT TRADE COSTS IS NOW A MEASUREMENT, not a description. On 2026-08-12
-// (claude 2.1.228, docs/measurements/0017-lifting-the-agent-mapped-exclusion.md,
-// the ceiling arm) the argv this file's mapping produces — a node declaring
-// `Bash(git *)`, run unattended under --permission-mode dontAsk — executed an
-// out-of-scope `touch /tmp/...` with `permission_denials: []`, while the same
-// probe's UNMAPPED node denied the identical command and its in-scope `git`
-// control ran. So "the declared tool list still binds" is true only of WHICH
-// TOOLS EXIST (E4): the SCOPE inside a declared tool binds no further than the
-// user's own settings do, and the measuring machine's settings granted
-// `Bash(*)`. ADR 0004's headline claim about an unattended planned node
-// therefore does not hold for a mapped one, and has not since mapping shipped.
-// Restoring it means giving `--agent` a way to resolve without dropping layer 1
-// — ADR 0017 §Compatibility's declined follow-up, a change to THIS file, not to
-// any layer above it. Until then the honest moves are to say so on the plan
-// printout (cmd/oh-my-graph/main.go, noteAgentMappings) and to make the opt-out
-// cost less than the whole plan (WithoutAgentsNamed).
+// A `--plugin-dir` supplies definitions WITHOUT reopening layer 1, and a plugin
+// directory can carry `agents/` as well as `skills/`. So applyAgentMapping now
+// stages the matched definition (agentstage.go) and LEAVES LAYER 1 AT "". Under
+// that argv the ceiling arm was denied 3 of 3 with the refusal recorded, the
+// in-scope control still ran, and `--agent` resolved to the STAGED definition
+// 3 of 3 — attributed by a marker token, with the staging removed as the
+// control (`docs/measurements/0017-staged-agent-restores-layer-1.md`).
+//
+// All five ceiling layers now hold on a mapped node exactly as on any other
+// planned node, and the user's CLAUDE.md, hooks, MCP servers and standing
+// permission grants no longer load for it. That is a REAL LOSS for anyone whose
+// mapped nodes leaned on their environment, and it is disclosed in the plan
+// printout (cmd/oh-my-graph/main.go, noteAgentMappings) rather than discovered
+// later. The escape hatches are unchanged: --no-agent-mapping, or --no-agent
+// <name> for one.
+//
+// TOOL SAFETY IS NOW PINNED, NOT JUST CHECKED. toolsBeyondCeiling reads the
+// definition this process SCANNED; what the CLI reads is the staged copy, and
+// the two are the same bytes because the manifest carries the source path with
+// its plan-time SHA-256 (agentstage.go). Before staging, the CLI re-read the
+// user's live file at spawn time and an edit in that window was unchecked.
 //
 // Filesystem scan failures — missing directories, unreadable files, broken
 // frontmatter — are silent no-mapping, never an error: zero-config stays
@@ -136,6 +141,10 @@ type agentDef struct {
 	Description string     `yaml:"description"`
 	Model       string     `yaml:"model"`
 	Tools       agentTools `yaml:"tools"`
+	// path is the file this was parsed from — not frontmatter, and set by the
+	// scan. It is what agentstage.go stages and hashes, so the definition the
+	// CLI resolves is the one whose `tools:` toolsBeyondCeiling approved.
+	path string
 }
 
 // agentTools accepts the two spellings agent frontmatter uses for its tool
@@ -226,6 +235,7 @@ func parseAgentFile(path string) (agentDef, bool) {
 	if def.Name == "" || strings.ContainsAny(def.Name, " \t\n") {
 		return agentDef{}, false
 	}
+	def.path = path
 	return def, true
 }
 
@@ -331,11 +341,26 @@ func toolsBeyondCeiling(agentTools, nodeTools []string) []string {
 }
 
 // applyAgentMapping is the coordinator's post-validation step: scan, decide,
-// and rebuild the plan with each mapped node's `agent:` set and its tool
-// policy's layer 1 dropped (see the package comment for why that pair is
-// inseparable). The rebuilt graph goes back through graph.Parse so the plan's
-// Graph, Spec and saved graph.json stay one artifact — a resumed or re-run
-// plan keeps its mappings instead of silently shedding them.
+// stage the definitions the decisions resolved to, and rebuild the plan with
+// each mapped node's `agent:` set. The rebuilt graph goes back through
+// graph.Parse so the plan's Graph, Spec and saved graph.json stay one artifact
+// — a resumed or re-run plan keeps its mappings instead of silently shedding
+// them.
+//
+// NO TOOL POLICY IS TOUCHED HERE ANY MORE, and that deletion is ADR 0022's
+// whole edit to this function: the line that read `policy.SettingSources = nil`
+// is gone, so a mapped node keeps the layer 1 toolPolicyFor gave it. What
+// replaces it is BindAgentStaging adding one --plugin-dir at run-directory
+// time.
+//
+// STAGING FAILURE IS NO MAPPING, NEVER A FAILED PLAN OR A MAPPED NODE WITH
+// NOTHING TO RESOLVE — and it is PER AGENT. A definition that cannot be staged
+// costs exactly the mappings that named it: those nodes stay ordinary planned
+// nodes with the reason recorded on their skip line, and every other mapping
+// stands. That is the only safe direction, because mapping without staging
+// would spawn `--agent` under `--setting-sources ""` with no definition
+// anywhere, which the CLI exits 1 on; and it is the right GRAIN, because the
+// agent is the unit a user can act on (`--no-agent <name>`).
 func (c *Coordinator) applyAgentMapping(plan *Plan) error {
 	if c.agentMappingOff || len(c.agentDirs) == 0 {
 		return nil
@@ -347,27 +372,38 @@ func (c *Coordinator) applyAgentMapping(plan *Plan) error {
 	mappings := mapAgents(plan.Graph, agents, c.declinedAgents)
 	plan.AgentMappings = mappings
 
-	applied := false
+	candidates := make(map[string]agentDef)
 	for _, m := range mappings {
+		if m.SkippedReason == "" {
+			candidates[m.Agent] = agents[m.Agent]
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	staging, refused := newAgentStaging(candidates)
+
+	var nodeIDs []string
+	for i, m := range plan.AgentMappings {
 		if m.SkippedReason != "" {
 			continue
 		}
-		for i := range plan.Graph.Nodes {
-			if plan.Graph.Nodes[i].ID == m.NodeID {
-				plan.Graph.Nodes[i].Agent = m.Agent
+		if err, bad := refused[m.Agent]; bad {
+			plan.AgentMappings[i].SkippedReason = fmt.Sprintf("its definition could not be staged, so mapping it would lose this node's ceiling: %v", err)
+			continue
+		}
+		for j := range plan.Graph.Nodes {
+			if plan.Graph.Nodes[j].ID == m.NodeID {
+				plan.Graph.Nodes[j].Agent = m.Agent
 			}
 		}
-		// Layer 1 and --agent are mutually exclusive (E2): a mapped node
-		// loads the user's settings so the agent can resolve at all. The
-		// other ceiling layers on the policy stay untouched.
-		policy := plan.ToolPolicies[m.NodeID]
-		policy.SettingSources = nil
-		plan.ToolPolicies[m.NodeID] = policy
-		applied = true
+		nodeIDs = append(nodeIDs, m.NodeID)
 	}
-	if !applied {
+	if len(nodeIDs) == 0 {
 		return nil
 	}
+	staging.stageFor(nodeIDs)
+	plan.AgentStaging = staging
 
 	spec, err := json.Marshal(plan.Graph)
 	if err != nil {
