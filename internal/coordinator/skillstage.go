@@ -342,7 +342,8 @@ type SkillActivation struct {
 	// fix could take: the arm measured to WORK here is `--agent` with `Skill` in
 	// --tools and NO staged plugin, over the user's own corpus.
 	//
-	// (j) IS NOW RECORDED — 2026-08-12, 18 spawns, $3.86, claude 2.1.228,
+	// (j) IS NOW RECORDED — 2026-08-12, 21 spawns (18 pre-registered + a
+	// 3-spawn registered addendum), $4.16, claude 2.1.228,
 	// docs/measurements/0017-lifting-the-agent-mapped-exclusion.md — AND THE
 	// EXCLUSION STAYS, on neither of the two grounds the paragraph above
 	// expected. The composite DELIVERS (3 of 3, resolving

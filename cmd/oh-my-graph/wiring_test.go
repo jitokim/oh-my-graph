@@ -339,6 +339,15 @@ func TestNoteCeiling_NamesTheAgentMappedException(t *testing.T) {
 		"EXCEPT any node marked [agent: ...]",
 		"DO load your settings",
 		"0017-lifting-the-agent-mapped-exclusion.md",
+		// The exception has to cancel BOTH halves of the paragraph, not just
+		// the scope half. The blanket line's other clause — CLAUDE.md, hooks
+		// and MCP servers are unavailable — reads as a COST, and for a mapped
+		// node it is false in the direction that matters: those load, and so
+		// does the repository's project scope. Narrowing only the guarantee
+		// and leaving the reassurance standing is the same half-truth this
+		// commit convicts the retired parenthesis of, one clause over.
+		"CLAUDE.md, hooks and MCP servers ARE available to them",
+		"the repository's own",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the ceiling summary does not carry the measured exception %q:\n%s", want, got)
@@ -385,9 +394,20 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 		// The scope loss is a measurement, and the record travels with it.
 		"permission_denials: []",
 		"0017-lifting-the-agent-mapped-exclusion.md",
-		// Both ways out, with their prices distinguished.
+		// The surface a mapped node inherits is not only the scope half. The
+		// same measurement showed the REPOSITORY under work supplying skill
+		// definitions and enabling plugins into such a node, which is strictly
+		// wider than "a non-git command can run" — and the two things it also
+		// implies but did not measure are labelled as implied, so the printout
+		// never invents a number it does not have.
+		"plugins its own .claude/settings.json enables",
+		"implied by the loading, NOT measured here",
+		// Both ways out, with their prices distinguished. The decline is per
+		// AGENT: it frees every node that agent would have taken, and calling
+		// that "a single node" understates it by however many nodes matched.
 		"--no-agent-mapping turns all of it off",
 		"--no-agent <name> declines one agent",
+		"every node that agent would have taken",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)

@@ -516,12 +516,14 @@ func TestPlan_AgentMappedNodeIsExcludedFromActivation(t *testing.T) {
 // layer 1 and is activated like any other planned node.
 //
 // This is the end-to-end claim the plan printout now makes — "--no-agent
-// <name> ... is how a single node buys back its ceiling and the Skill tool" —
-// and it is asserted here rather than inferred, because it spans two features
-// that are ordered but otherwise unaware of each other: applySkillActivation
-// reads node.Agent, and only applyAgentMapping writes it. This is the exact
-// configuration measurement (j)'s ACT/G-ACT arms ran, the one that both held
-// the scope ceiling and invoked the STAGED skill by an attributable name
+// <name> ... every node that agent would have taken gets its ceiling and its
+// Skill tool back" — and it is asserted here rather than inferred, because it
+// spans two features that are ordered but otherwise unaware of each other:
+// applySkillActivation reads node.Agent, and only applyAgentMapping writes it.
+// This is the exact configuration measurement (j)'s ACT/G-ACT arms ran, the one
+// that both held the scope ceiling and invoked the STAGED skill by an
+// attributable name — and that arm X-ACT then re-ran under the three-way name
+// collision, where the staged copy still won 3 of 3
 // (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).
 func TestPlan_DecliningTheAgentReturnsTheNodeToActivation(t *testing.T) {
 	agentDir, skillDir := t.TempDir(), t.TempDir()

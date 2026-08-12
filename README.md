@@ -562,8 +562,10 @@ agent-mapped, on a run where activation is on at all — an empty or missing
 `~/.claude/skills`, or a staging failure, turns it off for the whole run and
 says so on its own line. An **agent-mapped node is excluded** and gets neither
 half, because running as one of your subagents already means loading your
-settings to resolve the agent, and `--agent` plus a staged plugin plus your
-settings is a combination nothing here has measured.
+settings to resolve the agent — and on a node that loads your settings, a skill
+name resolves against definitions the repository you are working in can write.
+That combination was measured on 2026-08-12 and the exclusion was kept: see
+below.
 
 **What that exclusion costs is not small, and the plan printout now says so.**
 An excluded node holds no `Skill` tool, so it invokes **no skill at all** — not
@@ -577,11 +579,22 @@ project
 And the exclusion is not spread evenly: agent mapping runs first and matches on
 the same signal, so it takes the design, doc and review nodes — the ones a
 procedure fits best. If you would rather those nodes kept the skill surface
-than gained a subagent, `--no-agent-mapping` is the switch — it turns agent
-mapping off for the whole run, so the price is every mapping the plan would
-have made; there is no per-node opt-out. Lifting the exclusion
-itself needs its own measurement first, which is
-[ADR 0017's (j)](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md).
+than gained a subagent, `--no-agent-mapping` turns agent mapping off for the
+whole run, and `--no-agent <name>` declines a single agent so the price is the
+nodes that one agent would have taken rather than every mapping in the plan.
+
+**Lifting the exclusion was measured on 2026-08-12 and refused** — 21 spawns,
+$4.16, pre-registered in its own commit
+([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)).
+Not because adding the tool fails: it works, 3 of 3, and it costs the ceiling
+nothing because a mapped node's ceiling is already breached without it. It was
+refused because on these nodes a skill name resolves against a corpus **the
+repository under work can write**: a same-named `SKILL.md` committed to the
+target repo beat oh-my-graph's own staged corpus 3 of 3, and a
+repository-committed `SKILL.md` fired 3 of 3 in a node whose prompt never
+mentioned skills. Under `--setting-sources ""` — every non-mapped node — the
+same three-way collision resolved to the staged copy 3 of 3, so this is agent
+mapping's exposure and not activation's.
 
 **Whether it does is now measured; whether the result is worth the tokens is
 not, and the feature is on by default.** v0.5.1 shipped this recording **1
@@ -611,9 +624,14 @@ switch.
 The tool ceiling does not move for it. Activation-eligible planned nodes still
 load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared
 scope like `Bash(git *)` is still enforced — the only change is that the `Skill`
-tool now exists for them. (An agent-mapped node still loads your settings, as it
-did before ADR 0017, and is excluded from activation for that very reason — it
-does not get the `Skill` tool either way, so those settings buy it no skill.)
+tool now exists for them. (An **agent-mapped** node is the other case in every
+one of those clauses, and it was already before ADR 0017: it loads your
+settings, so your CLAUDE.md, hooks and MCP servers *do* reach it, and so does
+the repository's `.claude/` — while its declared scope binds only as far as your
+own settings bind it, measured. It is excluded from activation for that same
+loading, and it holds no `Skill` tool either way. The paragraph above the plan
+printout's ceiling summary says both halves per node; `--no-agent <name>` is the
+one-agent way out.)
 What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
 activation-eligible node invocation of that leg, including retries and feedback

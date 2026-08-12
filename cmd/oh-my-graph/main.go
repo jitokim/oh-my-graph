@@ -929,8 +929,15 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 			"    2026-08-12 on this build's argv — an out-of-scope command ran with\n"+
 			"    permission_denials: [], while an unmapped node denied the same one\n"+
 			"    (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md).\n"+
+			"  And \"your settings\" includes THE REPOSITORY'S. A mapped node loads project scope too,\n"+
+			"    so the checkout it runs in supplies configuration to it: its .claude/skills and the\n"+
+			"    plugins its own .claude/settings.json enables are both MEASURED to reach such a node,\n"+
+			"    and by the same mechanism its project CLAUDE.md and its hooks do — that last pair is\n"+
+			"    implied by the loading, NOT measured here. Weigh it like any code you would run from\n"+
+			"    this checkout.\n"+
 			"  --no-agent-mapping turns all of it off; --no-agent <name> declines one agent and keeps\n"+
-			"    the rest, which is how a single node buys back its ceiling and the Skill tool.\n",
+			"    the rest — every node that agent would have taken gets its ceiling and its Skill tool\n"+
+			"    back, and no other node changes.\n",
 	)
 }
 
@@ -1077,15 +1084,21 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
 //
-// mapped narrows it, and has to. The sentence "a declared scope like
-// Bash(git *) is enforced rather than merely requested" is this project's
-// headline ceiling claim (ADR 0004, E1), and on 2026-08-12 it was measured
-// FALSE for an agent-mapped node — the one node shape that does load your
-// settings. Printing the blanket claim under a plan that contains one would be
-// a stronger promise than the measurement supports, on the screen where that
-// matters most, so the exception is stated here as well as in
-// noteAgentMappings: this paragraph is the one a reader takes as the summary,
-// and a summary that a paragraph above it contradicts is read as the summary.
+// mapped narrows it, and has to — in BOTH directions, because this paragraph
+// makes two claims and a mapped node falsifies each one the other way round.
+// The sentence "a declared scope like Bash(git *) is enforced rather than
+// merely requested" is this project's headline ceiling claim (ADR 0004, E1),
+// and on 2026-08-12 it was measured FALSE for an agent-mapped node — the one
+// node shape that does load your settings. The other clause, "your CLAUDE.md,
+// hooks and MCP servers are unavailable to them", is a COST, and it is equally
+// untrue there: the same loading that lets --agent resolve hands those nodes
+// the user's CLAUDE.md and hooks, and the repository's, since project scope
+// loads with the rest. Printing the blanket version under a plan that contains
+// such a node would overstate the guarantee and understate the surface at
+// once, on the screen where that matters most, so the exception is stated here
+// as well as in noteAgentMappings: this paragraph is the one a reader takes as
+// the summary, and a summary that a paragraph above it contradicts is read as
+// the summary.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
 		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
@@ -1095,9 +1108,11 @@ func noteCeiling(w io.Writer, mapped bool) {
 	if mapped {
 		fmt.Fprint(w,
 			"  EXCEPT any node marked [agent: ...] above: those DO load your settings — that is what\n"+
-				"  lets --agent resolve at all — so for them the declared scope is enforced only as far as\n"+
-				"  your own settings enforce it, and that half of the ceiling is not there. Measured, not\n"+
-				"  inferred: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md.\n",
+				"  lets --agent resolve at all — so BOTH halves of the sentence above are off for them.\n"+
+				"  Their declared scope is enforced only as far as your own settings enforce it (measured,\n"+
+				"  not inferred: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md), and your\n"+
+				"  CLAUDE.md, hooks and MCP servers ARE available to them — as are the repository's own,\n"+
+				"  since project scope loads with the rest. See the per-node lines above.\n",
 		)
 	}
 }

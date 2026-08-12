@@ -125,7 +125,7 @@ The layers:
 | layer | mechanism | closes |
 |---|---|---|
 | 0 declaration | `coordinator.plannedToolAllowlist` | what a plan may name at all — plan time, before any node runs |
-| 1 isolation | `--setting-sources ""` | your standing grants; settings hooks |
+| 1 isolation | `--setting-sources ""` — **absent entirely on an agent-mapped node** | your standing grants; settings hooks — **closes neither one for a mapped node** |
 | 2 grant | `--allowedTools` under `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<names declared>"` | tools the model can attempt at all |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
@@ -147,10 +147,45 @@ settings.json granting `Bash(*)` and a node declaring `Bash(git *)`, an
 out-of-scope shell command **ran** without Layer 1 and was **denied** with it,
 while in-scope `git` kept working. So the previously-disclosed gap — *"a node
 declaring any scoped `Bash(...)` pattern keeps the whole `Bash` tool"* — is
-**closed for auto-planned nodes.** It remains accurate for hand-written graphs,
-which run without layer 1's isolation: their declared `allowed_tools` is still
-rendered as `--allowedTools` (layer 2 applies to every graph), but layers 1 and
-3–5 are auto mode's alone by design.
+**closed for auto-planned nodes that get Layer 1.** It remains accurate for
+hand-written graphs, which run without layer 1's isolation: their declared
+`allowed_tools` is still rendered as `--allowedTools` (layer 2 applies to every
+graph), but layers 1 and 3–5 are auto mode's alone by design.
+
+**And it is NOT closed for an auto-planned node that oh-my-graph maps onto one
+of your own subagents.** Those nodes omit `--setting-sources` entirely, because
+`--agent` cannot resolve without your settings loaded (DESIGN.md, E2), so Layer
+1 is not weakened for them — it is absent, and everything in the table above
+that Layer 1 closes is open. **Measured on claude 2.1.228** (2026-08-12) against
+the argv this build emits, not argued from the flag list: a mapped node
+declaring `Bash(git *)`, unattended under `--permission-mode dontAsk`, ran an
+out-of-scope `touch` with `permission_denials: []`, while the same probe's
+unmapped node denied the identical command and its in-scope `git` control ran
+([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)).
+Which tools **exist** is still bound by Layer 3; the scope inside them is bound
+only as far as your own settings bind it. This is not new behaviour introduced
+by that measurement — it has been true since agent mapping shipped, and the
+measurement is what gave it a number.
+
+In the probe's own plan **6 of 8 nodes were mapped**, so this is the common case
+rather than a corner of one: agent mapping matches on the same signal a design,
+doc or review node's id carries. Every mapping is printed before the run, on the
+node's own line, with both costs named; `--no-agent-mapping` turns mapping off
+run-wide and `--no-agent <name>` declines one agent. Restoring Layer 1 for these
+nodes is a change to agent mapping itself
+([ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
+§Compatibility's declined follow-up), not to any layer here.
+
+**What a mapped node's settings bring with them is wider than your permission
+grants.** Loading your settings means loading **project** scope too — the
+`.claude/` of the repository the node is working in. Measured in the same
+probe: a `SKILL.md` committed to that repository was invoked **3 of 3** by a
+node whose prompt never mentioned skills, and a plugin enabled by that
+repository's own committed `.claude/settings.json` loaded and its skill fired.
+By the same loading, and **implied rather than measured**, the repository's
+project `CLAUDE.md` and its **hooks** — which are command execution at tool
+events — reach such a node as well. Treat an `auto` run with mapped nodes in an
+untrusted checkout as running that checkout's configuration, because it is.
 
 Still a reduction, not a sandbox. What is **not** covered:
 
@@ -177,6 +212,9 @@ Still a reduction, not a sandbox. What is **not** covered:
 Dropping your settings also drops your CLAUDE.md, your hooks and your configured
 MCP servers for those nodes. That is the intended direction, but it is a real
 behaviour change: if your `auto` runs depended on an MCP server, they will stop.
+**Agent-mapped nodes are the exception in both directions**: nothing is dropped
+for them, so your CLAUDE.md, hooks and MCP servers — and the repository's —
+do load, and they are correspondingly less isolated, not more.
 
 Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would

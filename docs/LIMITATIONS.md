@@ -168,6 +168,24 @@ has no open issue behind it.
   nodes is a change to agent mapping itself and is
   [ADR 0017](adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
   §Compatibility's declined follow-up.
+- **An agent-mapped node loads the REPOSITORY's configuration, not only yours.**
+  The bullet above is about permission scope; this is the wider half of the same
+  cause. "Loads your settings" means the CLI's own default sources — user,
+  project and local — so the `.claude/` of the checkout the node is working in
+  is one of them. Measured in the same probe, on the same argv: a `SKILL.md`
+  **committed to that repository** was invoked **3 of 3** by a node whose prompt
+  never mentioned skills, procedure text and all, and a plugin enabled by that
+  repository's own committed `.claude/settings.json` (`extraKnownMarketplaces` +
+  `enabledPlugins`) loaded, with its skill firing. By the same loading — and
+  **implied, not measured here** — the repository's project `CLAUDE.md` and its
+  **hooks**, which are command execution at tool events, reach such a node too.
+  None of this needs an attacker to be clever: it arrives with a `git clone`.
+  An activated (non-mapped) node is not exposed to it — `--setting-sources ""`
+  keeps project scope out, and the staged corpus won the same three-way name
+  collision 3 of 3 under that flag
+  ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md), arm
+  `X-ACT`). So the boundary is agent mapping, and the way out is the same two
+  flags.
 - **Isolation stops at the invocation repository.** `auto` provisions no
   managed worktree anywhere (`cwd:` and `worktree:` are both rejected at plan
   time), and a managed worktree — a hand-written-graph feature,

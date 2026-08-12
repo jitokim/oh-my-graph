@@ -1787,7 +1787,7 @@ meet the user's own plugins there for the first time — but the plan printout
 now states the cost and names `--no-agent-mapping` (which turns agent mapping
 off for the whole plan), and lifting it is gated
 on ADR 0017's measurement (j) rather than on the argument that it costs little.
-**(j) was run on 2026-08-12 — 18 spawns, $3.86, claude 2.1.228 — and the
+**(j) was run on 2026-08-12 — 21 spawns, $4.16, claude 2.1.228 — and the
 exclusion stays** (`docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`).
 Not because the composite fails: `--agent` + `--plugin-dir` + `Skill` invoked
 the staged skill 3 of 3, and it costs the ceiling nothing because an
@@ -1814,7 +1814,10 @@ only ever remove a mapping — dropping it earlier would let declining one of tw
 ambiguous agents promote the other and *create* a mapping. A declined node keeps
 Layer 1 and is therefore activated like any other planned node: exactly the
 configuration (j)'s `ACT`/`G-ACT` arms measured, which held the ceiling and
-invoked the staged skill under an attributable name.
+invoked the staged skill under an attributable name — and, in the post-hoc
+`X-ACT` arm, kept that name **3 of 3 under the same three-way collision that
+beat it on a mapped node**, so "attributable" here is measured against
+competition rather than in its absence.
 
 The last thing computed with a plan is a warning rather than a decision. If the
 goal or a planned prompt names an absolute path that resolves into a git
@@ -1915,12 +1918,20 @@ Remaining honest gaps, unchanged by this work: skill/slash-command surfaces are
 still not enumerable — though ADR 0012 and then ADR 0017 measured the
 planned-node case layer by layer: Layer 1 withholds the skill DEFINITIONS and
 Layer 3 withholds the `Skill` TOOL, which is why activation needs both a staged
-`--plugin-dir` and `Skill` in `--tools`; **Layer 4 is unverified** (E5 — `--strict-mcp-config`
-ships because it is free, not because MCP closure was observed); and dropping
-user settings also drops the user's CLAUDE.md, hooks and MCP servers for planned
-nodes — a behaviour change that makes planned nodes *more isolated and less
-capable* than they were, which is the intended direction but must be stated in
-the README rather than discovered.
+`--plugin-dir` and `Skill` in `--tools`. Layer 1's half of that is now measured
+under competition rather than assumed: with a same-named skill in the working
+repository's `.claude/skills` **and** in a plugin that repository's own
+`settings.json` enables, an activated node still resolved the bare name to the
+STAGED copy 3 of 3 (measurement (j), arm `X-ACT`), while a mapped node — nil
+Layer 1 — lost it to the repository 3 of 3. **Layer 4 is unverified** (E5 —
+`--strict-mcp-config` ships because it is free, not because MCP closure was
+observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
+MCP servers for planned nodes — a behaviour change that makes planned nodes
+*more isolated and less capable* than they were, which is the intended direction
+but must be stated in the README rather than discovered. **Agent-mapped nodes
+invert that last sentence**: nothing is dropped for them, so the user's
+CLAUDE.md, hooks and MCP servers load — and so does the working repository's
+project scope, which is where the repository-supplied skill above came from.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the

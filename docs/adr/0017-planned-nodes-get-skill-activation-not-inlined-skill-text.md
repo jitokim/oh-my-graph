@@ -858,6 +858,15 @@ not adding a second definition source.
    declined node keeps layer 1 and is activated like any other planned node —
    exactly the `ACT`/`G-ACT` configuration, which in this same session held the
    scope ceiling and invoked the **staged** skill under an attributable name.
+   Attributable **under collision**, not merely where nothing competed: `ACT`
+   ran in phase A, where the staged copy was the only definition of that name,
+   and a review was right that "nothing competes under layer 1 = `\"\"`" is the
+   same class of premise (j) had just shown fails for `nil`. Arm **`X-ACT`** —
+   `ACT`'s argv verbatim under phase B, registered in PREREG's addendum before
+   its spawn and labelled post-hoc there — resolved to the **staged** copy
+   **3 of 3** with the repository's same-named `.claude/skills` copy and the
+   repository-enabled plugin's copy both on disk, i.e. against the very
+   definitions that beat it under `nil`.
 
 **What did NOT ship, and why.** No change to `applySkillActivation`'s guard, no
 `--plugin-dir` on a mapped node, and no fix to `SettingSources = nil` — the
@@ -1139,9 +1148,11 @@ costs.
   happens to repository-supplied definitions before, not after.
 
   > **RECORDED 2026-08-12 — (j) was run, and the exclusion is KEPT on the two
-  > grounds it did NOT expect.** 18 spawns, $3.86, claude **2.1.228** (a fourth
+  > grounds it did NOT expect.** 21 spawns, $4.16, claude **2.1.228** (a fourth
   > build), macOS, one machine; pre-registration in its own commit before the
-  > first spawn; judged only by a raw `{"type":"tool_use","name":"Skill"}`
+  > first spawn, plus a 3-spawn addendum (`X-ACT`) registered in its own commit
+  > after the eighteen were reported and labelled post-hoc where it is quoted;
+  > judged only by a raw `{"type":"tool_use","name":"Skill"}`
   > record, a planted marker token and the filesystem.
   > `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
   >
@@ -1152,9 +1163,12 @@ costs.
   > - **The ceiling arm refutes the sentence above it.** ADR 0004's E1 shape
   >   under the composite created the out-of-scope file **2 of 2** — and so did
   >   the **shipped agent-mapped argv, verbatim, with no plugin and no `Skill`
-  >   anywhere** (`G-T`, 1 of 1, `permission_denials: []`). The activated node's
-  >   own argv denied it, with the denial in the envelope, and the in-scope
-  >   `git` positive control ran, so `Bash` existed in every arm. **The lift
+  >   anywhere** (`G-T`, 1 of 1, `permission_denials: []`). The in-scope `git`
+  >   positive control ran under the **mapped composite** argv, so the breach
+  >   there is scope and not tool presence; the activated node's arm is carried
+  >   instead by its envelope, which names the `Bash` call and the command the
+  >   CLI refused — no in-scope control ran under *that* argv, and the two are
+  >   evidenced differently rather than identically. **The lift
   >   does not cost the ceiling; the ceiling is already gone in shipped code for
   >   these nodes.** That makes the last bullet of §Compatibility — the
   >   follow-up this ADR declines to decide — the urgent finding, not this one.
@@ -1541,7 +1555,7 @@ before today.
   > cheaper arm's caveat above is therefore **measured true**, and it is not
   > cheaper on it — the composite carries the same nil layer 1. Every finding
   > traces to that one field, which is the bullet immediately below.
-  > 18 spawns, $3.86, claude 2.1.228;
+  > 21 spawns, $4.16, claude 2.1.228;
   > `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`.
   >
   > The last clause of the paragraph above — "run-wide, since agent mapping has

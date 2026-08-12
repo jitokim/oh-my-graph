@@ -11,7 +11,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 ## [Unreleased]
 
 One flag, and a paragraph deleted from the plan screen because it was not true.
-ADR 0017's measurement (j) — 18 spawns, $3.86, claude 2.1.228, pre-registered in
+ADR 0017's measurement (j) — 21 spawns, $4.16, claude 2.1.228, pre-registered in
 its own commit — asked whether the agent-mapped skill exclusion could be lifted.
 It cannot, and **not for the reason the ADR expected**: adding the `Skill` tool
 to those nodes works, 3 of 3, and it costs the ceiling nothing because the
@@ -60,8 +60,26 @@ in the plan.
   says lifting was measured and refused, and that the refusal was **not** about
   capability, since a user told "it does not work" would never think to check
   what their repository can supply. `README.md`, `docs/LIMITATIONS.md`,
-  `DESIGN.md` and ADR 0017 (Decision §9) carry the same bound.
+  `DESIGN.md`, `SECURITY.md` and ADR 0017 (Decision §9) carry the same bound.
   `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md` is the record.
+- **The disclosure covers the whole surface a mapped node loads, not only the
+  `Bash` scope half.** "Loads your settings" means the CLI's default sources —
+  user, project **and local** — so the `.claude/` of the repository being worked
+  in reaches such a node too. The same measurement showed a repository-committed
+  `SKILL.md` invoked 3 of 3 unbidden and a repository-enabled plugin's skill
+  firing; by the same loading, and marked **implied rather than measured**, that
+  repository's project `CLAUDE.md` and its hooks reach it as well. The plan
+  printout, `docs/LIMITATIONS.md` and `SECURITY.md` all say so, and the ceiling
+  summary's other clause — "your CLAUDE.md, hooks and MCP servers are
+  unavailable to them" — is now cancelled for mapped nodes instead of standing
+  as a reassurance the argv does not keep.
+- **The remedy's own arm was run rather than inferred.** A review found
+  `--no-agent`'s "attributable" claim rested on `ACT`, which ran only in the
+  phase where the staged copy was the sole definition of its name. Arm `X-ACT`
+  (3 spawns, $0.29, registered in its own commit before spawning and labelled
+  post-hoc) re-ran that argv under the three-way collision: the staged copy won
+  **3 of 3**, so `--setting-sources ""` bounds the definition search and the
+  exposure is agent mapping's alone.
   Restoring the ceiling for these nodes is a change to agent mapping itself and
   stays ADR 0017 §Compatibility's declined follow-up — now with a direct
   measurement behind it rather than an analogue.

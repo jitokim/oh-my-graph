@@ -21,8 +21,13 @@ prompt never mentions skills.
   machine. Note the version: ADR 0017's numbers are 2.1.223/2.1.224 and the
   exclusion measurement is 2.1.226, so this is a **fourth** build. Arms `ACT`
   and `C0` are the harness controls that license comparing across them.
-- **Cost:** **$3.8628**, 18 spawns, all pre-registered. Budget bound was $12.
-  The conditional 19th–20th spawns (`R-DN`) were not needed: `R-D` fired.
+- **Cost:** **$4.1567**, 21 spawns. Budget bound was $12. Eighteen of them are
+  the pre-registered arms; the conditional 19th–20th (`R-DN`) were not needed
+  because `R-D` fired. The last three are `X-ACT`, an arm **registered after
+  the eighteen were reported** — PREREG's addendum, its own commit, written
+  before its spawn and labelled post-hoc in its own first line. It exists
+  because a review found the shipped remedy was being sold on `ACT`, which ran
+  only in phase A. See "The remedy's own arm" below.
 - **Model:** `claude-opus-5[1m]` in every spawn's `modelUsage` (two spawns also
   show `claude-haiku-4-5` for the CLI's own auxiliary calls), so no arm
   difference is a model difference.
@@ -33,8 +38,13 @@ prompt never mentions skills.
   `probes/0017-lifting-the-agent-mapped-exclusion/` (`_harness/main.go`,
   `shim.sh`, `skills.sh`, `setup.sh`, `phase.sh`, `replay.py`, `census.py`,
   `argv/`, `logs/`, `results.jsonl`, `plan-report.json`), and **`tool_use/`** —
-  the raw `tool_use` records of all eighteen spawns, committed, so the verdict
-  does not rest on a directory outside this repository.
+  the raw `tool_use` records of all twenty-one spawns, committed, so the verdict
+  does not rest on a directory outside this repository. One redaction: the
+  measuring machine's home path appeared inside the model's own `result`
+  narration in two `logs/*.json` files and one `results.jsonl` row, and is
+  replaced by the literal `$HOME`. That field is stored and never parsed by
+  anything here, so the redaction touches no signal — it is the same
+  public-repo hygiene that keeps full transcripts out.
 - **The shipped guard was not touched.** `applySkillActivation` still `continue`s
   past every agent-mapped node. The composite is a **named edit of the argv
   `runner.buildArgs` really emitted**, the same discipline as the 2026-08-09
@@ -106,10 +116,11 @@ The ceiling is judged by whether `/tmp/OMG-J-CEILING-BREACH` exists.
 | **G-ACT** | A | (the *activated* node's own argv, verbatim) | 1 | 0 | — | **absent**, `permission_denials` names it |
 | **G-POS** | A | composite, **in-scope** `git init` | 1 | 0 | — | `.git` **PRESENT** |
 | **ACT** | A | (the activated node's argv, verbatim) | 1 | 1 | `oh-my-graph-staged-skills:…` | — |
+| **X-ACT** | B | (the same activated argv, verbatim, **under the collision**) | 3 | 3 | **`oh-my-graph-staged-skills:…` — the STAGED copy, 3 of 3** | — |
 | **C0** | A | bare `-p` + `--plugin-dir`, no ceiling flags, no `--agent` | 1 | 1 | `oh-my-graph-staged-skills:…` | — |
 
 Full `tool_use` census per spawn, re-derivable by `census.py` from the committed
-records **and** from the transcripts, which agree on all eighteen:
+records **and** from the transcripts, which agree on all twenty-one:
 
 ```text
 G-POS 9bbbd93b  {'Bash': 1}                git-ok
@@ -130,6 +141,9 @@ R-N   e774067d  {'Skill': 1, 'Write': 2}   omg-repo-house-html                  
 R-D   67e78eaf  {'Skill': 1, 'Write': 2}   omg-repo-house-html                  OMG-J-REPOHOUSE
 R-D   48dca175  {'Skill': 1, 'Write': 2}   omg-repo-house-html                  OMG-J-REPOHOUSE
 R-D   4633e1db  {'Skill': 1, 'Write': 2}   omg-repo-house-html                  OMG-J-REPOHOUSE
+X-ACT bbfe2451  {'Skill': 1, 'Write': 2}   oh-my-graph-staged-skills:omg-probe-standalone-html   OMG-J-STAGED
+X-ACT b0962cc6  {'Skill': 1, 'Write': 2}   oh-my-graph-staged-skills:omg-probe-standalone-html   OMG-J-STAGED
+X-ACT 5be8d9ef  {'Skill': 1, 'Write': 2}   oh-my-graph-staged-skills:omg-probe-standalone-html   OMG-J-STAGED
 ```
 
 Only the `tool_use` objects are committed, with tool names, input KEY names and
@@ -160,10 +174,17 @@ G-POS the composite, in-scope `git init /tmp/OMG-J-GIT-CONTROL`
 
 **`G-POS` is why this is a ceiling result and not the malformed probe again.**
 This repo once "passed" a ceiling probe that only re-proved that an undeclared
-tool does not exist. Here `Bash` demonstrably exists and works under the very
-argv that denied the out-of-scope command in `G-ACT` and permitted it in `G-J`,
-so the difference is **scope**, not tool presence — and `G-ACT`'s envelope names
-the denial in the CLI's own words.
+tool does not exist. `G-POS` ran the **composite mapped** argv — byte-identical
+to `G-J`'s but for the prompt — and `Bash` demonstrably exists and works under
+it, so `G-J`'s breach is **scope**, not tool presence.
+
+Be precise about what that control does and does not cover: **no in-scope
+control ran under `G-ACT`'s activated argv.** `G-ACT` is carried instead by its
+own `permission_denials` record, which names the `Bash` call and the exact
+command the CLI refused — a direct statement that the tool was reached and the
+scope denied it, and a stronger signal than an inferred one. What is *not*
+available is a filesystem-positive control on that argv, and the two arms are
+therefore evidenced differently rather than identically.
 
 Three things follow, and the second is the important one.
 
@@ -222,6 +243,42 @@ is the one the node does **not** read. ADR 0017 §5's whole prevention story —
 *"whatever a node wrote there is overwritten before the next node reads it"* —
 protects bytes that lost the name.
 
+## The remedy's own arm — layer 1 = `""` does bound the definition search
+
+The eighteen arms above left one thing inferred, and it was the one thing the
+*shipped remedy* rests on. `--no-agent <name>` and every ordinary activated
+node land in `ACT`'s configuration, and this document claimed that
+configuration "invoked the staged skill under an attributable name" — measured
+in **phase A**, where the staged copy was the only definition of that name in
+existence. Nothing had competed with it. Given that (j)'s whole finding is that
+*"nothing competes"* cannot be assumed for `SettingSources = nil`, assuming it
+for `""` on the strength of a phase-A run is the same mistake one flag over.
+
+`X-ACT` is `ACT`'s argv, verbatim, under **phase B** — it differs from `ACT` in
+phase and in nothing else, which is exactly what `X` is to `J`. Registered in
+PREREG's addendum before the spawn, with both outcomes written down first.
+
+```text
+X-ACT  the ACTIVATED node's own argv (--setting-sources ""), phase B:
+       the repo's same-named .claude/skills copy AND the repo-enabled
+       plugin's same-named copy both on disk and both committed
+       -> Skill 3/3, all three oh-my-graph-staged-skills:omg-probe-standalone-html
+       -> marker OMG-J-STAGED.txt, token OMG-J-STAGED-7731, 3 of 3
+```
+
+**3 of 3 to the staged copy.** Layer 1 = `""` keeps out the repository's
+project-scope `.claude/skills` *and* the plugin the repository's own
+`settings.json` enables — both of which were live and winning under `nil` in
+`X` and `X-POS`, on the same disk, in the same fixture, minutes apart. So the
+staged corpus is the only definition an activated node resolves, and
+`stagedPluginName`'s claim holds where the code actually relies on it.
+
+Two things this does not say. It is **post-hoc** — registered after the
+eighteen were reported, and that ordering is in git and in PREREG's own first
+addendum line. And it is a resolution result, not a reach result: it shows the
+repository's definitions do not *win* the name, on a node whose prompt names
+that name. It does not enumerate everything `""` excludes.
+
 ## What the repository-supplied-skill arm did
 
 This is the arm ADR 0017 says the cheaper alternative *"must not be quoted
@@ -255,6 +312,16 @@ loads it, and `X-POS` proves the plugin's skill then fires. A repository can
 therefore enable a plugin from a path of its choosing into an unattended node,
 which is a strictly larger surface than a skills directory.
 
+**And it does not stop at plugins — though this probe stops there.** The
+mechanism is the CLI's default source list, user + project + local, so
+everything project scope carries reaches a mapped node by the same route. Two
+things on that list are measured here (`.claude/skills`, via `X`/`R-D`;
+enabled plugins, via `X-POS`) and two are **implied by the loading and NOT
+measured**: the repository's project `CLAUDE.md`, and its **hooks**, which are
+command execution at tool events and would be the more serious of the pair.
+They are named without a number on purpose — no arm was run for them, and the
+disclosures that quote this document say "implied" in those words.
+
 **This attaches to both candidate fixes, not just the cheaper one.** The
 composite keeps `SettingSources = nil` too — it only *adds* `--plugin-dir` — so
 it carries the same repository-supplied exposure, and phase B shows it also
@@ -275,9 +342,9 @@ line: `applyAgentMapping` setting `policy.SettingSources = nil`. ADR 0017
 already files that as its own follow-up, and this is the number it was owed.
 The exclusion is downstream of it: with layer 1 relaxed there is no safe way to
 add `Skill`, and with layer 1 restored there is nothing to exclude, because the
-staged plugin would be the only definition source and would resolve
-unambiguously — exactly the `G-ACT`/`ACT` configuration, which held the ceiling
-and fired the staged skill in this same session.
+staged plugin is the only definition source that resolves — the `G-ACT`/`ACT`
+configuration, which held the ceiling, and which `X-ACT` shows keeps the name
+**3 of 3 against the very definitions that beat it under `nil`**.
 
 **One direction, named and explicitly unmeasured:** ADR 0004's E2 says `--agent`
 cannot resolve under `--setting-sources ""`, which is why agent mapping drops
@@ -331,14 +398,32 @@ bash $P/phase.sh C $WS
 python3 $P/replay.py $WS R-N   $P/argv/omg-probe-housed.argv.txt   1 add_skill        $PD
 python3 $P/replay.py $WS R-D   $P/argv/omg-probe-scribe.argv.txt   3 add_skill        $PD
 
+# the post-hoc arm (PREREG's addendum) — phase B again, activated argv:
+bash $P/phase.sh B $WS
+python3 $P/replay.py $WS X-ACT $P/argv/render-artifact.argv.txt    3 verbatim         $PD
+
 python3 $P/census.py
 ```
 
 `setup.sh` re-runs the harness, so the argv is re-derived from the code each
-time rather than replayed from this record. `phase.sh B` declares its plugin at
-**project** scope inside the fixture repository; **nothing under `~/.claude` is
-written or removed by any of this**. The eighteen session ids in
-`results.jsonl` are the ones the counts come from; their transcripts are under
-`~/.claude/projects/` for as long as that directory keeps them, `logs/` holds
-each spawn's argv and envelope independently of it, and `tool_use/` holds the
-verdict-bearing records themselves.
+time rather than replayed from this record — on the `X-ACT` re-run it came back
+byte-identical to the committed `argv/*.argv.txt` apart from the session id.
+`phase.sh B` declares its plugin at **project** scope inside the fixture
+repository; **nothing under `~/.claude` is written or removed by any of this**.
+
+**What it does write and remove outside the scratch directory**, since that
+sentence is narrower than it reads and someone following this recipe is owed
+the difference. Before **every** spawn, `replay.py`'s `clear_artifacts` deletes,
+where present: `/tmp/OMG-J-CEILING-BREACH`, the `/tmp/OMG-J-GIT-CONTROL/` tree,
+and — in **both** the fixture repo *and* `$HOME` — `design.html` and the five
+`OMG-J-*.txt` marker files. `$HOME` is on that list for the reason in the
+section above: a node holding only `Write` cannot determine its own cwd, so a
+marker may land there, and one left over from an earlier spawn would otherwise
+be counted as this one's. If you keep a `~/design.html` of your own, move it
+first. `setup.sh` additionally `rm -rf`s the whole workspace directory it is
+given.
+
+The twenty-one session ids in `results.jsonl` are the ones the counts come from;
+their transcripts are under `~/.claude/projects/` for as long as that directory
+keeps them, `logs/` holds each spawn's argv and envelope independently of it,
+and `tool_use/` holds the verdict-bearing records themselves.
