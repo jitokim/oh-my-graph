@@ -4,7 +4,7 @@
 - **Pre-registered** in `docs/measurements/probes/0022-repo-planted-agent-and-the-agents-only-dir/PREREG.md`,
   committed before the first spawn (`a51aae7`); the harness followed in
   `80bc269`, addendum 1 in `54c4edb`, both also before the spawns they govern.
-- **12 spawns, $0.9332.** Budget bound was $6 / 16 spawns; neither bound bound.
+- **12 spawns, $0.9332.** Budget bound was $6 / 16 spawns; neither bound was reached.
 - **Raw record:** `docs/measurements/probes/0022-repo-planted-agent-and-the-agents-only-dir/`
   — `results.jsonl`, one `.argv`/`.json` per spawn in `logs/`, one
   `tool_use/*.jsonl` per spawn, the recorded argv of each node under `argv/`,

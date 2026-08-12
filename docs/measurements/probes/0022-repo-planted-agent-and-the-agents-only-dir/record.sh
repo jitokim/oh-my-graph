@@ -15,7 +15,7 @@
 # The repository copy is COMMITTED after every phase change: "repository-
 # supplied" means a definition that arrives with a checkout, and a fixture that
 # only ever existed in the working tree would not be that.
-set -eu
+set -euo pipefail
 WS="${1:?usage: record.sh <ws> R|A pre|fix}"
 PHASE="${2:?usage: record.sh <ws> R|A pre|fix}"
 SCOPE="${3:?usage: record.sh <ws> R|A pre|fix}"

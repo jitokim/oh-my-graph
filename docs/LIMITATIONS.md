@@ -154,7 +154,9 @@ has no open issue behind it.
 - **An agent-mapped node loses your environment, and that is the change of
   2026-08-12.** Until then a mapped node dropped Layer 1 — `--agent` could not
   resolve without the user's settings loaded — and it was the one planned node
-  that saw your `CLAUDE.md`, your hooks and your standing permission grants.
+  that saw your standing permission grants, and with them your `CLAUDE.md` and
+  your hooks (that second half arriving by the same source list, and **implied,
+  not measured**, in both directions — as below).
   It no longer does: the matched agent definition is copied into the run's own
   directory and supplied with `--plugin-dir`, so Layer 1 stays `""` and a
   mapped node is as isolated, and as limited, as every other planned node
@@ -164,7 +166,8 @@ has no open issue behind it.
   ordinary planned-node isolation: the node stops running under your agent's
   system prompt and gets its `Skill` tool back, and that is all it gets — an
   unmapped planned node has no more access to your settings, `CLAUDE.md`, hooks
-  or grants than a mapped one does.
+  or grants than a mapped one does — on the same evidence scope: measured for
+  settings, implied for `CLAUDE.md` and hooks.
   <br>What that fixes, measured on the same machine and CLI build minutes
   apart: the **shipped** mapped argv ran an out-of-scope `touch` with
   `permission_denials: []` **2 of 2**, the new one was **denied 3 of 3** with

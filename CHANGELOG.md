@@ -32,7 +32,8 @@ them is true of this build.
   $2.4616, pre-registered in its own commit before the first spawn —
   `docs/measurements/0017-staged-agent-restores-layer-1.md`,
   [ADR 0022](docs/adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md).
-- **The repository under work no longer configures a mapped node.** The wider
+- **The repository under work no longer supplies a mapped node's settings, its
+  skills or its agent.** The wider
   half of the same fix: a `SKILL.md` committed to the repository fired 3 of 3
   under v0.6.0's argv and **0 of 3** under this one, and where the model did call
   `Skill` the CLI answered `Unknown skill: …` with `is_error: true`. A plugin
@@ -60,9 +61,10 @@ them is true of this build.
   scope. "Auto-mapped onto **your own** agents" is a claim about a path on disk,
   and the measurement above is what it looks like when nothing on the screen
   carries the path.
-- **What this costs you, plainly:** a mapped node no longer gets your
-  `CLAUDE.md`, your hooks or your standing permission grants. It was the one
-  planned node that did. MCP is not part of that change: `--strict-mcp-config`
+- **What this costs you, plainly:** a mapped node no longer gets your standing
+  permission grants — measured — nor your `CLAUDE.md` or your hooks, which
+  arrive by the same source list and stay **implied, not measured**. It was the
+  one planned node that did. MCP is not part of that change: `--strict-mcp-config`
   was already on a mapped node's argv, and whether it closes MCP is still
   unmeasured (E5) — nothing here should be read as measured MCP isolation.
   **`--no-agent <name>` and `--no-agent-mapping` do not give the old behaviour

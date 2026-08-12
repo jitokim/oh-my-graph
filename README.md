@@ -536,8 +536,9 @@ staged directory and all
 following [the one that made the change](docs/measurements/0017-staged-agent-restores-layer-1.md)):
 denied 3 of 3, against a breach for the argv shipped through v0.6.0 on the same
 machine the same hour, with an in-scope control still running 2 of 2. What it costs the node is real and is the other
-half of the same sentence — your `CLAUDE.md`, your hooks and your standing grants
-are unavailable to it, and it holds no `Skill` tool, so it can invoke no skill at
+half of the same sentence — your standing grants are unavailable to it, your
+`CLAUDE.md` and your hooks arrive by the same source list and are implied rather
+than measured, and it holds no `Skill` tool, so it can invoke no skill at
 all. (Its argv also carries `--strict-mcp-config`, as every planned node's
 always has; whether that closes MCP is unmeasured, so read it as a flag rather
 than a result.) **Through v0.6.0 a mapped node was the one exception
@@ -652,9 +653,11 @@ every run. If you would rather not pay a per-invocation token tax for a
 capability whose value is still unmeasured, `--no-skill-activation` is the
 switch.
 
-The tool ceiling does not move for it. Planned nodes load none of your settings,
-CLAUDE.md or hooks, they run under `--strict-mcp-config` (whether that closes MCP
-is not something anyone has measured), and a declared scope like `Bash(git *)` is
+The tool ceiling does not move for it. Planned nodes load none of your settings
+(measured; your CLAUDE.md and hooks arrive by that same source list, so their
+absence is implied rather than measured), they run under `--strict-mcp-config`
+(whether that closes MCP is not something anyone has measured), and a declared
+scope like `Bash(git *)` is
 enforced — the only change activation makes is that the `Skill` tool exists for
 the nodes it reaches. Since 2026-08-12 that sentence holds for an
 **agent-mapped** node too, which used to be its one exception: it now keeps the

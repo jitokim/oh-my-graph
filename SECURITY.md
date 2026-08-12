@@ -209,8 +209,10 @@ source list `--setting-sources ""` empties; they are **implied rather than
 measured** in both directions, and nothing here should be read as covering them.
 
 **What this costs, and what is still unmeasured.** A mapped node no longer gets
-your `CLAUDE.md`, your hooks or your standing grants — it was the one planned
-node that did. **MCP is not on that list in either direction**: layer 4 is a
+your standing grants — that half is measured — and no longer gets your
+`CLAUDE.md` or your hooks, which arrive by the same source list `--setting-sources ""`
+empties and are, as above, **implied rather than measured**. It was the one
+planned node that did. **MCP is not on that list in either direction**: layer 4 is a
 flag rather than a settings scope, so `--strict-mcp-config` was already on a
 mapped node's argv before this change and still is, and whether that flag
 actually closes MCP is the one thing here nobody has observed (E5) — read it as
@@ -219,7 +221,8 @@ before the run, on the node's own line, with that cost named. `--no-agent-mappin
 turns mapping off run-wide and `--no-agent <name>` declines one agent; what
 either buys is an **ordinary planned node** — it gets its `Skill` tool back and
 nothing else. Neither restores the settings, `CLAUDE.md`, hooks or environment
-access a mapped node used to have: no planned node has those any more.
+access a mapped node used to have: no planned node has those any more — measured
+for settings, skills and agent discovery, implied for `CLAUDE.md` and hooks.
 An agent kept in the repository's own
 `.claude/agents` no longer maps at all — move it to `~/.claude/agents` if you
 want it — and how many people that costs is not measured; the decision was taken

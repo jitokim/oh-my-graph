@@ -25,7 +25,7 @@ A node = one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --max-budget-usd <amount> ] \
-  [ --setting-sources "" ] [ --agent <name> ] \
+  [ --setting-sources "" ] [ --plugin-dir <dir> ]… [ --agent <name> ] \
   [ --allowedTools "<comma,joined>" ] \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] \
@@ -36,7 +36,12 @@ This is emission order, not just a flag inventory: `runner.buildArgs` appends
 in exactly this sequence and `claude_test.go`'s `want` argv pins it
 element-by-element, so a reordering is a test failure, not a style choice.
 Note where `--max-budget-usd` sits — immediately after `--permission-mode`,
-*before* the ceiling flags, because it is not one of them.
+*before* the ceiling flags, because it is not one of them. Note too where
+`--plugin-dir` sits — after isolation and before the grant, one flag per
+`ToolPolicy.PluginDirs` entry in order, because it restores instruction material
+layer 1 withheld before any layer decides what may be done with it. It is what
+carries a staged skill corpus (ADR 0017) or a mapped node's staged agent
+definition (ADR 0022) into the node, and it is emitted for those nodes only.
 
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
@@ -1895,6 +1900,7 @@ type ToolPolicy struct {
 	Tools           []string // --tools  (nil = flag omitted)
 	SettingSources  *string  // --setting-sources ("" = load none; nil = flag omitted)
 	StrictMCPConfig bool     // --strict-mcp-config
+	PluginDirs      []string // one --plugin-dir <dir> per entry, in order
 }
 ```
 
@@ -1906,6 +1912,18 @@ type ToolPolicy struct {
 | 3 narrowing | `--tools "<bare names declared>"` | tools the model can even attempt |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` (PR #5's list, retained) | anything the above missed |
+
+`PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
+a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
+(ADR 0022) — and grants no capability, since whatever it supplies still runs
+inside the five layers above (a `Skill` tool exists only when layer 3's `Tools`
+names it, and a staged agent's frontmatter does not widen past `--tools`, E6).
+It exists because layer 1 stays `""`: `--setting-sources ""` withholds the
+DEFINITIONS along with the settings, and a plugin directory is the one source of
+definitions that does not reopen it. Empty omits the flag, which is every
+hand-written graph and every planned run that neither activated nor mapped; a
+resumed leg is emptied deliberately, since rehydrating the path would trust a
+directory the previous leg's nodes could write (ADR 0017 §6, below).
 
 Layer 1 is the load-bearing change. Rules from `~/.claude/settings.json` are why
 `--allowedTools` could never bind: they are matched alongside ours and a standing
