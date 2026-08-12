@@ -61,10 +61,14 @@ them is true of this build.
   and the measurement above is what it looks like when nothing on the screen
   carries the path.
 - **What this costs you, plainly:** a mapped node no longer gets your
-  `CLAUDE.md`, your hooks, your MCP servers or your standing permission grants.
-  It was the one planned node that did. If your agents lean on your environment,
-  `--no-agent <name>` or `--no-agent-mapping` gives the old behaviour back for
-  the nodes they free.
+  `CLAUDE.md`, your hooks or your standing permission grants. It was the one
+  planned node that did. MCP is not part of that change: `--strict-mcp-config`
+  was already on a mapped node's argv, and whether it closes MCP is still
+  unmeasured (E5) — nothing here should be read as measured MCP isolation.
+  **`--no-agent <name>` and `--no-agent-mapping` do not give the old behaviour
+  back.** They remove the mapping, and what you get is an ordinary planned node:
+  its `Skill` tool returns, your environment does not. If your agents lean on
+  your environment, no flag in this release reaches it.
 - **A resumed leg maps nothing**, and says so — the rule ADR 0017 §6 already
   applies to skills, for the same reason: the only record a second process could
   re-stage a definition from lives in the run directory the previous leg's nodes

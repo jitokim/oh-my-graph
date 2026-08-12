@@ -314,14 +314,19 @@ loud failure is the smaller harm. What the runner does add is the CLI's own
 stderr to the error (`NodeOutputError.Stderr`), because that message names every
 agent that IS available — turning a dead end into a fix.
 
-**Mutually exclusive with the auto-mode tool ceiling's Layer 1.**
-`--setting-sources ""` also disables discovery of the user's agent definitions
-(E6's neighbour, E2), so the two cannot be combined. A raw plan still rejects
-`agent:` outright; the one path that puts the field on a planned node —
-coordinator auto-mapping, below — pays for it by dropping Layer 1 on exactly
-the mapped nodes, and the plan printout says so before anything runs. Layer 1
-can still never be extended to hand-written graphs without dropping `agent:`
-with it.
+**No longer mutually exclusive with the auto-mode tool ceiling's Layer 1**
+(ADR 0022, 2026-08-12). `--setting-sources ""` still disables *discovery* of the
+user's agent definitions (E6's neighbour, E2, re-confirmed at CLI 2.1.228), so a
+bare `--agent <name>` cannot resolve under it. A raw plan still rejects `agent:`
+outright; the one path that puts the field on a planned node — coordinator
+auto-mapping, below — no longer pays for it by dropping Layer 1. It stages the
+matched definition into the run's own directory and supplies it with
+`--plugin-dir`, which reaches the node without reopening `--setting-sources`, so
+a mapped node **keeps every ceiling layer**. Until 2026-08-12 it dropped Layer 1
+and was measured to lose its declared scope with it. The plan printout says what
+each mapping costs before anything runs. Layer 1 still cannot be extended to
+hand-written graphs without dropping `agent:` with it: nothing stages a
+hand-written graph's definition.
 
 **Tool reconciliation: a claim only where there is a measurement.** For a
 hand-written graph, oh-my-graph does not parse the subagent's frontmatter and
@@ -1961,14 +1966,20 @@ Layer 1 — lost it to the repository 3 of 3. **Layer 4 is unverified** (E5 —
 observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
 MCP servers for planned nodes — a behaviour change that makes planned nodes
 *more isolated and less capable* than they were, which is the intended direction
-but must be stated in the README rather than discovered. **Agent-mapped nodes
-invert that last sentence for the SETTINGS half only**: nothing is dropped for
-them, so the user's CLAUDE.md and hooks load — and so does the working
-repository's project scope, which is where the repository-supplied skill above
-came from. Their **MCP servers do not**: layer 4 is a flag rather than a
-settings scope, so `--strict-mcp-config` is on a mapped node's argv exactly as
-on any other planned node's, with no `--mcp-config` beside it (measurement (j),
-`argv/omg-probe-writer.argv.txt`).
+but must be stated in the README rather than discovered. **Through v0.6.0
+agent-mapped nodes inverted that last sentence for the SETTINGS half**: nothing
+was dropped for them, so the user's CLAUDE.md and hooks loaded — and so did the
+working repository's project scope, which is where the repository-supplied skill
+above came from. **Since 2026-08-12 (ADR 0022) they do not**: the mapping is
+carried by a staged definition and a `--plugin-dir` instead of by nil settings,
+so a mapped node drops exactly what every other planned node drops and is
+measured under the same E1. What was never part of that difference is layer 4:
+it is a flag rather than a settings scope, so `--strict-mcp-config` was on a
+mapped node's argv exactly as on any other planned node's, with no `--mcp-config`
+beside it, before the change and after it (measurement (j),
+`argv/omg-probe-writer.argv.txt`). Whether that flag actually closes MCP is E5,
+and E5 is unmeasured — the sentence above about MCP servers is a statement about
+the argv, not an observed closure.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the

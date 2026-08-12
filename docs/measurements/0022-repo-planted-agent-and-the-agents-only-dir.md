@@ -151,8 +151,9 @@ is approved.
 - **`GuardAgentStaging` is not measured here.** This probe binds the staged
   directory once and spawns against it; the shipped per-spawn re-materialization
   is covered by unit tests.
-- **`DefaultAgentDirs`' own composition is not measured here** — it is a pure
-  function of `os.UserHomeDir`/`os.Getwd`, and it is pinned by
+- **`DefaultAgentDirs`' own composition is not measured here** — as shipped it is
+  a pure function of `os.UserHomeDir` alone (the `os.Getwd` lookup that built the
+  project entry went with the `pre` scan order), and it is pinned by
   `TestDefaultAgentDirs_UserAgentsOnlyNeverTheProjectDir` rather than by a spawn.
   The substitution is exact for everything downstream, because passing the
   result to `WithAgentDirs` is the only thing the CLI does with it.

@@ -386,6 +386,17 @@ func TestRunAuto_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(runDirFor(runID), "skills-plugin")); !os.IsNotExist(err) {
 		t.Errorf("a staged directory exists with activation off (stat err = %v)", err)
 	}
+	// The other half of "scoped to the SKILL directory", asserted rather than
+	// left to the loop above: the mapped node still carries its agent and the
+	// agents-plugin directory that resolves it. Without this, a regression that
+	// unmapped every agent under --no-skill-activation would pass.
+	mapped := nodeArgv(t, spawns, "judge the proposal")
+	if name, ok := mapped.value("--agent"); !ok || name != "code-reviewer" {
+		t.Errorf("--agent = %q (present=%t), want code-reviewer to survive --no-skill-activation\nargv: %q", name, ok, mapped)
+	}
+	if dir, ok := mapped.value("--plugin-dir"); !ok || filepath.Base(dir) != "agents-plugin" {
+		t.Errorf("--plugin-dir = %q (present=%t), want the staged agents-plugin\nargv: %q", dir, ok, mapped)
+	}
 	if len(spawns) == 0 {
 		t.Fatal("no node spawned at all, so nothing above was actually checked")
 	}
@@ -524,6 +535,12 @@ func TestResumeRetryFailed_MapsNothing(t *testing.T) {
 	}
 	if tools := argv.tools(); !slices.Contains(tools, "Read") {
 		t.Errorf("--tools = %v, want the node's own declared tools intact", tools)
+	}
+	// Both halves of the de-escalation, not just the agent half: a resumed leg
+	// activates nothing either, so the Skill tool the previous leg's staged
+	// corpus paid for must be gone from this argv too.
+	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want no %s on a resumed leg\nargv: %q", tools, coordinator.SkillToolName, argv)
 	}
 	if !strings.Contains(out, "agent mapping is off for this leg") {
 		t.Errorf("resume did not disclose that the node lost its agent:\n%s", out)

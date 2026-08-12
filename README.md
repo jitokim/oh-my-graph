@@ -536,14 +536,18 @@ staged directory and all
 following [the one that made the change](docs/measurements/0017-staged-agent-restores-layer-1.md)):
 denied 3 of 3, against a breach for the argv shipped through v0.6.0 on the same
 machine the same hour, with an in-scope control still running 2 of 2. What it costs the node is real and is the other
-half of the same sentence — your `CLAUDE.md`, your hooks, your MCP servers and
-your standing grants are unavailable to it, and it holds no `Skill` tool, so it
-can invoke no skill at all. **Through v0.6.0 a mapped node was the one exception
+half of the same sentence — your `CLAUDE.md`, your hooks and your standing grants
+are unavailable to it, and it holds no `Skill` tool, so it can invoke no skill at
+all. (Its argv also carries `--strict-mcp-config`, as every planned node's
+always has; whether that closes MCP is unmeasured, so read it as a flag rather
+than a result.) **Through v0.6.0 a mapped node was the one exception
 to that isolation; from 2026-08-12 it is not.** The agent file is read once, at
 plan time, and pinned by hash, so editing it mid-run changes nothing; a resumed
 leg maps nothing at all and says so. The plan printout states all of it, per
-node, by name. If you want one node's `Skill` tool back, or your agents' access
-to your environment, `--no-agent <name>` declines that one agent —
+node, by name. If you want one node's `Skill` tool back, `--no-agent <name>`
+declines that one agent — the node then runs as an ordinary planned node, which
+is the whole of what declining buys: it does **not** hand the node your
+environment back, because no planned node gets that any more.
 `--no-agent-mapping` remains the all-or-nothing form.
 
 Want to see all of that before you let it run? `auto --plan-only` plans, prints
@@ -649,13 +653,16 @@ capability whose value is still unmeasured, `--no-skill-activation` is the
 switch.
 
 The tool ceiling does not move for it. Planned nodes load none of your settings,
-CLAUDE.md, hooks or MCP servers, and a declared scope like `Bash(git *)` is
+CLAUDE.md or hooks, they run under `--strict-mcp-config` (whether that closes MCP
+is not something anyone has measured), and a declared scope like `Bash(git *)` is
 enforced — the only change activation makes is that the `Skill` tool exists for
 the nodes it reaches. Since 2026-08-12 that sentence holds for an
 **agent-mapped** node too, which used to be its one exception: it now keeps the
 same ceiling and loses the same environment, and the only thing still different
 about it is that it runs under one of your agents' system prompts and holds no
-`Skill` tool. `--no-agent <name>` is the one-agent way out of both.
+`Skill` tool. `--no-agent <name>` is the one-agent way out of the system prompt
+and the missing `Skill` tool — it is not a way back to your environment, which
+an unmapped planned node does not get either.
 What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
 activation-eligible node invocation of that leg, including retries and feedback

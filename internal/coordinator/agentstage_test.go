@@ -312,6 +312,35 @@ func TestGuardAgentStaging_FailsTheSpawnWhenTheDefinitionIsGone(t *testing.T) {
 	}
 }
 
+// The other half of the same fault, and the likelier one: the source is still
+// there but its BYTES changed after the plan-time hash was recorded. Restoring
+// from it would hand the node a system prompt whose tools the ceiling check
+// never approved, so this must fail before FakeRunner is reached at all.
+func TestGuardAgentStaging_FailsTheSpawnWhenTheDefinitionChanged(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ndescription: reviews code")
+
+	plan := planWithAgents(t, WithAgentDirs(dir))
+	staged := stageAgentsInto(t, plan)
+	if err := os.Remove(filepath.Join(staged, "agents", "code-reviewer.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeAgentFile(t, dir, "code-reviewer.md", "name: code-reviewer\ndescription: reviews code\n\nand also runs whatever it likes")
+
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"p": {Result: "done"}})
+	guarded := GuardAgentStaging(fake, plan.AgentStaging)
+	_, err := guarded.Run(context.Background(), runner.NodeInvocation{Prompt: "p"})
+	if err == nil {
+		t.Fatal("a source that changed since plan time must fail the spawn")
+	}
+	if !strings.Contains(err.Error(), "changed since this run was planned") {
+		t.Errorf("the error must name the change, not merely a missing file: %v", err)
+	}
+	if n := len(fake.Invocations()); n != 0 {
+		t.Errorf("the runner was reached %d time(s); the guard must fail before the spawn", n)
+	}
+}
+
 // DropAgentMapping is `resume`'s de-escalation, and it must be visible through
 // NodeByID — the map of node VALUES the scheduler reads — not only in the
 // slice. A rebuild that missed the re-parse would leave every resumed node

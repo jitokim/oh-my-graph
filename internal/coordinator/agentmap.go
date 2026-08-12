@@ -425,7 +425,10 @@ func (c *Coordinator) applyAgentMapping(plan *Plan) error {
 		}
 		nodeIDs = append(nodeIDs, m.NodeID)
 	}
-	if len(nodeIDs) == 0 {
+	// staging is nil exactly when every candidate was refused, which also
+	// empties nodeIDs — but stating both makes the safety a check rather than
+	// an inference a later edit could invalidate.
+	if len(nodeIDs) == 0 || staging == nil {
 		return nil
 	}
 	staging.stageFor(nodeIDs)

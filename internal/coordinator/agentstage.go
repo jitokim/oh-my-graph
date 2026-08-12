@@ -226,11 +226,15 @@ func (s *AgentStaging) stageFor(nodeIDs []string) {
 
 // Agents is the staged agent set, for the printout.
 func (s *AgentStaging) Agents() []StagedAgent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]StagedAgent(nil), s.agents...)
 }
 
 // NodeIDs are the mapped nodes this directory was staged for, in graph order.
 func (s *AgentStaging) NodeIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]string(nil), s.nodeIDs...)
 }
 

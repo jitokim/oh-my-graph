@@ -159,9 +159,12 @@ has no open issue behind it.
   directory and supplied with `--plugin-dir`, so Layer 1 stays `""` and a
   mapped node is as isolated, and as limited, as every other planned node
   ([ADR 0022](adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
-  If your agents lean on your environment, `--no-agent-mapping` (or
-  `--no-agent <name>`) is the way back — and it gives back the old behaviour,
-  including the two bullets this one replaced.
+  If your agents lean on your environment, **no flag gives that back.**
+  `--no-agent-mapping` (or `--no-agent <name>`) trades agent mapping for
+  ordinary planned-node isolation: the node stops running under your agent's
+  system prompt and gets its `Skill` tool back, and that is all it gets — an
+  unmapped planned node has no more access to your settings, `CLAUDE.md`, hooks
+  or grants than a mapped one does.
   <br>What that fixes, measured on the same machine and CLI build minutes
   apart: the **shipped** mapped argv ran an out-of-scope `touch` with
   `permission_denials: []` **2 of 2**, the new one was **denied 3 of 3** with

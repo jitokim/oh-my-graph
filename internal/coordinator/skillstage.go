@@ -684,7 +684,10 @@ func pruneStagedDir(dir string, keep map[string]bool) error {
 		return os.RemoveAll(p)
 	})
 	if err != nil {
-		return fmt.Errorf("skill staging: %w", err)
+		// No "skill staging:" here: both Materialize callers wrap this with
+		// their own prefix, and an agent-staging prune failure reported as a
+		// skill-staging one points the operator at the wrong mechanism.
+		return fmt.Errorf("prune staged directory %s: %w", dir, err)
 	}
 	// Deepest first, so a directory emptied by the sweep above is itself
 	// removable. os.Remove on a non-empty directory fails and is ignored,

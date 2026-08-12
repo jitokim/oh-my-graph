@@ -19,6 +19,13 @@ set -eu
 WS="${1:?usage: record.sh <ws> R|A pre|fix}"
 PHASE="${2:?usage: record.sh <ws> R|A pre|fix}"
 SCOPE="${3:?usage: record.sh <ws> R|A pre|fix}"
+# $SCOPE is a path component below (`argv-$SCOPE`, `run-$SCOPE`) and one of them
+# is `rm -rf`'d, so it gets the same closed check $PHASE gets: `foo/../..` is a
+# traversal out of $WS, not a scan order.
+case "$SCOPE" in
+  pre|fix) ;;
+  *) echo "record.sh: unknown scope $SCOPE" >&2; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 . "$HERE/agents.sh"
