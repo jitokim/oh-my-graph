@@ -8,26 +8,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.6.0] - 2026-08-12
 
-One flag, and a paragraph deleted from the plan screen because it was not true.
+**Minor because there is one new flag to type** — `--no-agent <name>`, the
+surface v0.5.2 through v0.5.5 each went without. Behind it is a measurement that
+**refused** the change it was run to make, plus the disclosure that refusal
+forced.
+
 ADR 0017's measurement (j) — 21 spawns, $4.16, claude 2.1.228, pre-registered in
 its own commit — asked whether the agent-mapped skill exclusion could be lifted.
-It cannot, and **not for the reason the ADR expected**: adding the `Skill` tool
-to those nodes works, 3 of 3, and it costs the ceiling nothing because the
-ceiling is already gone there. It stays because on a node that loads your
-settings, a skill name resolves against definitions **the repository you are
-working in can write** — a same-named `.claude/skills` file committed to the
-fixture repo beat oh-my-graph's own staged corpus 3 of 3, and a
+It cannot, and **not because the lift failed**: adding the `Skill` tool to those
+nodes works, 3 of 3, and it costs the ceiling nothing. It stays because on a node
+that loads your settings, a skill name resolves against definitions **the
+repository you are working in can write** — a same-named `.claude/skills` file
+committed to the fixture repo beat oh-my-graph's own staged corpus 3 of 3, and a
 repository-committed `SKILL.md` fired 3 of 3 in a node whose prompt never
-mentioned skills. So nothing was lifted. What shipped is the thing the same
-measurement made unavoidable: the plan screen used to say a mapped node's
-"declared tool list still binds", and the argv this build emits says otherwise —
-a mapped node declaring `Bash(git *)` ran an out-of-scope command with
-`permission_denials: []` while an unmapped one denied it. That clause is gone,
-each mapped node now says on its own line what it gave up, and `--no-agent
-<name>` makes getting one node out of it cost one agent instead of every mapping
-in the plan.
+mentioned skills. So nothing was lifted, and `applySkillActivation`'s guard is
+byte-untouched.
+
+The finding nobody went looking for is the one that reaches users today: **an
+agent-mapped node's declared scope is not enforced, in the code already
+installed.** This release neither introduced that nor fixes it — it **discloses**
+it, per node, and it is tracked as issue #161. The flag is the escape, not a
+feature, and it is priced honestly: a declined node keeps its ceiling and its
+skills by **giving up its agent**.
+
+### Added
+
+- **`--no-agent <name>` (repeatable, on `auto` and `chat`): decline ONE agent
+  from auto-mapping and keep the rest.** `--no-agent-mapping` remains the
+  all-or-nothing form. **What it costs is the agent**: a declined node is planned
+  and run without it — no subagent persona, no agent-supplied prompt — and in
+  exchange it keeps ceiling layer 1 (`--setting-sources ""`) and is activated
+  like any other planned node, which is exactly the configuration (j) measured
+  holding the scope ceiling and invoking the staged skill under an attributable
+  name. This exists because measurement (j) changed what the opt-out is *for*: it
+  used to be the remedy for a capability loss (a mapped node holds no `Skill`
+  tool), and it is now also the only way to keep a node's declared scope
+  enforced — an all-or-nothing switch carrying that weight prices one node's
+  ceiling at every mapping the plan would have made. The **agent** is the unit
+  because it is the only identifier that exists before the planner is paid: node
+  ids are bought, agent names are your own files, and the plan prints the agent
+  on the node line it took. The decline is applied after the single-candidate
+  rule, never before it, so it can only ever remove a mapping — declining one of
+  two ambiguous agents does not promote the other.
+
+### Security
+
+- **An agent-mapped node's declared scope is not enforced. This is shipped
+  behavior, not something this release introduced or repaired.** Arm `G-T` ran
+  the argv `runner.buildArgs` emits today for a mapped node — no staged plugin,
+  no `Skill` in `--tools`, nothing this measurement proposes — and a node
+  declaring `Bash(git *)`, unattended under `--permission-mode dontAsk`, ran an
+  out-of-scope `touch` with `permission_denials: []`. The unmapped arm `G-ACT`
+  denied the identical command and named it in its `permission_denials` record;
+  the in-scope positive control `G-POS`, on the composite mapped argv, ran `git
+  init` successfully, so this is a scope escape rather than the malformed
+  ceiling probe this repo once mistook for a pass. **If you run `auto` with your
+  own `~/.claude/agents`, this reaches the runs you have already made**: ADR
+  0004's claim that an unattended `dontAsk` planned node declaring `Bash(git *)`
+  cannot run an out-of-scope command does not hold for a mapped node, and has
+  not since agent mapping shipped. What a mapped node can actually reach is
+  **your own standing grants** — on the measuring machine `~/.claude/settings.json`
+  allowed `Bash(*)` among 28 rules, which is what made the escape visible; a
+  narrower settings file bounds it more narrowly. The engine's own guarantee is
+  what is gone, not necessarily your machine's. It is not fixed here because `--agent` and
+  layer 1 are mutually exclusive (ADR 0004 E2) — restoring the ceiling is a
+  redesign of agent mapping, ADR 0017 §Compatibility's declined follow-up, now
+  with a direct measurement behind it instead of an analogue. Tracked as **issue
+  #161**; disclosed on the plan printout per mapped node, and in `README.md`,
+  `docs/LIMITATIONS.md`, `SECURITY.md`, `DESIGN.md` and ADR 0017 (Decision §9).
+- **The disclosure covers the whole surface a mapped node loads, not only the
+  `Bash` scope half.** "Loads your settings" means the CLI's default sources —
+  user, project **and local** — so the `.claude/` of the repository being worked
+  in reaches such a node too. The same measurement showed a repository-committed
+  `SKILL.md` invoked 3 of 3 unbidden and a repository-enabled plugin's skill
+  firing; by the same loading, and marked **implied rather than measured**, that
+  repository's project `CLAUDE.md` and its hooks reach it as well. Its **MCP
+  servers do not**: `--strict-mcp-config` is a flag on the argv rather than a
+  settings scope, and arrives with no `--mcp-config` beside it. The plan
+  printout, `docs/LIMITATIONS.md` and `SECURITY.md` all say so, and the ceiling
+  summary's other clause — "your CLAUDE.md, hooks and MCP servers are
+  unavailable to them" — is now cancelled for mapped nodes instead of standing
+  as a reassurance the argv does not keep.
+
+### Changed
+
+- **The plan printout no longer promises a mapped node's declared scope binds,
+  and names what each mapped node lost, by node.** The retired clause was
+  "(their declared tool list still binds)". Which tools *exist* is still bound;
+  the scope inside them is not, because your standing permission grants load
+  with your settings. In its place each mapped node gets its own line — no
+  `Skill` tool, and a scope enforced only as far as your settings enforce it —
+  the ceiling summary carries the same exception when the plan contains such a
+  node, and the exclusion paragraph no longer calls lifting "unmeasured": it
+  says lifting was measured and refused, and that the refusal was **not** about
+  capability, since a user told "it does not work" would never think to check
+  what their repository can supply.
+  `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md` is the record.
+- **The remedy's own arm was run rather than inferred.** A review found
+  `--no-agent`'s "attributable" claim rested on `ACT`, which ran only in the
+  phase where the staged copy was the sole definition of its name. Arm `X-ACT`
+  (3 spawns, $0.29, registered in its own commit before spawning and labelled
+  post-hoc) re-ran that argv under the three-way collision: the staged copy won
+  **3 of 3**, so `--setting-sources ""` bounds the definition search and the
+  exposure is agent mapping's alone.
+
+### Documentation
+
+- **`README.ko.md` caught up with the measurement it was three claims behind
+  on.** #160 rewrote the English README's agent-mapping and skills sections and
+  left the Korean one describing the world before (j): it still promised
+  *"선언된 도구 목록은 여전히 강제됩니다"* — the exact clause the plan printout
+  retired — called the `--agent` + staged-plugin + settings combination *"아직
+  한 번도 측정해보지 않은 조합"*, and told the reader *"노드별 opt-out은
+  없습니다"* one release after `--no-agent` shipped. All three now match
+  `README.md`, including the measured breach and the repository-supplied
+  configuration surface.
 
 ### Added
 
@@ -2470,7 +2567,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...HEAD
+[v0.6.0]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...v0.6.0
 [v0.5.5]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/jitokim/oh-my-graph/compare/v0.5.2...v0.5.3

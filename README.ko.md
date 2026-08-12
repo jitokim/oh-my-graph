@@ -301,7 +301,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.5.5 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.6.0 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -528,9 +528,21 @@ cycle 경계가 없으므로 `--max-cycles`가 최소 2여야 하며, 아니면 
 `code-reviewer`로 실행됩니다. 매칭은 의도적으로 보수적이며(명확한 후보가
 정확히 하나일 때만, 노드의 계획된 도구 허용 목록을 넘는 도구를 원하는
 에이전트는 안내 문구와 함께 스킵), 모든 매핑은 실행 전에 출력되는 플랜에
-표시되고, `--no-agent-mapping`으로 끌 수 있습니다. 트레이드오프도 미리
-밝혀 둡니다: 매핑된 노드는 에이전트를 해석하기 위해 완전한 설정 격리
-대신 사용자의 설정을 로드합니다 — 선언된 도구 목록은 여전히 강제됩니다.
+표시되고, `--no-agent-mapping`으로 끌 수 있습니다.
+
+**트레이드오프는 미리 밝히되, 이제 설명이 아니라 측정입니다.** 매핑된 노드는
+에이전트를 해석하기 위해 완전한 설정 격리 대신 사용자의 설정을 로드하며, 그
+대가로 두 가지를 잃습니다. 첫째, `Skill` tool을 아예 들고 있지 않아 **어떤
+스킬도 호출하지 못합니다**. 둘째, 선언된 scope가 **당신의 settings가 강제하는
+만큼만** 강제됩니다: 어떤 도구가 존재하는지는 여전히 노드의 도구 목록에 묶이지만,
+`Bash(git *)`를 선언한 노드도 당신의 settings가 허용한다면 git이 아닌 명령을
+실행할 수 있습니다 — 2026-08-12에 이 빌드가 실제로 내보내는 argv에 대고
+측정했으며([기록](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)),
+매핑된 노드는 scope 밖 명령을 `permission_denials: []`로 실행했고 매핑되지 않은
+노드는 같은 명령을 거부했습니다. 플랜 출력이 이 둘을 노드마다 이름으로 말합니다.
+플랜의 매핑 전부를 잃지 않으면서 한 노드만 ceiling과 스킬을 지키고 싶다면
+`--no-agent <name>`이 그 에이전트 하나를 거절합니다 — `--no-agent-mapping`은
+all-or-nothing 형태로 그대로 남습니다.
 
 실행시키기 전에 이 모든 걸 먼저 보고 싶다면, `auto --plan-only`가 플랜을
 설계해 그래프·모든 에이전트/스킬 매핑·tool ceiling을 출력한 뒤 멈춥니다 —
@@ -566,8 +578,9 @@ cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므�
 `~/.claude/skills`가 없거나 비어 있거나 스테이징이 실패하면 run 전체에서
 활성화가 꺼지고, 그 사실이 한 줄로 출력됩니다. **agent에 매핑된 노드는 제외**되어
 둘 중 어느 쪽도 받지 않습니다. 당신의 subagent로 실행된다는 것은 그 agent를 찾기
-위해 당신의 settings를 로드한다는 뜻이고, `--agent` + 스테이징된 플러그인 + 당신의
-settings라는 조합은 이 프로젝트가 아직 한 번도 측정해보지 않은 조합이기 때문입니다.
+위해 당신의 settings를 로드한다는 뜻이고 — settings를 로드하는 노드에서는 스킬
+이름이 **당신이 작업 중인 저장소가 쓸 수 있는** 정의를 상대로 해석되기 때문입니다.
+그 조합은 2026-08-12에 측정되었고, 제외는 유지되었습니다: 아래를 보십시오.
 
 **그 제외의 대가는 작지 않으며, 이제 플랜 출력이 그렇게 말합니다.** 제외된 노드는
 `Skill` tool을 아예 들고 있지 않으므로 **어떤 스킬도 호출하지 못합니다** —
@@ -580,18 +593,36 @@ argv의 `--tools`에 `Skill`만 더하고 나머지는 하나도 바꾸지 않�
 ([기록](docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md)).
 게다가 이 제외는 고르게 퍼지지 않습니다: agent 매핑이 먼저 돌고 같은 신호로
 매칭되므로, 절차(procedure)가 가장 잘 맞는 design·doc·review 노드를 가져갑니다.
-그 노드들이 subagent를 얻는 것보다 스킬 표면을 유지하는 편이 낫다면 스위치는
-`--no-agent-mapping`입니다 — run 전체의 agent 매핑을 끄는 스위치라 플랜이 하려던
-매핑 전부가 그 대가이고, 노드별 opt-out은 없습니다. 제외 자체를 푸는 일은 그에
-앞선 자체 측정이 필요하며, 그것이
-[ADR 0017의 (j)](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)입니다.
+그 노드들이 subagent를 얻는 것보다 스킬 표면을 유지하는 편이 낫다면,
+`--no-agent-mapping`은 run 전체의 agent 매핑을 끄고, `--no-agent <name>`은
+에이전트 하나만 거절해 그 대가를 플랜의 매핑 전부가 아니라 그 에이전트가
+가져갔을 노드들로 줄입니다.
+
+**제외를 푸는 일은 2026-08-12에 측정되었고 거절되었습니다** — 21 spawn, $4.16,
+자체 커밋으로 사전 등록
+([기록](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)).
+tool을 더하는 것이 실패해서가 아닙니다: 3번 중 3번 동작했고, 매핑된 노드의
+ceiling은 그것 없이도 이미 뚫려 있으므로 ceiling에 드는 비용도 없습니다.
+거절된 이유는 이 노드들에서 스킬 이름이 **작업 대상 저장소가 쓸 수 있는**
+코퍼스를 상대로 해석되기 때문입니다: 대상 저장소에 커밋된 같은 이름의
+`SKILL.md`가 oh-my-graph 자신의 스테이징된 코퍼스를 3번 중 3번 이겼고,
+저장소에 커밋된 `SKILL.md`가 스킬을 한 번도 언급하지 않은 프롬프트의 노드에서
+3번 중 3번 발화했습니다. `--setting-sources ""` 아래 — 매핑되지 않은 모든
+노드 — 에서는 같은 3자 충돌이 3번 중 3번 스테이징된 사본으로 해석되었으므로,
+이것은 activation이 아니라 agent 매핑의 노출입니다.
 
 tool ceiling은 그대로입니다. 활성화 대상인 플랜된 노드는 여전히 당신의
 settings, CLAUDE.md, hook, MCP 서버를 전혀 로드하지 않고, `Bash(git *)` 같은
 선언된 scope도 그대로 강제됩니다 — 달라지는 것은 이 노드들에게 `Skill` tool이
-존재한다는 것뿐입니다. (agent에 매핑된 노드는 ADR 0017 이전과 마찬가지로
-당신의 settings를 로드하며, 바로 그 이유로 활성화에서 제외됩니다 — 어느 쪽이든
-`Skill` tool은 받지 못하므로, 그 settings가 스킬을 사주지는 않습니다.)
+존재한다는 것뿐입니다. (**agent에 매핑된 노드**는 MCP 절을 제외한 위 모든 절의
+반대편이며, ADR 0017 이전에도 이미 그랬습니다: 당신의 settings를 로드하므로
+당신의 CLAUDE.md와 hook은 그 노드에 *닿고*, 작업 중인 저장소의 `.claude/`도
+닿습니다 — 다만 **MCP 서버는 닿지 않습니다**. `--strict-mcp-config`는 settings
+scope가 아니라 그 노드 argv에 붙는 플래그이고 `--mcp-config` 없이 도착하기
+때문입니다 — 그리고 선언된 scope는 당신의 settings가 묶는 만큼만 묶입니다,
+측정된 사실입니다. 같은 로딩 때문에 활성화에서 제외되며, 어느 쪽이든 `Skill`
+tool은 받지 못합니다. 플랜 출력의 ceiling 요약 위 문단이 이 두 절반을 노드마다
+말하고, `--no-agent <name>`이 에이전트 하나 단위의 탈출구입니다.)
 그 대가는 실행 전에 출력됩니다: 스테이징된 스킬 하나하나의 크기와 SHA-256,
 그리고 그 코퍼스가 그 leg의 **모든** 활성화 대상 노드 호출에 더하는 프롬프트
 토큰(재시도와 feedback 재실행 포함).
