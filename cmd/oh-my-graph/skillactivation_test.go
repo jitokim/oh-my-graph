@@ -241,7 +241,7 @@ func TestDropSkillActivation(t *testing.T) {
 		}
 
 		var out strings.Builder
-		dropSkillActivation(&out, snapPolicies, policies, false)
+		dropSkillActivation(&out, snapPolicies, policies, false, nil)
 
 		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
 			t.Errorf("Tools = %v, want %s dropped", policies["work"].Tools, coordinator.SkillToolName)
@@ -286,7 +286,7 @@ func TestDropSkillActivation(t *testing.T) {
 			t.Fatal("precondition failed: no staged plugin directory to forge a manifest beside")
 		}
 		policies := toRunnerToolPolicies(snapPolicies)
-		dropSkillActivation(io.Discard, snapPolicies, policies, false)
+		dropSkillActivation(io.Discard, snapPolicies, policies, false, nil)
 
 		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
 			t.Errorf("Tools = %v; a forged manifest must not be able to keep activation on", policies["work"].Tools)
@@ -301,7 +301,7 @@ func TestDropSkillActivation(t *testing.T) {
 		policies := toRunnerToolPolicies(snapPolicies)
 
 		var out strings.Builder
-		dropSkillActivation(&out, snapPolicies, policies, true)
+		dropSkillActivation(&out, snapPolicies, policies, true, nil)
 
 		if slices.Contains(policies["work"].Tools, coordinator.SkillToolName) {
 			t.Errorf("Tools = %v, want %s dropped", policies["work"].Tools, coordinator.SkillToolName)
@@ -324,7 +324,7 @@ func TestDropSkillActivation(t *testing.T) {
 		snapPolicies := map[string]runstate.NodeToolPolicy{"work": {Tools: []string{"Read"}}}
 		policies := toRunnerToolPolicies(snapPolicies)
 		var out strings.Builder
-		dropSkillActivation(&out, snapPolicies, policies, false)
+		dropSkillActivation(&out, snapPolicies, policies, false, nil)
 
 		if !slices.Equal(policies["work"].Tools, []string{"Read"}) {
 			t.Errorf("Tools = %v, want them untouched", policies["work"].Tools)

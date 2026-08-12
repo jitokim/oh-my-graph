@@ -507,26 +507,48 @@ five graphs and five assessments with nobody watching — the
 governance is the bound you typed, the per-cycle validation, and the printed
 record, not a confirmation prompt.
 
-If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
-— project wins), `auto` also maps planned nodes onto them when a node's id
+If you have your own Claude Code agents (`~/.claude/agents` — **your own
+directory only**, never the repository's `./.claude/agents`), `auto` also maps
+planned nodes onto them when a node's id
 clearly matches an agent's name — your review node runs as *your*
 `code-reviewer`. The match is deliberately conservative (one clear candidate or
 nothing, and an agent wanting tools beyond the node's planned allowlist is
 skipped with a note), every mapping is shown in the printed plan before
 anything runs, and `--no-agent-mapping` turns it off.
 
+**The project directory was scanned until 2026-08-12, and the reason it stopped
+is worth a sentence.** A matched definition is now *copied* into the run and
+handed to the node as its system prompt, so scanning the repository under work
+meant a file that arrives with a `git clone` could write the instructions an
+unattended node runs under. Measured: it did, 2 of 2
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+Move an agent you want mapped into `~/.claude/agents`; the plan printout names
+the file every staged definition came from, with its size and hash.
+
 **The trade, stated up front and measured rather than described.** A mapped node
-loads your settings so the agent can resolve, instead of running fully
-settings-isolated, and that costs it two things. It holds no `Skill` tool, so it
-can invoke no skill at all. And its declared scope is enforced only as far as
-*your own settings* enforce it: which tools exist is still bound by the node's
-tool list, but a node declaring `Bash(git *)` can run a non-git command if your
-settings grant one — measured on 2026-08-12 against the argv this build emits
-([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)),
-where the mapped node ran an out-of-scope command with `permission_denials: []`
-and the unmapped node denied the same one. The plan printout says both, per node,
-by name. If you want one node to keep its ceiling and its skills without losing
-every mapping in the plan, `--no-agent <name>` declines that one agent —
+runs as settings-isolated as any other planned node: oh-my-graph copies that
+agent's definition into the run's own directory and hands the node that copy, so
+`--agent` resolves without your settings loading. Its declared scope binds — a
+node declaring `Bash(git *)` cannot run a non-git command even if your settings
+would allow one, measured on 2026-08-12 against the argv this build emits —
+staged directory and all
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md),
+following [the one that made the change](docs/measurements/0017-staged-agent-restores-layer-1.md)):
+denied 3 of 3, against a breach for the argv shipped through v0.6.0 on the same
+machine the same hour, with an in-scope control still running 2 of 2. What it costs the node is real and is the other
+half of the same sentence — your standing grants are unavailable to it, your
+`CLAUDE.md` and your hooks arrive by the same source list and are implied rather
+than measured, and it holds no `Skill` tool, so it can invoke no skill at
+all. (Its argv also carries `--strict-mcp-config`, as every planned node's
+always has; whether that closes MCP is unmeasured, so read it as a flag rather
+than a result.) **Through v0.6.0 a mapped node was the one exception
+to that isolation; from 2026-08-12 it is not.** The agent file is read once, at
+plan time, and pinned by hash, so editing it mid-run changes nothing; a resumed
+leg maps nothing at all and says so. The plan printout states all of it, per
+node, by name. If you want one node's `Skill` tool back, `--no-agent <name>`
+declines that one agent — the node then runs as an ordinary planned node, which
+is the whole of what declining buys: it does **not** hand the node your
+environment back, because no planned node gets that any more.
 `--no-agent-mapping` remains the all-or-nothing form.
 
 Want to see all of that before you let it run? `auto --plan-only` plans, prints
@@ -561,16 +583,16 @@ by description, at run time. Eligible means a planned node that is not
 agent-mapped, on a run where activation is on at all — an empty or missing
 `~/.claude/skills`, or a staging failure, turns it off for the whole run and
 says so on its own line. An **agent-mapped node is excluded** and gets neither
-half, because running as one of your subagents already means loading your
-settings to resolve the agent — and on a node that loads your settings, a skill
-name resolves against definitions the repository you are working in can write.
-That combination was measured on 2026-08-12 and the exclusion was kept: see
-below.
+half. That exclusion was measured on 2026-08-12 and kept, because a mapped node
+then loaded your settings and a skill name resolved against definitions the
+repository you are working in can write — and it *still stands*, though the
+ground under it is gone: since ADR 0022 such a node loads no settings and those
+definitions no longer reach it. Nobody has re-taken the decision, and until
+someone does, an excluded node holds no `Skill` tool. See below.
 
 **What that exclusion costs is not small, and the plan printout now says so.**
 An excluded node holds no `Skill` tool, so it invokes **no skill at all** — not
-the staged corpus, and not your own installed skills either, even though its
-settings do load. Measured 2026-08-09 on 10 real spawns: told outright to use a
+the staged corpus, and not your own installed skills. Measured 2026-08-09 on 10 real spawns: told outright to use a
 skill it fired 0 of 3 under the argv oh-my-graph really sends, and 3 of 3 with
 `Skill` added to that argv's `--tools` and nothing else changed — and 0 of 1
 against 1 of 1 when the skill sat in `~/.claude/skills` rather than in the
@@ -587,14 +609,24 @@ nodes that one agent would have taken rather than every mapping in the plan.
 $4.16, pre-registered in its own commit
 ([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)).
 Not because adding the tool fails: it works, 3 of 3, and it costs the ceiling
-nothing because a mapped node's ceiling is already breached without it. It was
-refused because on these nodes a skill name resolves against a corpus **the
+nothing because a mapped node's ceiling was already breached without it. It was
+refused because on those nodes a skill name resolved against a corpus **the
 repository under work can write**: a same-named `SKILL.md` committed to the
 target repo beat oh-my-graph's own staged corpus 3 of 3, and a
 repository-committed `SKILL.md` fired 3 of 3 in a node whose prompt never
 mentioned skills. Under `--setting-sources ""` — every non-mapped node — the
-same three-way collision resolved to the staged copy 3 of 3, so this is agent
+same three-way collision resolved to the staged copy 3 of 3, so this was agent
 mapping's exposure and not activation's.
+
+**And on 2026-08-12 that exposure was closed, without lifting the exclusion.** A
+mapped node now keeps `--setting-sources ""` and gets its agent from a staged
+directory instead (see the agent-mapping section above), so the repository's
+definitions no longer load for it: the same repository copy fired **0 of 3**,
+and where the model did call `Skill` the CLI answered `Unknown skill: …`
+([the record](docs/measurements/0017-staged-agent-restores-layer-1.md)). The
+exclusion stands anyway, because nothing has re-decided it — that is a separate
+call with its own record, and the printout says so in those words rather than
+implying the refusal still has a reason behind it.
 
 **Whether it does is now measured; whether the result is worth the tokens is
 not, and the feature is on by default.** v0.5.1 shipped this recording **1
@@ -621,19 +653,19 @@ every run. If you would rather not pay a per-invocation token tax for a
 capability whose value is still unmeasured, `--no-skill-activation` is the
 switch.
 
-The tool ceiling does not move for it. Activation-eligible planned nodes still
-load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared
-scope like `Bash(git *)` is still enforced — the only change is that the `Skill`
-tool now exists for them. (An **agent-mapped** node is the other case in every
-one of those clauses but the MCP one, and it was already before ADR 0017: it
-loads your settings, so your CLAUDE.md and hooks *do* reach it, and so does
-the repository's `.claude/` — your **MCP servers do not**, because
-`--strict-mcp-config` is a flag on its argv rather than a settings scope and
-arrives with no `--mcp-config` — while its declared scope binds only as far as your
-own settings bind it, measured. It is excluded from activation for that same
-loading, and it holds no `Skill` tool either way. The paragraph above the plan
-printout's ceiling summary says both halves per node; `--no-agent <name>` is the
-one-agent way out.)
+The tool ceiling does not move for it. Planned nodes load none of your settings
+(measured; your CLAUDE.md and hooks arrive by that same source list, so their
+absence is implied rather than measured), they run under `--strict-mcp-config`
+(whether that closes MCP is not something anyone has measured), and a declared
+scope like `Bash(git *)` is
+enforced — the only change activation makes is that the `Skill` tool exists for
+the nodes it reaches. Since 2026-08-12 that sentence holds for an
+**agent-mapped** node too, which used to be its one exception: it now keeps the
+same ceiling and loses the same environment, and the only thing still different
+about it is that it runs under one of your agents' system prompts and holds no
+`Skill` tool. `--no-agent <name>` is the one-agent way out of the system prompt
+and the missing `Skill` tool — it is not a way back to your environment, which
+an unmapped planned node does not get either.
 What that costs is printed before the run: every staged skill
 with its size and SHA-256, and the prompt tokens the corpus adds to **every**
 activation-eligible node invocation of that leg, including retries and feedback

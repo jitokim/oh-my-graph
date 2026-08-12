@@ -84,7 +84,7 @@ internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), Refus
 internal/childenv/     the shared child-env scrub policy (used by all four spawners)
 internal/fence/        the shared data fence: a per-call crypto/rand nonce in BOTH markers of any quote of untrusted text into a prompt, plus the head+tail bound on it
 internal/invariants/   test-only: asserts exactly four spawner objects — only their seams' files import os/exec
-internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent mapping and skill activation (ADR 0017, superseding ADR 0012's plan-time inlining); the goal loop
+internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent mapping — scanned from ~/.claude/agents only, with the matched definition staged so a mapped node keeps ceiling layer 1 (ADR 0022) — and skill activation (ADR 0017, superseding ADR 0012's plan-time inlining); the goal loop
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff, the advisory lint sweeps
 internal/runstate/     state.json snapshot — atomic write, resume load, and the run lock (an flock a leg holds; ProbeLock reads it — ADR 0015)
 internal/runfeed/      events.jsonl append-only event stream (consumer contract, docs/RUN-FEED.md)

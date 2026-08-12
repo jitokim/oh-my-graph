@@ -295,18 +295,28 @@ type SkillActivation struct {
 	Skills []StagedSkill
 	// NodeIDs are the nodes granted activation, in graph order.
 	NodeIDs []string
-	// ExcludedNodeIDs are agent-mapped nodes, which are excluded and said so:
-	// applyAgentMapping drops their layer 1 to nil, so `--agent` plus a staged
-	// plugin plus the user's settings is a different, unmeasured composite.
+	// ExcludedNodeIDs are agent-mapped nodes, which are excluded and said so.
+	//
+	// WHAT THIS FIELD'S REASON USED TO BE, AND WHAT IT IS NOW. Until ADR 0022
+	// applyAgentMapping dropped a mapped node's layer 1 to nil, so `--agent`
+	// plus a staged plugin plus the user's settings was a different composite —
+	// first unmeasured, then measured by (j) and refused. Layer 1 on those
+	// nodes is now "" (agentstage.go), so that composite no longer exists and
+	// neither does the ground under the refusal. The guard is unchanged and the
+	// exclusion still holds, as A DECISION NOBODY HAS RE-TAKEN. Everything
+	// below is kept because it is the record of how it got here; read it in
+	// that light, and see the closing paragraph.
 	//
 	// THE EXCLUSION IS A CAPABILITY HOLE, NOT A CORPUS PREFERENCE, and the
 	// sentence that used to sit here — "under nil such a node already sees the
 	// user's real skills, so the exclusion costs it little" — is MEASURED FALSE
 	// (2026-08-09, claude 2.1.226, 10 spawns, $2.41,
 	// docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).
-	// applyAgentMapping sets ONLY SettingSources; Tools stays
-	// narrowedToolsFor(node, false), with no Skill, and this loop skips the
-	// node before the line that would add it. Under the real agent-mapped argv
+	// As that measurement ran, applyAgentMapping set ONLY SettingSources and
+	// Tools stayed narrowedToolsFor(node, false), with no Skill — it touches no
+	// tool policy at all today, and the Tools half is unchanged either way — and
+	// this loop skips the node before the line that would add it. Under the
+	// then-real agent-mapped argv
 	// — no --setting-sources flag at all, --agent, --tools Write — a node told
 	// outright to use a planted skill invoked it 0 of 3 times; the same argv
 	// with `Skill` appended to --tools and NOTHING else changed invoked it 3 of
@@ -363,6 +373,20 @@ type SkillActivation struct {
 	// the repository under work fired 3 of 3 on a prompt that never mentions
 	// skills. Both carry over to the cheaper `--agent` + Skill arm, since both
 	// rest on the same nil layer 1 — which is what to change, not this guard.
+	//
+	// THAT IS WHAT CHANGED (2026-08-12, ADR 0022, measurement (k),
+	// docs/measurements/0017-staged-agent-restores-layer-1.md). With layer 1
+	// back at "" on a mapped node, the repository-committed .claude/skills copy
+	// fired 0 of 3 where it had fired 3 of 3, and the two arms whose model DID
+	// call Skill got `Unknown skill: …` with is_error: true from the CLI itself.
+	// So both of (j)'s killing arms are answered — and this guard is still here,
+	// unlifted, because answering the objection is not the same as taking the
+	// decision. Re-taking it needs its own record and its own arms; what it
+	// starts from is that `Skill` was live under the new argv (2 of 2 on the
+	// staged corpus) and the staged copy kept its name 3 of 3 under the same
+	// three-way collision that beat it before. Until then noteExclusionCost
+	// prints "a decision nobody has re-taken", which is neither "it does not
+	// work" nor "it is coming".
 	ExcludedNodeIDs []string
 	// PluginDir is the staged directory, once bound. Empty for a --plan-only
 	// preview, which stages nothing because nothing runs.
@@ -407,7 +431,7 @@ func newSkillStaging(skills map[string]skillDef) (*SkillStaging, error) {
 	staging := &SkillStaging{}
 	total := int64(0)
 	for _, name := range names {
-		if !safeSkillDirName(name) {
+		if !safePathElement(name) {
 			continue
 		}
 		def := skills[name]
@@ -435,11 +459,12 @@ func newSkillStaging(skills map[string]skillDef) (*SkillStaging, error) {
 	return staging, nil
 }
 
-// safeSkillDirName is the guard on where staging writes. The name comes from a
-// scanned file's frontmatter, so it is data, and it becomes a path element.
-// One path element, no separators, no dot-prefix (which would collide with
-// .claude-plugin and would hide the result from an `ls`).
-func safeSkillDirName(name string) bool {
+// safePathElement is the guard on where staging writes. The name comes from a
+// scanned file's frontmatter, so it is data, and it becomes a path element —
+// a skill's directory under skills/, or (ADR 0022) an agent's file under
+// agents/. One path element, no separators, no dot-prefix (which would collide
+// with .claude-plugin and would hide the result from an `ls`).
+func safePathElement(name string) bool {
 	if name == "" || strings.HasPrefix(name, ".") {
 		return false
 	}
@@ -592,7 +617,7 @@ func (s *SkillStaging) Materialize() error {
 	for _, f := range s.files {
 		keep[filepath.Join(s.dir, filepath.FromSlash(f.Rel))] = true
 	}
-	if err := s.pruneTo(keep); err != nil {
+	if err := pruneStagedDir(s.dir, keep); err != nil {
 		return err
 	}
 
@@ -613,7 +638,8 @@ func (s *SkillStaging) Materialize() error {
 			return err
 		}
 	}
-	return writeStagedFile(pluginJSON, pluginManifestJSON())
+	return writeStagedFile(pluginJSON, pluginManifestJSON(stagedPluginName,
+		"Skill definitions oh-my-graph staged for this run's planned nodes (ADR 0017)."))
 }
 
 // stagedFileMatches reports whether the staged copy is already the planned
@@ -632,17 +658,22 @@ func stagedFileMatches(dst, want string) bool {
 	return digest.sum == want
 }
 
-// pruneTo deletes every regular file under the staged directory the manifest
-// does not name, and every directory left empty by that. A node that wrote a
-// skill of its own here loses it before the next node spawns.
-func (s *SkillStaging) pruneTo(keep map[string]bool) error {
+// pruneStagedDir deletes every regular file under a staged directory its
+// manifest does not name, and every directory left empty by that. A node that
+// wrote a definition of its own here loses it before the next node spawns.
+//
+// It is a free function rather than a method because BOTH staged plugin
+// directories need exactly this sweep — the skill corpus and, since ADR 0022,
+// the matched agent — and the property it enforces ("a node cannot stage a
+// definition for a later node") must not be reimplemented twice.
+func pruneStagedDir(dir string, keep map[string]bool) error {
 	var dirs []string
-	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if p != s.dir {
+			if p != dir {
 				dirs = append(dirs, p)
 			}
 			return nil
@@ -653,7 +684,10 @@ func (s *SkillStaging) pruneTo(keep map[string]bool) error {
 		return os.RemoveAll(p)
 	})
 	if err != nil {
-		return fmt.Errorf("skill staging: %w", err)
+		// No "skill staging:" here: both Materialize callers wrap this with
+		// their own prefix, and an agent-staging prune failure reported as a
+		// skill-staging one points the operator at the wrong mechanism.
+		return fmt.Errorf("prune staged directory %s: %w", dir, err)
 	}
 	// Deepest first, so a directory emptied by the sweep above is itself
 	// removable. os.Remove on a non-empty directory fails and is ignored,
@@ -705,12 +739,13 @@ func writeStagedFile(dst string, content []byte) error {
 }
 
 // pluginManifestJSON is the .claude-plugin/plugin.json the CLI needs to see a
-// directory as a plugin at all — the shape measurement (f) used.
-func pluginManifestJSON() []byte {
+// directory as a plugin at all — the shape measurement (f) used, and the shape
+// measurement (k) re-used for the staged agent directory.
+func pluginManifestJSON(name, description string) []byte {
 	raw, err := json.MarshalIndent(map[string]string{
-		"name":        stagedPluginName,
+		"name":        name,
 		"version":     "0.0.0",
-		"description": "Skill definitions oh-my-graph staged for this run's planned nodes (ADR 0017).",
+		"description": description,
 	}, "", "  ")
 	if err != nil {
 		// Unreachable: a map[string]string of constants always marshals.
@@ -798,14 +833,16 @@ func (r *stagingRunner) Run(ctx context.Context, spec runner.NodeInvocation) (ru
 // is authoritative) and before the verify attachment. It adjusts the POLICY
 // and never the graph.
 //
-// It cannot live in toolPolicyFor, and the reason is worth stating because the
-// first draft of ADR 0017 put it there: toolPolicyFor is called from
-// toolPoliciesByNode BEFORE either mapping runs, and applyAgentMapping
-// afterwards sets policy.SettingSources = nil on mapped nodes — so a §1
-// implemented there would hand an agent-mapped node `Skill` in Tools PLUS nil
-// setting sources, wider than anything ADR 0017 decided. It also could not
-// work: toolPolicyFor is a pure function of one graph.Node and cannot see the
-// scan, which the predicate requires.
+// It cannot live in toolPolicyFor, and the reason survives ADR 0022 in a
+// weaker form than the one the first draft of ADR 0017 was warned about.
+// toolPolicyFor is called from toolPoliciesByNode BEFORE either mapping runs
+// and is a pure function of one graph.Node: it cannot see the scan, which the
+// predicate requires, and it cannot see node.Agent, which the exclusion
+// requires. (Until 2026-08-12 there was a sharper reason on top —
+// applyAgentMapping then set policy.SettingSources = nil afterwards, so a §1
+// implemented there would have handed a mapped node `Skill` in Tools PLUS nil
+// setting sources, wider than anything ADR 0017 decided. That failure mode is
+// gone with the line that caused it; the ordering constraint is not.)
 //
 // Layers 0, 1, 2, 4 and 5 do not move. Layer 3 is recomputed through
 // narrowedToolsFor — the one function that builds that list — rather than

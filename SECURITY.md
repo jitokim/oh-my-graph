@@ -125,7 +125,7 @@ The layers:
 | layer | mechanism | closes |
 |---|---|---|
 | 0 declaration | `coordinator.plannedToolAllowlist` | what a plan may name at all — plan time, before any node runs |
-| 1 isolation | `--setting-sources ""` — **absent entirely on an agent-mapped node** | your standing grants; settings hooks — **closes neither one for a mapped node** |
+| 1 isolation | `--setting-sources ""` — on **every** planned node since 2026-08-12, agent-mapped included | your standing grants; settings hooks |
 | 2 grant | `--allowedTools` under `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<names declared>"` | tools the model can attempt at all |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
@@ -152,40 +152,86 @@ hand-written graphs, which run without layer 1's isolation: their declared
 `allowed_tools` is still rendered as `--allowedTools` (layer 2 applies to every
 graph), but layers 1 and 3–5 are auto mode's alone by design.
 
-**And it is NOT closed for an auto-planned node that oh-my-graph maps onto one
-of your own subagents.** Those nodes omit `--setting-sources` entirely, because
-`--agent` cannot resolve without your settings loaded (DESIGN.md, E2), so Layer
-1 is not weakened for them — it is absent, and everything in the table above
-that Layer 1 closes is open. **Measured on claude 2.1.228** (2026-08-12) against
-the argv this build emits, not argued from the flag list: a mapped node
-declaring `Bash(git *)`, unattended under `--permission-mode dontAsk`, ran an
-out-of-scope `touch` with `permission_denials: []`, while the same probe's
-unmapped node denied the identical command and its in-scope `git` control ran
-([the record](docs/measurements/0017-lifting-the-agent-mapped-exclusion.md)).
-Which tools **exist** is still bound by Layer 3; the scope inside them is bound
-only as far as your own settings bind it. This is not new behaviour introduced
-by that measurement — it has been true since agent mapping shipped, and the
-measurement is what gave it a number.
+**Through v0.6.0 it was NOT closed for an auto-planned node that oh-my-graph
+mapped onto one of your own subagents, and since 2026-08-12 it is.** Those
+nodes used to omit `--setting-sources` entirely, because `--agent` cannot
+resolve without agent definitions loaded (DESIGN.md, E2) — so Layer 1 was not
+weakened for them, it was absent, and everything in the table above that Layer 1
+closes was open. **Measured on claude 2.1.228** (2026-08-12) against the argv
+that build emitted: a mapped node declaring `Bash(git *)`, unattended under
+`--permission-mode dontAsk`, ran an out-of-scope `touch` with
+`permission_denials: []`, twice, while the same probe's unmapped node denied the
+identical command.
 
-In the probe's own plan **6 of 8 nodes were mapped**, so this is the common case
-rather than a corner of one: agent mapping matches on the same signal a design,
-doc or review node's id carries. Every mapping is printed before the run, on the
-node's own line, with both costs named; `--no-agent-mapping` turns mapping off
-run-wide and `--no-agent <name>` declines one agent. Restoring Layer 1 for these
-nodes is a change to agent mapping itself
-([ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)
-§Compatibility's declined follow-up), not to any layer here.
+What closed it is not a flag but a different way to supply the definition:
+oh-my-graph copies the matched agent's file into the run's own directory and
+passes it with `--plugin-dir`, which reaches the node **without** reopening
+Layer 1. **Measured in the same session, on the same machine and build, minutes
+apart**: the identical ceiling arm under the new argv was **denied 3 of 3**,
+with the refusal recorded in the CLI's own `permission_denials`, while an
+in-scope `git init` control still ran 2 of 2
+([the record](docs/measurements/0017-staged-agent-restores-layer-1.md);
+[ADR 0022](docs/adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
+The same measurement re-confirmed and widened E2: under `--setting-sources ""`
+the CLI's own list of agents it can see is five built-ins, and **neither your
+`~/.claude/agents` nor the repository's** — which is why the definition has to
+be staged.
 
-**What a mapped node's settings bring with them is wider than your permission
-grants.** Loading your settings means loading **project** scope too — the
-`.claude/` of the repository the node is working in. Measured in the same
-probe: a `SKILL.md` committed to that repository was invoked **3 of 3** by a
-node whose prompt never mentioned skills, and a plugin enabled by that
-repository's own committed `.claude/settings.json` loaded and its skill fired.
-By the same loading, and **implied rather than measured**, the repository's
-project `CLAUDE.md` and its **hooks** — which are command execution at tool
-events — reach such a node as well. Treat an `auto` run with mapped nodes in an
-untrusted checkout as running that checkout's configuration, because it is.
+**That is a claim about DISCOVERY, and staging is a second channel.** A sentence
+here said it covered both until 2026-08-12, and it did not: oh-my-graph scanned
+`<cwd>/.claude/agents` as well as your own, a project file shadowed a user file
+of the same name, and *whatever the scan resolved* was what got copied into the
+node's `--plugin-dir` — which `--setting-sources ""` structurally cannot shut.
+**Measured**: with a definition committed to the repository under work, the
+system prompt that ran an unattended `dontAsk` node was the repository's, 2 of 2
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+It did not breach the ceiling — layer 1 was `""` and the tools stayed bound, so
+the class is injection rather than escalation — but it is the repository
+choosing an unattended node's instructions, which is what this section says it
+prevents. **What closed it is the scan scope**: oh-my-graph reads
+`~/.claude/agents` and nothing else, the same scope it has always used for
+skills. With the repository's copy still committed in the node's own cwd, the
+definition that resolved was yours, 3 of 3. Every staged definition is printed
+before the run with the file it came from, its size and its SHA-256, so this is
+checkable per run rather than taken on trust.
+
+**The repository-configuration surface closed with it.** Loading your settings
+used to mean loading **project** scope too — the `.claude/` of the repository the
+node is working in — and that was the wider half of the problem: a `SKILL.md`
+committed to that repository was invoked **3 of 3** by a mapped node whose
+prompt never mentioned skills, and a plugin enabled by that repository's own
+committed `.claude/settings.json` loaded and its skill fired. Under the new argv
+the repository's copy fired **0 of 3**, and where the model did call `Skill` the
+CLI answered `Unknown skill: …` with `is_error: true` — the CLI stating the
+definition is not loaded, rather than an inference from silence. The
+repository's project `CLAUDE.md` and its **hooks** arrive by the same default
+source list `--setting-sources ""` empties; they are **implied rather than
+measured** in both directions, and nothing here should be read as covering them.
+
+**What this costs, and what is still unmeasured.** A mapped node no longer gets
+your standing grants — that half is measured — and no longer gets your
+`CLAUDE.md` or your hooks, which arrive by the same source list `--setting-sources ""`
+empties and are, as above, **implied rather than measured**. It was the one
+planned node that did. **MCP is not on that list in either direction**: layer 4 is a
+flag rather than a settings scope, so `--strict-mcp-config` was already on a
+mapped node's argv before this change and still is, and whether that flag
+actually closes MCP is the one thing here nobody has observed (E5) — read it as
+a statement about the argv, not as measured isolation. Every mapping is printed
+before the run, on the node's own line, with that cost named. `--no-agent-mapping`
+turns mapping off run-wide and `--no-agent <name>` declines one agent; what
+either buys is an **ordinary planned node** — it gets its `Skill` tool back and
+nothing else. Neither restores the settings, `CLAUDE.md`, hooks or environment
+access a mapped node used to have: no planned node has those any more — measured
+for settings, skills and agent discovery, implied for `CLAUDE.md` and hooks.
+An agent kept in the repository's own
+`.claude/agents` no longer maps at all — move it to `~/.claude/agents` if you
+want it — and how many people that costs is not measured; the decision was taken
+on the surface, not on a number. The staged directory this build writes carries
+`agents/` and no `skills/` while the first measurement's carried both, and that
+acceptance is now run: this build's own argv resolved its agent from an
+`agents/`-only directory 3 of 3, denied the out-of-scope command 0 of 3, and ran
+the in-scope control 2 of 2, against a machine that still breached under the
+v0.6.0 argv the same hour.
 
 Still a reduction, not a sandbox. What is **not** covered:
 

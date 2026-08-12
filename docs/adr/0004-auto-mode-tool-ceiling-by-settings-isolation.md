@@ -206,6 +206,42 @@ settings, hooks and MCP servers.
 > shape (g) breached, and it loads *user, project and local* settings rather
 > than just user. That gap is live in the tree today and is filed as its own
 > issue with its own measurement.
+>
+> **Update (2026-08-12): that gap is CLOSED, and E1 is unexcepted.** Amended by
+> `0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md`.
+> `applyAgentMapping` no longer sets `SettingSources = nil`: the matched agent
+> definition is staged into a run-owned plugin directory and supplied with
+> `--plugin-dir`, so a mapped node keeps layer 1 at `""` like every other
+> planned node. Measured on the same machine and CLI build, minutes apart: the
+> **shipped** mapped argv breached E1 **2 of 2**, the staged-definition argv was
+> **denied 3 of 3** with the refusal recorded in `permission_denials`, and an
+> in-scope `git init` control still ran 2 of 2
+> (`docs/measurements/0017-staged-agent-restores-layer-1.md`). **E1, and the
+> first bullet of "Negative / trade-offs", now hold for EVERY planned node with
+> no exception** — including the loss: a mapped node no longer gets the user's
+> CLAUDE.md, hooks or standing grants, which it alone used to. **MCP is not part
+> of that list in either direction**: layer 4 is a flag, not a settings scope, so
+> `--strict-mcp-config` was already on a mapped node's argv before this change,
+> and whether it closes MCP is **E5, which remains unmeasured**.
+> **E2 is not amended; it is re-confirmed at 2.1.228 and widened** — under
+> `--setting-sources ""` the CLI's own list of agents it can see is five
+> built-ins, and neither the user's `~/.claude/agents` nor the repository's
+> `.claude/agents`, so the repository cannot supply a mapped node's system
+> prompt either. What ADR 0022 owed in its §7 — the shipped directory carries
+> `agents/` and no `skills/`, and the measured one carried both — is **now run**:
+> see the amendment below.
+
+> **Update (2026-08-12, later the same day): §7's acceptance is DISCHARGED.**
+> Measurement (l)
+> (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`)
+> spawned this build's own argv against an `agents/`-only directory under the
+> plugin name `oh-my-graph-staged-agents`: `--agent` resolved **3 of 3**
+> (`L-FIX`), the empty-directory control failed (`L-NEG`, exit 1), E1 held
+> **0 of 3** under that same directory (`L-CEIL`) against a live in-scope `Bash`
+> (`L-POS` 2 of 2), and a machine still breaching under the v0.6.0 argv the same
+> hour (`L-REF` 1 of 1). Both remaining deltas from (k)'s argv — the plugin's
+> name and the flag position — were carried by those spawns rather than reasoned
+> about. E5 is untouched by any of it and stays unmeasured.
 
 ### 2. Every `graph.Node` field has an explicit planned-node disposition
 

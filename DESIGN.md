@@ -25,7 +25,7 @@ A node = one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --max-budget-usd <amount> ] \
-  [ --setting-sources "" ] [ --agent <name> ] \
+  [ --setting-sources "" ] [ --plugin-dir <dir> ]… [ --agent <name> ] \
   [ --allowedTools "<comma,joined>" ] \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] \
@@ -36,7 +36,12 @@ This is emission order, not just a flag inventory: `runner.buildArgs` appends
 in exactly this sequence and `claude_test.go`'s `want` argv pins it
 element-by-element, so a reordering is a test failure, not a style choice.
 Note where `--max-budget-usd` sits — immediately after `--permission-mode`,
-*before* the ceiling flags, because it is not one of them.
+*before* the ceiling flags, because it is not one of them. Note too where
+`--plugin-dir` sits — after isolation and before the grant, one flag per
+`ToolPolicy.PluginDirs` entry in order, because it restores instruction material
+layer 1 withheld before any layer decides what may be done with it. It is what
+carries a staged skill corpus (ADR 0017) or a mapped node's staged agent
+definition (ADR 0022) into the node, and it is emitted for those nodes only.
 
 The bracketed tool-ceiling flags come from one `runner.ToolPolicy` per node and
 are auto mode's alone (see "Auto mode"); a hand-written graph's policy carries
@@ -314,14 +319,19 @@ loud failure is the smaller harm. What the runner does add is the CLI's own
 stderr to the error (`NodeOutputError.Stderr`), because that message names every
 agent that IS available — turning a dead end into a fix.
 
-**Mutually exclusive with the auto-mode tool ceiling's Layer 1.**
-`--setting-sources ""` also disables discovery of the user's agent definitions
-(E6's neighbour, E2), so the two cannot be combined. A raw plan still rejects
-`agent:` outright; the one path that puts the field on a planned node —
-coordinator auto-mapping, below — pays for it by dropping Layer 1 on exactly
-the mapped nodes, and the plan printout says so before anything runs. Layer 1
-can still never be extended to hand-written graphs without dropping `agent:`
-with it.
+**No longer mutually exclusive with the auto-mode tool ceiling's Layer 1**
+(ADR 0022, 2026-08-12). `--setting-sources ""` still disables *discovery* of the
+user's agent definitions (E6's neighbour, E2, re-confirmed at CLI 2.1.228), so a
+bare `--agent <name>` cannot resolve under it. A raw plan still rejects `agent:`
+outright; the one path that puts the field on a planned node — coordinator
+auto-mapping, below — no longer pays for it by dropping Layer 1. It stages the
+matched definition into the run's own directory and supplies it with
+`--plugin-dir`, which reaches the node without reopening `--setting-sources`, so
+a mapped node **keeps every ceiling layer**. Until 2026-08-12 it dropped Layer 1
+and was measured to lose its declared scope with it. The plan printout says what
+each mapping costs before anything runs. Layer 1 still cannot be extended to
+hand-written graphs without dropping `agent:` with it: nothing stages a
+hand-written graph's definition.
 
 **Tool reconciliation: a claim only where there is a measurement.** For a
 hand-written graph, oh-my-graph does not parse the subagent's frontmatter and
@@ -336,8 +346,10 @@ the node's own planned `allowed_tools` (the skip and its reason are printed).
 
 **Coordinator auto-mapping (`auto` and chat graph turns).** After a plan
 validates — never before, and never by the planner LLM, which keeps getting its
-`agent:` rejected — trusted code scans `~/.claude/agents` and
-`<cwd>/.claude/agents` (project shadows user) and maps planned nodes onto the
+`agent:` rejected — trusted code scans `~/.claude/agents` — **the user's own
+directory only, never the repository's**, since a scanned definition is now
+copied into the node's `--agent` (ADR 0022 §3.7, measurement (l)) — and maps
+planned nodes onto the
 user's own agents by a deliberately conservative name-token rule: exact token
 or ≥4-rune prefix between node id and agent name, exactly one candidate or
 nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
@@ -1676,15 +1688,20 @@ offending tool.
 
 After validation — and only after — the coordinator may map planned nodes onto
 the user's own Claude Code agents (`internal/coordinator/agentmap.go`): a scan
-of `~/.claude/agents` and `<cwd>/.claude/agents` (project shadows user), a
+of `~/.claude/agents` only — never a project directory, the same cut skill
+staging has always had and for the sharper reason measurement (l) recorded — a
 conservative name-token match between node id and agent name (exactly one
 candidate or nothing), and a refusal to map any agent whose frontmatter tools
 exceed the node's own `allowed_tools`. A mapped node runs `--agent <name>` and
-drops ceiling Layer 1 (agent resolution needs the user's settings loaded; the
-other layers stay), every decision is shown in the printed plan, and
-`--no-agent-mapping` turns it off run-wide while `--no-agent <name>` declines a
-single agent. The full rule and its trade live in
-"Node-as-subagent"; the raw plan itself still may not carry `agent:`.
+**keeps every ceiling layer, Layer 1 included** (ADR 0022, 2026-08-12): the
+matched definition is copied into `<run-dir>/agents-plugin/agents/<name>.md`,
+pinned by its plan-time SHA-256, and supplied with `--plugin-dir`, which reaches
+the node without reopening `--setting-sources`. Until then a mapped node dropped
+Layer 1 and was measured to lose its scope ceiling with it. Every decision is
+shown in the printed plan, and `--no-agent-mapping` turns it off run-wide while
+`--no-agent <name>` declines a single agent. The full rule and what it now costs
+the node live in "Node-as-subagent"; the raw plan itself still may not carry
+`agent:`.
 
 Strictly after agent mapping, the coordinator stages the user's own Claude
 Code skills for planned nodes (`internal/coordinator/skillstage.go`, ADR 0017).
@@ -1800,12 +1817,28 @@ mentions skills. Both candidate fixes carry that, since both keep Layer 1 at
 `nil` — so the thing to change is `applyAgentMapping`'s `SettingSources`, not
 the exclusion.
 
+**That change was measured and shipped on 2026-08-12 (ADR 0022), and it moves
+the ground under this paragraph without moving the exclusion.** A mapped node's
+Layer 1 is now `""` and its agent arrives from a staged `--plugin-dir`, so the
+repository-supplied definitions the paragraph above rests on no longer load: the
+repository's `.claude/skills` copy fired 0 of 3, and where the model called
+`Skill` the CLI answered `Unknown skill: …`, `is_error: true`
+(`docs/measurements/0017-staged-agent-restores-layer-1.md`). The exclusion is
+still in force — `applySkillActivation` still skips an agent-mapped node — but
+it is now **a decision nobody has re-taken** rather than a refusal with a number
+behind it, and re-deciding it needs its own record. The other half of the
+paragraph is unchanged and still true: an excluded node's `--tools` carries no
+`Skill`, so it invokes none by any route.
+
 **What shipped instead of the lift is disclosure and a cheaper way out.** The
-exclusion's two costs — no `Skill` tool, and a declared scope enforced only as
-far as the user's own settings enforce it — are now printed **per node**, by
-name, on the plan screen, together with the one-line ceiling exception on
-`noteCeiling`'s summary; and `--no-agent <name>` (`WithoutAgentsNamed`) declines
-a single agent while every other mapping stands. The agent is the unit because
+exclusion's cost — no `Skill` tool — is printed **per node**, by name, on the
+plan screen; and `--no-agent <name>` (`WithoutAgentsNamed`) declines a single
+agent while every other mapping stands. (Until ADR 0022 that per-node line
+carried a second cost, *a declared scope enforced only as far as the user's own
+settings enforce it*, and `noteCeiling` carried a matching ceiling exception.
+Both are gone with the fact they described — a warning kept past its cause
+teaches a reader to discount the next one — and `wiring_test.go` asserts their
+absence.) The agent is the unit because
 it is the only identifier that exists before the planner is paid: node ids are
 bought, agent names are the user's own files, and the plan names the agent on
 the node line it took. The decline is applied **after** `candidateFor` picks a
@@ -1867,6 +1900,7 @@ type ToolPolicy struct {
 	Tools           []string // --tools  (nil = flag omitted)
 	SettingSources  *string  // --setting-sources ("" = load none; nil = flag omitted)
 	StrictMCPConfig bool     // --strict-mcp-config
+	PluginDirs      []string // one --plugin-dir <dir> per entry, in order
 }
 ```
 
@@ -1879,6 +1913,18 @@ type ToolPolicy struct {
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` (PR #5's list, retained) | anything the above missed |
 
+`PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
+a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
+(ADR 0022) — and grants no capability, since whatever it supplies still runs
+inside the five layers above (a `Skill` tool exists only when layer 3's `Tools`
+names it, and a staged agent's frontmatter does not widen past `--tools`, E6).
+It exists because layer 1 stays `""`: `--setting-sources ""` withholds the
+DEFINITIONS along with the settings, and a plugin directory is the one source of
+definitions that does not reopen it. Empty omits the flag, which is every
+hand-written graph and every planned run that neither activated nor mapped; a
+resumed leg is emptied deliberately, since rehydrating the path would trust a
+directory the previous leg's nodes could write (ADR 0017 §6, below).
+
 Layer 1 is the load-bearing change. Rules from `~/.claude/settings.json` are why
 `--allowedTools` could never bind: they are matched alongside ours and a standing
 `Bash(*)` wins. `--setting-sources ""` loads none of user/project/local settings,
@@ -1889,16 +1935,26 @@ an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** �
 identical node declaration ran an out-of-scope `touch` without Layer 1 and had
 it denied with Layer 1, while in-scope `git` kept working. The gap "a node
 declaring a scoped `Bash(...)` keeps the whole `Bash` tool" is closed for
-planned nodes — **except the agent-mapped ones, which drop Layer 1 to `nil` so
-`--agent` can resolve (E2), and for which it is therefore not closed at all.**
-That is not an inference either: on 2026-08-12, claude 2.1.228, the argv
-`runner.buildArgs` really emits for an agent-mapped planned node declaring
+planned nodes — **including the agent-mapped ones, since 2026-08-12.** Those
+used to drop Layer 1 to `nil` so `--agent` could resolve (E2), and for them it
+was therefore not closed at all: on 2026-08-12, claude 2.1.228, the argv
+`runner.buildArgs` then emitted for an agent-mapped planned node declaring
 `Bash(git *)` ran the out-of-scope `touch` under `dontAsk` with
-`permission_denials: []`, while the same probe's non-mapped node denied the
-identical command and its in-scope `git` control ran
-(`docs/measurements/0017-lifting-the-agent-mapped-exclusion.md`, the ceiling
-arm). Closing it is ADR 0017 §Compatibility's declined follow-up, and it is a
-change to agent mapping rather than to any layer above.
+`permission_denials: []`, twice, while the same probe's non-mapped node denied
+the identical command. ADR 0022 closed it by changing where the definition
+comes from rather than which flags bind: the matched agent is staged into
+`<run-dir>/agents-plugin/` and supplied with `--plugin-dir`, which reaches the
+node with Layer 1 still `""`. Same machine, same build, minutes apart, the
+identical arm was **denied 3 of 3** with the refusal named in
+`permission_denials`, and the in-scope `git init` control ran 2 of 2
+(`docs/measurements/0017-staged-agent-restores-layer-1.md`). That measurement
+re-confirms E2 and widens it: under `--setting-sources ""` the CLI's own list of
+agents it can see is five built-ins and neither the user's nor the repository's
+directories, which is why the definition has to be staged at all. **Staging is
+then a channel of its own**, and the scan feeding it is `~/.claude/agents` only:
+while it also read `<cwd>/.claude/agents`, a definition committed to the
+repository under work was the one staged, and its system prompt ran the node 2
+of 2 (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,
@@ -1928,14 +1984,20 @@ Layer 1 — lost it to the repository 3 of 3. **Layer 4 is unverified** (E5 —
 observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
 MCP servers for planned nodes — a behaviour change that makes planned nodes
 *more isolated and less capable* than they were, which is the intended direction
-but must be stated in the README rather than discovered. **Agent-mapped nodes
-invert that last sentence for the SETTINGS half only**: nothing is dropped for
-them, so the user's CLAUDE.md and hooks load — and so does the working
-repository's project scope, which is where the repository-supplied skill above
-came from. Their **MCP servers do not**: layer 4 is a flag rather than a
-settings scope, so `--strict-mcp-config` is on a mapped node's argv exactly as
-on any other planned node's, with no `--mcp-config` beside it (measurement (j),
-`argv/omg-probe-writer.argv.txt`).
+but must be stated in the README rather than discovered. **Through v0.6.0
+agent-mapped nodes inverted that last sentence for the SETTINGS half**: nothing
+was dropped for them, so the user's CLAUDE.md and hooks loaded — and so did the
+working repository's project scope, which is where the repository-supplied skill
+above came from. **Since 2026-08-12 (ADR 0022) they do not**: the mapping is
+carried by a staged definition and a `--plugin-dir` instead of by nil settings,
+so a mapped node drops exactly what every other planned node drops and is
+measured under the same E1. What was never part of that difference is layer 4:
+it is a flag rather than a settings scope, so `--strict-mcp-config` was on a
+mapped node's argv exactly as on any other planned node's, with no `--mcp-config`
+beside it, before the change and after it (measurement (j),
+`argv/omg-probe-writer.argv.txt`). Whether that flag actually closes MCP is E5,
+and E5 is unmeasured — the sentence above about MCP servers is a statement about
+the argv, not an observed closure.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
@@ -2201,7 +2263,7 @@ internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
-internal/coordinator/{coordinator,router,agentmap,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping (agentmap.go) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
@@ -2315,15 +2377,39 @@ automated suite stays spawn-free.
   So the scoped pattern binds — `Bash(git *)` means git and nothing else —
   rather than being a declaration. This is what licenses narrowing the Bash-gap
   wording in README/SECURITY.md **for planned nodes only**.
-- **E2 — ANSWERED: yes, mutually exclusive.** `--setting-sources ""` also
-  disables discovery of the user's agent definitions. `--agent code-reviewer`
-  under isolation fails at startup with *"not found. Available agents: claude,
-  Explore, general-purpose, Plan, statusline-setup"* — only built-ins survive.
-  Layer 1 and `agent:` therefore cannot be combined. This is a hard constraint
-  on ever extending Layer 1 to hand-written graphs, and it is why a
-  coordinator-MAPPED node (see "Node-as-subagent") drops Layer 1 on exactly
-  that node — the trade the plan printout discloses — rather than combining
-  the two and failing at startup.
+- **E2 — ANSWERED: yes for DISCOVERY, and that is not the same as `--agent`.**
+  `--setting-sources ""` disables discovery of the user's agent definitions.
+  `--agent code-reviewer` under isolation fails at startup with *"not found.
+  Available agents: claude, Explore, general-purpose, Plan, statusline-setup"* —
+  only built-ins survive. **Re-confirmed at claude 2.1.228 on 2026-08-12, and
+  widened**: that same list names neither `~/.claude/agents` nor the
+  repository's `.claude/agents`, so a repository cannot supply a mapped node's
+  system prompt **by discovery**
+  (`docs/measurements/0017-staged-agent-restores-layer-1.md`, arm `K-NEG`;
+  re-run against this build's own argv as (l)'s `L-NEG`, with the repository's
+  definition committed in the node's cwd).
+
+  **Staging is a second channel and this entry does not cover it.** The
+  sentence above said "cannot supply a mapped node's system prompt" without the
+  last two words until 2026-08-12, which generalized a discovery result onto the
+  pipeline that ships: a scanned definition is COPIED into a `--plugin-dir`, and
+  `DefaultAgentDirs` scanned `<cwd>/.claude/agents` with the project shadowing
+  the user. Measured, the repository's definition was the system prompt that ran,
+  2 of 2. The scan is now `~/.claude/agents` only
+  (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
+
+  **What E2 does NOT say is that Layer 1 and `agent:` cannot be combined**, and
+  that inference — which this entry drew, and which cost the ceiling on every
+  mapped node until 2026-08-12 — is refuted by the same measurement.
+  A `--plugin-dir` supplies definitions without reopening Layer 1, and a plugin
+  directory can carry `agents/`: with the matched definition staged there,
+  `--agent` resolved **3 of 3** under `--setting-sources ""`, attributed by a
+  marker token, with removing `agents/` from an otherwise identical directory as
+  the control (exit 1). So a coordinator-MAPPED node keeps Layer 1 and stages
+  its agent (ADR 0022) rather than trading the ceiling for the mapping. The
+  constraint that remains is narrower and still real: Layer 1 cannot be extended
+  to a HAND-WRITTEN graph's `agent:`, whose definition oh-my-graph does not
+  stage and whose node is the user's own reviewed artifact.
 - **E3 — CONFIRMED SAFE. `--setting-sources ""` does NOT affect subscription
   OAuth.** With `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` absent from the
   environment, `claude -p '…' --output-format json --permission-mode plan

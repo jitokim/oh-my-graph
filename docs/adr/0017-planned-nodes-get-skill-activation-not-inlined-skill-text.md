@@ -879,6 +879,30 @@ agent beside the corpus *might* let a mapped node keep layer 1 at `""` and
 recover the ceiling, the attributability and this exclusion's whole reason at
 once. **Nothing measures that**, and this section does not propose it.
 
+> **Update (2026-08-12): something measures it now, and it shipped.**
+> Measurement **(k)** — 28 spawns, $2.4616, claude 2.1.228, pre-registered in
+> its own commit before the first spawn,
+> `docs/measurements/0017-staged-agent-restores-layer-1.md` — ran the direction
+> the paragraph above names, and all nine of its pre-registered conjuncts were
+> met. `SettingSources = nil` is gone from `applyAgentMapping`, replaced by a
+> staged agent definition and a `--plugin-dir` of its own
+> (`0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md`).
+> **The sentence "Nothing measures that" is retained as written and is no
+> longer true**; it is what this §'s own follow-up was owed, and it was paid.
+>
+> **This § is amended in one direction only.** Its two shipped parts stand: the
+> bounded per-node disclosure (rewritten by ADR 0022, because what it discloses
+> is now the opposite fact) and the per-agent `--no-agent` escape (untouched).
+> **The refusal to lift the exclusion is NOT converted into a lift.** What
+> changed is its ground: the refusal rested on a mapped node's `nil` layer 1
+> letting a skill name resolve against definitions the repository under work
+> can write, and (k) measured those same definitions failing to load under
+> `""` — the repository's `.claude/skills` copy 0 of 3, and the model's own
+> `Skill` call answered `Unknown skill: …`, `is_error: true`. So the exclusion
+> now stands as **a decision nobody has re-taken**, which is a third thing from
+> both "refused" and "coming", and `noteExclusionCost` prints exactly that.
+> Re-deciding it is its own record's job, not this update's.
+
 ## What was implemented, and the three places the code differs from this text
 
 Landed 2026-08-07. Where the code and this record disagree, the record is

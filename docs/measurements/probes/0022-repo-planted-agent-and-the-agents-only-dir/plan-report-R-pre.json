@@ -1,0 +1,84 @@
+{
+  "agent_dirs": [
+    "/tmp/omg-repo-agent/user-agents",
+    "/tmp/omg-repo-agent/repo/.claude/agents"
+  ],
+  "agent_mappings": [
+    {
+      "NodeID": "omg-probe-scribe",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-ceiling",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-gitctl",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    }
+  ],
+  "agent_staging": {
+    "agents": [
+      {
+        "bytes": 548,
+        "name": "omg-probe-writer",
+        "sha256": "61ebaed5bc9909e92675c0a2c870f23eaf23464a806fef03388a0d8bd0ea121f",
+        "source_path": "/tmp/omg-repo-agent/repo/.claude/agents/omg-probe-writer.md"
+      }
+    ],
+    "dir": "/tmp/omg-repo-agent/run-pre/agents-plugin",
+    "nodes": [
+      "omg-probe-scribe",
+      "omg-probe-ceiling",
+      "omg-probe-gitctl"
+    ]
+  },
+  "nodes": {
+    "omg-probe-ceiling": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-pre/omg-probe-ceiling",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-pre/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-gitctl": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-pre/omg-probe-gitctl",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-pre/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-scribe": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-repo-agent/argv-pre/omg-probe-scribe",
+      "plugin_dirs": [
+        "/tmp/omg-repo-agent/run-pre/agents-plugin"
+      ],
+      "setting_sources": "",
+      "tools": [
+        "Write"
+      ]
+    }
+  },
+  "scope": "pre"
+}

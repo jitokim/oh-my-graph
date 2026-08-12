@@ -324,33 +324,60 @@ func TestRunAuto_ActivatedNodeArgvCarriesTheSkillToolAndThePluginDir(t *testing.
 	}
 }
 
-// The agent-mapped node is excluded, and the argv is where that has to show:
-// applyAgentMapping drops its layer 1 so `--agent` can resolve, and
-// `--agent` + a staged plugin + the user's settings is a composite ADR 0017
-// never measured.
-func TestRunAuto_AgentMappedNodeArgvGetsNoActivation(t *testing.T) {
-	_, spawns := runAutoCapturingArgv(t)
+// The agent-mapped node is the one this whole ADR is about, and the argv is
+// where it has to show. Until ADR 0022 this test asserted the OPPOSITE of two
+// of its four cells — no --plugin-dir, and layer 1 dropped — because
+// applyAgentMapping set SettingSources = nil so `--agent` could resolve from
+// the user's own directories. Measurement (k) priced that: the argv this test
+// used to pin breached ADR 0004's E1 ceiling 2 of 2, and the argv it pins now
+// was denied 3 of 3 while resolving the STAGED definition 3 of 3
+// (docs/measurements/0017-staged-agent-restores-layer-1.md).
+//
+// So the four cells are: the agent resolves, layer 1 is held at "", the
+// --plugin-dir is the staged AGENT directory (not the skill corpus, which the
+// ADR 0017 §9 exclusion still withholds), and there is no `Skill` in --tools.
+func TestRunAuto_AgentMappedNodeArgvGetsItsAgentStagedAndKeepsTheCeiling(t *testing.T) {
+	runID, spawns := runAutoCapturingArgv(t)
 	argv := nodeArgv(t, spawns, "judge the proposal")
 
 	if name, ok := argv.value("--agent"); !ok || name != "code-reviewer" {
 		t.Fatalf("precondition failed: --agent = %q (present=%t), want code-reviewer\nargv: %q", name, ok, argv)
 	}
-	if argv.has("--plugin-dir") {
-		t.Errorf("an agent-mapped node was given --plugin-dir: %q", argv)
+	if sources, ok := argv.value("--setting-sources"); !ok || sources != "" {
+		t.Errorf("--setting-sources = %q (present=%t), want a rendered empty value: a mapped node keeps ceiling layer 1 since ADR 0022\nargv: %q", sources, ok, argv)
+	}
+	wantDir := filepath.Join(runDirFor(runID), "agents-plugin")
+	if dir, ok := argv.value("--plugin-dir"); !ok || dir != wantDir {
+		t.Errorf("--plugin-dir = %q (present=%t), want the staged agent directory %q\nargv: %q", dir, ok, wantDir, argv)
 	}
 	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
-		t.Errorf("--tools = %v, want no %s on an agent-mapped node", tools, coordinator.SkillToolName)
+		t.Errorf("--tools = %v, want no %s on an agent-mapped node — the ADR 0017 §9 exclusion is not lifted here", tools, coordinator.SkillToolName)
+	}
+	// "The flag was passed" is only worth asserting if the CLI could read
+	// something behind it, and only the user's own bytes may be there.
+	staged := filepath.Join(wantDir, "agents", "code-reviewer.md")
+	if raw, err := os.ReadFile(staged); err != nil {
+		t.Errorf("staged agent missing: %v", err)
+	} else if !strings.Contains(string(raw), "review carefully") {
+		t.Errorf("staged agent is not the user's file:\n%s", raw)
 	}
 }
 
 // The kill switch, checked at the same layer: --no-skill-activation must leave
 // nothing in any node's argv, not merely nothing in the policy struct.
+//
+// It is scoped to the SKILL directory, and that scoping is the point: since
+// ADR 0022 a mapped node carries a --plugin-dir of its own, and
+// --no-skill-activation must not touch it. Turning skills off and silently
+// unmapping the agents would be one flag doing two features' work — and the
+// second one would take a node's agent away without saying so.
+// --no-agent-mapping is the flag for that, asserted separately.
 func TestRunAuto_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	runID, spawns := runAutoCapturingArgv(t, "--no-skill-activation")
 
 	for prompt, argv := range spawns {
-		if argv.has("--plugin-dir") {
-			t.Errorf("%s: --plugin-dir survived --no-skill-activation: %q", prompt, argv)
+		if dir, ok := argv.value("--plugin-dir"); ok && filepath.Base(dir) == "skills-plugin" {
+			t.Errorf("%s: the staged skill corpus survived --no-skill-activation: %q", prompt, argv)
 		}
 		if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
 			t.Errorf("%s: --tools = %v, want no %s", prompt, tools, coordinator.SkillToolName)
@@ -358,6 +385,17 @@ func TestRunAuto_NoSkillActivationArgvIsUnchanged(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runDirFor(runID), "skills-plugin")); !os.IsNotExist(err) {
 		t.Errorf("a staged directory exists with activation off (stat err = %v)", err)
+	}
+	// The other half of "scoped to the SKILL directory", asserted rather than
+	// left to the loop above: the mapped node still carries its agent and the
+	// agents-plugin directory that resolves it. Without this, a regression that
+	// unmapped every agent under --no-skill-activation would pass.
+	mapped := nodeArgv(t, spawns, "judge the proposal")
+	if name, ok := mapped.value("--agent"); !ok || name != "code-reviewer" {
+		t.Errorf("--agent = %q (present=%t), want code-reviewer to survive --no-skill-activation\nargv: %q", name, ok, mapped)
+	}
+	if dir, ok := mapped.value("--plugin-dir"); !ok || filepath.Base(dir) != "agents-plugin" {
+		t.Errorf("--plugin-dir = %q (present=%t), want the staged agents-plugin\nargv: %q", dir, ok, mapped)
 	}
 	if len(spawns) == 0 {
 		t.Fatal("no node spawned at all, so nothing above was actually checked")
@@ -434,6 +472,85 @@ func TestResumeRetryFailed_ActivatesNothing(t *testing.T) {
 	// And the user is told, in one line, why this leg differs from its first.
 	if !strings.Contains(out, "skill activation is off for this leg") {
 		t.Errorf("resume did not disclose the de-escalation:\n%s", out)
+	}
+}
+
+// The same rule, one mechanism over: a resumed leg maps NOTHING either
+// (ADR 0022 §5). The reason is the one ADR 0017 §6 gives for skills, and it is
+// sharper here — the only record a second process could re-stage an agent
+// definition from lives in the run directory the previous leg's nodes could
+// write, and an agent definition is a SYSTEM PROMPT, arriving without the model
+// having to choose it.
+//
+// The de-escalation only ever removes capability: the node runs as an ordinary
+// planned node under the same ceiling. That is why it is unconditional, and why
+// the printed line is required rather than optional — the node's system prompt
+// changed between legs, which nothing else on the screen would reveal.
+func TestResumeRetryFailed_MapsNothing(t *testing.T) {
+	probe := newArgvProbe(t)
+	t.Setenv(failPromptEnv, "judge the proposal")
+
+	var runErr error
+	captureStdout(t, func() {
+		runErr = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	if runErr == nil {
+		t.Fatal("precondition failed: the auto run was supposed to fail at the mapped node")
+	}
+	runID := soleRunID(t)
+
+	// The first leg DID map, with its definition staged — otherwise nothing
+	// below is a de-escalation.
+	first := nodeArgv(t, probe.spawns(t), "judge the proposal")
+	if name, ok := first.value("--agent"); !ok || name != "code-reviewer" {
+		t.Fatalf("precondition failed: --agent = %q (present=%t) on the first leg\nargv: %q", name, ok, first)
+	}
+	if !first.has("--plugin-dir") {
+		t.Fatalf("precondition failed: the first leg's mapped node had no staged directory\nargv: %q", first)
+	}
+
+	probe.freshArgvDir(t)
+	t.Setenv(failPromptEnv, "")
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), probe.runner(), nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("resume --retry-failed: %v", resumeErr)
+	}
+
+	argv := nodeArgv(t, probe.spawns(t), "judge the proposal")
+	if argv.has("--agent") {
+		t.Errorf("a resumed node was spawned with --agent; the only record it could re-stage the definition from is one the previous leg's nodes could write\nargv: %q", argv)
+	}
+	if argv.has("--plugin-dir") {
+		t.Errorf("a resumed node was spawned with --plugin-dir: %q", argv)
+	}
+	// The ceiling under it does not move: de-escalating the mapping is not a
+	// licence to rebuild the policy some other way.
+	if sources, ok := argv.value("--setting-sources"); !ok || sources != "" {
+		t.Errorf("--setting-sources = %q (present=%t), want a rendered empty value\nargv: %q", sources, ok, argv)
+	}
+	if tools := argv.tools(); !slices.Contains(tools, "Read") {
+		t.Errorf("--tools = %v, want the node's own declared tools intact", tools)
+	}
+	// Both halves of the de-escalation, not just the agent half: a resumed leg
+	// activates nothing either, so the Skill tool the previous leg's staged
+	// corpus paid for must be gone from this argv too.
+	if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
+		t.Errorf("--tools = %v, want no %s on a resumed leg\nargv: %q", tools, coordinator.SkillToolName, argv)
+	}
+	if !strings.Contains(out, "agent mapping is off for this leg") {
+		t.Errorf("resume did not disclose that the node lost its agent:\n%s", out)
+	}
+	// ...and it must not be counted as an activated node losing its corpus,
+	// which is what dropSkillActivation's PluginDirs-keyed sweep would have
+	// done now that a mapped node carries one. Three of this plan's four nodes
+	// were activated; the mapped one never held a Skill tool to lose.
+	if !strings.Contains(out, "3 node(s) run with no Skill tool") {
+		t.Errorf("the mapped node was counted among the activated ones:\n%s", out)
 	}
 }
 
@@ -554,5 +671,43 @@ func TestRunAutoCapturingArgv_RecordsEveryPlannedNode(t *testing.T) {
 		}
 		sort.Strings(got)
 		t.Fatalf("recorded %d node spawns, want 4: %s", len(spawns), fmt.Sprint(got))
+	}
+}
+
+// THE DISCLOSURE, at the layer where it can be wrong: the plan printout has to
+// name the FILE each staged definition came from.
+//
+// "Auto-mapped onto your own Claude Code agents" is a claim about a path on
+// disk, and until measurement (l) nothing on the screen carried the path while
+// `DefaultAgentDirs` also scanned `<cwd>/.claude/agents` — where a repository's
+// committed definition shadowed the user's and became the staged `--agent`, 2
+// of 2 (docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md).
+// The scan scope is what closed that; this line is what makes it checkable per
+// run rather than believed, and it is why StagedAgent.SourcePath exists.
+func TestRunAuto_PlanPrintoutNamesTheStagedAgentSourceFile(t *testing.T) {
+	probe := newArgvProbe(t)
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("auto run: %v", err)
+	}
+
+	want := filepath.Join(os.Getenv("HOME"), ".claude", "agents", "code-reviewer.md")
+	if !strings.Contains(out, "staged code-reviewer from "+want) {
+		t.Errorf("the printout does not name the staged definition's source file %q:\n%s", want, out)
+	}
+	// The size and hash travel with it, exactly as the staged skill corpus
+	// prints them: a path alone does not say the bytes were pinned.
+	if !strings.Contains(out, "sha256:") {
+		t.Errorf("the staged agent line carries no hash:\n%s", out)
+	}
+	// And the scan's own scope is stated, because a user whose project agent
+	// stopped mapping has no other way to find out why.
+	if !strings.Contains(out, "Not scanned: ./.claude/agents") {
+		t.Errorf("the printout does not say the repository's agents are out of scope:\n%s", out)
 	}
 }

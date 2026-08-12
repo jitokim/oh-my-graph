@@ -8,6 +8,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+**Issue #161 is fixed, and the v0.6.0 disclosure below is now WRONG in the
+opposite direction — read this section before you read that one.** v0.6.0 told
+you that an agent-mapped planned node loads your settings, that its declared
+scope is enforced only as far as your own settings enforce it, and that your
+repository's `.claude/` configures it. All three were true and measured. None of
+them is true of this build.
+
+### Changed
+
+- **An agent-mapped node keeps the whole tool ceiling.** `applyAgentMapping` no
+  longer drops `--setting-sources`. The matched agent's definition is copied
+  into `<run-dir>/agents-plugin/agents/<name>.md` — pinned by its plan-time
+  SHA-256, re-verified before every spawn — and supplied with `--plugin-dir`,
+  which reaches the node without reopening ceiling layer 1. Measured on one
+  machine and CLI build (2.1.228) minutes apart: the argv v0.6.0 shipped ran an
+  out-of-scope command with `permission_denials: []` **2 of 2**, the new argv was
+  **denied 3 of 3** with the refusal recorded, an in-scope `git init` control
+  still ran **2 of 2**, and `--agent` resolved to the **staged** definition
+  **3 of 3** with removing the staging as the control (exit 1). 28 spawns,
+  $2.4616, pre-registered in its own commit before the first spawn —
+  `docs/measurements/0017-staged-agent-restores-layer-1.md`,
+  [ADR 0022](docs/adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md).
+- **The repository under work no longer supplies a mapped node's settings, its
+  skills or its agent.** The wider
+  half of the same fix: a `SKILL.md` committed to the repository fired 3 of 3
+  under v0.6.0's argv and **0 of 3** under this one, and where the model did call
+  `Skill` the CLI answered `Unknown skill: …` with `is_error: true`. A plugin
+  enabled by that repository's own `.claude/settings.json` no longer loads
+  either. `CLAUDE.md` and hooks arrive by the same source list and remain
+  **implied, not measured**, in both directions.
+- **…and the last way it still could is closed: only `~/.claude/agents` is
+  scanned.** The sentence above was **false for one channel** when it was first
+  written, and the channel was this fix's own: `DefaultAgentDirs` also scanned
+  `<cwd>/.claude/agents`, the project shadowed the user on a name collision, and
+  `applyAgentMapping` copies *whatever the scan resolved* into the node's
+  `--agent` — a path `--setting-sources ""` structurally cannot shut, because
+  oh-my-graph opens it. **Measured, 12 spawns, $0.9332**: with a definition
+  committed to the fixture repository, the system prompt that ran an unattended
+  `dontAsk` node was **the repository's, 2 of 2**; with the scan cut to the
+  user's own directory and that copy still committed in the node's cwd, the
+  definition that resolved was **the user's, 3 of 3**
+  ([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+  It never breached the ceiling — layer 1 was `""` in both arms and the tools
+  stayed bound, so the class is injection, not escalation. **It costs you a
+  feature**: an agent kept in a project checkout no longer maps at all. Move it
+  to `~/.claude/agents`.
+- **The plan printout names the file every staged definition came from**, with
+  its size and SHA-256, and says the repository's `./.claude/agents` is out of
+  scope. "Auto-mapped onto **your own** agents" is a claim about a path on disk,
+  and the measurement above is what it looks like when nothing on the screen
+  carries the path.
+- **What this costs you, plainly:** a mapped node no longer gets your standing
+  permission grants — measured — nor your `CLAUDE.md` or your hooks, which
+  arrive by the same source list and stay **implied, not measured**. It was the
+  one planned node that did. MCP is not part of that change: `--strict-mcp-config`
+  was already on a mapped node's argv, and whether it closes MCP is still
+  unmeasured (E5) — nothing here should be read as measured MCP isolation.
+  **`--no-agent <name>` and `--no-agent-mapping` do not give the old behaviour
+  back.** They remove the mapping, and what you get is an ordinary planned node:
+  its `Skill` tool returns, your environment does not. If your agents lean on
+  your environment, no flag in this release reaches it.
+- **A resumed leg maps nothing**, and says so — the rule ADR 0017 §6 already
+  applies to skills, for the same reason: the only record a second process could
+  re-stage a definition from lives in the run directory the previous leg's nodes
+  could write. The node runs as an ordinary planned node under the same ceiling,
+  without your agent's system prompt.
+- **The plan printout, `README.md`, `README.ko.md`, `SECURITY.md`,
+  `docs/LIMITATIONS.md` and
+  `DESIGN.md` are rewritten with the code.** The v0.6.0 warnings are deleted
+  rather than softened — a warning kept past its cause is still a false
+  disclosure, and `cmd/oh-my-graph/wiring_test.go` asserts their absence.
+  `README.ko.md` was missed on the first pass and carried the v0.6.0 text for
+  one commit; a Korean reader was told their settings enforce a mapped node's
+  scope while the English reader was told the opposite.
+
+### Not fixed, and not claimed
+
+- **The ADR 0017 §9 skill exclusion still stands.** An agent-mapped node still
+  holds no `Skill` tool. What changed is the ground: §9 refused to lift it
+  because a mapped node's settings loaded the repository's skill definitions,
+  and they no longer load. It is now **a decision nobody has re-taken**, which
+  the plan printout says in those terms.
+- **The acceptance ADR 0022 §7 owed is run.** The staged directory this build
+  writes carries `agents/` and no `skills/`, while the first measurement's
+  carried both; the second measurement spawned this build's own argv against it
+  — `--agent` resolved **3 of 3**, emptying the directory was the control
+  (exit 1, `--agent 'x' not found`), the out-of-scope command was denied
+  **0 of 3** and the in-scope control ran **2 of 2**, against a machine that
+  still breached under the v0.6.0 argv the same hour.
+- **The verify→read window is inherited from skill staging and is wider here.**
+  `GuardAgentStaging` re-materializes before every spawn, but ready nodes run
+  concurrently, so a sibling can rewrite the staged file between another node's
+  check and the CLI's read. The node still runs under its own unmodified
+  ceiling, so this is injection and not escalation — and an agent definition is
+  a system prompt rather than a skill body the model has to choose. ADR 0022 §7.
+
 ## [v0.6.0] - 2026-08-12
 
 **Minor because there is one new flag to type** — `--no-agent <name>`, the
