@@ -1543,8 +1543,10 @@ one, and it answers 409 like any other view that cannot resume.
   It does **not** call `runfeed.InFlight`: one walk already carries the leg
   state, and a card is rebuilt for every changed run on every tick, so a
   second read of the same stream was doubling the I/O on the hot path.
-  `buildCard` therefore reads the leg state (`started != "" && ended == ""`)
-  off its own walk, and then hands it to the SHARED derivation
+  `buildCard` therefore folds the leg state (`runfeed.Leg`'s two booleans — the
+  last leg is open, a `run_started` was seen at all) off its own walk, keeping
+  it distinct from the two boundary TIMESTAMPS the same walk collects for the
+  elapsed clock, and then hands it to the SHARED derivation
   (`runstatus.Probe`), which composes it with the lock exactly as `runs
   list`, `ResolveRun`, `watch` and the single-run view's `/api/graph` do — the
   composition is stated once, not five times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
@@ -1573,7 +1575,16 @@ one, and it answers 409 like any other view that cannot resume.
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
   warning because a table can, but a dashboard that silently omitted one
-  would be lying about what is on the machine.
+  would be lying about what is on the machine. The token itself is a contract
+  between four files with no compiler between them — `card.go` chooses the
+  word, `dashboard.css` paints the tile's stripe, `style.css` owns the colour
+  token and the chip's dot, `dashboard.js` decides whether a card carrying it
+  is live and whether it is counted at all — so `internal/serve/assets_test.go`
+  derives the whole token set from the enumeration and reads the three embedded
+  assets back, rather than leaving the agreement to comments. That is also what
+  holds the page's `LIVE_STATES` to `Status.InFlight()`: a page with no build
+  step cannot import the predicate, and a hand-written equality test over the
+  in-flight values is the exact shape ADR 0023 removed from the Go side.
 - **`/run/<id>/` mounts the single-run view unchanged.** Endpoints are
   path-scoped (`/run/<id>/api/...`) rather than query-scoped because that is
   by far the smaller diff: the page already fetches with document-relative

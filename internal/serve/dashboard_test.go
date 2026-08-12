@@ -410,16 +410,15 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 				if err != nil {
 					t.Fatalf("walkNodeStates returned error: %v", err)
 				}
-				derived := walked.started != "" && walked.ended == ""
-				if derived != openLeg {
-					t.Errorf("derived open leg = %v, want runfeed.InFlight's %v", derived, openLeg)
+				if walked.open != openLeg {
+					t.Errorf("derived open leg = %v, want runfeed.InFlight's %v", walked.open, openLeg)
 				}
 
 				shared, err := runstatus.Of(dir)
 				if err != nil {
 					t.Fatalf("runstatus.Of returned error: %v", err)
 				}
-				facts := runstatus.Facts{OpenLeg: derived, AnyLeg: walked.started != "", Phase: walked.phase, LastOutcome: walked.lastOutcome}
+				facts := runstatus.Facts{OpenLeg: walked.open, AnyLeg: walked.anyLeg, Phase: walked.phase, LastOutcome: walked.lastOutcome}
 				if probed := runstatus.Probe(dir, facts); probed != shared {
 					t.Errorf("the card's composition = %v, want the shared rule's %v", probed, shared)
 				}
@@ -429,7 +428,7 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 				// Spelled out here rather than borrowed from runstatus.Spoken:
 				// this test is what judges the card against the shared rule, so
 				// it states the rule independently.
-				spoken := walked.started != "" || len(walked.states) > 0
+				spoken := walked.anyLeg || len(walked.states) > 0
 				if !spoken {
 					// The one affirmative exception: a directory whose stream
 					// has said NOTHING — no run_started, no node event — has no

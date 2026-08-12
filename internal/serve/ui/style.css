@@ -131,6 +131,10 @@ header {
 .dot.paused { background: var(--paused); }
 .dot.abandoned { background: var(--abandoned); }
 .dot.planning { background: var(--planning); }
+/* A run directory this binary cannot read. It is a RUN state only — no node is
+   ever unknown — and it wears --muted rather than a status hue because it is
+   the absence of a status, not one of them. */
+.dot.unknown { background: var(--muted); }
 
 .elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
 .cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }

@@ -144,7 +144,20 @@ function setBanner(text) {
 // its leg is open only because the process that opened it died, so it groups
 // with the settled runs, carrying its hint. Within each group, newest first:
 // run ids are timestamps that sort lexically.
+//
+// This IS a hand-copy of runstatus.Status.InFlight() — the very predicate the Go
+// side was rewritten to use so that a new in-flight value could not be dropped
+// by an equality test. A page with no build step cannot import it, so the copy
+// is held to the original by a Go test instead
+// (TestLiveStates_AgreeWithTheInFlightPredicate reads this literal out of the
+// embedded asset); do not edit it without editing that predicate.
 const LIVE_STATES = new Set(["running", "planning"]);
+
+// Every state a card can carry, in the order the header chips show them. It is
+// the whole set on purpose — a state missing here has no chip, so a run in it
+// would be invisible in the header's tally while sitting in plain sight below.
+// TestCardStateTokens_AreDefinedByEveryAsset holds it to the Go side's set.
+const COUNT_ORDER = ["planning", "running", "paused", "abandoned", "passed", "failed", "pending", "unknown"];
 
 function render() {
   const all = [...cards.values()].sort((a, b) => (a.run_id < b.run_id ? 1 : -1));
@@ -169,7 +182,7 @@ function paintCounts(all) {
   for (const card of all) by.set(card.state, (by.get(card.state) || 0) + 1);
   const host = $("dash-counts");
   host.replaceChildren();
-  for (const state of ["planning", "running", "paused", "abandoned", "passed", "failed", "unknown"]) {
+  for (const state of COUNT_ORDER) {
     const n = by.get(state) || 0;
     if (!n) continue;
     const chip = el("span", "chip");
@@ -194,8 +207,11 @@ function cardEl(card) {
   // The graph name is unknown until the run's first node completes (no
   // snapshot yet); the run id is always known, so it stands in.
   top.append(withText(el("span", "card-name"), card.name || card.run_id));
-  // The state word is the enumeration's own, lower-cased by the server
-  // (ADR 0023) — rendered as given, translated nowhere.
+  // The state word is whatever the server put in `state`: the card's own
+  // vocabulary for ADR 0023's enumeration, chosen by serve.runState (mostly the
+  // status lower-cased, but PASS/FAIL are `passed`/`failed` and there are two
+  // tokens no status maps to). This page renders it as given and translates
+  // nothing.
   top.append(withText(el("span", "card-state"), card.state));
   a.append(top);
 

@@ -38,6 +38,16 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
   on the live human views of the stream. The run page's header chip reads
   `planning` for that leg too, instead of calling it `running` while the
   dashboard card that links to it says `planning` about the same bytes.
+- **`watch` opens with the run's status, on a new first line.** Every
+  `oh-my-graph watch <id>` now prints `run <id> is <STATUS>` to **stdout**
+  before the first event — for *every* run it agrees to tail, a `RUNNING` or
+  `PASS` run made by v0.6.1 included, not only a planning one. It is what tells
+  a watcher whether the silence they are about to sit in is a planner call, a
+  running node, or a stream that is already over; those three are
+  indistinguishable from a tail alone. **`oh-my-graph watch <id> | head -1`
+  therefore returns a status word where it used to return the first event.** A
+  run directory whose stream has said nothing prints no such line — there is no
+  status to announce — and an abandoned run's refusal on stderr is unchanged.
 
 ### Changed
 
@@ -66,6 +76,28 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
   good. The dashboard has always kept `pending` there; `runs list` prints `-`
   and `show` omits the word, instead of the confident `FAIL` the derivation's
   default arm would otherwise have given them.
+- **Three lines `auto`, the goal loop and `chat` print changed shape**, all
+  because the run id now exists before the planner call rather than after it:
+  - `Planning a graph for goal "…"...` gains the run id — `Planning a graph for
+    goal "…" (run 20260813-…)...` — so the directory that wait is happening in
+    can be opened in another terminal *while* it waits, which is the whole
+    point of it existing. `auto --plan-only` mints no run id at any point and
+    keeps the old line verbatim.
+  - The goal loop's cycle banner moves AHEAD of that cycle's planner call and
+    says what it is doing: `— goal cycle 1/3 (run 20260813-…), planning… —`. It
+    used to be printed once the plan came back, i.e. after the wait it is the
+    only announcement of.
+  - `chat`'s accepted plan splits one header in two: the topology
+    (`Planned graph "…" (4 nodes, planning cost $0.0412):`) is printed before
+    the `[y/N]`, and the destination follows the answer on its own line
+    (`plan accepted, saved to …`). Where the spec lands is not known until the
+    answer is given — that is the same move as the bullet below.
+- **`/api/cards`'s `state` value set changed.** `paused` and `planning` are new,
+  and `gate-paused` no longer appears at the RUN level (it stays a node's
+  state, on `nodes[].state`, unchanged). The dashboard's JSON is not a versioned
+  contract the way `events.jsonl` is, but it is machine-readable and DESIGN.md
+  documents it, so it is worth saying plainly: a reader matching the old value
+  set drops every planning and paused run into whatever its default branch does.
 - **A declined `chat` plan no longer manufactures a corrupt run.** The spec save
   moved after the `[y/N]`: answering `n` used to leave a `runs/<id>/` holding a
   `graph.json` and no `state.json`, which `runs list` reported as
@@ -111,6 +143,13 @@ want to know, all documented:
   and there is still no `runs prune`. Those calls were paid for, so this is
   information rather than litter — but it is a visible change in what
   `runs list` accumulates.
+- **Ctrl-C during a planner call now leaves a `FAIL` row.** Interrupting `auto`
+  while it thinks used to leave nothing behind, because nothing existed. The
+  planning leg is bracketed by a deferred close, and an interrupt runs it, so
+  the run settles `FAIL` and exits 1. That is the deliberate choice over the
+  alternative — leaving the leg open, which would read `ABANDONED` and print the
+  orphaned-subprocess warning about a `claude` the interrupt just took down with
+  it — but it is a row where there used to be none.
 - The goal loop's ASSESSMENT call is still invisible: it happens after cycle
   *k*'s leg closed and before cycle *k+1*'s id exists, so it belongs to no run.
   Same shape as #163; fixing it needs a phase that belongs to the *goal*.

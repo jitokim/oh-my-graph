@@ -1,7 +1,14 @@
 # ADR 0023 — A run has ONE status, and PLANNING is one of its values
 
-- Status: **Accepted — implemented 2026-08-13.** §9 listed what the
-  implementation owed; it is delivered, with two notes recorded in §12.
+- Status: **Accepted — implemented 2026-08-13, and reviewed three times since.**
+  §9 listed what the implementation owed and it is delivered; §12 records the two
+  notes the implementation learned, §13 the code review that changed behaviour in
+  two places (§2.1.1, §2.7), and §14 the fresh-eyes round that found no
+  correctness defect and closed eight unguarded copies and record gaps instead.
+  What ships is the six-valued enumeration derived once in `internal/runstatus`
+  and rendered by the six surfaces §2.6 names, with the planning phase a leg that
+  holds the lock and opens the stream, `rejected.json` inside the run directory,
+  and `--plan-only` still minting no run id.
 - Date: 2026-08-12
 - **Revised 2026-08-12 after a design review, before any code existed.** The
   decision did not change; the specification did, in ten places recorded in §11.
@@ -1111,3 +1118,33 @@ composition (`runs list`'s and the card's verdict logic are deleted, not moved),
 that `ABANDONED`/`PAUSED` collapse into `FAIL` on none of the six surfaces, that
 the exit-code mapping is untouched, and that `--plan-only` mints no run id at any
 point.
+
+## 14. Review round 3 (2026-08-13) — the record and the unguarded copies
+
+A fresh-eyes round over the same implementation. It found no correctness defect
+— it confirmed that `Derive` is total and pure, that its precedence is tested,
+that the leg's lifetime is bracketed by an idempotent `Close` with tests for the
+pre-scheduler exits, and that the exit-code/status agreement is asserted rather
+than claimed. Every one of its eight findings is about something a reader is
+promised and nothing checks: either the CHANGELOG not naming a change a v0.6.1
+user will SEE, or a copy of a rule living somewhere no compiler and no test can
+reach it. All eight are applied.
+
+| # | finding | disposition |
+|---|---|---|
+| W1 | **`watch` prints a NEW first line for every run**, not only a planning one — recorded in §2.6 and in `Status.String`'s docstring, but the CHANGELOG's `watch` bullets covered only `▶ run started (planning)`. `watch <id> \| head -1` now returns a status word where it returned an event. | **Applied**: its own **Added** bullet, naming it as a new first line on stdout for *all* runs, with the pipeline hazard spelled out. |
+| W2 | **The Go card-state constants ↔ CSS/JS token agreement was guarded by comments only.** Renaming a token left a card with no stripe, no dot and no chip, and a green test run — `dashboard_test.go` asserts the Go strings and never opens the assets. Worse, `dashboard.js`'s `LIVE_STATES` is a hand-copy of `Status.InFlight()`, the predicate `resolve.go` was rewritten to use *because* an equality test silently drops a new in-flight value: Go was made safe and the page was left filing a future in-flight run under settled. | **Applied** as `internal/serve/assets_test.go`, in `prose_count_test.go`'s shape: the token set is DERIVED (walk the enumeration until `String` falls through, map each value through `runState`, add the card's own `pending`/`unknown`) and the three embedded assets are read back. It found two live gaps in the shipped page — `style.css` had no `.dot.unknown`, so an `unknown` run's header chip drew an invisible dot, and `paintCounts` omitted `pending` entirely, so a run in the one state §2.1.1 exists for was counted in no chip at all. Both fixed; `paintCounts`'s literal is now a named `COUNT_ORDER` the test can find. |
+| W3 | **`runState`'s docstring contradicted its body** — *"It has no default arm on purpose … a new value must come here and be given a colour rather than silently inheriting one"*, in a function with a `default:` returning `stateUnknown`. A seventh value did silently inherit one. | **Applied**, by making the promise real rather than by softening it: `TestRunState_CoversEveryDerivableStatus` walks the enumeration and fails on any value reaching the default (and on two values sharing a token). The docstring now says the switch is backstopped by a test, and names it. |
+| I1 | `/api/cards`'s `state` value set changed (`gate-paused` gone at run level, `paused`/`planning` new) and the CHANGELOG described it only in colour terms. | **Applied**: a **Changed** bullet, scoped honestly — the dashboard's JSON is not a versioned contract, but it is machine-readable and DESIGN.md documents it. |
+| I2 | **`buildCard` re-derived `OpenLeg`/`AnyLeg` from TIMESTAMP strings** (`walked.started != ""`), a second spelling of the leg rule that agrees with `runfeed.Leg` only because `Emit` always stamps `ts`. | **Applied**: `walkedStream` carries `open`/`anyLeg` as booleans, folded over the same events `runfeed.LastLeg` folds them over, leaving the two timestamps to the elapsed clock alone. This does not reopen §13's finding 6 — the walk stays local to the dashboard's hot path, and `TestBuildCard_AgreesWithTheSharedRule` still judges it against `runstatus.Of` — it removes the accidental coupling of a *status* to a *display* field. |
+| I3 | `dashboard.js` called the state word *"the enumeration's own, lower-cased by the server"*, which is false for `PASS`→`passed` / `FAIL`→`failed`, and for the two tokens no status maps to. | **Applied**: the comment now names `serve.runState` as the chooser and says the page translates nothing. |
+| I4 | **Four stdout lines changed shape and none was written down**: `Planning a graph for goal %q` gained the run id, the goal-cycle banner moved ahead of the plan and gained `, planning… —`, and `chat` split one header into a topology line before the `[y/N]` and a destination line after it. | **Applied**: a **Changed** bullet with all three (the fourth, the declined-plan spec path, was already its own bullet). |
+| I5 | **Ctrl-C during a planner call now settles the run `FAIL`** (the deferred `Close(OutcomeFailed)`; §2.7 states it deliberately). Defensible — the alternative is a false `ABANDONED` plus an orphan warning about a `claude` the interrupt just killed — but interrupting `auto` while it thinks used to leave nothing and now leaves a row. | **Applied**: a **Known limits** bullet beside the `runs/` accumulation note, stating the choice and its alternative. |
+
+The round's own summary is worth keeping as the shape of what was left: after
+two reviews of the code, what remained was not logic but **unguarded copies of
+it** — a predicate hand-copied into a file Go cannot see, a docstring stating an
+invariant the switch below it did not hold, and four user-visible lines the
+record did not mention. Two of the three were found only by asking what checks
+each claim; the first two guards written to answer that question failed on the
+first run, against shipped code.

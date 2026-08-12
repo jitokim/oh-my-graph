@@ -149,8 +149,8 @@ func buildCard(runsRoot, runID string) runCard {
 	// the one rule every surface shares.
 	// TestBuildCard_AgreesWithTheSharedRule judges it against runstatus.Of.
 	facts := runstatus.Facts{
-		OpenLeg:     walked.started != "" && walked.ended == "",
-		AnyLeg:      walked.started != "",
+		OpenLeg:     walked.open,
+		AnyLeg:      walked.anyLeg,
 		Phase:       walked.phase,
 		LastOutcome: walked.lastOutcome,
 	}
@@ -257,8 +257,14 @@ func brokenCard(runID string, err error) runCard {
 // through its default arm and paint red. The derivation now happens once, in
 // internal/runstatus, and this function only chooses a CSS token for it.
 //
-// It has no default arm on purpose: the enumeration is closed, so a new value
-// must come here and be given a colour rather than silently inheriting one.
+// Its default arm is a backstop, NOT a colour a new value may quietly inherit:
+// the promise that every derivable status is named here is kept by a test, not
+// by the shape of the switch. TestRunState_CoversEveryDerivableStatus walks the
+// enumeration and fails on any value that reaches the default, and
+// TestCardStateTokens_AreDefinedByEveryAsset then holds the token it returns to
+// a rule in each of the three assets that paint it. A seventh status added
+// without a case here therefore fails the build rather than rendering as
+// `unknown` on someone's dashboard.
 func runState(status runstatus.Status) string {
 	switch status {
 	case runstatus.Planning:
@@ -299,6 +305,16 @@ func nodeState(states map[string]string, id string) string {
 type walkedStream struct {
 	// states is the latest state per node the stream has spoken for.
 	states map[string]string
+	// open and anyLeg are runfeed.Leg's two booleans — "the last leg is open"
+	// and "a run_started was seen at all" — folded over the same events
+	// runfeed.LastLeg folds them over, so this walk answers the leg question
+	// with the leg's own facts. They are booleans rather than tests on the two
+	// timestamps below because a boundary and a CLOCK are different facts: an
+	// event with no `ts` is a leg all the same, and deriving the leg from the
+	// timestamp would make a card's status hang on a field only the renderer
+	// needs.
+	open   bool
+	anyLeg bool
 	// started is the FIRST run_started's timestamp, so a resumed run's elapsed
 	// still counts from when the work began — and, for an auto run since ADR
 	// 0023, from when its PLANNING began, which is the correct total under a
@@ -338,10 +354,12 @@ func walkNodeStates(feedPath string) (walkedStream, error) {
 			if walked.started == "" {
 				walked.started = event.Timestamp
 			}
+			walked.open, walked.anyLeg = true, true
 			walked.ended = ""
 			walked.phase = event.Phase
 			markAbandoned(walked.states)
 		case runfeed.EventRunFinished:
+			walked.open = false
 			walked.ended = event.Timestamp
 			walked.lastOutcome = event.Outcome
 		case runfeed.EventNodeStarted, runfeed.EventNodeRetried:
