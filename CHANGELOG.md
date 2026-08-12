@@ -32,10 +32,12 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
   run after the fact used to say nothing at all about it being paused, and a
   run directory that exists but has no snapshot is no longer reported as an
   unknown run.
-- **`watch` names the phase a leg opened in.** An auto run's stream carries two
-  `run_started`s, and both used to render as `▶ run started` with nothing to say
-  why — so the `PLANNING`→`RUNNING` transition was invisible on the one live
-  human view of the stream.
+- **`watch` and the run page name the phase a leg opened in.** An auto run's
+  stream carries two `run_started`s, and both used to render as `▶ run started`
+  with nothing to say why — so the `PLANNING`→`RUNNING` transition was invisible
+  on the live human views of the stream. The run page's header chip reads
+  `planning` for that leg too, instead of calling it `running` while the
+  dashboard card that links to it says `planning` about the same bytes.
 
 ### Changed
 

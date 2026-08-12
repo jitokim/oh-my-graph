@@ -126,9 +126,10 @@ func formatEvent(e runfeed.Event) string {
 	case runfeed.EventRunStarted:
 		// The phase, when the event carries one, because an auto run opens TWO
 		// legs on one stream — the planner call's and the scheduler's — and
-		// without it a watcher sees the same line twice with nothing to say why,
-		// on the one live human view of the stream. The PLANNING→RUNNING
-		// transition is the whole of what ADR 0023 made visible.
+		// without it a watcher sees the same line twice with nothing to say why.
+		// The run page's feed renders the same phase the same way, for the same
+		// reason. The PLANNING→RUNNING transition is the whole of what ADR 0023
+		// made visible.
 		if e.Phase != "" {
 			return fmt.Sprintf("▶ run started (%s)", e.Phase)
 		}

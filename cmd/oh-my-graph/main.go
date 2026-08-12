@@ -794,7 +794,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		graphJSON = marshaled
 	}
 
-	statePath := filepath.Join(runDirFor(runID), "state.json")
+	statePath := filepath.Join(runDirFor(runID), runstate.SnapshotFileName)
 	base := runstate.Snapshot{
 		RunID:           runID,
 		GraphSourcePath: graphSourcePath,
@@ -826,10 +826,11 @@ func saveGeneratedSpec(dir string, spec []byte) (string, error) {
 // of a run directory already reads.
 const generatedSpecFileName = "graph.json"
 
-// rejectedSpecFileName is a REFUSED plan's file. A distinct name, in a
-// plans/<id> directory of its own, because it is not a graph the engine would
-// run: nothing may mistake it for one, least of all a reader walking the tree
-// for graph.json.
+// rejectedSpecFileName is a REFUSED plan's file. A distinct name because it is
+// not a graph the engine would run: nothing may mistake it for one, least of all
+// a reader walking the tree for graph.json — and since ADR 0023 §3.1 it sits in
+// the run's OWN directory whenever a run leg exists, so the name is the only
+// thing keeping the two kinds of spec apart there.
 const rejectedSpecFileName = "rejected.json"
 
 // saveSpecAs writes one planner spec into dir under name, with the indentation
@@ -1414,14 +1415,15 @@ func runDirFor(runID string) string {
 	return filepath.Join(runsRoot(), runID)
 }
 
-// planDirFor is where a plan that was bought but never executed keeps its spec
-// — `auto --plan-only`. It is deliberately NOT under runsRoot(): `runs list`
-// and the `serve` dashboard both enumerate that tree and read a directory with
-// no state.json as a broken run, so a preview left there would be reported as
-// damage — and, being the newest directory, would sit at the top of both
-// listings. Its own tree keeps the two kinds of artifact — what ran, and what
-// was only planned — apart for every reader, without any of them needing a
-// special case.
+// planDirFor is where a plan that was bought but never executed keeps its spec:
+// `auto --plan-only`'s preview, a declined `chat` plan, and a rejection from a
+// call that minted no run id. It is deliberately NOT under runsRoot(), and since
+// ADR 0023 §2.5 the reason is no longer the old mechanism argument — a runs/
+// directory with no state.json is an ordinary shape now, not damage. The reason
+// that survives is the enumeration: none of these has any of the six statuses,
+// because nothing ran. Its own tree therefore keeps the two kinds of artifact —
+// what ran, and what was only planned — apart for every reader, without any of
+// them needing a special case.
 func planDirFor(planID string) string {
 	return filepath.Join(omgHome(), "plans", planID)
 }

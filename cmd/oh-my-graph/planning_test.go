@@ -641,6 +641,31 @@ func TestSurfaces_ADirectoryThatHasSaidNothingHasNoStatus(t *testing.T) {
 	}
 }
 
+// TestListRuns_ASilentRowCarriesNoHintEither is the same statusless cell reached
+// by its other route, and the one the table's hints could still contradict. A
+// stream holding a lone `run_finished{paused}` — a close with no open before it,
+// which runstatus reads as damage rather than a leg — has said nothing, so the
+// STATUS cell is "-"; the resume hint under the table keys on the derived word
+// alone, and would have printed "run … is PAUSED" beneath that very "-".
+func TestListRuns_ASilentRowCarriesNoHintEither(t *testing.T) {
+	isolateRunHome(t)
+	dir := runDirFor("run-damaged")
+	writeEventFixture(t, dir, "run-damaged",
+		[]runfeed.Event{{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused}})
+
+	var listed, warned strings.Builder
+	if err := listRuns(&listed, &warned, runsRoot()); err != nil {
+		t.Fatalf("listRuns: %v", err)
+	}
+	out := listed.String()
+	if !strings.Contains(out, "run-damaged") {
+		t.Fatalf("the directory is a fact and keeps its row:\n%s", out)
+	}
+	if strings.Contains(out, "PAUSED") {
+		t.Errorf("one directory, two answers: the row says \"-\" and the hint says PAUSED:\n%s", out)
+	}
+}
+
 // TestPlanAndExecuteCycles_EveryCyclesPlanningPhaseIsVisible pins that PLANNING
 // is not a single-cycle privilege. Without the per-cycle hook the status would
 // exist for `auto` and not for `auto --max-cycles 3`, and a status that depends

@@ -1425,7 +1425,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   and stop tailing that leg's transcript, and the hint sits above the feed the
   button lives in. That page's own stream reducer applies the same leg boundary
   the two Go reducers do — every `run_started` ends the previous leg's running
-  nodes. The leg that opens a run
+  nodes — and it renders that event's `phase` rather than a word of its own, so
+  the header chip reads `planning` for a planner leg exactly as the card linking
+  to it does, and the feed marker names the phase exactly as `watch` does. The
+  leg that opens a run
   must hold the lock **before** its first event and **after** its last, or a
   starting run would read abandoned for its first instants; that ordering is
   stated at `acquireRunLock` and pinned by

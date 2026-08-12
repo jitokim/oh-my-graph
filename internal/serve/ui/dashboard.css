@@ -75,7 +75,9 @@ main {
 .card.running { border-left-color: var(--running); }
 .card.passed { border-left-color: var(--passed); }
 .card.failed { border-left-color: var(--failed); }
-.card.gate-paused { border-left-color: var(--gate-paused); }
+/* No .card.gate-paused: `gate-paused` is a NODE token, and the run level used
+   to borrow it. Since ADR 0023 the run level has `paused`, which covers the
+   gate pause and the session-limit pause alike. */
 .card.paused { border-left-color: var(--paused); }
 .card.abandoned { border-left-color: var(--abandoned); }
 .card.planning { border-left-color: var(--planning); }

@@ -250,7 +250,18 @@ func printRuns(w io.Writer, rows []runSummary) {
 	// table itself uniform is also what lets a human — or the `awk`-shaped
 	// script ADR 0015 declines to promise anything to — keep reading it as a
 	// table.
+	//
+	// Gated on `spoken` for the same reason statusCell is: a row whose STATUS
+	// cell says "-" must not be followed by a sentence that names a status. A
+	// truncated stream carrying only a `run_finished{paused}` — a close with no
+	// open before it, which runstatus reads as damage rather than a leg — is
+	// exactly that row, and it would otherwise print "-" in the table and
+	// "run X is PAUSED" beneath it: one directory, two answers, from the one
+	// surface W1 just made consistent.
 	for _, row := range rows {
+		if !row.spoken {
+			continue
+		}
 		switch row.status {
 		case runstatus.Abandoned:
 			fmt.Fprintf(w, "\n%s\n", runstatus.Hint(row.runID, row.hasSnapshot))

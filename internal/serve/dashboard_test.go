@@ -475,6 +475,9 @@ func TestBuildCard_ARefusedPlanRendersAsFailedNotPending(t *testing.T) {
 		runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
 		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
 	)
+	// buildCard never reads this file; it is here so the fixture is the whole
+	// directory shape ADR 0023 §3 describes, and so a future card that DOES
+	// notice a rejected spec is tested against a real one rather than an absence.
 	if err := os.WriteFile(filepath.Join(dir, "rejected.json"), []byte(`{"name":"x"}`), 0o600); err != nil {
 		t.Fatalf("write rejected spec: %v", err)
 	}
@@ -544,10 +547,8 @@ func TestBuildCard_ASessionLimitPauseIsNotRed(t *testing.T) {
 
 	card := buildCard(root, "run-limited")
 	if card.State != statePaused {
-		t.Errorf("card state = %q, want %q — a session-limited run stopped as designed and is resumable", card.State, statePaused)
-	}
-	if card.State == stateFailed {
-		t.Error("the session-limit pause must not paint red")
+		t.Errorf("card state = %q, want %q — a session-limited run stopped as designed and is resumable, "+
+			"and above all must not paint %q", card.State, statePaused, stateFailed)
 	}
 }
 

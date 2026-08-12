@@ -194,7 +194,9 @@ function cardEl(card) {
   // The graph name is unknown until the run's first node completes (no
   // snapshot yet); the run id is always known, so it stands in.
   top.append(withText(el("span", "card-name"), card.name || card.run_id));
-  top.append(withText(el("span", "card-state"), stateWord(card)));
+  // The state word is the enumeration's own, lower-cased by the server
+  // (ADR 0023) — rendered as given, translated nowhere.
+  top.append(withText(el("span", "card-state"), card.state));
   a.append(top);
 
   a.append(withText(el("div", "card-run"), card.run_id));
@@ -227,15 +229,6 @@ function cardEl(card) {
   }
   a.append(card.nodes && card.nodes.length ? miniDag(card.nodes) : withText(el("div", "mini-none"), "no nodes yet"));
   return a;
-}
-
-// The card's state word is the enumeration's own, lower-cased by the server
-// (ADR 0023). It used to translate "gate-paused" into "paused" here, because
-// the run level borrowed the NODE's token; the run level now has its own, which
-// is what lets a session-limit pause — a pause with no gate — say "paused"
-// rather than paint red.
-function stateWord(card) {
-  return card.state;
 }
 
 // Only the states a run actually has get a chip — an all-passed card should
