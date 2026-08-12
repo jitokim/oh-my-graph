@@ -122,64 +122,9 @@ skills by **giving up its agent**.
   *"선언된 도구 목록은 여전히 강제됩니다"* — the exact clause the plan printout
   retired — called the `--agent` + staged-plugin + settings combination *"아직
   한 번도 측정해보지 않은 조합"*, and told the reader *"노드별 opt-out은
-  없습니다"* one release after `--no-agent` shipped. All three now match
+  없습니다"* in the same release that ships `--no-agent`. All three now match
   `README.md`, including the measured breach and the repository-supplied
   configuration surface.
-
-### Added
-
-- **`--no-agent <name>` (repeatable, on `auto` and `chat`): decline ONE agent
-  from auto-mapping and keep the rest.** `--no-agent-mapping` remains the
-  all-or-nothing form. This exists because measurement (j) changed what the
-  opt-out is *for*: it used to be the remedy for a capability loss (a mapped
-  node holds no `Skill` tool), and it is now also the only way to keep a node's
-  declared scope enforced — an all-or-nothing switch carrying that weight
-  prices one node's ceiling at every mapping the plan would have made. The
-  **agent** is the unit because it is the only identifier that exists before the
-  planner is paid: node ids are bought, agent names are your own files, and the
-  plan prints the agent on the node line it took. The decline is applied after
-  the single-candidate rule, never before it, so it can only ever remove a
-  mapping — declining one of two ambiguous agents does not promote the other. A
-  declined node keeps ceiling layer 1 and is activated like any other planned
-  node, which is exactly the configuration (j) measured holding the scope
-  ceiling and invoking the staged skill under an attributable name.
-
-### Changed
-
-- **The plan printout no longer promises a mapped node's declared scope binds,
-  and names what each mapped node lost, by node.** The retired clause was
-  "(their declared tool list still binds)". Which tools *exist* is still bound;
-  the scope inside them is not, because your standing permission grants load
-  with your settings. In its place each mapped node gets its own line — no
-  `Skill` tool, and a scope enforced only as far as your settings enforce it —
-  the ceiling summary carries the same exception when the plan contains such a
-  node, and the exclusion paragraph no longer calls lifting "unmeasured": it
-  says lifting was measured and refused, and that the refusal was **not** about
-  capability, since a user told "it does not work" would never think to check
-  what their repository can supply. `README.md`, `docs/LIMITATIONS.md`,
-  `DESIGN.md`, `SECURITY.md` and ADR 0017 (Decision §9) carry the same bound.
-  `docs/measurements/0017-lifting-the-agent-mapped-exclusion.md` is the record.
-- **The disclosure covers the whole surface a mapped node loads, not only the
-  `Bash` scope half.** "Loads your settings" means the CLI's default sources —
-  user, project **and local** — so the `.claude/` of the repository being worked
-  in reaches such a node too. The same measurement showed a repository-committed
-  `SKILL.md` invoked 3 of 3 unbidden and a repository-enabled plugin's skill
-  firing; by the same loading, and marked **implied rather than measured**, that
-  repository's project `CLAUDE.md` and its hooks reach it as well. The plan
-  printout, `docs/LIMITATIONS.md` and `SECURITY.md` all say so, and the ceiling
-  summary's other clause — "your CLAUDE.md, hooks and MCP servers are
-  unavailable to them" — is now cancelled for mapped nodes instead of standing
-  as a reassurance the argv does not keep.
-- **The remedy's own arm was run rather than inferred.** A review found
-  `--no-agent`'s "attributable" claim rested on `ACT`, which ran only in the
-  phase where the staged copy was the sole definition of its name. Arm `X-ACT`
-  (3 spawns, $0.29, registered in its own commit before spawning and labelled
-  post-hoc) re-ran that argv under the three-way collision: the staged copy won
-  **3 of 3**, so `--setting-sources ""` bounds the definition search and the
-  exposure is agent mapping's alone.
-  Restoring the ceiling for these nodes is a change to agent mapping itself and
-  stays ADR 0017 §Compatibility's declined follow-up — now with a direct
-  measurement behind it rather than an analogue.
 
 ## [v0.5.5] - 2026-08-12
 
