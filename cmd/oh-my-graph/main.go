@@ -391,16 +391,17 @@ var singleCycle = goalCycleOptions{maxCycles: 1}
 // stays un-wired (ADR 0006).
 //
 // planOnly is `auto --plan-only`: the same sequence up to and including the
-// topology print, then a stop — nothing is wired, no node runs. It sits HERE,
-// as an early return inside the one sequence, rather than in a parallel
-// plan-and-print function, because the flag's entire value is that what it
-// shows is what a real run would show; a second implementation of the print
-// would be free to drift from this one and would take a mapping line with it
-// when it did. The planner call above it is NOT skipped and cannot be: unlike
+// topology print, then a stop — nothing is wired, no node runs. It is an early
+// return inside this one sequence (notePlanOnlyPreview does the printing and
+// nothing else) rather than a parallel plan-and-print function, because the
+// flag's entire value is that what it shows is what a real run would show;
+// a second implementation of the print would be free to drift from this one and
+// would take a mapping line with it when it did. Note that the shared thing is
+// printPlan, which BOTH branches call — the extracted helper carries only the
+// stop line. The planner call above it is NOT skipped and cannot be: unlike
 // `run --dry-run`, which reads a file, there is no plan to inspect until one
-// has been bought. The saved spec survives the stop for the same reason —
-// it was paid for — but it is saved under plans/, not runs/ (see the branch
-// below), because nothing about it ran.
+// has been bought. The saved spec survives the stop for the same reason — it
+// was paid for — but it goes under plans/, not runs/ (ADR 0023 §3).
 //
 // cycles decides whether the sequence runs once (maxCycles 1 — this function
 // body, exactly today's) or as the bounded goal loop of ADR 0011 (maxCycles
@@ -468,50 +469,16 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	}
 
 	if planOnly {
-		// A preview is still not a run (ADR 0023 §3), and the reason is no
-		// longer the old mechanism argument — that a runs/ directory holding a
-		// graph.json and no state.json reads as damage, which §2.5 dissolved.
-		// The reason that survives is the enumeration: a preview has none of the
-		// six statuses and cannot be given one. It is not PLANNING (it
-		// finished), not RUNNING, not ABANDONED (its process left on purpose),
-		// and it has no verdict about work, because there was no work.
-		specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
-		if err != nil {
-			return err
-		}
-		printPlan(out, plan, specPath)
-		fmt.Fprintf(out,
-			"plan only: no node was executed. The %s still paid for ($%.4f) —\n"+
-				"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
-				"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
-				"about it. Run it with `oh-my-graph run %s`.\n",
-			plannerCallsPhrase(plan), plan.CostUSD, specPath, specPath)
-		return nil
+		return notePlanOnlyPreview(out, plan)
 	}
 
 	if !committed {
-		// The chat path: the plan is printed, the human decides, and only then
-		// does the spec land anywhere. Saving into the run directory BEFORE the
-		// prompt is what made every declined chat plan leave behind a runs/<id>/
-		// holding a graph.json and no state.json — a corrupt run manufactured by
-		// saying `n` (ADR 0023 §2.4). The topology therefore prints without a
-		// path, and the path is announced by whichever branch claims the spec.
-		printPlan(out, plan, "")
-		ok, err := confirm()
-		if err != nil {
+		accepted, err := confirmPlan(out, plan, confirm)
+		if err != nil || !accepted {
 			return err
 		}
-		if !ok {
-			path, saveErr := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
-			if saveErr != nil {
-				fmt.Fprintf(os.Stderr, "save the declined plan's spec: %v\n", saveErr)
-				fmt.Fprintln(out, "plan discarded.")
-				return nil
-			}
-			fmt.Fprintf(out, "plan discarded. Its spec was paid for either way and is kept at %s —\n"+
-				"run it later with `oh-my-graph run %s`.\n", path, path)
-			return nil
-		}
+		// The commitment just landed, so this is where the run id is minted and
+		// the run directory becomes legitimate.
 		runID = newRunID()
 	}
 
@@ -519,13 +486,75 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	if err != nil {
 		return err
 	}
-	if !committed {
-		fmt.Fprintf(out, "plan accepted, saved to %s\n\n", specPath)
-	} else {
+	if committed {
 		printPlan(out, plan, specPath)
+	} else {
+		// confirmPlan already printed the topology; only the destination was
+		// unknown until the answer came back.
+		fmt.Fprintf(out, "plan accepted, saved to %s\n\n", specPath)
 	}
 
 	return executePlan(ctx, runID, plan, nodeRunner, flags, specPath, web, nil, leg)
+}
+
+// notePlanOnlyPreview is `auto --plan-only`'s terminal branch: print the
+// topology, say what the call cost, and keep the spec under plans/.
+//
+// A preview is still not a run, and since ADR 0023 §3 the reason is no longer
+// the old mechanism argument — that a runs/ directory holding a graph.json and
+// no state.json reads as damage, which §2.5 dissolved and which is now an
+// ordinary shape. The reason that survives is the enumeration itself: a preview
+// has none of the six statuses and cannot be given one. It is not PLANNING (it
+// finished), not RUNNING, not ABANDONED (its process left on purpose), and it
+// has no verdict about work, because there was no work. So it mints no run id
+// at any point, its planner call included.
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan) error {
+	specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+	if err != nil {
+		return err
+	}
+	printPlan(out, plan, specPath)
+	fmt.Fprintf(out,
+		"plan only: no node was executed. The %s still paid for ($%.4f) —\n"+
+			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
+			"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
+			"about it. Run it with `oh-my-graph run %s`.\n",
+		plannerCallsPhrase(plan), plan.CostUSD, specPath, specPath)
+	return nil
+}
+
+// confirmPlan is the chat path's gate: print the topology, ask, and place the
+// paid-for spec according to the answer. It reports whether to proceed; a
+// decline is (false, nil) — not an error, and today's "plan discarded."
+//
+// The spec is saved AFTER the answer, and that ordering is the fix ADR 0023
+// §2.4 makes on the way past #163. Saving into the run directory before the
+// prompt meant every declined plan left behind a runs/<id>/ holding a
+// graph.json and no state.json — reported by `runs list` as
+// "WARNING: skipping run …" and painted `unknown` by the dashboard. Saying no
+// manufactured a corrupt run. The topology therefore prints with no path,
+// because which directory the spec belongs in is exactly what is being decided.
+//
+// A failure to save the declined spec is reported and swallowed: losing the
+// artifact must not turn a decline into an error.
+func confirmPlan(out io.Writer, plan coordinator.Plan, confirm func() (bool, error)) (bool, error) {
+	printPlan(out, plan, "")
+	ok, err := confirm()
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+	path, saveErr := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "save the declined plan's spec: %v\n", saveErr)
+		fmt.Fprintln(out, "plan discarded.")
+		return false, nil
+	}
+	fmt.Fprintf(out, "plan discarded. Its spec was paid for either way and is kept at %s —\n"+
+		"run it later with `oh-my-graph run %s`.\n", path, path)
+	return false, nil
 }
 
 // executePlan runs a coordinator Plan. It exists so the planned graph and its
