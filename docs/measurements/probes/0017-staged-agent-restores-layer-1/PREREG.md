@@ -225,3 +225,31 @@ there on a guess), so a leftover would be counted as this spawn's. **Nothing
 under `~/.claude` is written, modified or removed by any of this** — the
 colliding plugin is declared at **project** scope inside the fixture
 repository.
+
+---
+
+## Addendum 1 — a harness correction, written before the arms it affects ran
+
+**Post-hoc relative to the first `K-RES` spawn and pre-hoc relative to every
+other spawn in this probe**, and that ordering is in git.
+
+The first `K-RES` spawn (`1bb76aee`) exited 0 and wrote both of its files, but
+`read_markers` returned nothing: the node wrote them into **`/tmp`**, which
+`marker_dirs` did not search. It is the same cwd-guessing artifact measurement
+(j) recorded for `$HOME` — a node holding only `Write` cannot determine its own
+cwd — one directory over. The marker was recovered by hand and carried
+`OMG-K-AGENT-STAGED-8802`.
+
+`marker_dirs` now returns `[repo, $HOME, /tmp]`, so all three are cleared
+before a spawn and searched after. **This changes nothing about the decision
+rule**, only where the same token is looked for. Consequences, both recorded
+rather than smoothed over:
+
+- The pilot row stays in `results.jsonl` **as recorded, with `markers: []`**,
+  and the write-up reports it as a pilot whose marker was read by hand rather
+  than re-running it into agreement. The registered `n=3` runs under the fixed
+  harness, so `K-RES` has **four** rows and the write-up says which three are
+  the registered ones.
+- `clear_artifacts` now also removes `/tmp/design.html` and any `/tmp/OMG-*.txt`
+  marker before every spawn. This is added to the "what is written outside the
+  workspace" list above.
