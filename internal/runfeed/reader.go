@@ -95,23 +95,62 @@ func Walk(path string, visit func(Event) error) error {
 // pure stdlib reader of the two contract files that spawns nothing, probes
 // nothing, and knows nothing about locks or processes.
 func InFlight(path string) (bool, error) {
-	open := false
+	leg, err := LastLeg(path)
+	if err != nil {
+		return false, err
+	}
+	return leg.Open, nil
+}
+
+// Leg is everything the stream says about a run's LAST leg, read in one walk.
+// It exists because since ADR 0023 the composition layer needs three facts off
+// this file rather than one — whether the last leg is open, which phase it
+// opened in, and how the last one that closed said it ended — and reading the
+// stream three times to learn them would put the dashboard's hot path (one
+// walk per card per tick) back where ADR 0015 took it out of.
+type Leg struct {
+	// Open is runfeed.InFlight's own answer: the last leg has not been closed
+	// by a run_finished. It says nothing about the process that opened it —
+	// that half is the run lock's, composed in internal/runstatus.
+	Open bool
+	// Phase is the LAST run_started's Phase: PhasePlanning while the planner
+	// call runs, empty for a scheduler leg. The transition between them is
+	// affirmative in BOTH directions — "the latest run_started says planning"
+	// and "the latest run_started says nothing" — never "no node has started
+	// yet", which would paint the first instants of every hand-written run as
+	// planning (ADR 0023 §2.3).
+	Phase string
+	// LastOutcome is the last run_finished's Outcome — "passed", "failed" or
+	// "paused". It is meaningful only when Open is false; while a leg is open
+	// it is whatever the previous leg said, which no caller reads because an
+	// open leg answers first (ADR 0023 §2.1).
+	LastOutcome string
+}
+
+// LastLeg reads the run's event stream once and reports what it says about the
+// last leg. Like InFlight, a missing stream is not an error: it reads as no
+// legs at all — a settled (or pre-runfeed) directory. A stream this binary
+// refuses to read IS an error, and the caller decides what that means.
+func LastLeg(path string) (Leg, error) {
+	var leg Leg
 	err := Walk(path, func(event Event) error {
 		switch event.Type {
 		case EventRunStarted:
-			open = true
+			leg.Open = true
+			leg.Phase = event.Phase
 		case EventRunFinished:
-			open = false
+			leg.Open = false
+			leg.LastOutcome = event.Outcome
 		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
+			return Leg{}, nil
 		}
-		return false, err
+		return Leg{}, err
 	}
-	return open, nil
+	return leg, nil
 }
 
 // Follow tails the event stream at path: every complete ('\n'-terminated)

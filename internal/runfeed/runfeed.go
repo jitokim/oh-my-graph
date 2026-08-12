@@ -196,7 +196,27 @@ type Event struct {
 	Provenance string `json:"provenance,omitempty"`
 	// Outcome is how the leg ended, on run_finished only.
 	Outcome string `json:"outcome,omitempty"`
+	// Phase qualifies a run_started, on run_started only (ADR 0023 §2.3): the
+	// leg it opens is the planner call that PRECEDES the scheduler, not the
+	// scheduler itself. The only defined value is PhasePlanning. An additive
+	// optional field, no schema bump — absent is every run_started this tool
+	// wrote before ADR 0023 and every one a `run` or a `resume` leg will ever
+	// write, and it means the scheduler leg.
+	//
+	// The cost, stated because a consumer can trip on it: an auto run's stream
+	// now carries TWO run_started lines, so a reader counting legs must count
+	// run_started events with NO phase. run_finished carries no phase and gains
+	// none — on the committed path a planning phase is closed by the untagged
+	// run_started, not by a run_finished of its own (docs/RUN-FEED.md).
+	Phase string `json:"phase,omitempty"`
 }
+
+// PhasePlanning is Event.Phase's one defined value: this run_started opens the
+// leg a planner call runs inside, before any graph exists. It exists because
+// PLANNING is derivable from nothing — a planner call in progress leaves no
+// trace on disk unless the engine writes one — unlike ABANDONED, which ADR
+// 0015 could derive from bytes that were already there (ADR 0023 §2.3).
+const PhasePlanning = "planning"
 
 // StreamWriter appends events to one run's events.jsonl. It is the concrete,
 // disk-backed implementation of schedule.EventSink (matched structurally —
