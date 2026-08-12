@@ -79,7 +79,7 @@ def census_from_committed(dump, arm, sid):
 
 
 def main():
-    if len(sys.argv) == 2:
+    if len(sys.argv) not in (1, 3):
         # Half a pair is not a source. Defaulting the dump under a re-run's
         # results file would call every one of its rows `missing-committed`.
         sys.exit("census: pass results.jsonl and tool_use_dir together, or neither")
