@@ -180,10 +180,36 @@ nodes:
     prompt: |
       Run the project's real local execution beyond unit tests — `make
       local` here, or the project's closest equivalent — and exercise the
-      new behavior end to end. If the diff touches concurrency-sensitive
-      code, also stress its tests (`go test <affected packages> -race
-      -count=300`, or your stack's equivalent). Run every check
-      SYNCHRONOUSLY and wait for it to finish — never in the background.
+      new behavior end to end. Run every check SYNCHRONOUSLY and wait for
+      it to finish — never in the background.
+
+      If the diff touches concurrency-sensitive code, also stress the
+      affected packages' tests under the race detector. A fixed repetition
+      count belongs to a repository, never to a template, so DERIVE one
+      from the budget below and then SAY what you derived:
+
+        1. BUDGET. This node is killed at 20 minutes, and a node killed by
+           its own timeout produces NO verdict at all — the run is
+           discarded with the implementation already committed. Spend at
+           most half of that on stress, and leave the rest for the
+           end-to-end run and for reporting.
+        2. DERIVE. Time ONE repetition of each affected package first
+           (`-count=1`), then pick a per-package count that fits step 1.
+           Measured in this repository once: 40 repetitions of one package
+           took 113s, while 300 of another would have taken 72 minutes. A
+           smaller count that finishes beats a larger one that is killed.
+        3. RAISE THE PER-TEST TIMEOUT — this part is not optional. `go
+           test` kills a package after 10 minutes BY DEFAULT and prints
+           FAIL, so any long stress run reports a failure that never
+           happened, and a FAIL here halts the whole pipeline. Pass
+           `-timeout` above your step-1 budget (`go test <pkg> -race
+           -count=<n> -timeout 25m`), or your stack's equivalent.
+        4. REPORT. Name every package you stressed with the count and the
+           wall time it took (`internal/serve -race -count=40, 113s`), or
+           say plainly that you stressed nothing and why. A verdict that
+           does not say what was exercised cannot be told from one that
+           exercised nothing.
+
       Your FINAL reply is the verdict: never end the turn on an interim
       report. START it with the bare word PASS, or with a bare FAIL and the
       failing step — the verdict word must be the very FIRST characters of
@@ -191,8 +217,18 @@ nodes:
       heading, no preamble. Anything you need to qualify goes AFTER the
       verdict, never before it: a line of context ahead of the token fails
       this node even when every check passed.
-    allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
+    # `Bash(go test *)` is the narrow form on purpose: the prompt asks for a
+    # stress run, and a grant that never named the command it asks for left
+    # the node's own instruction unrunnable. `Bash(go *)` would include
+    # `go run`, i.e. executing the tree — see graphs/fragments/e2e-verify.yaml,
+    # which refused it for that reason. Swap this for your stack's test
+    # command if it is not Go.
+    allowed_tools: [Read, "Bash(make *)", "Bash(go test *)", "Bash(git *)"]
     permission_mode: dontAsk
+    # Declared rather than left to the runner's 20m default because the prompt
+    # QUOTES it: the stress budget above is derived from this number, so the
+    # two must move together (TestLocalrunStressBudgetMatchesItsTimeout).
+    timeout: 20m
     # Runaway insurance ONLY, never cost tuning — keep this an order of
     # magnitude above a plausible run, or omit it. The hang guard is
     # `timeout:`, not the budget.

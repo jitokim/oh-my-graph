@@ -218,6 +218,62 @@ nodes:
 	}
 }
 
+// TestScheduler_TimeoutAndRunErrorAreSeparatelyRetryable is the behaviour ADR
+// 0024 exists for, stated as the four cells of the grid it opens up.
+//
+// Before it, `causeFromRunError` returned `run_error` for everything that was
+// not an unparseable envelope, so a node killed by its own clock and a binary
+// that never started shared ONE retry token: a graph could not ask for the
+// cheap re-attempt a failed spawn deserves without also signing up to spend a
+// second full timeout, and it could not opt into retrying a timeout without
+// also retrying every spawn failure. Both directions are asserted here, because
+// only having both is the separation — either alone is satisfied by a token
+// that classifies nothing.
+func TestScheduler_TimeoutAndRunErrorAreSeparatelyRetryable(t *testing.T) {
+	// A timeout the runner minted for the node's own bound, and a spawn that
+	// never produced a process. The runner returns these as different types;
+	// the whole change is that the scheduler now reads the difference.
+	timedOut := func() error {
+		return &runner.NodeTimeoutError{Timeout: 20 * time.Minute, Err: context.DeadlineExceeded}
+	}
+	spawnFailed := func() error {
+		return errors.New("claude run: spawn failed: exec: \"claude\": executable file not found in $PATH")
+	}
+
+	for _, tc := range []struct {
+		name string
+		on   string
+		err  func() error
+		want int
+	}{
+		{"a timeout is retried by a graph that asked for timeouts", "timeout", timedOut, 3},
+		{"a timeout is NOT retried by a graph that asked for run errors", "run_error", timedOut, 1},
+		{"a spawn failure is retried by a graph that asked for run errors", "run_error", spawnFailed, 3},
+		{"a spawn failure is NOT retried by a graph that asked for timeouts", "timeout", spawnFailed, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := mustGraph(t, `
+name: cause-split
+nodes:
+  - id: slow
+    prompt: slow
+    retry: { max: 2, on: [`+tc.on+`] }
+`)
+			fake := runner.NewFakeRunner(nil)
+			fake.KeyFn = nodePromptKey
+			fake.InjectError("slow", tc.err())
+			s, h, led := newHarness(t, fake, Options{})
+
+			if err := s.Run(context.Background(), g, h, led); err == nil {
+				t.Fatal("a node whose every attempt errored must fail the run")
+			}
+			if got := fake.InvocationCount("slow"); got != tc.want {
+				t.Fatalf("slow invoked %d times under retry.on [%s], want %d", got, tc.on, tc.want)
+			}
+		})
+	}
+}
+
 // TestScheduler_RetriedSessionNodeDetailSaysItStartedCold proves that when a
 // session-handoff node passes on a retry, its record's Detail says the retry
 // ran without the parent session — runNode clears ResumeSession on every

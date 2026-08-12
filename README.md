@@ -767,6 +767,14 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   `handoff: session` retry still starts cold and says so. This is on by default
   and it costs money: up to roughly 2k tokens of quoted reply per retry of a
   judged failure, bounded and flat, never compounding ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0020](docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md)).
+  `retry.on` filters over a closed set of seven causes — `nonzero_exit`,
+  `run_error`, `timeout`, `output_error`, `budget_exceeded`, `verify_failed`,
+  `result_mismatch` — rejected at load if you misspell one. `timeout` is
+  separate from `run_error` on purpose: a node killed by its own bound is the
+  one failure that always spends its whole budget before dying, so retrying it
+  costs another full timeout, and that must be a decision you make rather than
+  one you inherit by asking for spawn-failure retries
+  ([ADR 0024](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc. In a run where any node declares one, a **passing** row's
   `COST(USD)` cell also states the share of that node's budget the spend used —

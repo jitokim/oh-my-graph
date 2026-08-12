@@ -11,9 +11,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 ## [Unreleased]
 
 Implements [ADR 0023](docs/adr/0023-a-run-has-one-status-and-planning-is-one-of-its-values.md),
-closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
+closing [#163](https://github.com/jitokim/oh-my-graph/issues/163), and
+[ADR 0024](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md), found by
+running this repository's own `adr-driven-dev` template against it.
 
 ### Added
+
+- **New `retry.on` cause: `timeout`. This is user-facing schema surface** — a
+  seventh value you may now write in a node's `retry.on`, accepted at load,
+  named in the load error that rejects an unknown one, and advertised to the
+  planner alongside the other six. A node killed by its own bound (the
+  `timeout:` it declared, or the runner's 20-minute default) used to be
+  classified `run_error`, the same token as a `claude` binary that never
+  started — so `retry: { max: 1, on: [run_error] }` could not ask for one
+  without the other, and the two want opposite policies. Nothing existing
+  changes meaning: the set only grew, no shipped graph lists `run_error`, and a
+  graph that wants the old behaviour writes `on: [run_error, timeout]`.
+  **Auto-retrying timeouts was considered and refused** — a timeout is the one
+  failure that always burns its full budget before dying, so a retry costs
+  another whole timeout, and the engine cannot tell a slow machine from an
+  instruction that cannot finish at any timeout. The author can, so the author
+  decides ([ADR 0024 §3.1](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md)).
+  Only a deadline the runner minted for *that node* earns the token; a deadline
+  inherited from the run's own context is still `run_error`.
 
 - **`auto` is visible while it plans.** The run id is minted BEFORE the planner
   call, not after it, and the planning phase is a real leg: it takes the run
@@ -51,6 +71,24 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
 
 ### Changed
 
+- **`graphs/adr-driven-dev.yaml`'s `localrun` stops asking for something it
+  cannot finish.** It handed every repository the same literal
+  `go test <affected packages> -race -count=300` under a 20-minute node — and on
+  *this* repository 300 repetitions of `cmd/oh-my-graph` under `-race` take
+  ~72 minutes, so the node was killed by its own timeout with the
+  implementation already committed. A repetition count belongs to a repository,
+  not to a template, so the node now derives one from a stated budget (its
+  `timeout:`, declared explicitly rather than inherited, because the prompt
+  quotes it) and **reports what it actually exercised** — package, count, wall
+  time — so the verdict can be told from one that stressed nothing. It also
+  now says to pass `-timeout`: `go test` kills a package after 10 minutes by
+  default and prints `FAIL`, so a stress run that *did* fit the node's budget
+  still reported a failure that never happened (measured: `-count=40
+  ./cmd/oh-my-graph` "failed" at 601s), and `localrun`'s FAIL halts the whole
+  pipeline. Its grant gains `Bash(go test *)` — narrow on purpose, never
+  `Bash(go *)`, which would include `go run` — because the command the prompt
+  asks for was never one the node was allowed to run. No other shipped graph
+  changes.
 - **A paused run stops reading as a failure, on every surface at once.** A
   shepherd stopped at its approval gate — exit 2, resumable, working exactly as
   designed — was listed as `FAIL` by `runs list`, which said so in its own

@@ -1207,6 +1207,7 @@ func extractJSON(result string) string {
 var plannerRetryCauses = []string{
 	graph.CauseNonzeroExit,
 	graph.CauseRunError,
+	graph.CauseTimeout,
 	graph.CauseOutputError,
 	graph.CauseBudgetExceeded,
 	graph.CauseVerifyFailed,

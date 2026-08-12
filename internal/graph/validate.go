@@ -206,10 +206,11 @@ func (g *Graph) validateOnFail() []error {
 
 // retryCauses is the closed set of failure-cause tokens retry.on may list, in
 // the order the error message presents them. A slice rather than a map so the
-// message is deterministic; membership is a linear scan over six entries.
+// message is deterministic; membership is a linear scan over seven entries.
 var retryCauses = []string{
 	CauseNonzeroExit,
 	CauseRunError,
+	CauseTimeout,
 	CauseOutputError,
 	CauseBudgetExceeded,
 	CauseVerifyFailed,

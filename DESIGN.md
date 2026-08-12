@@ -596,7 +596,7 @@ other and starts cold on the same terms — a `handoff: session` node does not
 resume its parent there either, and the row that prices it says so — and the
 `failed/` file it was seeded from is removed once that execution passes, so the
 directory never holds a losing reply beside a winning artifact. The causes are a closed set — `nonzero_exit`,
-`run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
+`run_error`, `timeout`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
 produces and silently mean "never retry". A **negative `max`** is refused at
@@ -605,6 +605,23 @@ when it is positive, so `max: -1` is discarded and the node runs once — the
 identical quiet non-retry, from a value no author can have meant. `max: 0` is
 legal and untouched: it IS the extra-attempt count a node declaring no retry
 already has.
+
+`timeout` is the newest of the seven and is **not** part of `run_error`
+(ADR 0024). A node killed by its own bound — the `timeout:` it declared, or the
+runner's 20-minute default — used to be classified as a run error alongside a
+spawn that never started, so one token covered two failures that want opposite
+policies: a failed spawn is worth an immediate cheap re-attempt, while a timeout
+is the one failure that always burns its *whole* budget before dying, so
+retrying it costs another full bound. The engine does not decide which of those
+you have, because it cannot: a timed-out node is either a slow machine or an
+instruction that cannot finish at any timeout, and nothing in the error tells
+them apart. It gives the token; `retry: { max: 1, on: [timeout] }` is the
+author's opt-in, and a graph that says nothing retries nothing, exactly as
+before. The boundary is whose clock ran out: only a deadline the runner minted
+for THIS node earns the token (a `*runner.NodeTimeoutError`), while a deadline
+inherited from the run's own context stays `run_error` — retrying inside an
+already-expired context would burn every attempt against a deadline that has
+passed.
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
@@ -1138,7 +1155,7 @@ uses (`internal/childenv`), asserted by its own unit test.
 `Predicate: "verify"` and a detail carrying the exit code and a truncated tail of
 the command's output — so the ledger says *why*, not just *that*. The retry
 cause token is `verify_failed`, joining `nonzero_exit` / `result_mismatch` /
-`output_error` / `run_error` / `budget_exceeded` — the full closed set of
+`output_error` / `run_error` / `timeout` / `budget_exceeded` — the full closed set of
 `graph.Cause*` constants `retry.on` accepts — so
 `retry: { max: 1, on: [verify_failed] }` works.
 A verification that times out or cannot spawn is a node failure, never a silent

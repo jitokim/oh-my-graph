@@ -922,7 +922,7 @@ nodes:
     prompt: a
     retry:
       max: 1
-      on: [nonzero_exit, run_error, output_error, budget_exceeded, verify_failed, result_mismatch]
+      on: [nonzero_exit, run_error, timeout, output_error, budget_exceeded, verify_failed, result_mismatch]
 `))
 	if err != nil {
 		t.Fatalf("all valid retry causes must be accepted: %v", err)
