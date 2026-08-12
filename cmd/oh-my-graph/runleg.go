@@ -39,7 +39,15 @@ type runLeg struct {
 	// release gives the flock back. Held rather than deferred, because this
 	// leg's lifetime is not lexical.
 	release func() error
-	closed  bool
+	// announced says this leg wrote its OWN opening event (beginPlanning).
+	// Only such a leg may be closed WITH an outcome: a run_finished that no
+	// run_started precedes is not a closed leg, it is damage in the stream, and
+	// the readers say exactly that (runfeed.Leg.Started, runstatus.Spoken). A
+	// leg handed to the scheduler instead is announced and closed by the
+	// scheduler, on the stream, and this flag stays false because nothing here
+	// wrote either event.
+	announced bool
+	closed    bool
 }
 
 // openRunLeg takes the run's lock and opens its event stream, creating the run
@@ -82,6 +90,7 @@ func (l *runLeg) beginPlanning() error {
 	if err := l.feed.Emit(runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning}); err != nil {
 		return fmt.Errorf("open the run's planning phase: %w", err)
 	}
+	l.announced = true
 	return nil
 }
 
@@ -96,6 +105,12 @@ func (l *runLeg) beginPlanning() error {
 // run_finished. Passing runfeed.OutcomeFailed is what the sweep does for a leg
 // that got no closing event at all.
 //
+// An outcome is emitted only for a leg that ANNOUNCED itself, so the sweep can
+// be deferred over a leg whose opening event is not its own without asking
+// which: a run whose stream the scheduler never opened is closed by leaving it
+// silent, which is what it is, rather than by a lone run_finished that no
+// reader would call a leg.
+//
 // It is IDEMPOTENT, and nil-safe, and both are load-bearing rather than
 // defensive: the happy path's close and the deferred close-if-open sweep
 // compose without the sweep needing to know what happened, and a caller that
@@ -107,7 +122,7 @@ func (l *runLeg) Close(outcome string) error {
 	l.closed = true
 
 	var firstErr error
-	if outcome != "" {
+	if outcome != "" && l.announced {
 		if err := l.feed.Emit(runfeed.Event{Type: runfeed.EventRunFinished, Outcome: outcome}); err != nil {
 			firstErr = err
 		}

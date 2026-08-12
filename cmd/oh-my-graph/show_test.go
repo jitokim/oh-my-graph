@@ -126,11 +126,13 @@ func TestShowRun_UnknownRunID(t *testing.T) {
 // (TestShowRun_UnknownRunID).
 func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		events     []runfeed.Event
-		lock       string
-		wantStatus string
-		wantReason string
+		name        string
+		events      []runfeed.Event
+		lock        string
+		rejected    bool
+		wantStatus  string
+		wantReason  string
+		wantMissing string
 	}{
 		{
 			name:       "inside the planner call",
@@ -146,8 +148,24 @@ func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
 				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
 			},
 			lock:       "free",
+			rejected:   true,
 			wantStatus: "FAIL",
 			wantReason: "rejected.json",
+		},
+		{
+			// The other settled-without-a-snapshot shape, and the reason the
+			// sentence above is conditional: a leg swept closed before the
+			// recorder's first write reads FAIL too, and there is no rejected
+			// spec in its directory to point at.
+			name: "a settled failure that refused no plan",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+			},
+			lock:        "free",
+			wantStatus:  "FAIL",
+			wantReason:  "no node ever settled",
+			wantMissing: "rejected.json",
 		},
 		{
 			name:       "a planner call whose process died",
@@ -161,6 +179,11 @@ func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
 			root := t.TempDir()
 			dir := filepath.Join(root, "run-x")
 			writeEventFixture(t, dir, "run-x", tc.events)
+			if tc.rejected {
+				if err := os.WriteFile(filepath.Join(dir, rejectedSpecFileName), []byte(`{"name":"x"}`), 0o600); err != nil {
+					t.Fatalf("write rejected spec: %v", err)
+				}
+			}
 			switch tc.lock {
 			case "held":
 				liveLegLock(t, dir)
@@ -175,6 +198,9 @@ func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
 			got := out.String()
 			if !strings.Contains(got, "Run run-x — "+tc.wantStatus) {
 				t.Errorf("want the %s status line:\n%s", tc.wantStatus, got)
+			}
+			if tc.wantMissing != "" && strings.Contains(got, tc.wantMissing) {
+				t.Errorf("the explanation names %q, but no such file is in this directory:\n%s", tc.wantMissing, got)
 			}
 			if !strings.Contains(got, tc.wantReason) {
 				t.Errorf("the missing record must be explained (%q):\n%s", tc.wantReason, got)

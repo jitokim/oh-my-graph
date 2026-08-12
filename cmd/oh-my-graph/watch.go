@@ -67,7 +67,13 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	// error below, and a stream this binary refuses to read is Follow's — so an
 	// unanswerable probe simply falls through to the tail, which is the
 	// pre-ADR-0015 behaviour.
-	if status, err := runstatus.Of(runDir); err == nil {
+	// Gather, not Of, for the reason `runs list` and `show` use it: a directory
+	// whose stream has said nothing has no status to announce (runstatus.Spoken,
+	// ADR 0023 §2.1.1), and here it is also about to be the unknown-run error
+	// below — an announced FAIL one line above "unknown run" would be two
+	// answers about one directory.
+	if facts, err := runstatus.Gather(runDir); err == nil && runstatus.Spoken(facts) {
+		status := runstatus.Probe(runDir, facts)
 		if status == runstatus.Abandoned {
 			fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
 			return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
@@ -118,6 +124,14 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 func formatEvent(e runfeed.Event) string {
 	switch e.Type {
 	case runfeed.EventRunStarted:
+		// The phase, when the event carries one, because an auto run opens TWO
+		// legs on one stream — the planner call's and the scheduler's — and
+		// without it a watcher sees the same line twice with nothing to say why,
+		// on the one live human view of the stream. The PLANNING→RUNNING
+		// transition is the whole of what ADR 0023 made visible.
+		if e.Phase != "" {
+			return fmt.Sprintf("▶ run started (%s)", e.Phase)
+		}
 		return "▶ run started"
 	case runfeed.EventNodeStarted:
 		return fmt.Sprintf("▶ %s  running…", e.NodeID)

@@ -31,7 +31,10 @@ import (
 // beyond node artifacts: the resumable snapshot and the concurrent-resume
 // guard.
 const (
-	stateFileName = "state.json"
+	// Both names are runstate's, for the same reason: the package that writes
+	// the snapshot and takes the lock owns what they are called, and a
+	// hand-spelled copy here is one more place the contract can drift.
+	stateFileName = runstate.SnapshotFileName
 	// lockFileName is runstate's, not this package's: since ADR 0015 §3 the
 	// lock file is contract surface, and the package that takes and probes it
 	// owns its name.

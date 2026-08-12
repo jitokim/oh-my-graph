@@ -150,6 +150,7 @@ func buildCard(runsRoot, runID string) runCard {
 	// TestBuildCard_AgreesWithTheSharedRule judges it against runstatus.Of.
 	facts := runstatus.Facts{
 		OpenLeg:     walked.started != "" && walked.ended == "",
+		AnyLeg:      walked.started != "",
 		Phase:       walked.phase,
 		LastOutcome: walked.lastOutcome,
 	}
@@ -223,7 +224,13 @@ func buildCard(runsRoot, runID string) runCard {
 	// settledness-keyed guard would leave every refused plan's card reading
 	// `pending` forever — a card that says a run is about to start, about a run
 	// that ended before it began.
-	if walked.started != "" || len(states) > 0 || facts.HasSnapshot {
+	//
+	// The question is runstatus.Spoken's rather than this file's, so `runs list`
+	// and `show` ask exactly the same one: while this card held the guard alone
+	// they read FAIL for a directory the dashboard called `pending`. The node
+	// states stay as a local second disjunct — this walk sees them and Facts
+	// does not — and they can only widen the answer, never narrow it.
+	if runstatus.Spoken(facts) || len(states) > 0 {
 		card.State = runState(status)
 	}
 

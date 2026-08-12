@@ -144,10 +144,11 @@ func (s Status) InFlight() bool {
 	return s == Planning || s == Running
 }
 
-// Facts is everything Derive reads, and every one of them is AFFIRMATIVE: an
-// open leg, a probed lock, a phase field, a run_finished outcome, a snapshot
-// that is there. No status is decided by the absence of a file — the snapshot
-// only ever REFINES Pass (ADR 0023 §2.5).
+// Facts is everything Derive reads — plus AnyLeg, which only Spoken reads —
+// and every one of them is AFFIRMATIVE: an open leg, a probed lock, a phase
+// field, a run_finished outcome, a snapshot that is there. No status is decided
+// by the absence of a file — the snapshot only ever REFINES Pass (ADR 0023
+// §2.5).
 //
 // What is deliberately NOT here is the snapshot's gate.paused_at. PAUSED comes
 // off the stream's outcome, which is the only formulation that covers ADR
@@ -157,6 +158,10 @@ type Facts struct {
 	// OpenLeg is runfeed.Leg.Open — the stream's own answer, never restated
 	// here.
 	OpenLeg bool
+	// AnyLeg is runfeed.Leg.Started: a run_started has been seen at all. It is
+	// the ONE field Derive does not read — Spoken does, to answer whether this
+	// directory has a status to derive in the first place.
+	AnyLeg bool
 	// Phase is the latest run_started's phase (runfeed.PhasePlanning or empty).
 	// Read only when OpenLeg.
 	Phase string
@@ -232,8 +237,36 @@ func Probe(runDir string, f Facts) Status {
 	return Derive(f, runstate.ProbeLock(filepath.Join(runDir, runstate.LockFileName)))
 }
 
-// Of is Probe for a caller that has not read the directory yet: it gathers the
-// facts and composes them.
+// Spoken reports whether the run directory has said ANYTHING about itself yet.
+//
+// It is not a seventh status and it is not derived from one: ADR 0023 §2.1.1
+// names one cell of the table that has NO status — a directory whose stream has
+// said nothing at all, which is the window between AcquireLock creating it and
+// the first event reaching the file, and is permanent for a directory whose
+// stream could never be created. Derive answers Fail there, because Derive is
+// total and something has to come out of its default arm, and every surface
+// that renders a word must therefore ask this first.
+//
+// It exists as a shared predicate rather than as a guard each surface writes
+// because it WAS one: the dashboard held it and the two CLI surfaces did not,
+// so one directory read `pending` on the card and FAIL in the table — surfaces
+// disagreeing about the same bytes, which is the condition this package exists
+// to end. Each surface still renders it in the vocabulary it already has for
+// "not known yet" (the card's `pending`, the table's "-", the omitted word in
+// `show`'s header); what they share is the question.
+//
+// Like every fact here it is AFFIRMATIVE: a run_started that was actually
+// written, or a snapshot that is there — a pre-runfeed directory has no stream
+// at all and has still spoken. A lone run_finished is neither: a close with no
+// open before it is damage rather than a leg, and it leaves the directory as
+// silent as it found it.
+func Spoken(f Facts) bool {
+	return f.AnyLeg || f.HasSnapshot
+}
+
+// Gather reads the two files a run directory persists and returns what they
+// say, for a caller that needs more than the word — Spoken above is not
+// recoverable from a Status, and a surface that renders a status must ask both.
 //
 // The error contract is the distinction ADR 0023 §2.1.1 turns on — the ABSENCE
 // of a file is a fact about the run, while the UNREADABILITY of one is a fact
@@ -242,19 +275,19 @@ func Probe(runDir string, f Facts) Status {
 // stream this binary refuses to read, a corrupt snapshot, or graph bytes that
 // will not parse all are: the caller decides what that means, and only that
 // second kind may make a row disappear.
-func Of(runDir string) (Status, error) {
+func Gather(runDir string) (Facts, error) {
 	leg, err := runfeed.LastLeg(filepath.Join(runDir, runfeed.FileName))
 	if err != nil {
-		return 0, err
+		return Facts{}, err
 	}
-	facts := Facts{OpenLeg: leg.Open, Phase: leg.Phase, LastOutcome: leg.LastOutcome}
+	facts := Facts{OpenLeg: leg.Open, AnyLeg: leg.Started, Phase: leg.Phase, LastOutcome: leg.LastOutcome}
 
 	snap, err := runstate.Load(filepath.Join(runDir, runstate.SnapshotFileName))
 	switch {
 	case err == nil:
 		g, parseErr := graph.Parse(snap.Graph)
 		if parseErr != nil {
-			return 0, fmt.Errorf("reconstruct graph: %w", parseErr)
+			return Facts{}, fmt.Errorf("reconstruct graph: %w", parseErr)
 		}
 		facts.HasSnapshot = true
 		facts.CompletedNodes = len(snap.CompletedNodes())
@@ -265,6 +298,17 @@ func Of(runDir string) (Status, error) {
 		// its absence never means damage — and since ADR 0023 §3 a refused
 		// plan settles without one for good.
 	default:
+		return Facts{}, err
+	}
+	return facts, nil
+}
+
+// Of is Probe for a caller that has not read the directory yet: it gathers the
+// facts and composes them. A caller that also renders the word asks Gather
+// itself, so it can put Spoken's question before the status.
+func Of(runDir string) (Status, error) {
+	facts, err := Gather(runDir)
+	if err != nil {
 		return 0, err
 	}
 	return Probe(runDir, facts), nil

@@ -419,13 +419,16 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 				if err != nil {
 					t.Fatalf("runstatus.Of returned error: %v", err)
 				}
-				facts := runstatus.Facts{OpenLeg: derived, Phase: walked.phase, LastOutcome: walked.lastOutcome}
+				facts := runstatus.Facts{OpenLeg: derived, AnyLeg: walked.started != "", Phase: walked.phase, LastOutcome: walked.lastOutcome}
 				if probed := runstatus.Probe(dir, facts); probed != shared {
 					t.Errorf("the card's composition = %v, want the shared rule's %v", probed, shared)
 				}
 
 				card := buildCard(root, "run-1")
 				want := wantState[shared]
+				// Spelled out here rather than borrowed from runstatus.Spoken:
+				// this test is what judges the card against the shared rule, so
+				// it states the rule independently.
 				spoken := walked.started != "" || len(walked.states) > 0
 				if !spoken {
 					// The one affirmative exception: a directory whose stream

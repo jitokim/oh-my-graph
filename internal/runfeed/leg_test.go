@@ -215,3 +215,47 @@ func TestEvent_PhaseIsAdditiveAndOmitted(t *testing.T) {
 		t.Errorf("a planning run_started encodes as %s, want a phase:planning key", line)
 	}
 }
+
+// TestLastLeg_StartedSeparatesASilentStreamFromAClosedLeg pins the fact the
+// status layer's "has this directory said anything" question rests on
+// (runstatus.Spoken). Open answers whether the LAST leg is still open; Started
+// answers whether there was ever a leg — and the two disagree on exactly the
+// stream that is damage: a run_finished with no run_started before it, which
+// the contract does not call a closed leg.
+func TestLastLeg_StartedSeparatesASilentStreamFromAClosedLeg(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		events      []Event
+		wantStarted bool
+	}{
+		{name: "an empty stream", wantStarted: false},
+		{
+			name:        "a close with no open before it",
+			events:      []Event{{Type: EventRunFinished, Outcome: OutcomePassed}},
+			wantStarted: false,
+		},
+		{
+			name:        "an open leg",
+			events:      []Event{{Type: EventRunStarted}},
+			wantStarted: true,
+		},
+		{
+			name: "a leg that opened and closed",
+			events: []Event{
+				{Type: EventRunStarted, Phase: PhasePlanning},
+				{Type: EventRunFinished, Outcome: OutcomeFailed},
+			},
+			wantStarted: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leg, err := LastLeg(writeStream(t, tc.events...))
+			if err != nil {
+				t.Fatalf("LastLeg: %v", err)
+			}
+			if leg.Started != tc.wantStarted {
+				t.Errorf("Started = %v, want %v (leg = %+v)", leg.Started, tc.wantStarted, leg)
+			}
+		})
+	}
+}

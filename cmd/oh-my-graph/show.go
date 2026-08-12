@@ -58,8 +58,15 @@ func showRun(w io.Writer, runDir, runID string) error {
 	// dashboard, `watch` or ResolveRun about the same directory. An
 	// unanswerable one (an unreadable stream or a corrupt snapshot) is reported
 	// below by the reader that actually needs the bytes, so this one stays
-	// silent rather than printing the same damage twice.
-	status, statusErr := runstatus.Of(runDir)
+	// silent rather than printing the same damage twice. Gather rather than Of
+	// because this surface renders the WORD, and a directory whose stream has
+	// said nothing has no word to render (runstatus.Spoken, ADR 0023 §2.1.1).
+	facts, statusErr := runstatus.Gather(runDir)
+	var status runstatus.Status
+	spoken := false
+	if statusErr == nil {
+		status, spoken = runstatus.Probe(runDir, facts), runstatus.Spoken(facts)
+	}
 
 	statePath := filepath.Join(runDir, stateFileName)
 	snap, err := runstate.Load(statePath)
@@ -68,22 +75,29 @@ func showRun(w io.Writer, runDir, runID string) error {
 			if statusErr != nil {
 				return fmt.Errorf("read run %q: %w", runID, statusErr)
 			}
-			fmt.Fprintf(w, "Run %s — %s\n", runID, status)
-			fmt.Fprintf(w, "No per-node record yet: %s\n", noRecordReason(status))
+			if word := statusWord(status, spoken, statusErr); word != "" {
+				fmt.Fprintf(w, "Run %s — %s\n", runID, word)
+			} else {
+				fmt.Fprintf(w, "Run %s\n", runID)
+			}
+			fmt.Fprintf(w, "No per-node record yet: %s\n", noRecordReason(status, spoken, runDir))
 			return nil
 		}
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
-	printRunDetail(w, runID, statusWord(status, statusErr), showRecords(snap))
+	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap))
 	return nil
 }
 
-// statusWord is the status for `show`'s header, or "" when the derivation could
-// not answer — in which case the header simply omits it, because the reader
-// that needed those bytes reports the damage itself and one directory should
-// not produce two complaints.
-func statusWord(status runstatus.Status, err error) string {
-	if err != nil {
+// statusWord is the status for `show`'s header, or "" when there is none to
+// print — in which case the header simply omits it. There are two such cases
+// and they are different in kind: the derivation could not ANSWER (an
+// unreadable stream or a corrupt snapshot), in which case the reader that
+// needed those bytes reports the damage itself and one directory should not
+// produce two complaints; or the directory has said NOTHING yet, which has no
+// status at all rather than a status this command failed to obtain.
+func statusWord(status runstatus.Status, spoken bool, err error) string {
+	if err != nil || !spoken {
 		return ""
 	}
 	return status.String()
@@ -94,14 +108,26 @@ func statusWord(status runstatus.Status, err error) string {
 // asked in the present tense. Without it the line reads as damage, which is
 // exactly the misreading ADR 0023 §2.5 spends itself preventing: a missing
 // snapshot is normal at three of the six statuses and permanent at one.
-func noRecordReason(status runstatus.Status) string {
+//
+// The FAIL arm asks the directory rather than asserting: a refused plan does
+// keep its rejected.json there (§3.1), but it is not the only settled run
+// without a snapshot — a leg swept closed before the recorder's first write
+// lands here too, with no rejected spec to point at, and pointing at a file
+// that is not there is worse than saying less.
+func noRecordReason(status runstatus.Status, spoken bool, runDir string) string {
+	if !spoken {
+		return "nothing has been written to this run's event stream yet, so it has no status either — the directory is created when the run takes its lock, an instant before its first event"
+	}
 	switch status {
 	case runstatus.Planning:
 		return "this run is still inside its planner call, so it has no graph yet"
 	case runstatus.Abandoned:
 		return "its leg died before any node settled, so there is nothing to resume from — run the graph again"
 	case runstatus.Fail:
-		return "no node ever settled — for a run that ends here, its planner call was refused and the spec it rejected is kept as rejected.json in this directory"
+		if _, err := os.Stat(filepath.Join(runDir, rejectedSpecFileName)); err == nil {
+			return "no node ever settled: this run's planner call was refused, and the spec it rejected is kept as " + rejectedSpecFileName + " in this directory"
+		}
+		return "no node ever settled — the run ended before its first node did"
 	default:
 		return "the snapshot is written after a node's first terminal verdict, and none has landed yet"
 	}

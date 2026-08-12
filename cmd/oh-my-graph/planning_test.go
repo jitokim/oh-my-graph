@@ -471,6 +471,176 @@ func TestPlanAndExecuteCycles_ARefusedCycleLeavesNoOpenLeg(t *testing.T) {
 	}
 }
 
+// TestPlanAndExecute_AFailedSnapshotWriteLeavesNoOpenLeg is the same guarantee
+// on the exit the lexical sweep cannot reach: one INSIDE executeGraph, after
+// the planning run_started is already on disk and before the scheduler has run.
+//
+// The hazard is the sweep's own idempotence turned against it. executeGraph
+// defers a close with an EMPTY outcome, because the scheduler writes this leg's
+// run_finished itself — but an empty close still marks the leg closed, so a
+// return from above the scheduler would close the leg VALUE, write nothing to
+// the stream, and leave planAndExecute's sweep with nothing to do. A clean exit
+// 1 would then read ABANDONED and print the orphaned-`claude` warning about a
+// run that spent nothing.
+func TestPlanAndExecute_AFailedSnapshotWriteLeavesNoOpenLeg(t *testing.T) {
+	isolateRunHome(t)
+
+	// The recorder's first write lands at <run-dir>/state.json through an
+	// atomic temp-file rename, so a DIRECTORY of that name makes WriteInitial
+	// fail — the one infra error that returns from executeGraph before
+	// scheduler.Run. Planted from inside the acquire, which is where the run
+	// directory comes into existence.
+	previous := acquireRunLock
+	t.Cleanup(func() { acquireRunLock = previous })
+	acquireRunLock = func(path string) (func() error, error) {
+		release, err := previous(path)
+		if err != nil {
+			return nil, err
+		}
+		if mkErr := os.Mkdir(filepath.Join(filepath.Dir(path), stateFileName), 0o700); mkErr != nil {
+			release()
+			return nil, mkErr
+		}
+		return release, nil
+	}
+
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1": {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+	out, err := runPlanAndExecute(t, fake, singleCycle, nil)
+	if err == nil {
+		t.Fatal("a snapshot that cannot be written must fail the run")
+	}
+
+	// The planted obstacle has done its job. It comes out before anything is
+	// asserted, so the directory is judged as a reader would find it — a
+	// state.json that is a DIRECTORY is unreadable, and an unreadable file is a
+	// fact about the reader, which is a different channel entirely (§2.1.1).
+	dir := soleRunDir(t)
+	if rmErr := os.Remove(filepath.Join(dir, stateFileName)); rmErr != nil {
+		t.Fatalf("remove the planted obstacle: %v", rmErr)
+	}
+
+	status, statusErr := runstatus.Of(dir)
+	if statusErr != nil {
+		t.Fatalf("runstatus.Of: %v", statusErr)
+	}
+	if status != runstatus.Fail {
+		t.Errorf("the run reads %v, want %v — the leg the scheduler never opened must still be closed on the stream", status, runstatus.Fail)
+	}
+
+	var listed, warned strings.Builder
+	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+		t.Fatalf("listRuns: %v", listErr)
+	}
+	for _, text := range []string{out, listed.String()} {
+		if strings.Contains(text, runstatus.OrphanWarning) {
+			t.Errorf("a clean exit must not raise the orphaned-subprocess alarm:\n%s", text)
+		}
+	}
+}
+
+// TestExecuteGraph_AFailedSnapshotClosesTheLegWithoutInventingOne is the other
+// half of the sweep above, on the shape `run` has and `auto` does not: a leg
+// this function opened ITSELF, whose stream nothing has written to yet because
+// the scheduler was never reached.
+//
+// The sweep must not emit an outcome there. A run_finished that no run_started
+// precedes is not a closed leg — the readers call it damage and refuse to count
+// it (runfeed.Leg.Started) — so a sweep that emitted unconditionally would trade
+// a false ABANDONED for a false leg. Leaving the stream silent is the honest
+// close, and it is what runLeg.announced decides.
+func TestExecuteGraph_AFailedSnapshotClosesTheLegWithoutInventingOne(t *testing.T) {
+	isolateRunHome(t)
+	runID := "run-no-snapshot"
+	dir := runDirFor(runID)
+	// The same planted obstacle: a DIRECTORY where the snapshot goes, so the
+	// recorder's first write fails before the scheduler runs.
+	if err := os.MkdirAll(filepath.Join(dir, stateFileName), 0o700); err != nil {
+		t.Fatalf("plant the obstacle: %v", err)
+	}
+
+	g := mustParse(t, `{"name":"no-snapshot","nodes":[{"id":"a","prompt":"a"}]}`)
+	err := executeGraph(context.Background(), runID, g, runner.NewFakeRunner(map[string]runner.NodeOutcome{}),
+		commonRunFlags{inputs: inputFlag{}}, nil, 0, "no-snapshot.yaml", []byte("name: no-snapshot\n"), false, nil, nil, nil)
+	if err == nil {
+		t.Fatal("a snapshot that cannot be written must fail the run")
+	}
+	if rmErr := os.Remove(filepath.Join(dir, stateFileName)); rmErr != nil {
+		t.Fatalf("remove the planted obstacle: %v", rmErr)
+	}
+
+	leg, legErr := runfeed.LastLeg(filepath.Join(dir, runfeed.FileName))
+	if legErr != nil {
+		t.Fatalf("read the stream: %v", legErr)
+	}
+	if leg.Started || leg.Open || leg.LastOutcome != "" {
+		t.Errorf("the stream says %+v, want silence — nothing opened this leg, so nothing may close it", leg)
+	}
+	status, statusErr := runstatus.Of(dir)
+	if statusErr != nil {
+		t.Fatalf("runstatus.Of: %v", statusErr)
+	}
+	if status == runstatus.Abandoned {
+		t.Error("a clean exit must not read ABANDONED")
+	}
+}
+
+// TestSurfaces_ADirectoryThatHasSaidNothingHasNoStatus is ADR 0023 §2.1.1's
+// one statusless cell, judged where it was NOT held: the run lock creates the
+// directory before the first event reaches the file, and a directory whose
+// stream could never be created stays that way for good.
+//
+// Derive is total, so its default arm answers FAIL there. The dashboard has
+// always guarded that with `pending`; the CLI surfaces did not, so one
+// directory read `pending` on the card and a confident FAIL in the table —
+// surfaces disagreeing about the same bytes, which is the condition
+// internal/runstatus exists to end. The question is runstatus.Spoken's now, and
+// each surface answers it in the vocabulary it already has for "not known yet".
+func TestSurfaces_ADirectoryThatHasSaidNothingHasNoStatus(t *testing.T) {
+	isolateRunHome(t)
+	dir := runDirFor("run-silent")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("create the run directory: %v", err)
+	}
+
+	var listed, warned strings.Builder
+	if err := listRuns(&listed, &warned, runsRoot()); err != nil {
+		t.Fatalf("listRuns: %v", err)
+	}
+	row := listed.String()
+	if !strings.Contains(row, "run-silent") {
+		t.Fatalf("the directory is a fact and keeps its row:\n%s", row)
+	}
+	if strings.Contains(row, "FAIL") {
+		t.Errorf("a directory that has said nothing has no status, least of all a verdict:\n%s", row)
+	}
+
+	var shown strings.Builder
+	if err := showRun(&shown, dir, "run-silent"); err != nil {
+		t.Fatalf("showRun: %v", err)
+	}
+	if strings.Contains(shown.String(), "FAIL") {
+		t.Errorf("`show` must not print a status this directory does not have:\n%s", shown.String())
+	}
+	if !strings.Contains(shown.String(), "event stream") {
+		t.Errorf("`show` must say why there is nothing to report:\n%s", shown.String())
+	}
+
+	// `watch` announces the status it is heading toward before the first event.
+	// Here there is none, and the very next thing it says is that the run is
+	// unknown — two answers about one directory would be one too many.
+	var watched, watchWarn strings.Builder
+	watchErr := watchRun(context.Background(), &watched, &watchWarn, dir, "run-silent", testPoll)
+	if watchErr == nil || !strings.Contains(watchErr.Error(), "unknown run") {
+		t.Errorf("watch on a stream-less directory = %v, want the unknown-run error", watchErr)
+	}
+	if strings.Contains(watched.String(), "FAIL") {
+		t.Errorf("watch must not announce a status before refusing the run:\n%s", watched.String())
+	}
+}
+
 // TestPlanAndExecuteCycles_EveryCyclesPlanningPhaseIsVisible pins that PLANNING
 // is not a single-cycle privilege. Without the per-cycle hook the status would
 // exist for `auto` and not for `auto --max-cycles 3`, and a status that depends

@@ -32,6 +32,10 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
   run after the fact used to say nothing at all about it being paused, and a
   run directory that exists but has no snapshot is no longer reported as an
   unknown run.
+- **`watch` names the phase a leg opened in.** An auto run's stream carries two
+  `run_started`s, and both used to render as `▶ run started` with nothing to say
+  why — so the `PLANNING`→`RUNNING` transition was invisible on the one live
+  human view of the stream.
 
 ### Changed
 
@@ -54,6 +58,12 @@ closing [#163](https://github.com/jitokim/oh-my-graph/issues/163).
   `PAUSED` and `ABANDONED` are not verdicts, and leaving them under that header
   would keep the conflation in the one place a user reads it. A `PAUSED` row
   carries its resume command under the table, beside the `ABANDONED` hint.
+- **A run directory that has said nothing yet has no status on any surface.**
+  The lock creates the directory an instant before the first event reaches the
+  file, and a directory whose stream could never be created stays that way for
+  good. The dashboard has always kept `pending` there; `runs list` prints `-`
+  and `show` omits the word, instead of the confident `FAIL` the derivation's
+  default arm would otherwise have given them.
 - **A declined `chat` plan no longer manufactures a corrupt run.** The spec save
   moved after the `[y/N]`: answering `n` used to leave a `runs/<id>/` holding a
   `graph.json` and no `state.json`, which `runs list` reported as

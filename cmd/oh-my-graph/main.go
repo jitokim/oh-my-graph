@@ -654,11 +654,6 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// a LOCK_EX against an fd this process already holds and fail with
 	// LockHeldError (ADR 0015 §1's measured table).
 	//
-	// The close is deferred with an EMPTY outcome, and that is deliberate: the
-	// scheduler writes this leg's run_finished itself, so emitting another here
-	// would close one leg twice. A leg the scheduler never closed (an infra
-	// error before it ran) therefore stays open and reads ABANDONED once the
-	// process exits — today's behaviour, unchanged.
 	if leg == nil {
 		opened, err := openRunLeg(runID)
 		if err != nil {
@@ -666,7 +661,20 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		}
 		leg = opened
 	}
-	defer leg.Close("")
+	// The sweep for the exits BELOW this line and ABOVE the scheduler — today,
+	// a snapshot that cannot be written. It is registered FIRST so LIFO runs it
+	// LAST, after the empty close below has had its say, and Close's idempotence
+	// makes it a no-op on every path that reaches the scheduler.
+	//
+	// Without it this function is a hole in ADR 0023 §2.7's guarantee, and the
+	// hole is on the auto path the sweep exists for: an auto run's PLANNING
+	// run_started is already on disk when it gets here, so returning through a
+	// bare `defer leg.Close("")` would close the leg VALUE without closing the
+	// leg on the STREAM — and, having marked it closed, would disarm
+	// planAndExecute's own sweep. The directory would then read ABANDONED after
+	// a clean exit 1 and print runstatus.OrphanWarning: a false double-spend
+	// alarm, which is precisely what §2.7 closes by construction.
+	defer leg.Close(runfeed.OutcomeFailed)
 
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
@@ -683,6 +691,15 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	if err := recorder.WriteInitial(); err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
+
+	// From here the leg belongs to the scheduler: it writes this leg's own
+	// run_finished, so the close below carries an EMPTY outcome — emitting
+	// another would close one leg twice. Registered after the sweep above, so
+	// LIFO runs this one first and the sweep sees an already-closed leg. It sits
+	// below the recorder rather than beside `scheduler.Run` so the teardown
+	// order is unchanged: the live view registered after it still stops before
+	// the leg gives the lock back.
+	defer leg.Close("")
 
 	// The worktree manager is per-run: nodes declaring `worktree:` get their
 	// managed checkouts under this run's directory, created off the invocation

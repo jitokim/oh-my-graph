@@ -261,3 +261,20 @@ func TestMainExitCode_WatchUnknownRunIsNonZero(t *testing.T) {
 		t.Errorf("watch of an unknown run must exit 1, got %d", code)
 	}
 }
+
+// TestFormatEvent_APlanningLegSaysWhichPhaseItOpened pins the one line that
+// makes ADR 0023's transition visible on the live human view of the stream. An
+// auto run opens TWO legs on one stream — the planner call's and the
+// scheduler's — so without the phase a watcher sees "run started" twice with
+// nothing to say why, and the PLANNING→RUNNING transition happens invisibly.
+func TestFormatEvent_APlanningLegSaysWhichPhaseItOpened(t *testing.T) {
+	planning := formatEvent(runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning})
+	if !strings.Contains(planning, runfeed.PhasePlanning) {
+		t.Errorf("a planning leg's opening line = %q, want it to name the phase", planning)
+	}
+	// A scheduler leg carries no phase and its line is unchanged: every
+	// hand-written run's stream still reads exactly as before.
+	if plain := formatEvent(runfeed.Event{Type: runfeed.EventRunStarted}); plain != "▶ run started" {
+		t.Errorf("an untagged leg's opening line = %q, want it unchanged", plain)
+	}
+}

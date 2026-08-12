@@ -410,6 +410,13 @@ to pause).
       stream had before: a refused plan. A consumer that assumes a failed leg
       names a failed node has to stop assuming it.
 
+  Two shapes are NOT legs and oh-my-graph's own readers decline to count them,
+  which a consumer matching its views should do too: a run directory whose
+  stream is absent or empty has said nothing at all — it exists because the run
+  took its lock, an instant before its first event — and a `run_finished` with
+  no `run_started` before it is damage rather than a closed leg. Neither has a
+  status; oh-my-graph renders both as "not known yet" rather than as failed.
+
   A reader that simply ignores the unknown field still improves: it sees a leg
   that opens at planning and closes once, so "the last leg is open" reports the
   run in flight for the whole planner call, where it previously saw no run

@@ -164,6 +164,19 @@ way that is wrong.
 the directory and the first event reaching the file. It is not `FAIL`; the
 dashboard keeps `pending` there, on that affirmative fact (§2.5).
 
+*Amended after round 2:* the question is `runstatus.Spoken(Facts)`, shared by
+every surface that renders a word, and not a guard the dashboard holds alone.
+`Derive` is total, so its default arm answers `FAIL` for that cell; while only
+`card.go` guarded it, one directory read `pending` on the card and a confident
+`FAIL` in `runs list` — surfaces disagreeing about the same bytes, which is what
+this package exists to end. `Spoken` is affirmative like every other fact (a
+`run_started` that was written, or a snapshot that is there — a *lone*
+`run_finished` is a close with no open before it, which is damage, not a leg),
+and it stays OUT of `Derive`: it is the question of whether there is a status to
+derive, not one of the six. Each surface then renders it in the vocabulary it
+already has for "not known yet" — the card's `pending`, the `-` that `runs
+list`'s three other columns already use, and `show`'s omitted word.
+
 **An unreadable snapshot or a refused stream is NOT a seventh status value.** It
 is a failure to read the directory, and the surfaces keep the channels they have
 for it: `WARNING`+skip in `runs list`, `stateUnknown` on the card. The
@@ -536,6 +549,27 @@ defers a close-if-still-open over the *entire* `RunGoal` call.**
 instead of one" — understated this. It is **one open and three exits, one of them
 in another package**, and the reason it is nevertheless safe is the sweep, not
 diligence at each exit.
+
+*Amended after round 2, which found the one exit the sweep could not reach:
+`executeGraph`'s own.* The sweep is disarmed by the very idempotence it relies
+on. `executeGraph` defers `Close("")` — empty, because the scheduler writes this
+leg's `run_finished` itself — and an empty close still marks the leg CLOSED, so
+a return from above the scheduler (a `state.json` that cannot be written) closed
+the leg *value* without closing the leg on the *stream* and left the outer sweep
+with nothing to do. The auto path's `run_started` is already on disk at that
+point, so the directory read `ABANDONED` after a clean exit 1: exactly the false
+alarm this section closes "by construction rather than accepted". Two rules
+restore it:
+
+- **The empty close is registered BELOW the recorder's first write**, so every
+  exit above it is still the sweep's; and `executeGraph` defers its own
+  `Close("failed")` above that, so the guarantee does not depend on which caller
+  it was reached from.
+- **An outcome is emitted only for a leg that announced ITSELF** (`beginPlanning`).
+  A `run` opens its leg here and the scheduler is what announces it, so a sweep
+  that emitted unconditionally would replace a false `ABANDONED` with a lone
+  `run_finished` — a close with no open before it, which §2.1.1 calls damage
+  rather than a leg. Leaving that stream silent is the honest close.
 
 ## 3. The open question, decided: `--plan-only` stays out of `runs/`
 
@@ -1055,3 +1089,25 @@ genuinely cannot tell a gate pause from a session-limit pause without asking the
 snapshot's gate block — which §9 forbids as the re-entry point for the §1.2
 defect. Naming the wrong one costs a command that refuses itself; naming neither
 costs the reader the whole row.
+
+## 13. Review round 2 (2026-08-13) — a code review of the implementation
+
+The first review of the *code* rather than of this document. Seven findings; six
+applied, one rejected. The three that changed behaviour are recorded above where
+they belong (§2.1.1, §2.7) rather than only here.
+
+| # | finding | disposition |
+|---|---|---|
+| 1 | **`executeGraph`'s `defer leg.Close("")` disarmed §2.7's sweep.** An infra failure before the scheduler (`WriteInitial`) closed the leg value, wrote nothing to the stream, and made the outer sweep a no-op — a clean exit 1 reading `ABANDONED` and printing the orphan warning. | **Applied**, and §2.7 amended: the empty close moves below the recorder, `executeGraph` defers its own failed-close above it, and an outcome is emitted only for a leg that announced itself. `TestPlanAndExecute_AFailedSnapshotWriteLeavesNoOpenLeg` reproduces the false alarm against the pre-fix code; `TestExecuteGraph_AFailedSnapshotClosesTheLegWithoutInventingOne` pins the second rule. |
+| 2 | **The "stream has said nothing" cell read `FAIL` everywhere except the dashboard**, permanently for a directory whose stream could not be created. | **Applied** as `runstatus.Spoken`, shared by `runs list`, `show`, `watch` and the card; §2.1.1 amended. The fact it rests on is new (`runfeed.Leg.Started`), because a lone `run_finished` must not count as having spoken. |
+| 3 | **`show` asserted a `rejected.json` that need not exist**: every settled snapshot-less `FAIL` got the refused-plan sentence, including the shape finding 1 produces. | **Applied**: the arm asks the directory. The fixture that asserted the unconditional sentence now writes the file, and a second case pins the `FAIL` that refused no plan. |
+| 4 | **`runs list` and `show` read the snapshot and re-parse the graph twice** (once inside `Of`, once for the graph name and the per-node costs). | **Rejected, with the cost written at the call site.** De-duplicating it means either a third hand-composition of the rule in the CLI — `card.go`'s exists only for the dashboard's per-tick hot path and is pinned by an agreement test — or turning `runstatus` into a loader that hands back a snapshot and a graph. One shared rule is worth a second read on a command that runs once per invocation. |
+| 5 | **`watch` rendered both of an auto run's `run_started`s as `▶ run started`**, so the `PLANNING`→`RUNNING` transition was invisible on the one live human view of the stream. | **Applied**: the line names the phase when the event carries one; an untagged leg's line is unchanged. |
+| 6 | **`card.go` re-implements `runfeed.Leg`'s facts** off its one walk. | **Kept, deliberately** — the walk is the dashboard's hot path and `TestBuildCard_AgreesWithTheSharedRule` judges it against `runstatus.Of` on every fixture. A `Leg.Apply(Event)` reducer folded by both is the better shape and is worth an issue, not this branch. |
+| 7 | **`runstate.SnapshotFileName` had not replaced the spellings it was added for** (`resume.go`, `serve/serve.go` each declared their own `"state.json"`). | **Applied**: both now alias the constant, as `lockFileName` already did. |
+
+The review also confirmed, against the code, that `Derive` is the only
+composition (`runs list`'s and the card's verdict logic are deleted, not moved),
+that `ABANDONED`/`PAUSED` collapse into `FAIL` on none of the six surfaces, that
+the exit-code mapping is untouched, and that `--plan-only` mints no run id at any
+point.

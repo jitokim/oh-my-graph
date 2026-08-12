@@ -113,6 +113,13 @@ type Leg struct {
 	// by a run_finished. It says nothing about the process that opened it —
 	// that half is the run lock's, composed in internal/runstatus.
 	Open bool
+	// Started says a run_started has been seen AT ALL, open or since closed. It
+	// is the fact that separates a stream which has said nothing from one whose
+	// leg is merely over, which is not a status question but the question of
+	// whether there is a status to ask for (runstatus.Spoken, ADR 0023 §2.1.1).
+	// A lone run_finished does not set it: a close with no open before it is
+	// damage, not a leg.
+	Started bool
 	// Phase is the LAST run_started's Phase: PhasePlanning while the planner
 	// call runs, empty for a scheduler leg. The transition between them is
 	// affirmative in BOTH directions — "the latest run_started says planning"
@@ -137,6 +144,7 @@ func LastLeg(path string) (Leg, error) {
 		switch event.Type {
 		case EventRunStarted:
 			leg.Open = true
+			leg.Started = true
 			leg.Phase = event.Phase
 		case EventRunFinished:
 			leg.Open = false

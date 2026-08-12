@@ -587,3 +587,48 @@ func requireLiveness(t *testing.T, got, want runstate.Liveness) {
 		t.Fatalf("ProbeLock over the fixture lock = %v, want %v", got, want)
 	}
 }
+
+// TestSpoken_IsTheQuestionBeforeTheStatus pins ADR 0023 §2.1.1's one statusless
+// cell. Derive is total, so it answers Fail for a directory that has said
+// nothing — which is right for the derivation and wrong for a reader, and while
+// only the dashboard guarded it one directory read `pending` on the card and
+// FAIL in `runs list`. The predicate is affirmative like every other fact here,
+// and a lone run_finished is not one of them: a close with no open before it is
+// damage, not a leg.
+func TestSpoken_IsTheQuestionBeforeTheStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		facts Facts
+		want  bool
+	}{
+		{name: "a directory whose stream has said nothing", facts: Facts{}, want: false},
+		{
+			name:  "a lone run_finished: damage, not a leg",
+			facts: Facts{LastOutcome: runfeed.OutcomePassed},
+			want:  false,
+		},
+		{name: "an open leg", facts: Facts{OpenLeg: true, AnyLeg: true}, want: true},
+		{
+			name:  "a leg that has closed",
+			facts: Facts{AnyLeg: true, LastOutcome: runfeed.OutcomeFailed},
+			want:  true,
+		},
+		{
+			name:  "a pre-runfeed directory: a snapshot and no stream at all",
+			facts: Facts{HasSnapshot: true, TotalNodes: 1, CompletedNodes: 1},
+			want:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Spoken(tc.facts); got != tc.want {
+				t.Errorf("Spoken(%+v) = %v, want %v", tc.facts, got, tc.want)
+			}
+		})
+	}
+
+	// And it is NOT a seventh status: the silent directory still derives one,
+	// which is why every rendering surface has to ask this first.
+	if got := Derive(Facts{}, runstate.LivenessUnknown); got != Fail {
+		t.Errorf("Derive over no facts = %v, want %v — Derive stays total", got, Fail)
+	}
+}

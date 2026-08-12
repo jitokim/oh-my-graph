@@ -1404,6 +1404,16 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   fact about the READER — the `WARNING`+skip row and the `unknown` card. Only
   the second may make a row disappear.
 
+  A third case has no status at all rather than one of the six: a directory
+  whose stream has said NOTHING — the instant between the run taking its lock
+  (which creates the directory) and its first event, and permanently for a
+  directory whose stream could never be created. `Derive` is total, so its
+  default arm would call that `FAIL`; every surface that renders a word asks
+  `runstatus.Spoken` first and falls back to the placeholder it already uses for
+  what is not known yet (`pending` on the card, `-` in the table, an omitted
+  word in `show`). A lone `run_finished` does not count as having spoken: a
+  close with no open before it is damage, not a leg.
+
   `runs list` renders the six words under a `STATUS` header (renamed from
   `VERDICT`, which would have kept the very conflation the enumeration
   removes), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening

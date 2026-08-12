@@ -53,6 +53,11 @@ type runSummary struct {
 	// FAIL for a run paused at its gate, and again for one paused on the
 	// session limit. There is now one value, and this column prints it.
 	status runstatus.Status
+	// spoken is runstatus.Spoken: false only for a directory whose stream has
+	// said nothing at all, which has no status to print (ADR 0023 §2.1.1). The
+	// row still exists — the directory is a fact — and its STATUS cell carries
+	// the same "-" the columns below use for what is not known yet.
+	spoken bool
 	// hasSnapshot is false for the legitimate snapshot-less rows: a live run
 	// whose first node has not completed yet (state.json is written only after
 	// each node's terminal verdict), one that was abandoned before it ever got
@@ -142,15 +147,23 @@ func listRuns(w, warnW io.Writer, root string) error {
 // verdict, so its ABSENCE never means damage at any status, while a corrupt or
 // schema-incompatible one always does and keeps the WARNING+skip path.
 func summarizeRun(root, runID string) (runSummary, error) {
-	status, err := runstatus.Of(filepath.Join(root, runID))
+	runDir := filepath.Join(root, runID)
+	// Gather rather than Of, because this row renders the WORD: a directory
+	// whose stream has said nothing has no status, and that is a fact only the
+	// facts carry (runstatus.Spoken). The snapshot is then loaded a second time
+	// here for the graph name and the per-node costs, which the derivation does
+	// not carry and this table cannot do without; one shared rule is worth the
+	// second read on a command that runs once.
+	facts, err := runstatus.Gather(runDir)
 	if err != nil {
 		return runSummary{}, err
 	}
+	status, spoken := runstatus.Probe(runDir, facts), runstatus.Spoken(facts)
 
-	snap, err := runstate.Load(filepath.Join(root, runID, stateFileName))
+	snap, err := runstate.Load(filepath.Join(runDir, stateFileName))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return runSummary{runID: runID, status: status}, nil
+			return runSummary{runID: runID, status: status, spoken: spoken}, nil
 		}
 		return runSummary{}, err
 	}
@@ -172,8 +185,23 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		nodeCount:   len(g.Nodes),
 		costUSD:     cost,
 		status:      status,
+		spoken:      spoken,
 		hasSnapshot: true,
 	}, nil
+}
+
+// statusCell is the STATUS column's text: the derived word, or "-" for the one
+// directory that has no status at all — one whose stream has said nothing yet
+// (ADR 0023 §2.1.1). "-" is this table's own placeholder for what is not known
+// yet, already carried by the three columns beside it, so the row stays a row
+// and says only what it knows. Printing the derivation's default arm there
+// instead would put a confident FAIL beside a card the dashboard is rendering
+// as `pending`, about the same bytes.
+func statusCell(row runSummary) string {
+	if !row.spoken {
+		return "-"
+	}
+	return row.status.String()
 }
 
 // printRuns writes the table: a header, one aligned row per run, and a footer
@@ -182,7 +210,8 @@ func summarizeRun(root, runID string) (runSummary, error) {
 // column style mirrors the end-of-run ledger table so the two read as one tool.
 // A snapshot-less row keeps the same column widths with "-" in place of the
 // values it cannot know yet, and counts toward the run count (its cost so far
-// is zero by definition, so the total stays honest).
+// is zero by definition, so the total stays honest). STATUS takes the same "-"
+// for the one directory that has no status either (see statusCell).
 //
 // The header says STATUS and not VERDICT since ADR 0023 §2.6. The whole
 // diagnosis behind that ADR is that liveness and verdict were being conflated,
@@ -209,7 +238,7 @@ func printRuns(w io.Writer, rows []runSummary) {
 			graphName,
 			nodes,
 			cost,
-			row.status,
+			statusCell(row),
 		)
 	}
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 70))
