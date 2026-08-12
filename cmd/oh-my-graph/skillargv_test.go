@@ -656,3 +656,41 @@ func TestRunAutoCapturingArgv_RecordsEveryPlannedNode(t *testing.T) {
 		t.Fatalf("recorded %d node spawns, want 4: %s", len(spawns), fmt.Sprint(got))
 	}
 }
+
+// THE DISCLOSURE, at the layer where it can be wrong: the plan printout has to
+// name the FILE each staged definition came from.
+//
+// "Auto-mapped onto your own Claude Code agents" is a claim about a path on
+// disk, and until measurement (l) nothing on the screen carried the path while
+// `DefaultAgentDirs` also scanned `<cwd>/.claude/agents` — where a repository's
+// committed definition shadowed the user's and became the staged `--agent`, 2
+// of 2 (docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md).
+// The scan scope is what closed that; this line is what makes it checkable per
+// run rather than believed, and it is why StagedAgent.SourcePath exists.
+func TestRunAuto_PlanPrintoutNamesTheStagedAgentSourceFile(t *testing.T) {
+	probe := newArgvProbe(t)
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runAutoWith([]string{"turn the issue into a proposal"},
+			probe.runner(), browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("auto run: %v", err)
+	}
+
+	want := filepath.Join(os.Getenv("HOME"), ".claude", "agents", "code-reviewer.md")
+	if !strings.Contains(out, "staged code-reviewer from "+want) {
+		t.Errorf("the printout does not name the staged definition's source file %q:\n%s", want, out)
+	}
+	// The size and hash travel with it, exactly as the staged skill corpus
+	// prints them: a path alone does not say the bytes were pinned.
+	if !strings.Contains(out, "sha256:") {
+		t.Errorf("the staged agent line carries no hash:\n%s", out)
+	}
+	// And the scan's own scope is stated, because a user whose project agent
+	// stopped mapping has no other way to find out why.
+	if !strings.Contains(out, "Not scanned: ./.claude/agents") {
+		t.Errorf("the printout does not say the repository's agents are out of scope:\n%s", out)
+	}
+}

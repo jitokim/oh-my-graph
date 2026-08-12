@@ -312,9 +312,11 @@ type SkillActivation struct {
 	// user's real skills, so the exclusion costs it little" — is MEASURED FALSE
 	// (2026-08-09, claude 2.1.226, 10 spawns, $2.41,
 	// docs/measurements/0017-agent-mapped-nodes-cannot-invoke-a-skill.md).
-	// applyAgentMapping sets ONLY SettingSources; Tools stays
-	// narrowedToolsFor(node, false), with no Skill, and this loop skips the
-	// node before the line that would add it. Under the real agent-mapped argv
+	// As that measurement ran, applyAgentMapping set ONLY SettingSources and
+	// Tools stayed narrowedToolsFor(node, false), with no Skill — it touches no
+	// tool policy at all today, and the Tools half is unchanged either way — and
+	// this loop skips the node before the line that would add it. Under the
+	// then-real agent-mapped argv
 	// — no --setting-sources flag at all, --agent, --tools Write — a node told
 	// outright to use a planted skill invoked it 0 of 3 times; the same argv
 	// with `Skill` appended to --tools and NOTHING else changed invoked it 3 of

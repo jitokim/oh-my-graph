@@ -175,10 +175,23 @@ has no open issue behind it.
   `is_error: true`. The repository's project `CLAUDE.md` and its **hooks**
   arrive by the same default source list and are **implied, not measured**, in
   both directions.
-  <br>**What is not measured** is in ADR 0022 §7: the staged directory this
-  build writes carries `agents/` and no `skills/`, and the measured one carried
-  both. A directory the CLI declined to load would fail the node loudly — exit
-  1, `--agent 'x' not found` — rather than running it unisolated.
+  <br>**Only your own `~/.claude/agents` is scanned**, and the repository's
+  `./.claude/agents` is not — since 2026-08-12, and this is the sharp edge of
+  the change above. Because the matched definition is *copied* into the node,
+  scanning the repository under work meant a file arriving with a `git clone`
+  could write an unattended node's system prompt: measured, it did, **2 of 2**
+  ([the record](measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+  It never breached the tool ceiling — the class is injection, not escalation —
+  but an agent you keep in a project checkout no longer maps. Move it to
+  `~/.claude/agents`; the plan printout names the source file, size and hash of
+  every definition it stages.
+  <br>**What is not measured**: how many people keep agents in a project
+  directory, so that cut was taken on the surface rather than on a number.
+  ADR 0022 §7's directory-shape acceptance is no longer outstanding — this
+  build's own argv resolved its agent from an `agents/`-only staged directory
+  **3 of 3**, with the directory emptied as the control (exit 1,
+  `--agent 'x' not found`), the out-of-scope command denied **0 of 3** and the
+  in-scope control run **2 of 2**.
 - **Isolation stops at the invocation repository.** `auto` provisions no
   managed worktree anywhere (`cwd:` and `worktree:` are both rejected at plan
   time), and a managed worktree — a hand-written-graph feature,

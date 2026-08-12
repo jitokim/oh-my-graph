@@ -429,6 +429,12 @@ func TestPrintPlan_ShowsAgentMappingsAndSkips(t *testing.T) {
 		"--no-agent-mapping turns all of it off",
 		"--no-agent <name> declines one agent",
 		"every node that agent would have taken",
+		// The scan's scope, on the same screen: a user whose project agent
+		// stopped mapping on 2026-08-12 has no other way to find out why, and
+		// the reason it stopped is the one thing on this screen a repository
+		// could otherwise have written (measurement (l)).
+		"Not scanned: ./.claude/agents",
+		"0022-repo-planted-agent-and-the-agents-only-dir.md",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan printout is missing %q:\n%s", want, got)

@@ -1,9 +1,9 @@
 // Subagent auto-mapping: after a plan has been validated, the coordinator —
 // trusted Go code, never the planner LLM — scans the user's own Claude Code
-// agent definitions (~/.claude/agents/*.md and <cwd>/.claude/agents/*.md,
-// project winning over user on a name collision), parses their frontmatter,
-// and maps planned nodes onto a matching agent by setting the node's `agent:`
-// so it runs under `claude --agent <name>`.
+// agent definitions (~/.claude/agents/*.md, and NOT the repository's — see
+// DefaultAgentDirs), parses their frontmatter, and maps planned nodes onto a
+// matching agent by setting the node's `agent:` so it runs under
+// `claude --agent <name>`.
 //
 // The trust posture mirrors the plan-time field rejections: an unreviewed plan
 // still may not carry `agent:` (validatePlannedNodeAgent stays intact), because
@@ -98,18 +98,41 @@ import (
 )
 
 // DefaultAgentDirs is where the CLI has the coordinator scan for agent
-// definitions: the user's ~/.claude/agents and the invocation directory's
-// .claude/agents, in that order — later wins in scanAgentDirs, so a project
-// agent shadows a user agent of the same name, matching Claude Code's own
-// precedence. A home or cwd that cannot be resolved just drops out of the
-// list (the scan is silent about missing directories anyway).
+// definitions: the user's ~/.claude/agents ONLY. That is the same scope
+// DefaultSkillDirs has always had, and it stopped being the invocation
+// directory's `.claude/agents` too on 2026-08-12, with a measurement behind it.
+//
+// WHY THE PROJECT DIRECTORY IS NOT SCANNED. Until ADR 0022 the project scan was
+// merely the CLI's own precedence copied — a mapped node dropped layer 1 and the
+// CLI would have discovered that file anyway. ADR 0022 changed what a scan hit
+// MEANS: the resolved definition is now COPIED into a `--plugin-dir` this
+// process builds, and that channel is not one `--setting-sources ""` can shut.
+// Measurement (l) ran it: with this directory in the list, a definition
+// committed to the repository under work was staged (its `source_path` is in
+// the plan report) and its system prompt ran the node, 2 of 2
+// (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
+// That is ADR 0012's class — untrusted text becoming instructions an unattended
+// node obeys — reached through configuration, and it is strictly worse than the
+// skill case ADR 0012 cut the project scan for: an agent definition is the
+// node's SYSTEM PROMPT and arrives without the model having to choose it.
+//
+// Cutting the SCAN rather than refusing to STAGE a project-scoped hit is the
+// wider cut on purpose. A project file that is still scanned keeps two levers
+// over a mapped node even if nothing stages it: it shadows a user agent of the
+// same name, and it can create the two-candidate ambiguity that means "no
+// mapping". Both only ever remove capability, and both are still the repository
+// configuring an unattended run.
+//
+// The cost is a real loss: a `<repo>/.claude/agents/reviewer.md` no longer maps.
+// Moving it to ~/.claude/agents restores the mapping, and the plan printout
+// names the source path of every definition it stages.
+//
+// A home that cannot be resolved just drops out (the scan is silent about
+// missing directories anyway).
 func DefaultAgentDirs() []string {
 	var dirs []string
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = append(dirs, filepath.Join(home, ".claude", "agents"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		dirs = append(dirs, filepath.Join(cwd, ".claude", "agents"))
 	}
 	return dirs
 }
@@ -182,7 +205,10 @@ func (t *agentTools) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // scanAgentDirs reads every *.md agent definition under dirs, in order, later
-// directories overwriting earlier ones on a name collision. Every failure —
+// directories overwriting earlier ones on a name collision. The precedence is
+// the function's contract and not a live behaviour any more: DefaultAgentDirs
+// passes exactly one directory, so only a caller that asks for several (tests)
+// can produce a collision. Every failure —
 // a missing directory, an unreadable file, frontmatter that does not parse, a
 // blank or whitespace-carrying name — skips just that much and stays silent:
 // a broken agent file must not break `auto`.

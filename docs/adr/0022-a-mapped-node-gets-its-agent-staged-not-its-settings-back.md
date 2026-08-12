@@ -1,16 +1,22 @@
 # ADR 0022 — A mapped node gets its agent STAGED, not its settings back
 
-- Status: **Accepted for the ceiling and the supply-chain surface; the
-  shipped directory shape has one acceptance measurement outstanding (§7).**
-  `applyAgentMapping` no longer sets `policy.SettingSources = nil`. The matched
-  agent definition is copied into a plugin directory oh-my-graph builds for the
-  run, and the mapped node keeps ADR 0004's ceiling layer 1 at `""` like every
-  other planned node.
+- Status: **Accepted.** `applyAgentMapping` no longer sets
+  `policy.SettingSources = nil`. The matched agent definition is copied into a
+  plugin directory oh-my-graph builds for the run, and the mapped node keeps
+  ADR 0004's ceiling layer 1 at `""` like every other planned node. **Amended
+  2026-08-12 by measurement (l)**: the definition is scanned from
+  `~/.claude/agents` only, because copying a *scanned* definition into the
+  node's `--agent` made the repository under work a supplier of system prompts
+  (§2, `DefaultAgentDirs`); and §7's outstanding acceptance is run.
 - Date: 2026-08-12
 - Issues: [#161](https://github.com/jitokim/oh-my-graph/issues/161)
-- Measurement: `docs/measurements/0017-staged-agent-restores-layer-1.md`
+- Measurements: `docs/measurements/0017-staged-agent-restores-layer-1.md`
   (measurement **(k)** — 28 spawns, $2.4616, claude 2.1.228, macOS, one
-  machine; pre-registered in its own commit before the first spawn).
+  machine; pre-registered in its own commit before the first spawn) and
+  `docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`
+  (measurement **(l)** — 12 spawns, $0.9332, same build and machine; the arm
+  (k)'s own pre-registration made a stopping rule and no arm of (k) could
+  report on).
 - **Amends `0004-auto-mode-tool-ceiling-by-settings-isolation.md`**: E1's
   headline claim, which ADR 0017 §9 and v0.6.0 had to except agent-mapped nodes
   from, applies to them again. ADR 0004's decision text is unchanged and
@@ -85,15 +91,30 @@ K-CEIL  ... the same, + --setting-sources '' + --plugin-dir <staged+agents/>
 resolution is the staged directory's doing; **E2 is re-confirmed at 2.1.228 and
 widened** — under `--setting-sources ""` the CLI's own list of agents it can
 see names five built-ins and *neither the user's nor the repository's*
-directories, so the repository cannot supply a mapped node's system prompt; and
-the failure is **loud** — a node whose agent cannot resolve exits 1 with the
-CLI's complaint, which `runner.NodeOutputError` already surfaces, rather than
-quietly running unmapped.
+directories, so the repository cannot supply a mapped node's system prompt **by
+discovery**; and the failure is **loud** — a node whose agent cannot resolve
+exits 1 with the CLI's complaint, which `runner.NodeOutputError` already
+surfaces, rather than quietly running unmapped.
+
+**Those three words are a correction, and they are the whole of what (l) found.**
+This entry said "cannot supply a mapped node's system prompt" without them, and
+generalized a result about *discovery* to the pipeline that ships. Staging is a
+second channel, and it is one `--setting-sources ""` structurally cannot shut:
+`DefaultAgentDirs` scanned `<cwd>/.claude/agents` too, the project shadowed the
+user, and `applyAgentMapping` copied whatever the scan resolved into the
+`--plugin-dir`. Measurement (l) ran the arm (k)'s own PREREG made a stopping
+rule and no arm of (k) could report on — with the repository's definition
+planted and committed, the marker carried the **REPO** token 2 of 2. The scan
+scope is fixed in the same commit as this correction (`DefaultAgentDirs` is
+`~/.claude/agents` only), and (l)'s `L-FIX` shows the user's definition
+resolving 3 of 3 with the repository's copy still committed in the node's cwd.
+`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`.
 
 All nine of PREREG's conjuncts were met, and none of its five pre-registered
-grounds for keeping `nil` fired — including the two the probe came closest to
-hitting (a repository-supplied *agent* winning the name; a partial pass closing
-the ceiling while leaving the corpus reachable).
+grounds for keeping `nil` fired. Two of them, though, were **not testable by any
+arm (k) ran**, and this ADR read their silence as a pass: a repository-supplied
+*agent* winning the name is the one (l) had to run, and it is why a stopping
+rule needs an arm that can trip it, not only a sentence that describes it.
 
 ## 3. Decision
 
@@ -118,6 +139,17 @@ and leave ceiling layer 1 at `""` on mapped nodes.**
    resolve.** Every mapping that would have applied is recorded as skipped with
    the reason, the node stays an ordinary planned node, and the plan printout
    says so.
+7. **`DefaultAgentDirs` scans `~/.claude/agents` only** (amended 2026-08-12 by
+   (l)). Staging changed what a scan hit means: the resolved file becomes the
+   node's system prompt through a channel `--setting-sources ""` cannot shut, so
+   the scan has to stop where the trust boundary is. It is the scope
+   `DefaultSkillDirs` has always had. Cutting the SCAN and not merely the
+   STAGING is deliberate — a project file that is still scanned can shadow a
+   user agent of the same name, or create the ambiguity that means "no mapping",
+   and both are the repository configuring an unattended run.
+8. **The plan printout names the source path, size and hash of every staged
+   definition.** "Auto-mapped onto your own agents" is a claim about a path on
+   disk; (l) is what it looks like when nothing on the screen carries the path.
 
 **It is its own directory, not the skill corpus's**, for two reasons in order
 of weight: the ADR 0017 §9 exclusion stays, so a mapped node has no `Skill` in
@@ -203,33 +235,44 @@ ADR 0016 §4's verify refusal uses.
   `internal/invariants` still passes.
 - One more per-spawn reconcile (one file), on runs that mapped anything.
 
-## 7. What is NOT measured, and the acceptance this ADR owes
+## 7. What is NOT measured, and the acceptance this ADR owed
 
 - **The shipped directory carries `agents/` and no `skills/`; (k)'s carried
-  both.** (k) built its candidate by *copying* the materialized skill directory
-  and adding `agents/`, because `SkillStaging.Materialize` prunes what its
-  manifest does not name. This implementation instead stages the agent through
-  its own manifest into its own directory — which is what §3 argues for, and
-  which is a directory shape no arm of (k) spawned. The delta is the presence
-  of a `skills/` subtree, and a plugin with any subset of components is
-  ordinary plugin structure; but "ordinary" is not "measured", and ADR 0004
-  already records that `--plugin-dir` behaviour is read off one build and
-  version-coupled. **The acceptance run this ADR owes is one spawn**: a mapped
-  node under this build's own argv, resolving its agent from an
-  `agents/`-only staged directory. Until it is run, the risk is bounded by
-  `K-NEG`'s shape — a directory the CLI declines to load fails the node with
-  exit 1 and the CLI's own complaint, loudly and immediately, rather than
-  silently running it unmapped or unisolated.
-- **Two smaller deltas from the measured argv, enumerated so the list is
-  complete.** The staged plugin is named `oh-my-graph-staged-agents` where the
-  probe's was `oh-my-graph-staged-skills` — (k) resolved the agent by its
-  **bare** name, which is independent of the plugin's, so this is noted rather
-  than suspected; and `--setting-sources`/`--plugin-dir` sit in
-  `runner.buildArgs`' own emission order rather than appended at the end as the
-  probe's replay appended them, which is flag position and not semantics.
-- **One machine, one CLI build (2.1.228), one fixture** for everything in §2.
-  A CLI update could change that a `--plugin-dir` auto-discovers `agents/`; if
-  it does, the failure is loud.
+  both — and that acceptance is now RUN.** (k) built its candidate by *copying*
+  the materialized skill directory and adding `agents/`, because
+  `SkillStaging.Materialize` prunes what its manifest does not name. This
+  implementation instead stages the agent through its own manifest into its own
+  directory — which is what §3 argues for, and which is a directory shape no arm
+  of (k) spawned. **Measurement (l) spawned it**: the recorded argv of this
+  build, pointing at an `agents/`-only directory under the plugin name
+  `oh-my-graph-staged-agents`, resolved `--agent` **3 of 3** (`L-FIX`), with
+  `agents/` removed as the control (`L-NEG`, exit 1) — and, under that same
+  directory, ADR 0004's E1 held **0 of 3** (`L-CEIL`) against a live `Bash`
+  (`L-POS` 2 of 2) and a machine that still breaches under the v0.6.0 argv
+  (`L-REF` 1 of 1). Both of §7's remaining deltas from (k)'s argv — the plugin's
+  name and the flag position — were carried by those spawns rather than reasoned
+  about.
+- **The verify→read window is inherited, and its impact is larger here than for
+  a skill.** `GuardAgentStaging` re-materializes immediately before every spawn,
+  but the scheduler runs ready nodes concurrently: a sibling node can rewrite
+  `agents-plugin/agents/<name>.md` between another node's `Materialize()` and the
+  CLI's read of it. That is `skillstage.go`'s residual, unchanged, and it is
+  bounded the same way — the node still runs under its own unmodified ceiling, so
+  `K-FM-GIT`'s result applies and the class is injection, not escalation. What is
+  *not* the same is what gets injected: a skill body is opt-in and model-chosen,
+  while an agent definition is the system prompt and arrives unasked. §5's resume
+  de-escalation draws exactly that distinction across legs and this does not draw
+  it within one; closing it needs a per-spawn private directory or a serialized
+  materialize, and neither is in this ADR.
+- **One machine, one CLI build (2.1.228), one fixture** for everything in §2 and
+  for (l). A CLI update could change that a `--plugin-dir` auto-discovers
+  `agents/`; if it does, the failure is loud.
+- **A project-scoped agent no longer maps at all**, which is a capability cut and
+  not only a safety one. Nothing measures how many users keep agents in
+  `<repo>/.claude/agents` — the yield ADR 0012 had for the equivalent skill cut
+  does not exist here, and the decision was taken on the surface rather than on a
+  number. Moving the file to `~/.claude/agents` restores the mapping, and the
+  plan printout names the source path of every definition it stages.
 - **Ambiguity and built-in collisions are untested.** (k)'s eight mapped nodes
   all matched one agent. A staged agent named like one of the five built-ins
   `K-NEG` printed (`claude`, `Explore`, `general-purpose`, `Plan`,

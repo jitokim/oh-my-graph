@@ -507,23 +507,35 @@ five graphs and five assessments with nobody watching — the
 governance is the bound you typed, the per-cycle validation, and the printed
 record, not a confirmation prompt.
 
-If you have your own Claude Code agents (`~/.claude/agents`, `./.claude/agents`
-— project wins), `auto` also maps planned nodes onto them when a node's id
+If you have your own Claude Code agents (`~/.claude/agents` — **your own
+directory only**, never the repository's `./.claude/agents`), `auto` also maps
+planned nodes onto them when a node's id
 clearly matches an agent's name — your review node runs as *your*
 `code-reviewer`. The match is deliberately conservative (one clear candidate or
 nothing, and an agent wanting tools beyond the node's planned allowlist is
 skipped with a note), every mapping is shown in the printed plan before
 anything runs, and `--no-agent-mapping` turns it off.
 
+**The project directory was scanned until 2026-08-12, and the reason it stopped
+is worth a sentence.** A matched definition is now *copied* into the run and
+handed to the node as its system prompt, so scanning the repository under work
+meant a file that arrives with a `git clone` could write the instructions an
+unattended node runs under. Measured: it did, 2 of 2
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+Move an agent you want mapped into `~/.claude/agents`; the plan printout names
+the file every staged definition came from, with its size and hash.
+
 **The trade, stated up front and measured rather than described.** A mapped node
 runs as settings-isolated as any other planned node: oh-my-graph copies that
 agent's definition into the run's own directory and hands the node that copy, so
 `--agent` resolves without your settings loading. Its declared scope binds — a
 node declaring `Bash(git *)` cannot run a non-git command even if your settings
-would allow one, measured on 2026-08-12 against the argv this build emits
-([the record](docs/measurements/0017-staged-agent-restores-layer-1.md)): denied
-3 of 3, against 2 of 2 breaches for the argv shipped through v0.6.0, with an
-in-scope control still running. What it costs the node is real and is the other
+would allow one, measured on 2026-08-12 against the argv this build emits —
+staged directory and all
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md),
+following [the one that made the change](docs/measurements/0017-staged-agent-restores-layer-1.md)):
+denied 3 of 3, against a breach for the argv shipped through v0.6.0 on the same
+machine the same hour, with an in-scope control still running 2 of 2. What it costs the node is real and is the other
 half of the same sentence — your `CLAUDE.md`, your hooks, your MCP servers and
 your standing grants are unavailable to it, and it holds no `Skill` tool, so it
 can invoke no skill at all. **Through v0.6.0 a mapped node was the one exception

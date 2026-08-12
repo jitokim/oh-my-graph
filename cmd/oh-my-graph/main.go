@@ -730,7 +730,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 		}
 		fmt.Fprintln(w, line)
 	}
-	noteAgentMappings(w, plan.AgentMappings)
+	noteAgentMappings(w, plan.AgentMappings, plan.AgentStaging)
 	noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
@@ -921,7 +921,17 @@ func noteRejectedPlan(w io.Writer, planID string, err error) error {
 // got what" is not recoverable from a paragraph that names none of them, and a
 // cost stated in full — which is now a real loss of capability rather than a
 // loss of isolation.
-func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
+//
+// EVERY STAGED DEFINITION IS PRINTED WITH THE FILE IT CAME FROM, and that is
+// not decoration. "Auto-mapped onto YOUR OWN agents" is a claim about a path on
+// disk; measurement (l) is what happens when nothing on the screen carries the
+// path — with `<cwd>/.claude/agents` still scanned, the file staged into an
+// unattended node's `--agent` was the repository's, 2 of 2, under a line that
+// said "your own". The scan scope is fixed (DefaultAgentDirs), so the source is
+// a user file again; printing it is what makes that checkable per run rather
+// than believed. The size and hash come along for the same reason the staged
+// skill corpus prints them.
+func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping, staging *coordinator.AgentStaging) {
 	var applied []coordinator.AgentMapping
 	for _, m := range mappings {
 		if m.SkippedReason != "" {
@@ -938,6 +948,12 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 	for _, m := range applied {
 		fmt.Fprintf(w, "    %s runs as your %q — same ceiling as any other planned node, and it\n"+
 			"      holds NO Skill tool\n", m.NodeID, m.Agent)
+	}
+	if staging != nil {
+		for _, a := range staging.Agents() {
+			fmt.Fprintf(w, "    staged %s from %s (%.1f KiB, sha256:%.12s…)\n",
+				a.Name, a.SourcePath, float64(a.Bytes)/1024, a.SHA256)
+		}
 	}
 	fmt.Fprint(w,
 		"  The ceiling BINDS on these nodes, in scope and not only in tool names: none of your\n"+
@@ -956,7 +972,12 @@ func noteAgentMappings(w io.Writer, mappings []coordinator.AgentMapping) {
 			"    leg maps nothing at all and says so.\n"+
 			"  --no-agent-mapping turns all of it off; --no-agent <name> declines one agent and keeps\n"+
 			"    the rest — every node that agent would have taken gets its Skill tool back, and no\n"+
-			"    other node changes.\n",
+			"    other node changes.\n"+
+			"  Not scanned: ./.claude/agents — the repository under work. Since 2026-08-12 only your\n"+
+			"    own ~/.claude/agents is, because a scanned definition is now COPIED into the node's\n"+
+			"    --agent and a repository-committed one measured 2 of 2 as the system prompt that ran\n"+
+			"    (docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md). Move an agent\n"+
+			"    you want mapped to ~/.claude/agents.\n",
 	)
 }
 

@@ -39,6 +39,27 @@ them is true of this build.
   enabled by that repository's own `.claude/settings.json` no longer loads
   either. `CLAUDE.md` and hooks arrive by the same source list and remain
   **implied, not measured**, in both directions.
+- **…and the last way it still could is closed: only `~/.claude/agents` is
+  scanned.** The sentence above was **false for one channel** when it was first
+  written, and the channel was this fix's own: `DefaultAgentDirs` also scanned
+  `<cwd>/.claude/agents`, the project shadowed the user on a name collision, and
+  `applyAgentMapping` copies *whatever the scan resolved* into the node's
+  `--agent` — a path `--setting-sources ""` structurally cannot shut, because
+  oh-my-graph opens it. **Measured, 12 spawns, $0.9332**: with a definition
+  committed to the fixture repository, the system prompt that ran an unattended
+  `dontAsk` node was **the repository's, 2 of 2**; with the scan cut to the
+  user's own directory and that copy still committed in the node's cwd, the
+  definition that resolved was **the user's, 3 of 3**
+  ([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+  It never breached the ceiling — layer 1 was `""` in both arms and the tools
+  stayed bound, so the class is injection, not escalation. **It costs you a
+  feature**: an agent kept in a project checkout no longer maps at all. Move it
+  to `~/.claude/agents`.
+- **The plan printout names the file every staged definition came from**, with
+  its size and SHA-256, and says the repository's `./.claude/agents` is out of
+  scope. "Auto-mapped onto **your own** agents" is a claim about a path on disk,
+  and the measurement above is what it looks like when nothing on the screen
+  carries the path.
 - **What this costs you, plainly:** a mapped node no longer gets your
   `CLAUDE.md`, your hooks, your MCP servers or your standing permission grants.
   It was the one planned node that did. If your agents lean on your environment,
@@ -49,10 +70,14 @@ them is true of this build.
   re-stage a definition from lives in the run directory the previous leg's nodes
   could write. The node runs as an ordinary planned node under the same ceiling,
   without your agent's system prompt.
-- **The plan printout, `README.md`, `SECURITY.md`, `docs/LIMITATIONS.md` and
+- **The plan printout, `README.md`, `README.ko.md`, `SECURITY.md`,
+  `docs/LIMITATIONS.md` and
   `DESIGN.md` are rewritten with the code.** The v0.6.0 warnings are deleted
   rather than softened — a warning kept past its cause is still a false
   disclosure, and `cmd/oh-my-graph/wiring_test.go` asserts their absence.
+  `README.ko.md` was missed on the first pass and carried the v0.6.0 text for
+  one commit; a Korean reader was told their settings enforce a mapped node's
+  scope while the English reader was told the opposite.
 
 ### Not fixed, and not claimed
 
@@ -61,10 +86,19 @@ them is true of this build.
   because a mapped node's settings loaded the repository's skill definitions,
   and they no longer load. It is now **a decision nobody has re-taken**, which
   the plan printout says in those terms.
-- **One acceptance measurement is outstanding** (ADR 0022 §7): the staged
-  directory this build writes carries `agents/` and no `skills/`, while the
-  measured one carried both. A directory the CLI declined to load fails the node
-  loudly — exit 1, `--agent 'x' not found` — rather than running it unisolated.
+- **The acceptance ADR 0022 §7 owed is run.** The staged directory this build
+  writes carries `agents/` and no `skills/`, while the first measurement's
+  carried both; the second measurement spawned this build's own argv against it
+  — `--agent` resolved **3 of 3**, emptying the directory was the control
+  (exit 1, `--agent 'x' not found`), the out-of-scope command was denied
+  **0 of 3** and the in-scope control ran **2 of 2**, against a machine that
+  still breached under the v0.6.0 argv the same hour.
+- **The verify→read window is inherited from skill staging and is wider here.**
+  `GuardAgentStaging` re-materializes before every spawn, but ready nodes run
+  concurrently, so a sibling can rewrite the staged file between another node's
+  check and the CLI's read. The node still runs under its own unmodified
+  ceiling, so this is injection and not escalation — and an agent definition is
+  a system prompt rather than a skill body the model has to choose. ADR 0022 §7.
 
 ## [v0.6.0] - 2026-08-12
 

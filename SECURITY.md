@@ -175,7 +175,25 @@ in-scope `git init` control still ran 2 of 2
 The same measurement re-confirmed and widened E2: under `--setting-sources ""`
 the CLI's own list of agents it can see is five built-ins, and **neither your
 `~/.claude/agents` nor the repository's** — which is why the definition has to
-be staged, and why the repository cannot supply a mapped node's system prompt.
+be staged.
+
+**That is a claim about DISCOVERY, and staging is a second channel.** A sentence
+here said it covered both until 2026-08-12, and it did not: oh-my-graph scanned
+`<cwd>/.claude/agents` as well as your own, a project file shadowed a user file
+of the same name, and *whatever the scan resolved* was what got copied into the
+node's `--plugin-dir` — which `--setting-sources ""` structurally cannot shut.
+**Measured**: with a definition committed to the repository under work, the
+system prompt that ran an unattended `dontAsk` node was the repository's, 2 of 2
+([the record](docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md)).
+It did not breach the ceiling — layer 1 was `""` and the tools stayed bound, so
+the class is injection rather than escalation — but it is the repository
+choosing an unattended node's instructions, which is what this section says it
+prevents. **What closed it is the scan scope**: oh-my-graph reads
+`~/.claude/agents` and nothing else, the same scope it has always used for
+skills. With the repository's copy still committed in the node's own cwd, the
+definition that resolved was yours, 3 of 3. Every staged definition is printed
+before the run with the file it came from, its size and its SHA-256, so this is
+checkable per run rather than taken on trust.
 
 **The repository-configuration surface closed with it.** Loading your settings
 used to mean loading **project** scope too — the `.claude/` of the repository the
@@ -195,10 +213,15 @@ your `CLAUDE.md`, your hooks, your MCP servers or your standing grants — it wa
 the one planned node that did. Every mapping is printed before the run, on the
 node's own line, with that cost named; `--no-agent-mapping` turns mapping off
 run-wide and `--no-agent <name>` declines one agent, and either restores the old
-behaviour for the nodes it frees. The staged directory this build writes carries
-`agents/` and no `skills/`, while the measured one carried both
-(ADR 0022 §7): a directory the CLI declined to load would fail the node with
-exit 1 and the CLI's own complaint, not run it unisolated.
+behaviour for the nodes it frees. An agent kept in the repository's own
+`.claude/agents` no longer maps at all — move it to `~/.claude/agents` if you
+want it — and how many people that costs is not measured; the decision was taken
+on the surface, not on a number. The staged directory this build writes carries
+`agents/` and no `skills/` while the first measurement's carried both, and that
+acceptance is now run: this build's own argv resolved its agent from an
+`agents/`-only directory 3 of 3, denied the out-of-scope command 0 of 3, and ran
+the in-scope control 2 of 2, against a machine that still breached under the
+v0.6.0 argv the same hour.
 
 Still a reduction, not a sandbox. What is **not** covered:
 

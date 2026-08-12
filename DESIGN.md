@@ -336,8 +336,10 @@ the node's own planned `allowed_tools` (the skip and its reason are printed).
 
 **Coordinator auto-mapping (`auto` and chat graph turns).** After a plan
 validates — never before, and never by the planner LLM, which keeps getting its
-`agent:` rejected — trusted code scans `~/.claude/agents` and
-`<cwd>/.claude/agents` (project shadows user) and maps planned nodes onto the
+`agent:` rejected — trusted code scans `~/.claude/agents` — **the user's own
+directory only, never the repository's**, since a scanned definition is now
+copied into the node's `--agent` (ADR 0022 §3.7, measurement (l)) — and maps
+planned nodes onto the
 user's own agents by a deliberately conservative name-token rule: exact token
 or ≥4-rune prefix between node id and agent name, exactly one candidate or
 nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
@@ -1676,7 +1678,8 @@ offending tool.
 
 After validation — and only after — the coordinator may map planned nodes onto
 the user's own Claude Code agents (`internal/coordinator/agentmap.go`): a scan
-of `~/.claude/agents` and `<cwd>/.claude/agents` (project shadows user), a
+of `~/.claude/agents` only — never a project directory, the same cut skill
+staging has always had and for the sharper reason measurement (l) recorded — a
 conservative name-token match between node id and agent name (exactly one
 candidate or nothing), and a refusal to map any agent whose frontmatter tools
 exceed the node's own `allowed_tools`. A mapped node runs `--agent <name>` and
@@ -1924,7 +1927,11 @@ identical arm was **denied 3 of 3** with the refusal named in
 (`docs/measurements/0017-staged-agent-restores-layer-1.md`). That measurement
 re-confirms E2 and widens it: under `--setting-sources ""` the CLI's own list of
 agents it can see is five built-ins and neither the user's nor the repository's
-directories, which is why the definition has to be staged at all.
+directories, which is why the definition has to be staged at all. **Staging is
+then a channel of its own**, and the scan feeding it is `~/.claude/agents` only:
+while it also read `<cwd>/.claude/agents`, a definition committed to the
+repository under work was the one staged, and its system prompt ran the node 2
+of 2 (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,
@@ -2348,8 +2355,19 @@ automated suite stays spawn-free.
   only built-ins survive. **Re-confirmed at claude 2.1.228 on 2026-08-12, and
   widened**: that same list names neither `~/.claude/agents` nor the
   repository's `.claude/agents`, so a repository cannot supply a mapped node's
-  system prompt either
-  (`docs/measurements/0017-staged-agent-restores-layer-1.md`, arm `K-NEG`).
+  system prompt **by discovery**
+  (`docs/measurements/0017-staged-agent-restores-layer-1.md`, arm `K-NEG`;
+  re-run against this build's own argv as (l)'s `L-NEG`, with the repository's
+  definition committed in the node's cwd).
+
+  **Staging is a second channel and this entry does not cover it.** The
+  sentence above said "cannot supply a mapped node's system prompt" without the
+  last two words until 2026-08-12, which generalized a discovery result onto the
+  pipeline that ships: a scanned definition is COPIED into a `--plugin-dir`, and
+  `DefaultAgentDirs` scanned `<cwd>/.claude/agents` with the project shadowing
+  the user. Measured, the repository's definition was the system prompt that ran,
+  2 of 2. The scan is now `~/.claude/agents` only
+  (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
 
   **What E2 does NOT say is that Layer 1 and `agent:` cannot be combined**, and
   that inference — which this entry drew, and which cost the ceiling on every

@@ -274,3 +274,47 @@ func TestPlan_ShortTokenDoesNotMatchByPrefix(t *testing.T) {
 		t.Fatalf("mappings = %+v, want none for a sub-minimum prefix", plan.AgentMappings)
 	}
 }
+
+// DefaultAgentDirs is the only place the real filesystem location enters agent
+// mapping, and since ADR 0022 its shape is the security-relevant half: a
+// scanned definition is COPIED into the node's `--agent` through a --plugin-dir
+// that `--setting-sources ""` cannot shut, so a project directory in this list
+// hands the repository under work the system prompt of an unattended node.
+// Measurement (l) ran exactly that and the marker carried the repository's
+// token 2 of 2
+// (docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md).
+// A later re-append of the project directory must fail here, not ship.
+func TestDefaultAgentDirs_UserAgentsOnlyNeverTheProjectDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dirs := DefaultAgentDirs()
+
+	want := []string{filepath.Join(home, ".claude", "agents")}
+	if len(dirs) != len(want) || dirs[0] != want[0] {
+		t.Fatalf("DefaultAgentDirs() = %v, want exactly %v", dirs, want)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range dirs {
+		if !filepath.IsAbs(dir) {
+			t.Errorf("dir %q is relative — it would resolve against the invocation directory", dir)
+		}
+		if rel, err := filepath.Rel(cwd, dir); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Errorf("dir %q sits under the working directory — the project scan is cut", dir)
+		}
+	}
+}
+
+// An unresolvable home just drops out, and then nothing is scanned at all: a
+// relative ".claude/agents" would resolve against the repository under work,
+// which is the one directory this scan must never reach.
+func TestDefaultAgentDirs_NoHomeScansNothing(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	if dirs := DefaultAgentDirs(); len(dirs) != 0 {
+		t.Fatalf("DefaultAgentDirs() = %v, want none when the home cannot be resolved", dirs)
+	}
+}
