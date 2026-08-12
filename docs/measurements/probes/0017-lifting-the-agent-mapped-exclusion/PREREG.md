@@ -205,3 +205,54 @@ state.** (The 2026-08-09 probe ran 10 spawns for $2.41.)
   layer 5. Untouched; still owed before `Accepted`.
 - **A second machine.** One machine, one CLI version, as every ADR 0017 number
   is.
+
+## Addendum — arm `X-ACT`, registered after the first eighteen spawns
+
+**Written before `X-ACT` is spawned and after the other eighteen have been
+reported, and it says so.** This is a post-hoc arm: it was not in the table
+above, the eighteen spawns are already in `results.jsonl` and already written
+up, and no result below may be read as pre-registered in the same sense as
+theirs. What it keeps of the discipline is the part that still can be kept —
+the arm, the n, the signals and **what each outcome means** are fixed here, in
+their own commit, before the spawn.
+
+**Why.** The write-up sells the shipped remedy (`--no-agent <name>`, and every
+activated node with it) on the claim that a declined node lands in *"exactly
+the `ACT`/`G-ACT` configuration, which held the ceiling and invoked the staged
+skill under an attributable name."* `ACT` ran in **phase A**, where the staged
+copy was the only definition of that name in existence. The collision was never
+run under the activated argv. So "attributable" is measured only where nothing
+competed — and *"nothing competes under layer 1 = `\"\"`"* is the exact class of
+premise this probe just showed cannot be assumed for `nil`.
+
+| arm | phase | base argv | edit | prompt | n |
+|---|---|---|---|---|---|
+| **X-ACT** | B | `render-artifact` (**activated**, `--setting-sources ""`) | `verbatim` | names the skill (bare) | 3 |
+
+`render-artifact` rather than `standalone-render`: the activated ceiling arm's
+prompt is the out-of-scope `touch` and would measure nothing about resolution.
+`render-artifact` is the activated argv `ACT` already ran, so `X-ACT` differs
+from `ACT` in **phase and nothing else** — which is what makes it the collision
+control `X` is to `J`.
+
+**What each outcome means, fixed in advance:**
+
+- **`OMG-J-STAGED`, 3 of 3.** Layer 1 = `""` keeps the repository's
+  project-scope `.claude/skills` and its project-scope plugin out, the staged
+  corpus is the only definition an activated node can resolve, and the remedy
+  claim is measured rather than inferred. The word "inferred" comes out of
+  DESIGN.md, ADR §9 and `skillstage_test.go`.
+- **`OMG-J-REPO` or `OMG-J-UPLUGIN`, any count.** Then `--setting-sources ""`
+  does **not** bound the skill-definition search, the repository under work
+  shadows the staged corpus on the **shipped default path** — every activated
+  node, not just a declined one — and that is a larger finding than (j)'s and
+  strictly worse than the one already reported. It would be written up as such
+  immediately, the remedy sentence would be deleted rather than reworded, and
+  the exclusion's own justification would need re-reading, since the surface
+  would not be agent-mapping's at all.
+- **0 of 3, no marker.** Uninterpretable as a collision result — `ACT` fired 1
+  of 1 on this argv in phase A, so a zero means the fixture or the build moved,
+  and it is reported as a broken control, not as a resolution result.
+
+**Cost:** 3 spawns, ≈$0.8 against the $12 bound of which $3.86 was spent. The
+same three signals, the same `replay.py`, unmodified.
