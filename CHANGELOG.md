@@ -89,8 +89,11 @@ skills by **giving up its agent**.
   settings scope, and arrives with no `--mcp-config` beside it. The plan
   printout, `docs/LIMITATIONS.md` and `SECURITY.md` all say so, and the ceiling
   summary's other clause — "your CLAUDE.md, hooks and MCP servers are
-  unavailable to them" — is now cancelled for mapped nodes instead of standing
-  as a reassurance the argv does not keep.
+  unavailable to them" — is now cancelled for mapped nodes in **two of its three
+  parts**: their CLAUDE.md and hooks ARE available, the repository's included,
+  while **MCP servers stay shut** on the argv's `--strict-mcp-config`. What is
+  retired is a reassurance the argv does not keep, not the MCP guarantee it
+  does.
 
 ### Changed
 
