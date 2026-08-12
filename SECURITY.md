@@ -212,9 +212,12 @@ Still a reduction, not a sandbox. What is **not** covered:
 Dropping your settings also drops your CLAUDE.md, your hooks and your configured
 MCP servers for those nodes. That is the intended direction, but it is a real
 behaviour change: if your `auto` runs depended on an MCP server, they will stop.
-**Agent-mapped nodes are the exception in both directions**: nothing is dropped
-for them, so your CLAUDE.md, hooks and MCP servers — and the repository's —
-do load, and they are correspondingly less isolated, not more.
+**Agent-mapped nodes are the exception in both directions**: no *settings* are
+dropped for them, so your CLAUDE.md and hooks — and the repository's — do load,
+and they are correspondingly less isolated, not more. **Your MCP servers are not
+part of that exception.** Layer 4 is a flag, not a settings scope:
+`--strict-mcp-config` ships on a mapped node's argv too, with no `--mcp-config`
+beside it, so an `auto` run that depended on an MCP server stops there as well.
 
 Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would

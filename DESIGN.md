@@ -1929,9 +1929,13 @@ observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
 MCP servers for planned nodes — a behaviour change that makes planned nodes
 *more isolated and less capable* than they were, which is the intended direction
 but must be stated in the README rather than discovered. **Agent-mapped nodes
-invert that last sentence**: nothing is dropped for them, so the user's
-CLAUDE.md, hooks and MCP servers load — and so does the working repository's
-project scope, which is where the repository-supplied skill above came from.
+invert that last sentence for the SETTINGS half only**: nothing is dropped for
+them, so the user's CLAUDE.md and hooks load — and so does the working
+repository's project scope, which is where the repository-supplied skill above
+came from. Their **MCP servers do not**: layer 4 is a flag rather than a
+settings scope, so `--strict-mcp-config` is on a mapped node's argv exactly as
+on any other planned node's, with no `--mcp-config` beside it (measurement (j),
+`argv/omg-probe-writer.argv.txt`).
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the

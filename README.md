@@ -625,9 +625,11 @@ The tool ceiling does not move for it. Activation-eligible planned nodes still
 load none of your settings, CLAUDE.md, hooks or MCP servers, and a declared
 scope like `Bash(git *)` is still enforced — the only change is that the `Skill`
 tool now exists for them. (An **agent-mapped** node is the other case in every
-one of those clauses, and it was already before ADR 0017: it loads your
-settings, so your CLAUDE.md, hooks and MCP servers *do* reach it, and so does
-the repository's `.claude/` — while its declared scope binds only as far as your
+one of those clauses but the MCP one, and it was already before ADR 0017: it
+loads your settings, so your CLAUDE.md and hooks *do* reach it, and so does
+the repository's `.claude/` — your **MCP servers do not**, because
+`--strict-mcp-config` is a flag on its argv rather than a settings scope and
+arrives with no `--mcp-config` — while its declared scope binds only as far as your
 own settings bind it, measured. It is excluded from activation for that same
 loading, and it holds no `Skill` tool either way. The paragraph above the plan
 printout's ceiling summary says both halves per node; `--no-agent <name>` is the

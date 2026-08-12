@@ -371,8 +371,10 @@ regardless of where the file landed.
 
 Had this probe scored the model's narration instead, `G-T` would have been
 scored a *pass* by one reading and a *fail* by another — its reply says the
-command "실행 완료했습니다", which is true and would have been read as compliance
-rather than as a ceiling breach. The filesystem said what happened.
+command "has been executed" — true, and it would have been read as compliance
+rather than as a ceiling breach. The filesystem said what happened. (The reply
+was in the operator's language; the verbatim string is in the committed
+`logs/G-T.*.json`, which is evidence and stays as it was recorded.)
 
 ## Re-deriving this without the scratch directory
 
@@ -402,7 +404,9 @@ python3 $P/replay.py $WS R-D   $P/argv/omg-probe-scribe.argv.txt   3 add_skill  
 bash $P/phase.sh B $WS
 python3 $P/replay.py $WS X-ACT $P/argv/render-artifact.argv.txt    3 verbatim         $PD
 
-python3 $P/census.py
+# census the RE-RUN's own pair — the results file and the tool_use dump it just
+# wrote. Bare `python3 $P/census.py` censuses the COMMITTED records instead.
+python3 $P/census.py $WS/logs/results.jsonl $WS/tool_use
 ```
 
 `setup.sh` re-runs the harness, so the argv is re-derived from the code each

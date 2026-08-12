@@ -45,6 +45,12 @@ case "$PHASE" in
 esac
 
 git -C "$WS/repo" add -A
-git -C "$WS/repo" commit -qm "phase $PHASE fixture" || true
+# Phase A stages nothing (it plants no skill), and "nothing to commit" is the
+# one commit failure that means the fixture is already correct. Every other one
+# means phase C cannot claim the repository skill arrived in a CHECKOUT, so it
+# has to be fatal rather than swallowed by a blanket `|| true`.
+if ! git -C "$WS/repo" diff --cached --quiet; then
+  git -C "$WS/repo" commit -qm "phase $PHASE fixture"
+fi
 echo "phase $PHASE:"
 find "$WS/repo/.claude" -name SKILL.md -o -name settings.json | sort

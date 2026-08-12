@@ -1090,10 +1090,15 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // merely requested" is this project's headline ceiling claim (ADR 0004, E1),
 // and on 2026-08-12 it was measured FALSE for an agent-mapped node — the one
 // node shape that does load your settings. The other clause, "your CLAUDE.md,
-// hooks and MCP servers are unavailable to them", is a COST, and it is equally
-// untrue there: the same loading that lets --agent resolve hands those nodes
-// the user's CLAUDE.md and hooks, and the repository's, since project scope
-// loads with the rest. Printing the blanket version under a plan that contains
+// hooks and MCP servers are unavailable to them", is a COST, and it is untrue
+// there in two of its three parts: the same loading that lets --agent resolve
+// hands those nodes the user's CLAUDE.md and hooks, and the repository's, since
+// project scope loads with the rest. MCP is the part that survives — layer 4 is
+// a FLAG, not a settings scope, so --strict-mcp-config ships on a mapped node's
+// argv exactly as on any other planned node's, with no --mcp-config beside it,
+// and no MCP server loads for it either. Widening the exception to MCP would
+// understate the surface in the one direction the reader cannot check, so the
+// two are named apart. Printing the blanket version under a plan that contains
 // such a node would overstate the guarantee and understate the surface at
 // once, on the screen where that matters most, so the exception is stated here
 // as well as in noteAgentMappings: this paragraph is the one a reader takes as
@@ -1111,8 +1116,9 @@ func noteCeiling(w io.Writer, mapped bool) {
 				"  lets --agent resolve at all — so BOTH halves of the sentence above are off for them.\n"+
 				"  Their declared scope is enforced only as far as your own settings enforce it (measured,\n"+
 				"  not inferred: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md), and your\n"+
-				"  CLAUDE.md, hooks and MCP servers ARE available to them — as are the repository's own,\n"+
-				"  since project scope loads with the rest. See the per-node lines above.\n",
+				"  CLAUDE.md and hooks ARE available to them — as are the repository's own, since project\n"+
+				"  scope loads with the rest. MCP servers are the one part that stays shut: those nodes\n"+
+				"  still get --strict-mcp-config with no --mcp-config. See the per-node lines above.\n",
 		)
 	}
 }

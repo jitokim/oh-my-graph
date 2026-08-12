@@ -346,8 +346,16 @@ func TestNoteCeiling_NamesTheAgentMappedException(t *testing.T) {
 		// does the repository's project scope. Narrowing only the guarantee
 		// and leaving the reassurance standing is the same half-truth this
 		// commit convicts the retired parenthesis of, one clause over.
-		"CLAUDE.md, hooks and MCP servers ARE available to them",
+		"CLAUDE.md and hooks ARE available to them",
 		"the repository's own",
+		// ...but NOT one clause too far. Layer 4 is a flag, not a settings
+		// scope: --strict-mcp-config is on a mapped node's argv too (see the
+		// measurement's argv/omg-probe-writer.argv.txt) with no --mcp-config
+		// beside it, so its MCP servers stay shut while its CLAUDE.md and
+		// hooks do not. An exception that swept MCP in with them would
+		// overstate the surface in the one direction a reader cannot check.
+		"MCP servers are the one part that stays shut",
+		"--strict-mcp-config with no --mcp-config",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the ceiling summary does not carry the measured exception %q:\n%s", want, got)

@@ -24,8 +24,23 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 . "$HERE/skills.sh"
 
+# $WS is deleted recursively below, and it is whatever the caller typed:
+# `setup.sh "$HOME"` would take the caller's home directory with it. So delete
+# only a workspace this probe owns — one that does not exist yet, or one
+# carrying the marker a previous run of THIS script left in it.
+MARKER=".omg-probe-workspace"
+case "$WS" in
+  "" | / | "$HOME" | "$HOME"/) echo "setup.sh: refusing $WS as a workspace" >&2; exit 2 ;;
+esac
+if [ -e "$WS" ] && [ ! -f "$WS/$MARKER" ]; then
+  echo "setup.sh: $WS exists and carries no $MARKER — refusing to rm -rf a" >&2
+  echo "          directory this probe did not create. Pass a fresh path." >&2
+  exit 2
+fi
+
 rm -rf "$WS"
 mkdir -p "$WS/repo/.claude/agents" "$WS/repo/.claude/skills" "$WS/skills-src" "$WS/logs" "$WS/argv"
+printf 'created by %s\n' "$HERE/setup.sh" >"$WS/$MARKER"
 
 git -C "$WS/repo" init -q
 git -C "$WS/repo" config user.email probe@example.invalid
