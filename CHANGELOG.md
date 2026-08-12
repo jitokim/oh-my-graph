@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.6.1] - 2026-08-12
+
+**Patch because nothing new is typed** — `git diff v0.6.0..HEAD --
+cmd/oh-my-graph/flags.go` registers no flag; the only two lines it touches are
+the help strings of `--no-agent-mapping` and `--no-agent`, rewritten because
+what they decline changed. One merged PR, [#164](https://github.com/jitokim/oh-my-graph/pull/164),
+closing the three findings issue #161 carried.
 
 **Issue #161 is fixed, and the v0.6.0 disclosure below is now WRONG in the
 opposite direction — read this section before you read that one.** v0.6.0 told
@@ -2613,7 +2619,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...HEAD
+[v0.6.1]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...v0.6.0
 [v0.5.5]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/jitokim/oh-my-graph/compare/v0.5.3...v0.5.4
