@@ -1,0 +1,273 @@
+{
+  "activated_node_ids": [
+    "render-artifact",
+    "standalone-render"
+  ],
+  "activation_enabled": true,
+  "agent_mappings": [
+    {
+      "NodeID": "omg-probe-writer",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-scribe",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-housed",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-uponly",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-fmwiden",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-ceiling",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    },
+    {
+      "NodeID": "omg-probe-gitctl",
+      "Agent": "omg-probe-writer",
+      "SkippedReason": ""
+    }
+  ],
+  "excluded_node_ids": [
+    "omg-probe-writer",
+    "omg-probe-scribe",
+    "omg-probe-housed",
+    "omg-probe-uponly",
+    "omg-probe-fmwiden",
+    "omg-probe-ceiling",
+    "omg-probe-gitctl"
+  ],
+  "nodes": {
+    "omg-probe-ceiling": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-ceiling",
+      "disallowed_tools": [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 80,
+      "setting_sources": null,
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-fmwiden": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-fmwiden",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 80,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "omg-probe-gitctl": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-gitctl",
+      "disallowed_tools": [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 80,
+      "setting_sources": null,
+      "tools": [
+        "Bash"
+      ]
+    },
+    "omg-probe-housed": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-housed",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 433,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "omg-probe-scribe": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-scribe",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 358,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "omg-probe-uponly": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-uponly",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 439,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "omg-probe-writer": {
+      "agent": "omg-probe-writer",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/omg-probe-writer",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": null,
+      "prompt_bytes": 439,
+      "setting_sources": null,
+      "tools": [
+        "Write"
+      ]
+    },
+    "render-artifact": {
+      "agent": "",
+      "allowed_tools": [
+        "Write"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/render-artifact",
+      "disallowed_tools": [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": [
+        "/tmp/omg-staged-agent/run/skills-plugin"
+      ],
+      "prompt_bytes": 534,
+      "setting_sources": "",
+      "tools": [
+        "Write",
+        "Skill"
+      ]
+    },
+    "standalone-render": {
+      "agent": "",
+      "allowed_tools": [
+        "Bash(git *)"
+      ],
+      "argv_dir": "/tmp/omg-staged-agent/argv/standalone-render",
+      "disallowed_tools": [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Agent"
+      ],
+      "plugin_dirs": [
+        "/tmp/omg-staged-agent/run/skills-plugin"
+      ],
+      "prompt_bytes": 175,
+      "setting_sources": "",
+      "tools": [
+        "Bash",
+        "Skill"
+      ]
+    }
+  },
+  "plugin_dir": "/tmp/omg-staged-agent/run/skills-plugin",
+  "prompt_notice_bytes": "A corpus of procedures is available through the Skill tool; consult it if one fits this task.",
+  "staged_skills": [
+    "omg-probe-standalone-html"
+  ]
+}
