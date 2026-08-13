@@ -56,10 +56,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   — if the default filter ever changes,
   `TestLintVerifyInlining_TheDefaultFilterIsAPath` fails.
 
-  Advisory, never a load error, for the standing reason: a planned graph cannot
-  reach this at all (`validatePlannedNodeVerify` refuses a planner-authored
-  `verify:`, and `--verify-cmd` is your own string), so only a hand-written
-  graph — the user's own reviewed artifact — can carry it.
+  Advisory, never a load error, for the standing reason: only a person can
+  write what it condemns. `validatePlannedNodeVerify` refuses a
+  planner-authored `verify:`, so the only verification a planned graph carries
+  is the `--verify-cmd` you supplied — advisory-eligible like any other command
+  line, but your own string — and a hand-written `verify:` block is your own
+  reviewed artifact.
 
 ## [v0.7.0] - 2026-08-13
 

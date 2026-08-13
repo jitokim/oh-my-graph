@@ -70,12 +70,14 @@ import (
 // TestLintVerifyInlining_TheDefaultFilterIsAPath fails.
 //
 // It stays a warning rather than a load error for the standing reason every
-// sweep in this package does: a hand-written graph is the user's own reviewed
-// artifact. A planned graph cannot reach this at all —
-// `coordinator.validatePlannedNodeVerify` refuses a planner-authored
-// `verify:`, and the only other way one appears is
-// `coordinator.attachVerifyCommand`, which sets the user's own `--verify-cmd`
-// string verbatim — so an author is the only person who can write this, which
+// sweep in this package does: what it condemns is always a PERSON's own text.
+// A hand-written graph is the user's own reviewed artifact, and a planned graph
+// is no different here — `coordinator.validatePlannedNodeVerify` refuses a
+// planner-authored `verify:`, so the only verification a planned graph can
+// carry is the one `coordinator.attachVerifyCommand` puts on its sinks, which
+// is the user's own `--verify-cmd` string verbatim. That command line is
+// advisory-eligible like any other; what a planned graph cannot do is have a
+// MODEL author one. So an author is the only person who can write this, which
 // is exactly what makes advice the right severity.
 func LintVerifyInlining(g *graph.Graph) []Warning {
 	var warnings []Warning

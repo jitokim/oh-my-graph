@@ -728,10 +728,13 @@ do splice model text are `{{ artifacts.<id> | inline }}` — the node's own repl
 `handoff.LintVerifyInlining` warns on both — in `command` only, since a `cwd`
 becomes `exec.Cmd.Dir` rather than a command line, and in no prompt, where
 inlining is the designed use. It is an advisory, not a load error, for the
-reason every sweep in that package is one: only a hand-written graph can carry
-it (`validatePlannedNodeVerify` refuses a planner-authored `verify:`, and
-`--verify-cmd` is the user's own string), and a hand-written graph is the
-user's own reviewed artifact.
+reason every sweep in that package is one: only a person can write what it
+condemns. A hand-written graph is the user's own reviewed artifact, and a
+planned graph carries no verification a MODEL wrote either —
+`validatePlannedNodeVerify` refuses a planner-authored `verify:`, so the only
+one it can carry is the `--verify-cmd` the user supplied, which is
+advisory-eligible like any other command line but is still the user's own
+string.
 
 ```go
 type SuccessCheck struct {
