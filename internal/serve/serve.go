@@ -79,7 +79,10 @@ import (
 // (which says whether the run is paused at a gate) and the concurrent-leg
 // guard the gate routes take before deciding anything.
 const (
-	stateFileName = "state.json"
+	// Both names are runstate's, for the same reason: the package that writes
+	// the snapshot and takes the lock owns what they are called, and a
+	// hand-spelled copy here is one more place the contract can drift.
+	stateFileName = runstate.SnapshotFileName
 	// The lock's name is runstate's, not this package's: since ADR 0015 §3 it
 	// is contract surface, and the package that takes and probes it owns it.
 	lockFileName = runstate.LockFileName

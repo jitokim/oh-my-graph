@@ -228,7 +228,7 @@ Called out honestly — these are **not** implemented as of v0.6.1:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause
-  filter over the closed cause set `nonzero_exit` / `run_error` /
+  filter over the closed cause set `nonzero_exit` / `run_error` / `timeout` /
   `output_error` / `budget_exceeded` / `verify_failed` / `result_mismatch`.)
 - a terminal TUI — the shipped views are the `serve` web ones (the live view
   of one run, and the multi-run dashboard `serve` renders with no run id) and

@@ -181,6 +181,13 @@ func TestDashboard_APausedRunIsItsOwnState(t *testing.T) {
 	// A run paused at a gate is neither passed nor failed, and it is the one
 	// state an operator most needs to spot on a wall of cards: it is waiting
 	// for them.
+	//
+	// The RUN's token is `paused` since ADR 0023, while the gate NODE keeps
+	// `gate-paused`. They are no longer the same word because they are no
+	// longer the same claim: the node really is sitting at a gate, but the run
+	// might instead have stopped on the subscription's session limit, which has
+	// no gate at all — and the old shared token could only be reached through
+	// the snapshot's gate block, which is why that pause painted red.
 	root := runsRootWith(t, "run-gate")
 	dir := filepath.Join(root, "run-gate")
 	writeSnapshot(t, dir, runstate.Snapshot{
@@ -199,8 +206,8 @@ func TestDashboard_APausedRunIsItsOwnState(t *testing.T) {
 	var cards []runCard
 	getJSON(t, newTestDashboard(root), "/api/cards", &cards)
 	card := cardByID(t, cards, "run-gate")
-	if card.State != stateGatePaused {
-		t.Errorf("card state = %q, want %q", card.State, stateGatePaused)
+	if card.State != statePaused {
+		t.Errorf("card state = %q, want %q", card.State, statePaused)
 	}
 	for _, node := range card.Nodes {
 		if node.ID == "approve" && node.State != stateGatePaused {
@@ -305,18 +312,22 @@ func TestDashboard_AnUnreadableRunIsShownNotDropped(t *testing.T) {
 
 func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 	// The cross-surface agreement test, and the reason ADR 0015 §2 puts the
-	// derivation in one place. Four things are judged against each other on
-	// every fixture, each with a real lock in each of its three conditions:
+	// derivation in one place — judging ALL SIX values since ADR 0023, not just
+	// the liveness half. Four things are judged against each other on every
+	// fixture, each with a real lock in each of its three conditions:
 	//
 	//  1. runfeed.InFlight's own rule (the last leg is open) against the leg
 	//     state buildCard derives inline off the walk it already does — it reads
 	//     the stream ONCE on the dashboard's hot path, which is only safe while
 	//     the two are the same rule;
-	//  2. runstatus.Of (stream + lock, read from a path) against
-	//     runstatus.Probe (the same rule for a caller that already walked);
-	//  3. the card's own state word against that shared answer;
+	//  2. runstatus.Of (every fact, read from a path) against runstatus.Probe
+	//     (the same rule for a caller that already walked and loaded);
+	//  3. the card's own state word against that shared answer, through the
+	//     complete six-value mapping — a new status must be given a colour here
+	//     rather than inheriting one;
 	//  4. ResolveRun's preference against it too — it must prefer an in-flight
-	//     run over a newer settled one, and must NOT prefer an abandoned one.
+	//     run (PLANNING included) over a newer settled one, and must NOT prefer
+	//     an abandoned one.
 	cases := map[string][]runfeed.Event{
 		"no events at all": {},
 		"open leg": {
@@ -345,6 +356,31 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 		"node events only": {
 			{Type: runfeed.EventNodeStarted, NodeID: "a"},
 		},
+		// The three shapes ADR 0023 introduces.
+		"a planner call in progress": {
+			{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+		},
+		"a planner call whose plan committed": {
+			{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+			{Type: runfeed.EventRunStarted},
+		},
+		"a refused plan: a failed leg with zero node events": {
+			{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+		},
+		"a paused leg": {
+			{Type: runfeed.EventRunStarted},
+			{Type: runfeed.EventNodeStarted, NodeID: "a"},
+			{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+		},
+	}
+	wantState := map[runstatus.Status]string{
+		runstatus.Planning:  statePlanning,
+		runstatus.Running:   stateRunning,
+		runstatus.Abandoned: stateAbandoned,
+		runstatus.Paused:    statePaused,
+		runstatus.Pass:      statePassed,
+		runstatus.Fail:      stateFailed,
 	}
 	for name, events := range cases {
 		for _, lock := range []string{"no lock file", "lock held", "lock free"} {
@@ -370,43 +406,42 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 				if err != nil {
 					t.Fatalf("runfeed.InFlight returned error: %v", err)
 				}
-				_, started, ended, err := walkNodeStates(feedPath)
+				walked, err := walkNodeStates(feedPath)
 				if err != nil {
 					t.Fatalf("walkNodeStates returned error: %v", err)
 				}
-				derived := started != "" && ended == ""
-				if derived != openLeg {
-					t.Errorf("derived open leg = %v, want runfeed.InFlight's %v", derived, openLeg)
+				if walked.open != openLeg {
+					t.Errorf("derived open leg = %v, want runfeed.InFlight's %v", walked.open, openLeg)
 				}
 
 				shared, err := runstatus.Of(dir)
 				if err != nil {
 					t.Fatalf("runstatus.Of returned error: %v", err)
 				}
-				if probed := runstatus.Probe(dir, derived); probed != shared {
+				facts := runstatus.Facts{OpenLeg: walked.open, AnyLeg: walked.anyLeg, Phase: walked.phase, LastOutcome: walked.lastOutcome}
+				if probed := runstatus.Probe(dir, facts); probed != shared {
 					t.Errorf("the card's composition = %v, want the shared rule's %v", probed, shared)
 				}
 
 				card := buildCard(root, "run-1")
-				switch shared {
-				case runstatus.InFlight:
-					if card.State != stateRunning {
-						t.Errorf("card state = %q, want %q for an in-flight run", card.State, stateRunning)
-					}
-				case runstatus.Abandoned:
-					if card.State != stateAbandoned {
-						t.Errorf("card state = %q, want %q for an abandoned run", card.State, stateAbandoned)
-					}
-					if card.Hint == "" {
-						t.Error("an abandoned card must carry the recovery hint: the gate button on the page it links to is one click that spends money")
-					}
-				default:
-					if card.State == stateRunning || card.State == stateAbandoned {
-						t.Errorf("card state = %q for a settled run", card.State)
-					}
-					if card.Hint != "" {
-						t.Errorf("only an abandoned run gets a hint, got %q", card.Hint)
-					}
+				want := wantState[shared]
+				// Spelled out here rather than borrowed from runstatus.Spoken:
+				// this test is what judges the card against the shared rule, so
+				// it states the rule independently.
+				spoken := walked.anyLeg || len(walked.states) > 0
+				if !spoken {
+					// The one affirmative exception: a directory whose stream
+					// has said NOTHING — no run_started, no node event — has no
+					// status to paint yet and keeps `pending` (ADR 0023 §2.1.1).
+					// A lone run_finished with no open before it is such a
+					// stream: it is damage, and it is not a leg.
+					want = statePending
+				}
+				if card.State != want {
+					t.Errorf("card state = %q, want %q for a %v run", card.State, want, shared)
+				}
+				if (card.Hint != "") != (shared == runstatus.Abandoned && spoken) {
+					t.Errorf("card hint = %q for a %v run — only an abandoned one carries the recovery sentence", card.Hint, shared)
 				}
 
 				resolved, err := ResolveRun(root, "")
@@ -414,7 +449,7 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 					t.Fatalf("ResolveRun returned error: %v", err)
 				}
 				wantResolved := "run-2" // the newest, the fallback
-				if shared == runstatus.InFlight {
+				if shared.InFlight() {
 					wantResolved = "run-1" // preferred: it is happening right now
 				}
 				if resolved != wantResolved {
@@ -422,6 +457,97 @@ func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestBuildCard_ARefusedPlanRendersAsFailedNotPending is ADR 0023 §2.1.1's
+// regression, on the dashboard's side. A refused plan's directory holds
+// resume.lock, a two-line events.jsonl and rejected.json — no graph.json and no
+// state.json, forever. The card's `pending` guard used to key on "has not
+// settled", and under six values FAIL is settled, so a mechanical rewrite would
+// have left every refused plan reading `pending` for good: a card promising a
+// run is about to start, about a run that ended before it began.
+func TestBuildCard_ARefusedPlanRendersAsFailedNotPending(t *testing.T) {
+	root := runsRootWith(t, "run-refused")
+	dir := filepath.Join(root, "run-refused")
+	writeEvents(t, dir, "run-refused",
+		runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+	)
+	// buildCard never reads this file; it is here so the fixture is the whole
+	// directory shape ADR 0023 §3 describes, and so a future card that DOES
+	// notice a rejected spec is tested against a real one rather than an absence.
+	if err := os.WriteFile(filepath.Join(dir, "rejected.json"), []byte(`{"name":"x"}`), 0o600); err != nil {
+		t.Fatalf("write rejected spec: %v", err)
+	}
+	freeLock(t, dir)
+
+	card := buildCard(root, "run-refused")
+	if card.State != stateFailed {
+		t.Errorf("card state = %q, want %q", card.State, stateFailed)
+	}
+	if card.Error != "" {
+		t.Errorf("a refused plan is not a broken directory, got error %q", card.Error)
+	}
+	if card.Available {
+		t.Error("a refused plan has no graph, so the card must not claim a structure")
+	}
+}
+
+// TestBuildCard_APlanningRunHasACardBeforeItHasAGraph is #163 itself, on the
+// surface the report names. Through the planner call the directory holds
+// resume.lock and a one-line events.jsonl and NOTHING else — no graph.json, no
+// state.json — and it must render as a live card rather than as `pending`,
+// `unknown`, or (as before ADR 0023) no card at all, because no directory
+// existed.
+func TestBuildCard_APlanningRunHasACardBeforeItHasAGraph(t *testing.T) {
+	root := runsRootWith(t, "run-planning")
+	dir := filepath.Join(root, "run-planning")
+	writeEvents(t, dir, "run-planning", runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning})
+	holdLock(t, dir)
+
+	card := buildCard(root, "run-planning")
+	if card.State != statePlanning {
+		t.Errorf("card state = %q, want %q", card.State, statePlanning)
+	}
+	if card.Available || len(card.Nodes) != 0 {
+		t.Errorf("a planning run has no graph yet: Available=%v, %d node(s)", card.Available, len(card.Nodes))
+	}
+	if card.StartedAt == "" {
+		t.Error("a planning card must carry its started_at — the elapsed clock is the whole point of showing it")
+	}
+	if card.Error != "" {
+		t.Errorf("a planning run is not a broken directory, got error %q", card.Error)
+	}
+}
+
+// TestBuildCard_ASessionLimitPauseIsNotRed is the dashboard's half of the defect
+// ADR 0023 §1.2 measures. The card used to ask the snapshot's gate.paused_at
+// whether a run was paused; ADR 0009's session-limit pause has no gate, so it
+// fell through the default arm and painted red, as failed. PAUSED is read off
+// the stream's outcome instead, which covers both pause shapes — this fixture
+// carries no gate anywhere.
+func TestBuildCard_ASessionLimitPauseIsNotRed(t *testing.T) {
+	root := runsRootWith(t, "run-limited")
+	dir := filepath.Join(root, "run-limited")
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-limited",
+		Graph: json.RawMessage(twoNodeGraph),
+		Nodes: map[string]runstate.NodeRecord{
+			"a": {Verdict: runstate.VerdictPass},
+		},
+	})
+	writeEvents(t, dir, "run-limited",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
+	)
+	freeLock(t, dir)
+
+	card := buildCard(root, "run-limited")
+	if card.State != statePaused {
+		t.Errorf("card state = %q, want %q — a session-limited run stopped as designed and is resumable, "+
+			"and above all must not paint %q", card.State, statePaused, stateFailed)
 	}
 }
 

@@ -37,7 +37,7 @@ func pausedGateFlowRun(t *testing.T) (runID string, rec *capturingRunner) {
 	// rawSource is deliberately not valid JSON, forcing executeGraph onto the
 	// json.Marshal(g) path a real `run` (hand-written YAML) takes — the
 	// round-trip this whole feature depends on (internal/graph's json tags).
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the initial run to pause, got %T: %v", err, err)
@@ -139,7 +139,7 @@ func TestResume_RunNotPausedErrors(t *testing.T) {
 	g := mustParse(t, `{"name":"no-gate","nodes":[{"id":"a","prompt":"a"}]}`)
 	rec := &capturingRunner{}
 	runID := "run-complete"
-	if err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "no-gate.yaml", []byte("name: no-gate\n"), false, nil, nil); err != nil {
+	if err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "no-gate.yaml", []byte("name: no-gate\n"), false, nil, nil, nil); err != nil {
 		t.Fatalf("initial run should complete cleanly: %v", err)
 	}
 
@@ -216,7 +216,7 @@ func TestResume_MultipleGatesRequireMultipleResumes(t *testing.T) {
 	rec := &capturingRunner{}
 	runID := "run-multi"
 
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "multi.yaml", []byte("name: multi-gate\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "multi.yaml", []byte("name: multi-gate\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) || paused.GateID != "gate1" {
 		t.Fatalf("expected the initial run to pause at gate1, got %T: %v", err, err)
@@ -400,7 +400,7 @@ func TestResume_WarnsOnBypassPermissions(t *testing.T) {
 		{"id":"ship","prompt":"ship","depends_on":["approve"],"permission_mode":"bypassPermissions"}]}`)
 	rec := &capturingRunner{}
 	runID := "run-bypass"
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "bypass-flow.yaml", []byte("name: bypass-flow\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "bypass-flow.yaml", []byte("name: bypass-flow\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the initial run to pause, got %T: %v", err, err)
@@ -543,7 +543,7 @@ func TestResume_ContinueOnFail_SettledFailedNodeDoesNotRerunOrDoubleRecord(t *te
 
 	err := executeGraph(context.Background(), runID, g, rec,
 		commonRunFlags{inputs: inputFlag{}, continueOnFail: true},
-		nil, 0, "gate-continue.yaml", []byte("name: gate-continue\n"), false, nil, nil)
+		nil, 0, "gate-continue.yaml", []byte("name: gate-continue\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) || paused.GateID != "gate" {
 		t.Fatalf("expected the initial run to pause at gate, got %T: %v", err, err)
@@ -598,7 +598,7 @@ func haltedRetryFlowRun(t *testing.T) (runID string, rec *scriptedRunner) {
 	rec = &scriptedRunner{failFirst: map[string]float64{"flaky": 0.05}}
 	runID = "run-retry"
 
-	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "retry-flow.yaml", []byte("name: retry-flow\n"), false, nil, nil)
+	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "retry-flow.yaml", []byte("name: retry-flow\n"), false, nil, nil, nil)
 	var halted *schedule.HaltError
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected the initial run to halt on flaky, got %T: %v", err, err)
@@ -722,7 +722,7 @@ func TestResume_RetryFailedNothingToRetryExitsCleanly(t *testing.T) {
 	g := mustParse(t, `{"name":"all-pass","nodes":[{"id":"a","prompt":"a"}]}`)
 	rec := &scriptedRunner{}
 	runID := "run-all-pass"
-	if err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "all-pass.yaml", []byte("name: all-pass\n"), false, nil, nil); err != nil {
+	if err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "all-pass.yaml", []byte("name: all-pass\n"), false, nil, nil, nil); err != nil {
 		t.Fatalf("initial run should complete cleanly: %v", err)
 	}
 
@@ -905,7 +905,7 @@ func TestResume_CarriesTheProvenanceQualifierAcrossLegs(t *testing.T) {
 
 	err := executeGraph(context.Background(), runID, g, rec,
 		commonRunFlags{inputs: inputFlag{}},
-		nil, 0, "prov.yaml", []byte("name: prov\n"), false, nil, nil)
+		nil, 0, "prov.yaml", []byte("name: prov\n"), false, nil, nil, nil)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) || paused.GateID != "gate" {
 		t.Fatalf("expected the initial run to pause at gate, got %T: %v", err, err)
@@ -1026,7 +1026,7 @@ func TestResume_RefusesASnapshotBorneVerifyOnAnAutoGraph(t *testing.T) {
 	spec := []byte(`{"name":"auto","nodes":[{"id":"apply","prompt":"apply"},` +
 		`{"id":"check","prompt":"check","depends_on":["apply"]}]}`)
 	err := executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}},
-		policies, 0, "auto.json", spec, false, nil, nil)
+		policies, 0, "auto.json", spec, false, nil, nil, nil)
 	var halted *schedule.HaltError
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected the initial run to halt on check, got %T: %v", err, err)

@@ -191,7 +191,7 @@ Running graph "haiku-smoke" (run 20260729-101532)
 ▶ critique  running…
 ✓ critique  PASS  $0.0034  2.1s
 
-Run 20260729-101532 — 2 node(s)
+Run 20260729-101532 — PASS, 2 node(s)
 NODE             VERDICT              SESSION                   COST(USD)  DETAIL
 ---------------------------------------------------------------------------------
 critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
@@ -417,8 +417,8 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
-| `runs list` | List runs, newest first: graph name, node count, cost, verdict (`PASS`, `FAIL`, `RUNNING`, `ABANDONED`), plus a total. Read-only. |
-| `show <run-id>` | Print one run's per-node ledger (session, cost, verdict, duration) and the total. Read-only. |
+| `runs list` | List runs, newest first: graph name, node count, cost, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. Read-only. |
+| `show <run-id>` | Print one run's status and its per-node ledger (session, cost, verdict, duration) with the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
 | `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
 | `version` | Print the tool version. |
@@ -461,6 +461,23 @@ additionally proves `{{ inputs.* }}` resolution against your actual
 `--input` values. An
 in-flight run shows in `runs list` as `RUNNING` (with `-` placeholders until
 its first snapshot lands).
+
+An `auto` run shows up EARLIER than that: from the moment it starts thinking.
+Its run id is minted before the planner call — a run id names an oh-my-graph
+execution, not the moment a graph starts executing — so the longest single wait
+in the tool shows as **`PLANNING`** in `runs list` and as a live card on the
+dashboard, instead of the silence that made the machine indistinguishable from
+"nothing happened" (#163). If the command dies while the planner is still
+running, before it closes the planning leg, the run reads `ABANDONED` like any
+other dead leg, with the same recovery advice. A planner that returns an error
+normally is not that: its leg is closed with a verdict, and the run reads
+`FAIL`.
+
+And a run that PAUSED says so. A run stopped at an approval gate, or on your
+subscription's session limit, stopped exactly as designed and is resumable — it
+exits 2, not 1 — but every read-back surface used to render it `FAIL`, which is
+the word for work that failed. It now reads **`PAUSED`**, with its resume
+command under the table.
 
 A run whose process died — a closed terminal, a `kill -9`, an OOM — used to
 read `RUNNING` forever, because a killed leg never writes the event that would
@@ -567,8 +584,10 @@ refusals back and buys **one** corrected attempt, held to the identical
 ceiling — no auto-editing of what the model wrote, and no third try. The
 printed price is the sum of both calls and the re-plan is disclosed on its own
 line, with the refusals that caused it. If the corrected reply is refused too,
-the rejected spec is still kept — at `~/.oh-my-graph/plans/<id>/rejected.json`
-— so a paid-for plan is never destroyed by being invalid. It
+the rejected spec is still kept — as `rejected.json`, in the run's own
+directory for `auto` (the run id exists before the planner call, and such a run
+reads `FAIL`) and under `~/.oh-my-graph/plans/<id>/` for `--plan-only`, which
+never mints one — so a paid-for plan is never destroyed by being invalid. It
 previews one cycle by definition — `--plan-only` with `--max-cycles` above 1 is
 rejected at parse, since every cycle after the first is planned from the
 previous cycle's run and so does not exist yet to be shown.
@@ -751,6 +770,14 @@ Beyond the sample, a node can opt into (DESIGN.md is the authoritative spec):
   `handoff: session` retry still starts cold and says so. This is on by default
   and it costs money: up to roughly 2k tokens of quoted reply per retry of a
   judged failure, bounded and flat, never compounding ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0020](docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md)).
+  `retry.on` filters over a closed set of seven causes — `nonzero_exit`,
+  `run_error`, `timeout`, `output_error`, `budget_exceeded`, `verify_failed`,
+  `result_mismatch` — rejected at load if you misspell one. `timeout` is
+  separate from `run_error` on purpose: a node killed by its own bound is the
+  one failure that always spends its whole budget before dying, so retrying it
+  costs another full timeout, and that must be a decision you make rather than
+  one you inherit by asking for spawn-failure retries
+  ([ADR 0024](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md)).
 - **`budget_usd`** — a per-node cost cap, enforced live (`--max-budget-usd`) and
   post-hoc. In a run where any node declares one, a **passing** row's
   `COST(USD)` cell also states the share of that node's budget the spend used —

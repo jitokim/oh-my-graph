@@ -86,6 +86,35 @@ func flattenLines(s string) string {
 
 func (e *NodeOutputError) Unwrap() error { return e.Err }
 
+// NodeTimeoutError is a node that was still working when the bound around it
+// expired — its own declared `timeout:`, or defaultTimeout when it declared
+// none. It is deliberately distinct from every other Run error, for the reason
+// verify.TimeoutError is distinct from a non-zero exit on the other seam: the
+// node reached no verdict, and the ones it is easiest to confuse it with say
+// something else entirely. A spawn failure means the binary never started; a
+// cancellation means something else killed the run. This one means only that we
+// did not wait long enough, and the Scheduler classifies it as graph.CauseTimeout
+// so a graph can retry it — or not — without deciding the others the same way
+// (ADR 0024).
+//
+// It is minted ONLY for a deadline this runner set itself. A deadline inherited
+// from the caller's context is not this node's timeout and stays a plain
+// context error.
+type NodeTimeoutError struct {
+	Timeout time.Duration
+	// Err is the context.DeadlineExceeded that fired, kept reachable through
+	// Unwrap so the Scheduler's existing errors.Is checks (the "killed before
+	// reporting, cost unknown" accounting) read this error exactly as they read
+	// the bare context error it replaced.
+	Err error
+}
+
+func (e *NodeTimeoutError) Error() string {
+	return fmt.Sprintf("claude run: timed out after %s (node timeout)", e.Timeout)
+}
+
+func (e *NodeTimeoutError) Unwrap() error { return e.Err }
+
 // ClaudeCLIRunner runs a node as a real `claude -p ...` subprocess on the user's
 // logged-in subscription. It is one of exactly FOUR objects in oh-my-graph
 // that may spawn a process (the others are verify.ShellVerifier, which runs a
@@ -319,14 +348,24 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 		// halt-cancellation from a genuine run failure.
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			// A deadline this runner minted itself — the parent context is
-			// still live — is the per-node timeout expiring, and the error
-			// says so in the run's own terms (as ShellVerifier's TimeoutError
-			// does on the other seam) instead of surfacing the raw Go
-			// plumbing string "context deadline exceeded" (run
-			// 20260802-062446). It still wraps the sentinel, so the
-			// Scheduler's classification is unchanged.
+			// still live — is the per-node timeout expiring, and it is
+			// returned as its own TYPE (as ShellVerifier's TimeoutError is on
+			// the other seam) rather than as a formatted string wrapping the
+			// sentinel. The message reads in the run's own terms instead of
+			// the raw Go plumbing "context deadline exceeded" (run
+			// 20260802-062446), and the type is what lets the Scheduler
+			// classify it as graph.CauseTimeout instead of lumping it in with
+			// a failed spawn (ADR 0024). It still unwraps to the sentinel, so
+			// every errors.Is check downstream is unchanged.
+			//
+			// `ctx.Err() == nil` reads two clocks at one instant, so a halt
+			// cancelling in the window between this deadline firing and this
+			// line demotes a real timeout to run_error. That direction is the
+			// deliberate one — under-claim the token rather than hand it to a
+			// node the RUN killed — so do not "fix" it by reading the parent
+			// first (ADR 0024 §2.1).
 			if errors.Is(ctxErr, context.DeadlineExceeded) && ctx.Err() == nil {
-				return NodeOutcome{}, fmt.Errorf("claude run: timed out after %s (node timeout): %w", timeout, ctxErr)
+				return NodeOutcome{}, &NodeTimeoutError{Timeout: timeout, Err: ctxErr}
 			}
 			return NodeOutcome{}, fmt.Errorf("claude run: %w", ctxErr)
 		}

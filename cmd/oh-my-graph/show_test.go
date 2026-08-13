@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
@@ -63,8 +64,13 @@ func TestShowRun_RendersPerNodeLedgerAndTotal(t *testing.T) {
 	}
 	got := out.String()
 
-	if !strings.Contains(got, "Run 20260730-000101 — 2 node(s)") {
-		t.Errorf("missing run header:\n%s", got)
+	// The header carries the RUN's status beside the node count since ADR 0023
+	// §2.6. This fixture has no stream at all, so its leg reads closed and its
+	// snapshot has a failed node: FAIL. Before the status line, `show` printed
+	// no run-level answer whatsoever, which is why re-opening a paused run
+	// after the fact told you nothing about it being paused.
+	if !strings.Contains(got, "Run 20260730-000101 — FAIL, 2 node(s)") {
+		t.Errorf("missing run header with its status:\n%s", got)
 	}
 
 	alpha := lineFor(t, got, "alpha")
@@ -108,6 +114,103 @@ func TestShowRun_UnknownRunID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `unknown run "no-such-run"`) {
 		t.Errorf("error does not name the unknown run id: %v", err)
+	}
+}
+
+// TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus is the boundary the
+// unknown-run error moved to in ADR 0023. A run inside its planner call, and a
+// refused plan, both hold a run directory with NO state.json — the first for
+// the length of the longest wait in the tool, the second permanently — so
+// "unknown run" would be a lie about a directory this binary can derive a
+// status for. A MISTYPED id still has no directory, and still gets the error
+// (TestShowRun_UnknownRunID).
+func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		events      []runfeed.Event
+		lock        string
+		rejected    bool
+		wantStatus  string
+		wantReason  string
+		wantMissing string
+	}{
+		{
+			name:       "inside the planner call",
+			events:     []runfeed.Event{{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning}},
+			lock:       "held",
+			wantStatus: "PLANNING",
+			wantReason: "planner call",
+		},
+		{
+			name: "a refused plan",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+			},
+			lock:       "free",
+			rejected:   true,
+			wantStatus: "FAIL",
+			wantReason: "rejected.json",
+		},
+		{
+			// The other settled-without-a-snapshot shape, and the reason the
+			// sentence above is conditional: a leg swept closed before the
+			// recorder's first write reads FAIL too, and there is no rejected
+			// spec in its directory to point at.
+			name: "a settled failure that refused no plan",
+			events: []runfeed.Event{
+				{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+				{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+			},
+			lock:        "free",
+			wantStatus:  "FAIL",
+			wantReason:  "no node ever settled",
+			wantMissing: "rejected.json",
+		},
+		{
+			name:       "a planner call whose process died",
+			events:     []runfeed.Event{{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning}},
+			lock:       "free",
+			wantStatus: "ABANDONED",
+			wantReason: "run the graph again",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "run-x")
+			writeEventFixture(t, dir, "run-x", tc.events)
+			if tc.rejected {
+				if err := os.WriteFile(filepath.Join(dir, rejectedSpecFileName), []byte(`{"name":"x"}`), 0o600); err != nil {
+					t.Fatalf("write rejected spec: %v", err)
+				}
+			}
+			switch tc.lock {
+			case "held":
+				liveLegLock(t, dir)
+			case "free":
+				deadLegLock(t, dir)
+			}
+
+			var out strings.Builder
+			if err := showRun(&out, dir, "run-x"); err != nil {
+				t.Fatalf("showRun on a snapshot-less run directory returned error: %v", err)
+			}
+			got := out.String()
+			if !strings.Contains(got, "Run run-x — "+tc.wantStatus) {
+				t.Errorf("want the %s status line:\n%s", tc.wantStatus, got)
+			}
+			if tc.wantMissing != "" && strings.Contains(got, tc.wantMissing) {
+				t.Errorf("the explanation names %q, but no such file is in this directory:\n%s", tc.wantMissing, got)
+			}
+			if !strings.Contains(got, tc.wantReason) {
+				t.Errorf("the missing record must be explained (%q):\n%s", tc.wantReason, got)
+			}
+			// It must not read as damage: a missing snapshot is a fact about the
+			// run at these statuses, not a broken directory (ADR 0023 §2.5).
+			if strings.Contains(got, "unknown run") {
+				t.Errorf("a derivable run directory must not be called unknown:\n%s", got)
+			}
+		})
 	}
 }
 

@@ -17,6 +17,13 @@ import (
 // for itself.
 const LockFileName = "resume.lock"
 
+// SnapshotFileName is the run directory's snapshot, named here for the same
+// reason LockFileName is: this package writes it and Load reads it, and it is
+// contract surface (docs/RUN-FEED.md). Named since ADR 0023, because the
+// composition layer that derives a run's status now has to open it too, and a
+// third hand-spelled "state.json" is one more place the contract can drift.
+const SnapshotFileName = "state.json"
+
 // LockFormatMarker is the first line of every resume.lock this binary writes,
 // and the only promise the file's contents carry (ADR 0015 §3). It says two
 // things at once, and both are load-bearing:

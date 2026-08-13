@@ -55,11 +55,27 @@ func runWatch(args []string) error {
 // hook, and adding one would push liveness into the pure stream reader — so
 // that one hang remains, and is stated rather than fixed.
 //
-// An unknown run id — no event stream on disk — is a distinct, clearly worded
+// An unknown run id — no run directory on disk — is a distinct, clearly worded
 // error rather than a raw file-not-found, because it is the one failure the
-// user causes by mistyping an id.
+// user causes by mistyping an id. A directory holding a SNAPSHOT but no event
+// stream is a different failure and gets its own refusal: that run is real and
+// `show` can still read it, there is simply nothing to tail.
 func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, poll time.Duration) error {
 	feedPath := filepath.Join(runDir, runfeed.FileName)
+
+	// A run directory holding a SNAPSHOT but NO event stream would otherwise get
+	// two answers about itself one line apart: Spoken is true on the snapshot
+	// alone, so the status line below announces PASS or FAIL, and then Follow's
+	// fs.ErrNotExist renders that very same directory as an unknown run at the
+	// bottom. It is neither — it is a real run, readable with `show`, that
+	// simply has nothing to tail — so it is refused here, before anything is
+	// announced. A directory with neither file is the other case and keeps the
+	// unknown-run error below: it has said nothing, so it has no status to
+	// announce either (runstatus.Spoken, ADR 0023 §2.1.1), and one answer is
+	// exactly what it gets.
+	if _, err := os.Stat(feedPath); errors.Is(err, fs.ErrNotExist) && hasSnapshot(runDir) {
+		return fmt.Errorf("run %q has no event stream at %s: there is nothing to tail — read what it recorded with `oh-my-graph show %s`", runID, feedPath, runID)
+	}
 
 	// The shared derivation (runstatus.Of), so `watch` refuses exactly the runs
 	// `runs list` calls ABANDONED and the dashboard paints abandoned. An error
@@ -67,9 +83,23 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	// error below, and a stream this binary refuses to read is Follow's — so an
 	// unanswerable probe simply falls through to the tail, which is the
 	// pre-ADR-0015 behaviour.
-	if status, err := runstatus.Of(runDir); err == nil && status == runstatus.Abandoned {
-		fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
-		return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
+	// Gather, not Of, for the reason `runs list` and `show` use it: a directory
+	// whose stream has said nothing has no status to announce (runstatus.Spoken,
+	// ADR 0023 §2.1.1), and here it is also about to be the unknown-run error
+	// below — an announced FAIL one line above "unknown run" would be two
+	// answers about one directory.
+	if facts, err := runstatus.Gather(runDir); err == nil && runstatus.Spoken(facts) {
+		status := runstatus.Probe(runDir, facts)
+		if status == runstatus.Abandoned {
+			fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
+			return fmt.Errorf("run %q is abandoned: nothing will ever be appended to its event stream, so there is nothing to tail", runID)
+		}
+		// The word this tail is heading toward, printed before the first event
+		// rather than inferred from what scrolls past (ADR 0023 §2.6). It is
+		// what tells a watcher whether the silence they are about to sit in is
+		// a planner call, a running node, or a stream that is already over —
+		// the three cases that look identical from a tail alone.
+		fmt.Fprintf(w, "run %s is %s\n", runID, status)
 	}
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE
@@ -110,6 +140,15 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 func formatEvent(e runfeed.Event) string {
 	switch e.Type {
 	case runfeed.EventRunStarted:
+		// The phase, when the event carries one, because an auto run opens TWO
+		// legs on one stream — the planner call's and the scheduler's — and
+		// without it a watcher sees the same line twice with nothing to say why.
+		// The run page's feed renders the same phase the same way, for the same
+		// reason. The PLANNING→RUNNING transition is the whole of what ADR 0023
+		// made visible.
+		if e.Phase != "" {
+			return fmt.Sprintf("▶ run started (%s)", e.Phase)
+		}
 		return "▶ run started"
 	case runfeed.EventNodeStarted:
 		return fmt.Sprintf("▶ %s  running…", e.NodeID)

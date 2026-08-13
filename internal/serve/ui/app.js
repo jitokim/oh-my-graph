@@ -490,7 +490,13 @@ function apply(event) {
       refreshRunStatus();
       runStartedMs = Number.isNaN(ts) ? Date.now() : ts;
       runEndedMs = null;
-      setStatus("running", true);
+      // The leg's own phase, not a word this page picks: an auto run's planner
+      // leg carries `planning`, and calling it "running" would have this page
+      // disagree with the dashboard card that links to it about the same bytes
+      // — the disagreement ADR 0023 exists to end. The server composes the
+      // status it can (abandoned, above); a live leg's phase is a fact the
+      // stream itself carries, rendered here the way `watch` renders it.
+      setStatus(event.phase === "planning" ? "planning" : "running", true);
       break;
     case "node_started":
     case "node_retried": {
@@ -664,10 +670,14 @@ function appendFeed(event, ts) {
   switch (event.event) {
     case "run_started": {
       // A slim leg marker; on a resumed run the replay carries one per leg,
-      // so a second marker IS the visible resume seam.
+      // so a second marker IS the visible resume seam. The phase, when the
+      // event carries one, for the reason `watch` prints it too: an auto run
+      // opens TWO legs on one stream, and without it the same line appears
+      // twice with nothing to say why.
       const li = addEntry("marker");
       const label = document.createElement("span");
-      label.textContent = clock ? `run started · ${clock}` : "run started";
+      const word = event.phase ? `run started (${event.phase})` : "run started";
+      label.textContent = clock ? `${word} · ${clock}` : word;
       li.appendChild(label);
       break;
     }

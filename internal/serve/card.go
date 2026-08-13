@@ -21,11 +21,26 @@ import (
 // vocabulary plus the two states a table has no colour for — the pause a run
 // is sitting at, and a run that has not produced anything yet.
 const (
-	stateRunning    = "running"
-	statePassed     = "passed"
-	stateFailed     = "failed"
+	stateRunning = "running"
+	statePassed  = "passed"
+	stateFailed  = "failed"
+	// stateGatePaused is a NODE sitting at its approval gate. It stays exactly
+	// what it was; what changed in ADR 0023 is that a RUN no longer borrows it
+	// (see statePaused).
 	stateGatePaused = "gate-paused"
-	statePending    = "pending"
+	// statePaused is the run-level pause, and it is wider than the node-level
+	// one on purpose: it covers a gate pause AND ADR 0009's session-limit
+	// pause, which has no gate to point at. The card used to key the run's
+	// pause off the snapshot's gate.paused_at, so a session-limited run fell
+	// through to the default arm and painted RED, as failed — the dashboard's
+	// half of the defect ADR 0023 §1.2 measures.
+	statePaused  = "paused"
+	statePending = "pending"
+	// statePlanning is a leg that is open, alive, and inside its planner call —
+	// the window #163 reported as invisible. A card appears for it now, with no
+	// graph to draw yet (there is none), which is why the mini-DAG is empty and
+	// Available is false until the plan commits.
+	statePlanning = "planning"
 	// stateAbandoned is a leg the stream left open whose process is gone
 	// (runstatus.Abandoned) — and, for a node, one that was still running when
 	// that happened. Muted rather than red on the page: nothing failed, and the
@@ -101,12 +116,14 @@ type cardNode struct {
 
 // buildCard derives one run's card from its directory. It reads through the
 // existing readers only — ONE runfeed.Walk for per-node state, the leg
-// boundaries and whether a leg is open, then runstatus.Probe over that answer
-// and the run's lock, plus runstate.Load and graph.Parse for the structure and
-// the cost — so a card can never disagree with `runs list`, `watch`,
-// ResolveRun or the single-run view about the same run. One walk, not two: a
-// card is rebuilt on every tick for every run that changed, so reading the
-// stream twice per card was a doubling the dashboard pays on its hot path.
+// boundaries, the leg's phase and its last outcome, then runstatus.Probe over
+// those facts and the run's lock, plus runstate.Load and graph.Parse for the
+// structure and the cost — so a card can never disagree with `runs list`,
+// `watch`, ResolveRun or the single-run view about the same run. One walk, not
+// two: a card is rebuilt on every tick for every run that changed, so reading
+// the stream twice per card was a doubling the dashboard pays on its hot path.
+// That is also why the status comes through runstatus.Probe rather than
+// runstatus.Of, which would re-read both files this function already has open.
 //
 // It never returns an error: a run directory this binary cannot read becomes
 // a stateUnknown card carrying the reason. The dashboard's job is to show
@@ -116,21 +133,51 @@ func buildCard(runsRoot, runID string) runCard {
 	runDir := filepath.Join(runsRoot, runID)
 	card := runCard{RunID: runID, State: statePending}
 
-	states, started, ended, err := walkNodeStates(filepath.Join(runDir, runfeed.FileName))
+	walked, err := walkNodeStates(filepath.Join(runDir, runfeed.FileName))
 	if err != nil {
 		return brokenCard(runID, err)
 	}
-	card.StartedAt, card.EndedAt = started, ended
-	// runfeed.InFlight's rule — the last leg is still open — read off the walk
-	// above instead of walking the stream a second time. walkNodeStates already
-	// carries the leg state (it clears ended on every run_started and sets it on
-	// every run_finished), and the dashboard rebuilds a card for every changed
-	// run on every tick, so the second read was doubling the I/O on the hot
-	// path. The composition with the lock is NOT re-implemented here, though:
-	// that half goes through runstatus.Probe, the one rule every surface
-	// shares. TestBuildCard_AgreesWithTheSharedRule judges both halves against
-	// runfeed.InFlight and runstatus.Of themselves.
-	status := runstatus.Probe(runDir, started != "" && ended == "")
+	states := walked.states
+	card.StartedAt, card.EndedAt = walked.started, walked.ended
+	// runfeed.LastLeg's three facts — is the last leg open, which phase did it
+	// open in, how did the last one close — read off the walk above instead of
+	// walking the stream a second time. walkNodeStates already carries them (it
+	// clears ended on every run_started and sets it on every run_finished), and
+	// the dashboard rebuilds a card for every changed run on every tick, so the
+	// second read was doubling the I/O on the hot path. The composition itself
+	// is NOT re-implemented here, though: that goes through runstatus.Probe,
+	// the one rule every surface shares.
+	// TestBuildCard_AgreesWithTheSharedRule judges it against runstatus.Of.
+	facts := runstatus.Facts{
+		OpenLeg:     walked.open,
+		AnyLeg:      walked.anyLeg,
+		Phase:       walked.phase,
+		LastOutcome: walked.lastOutcome,
+	}
+
+	snap, err := runstate.Load(filepath.Join(runDir, stateFileName))
+	var g *graph.Graph
+	switch {
+	case err == nil:
+		parsed, parseErr := graph.Parse(snap.Graph)
+		if parseErr != nil {
+			return brokenCard(runID, fmt.Errorf("reconstruct graph: %w", parseErr))
+		}
+		g = parsed
+		facts.HasSnapshot = true
+		facts.CompletedNodes = len(snap.CompletedNodes())
+		facts.TotalNodes = len(g.Nodes)
+	case errors.Is(err, fs.ErrNotExist):
+		// The legitimate snapshot-less run, and there are now several: state.json
+		// is written only after a node's terminal verdict, so a fresh run has no
+		// structure to draw yet, a run still inside its planner call has no graph
+		// at all, and a refused plan never gets one (ADR 0023 §2.1.1). The
+		// absence is a fact about the run, not damage, at every status.
+	default:
+		return brokenCard(runID, err)
+	}
+
+	status := runstatus.Probe(runDir, facts)
 	if status == runstatus.Abandoned {
 		// The nodes this run's dead leg left open are not running; nothing is.
 		// Same conversion the leg boundary applies in walkNodeStates, for the
@@ -139,13 +186,7 @@ func buildCard(runsRoot, runID string) runCard {
 		markAbandoned(states)
 	}
 
-	snap, err := runstate.Load(filepath.Join(runDir, stateFileName))
-	switch {
-	case err == nil:
-		g, parseErr := graph.Parse(snap.Graph)
-		if parseErr != nil {
-			return brokenCard(runID, fmt.Errorf("reconstruct graph: %w", parseErr))
-		}
+	if g != nil {
 		card.Available = true
 		card.Name = g.Name
 		for _, node := range g.Nodes {
@@ -157,36 +198,40 @@ func buildCard(runsRoot, runID string) runCard {
 		for _, rec := range snap.Nodes {
 			card.CostUSD += rec.CostUSD
 		}
-		card.State = runState(status, snap.Gate.PausedAt != "", len(snap.CompletedNodes()) == len(g.Nodes))
 		if snap.Goal != nil {
 			card.Goal = &goalPayload{
 				Text: snap.Goal.Text, Cycle: snap.Goal.Cycle,
 				MaxCycles: snap.Goal.MaxCycles, FirstRunID: snap.Goal.FirstRunID,
 			}
 		}
-	case errors.Is(err, fs.ErrNotExist):
-		// The one legitimate snapshot-less run: state.json is written only
-		// after a node's terminal verdict, so a fresh run has no structure to
-		// draw yet. The stream still knows which nodes have started, so the
-		// card renders those as an edgeless mini-DAG that gains its shape the
-		// moment the first node completes — the same honesty `runs list` shows
-		// with its "-" placeholders, in a form that is live.
+	} else {
+		// The stream still knows which nodes have started, so the card renders
+		// those as an edgeless mini-DAG that gains its shape the moment the
+		// first node completes — the same honesty `runs list` shows with its
+		// "-" placeholders, in a form that is live.
 		for _, id := range sortedKeys(states) {
 			card.Nodes = append(card.Nodes, cardNode{ID: id, State: states[id]})
 		}
-		// A directory whose stream has said NOTHING — no leg, no node — keeps
-		// the pending it started as. That is a real window, not a corner case:
-		// the run lock creates the directory (and an auto run saves its
-		// graph.json there) before the first event is emitted, and a pre-runfeed
-		// directory has no stream at all. runState's default arm means "settled
-		// and not all done", and a run that has not spoken is neither, so
-		// letting it fall through would paint every healthy run's first moments
-		// red.
-		if status != runstatus.Settled || len(states) > 0 {
-			card.State = runState(status, false, false)
-		}
-	default:
-		return brokenCard(runID, err)
+	}
+
+	// A directory whose stream has said NOTHING — no leg, no node — keeps the
+	// pending it started as. That is a real window, not a corner case: the run
+	// lock creates the directory before the first event is emitted, and a
+	// pre-runfeed directory has no stream at all.
+	//
+	// The guard is keyed on that AFFIRMATIVE fact since ADR 0023 §2.1.1, and no
+	// longer on "has not settled". Under six values FAIL is settled, so a
+	// settledness-keyed guard would leave every refused plan's card reading
+	// `pending` forever — a card that says a run is about to start, about a run
+	// that ended before it began.
+	//
+	// The question is runstatus.Spoken's rather than this file's, so `runs list`
+	// and `show` ask exactly the same one: while this card held the guard alone
+	// they read FAIL for a directory the dashboard called `pending`. The node
+	// states stay as a local second disjunct — this walk sees them and Facts
+	// does not — and they can only widen the answer, never narrow it.
+	if runstatus.Spoken(facts) || len(states) > 0 {
+		card.State = runState(status)
 	}
 
 	if status == runstatus.Abandoned {
@@ -204,25 +249,42 @@ func brokenCard(runID string, err error) runCard {
 	return runCard{RunID: runID, State: stateUnknown, Error: err.Error()}
 }
 
-// runState maps the three facts that decide a run's overall colour. An open
-// leg wins over everything: mid-run the snapshot holds only the nodes
-// completed so far, so the completed==all test would read a healthy run as
-// failed (the same trap `runs list` documents) — and an open leg whose process
-// is gone is abandoned rather than failed, for the same reason `runs list` does
-// not print FAIL for it. A pause is next, because a paused run is
-// settled-but-waiting, which is neither passed nor failed.
-func runState(status runstatus.Status, paused, allCompleted bool) string {
-	switch {
-	case status == runstatus.InFlight:
+// runState is a MAPPING from the shared enumeration to this page's vocabulary,
+// and since ADR 0023 that is all it is. It used to be a second derivation — it
+// took the liveness status, a "is the gate paused" boolean read off the
+// snapshot, and a completed==all boolean, and composed them here, its own way.
+// That is what let a session-limit pause (which has no gate to point at) fall
+// through its default arm and paint red. The derivation now happens once, in
+// internal/runstatus, and this function only chooses a CSS token for it.
+//
+// Its default arm is a backstop, NOT a colour a new value may quietly inherit:
+// the promise that every derivable status is named here is kept by a test, not
+// by the shape of the switch. TestRunState_CoversEveryDerivableStatus walks the
+// enumeration and fails on any value that reaches the default, and
+// TestCardStateTokens_AreDefinedByEveryAsset then holds the token it returns to
+// a rule in each of the three assets that paint it. A seventh status added
+// without a case here therefore fails the build rather than rendering as
+// `unknown` on someone's dashboard.
+func runState(status runstatus.Status) string {
+	switch status {
+	case runstatus.Planning:
+		return statePlanning
+	case runstatus.Running:
 		return stateRunning
-	case status == runstatus.Abandoned:
+	case runstatus.Abandoned:
 		return stateAbandoned
-	case paused:
-		return stateGatePaused
-	case allCompleted:
+	case runstatus.Paused:
+		return statePaused
+	case runstatus.Pass:
 		return statePassed
-	default:
+	case runstatus.Fail:
 		return stateFailed
+	default:
+		// Unreachable: Probe and Of only ever return one of the six above. A
+		// Status nobody derived is a programming error, and it renders as the
+		// same honest "this binary cannot say" the card uses for a directory it
+		// cannot read.
+		return stateUnknown
 	}
 }
 
@@ -235,10 +297,41 @@ func nodeState(states map[string]string, id string) string {
 	return statePending
 }
 
-// walkNodeStates reads a run's stream once and returns what it says: the
-// latest state per node, and the leg boundaries (the FIRST run_started, so a
-// resumed run's elapsed still counts from when the work began, and the LAST
-// run_finished, which is meaningful only once no leg is open).
+// walkedStream is everything ONE walk of a run's stream tells the card: the
+// latest state per node, the leg boundaries, and the two facts the status
+// derivation needs off the same file. It is a struct rather than five return
+// values because ADR 0023 added the last two and a five-value signature is
+// where a caller starts mixing up which string is which.
+type walkedStream struct {
+	// states is the latest state per node the stream has spoken for.
+	states map[string]string
+	// open and anyLeg are runfeed.Leg's two booleans — "the last leg is open"
+	// and "a run_started was seen at all" — folded over the same events
+	// runfeed.LastLeg folds them over, so this walk answers the leg question
+	// with the leg's own facts. They are booleans rather than tests on the two
+	// timestamps below because a boundary and a CLOCK are different facts: an
+	// event with no `ts` is a leg all the same, and deriving the leg from the
+	// timestamp would make a card's status hang on a field only the renderer
+	// needs.
+	open   bool
+	anyLeg bool
+	// started is the FIRST run_started's timestamp, so a resumed run's elapsed
+	// still counts from when the work began — and, for an auto run since ADR
+	// 0023, from when its PLANNING began, which is the correct total under a
+	// run id that identifies an execution.
+	started string
+	// ended is the LAST run_finished's timestamp, meaningful only once no leg
+	// is open.
+	ended string
+	// phase is the LAST run_started's phase — runfeed.PhasePlanning while a
+	// planner call is running, empty for a scheduler leg.
+	phase string
+	// lastOutcome is the last run_finished's outcome, which is where PAUSED
+	// comes from.
+	lastOutcome string
+}
+
+// walkNodeStates reads a run's stream once and returns what it says.
 //
 // Latest-terminal-event-wins is the run-feed contract's own rule, feedback
 // rounds included, so a node re-run by a feedback arc reads as running again
@@ -253,36 +346,40 @@ func nodeState(states map[string]string, id string) string {
 // resume, in a run that is otherwise long finished. The boundary converts it to
 // abandoned, which the next leg's own node_started overwrites the moment that
 // node really does run again.
-func walkNodeStates(feedPath string) (states map[string]string, started, ended string, err error) {
-	states = map[string]string{}
-	err = runfeed.Walk(feedPath, func(event runfeed.Event) error {
+func walkNodeStates(feedPath string) (walkedStream, error) {
+	walked := walkedStream{states: map[string]string{}}
+	err := runfeed.Walk(feedPath, func(event runfeed.Event) error {
 		switch event.Type {
 		case runfeed.EventRunStarted:
-			if started == "" {
-				started = event.Timestamp
+			if walked.started == "" {
+				walked.started = event.Timestamp
 			}
-			ended = ""
-			markAbandoned(states)
+			walked.open, walked.anyLeg = true, true
+			walked.ended = ""
+			walked.phase = event.Phase
+			markAbandoned(walked.states)
 		case runfeed.EventRunFinished:
-			ended = event.Timestamp
+			walked.open = false
+			walked.ended = event.Timestamp
+			walked.lastOutcome = event.Outcome
 		case runfeed.EventNodeStarted, runfeed.EventNodeRetried:
-			states[event.NodeID] = stateRunning
+			walked.states[event.NodeID] = stateRunning
 		case runfeed.EventNodePassed:
-			states[event.NodeID] = statePassed
+			walked.states[event.NodeID] = statePassed
 		case runfeed.EventNodeFailed:
-			states[event.NodeID] = stateFailed
+			walked.states[event.NodeID] = stateFailed
 		case runfeed.EventGatePaused:
-			states[event.NodeID] = stateGatePaused
+			walked.states[event.NodeID] = stateGatePaused
 		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return states, "", "", nil
+			return walkedStream{states: walked.states}, nil
 		}
-		return nil, "", "", err
+		return walkedStream{}, err
 	}
-	return states, started, ended, nil
+	return walked, nil
 }
 
 // markAbandoned converts every node the stream currently reads as running into

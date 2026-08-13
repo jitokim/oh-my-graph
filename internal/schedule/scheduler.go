@@ -1658,13 +1658,28 @@ func evaluateBudget(node graph.Node, outcome runner.NodeOutcome) error {
 }
 
 // causeFromRunError maps a runner error to a retry cause token. An unparseable
-// output is "output_error"; anything else (spawn failure, context) is
-// "run_error". Non-zero exits never reach here — the runner returns those inside
-// the outcome, and evaluateSuccessCheck classifies them.
+// output is "output_error"; a node killed by its own timeout is "timeout";
+// anything else (spawn failure, cancellation) is "run_error". Non-zero exits
+// never reach here — the runner returns those inside the outcome, and
+// evaluateSuccessCheck classifies them.
+//
+// timeout is its own token rather than part of the "run_error" fallback for the
+// same shape of reason budget_exceeded is its own below: the two failures folded
+// into it want opposite retry policies. A spawn failure is transient and cheap
+// to re-attempt; a timeout is the ONE failure that always burns its whole budget
+// before dying, so retrying it costs another full timeout to learn the same
+// thing — and no engine can tell a slow machine from an instruction that cannot
+// finish at any timeout. Giving it a token lets an author who knows which one
+// they have write retry: { on: [timeout] }; the engine never decides it for them
+// (ADR 0024).
 func causeFromRunError(err error) string {
 	var outputErr *runner.NodeOutputError
 	if asErr(err, &outputErr) {
 		return graph.CauseOutputError
+	}
+	var timeoutErr *runner.NodeTimeoutError
+	if asErr(err, &timeoutErr) {
+		return graph.CauseTimeout
 	}
 	return graph.CauseRunError
 }

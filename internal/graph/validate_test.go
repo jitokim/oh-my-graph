@@ -3,7 +3,11 @@ package graph
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -914,21 +918,102 @@ nodes:
 // TestParse_ValidRetryCausesAccepted is the positive boundary: every token the
 // scheduler can actually produce must pass validation, so the guard can never
 // reject a working retry policy.
+//
+// Walked one token at a time over the set itself rather than asserted once over
+// a hand-typed list: a single `on: [a, b, c]` line is satisfied in aggregate,
+// so a token that no test ever names alone (output_error was one) rides on its
+// neighbours. Adding a cause to the set therefore adds its own case here for
+// free, which is the point of taking the set from RetryCauses().
 func TestParse_ValidRetryCausesAccepted(t *testing.T) {
-	g, err := Parse([]byte(`
+	causes := RetryCauses()
+	if len(causes) == 0 {
+		t.Fatal("RetryCauses() is empty: retry.on would accept nothing")
+	}
+	for _, cause := range causes {
+		t.Run(cause, func(t *testing.T) {
+			g, err := Parse([]byte(fmt.Sprintf(`
 name: good-retry
 nodes:
-  - id: a
-    prompt: a
-    retry:
-      max: 1
-      on: [nonzero_exit, run_error, output_error, budget_exceeded, verify_failed, result_mismatch]
-`))
-	if err != nil {
-		t.Fatalf("all valid retry causes must be accepted: %v", err)
+  - { id: a, prompt: a, retry: { max: 1, on: [%s] } }
+`, cause)))
+			if err != nil {
+				t.Fatalf("valid retry cause %q must be accepted: %v", cause, err)
+			}
+			n, _ := g.NodeByID("a")
+			if n.Retry == nil || len(n.Retry.On) != 1 || n.Retry.On[0] != cause {
+				t.Errorf("retry.on %q did not survive parsing: %+v", cause, n.Retry)
+			}
+		})
 	}
-	if n, _ := g.NodeByID("a"); n.Retry == nil || len(n.Retry.On) != len(retryCauses) {
+
+	// And all of them at once, which is the shape an author actually writes
+	// when they want everything.
+	g, err := Parse([]byte(fmt.Sprintf(`
+name: good-retry-all
+nodes:
+  - { id: a, prompt: a, retry: { max: 1, on: [%s] } }
+`, strings.Join(causes, ", "))))
+	if err != nil {
+		t.Fatalf("all valid retry causes must be accepted together: %v", err)
+	}
+	if n, _ := g.NodeByID("a"); n.Retry == nil || len(n.Retry.On) != len(causes) {
 		t.Errorf("retry.on did not survive parsing: %+v", n)
+	}
+}
+
+// TestRetryCauses_CoversEveryCauseConstant closes the set by CONSTRUCTION, not
+// by convention. `retryCauses` is a hand-maintained slice beside a
+// hand-maintained `Cause*` const block, and Go offers no way to enumerate
+// constants at run time — so an eighth constant added without touching the
+// slice would produce a token the scheduler can emit and the validator rejects,
+// i.e. a failure cause no graph is allowed to name, and nothing would fail.
+// This reads the const block out of the source and holds the two together.
+func TestRetryCauses_CoversEveryCauseConstant(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "graph.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse graph.go: %v", err)
+	}
+
+	declared := map[string]string{} // constant name -> its token value
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if !strings.HasPrefix(name.Name, "Cause") || i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("unquote %s: %v", name.Name, err)
+				}
+				declared[name.Name] = value
+			}
+		}
+	}
+	if len(declared) == 0 {
+		t.Fatal("found no Cause* constants in graph.go — this guard is reading the wrong file and would pass on anything")
+	}
+
+	causes := RetryCauses()
+	for name, value := range declared {
+		if !slices.Contains(causes, value) {
+			t.Errorf("graph.%s = %q is not in retryCauses — the scheduler can classify a failure as a token retry.on refuses at load, so no graph may name that cause", name, value)
+		}
+	}
+	if len(causes) != len(declared) {
+		t.Errorf("retryCauses has %d entries but graph.go declares %d Cause* constants — the closed set and the token list have drifted", len(causes), len(declared))
 	}
 }
 

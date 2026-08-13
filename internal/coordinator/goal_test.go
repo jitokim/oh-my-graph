@@ -280,6 +280,39 @@ func TestRunGoal_ThreadsRemainingIntoNextPlanAndNextAssessment(t *testing.T) {
 	}
 }
 
+// TestRunGoal_OnCyclePlanningFailureStopsBeforeTheCyclePlans is the hook's
+// failure-first case, and it is the one that matters: OnCyclePlanning is what
+// mints the cycle's run id and opens its leg (ADR 0023 §9), so a hook that
+// fails means there is no run to hold what the planner call would buy. The
+// error must come back verbatim and NOTHING may be spent after it — an
+// unscripted plan-1 would fail the FakeRunner, and the call count says so
+// directly.
+func TestRunGoal_OnCyclePlanningFailureStopsBeforeTheCyclePlans(t *testing.T) {
+	fake := newGoalFake(nil)
+	executor := &fakeExecutor{}
+	hookErr := errors.New("open the cycle's run leg: no lock")
+
+	calls := 0
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 3, OnCyclePlanning: func(int) error { calls++; return hookErr }},
+		executor.execute)
+	if !errors.Is(err, hookErr) {
+		t.Fatalf("RunGoal error = %v, want the hook's own error", err)
+	}
+	if calls != 1 {
+		t.Errorf("hook fired %d time(s), want 1: a failed hook ends the loop", calls)
+	}
+	if got := len(fake.Calls()); got != 0 {
+		t.Errorf("%d coordinator call(s) made after the hook failed, want 0 — nothing may be spent for a cycle with no run", got)
+	}
+	if len(executor.plans) != 0 {
+		t.Errorf("executor ran %d cycle(s) after the hook failed, want 0", len(executor.plans))
+	}
+	if len(result.Cycles) != 0 {
+		t.Errorf("result reports %d completed cycle(s), want 0", len(result.Cycles))
+	}
+}
+
 // OnCycleAssessed is the CLI's live-verdict seam: it must fire once per
 // completed cycle — the met final cycle included, delivered before the loop
 // stops — so the caller can print and persist each verdict as it happens

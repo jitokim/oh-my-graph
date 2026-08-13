@@ -2,6 +2,14 @@
 
 - Status: Accepted (`timeout:`) / Rejected for now (`budget_turns:`)
 - Date: 2026-08-02
+- **Amended by [ADR 0024](0024-a-timeout-is-its-own-cause-not-a-run-error.md) on
+  2026-08-13, in one sentence.** §1 below says the seam contract is unchanged and
+  that "the Scheduler still classifies it as a `run_error`" — it no longer does;
+  a node killed by its own bound is now the `timeout` cause. The sentence is left
+  as written, because a record that edits away what it decided teaches a future
+  reader nothing. Everything else in §1 — the declarable bound, the load-time
+  validation, the absent ceiling, the process-tree kill, the auto-mode
+  disposition — is unchanged and still current.
 
 ## Context
 

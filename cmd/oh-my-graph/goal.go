@@ -11,6 +11,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -45,16 +46,51 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	fmt.Fprintf(out, "Planning a graph for goal %q (up to %d cycles)...\n", goal, cycles.maxCycles)
 
 	firstRunID := ""
-	execute := func(ctx context.Context, cycle int, plan coordinator.Plan) (coordinator.CycleEvidence, error) {
-		runID := newRunID()
+	// The CURRENT cycle's run id and leg, minted and opened by the planning
+	// hook below rather than inside execute, because the whole point is that
+	// they exist BEFORE the planner call — a cycle's planning phase is as long
+	// and as invisible as a single-cycle auto's, and a status that depended on
+	// --max-cycles would be worse than no status (ADR 0023 §9).
+	cycleRunID := ""
+	var leg *runLeg
+	// The bracket, restored lexically over the ENTIRE RunGoal call. The leg's
+	// lifetime now runs through another package's control flow — RunGoal can
+	// return on c.plan failing, on a cancelled context, and on any early return
+	// a future change adds there — so `defer` at the point of use cannot cover
+	// it. Close is idempotent, so executeGraph's own close on the happy path
+	// wins and this is a no-op there; when it is NOT a no-op it is closing a leg
+	// that would otherwise read ABANDONED after a clean exit and print an
+	// orphaned-subprocess warning nobody needs (ADR 0023 §2.7).
+	defer func() { closeLeg(leg, runfeed.OutcomeFailed) }()
+
+	onCyclePlanning := func(cycle int) error {
+		// The previous cycle's leg is closed by its own executeGraph; closing
+		// again here is the idempotent no-op that makes the sweep safe when a
+		// cycle returned before ever reaching execution.
+		closeLeg(leg, runfeed.OutcomeFailed)
+
+		cycleRunID = newRunID()
 		if firstRunID == "" {
-			firstRunID = runID
+			firstRunID = cycleRunID
 		}
+		opened, err := openRunLeg(cycleRunID)
+		if err != nil {
+			return err
+		}
+		leg = opened
+		if err := leg.beginPlanning(); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "— goal cycle %d/%d (run %s), planning… —\n", cycle, cycles.maxCycles, cycleRunID)
+		return nil
+	}
+
+	execute := func(ctx context.Context, cycle int, plan coordinator.Plan) (coordinator.CycleEvidence, error) {
+		runID := cycleRunID
 		specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
 		if err != nil {
 			return coordinator.CycleEvidence{}, err
 		}
-		fmt.Fprintf(out, "— goal cycle %d/%d (run %s) —\n", cycle, cycles.maxCycles, runID)
 		printPlan(out, plan, specPath)
 
 		// Unreachable in v1 production — `auto` passes a nil confirm and
@@ -82,7 +118,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		}
 
 		goalRef := &runstate.GoalRef{Text: goal, Cycle: cycle, MaxCycles: cycles.maxCycles, FirstRunID: firstRunID}
-		runErr := executePlan(ctx, runID, plan, nodeRunner, flags, specPath, cycleWeb, goalRef)
+		runErr := executePlan(ctx, runID, plan, nodeRunner, flags, specPath, cycleWeb, goalRef, leg)
 		if runErr != nil && ctx.Err() != nil {
 			// The user interrupted (a halt under Ctrl-C is still a
 			// *HaltError): never plan another cycle on a dead context.
@@ -102,6 +138,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		MaxCycles:        cycles.maxCycles,
 		MaxGoalBudgetUSD: cycles.maxGoalBudgetUSD,
 		InputKeys:        inputKeys(flags.inputs),
+		OnCyclePlanning:  onCyclePlanning,
 		OnCycleAssessed: func(report coordinator.CycleReport) {
 			printCycleVerdict(out, report)
 			if err := saveAssessment(runDirFor(report.RunID), report.Assessment); err != nil {
@@ -120,24 +157,25 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// A cycle whose planning was refused paid for it like any other, so
 		// its spec is persisted here too — the loop's plan step is the same
 		// coordinator.plan call the single-cycle path makes.
-		return noteRejectedPlan(out, rejectedPlanID(firstRunID, len(result.Cycles)+1), err)
+		//
+		// It goes INTO THAT CYCLE'S RUN DIRECTORY (ADR 0023 §3.1): the hook
+		// above minted the id and opened the leg before the planner call, so a
+		// run exists to hold it and the path says which cycle bought it without
+		// a name having to encode that. The leg is closed first, with outcome
+		// "failed", so the cycle has settled by the time anything reads it.
+		// This is what retired rejectedPlanID and its "<first-run>-cycleK"
+		// construction: the lineage is now the run id itself.
+		//
+		// The fallback is for an error that arrives before any cycle's hook ran
+		// (an invalid MaxCycles, a nil executor) — no run exists, so plans/ is
+		// the only honest home, exactly as for --plan-only.
+		if cycleRunID != "" {
+			closeLeg(leg, runfeed.OutcomeFailed)
+			return noteRejectedPlan(out, runDirFor(cycleRunID), err)
+		}
+		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
 	return goalExit(out, result)
-}
-
-// rejectedPlanID names the plans/ directory a refused cycle's spec goes into.
-// A fresh id carries no lineage: in a five-cycle loop, plans/<id>/rejected.json
-// would sit beside the goal's run directories with nothing linking it to the
-// goal or the cycle that bought it — invisible in the single-cycle path, and
-// exactly what a reader needs in a loop. When at least one cycle has run, the
-// id is that goal's first run id plus the refused cycle's ordinal, so the path
-// itself says where it came from. A cycle-1 refusal has no run to name yet, so
-// it falls back to a fresh id.
-func rejectedPlanID(firstRunID string, cycle int) string {
-	if firstRunID == "" {
-		return newRunID()
-	}
-	return fmt.Sprintf("%s-cycle%d", firstRunID, cycle)
 }
 
 // isRunFailure reports whether err is the scheduler saying "this run

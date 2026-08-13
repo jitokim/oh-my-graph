@@ -707,9 +707,11 @@ func waitForFile(t *testing.T, path string) {
 // TestRun_InvocationTimeoutBoundsTheRun proves a node's declared `timeout:`
 // actually governs the run: with the runner still on its 20m default, an
 // invocation carrying a tiny Timeout must be killed by the deadline, promptly,
-// and surface as the context error the Scheduler classifies as a run_error.
-// Like the cancellation test above this needs a real (free, offline) stub —
-// a deadline cannot be proven against code that never runs.
+// and surface as a *NodeTimeoutError — the type the Scheduler classifies as
+// graph.CauseTimeout (ADR 0024) — still unwrapping to the context sentinel every
+// downstream errors.Is check reads. Like the cancellation test above this needs
+// a real (free, offline) stub — a deadline cannot be proven against code that
+// never runs.
 func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stub is a shebang script; this pins the unix path")
@@ -728,6 +730,16 @@ func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected a context.DeadlineExceeded error, got %T: %v", err, err)
+	}
+	// The TYPE is the load-bearing half: it is the only thing that tells the
+	// Scheduler this was the node's own clock rather than a spawn that never
+	// started, and the two must be separately retryable.
+	var timeoutErr *NodeTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("expected a *NodeTimeoutError, got %T: %v", err, err)
+	}
+	if timeoutErr.Timeout != 100*time.Millisecond {
+		t.Errorf("the error carries a %s bound, want the invocation's 100ms", timeoutErr.Timeout)
 	}
 	// The expiry is named in the run's own terms, not the raw Go plumbing
 	// string — this message is what the ledger detail and events carry.
@@ -756,5 +768,47 @@ func TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out after 100ms (node timeout)") {
 		t.Errorf("the default-timeout expiry must name itself too, got %q", err)
+	}
+	// The default bound is still THIS node's clock, so it earns the same type
+	// and the same retry cause as a declared one — a graph should not have to
+	// write `timeout:` to be able to say `retry: { on: [timeout] }`.
+	var timeoutErr *NodeTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("the runner's own default must mint a *NodeTimeoutError too, got %T: %v", err, err)
+	}
+}
+
+// TestRun_InheritedDeadlineIsNotThisNodesTimeout pins the boundary the new type
+// draws (ADR 0024). NodeTimeoutError means "we did not wait long enough for
+// THIS node", and only a deadline this runner minted itself can mean that. A
+// deadline that arrived on the caller's context is somebody else's clock — a
+// whole-run bound, a caller's own — and reporting it as the node's timeout
+// would invite `retry: { on: [timeout] }` to re-run a node inside a context
+// that is already dead, burning attempts against a deadline that has passed.
+//
+// It stays a plain context error, which causeFromRunError classifies as
+// `run_error` exactly as it did before this ADR.
+func TestRun_InheritedDeadlineIsNotThisNodesTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
+
+	// The parent expires first; the node's own bound is generous and never fires.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	r := NewClaudeCLIRunner(WithBinary(stub))
+	_, err := r.Run(ctx, NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Timeout:        30 * time.Second,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the parent deadline to surface, got %T: %v", err, err)
+	}
+	var timeoutErr *NodeTimeoutError
+	if errors.As(err, &timeoutErr) {
+		t.Fatalf("an inherited deadline was reported as this node's own %s timeout: %v", timeoutErr.Timeout, err)
 	}
 }

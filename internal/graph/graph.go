@@ -199,8 +199,20 @@ func (c SuccessCheck) IsZero() bool {
 // string equality. The set lives here, next to the Retry field it constrains,
 // so the validator and the scheduler can never disagree on a spelling.
 const (
-	CauseNonzeroExit    = "nonzero_exit"
-	CauseRunError       = "run_error"
+	CauseNonzeroExit = "nonzero_exit"
+	CauseRunError    = "run_error"
+	// CauseTimeout is the node's own `timeout:` (or the runner's 20m default)
+	// expiring while the subprocess was still working — deliberately its own
+	// token rather than folding into CauseRunError, which is what it used to be.
+	// A timeout is not a verdict about the work: it says only that we did not
+	// wait long enough, the same distinction ADR 0015 draws for an ABANDONED run
+	// and ADR 0009 for a session limit. Folded together, a node that ran out of
+	// time and a binary that never started shared one retry token, so
+	// `retry: { on: [run_error] }` could not ask for one without the other —
+	// and they want opposite policies: a failed spawn is worth an immediate
+	// cheap re-attempt, a timeout costs another whole timeout to learn the
+	// same thing. See ADR 0024.
+	CauseTimeout        = "timeout"
 	CauseOutputError    = "output_error"
 	CauseBudgetExceeded = "budget_exceeded"
 	CauseVerifyFailed   = "verify_failed"

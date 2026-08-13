@@ -152,6 +152,34 @@ func TestWatchRun_UnknownRunID(t *testing.T) {
 	}
 }
 
+// TestWatchRun_SnapshotOnlyRunHasNothingToTail pins the other missing-stream
+// case, which is NOT a mistyped id: a run directory that holds a snapshot but
+// no events.jsonl is a real run this binary can still `show`. Before the check
+// it produced two answers one line apart — a status announced off the snapshot
+// alone (runstatus.Spoken), then the same directory reported as an unknown run
+// when Follow found no stream.
+func TestWatchRun_SnapshotOnlyRunHasNothingToTail(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, stateFileName), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	var out, warn strings.Builder
+	err := watchRun(context.Background(), &out, &warn, dir, "20260813-000001", testPoll)
+	if err == nil {
+		t.Fatal("watchRun on a run directory with no event stream must fail")
+	}
+	if !strings.Contains(err.Error(), "no event stream") {
+		t.Errorf("error does not say the stream is missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "unknown run") {
+		t.Errorf("a real run directory must not be reported as an unknown run: %v", err)
+	}
+	if out.String() != "" {
+		t.Errorf("no status may be announced for a run that cannot be tailed:\n%s", out.String())
+	}
+}
+
 // TestWatchRun_ZeroCostPassOmitsCost pins the gate rendering: a zero-cost
 // PASS (a gate, which spawns no subprocess) shows its detail but no "$0.0000".
 func TestWatchRun_ZeroCostPassOmitsCost(t *testing.T) {
@@ -259,5 +287,22 @@ func TestMainExitCode_WatchUnknownRunIsNonZero(t *testing.T) {
 	isolateRunHome(t)
 	if code := mainExitCode([]string{"watch", "nope"}); code != 1 {
 		t.Errorf("watch of an unknown run must exit 1, got %d", code)
+	}
+}
+
+// TestFormatEvent_APlanningLegSaysWhichPhaseItOpened pins the one line that
+// makes ADR 0023's transition visible on the live human view of the stream. An
+// auto run opens TWO legs on one stream — the planner call's and the
+// scheduler's — so without the phase a watcher sees "run started" twice with
+// nothing to say why, and the PLANNING→RUNNING transition happens invisibly.
+func TestFormatEvent_APlanningLegSaysWhichPhaseItOpened(t *testing.T) {
+	planning := formatEvent(runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning})
+	if !strings.Contains(planning, runfeed.PhasePlanning) {
+		t.Errorf("a planning leg's opening line = %q, want it to name the phase", planning)
+	}
+	// A scheduler leg carries no phase and its line is unchanged: every
+	// hand-written run's stream still reads exactly as before.
+	if plain := formatEvent(runfeed.Event{Type: runfeed.EventRunStarted}); plain != "▶ run started" {
+		t.Errorf("an untagged leg's opening line = %q, want it unchanged", plain)
 	}
 }

@@ -75,13 +75,20 @@ main {
 .card.running { border-left-color: var(--running); }
 .card.passed { border-left-color: var(--passed); }
 .card.failed { border-left-color: var(--failed); }
-.card.gate-paused { border-left-color: var(--gate-paused); }
+/* No .card.gate-paused: `gate-paused` is a NODE token, and the run level used
+   to borrow it. Since ADR 0023 the run level has `paused`, which covers the
+   gate pause and the session-limit pause alike. */
+.card.paused { border-left-color: var(--paused); }
 .card.abandoned { border-left-color: var(--abandoned); }
+.card.planning { border-left-color: var(--planning); }
 .card.unknown { border-left-color: var(--muted); }
 
 /* A running card's status pill borrows the run view's own live pulse, so
-   "something is happening here" reads the same on both pages. */
-.card.running .card-state { animation: chip-pulse 2s ease-in-out infinite; }
+   "something is happening here" reads the same on both pages. A PLANNING card
+   pulses too: it is the state whose whole complaint (#163) was that nothing on
+   screen said anything was happening. */
+.card.running .card-state,
+.card.planning .card-state { animation: chip-pulse 2s ease-in-out infinite; }
 
 .card-top {
   display: flex;
@@ -176,6 +183,8 @@ main {
 .mini-node.failed { fill: var(--failed); }
 .mini-node.gate-paused { fill: var(--gate-paused); }
 .mini-node.abandoned { fill: var(--abandoned); }
+/* No .mini-node.planning: a node is never planning — during a planner call
+   there is no graph, so a planning card has no mini-DAG to paint. */
 .card.running .mini-node.running { animation: chip-pulse 2s ease-in-out infinite; }
 
 .mini-none {

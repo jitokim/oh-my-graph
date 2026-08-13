@@ -596,7 +596,7 @@ other and starts cold on the same terms — a `handoff: session` node does not
 resume its parent there either, and the row that prices it says so — and the
 `failed/` file it was seeded from is removed once that execution passes, so the
 directory never holds a losing reply beside a winning artifact. The causes are a closed set — `nonzero_exit`,
-`run_error`, `output_error`, `budget_exceeded`, `verify_failed`,
+`run_error`, `timeout`, `output_error`, `budget_exceeded`, `verify_failed`,
 `result_mismatch` (the `graph.Cause*` constants) — and an unknown cause is a
 load-time `GraphValidationError`: it would match no failure the scheduler ever
 produces and silently mean "never retry". A **negative `max`** is refused at
@@ -605,6 +605,28 @@ when it is positive, so `max: -1` is discarded and the node runs once — the
 identical quiet non-retry, from a value no author can have meant. `max: 0` is
 legal and untouched: it IS the extra-attempt count a node declaring no retry
 already has.
+
+`timeout` is the newest of the seven and is **not** part of `run_error`
+(ADR 0024). A node killed by its own bound — the `timeout:` it declared, or the
+runner's 20-minute default — used to be classified as a run error alongside a
+spawn that never started, so one token covered two failures that want opposite
+policies: a failed spawn is worth an immediate cheap re-attempt, while a timeout
+is the one failure that always burns its *whole* budget before dying, so
+retrying it costs another full bound. The engine does not decide which of those
+you have, because it cannot: a timed-out node is either a slow machine or an
+instruction that cannot finish at any timeout, and nothing in the error tells
+them apart. It gives the token; `retry: { max: 1, on: [timeout] }` is the
+author's opt-in, and a graph that says nothing retries nothing, exactly as
+before. The boundary is whose clock ran out: only a deadline the runner minted
+for THIS node earns the token (a `*runner.NodeTimeoutError`), while a deadline
+inherited from the run's own context stays `run_error` — retrying inside an
+already-expired context would burn every attempt against a deadline that has
+passed. A graph that listed `run_error` and *wanted* timeouts covered writes
+`on: [run_error, timeout]`; that token narrowed, and it is the one thing here
+that is not purely additive. The other clock is not this one: a
+`success_check.verify` command that times out arrives through the verify seam
+and is `verify_failed`, not `timeout` — splitting it too is deliberately not
+decided (ADR 0024 §5).
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget
@@ -1138,7 +1160,7 @@ uses (`internal/childenv`), asserted by its own unit test.
 `Predicate: "verify"` and a detail carrying the exit code and a truncated tail of
 the command's output — so the ledger says *why*, not just *that*. The retry
 cause token is `verify_failed`, joining `nonzero_exit` / `result_mismatch` /
-`output_error` / `run_error` / `budget_exceeded` — the full closed set of
+`output_error` / `run_error` / `timeout` / `budget_exceeded` — the full closed set of
 `graph.Cause*` constants `retry.on` accepts — so
 `retry: { max: 1, on: [verify_failed] }` works.
 A verification that times out or cannot spawn is a node failure, never a silent
@@ -1378,9 +1400,45 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   every surface: *in flight = an open leg AND a held lock; abandoned = an open
   leg AND an affirmatively free lock; everything else is settled, and every
   doubt reads as in flight.* No reader writes anything — `events.jsonl` keeps
-  only lines a scheduler emitted. `runs list` renders `ABANDONED` beside
-  `RUNNING` (never `FAIL`: a FAIL is a verdict about the work, which never got
-  one), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
+  only lines a scheduler emitted.
+
+  **Since ADR 0023 that rule produces ONE SIX-VALUED STATUS rather than a
+  liveness answer each surface then combines with a verdict of its own
+  making:**
+
+      PLANNING → RUNNING → { PASS | FAIL | PAUSED | ABANDONED }
+
+  `PLANNING` is an open leg whose latest `run_started` carries
+  `phase: "planning"` — an `auto` run inside its planner call, which now has a
+  run id because the id identifies an EXECUTION, not the moment a graph starts
+  executing (#163). `PAUSED` is read off the closed leg's `run_finished`
+  outcome, never off the snapshot's gate block, which is what makes it cover
+  ADR 0009's gate-less session-limit pause as well as a gate pause; both used to
+  render `FAIL`. `PASS` is the one value that requires the snapshot, so a
+  settled run without one cannot claim it. `Status.Settled()` and
+  `Status.InFlight()` are both predicates, because `PLANNING` splits the
+  in-flight side — `ResolveRun` keys on `InFlight()` and would silently stop
+  preferring a planning run if written as an equality test.
+
+  Two absences are NOT statuses and must not become them: a missing
+  `state.json` is a fact about the run (normal at `PLANNING`, permanent for a
+  refused plan) and never damage, while an unreadable snapshot or stream is a
+  fact about the READER — the `WARNING`+skip row and the `unknown` card. Only
+  the second may make a row disappear.
+
+  A third case has no status at all rather than one of the six: a directory
+  whose stream has said NOTHING — the instant between the run taking its lock
+  (which creates the directory) and its first event, and permanently for a
+  directory whose stream could never be created. `Derive` is total, so its
+  default arm would call that `FAIL`; every surface that renders a word asks
+  `runstatus.Spoken` first and falls back to the placeholder it already uses for
+  what is not known yet (`pending` on the card, `-` in the table, an omitted
+  word in `show`). A lone `run_finished` does not count as having spoken: a
+  close with no open before it is damage, not a leg.
+
+  `runs list` renders the six words under a `STATUS` header (renamed from
+  `VERDICT`, which would have kept the very conflation the enumeration
+  removes), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
   right now", `watch` refuses to tail a stream that will never get another
   line, the dashboard paints the card abandoned, and the single-run live view —
   the surface that carries the gate button — reads the same answer off
@@ -1389,7 +1447,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   and stop tailing that leg's transcript, and the hint sits above the feed the
   button lives in. That page's own stream reducer applies the same leg boundary
   the two Go reducers do — every `run_started` ends the previous leg's running
-  nodes. The leg that opens a run
+  nodes — and it renders that event's `phase` rather than a word of its own, so
+  the header chip reads `planning` for a planner leg exactly as the card linking
+  to it does, and the feed marker names the phase exactly as `watch` does. The
+  leg that opens a run
   must hold the lock **before** its first event and **after** its last, or a
   starting run would read abandoned for its first instants; that ordering is
   stated at `acquireRunLock` and pinned by
@@ -1504,8 +1565,10 @@ one, and it answers 409 like any other view that cannot resume.
   It does **not** call `runfeed.InFlight`: one walk already carries the leg
   state, and a card is rebuilt for every changed run on every tick, so a
   second read of the same stream was doubling the I/O on the hot path.
-  `buildCard` therefore reads the leg state (`started != "" && ended == ""`)
-  off its own walk, and then hands it to the SHARED derivation
+  `buildCard` therefore folds the leg state (`runfeed.Leg`'s two booleans — the
+  last leg is open, a `run_started` was seen at all) off its own walk, keeping
+  it distinct from the two boundary TIMESTAMPS the same walk collects for the
+  elapsed clock, and then hands it to the SHARED derivation
   (`runstatus.Probe`), which composes it with the lock exactly as `runs
   list`, `ResolveRun`, `watch` and the single-run view's `/api/graph` do — the
   composition is stated once, not five times (ADR 0015 §2). The one duplicated half, the leg rule itself, is
@@ -1514,10 +1577,19 @@ one, and it answers 409 like any other view that cannot resume.
   against `runfeed.InFlight`, and the card's state and `ResolveRun`'s
   preference against `runstatus.Of`, which is what keeps a card from
   disagreeing with `runs list`, `watch` or the run's own view about the same
-  run. A card's state vocabulary is the node vocabulary plus two:
-  `gate-paused`, and **`abandoned`** — a leg the stream left open whose lock
-  is free, i.e. whose process is gone (muted, never red: nothing failed, the
-  work simply has no verdict). Nodes that leg left running render abandoned
+  run. A card's state is a MAPPING from the shared enumeration and nothing
+  else since ADR 0023 (`runState` used to compose its own answer from three
+  facts, which is how a session-limit pause fell through to the default arm and
+  painted red). Its vocabulary is the node vocabulary plus three: **`planning`**
+  — a run inside its planner call, with no graph to draw yet, pulsing beside the
+  running ones because that wait is the one #163 reported as invisible;
+  **`paused`** — the RUN-level pause, wider than a node's `gate-paused` because
+  it covers a session-limit pause too; and **`abandoned`** — a leg the stream
+  left open whose lock is free, i.e. whose process is gone (muted, never red:
+  nothing failed, the work simply has no verdict). A directory whose stream has
+  said NOTHING keeps `pending`, on that affirmative fact rather than on "has not
+  settled" — under six values `FAIL` is settled, so the old guard would have
+  left every refused plan reading `pending` forever. Nodes that leg left running render abandoned
   rather than spinning forever and tally as pending, and the card carries the
   recovery hint, because the page it links to has a gate button that starts a
   leg with one click. Cost is the snapshot's
@@ -1525,7 +1597,16 @@ one, and it answers 409 like any other view that cannot resume.
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
   warning because a table can, but a dashboard that silently omitted one
-  would be lying about what is on the machine.
+  would be lying about what is on the machine. The token itself is a contract
+  between four files with no compiler between them — `card.go` chooses the
+  word, `dashboard.css` paints the tile's stripe, `style.css` owns the colour
+  token and the chip's dot, `dashboard.js` decides whether a card carrying it
+  is live and whether it is counted at all — so `internal/serve/assets_test.go`
+  derives the whole token set from the enumeration and reads the three embedded
+  assets back, rather than leaving the agreement to comments. That is also what
+  holds the page's `LIVE_STATES` to `Status.InFlight()`: a page with no build
+  step cannot import the predicate, and a hand-written equality test over the
+  in-flight values is the exact shape ADR 0023 removed from the Go side.
 - **`/run/<id>/` mounts the single-run view unchanged.** Endpoints are
   path-scoped (`/run/<id>/api/...`) rather than query-scoped because that is
   by far the smaller diff: the page already fetches with document-relative
@@ -1651,8 +1732,13 @@ makes and no node runs — the inspection path for the mappings and the ceiling,
 and deliberately NOT free the way `run --dry-run` is: there is no plan to
 inspect until one has been bought, which is why the stop line prints its cost
 and the paid-for spec is kept — in `$OMG_HOME/plans/<id>/graph.json`, never
-under `runs/`, since a directory there holding no `state.json` is what a
-broken run looks like to `runs list` and to `serve`'s newest-run resolution. It is rejected with `--max-cycles ≥ 2`, since
+under `runs/`. The reason for that is no longer the mechanism one (a directory
+with no `state.json` reading as damage — ADR 0023 §2.5 dissolved exactly that,
+and such directories are now ordinary): **a preview has none of the six statuses
+and cannot be given one.** It is not `PLANNING` (it finished), not `RUNNING`,
+not `ABANDONED` (its process left on purpose), and it has no verdict about
+work, because there was no work. So `--plan-only` mints no run id at ANY point,
+its planner call included. It is rejected with `--max-cycles ≥ 2`, since
 every cycle after the first is planned from the previous cycle's run. (Interactive `chat`
 reuses the same Coordinator but adds a routing call per turn before planning;
 see "Ambient chat".) The planner asks
@@ -1661,9 +1747,15 @@ prompt / allowed_tools / handoff). JSON is a YAML subset, so the reply is
 loaded through the existing parser, normalization, and DAG validation — a
 VALIDATION-REFUSED plan buys the one corrected call above, and if that reply is
 refused too the whole step fails before anything runs, with what it paid for
-kept at
-`$OMG_HOME/plans/<id>/rejected.json` (its own name, so nothing walking the
-tree for `graph.json` mistakes it for a graph the engine would run). The
+kept as `rejected.json` (its own name, so nothing walking the tree for
+`graph.json` mistakes it for a graph the engine would run). WHERE it is kept
+follows one rule (ADR 0023 §3.1): **into the run directory when a run leg
+already exists, and into `$OMG_HOME/plans/<id>/` when none does.** `auto` and
+every goal cycle have committed to execute before their planner call, so their
+run id exists and the refusal is recorded beside it, where it reads `FAIL` — the
+engine judged the material it was given and diagnosed it. `--plan-only` has the
+diagnosis without the commitment, so its rejection goes to `plans/`, which
+thereby keeps one honest meaning: specs that never belonged to a run. The
 corrected reply is UNTRUSTED exactly like the first: same `graph.Parse`, same
 `validatePlannedNodes`, same mapping order — there is no shortcut for "it
 already failed once". Only a refusal the reply's own CONTENT caused is
@@ -2041,6 +2133,11 @@ saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can b
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
 Scheduler as any other graph. A `--plan-only` plan is saved the same way but
 to `~/.oh-my-graph/plans/<id>/graph.json`, because it has no run to belong to.
+So is a **declined chat plan's**: chat's commitment to execute does not exist
+until a human answers its `[y/N]`, so the spec save happens after that answer
+and a `n` leaves no run directory at all (ADR 0023 §2.4). It used to save
+before the prompt, which meant declining manufactured a `runs/<id>/` holding a
+`graph.json` and no `state.json` — a corrupt run produced by saying no.
 
 ### Goal cycles — `auto --max-cycles N` (ADR 0011)
 `auto` plans once by default; `--max-cycles N` (N ≥ 2) opts into the bounded
@@ -2061,7 +2158,13 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   table and layered ceiling, every cycle, no caching. On cycle k ≥ 2 the
   planner prompt gains a continuation section carrying the previous
   assessment's `remaining` (truncated, quoted as context, never as a rule
-  change).
+  change). **The cycle's run id and leg are opened BEFORE this call**, through
+  `GoalOptions.OnCyclePlanning` — the CLI mints and owns both, the loop takes on
+  no closing obligation — so each cycle's planner call reads `PLANNING` exactly
+  as a single-cycle `auto`'s does (ADR 0023). Without the hook the status would
+  exist for `auto` and not for `auto --max-cycles 3`, and a status that depends
+  on a flag is worse than no status. A cycle whose plan is REFUSED keeps that
+  directory: it holds `rejected.json`, no snapshot, and reads `FAIL`.
 - **Execute**: an ordinary run — own run id, directory, `graph.json`,
   `state.json`, `events.jsonl`, `resume.lock`. The snapshot additionally
   carries the additive `goal` block (`text`, `cycle`, `max_cycles`,

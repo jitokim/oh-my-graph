@@ -204,12 +204,29 @@ func (g *Graph) validateOnFail() []error {
 	}}
 }
 
+// RetryCauses returns the closed set of failure-cause tokens retry.on may list,
+// in the order the load error presents them. It is exported because a second
+// package needs the same set for a different purpose:
+// coordinator.plannerRetryCauses ADVERTISES to the planner what this validator
+// ENFORCES, and a set retyped there could advertise a token load rejects (a
+// wasted planner call) or omit one an author may write. Retyping was how it
+// worked until only ⊆ was tested; taking the set from here makes both
+// directions hold by construction instead.
+//
+// A copy, so a consumer cannot reorder or extend the validator's own list.
+func RetryCauses() []string { return slices.Clone(retryCauses) }
+
 // retryCauses is the closed set of failure-cause tokens retry.on may list, in
 // the order the error message presents them. A slice rather than a map so the
-// message is deterministic; membership is a linear scan over six entries.
+// message is deterministic; membership is a linear scan over seven entries.
+// Every Cause* constant must appear here — a token the scheduler can produce
+// but the validator rejects is a cause no graph may name; TestRetryCauses_
+// CoversEveryCauseConstant reads the constant block itself and holds them
+// together.
 var retryCauses = []string{
 	CauseNonzeroExit,
 	CauseRunError,
+	CauseTimeout,
 	CauseOutputError,
 	CauseBudgetExceeded,
 	CauseVerifyFailed,

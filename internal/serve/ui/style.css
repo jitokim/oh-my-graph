@@ -22,9 +22,16 @@
   --passed: #0ca30c;
   --failed: #d03b3b;
   --gate-paused: #ec835a;
+  /* A RUN that stopped as designed and is resumable (ADR 0023): the same hue as
+     the gate a node waits at, because it is the same kind of stop — but its own
+     token, since a run can pause on the session limit with no gate anywhere. */
+  --paused: #ec835a;
   /* A leg whose process is gone (ADR 0015): muted, never red — nothing failed,
      the work simply never got a verdict. */
   --abandoned: #7d8894;
+  /* A run inside its planner call (ADR 0023): cooler than --running, because
+     nothing of the graph is executing yet — there is no graph. */
+  --planning: #7aa2d6;
 }
 
 /* Dark tokens twice — once for the OS preference (only when no explicit
@@ -121,7 +128,13 @@ header {
 .dot.passed { background: var(--passed); }
 .dot.failed { background: var(--failed); }
 .dot.gate-paused { background: var(--gate-paused); }
+.dot.paused { background: var(--paused); }
 .dot.abandoned { background: var(--abandoned); }
+.dot.planning { background: var(--planning); }
+/* A run directory this binary cannot read. It is a RUN state only — no node is
+   ever unknown — and it wears --muted rather than a status hue because it is
+   the absence of a status, not one of them. */
+.dot.unknown { background: var(--muted); }
 
 .elapsed { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
 .cost { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 13px; }
