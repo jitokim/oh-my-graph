@@ -202,8 +202,11 @@ nodes:
            test` kills a package after 10 minutes BY DEFAULT and prints
            FAIL, so any long stress run reports a failure that never
            happened, and a FAIL here halts the whole pipeline. Pass
-           `-timeout` above your step-1 budget (`go test <pkg> -race
-           -count=<n> -timeout 25m`), or your stack's equivalent.
+           `-timeout` ABOVE your step-1 budget and BELOW this node's own
+           bound (`go test <pkg> -race -count=<n> -timeout 12m`), or your
+           stack's equivalent. A value outside the node's life is no guard
+           at all: the node kills the wedged run first, and a node killed
+           by its own timeout produces no verdict — see step 1.
         4. REPORT. Name every package you stressed with the count and the
            wall time it took (`internal/serve -race -count=40, 113s`), or
            say plainly that you stressed nothing and why. A verdict that

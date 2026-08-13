@@ -587,7 +587,11 @@ func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
 // kills a package after 10 minutes by DEFAULT and reports it as FAIL, so a
 // stress run that DOES fit the node's budget still reports a failure that never
 // happened — measured too: `-count=40 ./cmd/oh-my-graph` "failed" at 601s, and
-// `localrun`'s FAIL halts the whole pipeline.
+// `localrun`'s FAIL halts the whole pipeline. So the worked literal is checked
+// as a duration inside a window with a wall on each side, not as the substring
+// "-timeout": the first spelling of this clause showed `-timeout 25m` against a
+// 20-minute node, a number outside the node's whole life, and a literal is
+// exactly what a model copies — copying one is how `-count=300` shipped.
 func TestLocalrunStressBudgetMatchesItsTimeout(t *testing.T) {
 	loaded, err := LoadFile(filepath.Join("..", "..", "graphs", "adr-driven-dev.yaml"))
 	if err != nil {
@@ -618,13 +622,40 @@ func TestLocalrunStressBudgetMatchesItsTimeout(t *testing.T) {
 	if strings.Contains(node.Prompt, "-count=300") {
 		t.Error("localrun hands down `-count=300` again — 300 repetitions of cmd/oh-my-graph take ~72 minutes under -race, three times this node's whole budget")
 	}
-	for needle, why := range map[string]string{
-		"-timeout": "`go test` kills a package at 10 minutes by default and calls it FAIL, so a long stress run reports a failure that never happened — and localrun's FAIL halts the pipeline",
-		"REPORT":   "a verdict that does not name what was stressed cannot be told from one that stressed nothing",
-	} {
-		if !strings.Contains(node.Prompt, needle) {
-			t.Errorf("localrun's stress instruction never mentions %q — %s", needle, why)
-		}
+	if !strings.Contains(node.Prompt, "REPORT") {
+		t.Error("localrun's stress instruction never mentions \"REPORT\" — a verdict that does not name what was stressed cannot be told from one that stressed nothing")
+	}
+
+	// The worked `-timeout` literal is checked as a DURATION, not as the
+	// substring "-timeout": a literal is what a model copies, and the count that
+	// prompted this test was shipped by being copied. It has to sit strictly
+	// inside a window with a wall on each side. Below the stress budget, `go
+	// test`'s own 10-minute killer fires during a run the node explicitly
+	// budgeted for, printing the FAIL that never happened this clause exists to
+	// prevent. At or above the node's bound the guard can never fire at all: the
+	// NODE kills the wedged run first, and a node killed by its own timeout
+	// produces no verdict — the failure step 1 is written to avoid.
+	// Read against a whitespace-collapsed copy: the prompt is a literal YAML
+	// block, so a phrase this test looks for is broken by whatever newline the
+	// hard wrap happens to fall on.
+	flowed := strings.Join(strings.Fields(node.Prompt), " ")
+	stress := bound / 2 // step 1: "Spend at most half of that on stress"
+	if !strings.Contains(flowed, "at most half") {
+		t.Errorf("localrun no longer budgets stress at \"at most half\" of %s — the window this test checks the -timeout literal against is derived from that phrase, so the two must move together", bound)
+	}
+	m := regexp.MustCompile(`-timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
+	if m == nil {
+		t.Fatal("localrun's stress instruction shows no `-timeout <duration>` literal — `go test` kills a package at 10 minutes by default and calls it FAIL, so a long stress run reports a failure that never happened, and localrun's FAIL halts the pipeline")
+	}
+	shown, err := time.ParseDuration(m[1])
+	if err != nil {
+		t.Fatalf("localrun's worked `-timeout %s` is not a duration go test would accept: %v", m[1], err)
+	}
+	if shown <= stress {
+		t.Errorf("localrun works `-timeout %s` but budgets %s of stress — go test would kill a run the node itself budgeted for and print a FAIL that never happened, which halts the pipeline", shown, stress)
+	}
+	if shown >= bound {
+		t.Errorf("localrun works `-timeout %s`, outside its own %s life — the node kills the wedged run first, so the guard can never fire and the run is discarded with NO verdict at all", shown, bound)
 	}
 }
 

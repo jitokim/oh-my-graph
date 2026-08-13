@@ -1197,22 +1197,16 @@ func extractJSON(result string) string {
 }
 
 // plannerRetryCauses is the closed retry.on cause set, rendered into the
-// planner prompt. Built from graph's own exported cause constants rather than
-// retyped, for the same reason the tool list is rendered from
-// plannedToolAllowlist: a set the prompt ADVERTISES and the validator ENFORCES
-// must have one spelling. graph keeps its ordered slice unexported, so the
-// order here is this package's; TestPlan_PromptListsOnlyAcceptedRetryCauses
-// pins that every token advertised is one graph.Parse actually accepts, which
-// is the direction that costs a rejected plan.
-var plannerRetryCauses = []string{
-	graph.CauseNonzeroExit,
-	graph.CauseRunError,
-	graph.CauseTimeout,
-	graph.CauseOutputError,
-	graph.CauseBudgetExceeded,
-	graph.CauseVerifyFailed,
-	graph.CauseResultMismatch,
-}
+// planner prompt. It IS the validator's own list — graph.RetryCauses() — not a
+// re-typing of the same constants, for the same reason the tool list is
+// rendered from plannedToolAllowlist: a set the prompt ADVERTISES and the
+// validator ENFORCES must have one spelling. Retyped, the two could drift in
+// either direction, and only one of them was tested: advertising a token load
+// rejects costs a rejected plan (⊆, pinned by
+// TestPlan_PromptListsOnlyAcceptedRetryCauses), while omitting one an author
+// may write silently hides real surface from the planner (⊇, which nothing
+// checked). Both hold by construction now.
+var plannerRetryCauses = graph.RetryCauses()
 
 // plannerPrompt renders the coordinator instruction for one goal. Input keys
 // are sorted so the prompt is deterministic for a given goal + inputs. The

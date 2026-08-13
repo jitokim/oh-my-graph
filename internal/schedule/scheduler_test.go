@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1839,6 +1838,12 @@ nodes:
 // rule: a node killed by a context (its own timeout here) died before printing
 // the envelope that carries total_cost_usd, so its ledger row must say the
 // cost is unknown instead of implying the $0.0000 it records was the spend.
+//
+// The injected error is the type the runner actually mints for a node's own
+// bound (ADR 0024). It used to be a hand-rolled fmt.Errorf wrapping
+// context.DeadlineExceeded, which no seam produces any more — so this test
+// pinned a shape nothing could reach, and killedBeforeReporting's reading of
+// the real type, which rides entirely on its Unwrap, was covered by nothing.
 func TestScheduler_KilledNodeDetailSaysCostUnknown(t *testing.T) {
 	g := mustGraph(t, `
 name: killed
@@ -1846,7 +1851,7 @@ nodes:
   - { id: dev, prompt: dev }
 `)
 	fake := runner.NewFakeRunner(nil)
-	fake.InjectError("dev", fmt.Errorf("claude run: timed out after 100ms (node timeout): %w", context.DeadlineExceeded))
+	fake.InjectError("dev", &runner.NodeTimeoutError{Timeout: 100 * time.Millisecond, Err: context.DeadlineExceeded})
 	s, h, led := newHarness(t, fake, Options{})
 
 	if err := s.Run(context.Background(), g, h, led); err == nil {

@@ -72,9 +72,9 @@ worth waiting for again" was the token that also means "the binary is missing."
    added to `coordinator.plannerRetryCauses`, so a planned graph may use what a
    hand-written one may.
 
-A graph that wants the old behaviour writes `on: [run_error, timeout]`. Nothing
-else changes: this is additive to the closed set, and no existing `retry.on`
-list means anything different than it did.
+A graph that wants the old behaviour writes `on: [run_error, timeout]` — and it
+has to, which is the one thing here that is not additive: the *set* only grows,
+but the *token* `run_error` shrinks. §4 records the blast radius.
 
 ### 2.1 The boundary: whose clock was it
 
@@ -83,6 +83,18 @@ inherited from the caller's context — a whole-run bound, a caller's own — st
 a plain context error and stays `run_error`. That distinction already existed in
 the runner (it is what lets a halt-cancellation read differently from a genuine
 run failure); this ADR only gives its already-separated branch a type.
+
+The test for "this runner set it" is `ctx.Err() == nil` — the *parent* context
+still live when the node's own deadline fired. That is a read of two clocks at
+one instant, not a rule, and the direction it can be wrong in was chosen: a halt
+that cancels the parent in the window between the node's deadline firing and
+this check demotes a real timeout to `run_error`, which is the safe way round —
+it under-claims the token rather than handing it to a node the run killed. No
+shipped path can even produce the race today (every run context is a
+`signal.NotifyContext`, so it cancels rather than expiring), so the carve-out
+guards a case the binary does not currently reach. It is stated here so nobody
+"fixes" the ordering by reading the parent first, which would trade a
+conservative miss for a confident wrong answer.
 
 The reason to keep it is concrete: `retry: { on: [timeout] }` re-runs the node,
 and re-running inside a context that has already expired burns every remaining
@@ -163,9 +175,15 @@ diagnostic into an interface.
   that rejects an unknown one, advertised to the planner, and documented in
   DESIGN.md, README and `docs/LIMITATIONS.md`. The CHANGELOG says so in those
   terms.
-- **Nothing existing changes meaning.** No graph in the repository lists
-  `run_error` in a `retry.on`; a graph that does now retries strictly less than
-  before, in exactly the case where a retry costs the most.
+- **`run_error` narrows, and that is a behaviour change.** It is additive to
+  the closed *set* and subtractive from one *token*: a graph listing `run_error`
+  retries strictly less than before, in exactly the case where a retry costs the
+  most. The upgrade is `on: [run_error, timeout]`. The blast radius is small but
+  it is not zero, and it is not bounded by this repository: no shipped graph
+  lists `run_error`, but `run_error` is advertised in
+  `coordinator.plannerRetryCauses`, so auto-planned graphs — and any
+  hand-written graph outside this tree — can and do write it. The CHANGELOG
+  carries it under **Changed** with that upgrade line for the same reason.
 - **The ledger and the stream are untouched.** A timed-out node still fails, is
   still recorded with the timeout named in its detail, and `on_fail: halt` still
   halts. The only thing that reads the new token is `shouldRetry`.

@@ -357,6 +357,13 @@ func (r *ClaudeCLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOut
 			// classify it as graph.CauseTimeout instead of lumping it in with
 			// a failed spawn (ADR 0024). It still unwraps to the sentinel, so
 			// every errors.Is check downstream is unchanged.
+			//
+			// `ctx.Err() == nil` reads two clocks at one instant, so a halt
+			// cancelling in the window between this deadline firing and this
+			// line demotes a real timeout to run_error. That direction is the
+			// deliberate one — under-claim the token rather than hand it to a
+			// node the RUN killed — so do not "fix" it by reading the parent
+			// first (ADR 0024 §2.1).
 			if errors.Is(ctxErr, context.DeadlineExceeded) && ctx.Err() == nil {
 				return NodeOutcome{}, &NodeTimeoutError{Timeout: timeout, Err: ctxErr}
 			}

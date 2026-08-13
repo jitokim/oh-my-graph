@@ -621,7 +621,12 @@ before. The boundary is whose clock ran out: only a deadline the runner minted
 for THIS node earns the token (a `*runner.NodeTimeoutError`), while a deadline
 inherited from the run's own context stays `run_error` — retrying inside an
 already-expired context would burn every attempt against a deadline that has
-passed.
+passed. A graph that listed `run_error` and *wanted* timeouts covered writes
+`on: [run_error, timeout]`; that token narrowed, and it is the one thing here
+that is not purely additive. The other clock is not this one: a
+`success_check.verify` command that times out arrives through the verify seam
+and is `verify_failed`, not `timeout` — splitting it too is deliberately not
+decided (ADR 0024 §5).
 
 budget_usd (post-hoc verdict — the backstop layer): a node that passes its
 success_check is then judged against its declared `budget_usd`. Actual cost strictly greater than the budget

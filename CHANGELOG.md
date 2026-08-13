@@ -24,9 +24,9 @@ running this repository's own `adr-driven-dev` template against it.
   `timeout:` it declared, or the runner's 20-minute default) used to be
   classified `run_error`, the same token as a `claude` binary that never
   started — so `retry: { max: 1, on: [run_error] }` could not ask for one
-  without the other, and the two want opposite policies. Nothing existing
-  changes meaning: the set only grew, no shipped graph lists `run_error`, and a
-  graph that wants the old behaviour writes `on: [run_error, timeout]`.
+  without the other, and the two want opposite policies. That narrowing of
+  `run_error` is a behaviour change; it is under **Changed** below, with what
+  to write if a graph relied on the old reading.
   **Auto-retrying timeouts was considered and refused** — a timeout is the one
   failure that always burns its full budget before dying, so a retry costs
   another whole timeout, and the engine cannot tell a slow machine from an
@@ -71,6 +71,16 @@ running this repository's own `adr-driven-dev` template against it.
 
 ### Changed
 
+- **`retry: { on: [run_error] }` no longer covers a node killed by its own
+  timeout.** That is the other half of the new `timeout` cause above, and it is
+  the one line an upgrading author needs: a graph listing `run_error` now
+  retries strictly *less* than it did, in exactly the case where a retry costs
+  the most — a full second bound. **To keep the old behaviour, write
+  `on: [run_error, timeout]`.** No graph shipped in this repository lists
+  `run_error`, but `run_error` is one of the causes advertised to the planner,
+  so an auto-planned graph can and does write it: a saved plan spec you re-run
+  is worth checking. A deadline inherited from the run's own context is still
+  `run_error` — only the node's own bound earns the new token.
 - **`graphs/adr-driven-dev.yaml`'s `localrun` stops asking for something it
   cannot finish.** It handed every repository the same literal
   `go test <affected packages> -race -count=300` under a 20-minute node — and on
