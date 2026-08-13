@@ -161,8 +161,8 @@ nodes:
 // TestLintVerifyInlining_IsAboutTheCommandOnly pins the sweep's two scope
 // edges. A prompt is where inlining a reply is the DESIGNED use — every shipped
 // template does it — and a verify cwd is not shell-interpreted: it becomes
-// exec.Cmd.Dir, so an inlined reply there fails the spawn loudly rather than
-// running.
+// exec.Cmd.Dir, so nothing in a reply there is parsed as syntax and no part of
+// it can become a command of its own.
 func TestLintVerifyInlining_IsAboutTheCommandOnly(t *testing.T) {
 	g := parseGraph(t, `
 name: scope
@@ -179,6 +179,77 @@ nodes:
 `)
 	if warnings := LintVerifyInlining(g); len(warnings) != 0 {
 		t.Fatalf("only the command is swept, got %v", warnings)
+	}
+}
+
+// TestLintVerifyInlining_LeavesUnresolvableTokensToTheOtherSweep pins the
+// boundary the two docstrings state. A token that can never substitute — the
+// node's own artifact, or a node the graph does not have — is LintPlaceholders'
+// finding and only its finding: nothing is spliced by a token that never
+// resolves, so this sweep's sentence would be false and its fix ("drop the
+// filter") would be untakeable, since the filterless form of a reference that
+// names nothing does not resolve either. Both halves are asserted, because
+// silence here is only correct while the OTHER sweep still speaks.
+func TestLintVerifyInlining_LeavesUnresolvableTokensToTheOtherSweep(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "a node's own artifact cannot exist while it runs",
+			command: "test {{ artifacts.check | inline }}",
+		},
+		{
+			name:    "a reference to no node at all",
+			command: "test {{ artifacts.nowhere | inline }}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := parseGraph(t, `
+name: unresolvable
+nodes:
+  - id: impl
+    prompt: do the work
+  - id: check
+    prompt: check the work
+    depends_on: [impl]
+    success_check:
+      exit_zero: true
+      verify: { command: "`+tc.command+`" }
+`)
+			if warnings := LintVerifyInlining(g); len(warnings) != 0 {
+				t.Fatalf("a token that never resolves splices nothing, got %v", warnings)
+			}
+			if warnings := LintPlaceholders(g); len(warnings) != 1 {
+				t.Fatalf("the unresolvable token must still be reported by LintPlaceholders, got %v", warnings)
+			}
+		})
+	}
+}
+
+// TestLintVerifyInlining_WarnsOnANonAncestorToo is the other side of that
+// boundary. A non-ancestor's artifact MAY exist by the time this node runs —
+// LintPlaceholders says only that it may not — so if it does resolve, a model's
+// reply is on the command line, and the token earns a line from each sweep for
+// two different reasons.
+func TestLintVerifyInlining_WarnsOnANonAncestorToo(t *testing.T) {
+	g := parseGraph(t, `
+name: non-ancestor
+nodes:
+  - id: impl
+    prompt: do the work
+  - id: sibling
+    prompt: something else
+  - id: check
+    prompt: check the work
+    depends_on: [impl]
+    success_check:
+      exit_zero: true
+      verify: { command: "test {{ artifacts.sibling | inline }}" }
+`)
+	if warnings := LintVerifyInlining(g); len(warnings) != 1 {
+		t.Fatalf("a non-ancestor reference can still resolve and splice, got %v", warnings)
 	}
 }
 

@@ -74,10 +74,17 @@ var placeholderKinds = map[string]bool{
 //     one surviving into a validated graph sits in a plain node and will
 //     reach the paid prompt verbatim.
 //
-// Every finding here is about a token that will NOT resolve. A token that
-// resolves exactly as written can still be worth a word — a well-formed
-// `{{ artifacts.<id> | inline }}` in a verify command puts a model's reply on
-// a shell command line — and that is LintVerifyInlining's sweep, not this one.
+// Every finding here is about a token that will not, or may not, resolve.
+// Whether a token that DOES resolve is also one you want is a different
+// question — a well-formed `{{ artifacts.<id> | inline }}` in a verify command
+// puts a model's reply on a shell command line — and that is
+// LintVerifyInlining's sweep, not this one. The two meet on exactly one shape:
+// an artifact reference to a node that exists but is not an ancestor, which
+// may resolve and then splices, so it earns a line from each, for two
+// different reasons. On the tokens that can NEVER resolve — a node's own
+// artifact, a node the graph does not have — this sweep is the only one that
+// speaks; LintVerifyInlining skips them, since a token that never substitutes
+// splices nothing.
 //
 // It shares placeholderPattern with Interpolate, so what lint calls
 // well-formed and what the runtime resolves can never drift apart. Warnings

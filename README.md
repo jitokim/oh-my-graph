@@ -452,13 +452,14 @@ tools the node needs (`allowed_tools: []` if it needs none), or give it a
 `verify` command the engine runs itself. (A gate node and a
 `permission_mode: bypassPermissions` node are exempt: neither can be denied
 anything.)
-Last, for a `success_check.verify.command` that splices a model's own text into
-the shell command line the engine runs. A verify command interpolates exactly
-like a prompt, so `{{ artifacts.<id> | inline }}` there puts a node's free-form
-reply on that line — and `{{ feedback.<id> }}`, which always inlines, does the
-same. Neither is malformed and nothing else says a word. The fix for the first
-is usually the default: with no filter the token is the artifact's *file path*,
-so write `grep -q PASS {{ artifacts.impl }}` and let the command read the file.
+Last, it warns for a `success_check.verify.command` that splices a model's own
+text into the shell command line the engine runs. A verify command interpolates
+exactly like a prompt, so `{{ artifacts.<id> | inline }}` there puts a node's
+free-form reply on that line — and `{{ feedback.<id> }}`, which always inlines,
+does the same. Neither is malformed and nothing else says a word. The fix for
+the first is usually the default: with no filter the token is the artifact's
+*file path*, so write `grep -q '^PASS' "{{ artifacts.impl }}"` and let the
+command read the file.
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
 while a well-formed reference to an unbound input or unknown node fails

@@ -28,16 +28,33 @@ import (
 //     there is no default to fall back to, and its message says something
 //     different: the payload belongs in a prompt.
 //
+// A token LintPlaceholders condemns as UNRESOLVABLE is skipped here — an
+// artifacts token naming the referencing node itself, or a node that is not in
+// the graph. Nothing is spliced by a token that never substitutes, so the
+// warning's own sentence would be false, and its fix ("drop the filter") is
+// advice the author cannot use: the filterless form of a reference that names
+// nothing does not resolve either. That keeps the two sweeps' subjects
+// disjoint on the tokens that can never work, and the boundary stated in
+// LintPlaceholders' docstring true of the code. A reference to a node that
+// exists but is not an ancestor is NOT skipped: LintPlaceholders warns that it
+// may not resolve, but it still can — and if it does, a model's reply is on
+// that command line — so it earns a line from each sweep, for two different
+// reasons.
+//
 // `{{ inputs.<name> }}` is deliberately NOT warned about. An input is bound at
 // invocation from the user's own `--input k=v`, so it has exactly the standing
 // the command line itself has — and it is a shape this repo ships:
 // `backlog-batch.yaml`'s two e2e nodes run `{{ inputs.checks_command }}`,
 // which is the author parameterising their own check, not a model choosing it.
 //
-// Only `command` is swept, not `verify.cwd`. A cwd is not shell-interpreted —
-// it becomes `exec.Cmd.Dir` — so an inlined reply there is not a command line;
-// it is a directory that does not exist, and the spawn fails loudly as an
-// infrastructure fault. This sweep is for the case that passes SILENTLY.
+// Only `command` is swept, not `verify.cwd`. The exemption is that a cwd is
+// not SHELL-INTERPRETED: it becomes `exec.Cmd.Dir`, so no part of a reply
+// there is parsed as syntax and nothing in it can become a second command.
+// (It is not a claim that a reply in a cwd always fails: a node asked for a
+// path replies with a path, and then the author's own command runs somewhere a
+// model chose. That is worth knowing, but it is not this sweep's subject —
+// this sweep is about the command LINE, the place where a reply becomes
+// executable text.)
 //
 // It was measured before it shipped and it fires on NOTHING: over this repo's
 // shipped graphs plus a 20-graph operator lane corpus — 93 nodes and 34 verify
@@ -68,7 +85,11 @@ func LintVerifyInlining(g *graph.Graph) []Warning {
 			continue
 		}
 		for _, groups := range placeholderPattern.FindAllStringSubmatch(v.Command, -1) {
-			detail := judgeInlinedToken(groups[0], groups[1], groups[2], groups[3])
+			token, kind, ref, filter := groups[0], groups[1], groups[2], groups[3]
+			if kind == "artifacts" && !canEverSubstitute(g, node.ID, ref) {
+				continue // LintPlaceholders' finding, and nothing this one could say is true of it
+			}
+			detail := judgeInlinedToken(token, kind, ref, filter)
 			if detail == "" {
 				continue
 			}
@@ -80,6 +101,21 @@ func LintVerifyInlining(g *graph.Graph) []Warning {
 		}
 	}
 	return warnings
+}
+
+// canEverSubstitute reports whether an artifacts reference written in nodeID's
+// own verify command could ever resolve to anything at run time. A node cannot
+// reference its own artifact (it does not exist while the node runs) and a
+// reference to a node the graph does not have never names an artifact at all;
+// both are already LintPlaceholders findings. It deliberately does NOT ask
+// about ancestry — a non-ancestor's artifact may well exist by the time this
+// node runs, and then the splice is real.
+func canEverSubstitute(g *graph.Graph, nodeID, ref string) bool {
+	if ref == nodeID {
+		return false
+	}
+	_, exists := g.NodeByID(ref)
+	return exists
 }
 
 // judgeInlinedToken returns what to say about one already-well-formed token in
