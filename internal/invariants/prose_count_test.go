@@ -37,7 +37,7 @@
 //	the exclusion: this file states no count of its own, it derives one.
 //
 //	README.ko.md is excluded because its claims are written in Korean
-//	("정확히 네 개") and the number grammar below only reads English cardinals.
+//	("네 개의 exec seam") and the number grammar below only reads English cardinals.
 //	FOLLOW-UP: teach numberFromWord a Korean cardinal table, or drop the
 //	exclusion once the translation states the count in digits.
 //
