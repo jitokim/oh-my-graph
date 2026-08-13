@@ -8,12 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
-## [Unreleased]
+## [v0.7.0] - 2026-08-13
+
+**Minor because the schema grew a value you may type.** Compared by token name
+rather than by diff line: `graph.RetryCauses()` registered six causes at v0.6.1
+— `nonzero_exit`, `run_error`, `output_error`, `budget_exceeded`,
+`verify_failed`, `result_mismatch` — and registers seven at this tag, the new
+one being `timeout`. No existing token was renamed or removed. `flags.go` is
+untouched in the range and the eleven subcommands are the same eleven, so
+nothing else new is typed. One merged PR,
+[#166](https://github.com/jitokim/oh-my-graph/pull/166).
 
 Implements [ADR 0023](docs/adr/0023-a-run-has-one-status-and-planning-is-one-of-its-values.md),
 closing [#163](https://github.com/jitokim/oh-my-graph/issues/163), and
 [ADR 0024](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md), found by
 running this repository's own `adr-driven-dev` template against it.
+
+**These are one story, not three items.** #163 reported that `auto`'s planner
+call is invisible; fixing it meant deciding what a run's status *is*, which
+turned up one value that was already being rendered wrong and one the
+enumeration only had to keep; and running that work through this repository's
+own ADR template is what exposed the template's `localrun` node asking for
+stress it could not finish. One report, one thread.
 
 ### Added
 
@@ -114,6 +130,17 @@ running this repository's own `adr-driven-dev` template against it.
   `show`, `serve`'s `ResolveRun` and the single-run view had each been composing
   liveness with a verdict their own way — which is exactly what
   `internal/runstatus` was created to stop.
+  **Two of the six are not new values, and it is worth being plain about
+  which:** `ABANDONED` is not new — it shipped in v0.5.x as one of the
+  three-valued liveness enum's values, and ADR 0015 already refused to call it
+  `FAIL` on the grounds that a `FAIL` is a verdict about the work and an
+  abandoned run never got one; the enumeration keeps that refusal rather than
+  inventing it. `PAUSED` is the other, and it is a **defect users have been
+  seeing**: a run stopped at a gate — resumable, exit 2, working as designed —
+  was already being rendered `FAIL` by `runs list` and painted red by the
+  dashboard, as the bullet above describes. Only `PLANNING` is genuinely a new
+  value; `RUNNING`, `PASS` and `FAIL` are the words those surfaces already
+  printed.
 - **`runs list`'s column header is `STATUS`, not `VERDICT`.** `PLANNING`,
   `PAUSED` and `ABANDONED` are not verdicts, and leaving them under that header
   would keep the conflation in the one place a user reads it. A `PAUSED` row
@@ -2818,7 +2845,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...HEAD
+[v0.7.0]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...v0.7.0
 [v0.6.1]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...v0.6.0
 [v0.5.5]: https://github.com/jitokim/oh-my-graph/compare/v0.5.4...v0.5.5

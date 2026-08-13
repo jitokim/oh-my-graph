@@ -203,7 +203,7 @@ Running graph "haiku-smoke" (run 20260729-101532)
 ▶ critique  running…
 ✓ critique  PASS  $0.0034  2.1s
 
-Run 20260729-101532 — 2 node(s)
+Run 20260729-101532 — PASS, 2 node(s)
 NODE             VERDICT              SESSION                   COST(USD)  DETAIL
 ---------------------------------------------------------------------------------
 critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
@@ -301,7 +301,7 @@ ambient chat — 와 기능별 레시피는
 Releases 페이지에서 태그를 고른 다음:
 
 ```sh
-VERSION=0.6.1 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
+VERSION=0.7.0 OS=darwin ARCH=arm64   # the tag (without the leading v) and your platform
 ARCHIVE="oh-my-graph_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/${ARCHIVE}"
 curl -sSfLO "https://github.com/jitokim/oh-my-graph/releases/download/v${VERSION}/checksums.txt"
@@ -437,8 +437,8 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 | `lint <graph.yaml>` | 그래프 파일을 정적으로 검증하고 모든 문제를 한 번에 보고. 읽기 전용, 비용 없음. |
 | `chat` | 인터랙티브 REPL(프로토타입): 대화형 턴에는 답하고, 작업형 턴은 그래프로 설계해 실행합니다. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | run 재개: 일시정지된 gate를 결정하거나, `--retry-failed`로 실패한 run을 복구 — 통과한 노드의 결과는 그대로 유지되고 실패·취소된 노드만 다시 실행됩니다. `--concurrency N`과 `--no-web`을 받습니다. |
-| `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, verdict(`PASS`, `FAIL`, `RUNNING`, `ABANDONED`), 그리고 합계. 읽기 전용. |
-| `show <run-id>` | 한 run의 노드별 ledger(session, 비용, verdict, 소요 시간)와 합계를 출력. 읽기 전용. |
+| `runs list` | run 목록을 최신순으로 표시: 그래프 이름, 노드 수, 비용, status(`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), 그리고 합계. 읽기 전용. |
+| `show <run-id>` | 한 run의 status와 노드별 ledger(session, 비용, verdict, 소요 시간), 그리고 합계를 출력. 읽기 전용. |
 | `watch <run-id>` | run의 이벤트 스트림을 `tail -f` 스타일의 평문으로 추적. 읽기 전용. |
 | `serve [<run-id>]` | Web live view, `127.0.0.1`에만 바인딩(기본 포트 8642, `--port`로 변경). **run id 없이** 실행하면 dashboard입니다 — run마다 live mini-DAG 카드가 하나씩 뜨고, 카드를 클릭하면 그 run의 view(`/run/<id>/`)로 갑니다. run id를 주면 그 run의 view로 바로 갑니다. stdout이 터미널이면 브라우저로 열립니다(`--no-open`이거나 파이프·CI면 URL만 출력하고 서빙은 그대로 합니다). 한 가지를 빼면 읽기 전용입니다 — gate에서 일시정지된 run은 페이지에서 바로 승인·거절할 수 있습니다. |
 | `version` | 도구 버전을 출력. |
@@ -477,6 +477,22 @@ session-handoff 부모 규칙, verify 블록 — 유효하면 0, 아니면 1로
 `--input` 값에 대한 `{{ inputs.* }}` 해석까지 증명합니다. 진행 중인 run은
 `runs list`에 `RUNNING`으로 표시됩니다(첫 snapshot이 도착하기 전까지는
 `-` placeholder로).
+
+`auto` run은 그보다 **더 일찍** 보입니다 — 생각하기 시작하는 순간부터입니다.
+run id가 플래너 호출 *앞에서* 발급되기 때문입니다. run id는 그래프가 실행되기
+시작한 순간이 아니라 하나의 oh-my-graph 실행을 가리키는 이름이니까요. 그래서
+이 도구에서 가장 긴 단일 대기가 `runs list`에 **`PLANNING`**으로, 대시보드에는
+살아 있는 카드로 나타납니다 — 기계가 "아무 일도 일어나지 않았다"와 구별되지
+않던 그 침묵 대신에요(#163). 플래너가 아직 돌고 있는 동안, planning leg을 닫기
+전에 명령이 죽으면, 그 run은 다른 죽은 leg과 똑같이 `ABANDONED`로 읽히고 복구
+힌트도 동일합니다. 플래너가 정상적으로 에러를 반환한 경우는 이와 다릅니다:
+그 leg은 판정과 함께 닫히고, run은 `FAIL`로 읽힙니다.
+
+그리고 일시정지된 run은 그렇다고 말합니다. 승인 gate에서, 또는 구독의 세션
+한도에서 멈춘 run은 설계된 그대로 멈춘 것이고 재개할 수 있습니다 — 종료 코드도
+1이 아니라 2입니다 — 그런데도 모든 조회 표면이 예전에는 이것을 `FAIL`로,
+즉 실패한 작업을 가리키는 그 단어로 렌더링했습니다. 이제 **`PAUSED`**로 읽히며,
+테이블 아래에 재개 명령이 함께 나옵니다.
 
 프로세스가 죽어 버린 run — 터미널이 닫혔거나, `kill -9`, OOM — 은 예전에는
 영원히 `RUNNING`으로 읽혔습니다. 죽은 leg는 자신을 끝내는 이벤트를 결코
@@ -585,8 +601,10 @@ validator가 거부하는 그래프를 기술하면, oh-my-graph는 그 거부 �
 모델이 쓴 것을 엔진이 손대는 일은 없으며, 세 번째 시도도 없습니다. 출력되는
 가격은 두 호출의 합이고, 재플랜은 그것을 유발한 거부 사유와 함께 별도 줄로
 공개됩니다. 수정된 답마저 거부되면 거부된 spec은 그래도 보관됩니다 —
-`~/.oh-my-graph/plans/<id>/rejected.json`에 — 돈을 낸 플랜이 유효하지 않다는
-이유만으로 사라지지는 않습니다. 정의상 미리 보여주는 건 cycle 하나입니다 —
+`rejected.json`이라는 이름으로, `auto`는 그 run 자신의 디렉토리에(run id가
+플래너 호출보다 먼저 존재하며, 그런 run은 `FAIL`로 읽힙니다), run id를 아예
+발급하지 않는 `--plan-only`는 `~/.oh-my-graph/plans/<id>/` 아래에 — 돈을 낸
+플랜이 유효하지 않다는 이유만으로 사라지지는 않습니다. 정의상 미리 보여주는 건 cycle 하나입니다 —
 `--max-cycles`가 2 이상인 `--plan-only`는 파싱 단계에서 거부됩니다. 첫
 cycle 이후의 모든 cycle은 직전 cycle의 실행으로부터 플랜되므로, 미리 보여줄
 것 자체가 아직 존재하지 않기 때문입니다.
@@ -779,6 +797,14 @@ ADR 0017이 `Proposed`인 이유가 그것입니다. 이 숫자들은 매 run �
   `handoff: session` 재시도는 여전히 cold로 시작하고 그렇다고 말합니다. 이
   기능은 기본으로 켜져 있고 돈이 듭니다: 판정된 실패의 재시도 1회당 인용된
   답변 약 2k 토큰까지. 상한이 있고 평평하며, 절대 누적되지 않습니다 ([spec](DESIGN.md#success-checks--evidence-grounded-verification-v11) · [ADR 0020](docs/adr/0020-a-retry-carries-the-attempt-it-is-repeating.md)).
+  `retry.on`은 일곱 개로 닫힌 원인 집합 — `nonzero_exit`, `run_error`,
+  `timeout`, `output_error`, `budget_exceeded`, `verify_failed`,
+  `result_mismatch` — 위에서 걸러내며, 오타가 있으면 로드 시점에 거부됩니다.
+  `timeout`이 `run_error`와 분리된 것은 의도적입니다: 자기 자신의 상한에 걸려
+  죽은 노드는 죽기 전에 언제나 예산을 전부 써 버리는 유일한 실패라, 재시도하면
+  또 하나의 온전한 timeout만큼 비용이 듭니다. 그러니 이것은 spawn 실패 재시도를
+  요청하다가 딸려 들어오는 것이 아니라 당신이 직접 내리는 결정이어야 합니다
+  ([ADR 0024](docs/adr/0024-a-timeout-is-its-own-cause-not-a-run-error.md)).
 - **`budget_usd`** — 노드별 비용 상한, 라이브(`--max-budget-usd`)와 사후
   모두 적용. 어떤 노드든 예산을 선언한 run에서는 **통과한** 행의
   `COST(USD)` 칸이 그 노드의 예산 중 얼마를 썼는지도 함께 말합니다 —
