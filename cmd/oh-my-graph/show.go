@@ -57,8 +57,13 @@ func showRun(w io.Writer, runDir, runID string) error {
 	// The shared derivation, so `show` cannot disagree with `runs list`, the
 	// dashboard, `watch` or ResolveRun about the same directory. An
 	// unanswerable one (an unreadable stream or a corrupt snapshot) is reported
-	// below by the reader that actually needs the bytes, so this one stays
-	// silent rather than printing the same damage twice. Gather rather than Of
+	// below by the reader that actually needs the bytes WHERE THERE IS ONE:
+	// the missing-snapshot path returns it. On the path where the snapshot
+	// loads there is no such reader — runstate.Load does not parse the graph
+	// and the per-node table does not need it — so the failure is named there
+	// instead. Silence would drop the status word with nothing on screen
+	// saying why, while `runs list` reports that same directory's error: the
+	// cross-surface disagreement internal/runstatus exists to end. Gather rather than Of
 	// because this surface renders the WORD, and a directory whose stream has
 	// said nothing has no word to render (runstatus.Spoken, ADR 0023 §2.1.1).
 	facts, statusErr := runstatus.Gather(runDir)
@@ -84,6 +89,9 @@ func showRun(w io.Writer, runDir, runID string) error {
 			return nil
 		}
 		return fmt.Errorf("load run %q: %w", runID, err)
+	}
+	if statusErr != nil {
+		fmt.Fprintf(w, "WARNING: this run's status could not be derived: %v\n", statusErr)
 	}
 	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap))
 	return nil

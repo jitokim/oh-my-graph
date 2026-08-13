@@ -55,11 +55,27 @@ func runWatch(args []string) error {
 // hook, and adding one would push liveness into the pure stream reader — so
 // that one hang remains, and is stated rather than fixed.
 //
-// An unknown run id — no event stream on disk — is a distinct, clearly worded
+// An unknown run id — no run directory on disk — is a distinct, clearly worded
 // error rather than a raw file-not-found, because it is the one failure the
-// user causes by mistyping an id.
+// user causes by mistyping an id. A directory holding a SNAPSHOT but no event
+// stream is a different failure and gets its own refusal: that run is real and
+// `show` can still read it, there is simply nothing to tail.
 func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, poll time.Duration) error {
 	feedPath := filepath.Join(runDir, runfeed.FileName)
+
+	// A run directory holding a SNAPSHOT but NO event stream would otherwise get
+	// two answers about itself one line apart: Spoken is true on the snapshot
+	// alone, so the status line below announces PASS or FAIL, and then Follow's
+	// fs.ErrNotExist renders that very same directory as an unknown run at the
+	// bottom. It is neither — it is a real run, readable with `show`, that
+	// simply has nothing to tail — so it is refused here, before anything is
+	// announced. A directory with neither file is the other case and keeps the
+	// unknown-run error below: it has said nothing, so it has no status to
+	// announce either (runstatus.Spoken, ADR 0023 §2.1.1), and one answer is
+	// exactly what it gets.
+	if _, err := os.Stat(feedPath); errors.Is(err, fs.ErrNotExist) && hasSnapshot(runDir) {
+		return fmt.Errorf("run %q has no event stream at %s: there is nothing to tail — read what it recorded with `oh-my-graph show %s`", runID, feedPath, runID)
+	}
 
 	// The shared derivation (runstatus.Of), so `watch` refuses exactly the runs
 	// `runs list` calls ABANDONED and the dashboard paints abandoned. An error

@@ -216,6 +216,59 @@ func TestEvent_PhaseIsAdditiveAndOmitted(t *testing.T) {
 	}
 }
 
+// TestLastLeg_ATerminalEventThatClosesNoLegSaysNothing pins the reading a
+// stray run_finished gets: only a terminal event that actually closes an OPEN
+// leg carries a verdict. A duplicate finish must not overwrite the outcome the
+// real one recorded, and a lone finish — damage the contract already refuses to
+// call a closed leg — must not supply an outcome at all.
+func TestLastLeg_ATerminalEventThatClosesNoLegSaysNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		events      []Event
+		wantOutcome string
+	}{
+		{
+			name: "a duplicate finish does not rewrite the verdict",
+			events: []Event{
+				{Type: EventRunStarted},
+				{Type: EventRunFinished, Outcome: OutcomePassed},
+				{Type: EventRunFinished, Outcome: OutcomePaused},
+			},
+			wantOutcome: OutcomePassed,
+		},
+		{
+			name:        "a lone finish carries no outcome",
+			events:      []Event{{Type: EventRunFinished, Outcome: OutcomePaused}},
+			wantOutcome: "",
+		},
+		{
+			// The legitimate two-leg stream an auto run writes: each finish
+			// closes its own open leg, so the second one DOES answer.
+			name: "the second leg of an auto run still answers",
+			events: []Event{
+				{Type: EventRunStarted, Phase: PhasePlanning},
+				{Type: EventRunFinished, Outcome: OutcomeFailed},
+				{Type: EventRunStarted},
+				{Type: EventRunFinished, Outcome: OutcomePassed},
+			},
+			wantOutcome: OutcomePassed,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leg, err := LastLeg(writeStream(t, tc.events...))
+			if err != nil {
+				t.Fatalf("LastLeg: %v", err)
+			}
+			if leg.Open {
+				t.Errorf("leg reads open after a terminal event: %+v", leg)
+			}
+			if leg.LastOutcome != tc.wantOutcome {
+				t.Errorf("LastOutcome = %q, want %q (leg = %+v)", leg.LastOutcome, tc.wantOutcome, leg)
+			}
+		})
+	}
+}
+
 // TestLastLeg_StartedSeparatesASilentStreamFromAClosedLeg pins the fact the
 // status layer's "has this directory said anything" question rests on
 // (runstatus.Spoken). Open answers whether the LAST leg is still open; Started

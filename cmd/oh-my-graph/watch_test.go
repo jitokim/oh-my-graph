@@ -152,6 +152,34 @@ func TestWatchRun_UnknownRunID(t *testing.T) {
 	}
 }
 
+// TestWatchRun_SnapshotOnlyRunHasNothingToTail pins the other missing-stream
+// case, which is NOT a mistyped id: a run directory that holds a snapshot but
+// no events.jsonl is a real run this binary can still `show`. Before the check
+// it produced two answers one line apart — a status announced off the snapshot
+// alone (runstatus.Spoken), then the same directory reported as an unknown run
+// when Follow found no stream.
+func TestWatchRun_SnapshotOnlyRunHasNothingToTail(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, stateFileName), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	var out, warn strings.Builder
+	err := watchRun(context.Background(), &out, &warn, dir, "20260813-000001", testPoll)
+	if err == nil {
+		t.Fatal("watchRun on a run directory with no event stream must fail")
+	}
+	if !strings.Contains(err.Error(), "no event stream") {
+		t.Errorf("error does not say the stream is missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "unknown run") {
+		t.Errorf("a real run directory must not be reported as an unknown run: %v", err)
+	}
+	if out.String() != "" {
+		t.Errorf("no status may be announced for a run that cannot be tailed:\n%s", out.String())
+	}
+}
+
 // TestWatchRun_ZeroCostPassOmitsCost pins the gate rendering: a zero-cost
 // PASS (a gate, which spawns no subprocess) shows its detail but no "$0.0000".
 func TestWatchRun_ZeroCostPassOmitsCost(t *testing.T) {

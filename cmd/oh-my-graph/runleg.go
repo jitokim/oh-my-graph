@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
@@ -134,4 +135,23 @@ func (l *runLeg) Close(outcome string) error {
 		firstErr = err
 	}
 	return firstErr
+}
+
+// closeLeg is Close for the callers that have nothing to do with a failure but
+// must not swallow it — every close outside the scheduler, which is all of them
+// in this package. Close reports the first failure among the run_finished emit,
+// the stream close and the lock release, and a discarded one is invisible in
+// the worst way: a failed emit leaves the leg OPEN on the stream while the lock
+// goes back, so the directory reads ABANDONED after a clean exit and prints
+// runstatus.OrphanWarning — the false double-spend alarm runLeg's whole shape
+// exists to prevent, with nothing on screen to explain it.
+//
+// It writes to os.Stderr rather than the command's out, like every other
+// warning this binary emits about a run's plumbing (resume.go's orphan and
+// artifact warnings), so it can be deferred where no writer is in scope and
+// never lands in the middle of a ledger a human is reading.
+func closeLeg(l *runLeg, outcome string) {
+	if err := l.Close(outcome); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: could not close this run's leg cleanly: %v\n", err)
+	}
 }

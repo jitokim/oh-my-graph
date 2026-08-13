@@ -441,13 +441,13 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		}
 		leg = opened
 		if err := leg.beginPlanning(); err != nil {
-			leg.Close(runfeed.OutcomeFailed)
+			closeLeg(leg, runfeed.OutcomeFailed)
 			return err
 		}
 		// The bracket, restored lexically over every exit below — including the
 		// ones inside executePlan. Close is idempotent, so executeGraph's own
 		// close on the happy path wins and this is a no-op there (ADR 0023 §2.7).
-		defer leg.Close(runfeed.OutcomeFailed)
+		defer closeLeg(leg, runfeed.OutcomeFailed)
 		fmt.Fprintf(out, "Planning a graph for goal %q (run %s)...\n", goal, runID)
 	} else {
 		fmt.Fprintf(out, "Planning a graph for goal %q...\n", goal)
@@ -462,7 +462,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		// given and diagnosed it, which is what a FAIL is. "paused" would make
 		// it print a resume command for a run with nothing to resume.
 		if leg != nil {
-			leg.Close(runfeed.OutcomeFailed)
+			closeLeg(leg, runfeed.OutcomeFailed)
 			return noteRejectedPlan(out, runDirFor(runID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
@@ -674,7 +674,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// planAndExecute's own sweep. The directory would then read ABANDONED after
 	// a clean exit 1 and print runstatus.OrphanWarning: a false double-spend
 	// alarm, which is precisely what §2.7 closes by construction.
-	defer leg.Close(runfeed.OutcomeFailed)
+	defer closeLeg(leg, runfeed.OutcomeFailed)
 
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
@@ -699,7 +699,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// below the recorder rather than beside `scheduler.Run` so the teardown
 	// order is unchanged: the live view registered after it still stops before
 	// the leg gives the lock back.
-	defer leg.Close("")
+	defer closeLeg(leg, "")
 
 	// The worktree manager is per-run: nodes declaring `worktree:` get their
 	// managed checkouts under this run's directory, created off the invocation

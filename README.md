@@ -467,8 +467,11 @@ Its run id is minted before the planner call — a run id names an oh-my-graph
 execution, not the moment a graph starts executing — so the longest single wait
 in the tool shows as **`PLANNING`** in `runs list` and as a live card on the
 dashboard, instead of the silence that made the machine indistinguishable from
-"nothing happened" (#163). A planner call whose process dies reads `ABANDONED`
-like any other dead leg, with the same recovery advice.
+"nothing happened" (#163). If the command dies while the planner is still
+running, before it closes the planning leg, the run reads `ABANDONED` like any
+other dead leg, with the same recovery advice. A planner that returns an error
+normally is not that: its leg is closed with a verdict, and the run reads
+`FAIL`.
 
 And a run that PAUSED says so. A run stopped at an approval gate, or on your
 subscription's session limit, stopped exactly as designed and is resumable — it

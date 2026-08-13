@@ -1,6 +1,8 @@
 package runstatus
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -481,9 +483,20 @@ func factsOf(t *testing.T, runDir string) Facts {
 	if err != nil {
 		t.Fatalf("runfeed.LastLeg: %v", err)
 	}
-	facts := Facts{OpenLeg: leg.Open, Phase: leg.Phase, LastOutcome: leg.LastOutcome}
+	// AnyLeg included, because the position this helper models is the dashboard
+	// card's and the card fills it (internal/serve/card.go) — Derive never reads
+	// it, so leaving it zero passes today and would be a wrong assertion the
+	// moment this helper is reused for a Spoken check.
+	facts := Facts{OpenLeg: leg.Open, AnyLeg: leg.Started, Phase: leg.Phase, LastOutcome: leg.LastOutcome}
 	snap, err := runstate.Load(filepath.Join(runDir, runstate.SnapshotFileName))
 	if err != nil {
+		// Only a MISSING snapshot is absence; anything else is a fixture this
+		// test cannot read, which must fail rather than quietly become
+		// HasSnapshot: false — the very distinction
+		// TestOf_MissingSnapshotIsNeverAnErrorButAnUnreadableOneAlwaysIs pins.
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("runstate.Load: %v", err)
+		}
 		return facts
 	}
 	g, err := graph.Parse(snap.Graph)

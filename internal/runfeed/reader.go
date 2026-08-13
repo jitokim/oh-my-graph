@@ -127,10 +127,12 @@ type Leg struct {
 	// yet", which would paint the first instants of every hand-written run as
 	// planning (ADR 0023 §2.3).
 	Phase string
-	// LastOutcome is the last run_finished's Outcome — "passed", "failed" or
-	// "paused". It is meaningful only when Open is false; while a leg is open
-	// it is whatever the previous leg said, which no caller reads because an
-	// open leg answers first (ADR 0023 §2.1).
+	// LastOutcome is the Outcome of the last run_finished that CLOSED an open
+	// leg — "passed", "failed" or "paused". A terminal event with no open leg
+	// before it leaves it alone, so a duplicate or lone finish cannot overwrite
+	// a real verdict. It is meaningful only when Open is false; while a leg is
+	// open it is whatever the previous leg said, which no caller reads because
+	// an open leg answers first (ADR 0023 §2.1).
 	LastOutcome string
 }
 
@@ -147,8 +149,17 @@ func LastLeg(path string) (Leg, error) {
 			leg.Started = true
 			leg.Phase = event.Phase
 		case EventRunFinished:
-			leg.Open = false
-			leg.LastOutcome = event.Outcome
+			// Only a run_finished that actually CLOSES an open leg says
+			// anything about how that leg ended. A terminal event with no open
+			// leg before it is damage, not a leg — the same reading Started
+			// makes — and taking its outcome anyway would let a stray second
+			// finish overwrite the real verdict: `run_started →
+			// run_finished{passed} → run_finished{paused}` would report the
+			// completed run as PAUSED.
+			if leg.Open {
+				leg.Open = false
+				leg.LastOutcome = event.Outcome
+			}
 		}
 		return nil
 	})

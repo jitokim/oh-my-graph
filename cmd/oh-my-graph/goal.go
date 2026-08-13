@@ -61,13 +61,13 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	// wins and this is a no-op there; when it is NOT a no-op it is closing a leg
 	// that would otherwise read ABANDONED after a clean exit and print an
 	// orphaned-subprocess warning nobody needs (ADR 0023 §2.7).
-	defer func() { leg.Close(runfeed.OutcomeFailed) }()
+	defer func() { closeLeg(leg, runfeed.OutcomeFailed) }()
 
 	onCyclePlanning := func(cycle int) error {
 		// The previous cycle's leg is closed by its own executeGraph; closing
 		// again here is the idempotent no-op that makes the sweep safe when a
 		// cycle returned before ever reaching execution.
-		leg.Close(runfeed.OutcomeFailed)
+		closeLeg(leg, runfeed.OutcomeFailed)
 
 		cycleRunID = newRunID()
 		if firstRunID == "" {
@@ -170,7 +170,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// (an invalid MaxCycles, a nil executor) — no run exists, so plans/ is
 		// the only honest home, exactly as for --plan-only.
 		if cycleRunID != "" {
-			leg.Close(runfeed.OutcomeFailed)
+			closeLeg(leg, runfeed.OutcomeFailed)
 			return noteRejectedPlan(out, runDirFor(cycleRunID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)

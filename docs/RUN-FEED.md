@@ -43,6 +43,16 @@ cycle of an iterated one) and under `~/.oh-my-graph/plans/<id>/` when none does
 run). It is deliberately NOT named `graph.json`: nothing walking the tree for a
 graph the engine would run may pick it up.
 
+`~/.oh-my-graph/plans/<id>/` therefore holds BOTH shapes a paid-for plan can
+take outside a run, under the two names that keep them apart. A REFUSED planner
+reply from a command that minted no run id — `auto --plan-only`, and `chat`,
+whose plan is gated behind a `[y/N]` a human may answer `n` — is kept as
+`rejected.json`. A VALID plan that never ran — a `--plan-only` preview, or a
+`chat` plan DECLINED at that prompt — is kept as `graph.json`, because it IS a
+graph the engine would run: `oh-my-graph run <path>` on it is how you change
+your mind later. Neither is a run, and no `plans/` directory is ever reported by
+`runs list`.
+
 The converse does not hold: a `.out` is not proof of a PASS. `PersistOutput`
 runs *before* the post-hoc budget check, deliberately, so a node that did its
 work and then blew its `budget_usd` FAILS with its artifact already on disk.
