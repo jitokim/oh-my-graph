@@ -117,6 +117,7 @@ nodes:
     handoff: session          # e2e resumes dev's session — it already knows what dev did
     prompt: Run make local. Reply with the bare word PASS, or FAIL and what broke.
     success_check:
+      exit_zero: true
       result_matches: '^[*_`\s]*PASS[*_`\s]*$'   # what the node said
       verify: { command: "make local" }          # what the engine saw
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
@@ -151,11 +152,14 @@ mini-DAG 카드가 하나씩 뜹니다. 끝난 뒤에는 `runs list` / `show` / 
 
 모든 run은 `~/.oh-my-graph/runs/<run-id>/`에 영속화됩니다(`OMG_HOME`으로 베이스
 위치 변경 가능): snapshot(`state.json`)과, 외부 consumer도 tail 할 수 있는
-append-only `events.jsonl`. 이 레이아웃과, `runs list`가 출력하는 여섯 개의 run
-status, 그리고 살아 있는 run을 프로세스가 죽은 run과 어떻게 구별하는지는 문서화된
-안정적 계약입니다 — [docs/RUN-FEED.md](docs/RUN-FEED.md). 또한 노드는 session
-persistence가 **켜진** 채 실행되므로, 모든 노드가 `~/.claude/projects`에 평범한
-claude 세션으로 남고 그 transcript를 읽는 어떤 도구든 그대로 집어갈 수 있습니다.
+append-only `events.jsonl`. 이 레이아웃과, 살아 있는 run을 프로세스가 죽은 run과
+어떻게 구별하는지는 문서화된 안정적 계약입니다 —
+[docs/RUN-FEED.md](docs/RUN-FEED.md). `runs list`가 출력하는 여섯 개의 run
+status는 나머지 커맨드 표면과 함께
+[docs/EXAMPLES.md](docs/EXAMPLES.md#the-command-surface)에 있습니다. 또한 노드는
+session persistence가 **켜진** 채 실행되므로, 모든 노드가 `~/.claude/projects`에
+평범한 claude 세션으로 남고 그 transcript를 읽는 어떤 도구든 그대로 집어갈 수
+있습니다.
 
 ## 스스로를 배포합니다
 

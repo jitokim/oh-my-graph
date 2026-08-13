@@ -111,6 +111,7 @@ nodes:
     handoff: session          # e2e resumes dev's session — it already knows what dev did
     prompt: Run make local. Reply with the bare word PASS, or FAIL and what broke.
     success_check:
+      exit_zero: true
       result_matches: '^[*_`\s]*PASS[*_`\s]*$'   # what the node said
       verify: { command: "make local" }          # what the engine saw
     retry: { max: 1, on: [nonzero_exit, verify_failed] }
@@ -145,9 +146,11 @@ card each; `runs list` / `show` / `watch` are the plain-text reads afterward.
 
 Every run persists to `~/.oh-my-graph/runs/<run-id>/` (`OMG_HOME` relocates the
 base): a `state.json` snapshot and an append-only `events.jsonl` that any
-external consumer can tail. That layout, the six run statuses `runs list`
-prints, and how a live run is told from one whose process died are a documented,
-stable contract — [docs/RUN-FEED.md](docs/RUN-FEED.md). Nodes also run with
+external consumer can tail. That layout, and how a live run is told from one
+whose process died, are a documented, stable contract —
+[docs/RUN-FEED.md](docs/RUN-FEED.md); the six run statuses `runs list` prints
+are listed with the rest of the command surface in
+[docs/EXAMPLES.md](docs/EXAMPLES.md#the-command-surface). Nodes also run with
 session persistence **on**, so every node is an ordinary claude session in
 `~/.claude/projects` that any transcript reader can pick up.
 

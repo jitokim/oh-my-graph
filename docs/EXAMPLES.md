@@ -112,10 +112,16 @@ your actual `--input` values.
 
 Every `PASS` row carries a qualifier, because "the engine ran your build and it
 exited 0" and "the model said the word PASS" are not the same claim and must not
-print as the same word. In the README's quickstart ledger, `write` declares a
-`success_check.verify`, so its row is `verified`; `critique` declares only
-`exit_zero`, so nothing beyond the process's exit status was checked and its row
-says so. The four qualifiers are a closed set:
+print as the same word:
+
+```text
+critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
+```
+
+`write` declares a `success_check.verify`, so its row is `verified`; `critique`
+declares only `exit_zero`, so nothing beyond the process's exit status was
+checked and its row says so. The four qualifiers are a closed set:
 
 | qualifier | what the engine actually did |
 |---|---|
@@ -812,6 +818,18 @@ a result existed, so it leaves none. Budget failures are **not** retried unless
 you explicitly ask (`retry: { on: [budget_exceeded] }`) — retrying an
 over-budget node spends that money again, so it is never implicit. Passing nodes
 show their remaining headroom in the ledger's `DETAIL` column.
+
+The same fact is also on the other scale, in `COST(USD)`. In a run where any
+node declares a budget, each budgeted node's cost cell states the **share** of
+its budget the spend used — `0.4900 (98%)` — so "one bad run from failing" is
+scannable down the column on the run that *passed*, not only in the FAIL detail
+on the run after it. An absolute delta cannot be scanned that way: $0.02 left
+is one bad run against a $2.00 budget and barely started against a $200 one.
+The share is floored, never rounded, so a node that came in under budget never
+reads 100%; it is printed regardless of verdict, so a node that failed its
+`success_check` at 40% of budget still shows where its money went. A graph
+where no node declares a budget pays nothing for the feature: no annotation,
+and no blank column.
 
 What remains is sub-call and cross-node accounting — see
 [Known limitations](LIMITATIONS.md#known-limitations).
