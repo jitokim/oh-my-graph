@@ -9,7 +9,8 @@ import (
 )
 
 // Warning is one advisory finding from this package's lint sweeps
-// (LintPlaceholders, LintSessions, LintVerdicts, LintToolGrants): something a
+// (LintPlaceholders, LintSessions, LintVerdicts, LintToolGrants,
+// LintVerifyInlining): something a
 // valid graph declares that will — or may — not behave as written at run time.
 // It is advice, never an error, and must never affect whether a graph is valid
 // or what any command exits with.
@@ -72,6 +73,11 @@ var placeholderKinds = map[string]bool{
 //     (ADR 0013) — those resolve at LOAD time, inside a fragment body, so
 //     one surviving into a validated graph sits in a plain node and will
 //     reach the paid prompt verbatim.
+//
+// Every finding here is about a token that will NOT resolve. A token that
+// resolves exactly as written can still be worth a word — a well-formed
+// `{{ artifacts.<id> | inline }}` in a verify command puts a model's reply on
+// a shell command line — and that is LintVerifyInlining's sweep, not this one.
 //
 // It shares placeholderPattern with Interpolate, so what lint calls
 // well-formed and what the runtime resolves can never drift apart. Warnings
