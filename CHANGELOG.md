@@ -26,9 +26,10 @@ running this repository's own `adr-driven-dev` template against it.
 
 **These are one story, not three items.** #163 reported that `auto`'s planner
 call is invisible; fixing it meant deciding what a run's status *is*, which
-turned up two values that were already being rendered wrong; and running that
-work through this repository's own ADR template is what exposed the template's
-`localrun` node asking for stress it could not finish. One report, one thread.
+turned up one value that was already being rendered wrong and one the
+enumeration only had to keep; and running that work through this repository's
+own ADR template is what exposed the template's `localrun` node asking for
+stress it could not finish. One report, one thread.
 
 ### Added
 
@@ -129,7 +130,7 @@ work through this repository's own ADR template is what exposed the template's
   `show`, `serve`'s `ResolveRun` and the single-run view had each been composing
   liveness with a verdict their own way — which is exactly what
   `internal/runstatus` was created to stop.
-  **Two of the six are fixes, not additions, and it is worth being plain about
+  **Two of the six are not new values, and it is worth being plain about
   which:** `ABANDONED` is not new — it shipped in v0.5.x as one of the
   three-valued liveness enum's values, and ADR 0015 already refused to call it
   `FAIL` on the grounds that a `FAIL` is a verdict about the work and an
