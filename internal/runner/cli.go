@@ -32,9 +32,25 @@ const (
 // tailBuffer is an io.Writer that retains at most the last limit bytes written
 // to it. The tail, not the head, is what survives: every consumer of a node's
 // stderr reads it through tailOf, and a CLI's fatal line is its last one.
+//
+// Build one with newTailBuffer; the zero value is not usable.
 type tailBuffer struct {
 	limit int
 	buf   []byte
+}
+
+// newTailBuffer returns a buffer retaining the last limit bytes. The
+// constructor exists so the window cannot be forgotten: a zero limit makes
+// `n >= b.limit` true for every write, so a `tailBuffer{}` that compiles fine
+// would silently discard a whole node's stderr — the same reason MaxCycles has
+// no unbounded spelling. A non-positive limit is a programmer error at a call
+// site that passes a constant, so it fails loudly at the first exercise rather
+// than quietly at a crash nobody can then explain.
+func newTailBuffer(limit int) *tailBuffer {
+	if limit < 1 {
+		panic(fmt.Sprintf("newTailBuffer: retention limit must be at least 1, got %d", limit))
+	}
+	return &tailBuffer{limit: limit}
 }
 
 func (b *tailBuffer) Write(p []byte) (int, error) {
@@ -54,6 +70,14 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 }
 
 // Bytes returns the retained tail, never more than limit bytes.
+//
+// The result ALIASES the buffer's storage and both trim paths rewrite that
+// storage in place, so a slice taken here changes under the caller after the
+// next Write — unlike the bytes.Buffer this replaced, whose Bytes() stayed
+// valid until the next append reallocated. Read it after the process has
+// exited, or copy it. Every call site today is safe on both counts: Run touches
+// stderr only after cmd.Run has returned, and tailOf copies by converting to
+// string. Anyone holding a tail ACROSS writes must copy first.
 func (b *tailBuffer) Bytes() []byte {
 	if len(b.buf) > b.limit {
 		return b.buf[len(b.buf)-b.limit:]
@@ -236,9 +260,9 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 
 	cmd := r.buildCmd(runCtx, spec)
 	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
-	stderr := tailBuffer{limit: maxStderrRetained}
+	stderr := newTailBuffer(maxStderrRetained)
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	stdout.finish()
 

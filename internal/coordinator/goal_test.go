@@ -468,8 +468,13 @@ func TestRunGoal_UnknownCostUnderACeilingStopsTheLoop(t *testing.T) {
 
 			result, err := New(fake).RunGoal(context.Background(), "make the tests green",
 				GoalOptions{MaxCycles: 5, MaxGoalBudgetUSD: 10}, executor.execute)
-			if !errors.Is(err, ErrBudgetUnknownCost) {
-				t.Fatalf("err = %v, want ErrBudgetUnknownCost", err)
+			// A governance stop, never an error: every cycle up to here
+			// completed and was assessed, exactly as for StopDeclined.
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Stop != StopBudgetUnmeasurable {
+				t.Errorf("stop = %q, want %q", result.Stop, StopBudgetUnmeasurable)
 			}
 			if len(result.Cycles) != 1 {
 				t.Errorf("%d completed cycles reported, want the one that did run", len(result.Cycles))
@@ -478,6 +483,82 @@ func TestRunGoal_UnknownCostUnderACeilingStopsTheLoop(t *testing.T) {
 				t.Errorf("a cycle was planned under an unmeasurable ceiling: %d calls", got)
 			}
 		})
+	}
+}
+
+// The ceiling is checked at the cycle BOUNDARY, not after each cycle: the last
+// cycle a run is allowed has no boundary after it, so an unknown cost there
+// stops the loop the ordinary way. ADR 0011's honest overshoot is one cycle,
+// and a per-cycle check would report a governance stop for a loop that in fact
+// ran its whole allowance.
+func TestRunGoal_UnknownCostOnTheFinalAllowedCycleExhaustsInstead(t *testing.T) {
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessNotMetReply, CostUnknown: true},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: unknownCostEvidence("r1")}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 1, MaxGoalBudgetUSD: 10}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop != StopCyclesExhausted || len(result.Cycles) != 1 {
+		t.Fatalf("stop = %q with %d cycles, want the cycles-exhausted stop after the one allowed cycle", result.Stop, len(result.Cycles))
+	}
+}
+
+// A met goal is not a budget stop. The verdict is checked before the next
+// cycle's boundary ever arrives, so an unmeasurable spend on the winning cycle
+// must never convert a success into a governance stop — the caller maps
+// StopGoalMet to exit 0 and StopBudgetUnmeasurable to exit 1, so a reordering
+// here would turn a finished goal into a failure.
+func TestRunGoal_UnknownCostOnAMetGoalStillStopsAsGoalMet(t *testing.T) {
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessMetReply, CostUnknown: true},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: unknownCostEvidence("r1")}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 5, MaxGoalBudgetUSD: 10}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop != StopGoalMet || len(result.Cycles) != 1 {
+		t.Fatalf("stop = %q with %d cycles, want the goal-met stop", result.Stop, len(result.Cycles))
+	}
+}
+
+// The blast radius StopBudgetUnmeasurable's doc comment names, pinned so the
+// next reader meets it as behaviour and not as a claim: CostUnknown is what one
+// ordinary node timeout sets, so a single timed-out node ends a BUDGETED loop
+// that ADR 0011 §2 would otherwise keep iterating ("a FAILED run still
+// iterates" — TestRunGoal_FailedRunStillIteratesAndReportsHonestly). Accepted,
+// not endorsed: the stop is honest, because that cycle's spend really is
+// unknown, and the budget is the only bound left once the money is unmeasured.
+func TestRunGoal_ATimedOutCycleEndsABudgetedLoop(t *testing.T) {
+	timedOut := unknownCostEvidence("r1")
+	timedOut.RunPassed = false
+	timedOut.Nodes[0].Verdict = "FAIL"
+	timedOut.Nodes[0].Detail = "timed out after 20m0s (node timeout)"
+
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessNotMetReply, TotalCostUSD: 0.01},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: timedOut}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 5, MaxGoalBudgetUSD: 10}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop != StopBudgetUnmeasurable {
+		t.Fatalf("stop = %q, want %q — a timed-out cycle leaves a budgeted loop unable to measure itself", result.Stop, StopBudgetUnmeasurable)
+	}
+	if got := fake.InvocationCount("plan-2"); got != 0 {
+		t.Errorf("cycle 2 was planned: %d calls — a budgeted loop must not iterate past an unmeasured spend", got)
 	}
 }
 
