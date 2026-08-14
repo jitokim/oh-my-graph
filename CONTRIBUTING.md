@@ -175,11 +175,15 @@ These are the load-bearing guarantees the whole project exists to make (see
 without an explicit, discussed design change should not be merged:
 
 - **Subscription-auth env scrub.** Every child process oh-my-graph spawns —
-  a claude node, a `success_check.verify` command, the git commands behind a
+  a model node, a `success_check.verify` command, the git commands behind a
   node's `worktree:`, AND the `open`/`xdg-open` launch of the `serve` URL —
-  has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted from its
-  environment by the shared `internal/childenv.Scrub`. Those variables
-  silently switch `claude` to metered API billing;
+  has `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` deleted from its
+  environment by the shared `internal/childenv.Scrub`. There is one list and
+  no runtime branch — a Claude node drops the OpenAI switches and a Codex node
+  drops the Anthropic ones — because a per-runtime list is one provider
+  variable away from billing silently. Those variables
+  silently switch the CLI to metered API billing;
   `verify: { command: "claude -p ..." }` is a legal thing to write, a repo's
   own git hooks may invoke claude too, and the URL handler `open` dispatches
   to is arbitrary user-configured code — so every one of the four spawners
@@ -188,9 +192,12 @@ without an explicit, discussed design change should not be merged:
   `internal/verify/shell_test.go`, `internal/worktree/git_test.go`,
   `internal/browser/exec_test.go`) — if you touch env construction, make sure
   those tests still prove the scrub.
-- **Never the Agent SDK.** The node runtime is exclusively the `claude` CLI
-  subprocess (`claude -p ... --output-format json`). Don't introduce an
-  Anthropic API/Agent SDK dependency as an alternate or default runtime path.
+- **Never a provider SDK.** A node runs as the provider's own CLI subprocess —
+  `claude -p ... --output-format json` or `codex exec --json`, one runtime per
+  run (ADR 0025) — on that provider's saved login. Don't introduce an
+  Anthropic/OpenAI API or Agent SDK dependency as an alternate or default
+  runtime path; a new runtime means a new CLI protocol under `CLIRunner`, not
+  a new way to reach a model.
 - **Never `--bare`.** That flag disables OAuth and would break subscription
   auth. Don't add it to the built argv.
 - **Never `--no-session-persistence`.** Nodes run with session persistence on
