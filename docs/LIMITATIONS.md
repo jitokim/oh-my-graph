@@ -138,22 +138,49 @@ has no open issue behind it.
   Every Codex node also runs with `approval_policy="never"`: a non-interactive
   scheduler cannot answer a prompt, so nothing is escalated for approval.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
-- **A Codex node has no network — which is where most of our graphs END.**
+- **A Codex node has no network — and a graph halts at the FIRST node that
+  needs it, which is not always the last one.**
   The Codex sandbox is a network boundary as well as a filesystem one. Measured
   2026-08-14 under `workspace-write`: `gh api rate_limit` → "error connecting
   to api.github.com" (the same call on the host returns 5000), `git ls-remote`
-  → "Could not resolve host". Every shipped graph that publishes finishes on
-  such a node — `graphs/fragments/pr-publish.yaml` (used by `self-dev`,
-  `dev-review-pr` and twice by `backlog-batch`), `adr-driven-dev`'s `finalize`
-  node, which pushes the branch and opens the PR through its own
-  `Bash(gh *)` grant, and `merge-shepherd`, which is `gh` end to end — so under
-  `--runtime codex` those runs do all the work and then fail on the last node.
-  Codex's `sandbox_workspace_write.network_access=true` is **not** the remedy:
-  it lifts the network block, and `gh` still fails with "no oauth token found
-  for github.com", because gh's token lives in the OS keyring and the sandbox
-  denies keyring access. Use `--runtime claude` (the default) for a graph that
-  publishes, or end the Codex graph before its network node and publish
-  separately.
+  → "Could not resolve host". Where the network node SITS is what decides the
+  cost of the failure, and the shipped graphs cover all three positions:
+  - **Last node** — `graphs/fragments/pr-publish.yaml` (used by `self-dev`,
+    `dev-review-pr` and twice by `backlog-batch`) and `adr-driven-dev`'s
+    `finalize`, which pushes the branch and opens the PR through its own
+    `Bash(gh *)` grant. These are the runs that do all the work and then fail
+    on the last node.
+  - **First node** — `apply-flags`, whose `dev` node must have every flag
+    "applied, committed and pushed BEFORE you reply" and whose verdict payload
+    is the pushed SHA. Its LAST node, `verify`, is `permission_mode: plan` with
+    `git diff`/`log`/`show` and needs no network at all. So a graph can publish
+    without finishing on a network node.
+  - **Several** — `merge-shepherd`, which runs `gh` in all five of its model
+    nodes. Its FIRST node, `verify`, runs `gh pr view`, `gh pr diff` and
+    `git fetch origin pull/<n>/head`, so a Codex run of it fails at node 1
+    having done nothing. That is cheaper than a late failure, not worse — but
+    it is not what "does all the work and then fails" describes, which is why
+    this entry names positions instead.
+
+  Three remedies, in order of bluntness. Use `--runtime claude` (the default)
+  for a graph that publishes; or end the Codex graph before its network node
+  and publish separately; or open the network for that ONE node, which the tool
+  already ships two ways of doing:
+  - `permission_mode: bypassPermissions` on that node maps to Codex's
+    `danger-full-access`, which is **not a sandbox** — that node keeps both the
+    network and the keyring. It is opt-in per node and prints a loud warning at
+    load time, which is exactly the trade being made here.
+  - Codex's `sandbox_workspace_write.network_access=true` lifts the network
+    block. That IS the remedy for `git push` and `git ls-remote` — which is what
+    `pr-publish` and `adr-driven-dev`'s `finalize` need — and it is **not** a
+    remedy for `gh` on a machine with an OS keyring: `gh` stores its token there
+    when one is available, the sandbox denies it, and `gh` fails with "no oauth
+    token found for github.com" (measured 2026-08-14, macOS, `workspace-write`).
+    On a machine with no keyring — a headless Linux box is the plausible one for
+    an unattended graph — `gh` falls back to `~/.config/gh/hosts.yml`, a plain
+    file the sandbox can READ (it restricts writes and network, not reads), so
+    `network_access=true` probably does fix `gh` there. That case is
+    **unmeasured**; the macOS result above is the only one this repo has run.
 - **ADR 0009's session-limit pause does not exist on Codex.** A Claude node
   that hits a plan session limit becomes a resumable pause (exit 2). The
   matcher is Claude's own prose and `SessionLimited` is set only for the Claude

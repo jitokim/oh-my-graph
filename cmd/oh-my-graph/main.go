@@ -1052,12 +1052,14 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	fmt.Fprintln(w)
 }
 
-// noteCodexRuntimePolicy prints, before anything spends, every way a Codex run
-// differs from the Claude run this project's defaults describe. Each line is
-// here because the alternative is meeting it AFTER paying for the nodes that
-// led up to it: the network block lands on the publish node most shipped
-// graphs end with, cost-unknown lands in the ledger footer, and the missing
-// session-limit pause lands as a FAILED run someone expected to resume.
+// noteCodexRuntimePolicy prints, before any node spends, every way a Codex run
+// differs from the Claude run this project's defaults describe. (Before any
+// NODE, not before anything: in `auto` the planner call is already bought by
+// the time this prints, and on Codex that first spend is itself cost-unknown.)
+// Each line is here because the alternative is meeting it AFTER paying for the
+// nodes that led up to it: the network block lands wherever the graph's first
+// publishing node sits, cost-unknown lands in the ledger footer, and the
+// missing session-limit pause lands as a FAILED run someone expected to resume.
 //
 // Deliberately one line per difference and no more. A disclosure long enough
 // to scroll past is one nobody reads, so anything that is merely interesting
@@ -1074,10 +1076,14 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 		fmt.Fprintln(w, "  allowed_tools declarations do not become granular Codex permissions; they remain graph documentation.")
 		break
 	}
-	// Named files, because the user's own graph is the thing at risk: these are
-	// the shipped graphs whose LAST node is the one this breaks.
-	fmt.Fprintln(w, "  No network: a sandboxed node cannot reach it — `gh` and `git ls-remote` fail — so a graph ending in a publish node (graphs/fragments/pr-publish.yaml, used by self-dev, dev-review-pr and backlog-batch; adr-driven-dev; merge-shepherd) does the work and then fails on that node.")
-	fmt.Fprintln(w, "    Codex's sandbox_workspace_write.network_access=true lifts the network block but does NOT fix gh: its token is in the OS keyring, which the sandbox denies (\"no oauth token found for github.com\").")
+	// Named files, because the user's own graph is the thing at risk. Where the
+	// network node SITS is the part that decides what a failure costs, and it is
+	// not always the last node: apply-flags pushes from its first, merge-shepherd
+	// runs `gh` in all five of its model nodes and so fails at node 1 having done
+	// nothing at all.
+	fmt.Fprintln(w, "  No network: a sandboxed node cannot reach it — `gh`, `git push` and `git ls-remote` fail — so a graph halts at its FIRST node that publishes, wherever that sits.")
+	fmt.Fprintln(w, "    Last node: adr-driven-dev (finalize), and every user of graphs/fragments/pr-publish.yaml (self-dev, dev-review-pr, backlog-batch). First node: apply-flags (dev pushes before verify reads). Every node: merge-shepherd, which is `gh` end to end and fails at node 1 having done nothing.")
+	fmt.Fprintln(w, "    Two remedies, both per node: permission_mode: bypassPermissions maps to danger-full-access, which is no sandbox — that node keeps network AND keyring. Or Codex's sandbox_workspace_write.network_access=true, which lifts the block for `git push`/`git ls-remote` but not for `gh` on a machine where gh's token is in an OS keyring the sandbox denies (measured 2026-08-14, macOS: \"no oauth token found for github.com\"; where no keyring exists gh reads ~/.config/gh/hosts.yml, which the sandbox can read).")
 	fmt.Fprintln(w, "  Cost is unknown for every Codex node: tokens are counted, USD never is, so this run reports no dollar figure per node or in total.")
 	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
 	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (issue #171).")

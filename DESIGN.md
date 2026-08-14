@@ -148,13 +148,34 @@ non-git directory; oh-my-graph already chooses that directory explicitly.
 The sandbox is a NETWORK boundary as well as a filesystem one: under
 `workspace-write` a node cannot reach the network (measured 2026-08-14,
 `gh api rate_limit` → "error connecting to api.github.com", `git ls-remote` →
-"Could not resolve host"), which is why every graph whose last node publishes —
-`graphs/fragments/pr-publish.yaml`, `adr-driven-dev`, `merge-shepherd` — does
-its work and then fails on that node under `--runtime codex`. Codex's
-`sandbox_workspace_write.network_access=true` would lift the block and still
-not fix `gh`, whose token lives in the OS keyring the sandbox denies, so
-oh-my-graph does not offer it as a remedy; it prints the limitation before the
-run instead (`noteCodexRuntimePolicy`) and records it in
+"Could not resolve host"), so under `--runtime codex` a graph halts at the
+FIRST node that publishes. **Where that node sits varies, and it decides what
+the failure costs** — the shipped graphs cover all three shapes:
+
+| where | graphs | what a Codex run does first |
+|---|---|---|
+| last node | `adr-driven-dev` (`finalize`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
+| first node | `apply-flags` (`dev` applies, commits and pushes; `verify` is `permission_mode: plan` and reads only) | fails immediately, having done nothing |
+| several | `merge-shepherd` — `gh` in all five model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
+
+So "does the work and then fails" is only the last-node case. A graph can also
+publish from a node that is not its last (`apply-flags`), which is why the
+disclosure names positions rather than a list of "graphs that publish".
+
+Two remedies exist, both per node rather than per run, and both are the user's
+call rather than something oh-my-graph selects: `permission_mode:
+bypassPermissions` maps to `danger-full-access`, which is not a sandbox at all,
+so such a node keeps network AND keyring; and Codex's
+`sandbox_workspace_write.network_access=true` lifts the network block, which is
+enough for `git push`/`git ls-remote` (what `pr-publish` and `adr-driven-dev`'s
+`finalize` need) but not for `gh` **on a machine where a keyring is available** —
+`gh` uses the OS keyring only then, and the sandbox denies it ("no oauth token
+found for github.com", measured 2026-08-14 on macOS). Where there is no keyring
+(a headless Linux box, say) `gh` reads `~/.config/gh/hosts.yml`, a plain file a
+`workspace-write` sandbox restricts writes and network for but not reads — so
+`network_access=true` probably does fix `gh` there. That case is unmeasured.
+The run prints the limitation before any node spends
+(`noteCodexRuntimePolicy`) and records it in
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Graph model — YAML (committed)
@@ -1414,8 +1435,13 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   runner classifies the CLI's limit message (`NodeOutcome.SessionLimited`,
   matcher pinned in `internal/runner/sessionlimit.go` against Claude's own
   prose, and set only for the Claude runtime), so a `--runtime codex` run
-  reaches no pause at all: it retries and then FAILS, which
-  `resume --retry-failed` still salvages. Whether ADR 0009 is a promise of the
+  reaches no SESSION-LIMIT pause: the limit is an ordinary node failure — a
+  retry first only if that node declares a `retry:` block, since `shouldRetry`
+  returns false when `node.Retry` is nil — which `resume --retry-failed` still
+  salvages. Only that ONE pause is runtime-shaped: a `gate` node is an engine
+  construct with no runtime branch, so a Codex run pauses at a gate exactly as
+  a Claude run does (`merge-shepherd`, the graph named above, has one).
+  Whether ADR 0009 is a promise of the
   engine or of the Claude runtime is open — #171. The scheduler then
   stops launching new work but drains in-flight siblings (which may
   themselves limit and join the paused set), records the limited node

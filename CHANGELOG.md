@@ -27,10 +27,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 - **The pre-run Codex disclosure now names the four differences a user
   otherwise met only after spending.** Alongside the filesystem sandbox and the
   documentary status of `allowed_tools`: a sandboxed node has **no network**
-  (`gh` and `git ls-remote` fail), which is where the shipped publishing graphs
-  end — `graphs/fragments/pr-publish.yaml`, `adr-driven-dev`, `merge-shepherd`
-  — and Codex's `sandbox_workspace_write.network_access=true` is stated as what
-  it is rather than as a remedy, since `gh`'s keyring token stays out of reach;
+  (`gh`, `git push` and `git ls-remote` fail), so a graph halts at the FIRST
+  node that publishes — and the disclosure names **where that node sits**,
+  because it is not always the last one. Last in `adr-driven-dev` and every user
+  of `graphs/fragments/pr-publish.yaml`; **first** in `apply-flags`, which
+  pushes from `dev` and ends on a read-only `verify`; **every node** in
+  `merge-shepherd`, which is `gh` end to end and so fails at node 1 having done
+  nothing. Two per-node ways out are named with what each costs
+  (`bypassPermissions` → `danger-full-access`, which is no sandbox at all; and
+  Codex's `sandbox_workspace_write.network_access=true`, which does fix
+  `git push` but not `gh` where a keyring holds its token);
   **USD cost is unknown for every node**, not merely unbudgetable;
   `approval_policy="never"` is passed unconditionally; and **ADR 0009's
   session-limit pause does not exist on Codex**

@@ -139,8 +139,21 @@ nodes:
 	if runErr != nil {
 		t.Fatalf("Codex handwritten run returned error: %v", runErr)
 	}
-	if !strings.Contains(out, "allowed_tools declarations do not become granular Codex permissions") {
-		t.Fatalf("Codex handwritten run hid its permission mapping:\n%s", out)
+	// The `run` path prints the same disclosure `auto` does, minus the isolation
+	// line, so it pins the same differences. Same reason as in planonly_test.go:
+	// docs/LIMITATIONS.md points at this print as the mitigation.
+	for _, want := range []string{
+		"allowed_tools declarations do not become granular Codex permissions",
+		"No network: a sandboxed node cannot reach it",
+		"First node: apply-flags",
+		"Every node: merge-shepherd",
+		"Cost is unknown for every Codex node",
+		`approval_policy="never" is passed on every node`,
+		"No session-limit pause",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Codex handwritten run hid %q:\n%s", want, out)
+		}
 	}
 }
 

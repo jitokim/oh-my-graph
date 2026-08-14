@@ -194,9 +194,35 @@ func TestRunAutoWith_CodexPlanPrintsSandboxNotGranularToolClaims(t *testing.T) {
 			t.Errorf("Codex plan claims unsupported granular enforcement %q:\n%s", misleading, out)
 		}
 	}
-	for _, want := range []string{"Codex filesystem sandbox", "allowed_tools declarations"} {
+	// Every line of the disclosure is pinned, not just the two that shipped
+	// first: docs/LIMITATIONS.md now cites this print as the mitigation for the
+	// network block, so a trimmed function would turn that document into a lie
+	// with the suite still green. The position claim is pinned with the rest —
+	// "the last node" was wrong about two shipped graphs, and the fix is only
+	// worth anything if it cannot silently revert.
+	for _, want := range []string{
+		"Codex filesystem sandbox",
+		"allowed_tools declarations",
+		"No network: a sandboxed node cannot reach it",
+		"First node: apply-flags",
+		"Every node: merge-shepherd",
+		"fails at node 1 having done nothing",
+		"bypassPermissions maps to danger-full-access",
+		"network_access=true",
+		"Cost is unknown for every Codex node",
+		`approval_policy="never" is passed on every node`,
+		"No session-limit pause",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Codex plan does not disclose %q:\n%s", want, out)
+		}
+	}
+	// The claim this replaced, kept as a negative: it named merge-shepherd,
+	// whose FIRST node is `gh`, and apply-flags publishes from its first node
+	// while ending on a read-only one.
+	for _, wrong := range []string{"does the work and then fails on that node", "graph ending in a publish node"} {
+		if strings.Contains(out, wrong) {
+			t.Errorf("Codex plan claims every publishing graph fails LAST (%q):\n%s", wrong, out)
 		}
 	}
 }
