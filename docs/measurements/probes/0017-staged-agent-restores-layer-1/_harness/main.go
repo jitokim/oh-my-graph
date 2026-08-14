@@ -8,7 +8,7 @@
 //	                               applySkillActivation (the real functions)
 //	Plan.BindSkillStaging       -> the staged plugin dir, as `auto` binds it
 //	schedule's buildInvocation  -> re-created field for field below
-//	runner.ClaudeCLIRunner.Run  -> runner.buildArgs, the thing under measurement
+//	runner.CLIRunner.Run  -> runner.buildArgs, the thing under measurement
 //
 // Exactly two things are substituted, and both are ends of the chain rather
 // than steps in it: the planner is a canned NodeRunner returning a fixed graph
@@ -162,7 +162,7 @@ func main() {
 	}
 	nodes := report["nodes"].(map[string]any)
 
-	cli := runner.NewClaudeCLIRunner(runner.WithBinary(shim))
+	cli := runner.NewCLIRunner(runner.RuntimeClaude, runner.WithBinary(shim))
 	for _, node := range plan.Graph.Nodes {
 		dir := filepath.Join(argvRoot, node.ID)
 		must(os.MkdirAll(dir, 0o755))

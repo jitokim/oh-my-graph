@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // runLeg is one leg of a run as a VALUE: the run's flock and its event-stream
@@ -47,8 +50,11 @@ type runLeg struct {
 	// leg handed to the scheduler instead is announced and closed by the
 	// scheduler, on the stream, and this flag stays false because nothing here
 	// wrote either event.
-	announced bool
-	closed    bool
+	announced        bool
+	closed           bool
+	closeCostUSD     float64
+	closeCostUnknown bool
+	closeUsage       runfeed.TokenUsage
 }
 
 // openRunLeg takes the run's lock and opens its event stream, creating the run
@@ -124,7 +130,10 @@ func (l *runLeg) Close(outcome string) error {
 
 	var firstErr error
 	if outcome != "" && l.announced {
-		if err := l.feed.Emit(runfeed.Event{Type: runfeed.EventRunFinished, Outcome: outcome}); err != nil {
+		if err := l.feed.Emit(runfeed.Event{
+			Type: runfeed.EventRunFinished, Outcome: outcome,
+			CostUSD: l.closeCostUSD, CostUnknown: l.closeCostUnknown, Usage: l.closeUsage,
+		}); err != nil {
 			firstErr = err
 		}
 	}
@@ -135,6 +144,27 @@ func (l *runLeg) Close(outcome string) error {
 		firstErr = err
 	}
 	return firstErr
+}
+
+// setPlanningAccounting arms the planning leg's fallback close as soon as a
+// paid planner call returns. If execution reaches the scheduler, its
+// run_started carries the same accounting and Close("") emits nothing; if
+// spec/snapshot setup fails first, run_finished carries it instead.
+func (l *runLeg) setPlanningAccounting(costUSD float64, costUnknown bool, usage runner.TokenUsage) {
+	l.closeCostUSD = costUSD
+	l.closeCostUnknown = costUnknown
+	l.closeUsage = runfeed.TokenUsage{
+		InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
+		OutputTokens: usage.OutputTokens, ReasoningOutputTokens: usage.ReasoningOutputTokens,
+	}
+}
+
+func closeRejectedPlanning(l *runLeg, err error) {
+	var rejection *coordinator.PlanRejection
+	if errors.As(err, &rejection) {
+		l.setPlanningAccounting(rejection.CostUSD, rejection.CostUnknown, rejection.Usage)
+	}
+	closeLeg(l, runfeed.OutcomeFailed)
 }
 
 // closeLeg is Close for the callers that have nothing to do with a failure but

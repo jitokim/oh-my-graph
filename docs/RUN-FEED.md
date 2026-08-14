@@ -108,7 +108,7 @@ files answer complementary questions:
 | Answers | "where is the run *now*?" (resume reads this) | "what *happened*, in order, live?" |
 | Write discipline | temp file + fsync + rename after every node | one `write` + fsync per line |
 | Reader pattern | re-read the whole file | `tail -f` / seek to last offset |
-| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **2**) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **2**) |
+| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **3**) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **3**) |
 
 The two files version independently — a snapshot format change does not bump
 the event schema, and vice versa.
@@ -119,11 +119,15 @@ The authoritative field-by-field documentation is the doc comments in
 `internal/runstate/runstate.go` (the `Snapshot`, `NodeRecord`, and `GateState`
 types); this section is the consumer-facing summary.
 
-Top-level fields: `schema`, `run_id`, `graph_source_path`, `graph_sha256`,
+Top-level fields: `schema`, `run_id`, `runtime` (`"claude"` or `"codex"`),
+`planning_cost_usd`, `planning_cost_unknown`, `planning_usage`,
+`graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
 `continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
 runs only — see "Goal cycles" below), `nodes` (map of node id →
-terminal record: `verdict`, `session_id`, `cost_usd`, `budget_usd`, `duration`
+terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
+(`input_tokens`, `cached_input_tokens`, `output_tokens`,
+`reasoning_output_tokens`), `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
@@ -284,7 +288,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema` | int | Event format version. Currently **2**. |
+| `schema` | int | Event format version. Currently **3**. |
 | `ts` | string | Emission time, RFC 3339 UTC with nanosecond precision. Not a sort key — see "Ordered per emission". |
 | `run_id` | string | The run this stream belongs to. |
 | `event` | string | One of the event types below. |
@@ -293,19 +297,27 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 
 | `event` | Extra fields | Emitted when |
 |---|---|---|
-| `run_started` | `phase` *(optional)* | A leg begins. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
-| `node_started` | `node_id`, `session_id` *(optional)* | A node (claude node or gate) begins execution. |
-| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
-| `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
-| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id` *(optional)*, `round` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. |
-| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail` *(optional)* | The leg ends — every launch settled. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
+| `run_started` | `phase`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A leg begins. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. When an auto plan commits, this unphased boundary carries the planner call's accounting. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
+| `node_started` | `node_id`, `session_id` *(optional)* | A node (model-CLI node or gate) begins execution. |
+| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
+| `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
+| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
+| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
+Accounting appears exactly once per paid invocation: on a terminal node event,
+on a feedback `node_retried` when the prior judgment is deliberately
+non-terminal, on the unphased `run_started` that commits a successful plan, or
+on `run_finished` when planning is rejected before a graph exists. Consumers
+may therefore sum these fields over the stream without runtime-specific logic.
+
 On terminal node events, `retries` is the number of retries that preceded the
 terminal attempt (0 for a first-attempt verdict), `cost_usd` is the node's
-reported spend, `session_id` is the claude session it ran under, and `detail`
+reported spend, `cost_unknown` distinguishes an unreported USD value from a
+free call, `usage` carries input/cached-input/output/reasoning-output token
+counts, `session_id` is the selected runtime's session/thread, and `detail`
 is the same short note the run ledger records (the failure cause on a FAIL;
 the retry/budget note, possibly empty, on a PASS). The producer caps the
 *cause* text at one shared bound (240 runes, keeping the tail), so a line
@@ -315,9 +327,10 @@ short round note (`; feedback round k/N`) appended *after* the cap, so such a
 `detail` runs a few tens of runes over 240. Size `detail` as "short, bounded
 by roughly 300 runes", never as "exactly ≤ 240" — and rely on the 1 MiB
 per-line cap below for the actual hard limit. Zero/empty values are
-**omitted** from the JSON — treat an absent `cost_usd`/`retries` as 0 and an
-absent `session_id`/`detail` as none (e.g. a gate spawns no subprocess, so its
-`node_passed` carries neither cost nor session).
+**omitted** from the JSON. Under schema 3, treat absent `cost_unknown` as false
+and absent token members as zero; never infer that absent `cost_usd` means a
+known zero when `cost_unknown` is true. A gate spawns no subprocess, so its
+`node_passed` carries no cost, usage, or session.
 
 `node_passed` additionally carries `provenance`: **how** the PASS was reached
 (ADR 0016 §6), one of a closed set of four —
@@ -345,21 +358,14 @@ appears at most once per declarer per leg, when the failure is final (its
 `detail` then names the spend: `feedback exhausted after 2 rounds of impl →
 review: …`).
 
-On `node_started` and `node_retried`, `session_id` is the **pre-assigned**
-session id the engine hands claude via `--session-id` (a UUID minted before
-the subprocess spawns), published early so a consumer can locate a *running*
-node's transcript instead of waiting for the terminal event; the terminal
-events' `session_id` stays envelope-sourced (the same id, as claude reported
-it back). It is **absent** on a gate's `node_started` (a gate spawns no
-subprocess) and on a session-handoff node's `node_started` (that node resumes
-its parent's session, whose id the parent's own terminal event already
-carried). Each retried attempt gets a *fresh* id — the failed attempt's id
-names the failed attempt's transcript — so `node_retried`'s `session_id`
-supersedes the one published before it. This is an optional field existing
-readers ignore, added under the additive rule below: **no schema bump**.
-The in-repo reference consumer is `serve`'s `/api/transcript`: it reduces
-this stream to "is the node running, and under which session", then serves
-that session's transcript tail as the live view's "now doing" line.
+On `node_started` and `node_retried`, `session_id` appears when the selected
+runtime owns it. Claude pre-assigns a UUID and publishes it before spawn; Codex
+publishes the `thread.started` id after spawn. A gate has none. A
+session-handoff node resumes its parent's id. Each cold retry gets a fresh id,
+so `node_retried` supersedes the failed attempt's transcript/thread reference.
+The in-repo transcript-tail consumer currently understands Claude's
+`~/.claude/projects` layout; Codex session ids remain useful for CLI resume and
+external consumers even though that live tail is unavailable.
 
 The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
 added in schema **2**) mark the decision itself; an approved/rejected gate
@@ -530,7 +536,7 @@ same bytes and derives what it always did.
 
 Finally, the honest caveat about what a free lock does and does not prove: it
 proves the *oh-my-graph* leg is gone, not that its children are. The engine
-spawns each `claude` in its own process group, so a death that took only the
+spawns each selected model CLI in its own process group, so a death that took only the
 engine can leave a subprocess still running and still spending. Recovering such
 a run (`oh-my-graph resume <run-id> --retry-failed`) may therefore run a node
 alongside its own orphan; oh-my-graph's surfaces warn about this rather than

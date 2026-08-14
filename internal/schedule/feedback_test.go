@@ -391,8 +391,11 @@ nodes:
 func TestScheduler_FeedbackEventsNarrateRounds(t *testing.T) {
 	g := mustGraph(t, feedbackLoopYAML)
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
-		"impl: ":           result("draft-v1", 0),
-		"review: draft-v1": result("needs work", 0),
+		"impl: ": result("draft-v1", 0),
+		"review: draft-v1": {
+			SessionID: "thread-needs-work", Result: "needs work", CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3},
+		},
 		"impl: needs work": result("draft-v2", 0),
 		"review: draft-v2": result("ship it", 0),
 	})
@@ -427,6 +430,9 @@ func TestScheduler_FeedbackEventsNarrateRounds(t *testing.T) {
 	}
 	if retried.Retries != 0 {
 		t.Errorf("node_retried retries = %d, want 0 — a feedback round is not a same-node retry", retried.Retries)
+	}
+	if !retried.CostUnknown || retried.Usage.InputTokens != 11 || retried.Usage.ReasoningOutputTokens != 3 {
+		t.Errorf("node_retried accounting = unknown:%v usage:%+v, want the completed feedback attempt", retried.CostUnknown, retried.Usage)
 	}
 }
 
@@ -473,8 +479,11 @@ func (r *historyRecorder) recordsFor(nodeID string) []runstate.NodeRecord {
 func TestScheduler_FeedbackWritesMarkerNotFailToSnapshot(t *testing.T) {
 	g := mustGraph(t, feedbackLoopYAML)
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
-		"impl: ":           result("draft-v1", 0.10),
-		"review: draft-v1": result("needs work", 0.25),
+		"impl: ": result("draft-v1", 0.10),
+		"review: draft-v1": {
+			SessionID: "s-needs-work", Result: "needs work", TotalCostUSD: 0.25, CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 13, CachedInputTokens: 4, OutputTokens: 6, ReasoningOutputTokens: 2},
+		},
 		"impl: needs work": result("draft-v2", 0.10),
 		"review: draft-v2": result("ship it", 0.40),
 	})
@@ -495,6 +504,9 @@ func TestScheduler_FeedbackWritesMarkerNotFailToSnapshot(t *testing.T) {
 	}
 	if marker.CostUSD != 0.25 {
 		t.Errorf("marker cost = %v, want the failing execution's 0.25", marker.CostUSD)
+	}
+	if !marker.CostUnknown || marker.Usage.InputTokens != 13 || marker.Usage.ReasoningOutputTokens != 2 {
+		t.Errorf("marker accounting = unknown:%v usage:%+v, want the failing execution's accounting", marker.CostUnknown, marker.Usage)
 	}
 	if terminal := reviewRecords[1]; terminal.Verdict != runstate.VerdictPass || terminal.Round != 1 {
 		t.Errorf("terminal record = %+v, want PASS at round 1", terminal)

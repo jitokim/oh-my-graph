@@ -30,7 +30,7 @@ let them drift apart.
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) — don't
   touch env construction without keeping those tests meaningful.
 - **The four exec seams.** Exactly four objects may spawn a process:
-  `runner.ClaudeCLIRunner` (a node's claude subprocess),
+  `runner.CLIRunner` (a node's claude subprocess),
   `verify.ShellVerifier` (a node's evidence command),
   `worktree.GitManager` (the `git worktree` commands behind a node's
   `worktree:`) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
@@ -77,7 +77,7 @@ scheduling/runtime behavior, write the test against `FakeRunner`, not a real
 cmd/oh-my-graph/       CLI entrypoint and flag parsing
 internal/graph/        Graph/Node value objects, YAML load, DAG validation
 internal/schedule/     ready-set scheduler (the engine's core)
-internal/runner/       NodeRunner interface, ClaudeCLIRunner, FakeRunner
+internal/runner/       NodeRunner interface, CLIRunner, FakeRunner
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener

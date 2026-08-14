@@ -91,10 +91,14 @@ func (f *serveFlags) parse(args []string) error {
 // it is the only one that injects a resumer (ADR 0014): a run paused at a gate
 // has already exited (ADR 0003), taking its embedded live view with it, so
 // `serve` is by definition the view a paused run is looked at through. The
-// resumer runs the leg's nodes through the production ClaudeCLIRunner, exactly
+// resumer runs the leg's nodes through the production CLIRunner, exactly
 // as `resume` does. The dashboard injects the same one — its interface names
 // the run per call, so one resumer serves every run mounted under it.
 func runServe(args []string) error {
+	return runServeRuntime(runner.RuntimeClaude, false, args)
+}
+
+func runServeRuntime(requested runner.Runtime, requestedSet bool, args []string) error {
 	flags := newServeFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -121,7 +125,12 @@ func runServe(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	resumer := cliGateResumer{nodeRunner: runner.NewClaudeCLIRunner(), errOut: os.Stderr}
+	resumer := cliGateResumer{
+		runnerFor: func(runID string) (runner.NodeRunner, error) {
+			return persistedNodeRunner(runID, requested, requestedSet)
+		},
+		errOut: os.Stderr,
+	}
 	// The fourth exec seam's production implementation, injected here at the
 	// CLI call site and nowhere else (ADR 0006). The gate decides whether it
 	// is ever consulted.

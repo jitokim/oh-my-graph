@@ -93,6 +93,13 @@ func (f *FakeRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome,
 	if !ok {
 		return NodeOutcome{}, fmt.Errorf("fake runner: no scripted outcome for node %q", key)
 	}
+	startedID := outcome.SessionID
+	if spec.ResumeSession != "" {
+		startedID = spec.ResumeSession
+	}
+	if spec.SessionStarted != nil && startedID != "" {
+		spec.SessionStarted(startedID)
+	}
 	return outcome, nil
 }
 

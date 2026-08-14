@@ -72,7 +72,7 @@ type Opener interface {
 The invariant is **restated, not weakened**:
 
 > Exactly four objects in oh-my-graph may spawn a process —
-> `runner.ClaudeCLIRunner`, `verify.ShellVerifier`, `worktree.GitManager` and
+> `runner.CLIRunner`, `verify.ShellVerifier`, `worktree.GitManager` and
 > `browser.ExecOpener` — each behind its own injected interface. No other
 > package imports `os/exec`.
 

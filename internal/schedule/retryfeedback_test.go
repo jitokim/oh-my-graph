@@ -24,15 +24,13 @@ type recordingSequenceRunner struct {
 	err      error // returned instead of an outcome on every attempt in errAt
 	errAt    map[int]bool
 
-	prompts  []string
-	sessions []string
-	resumes  []string
+	prompts []string
+	resumes []string
 }
 
 func (r *recordingSequenceRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	i := len(r.prompts)
 	r.prompts = append(r.prompts, spec.Prompt)
-	r.sessions = append(r.sessions, spec.SessionID)
 	r.resumes = append(r.resumes, spec.ResumeSession)
 	if r.errAt[i] {
 		return runner.NodeOutcome{}, r.err
@@ -340,7 +338,7 @@ nodes:
 	if !strings.Contains(rec.prompts[2], "CHILD-FIRST-REPLY") {
 		t.Errorf("the cold retry was not handed its own previous reply:\n%s", rec.prompts[2])
 	}
-	if !strings.Contains(rec.prompts[2], "FRESH claude session") {
+	if !strings.Contains(rec.prompts[2], "FRESH model-CLI session") {
 		t.Errorf("the quote does not tell the node the attempt is not in its context, which for a "+
 			"session node is the difference between notes and an impossible instruction:\n%s", rec.prompts[2])
 	}
@@ -412,11 +410,7 @@ nodes:
 		t.Errorf("the child resumed session %q while its own prompt told it it is a FRESH session with "+
 			"no conversation behind it; a retry is cold in this process or the last one", rec.resumes[1])
 	}
-	if rec.sessions[1] == "" {
-		t.Error("the child resumed nothing and was given no session id of its own either; a cold " +
-			"execution needs one, and node_started has to publish it")
-	}
-	if !strings.Contains(rec.prompts[1], "FRESH claude session") {
+	if !strings.Contains(rec.prompts[1], "FRESH model-CLI session") {
 		t.Errorf("the quote dropped the paragraph that makes it readable as notes:\n%s", rec.prompts[1])
 	}
 

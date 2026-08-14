@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +65,40 @@ func eventTypes(events []runfeed.Event) []string {
 	return out
 }
 
+type sessionErrorRunner struct{}
+
+func (sessionErrorRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	const sessionID = "thread-interrupted"
+	if spec.SessionStarted != nil {
+		spec.SessionStarted(sessionID)
+	}
+	return runner.NodeOutcome{SessionID: sessionID, CostUnknown: true}, errors.New("codex run: context canceled")
+}
+
+func TestScheduler_TerminalFailureRetainsTheRuntimeOwnedSession(t *testing.T) {
+	g := mustGraph(t, `
+name: interrupted
+nodes:
+  - { id: work, prompt: work }
+`)
+	feed, path := newEventStream(t, "run-interrupted")
+	s, h, led := newHarness(t, sessionErrorRunner{}, Options{EventSink: feed})
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("interrupted node must fail the run")
+	}
+	events := readEventStream(t, path)
+	if len(events) < 4 {
+		t.Fatalf("event sequence too short: %+v", events)
+	}
+	started, failed := events[1], events[2]
+	if started.Type != runfeed.EventNodeStarted || failed.Type != runfeed.EventNodeFailed {
+		t.Fatalf("node lifecycle = %s then %s", started.Type, failed.Type)
+	}
+	if started.SessionID != "thread-interrupted" || failed.SessionID != started.SessionID {
+		t.Fatalf("session started %q, terminal %q; terminal failure must retain the owned session", started.SessionID, failed.SessionID)
+	}
+}
+
 // TestScheduler_EventStreamSequence proves a passing linear run emits exactly
 // the documented lifecycle sequence, and that every event carries the schema
 // version, the run id, and a parseable RFC 3339 timestamp — the contract
@@ -116,6 +149,35 @@ nodes:
 	}
 	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomePassed {
 		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomePassed)
+	}
+}
+
+func TestScheduler_EventStreamPreservesUnknownCostAndUsage(t *testing.T) {
+	g := mustGraph(t, `
+name: codex-accounting
+nodes:
+  - { id: work, prompt: work }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"work": {
+			SessionID: "thread-1", Result: "PASS", CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1},
+		},
+	})
+	feed, path := newEventStream(t, "run-codex-accounting")
+	s, h, led := newHarness(t, fake, Options{EventSink: feed})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	events := readEventStream(t, path)
+	passed := events[2]
+	if !passed.CostUnknown || passed.CostUSD != 0 || passed.Usage.InputTokens != 11 || passed.Usage.ReasoningOutputTokens != 1 {
+		t.Errorf("node_passed accounting = %+v", passed)
+	}
+	row := led.Records()[0]
+	if !row.CostUnknown || row.Usage.InputTokens != 11 {
+		t.Errorf("ledger accounting = %+v", row)
 	}
 }
 
@@ -170,26 +232,10 @@ nodes:
 	}
 }
 
-// scriptedSessionIDs returns a deterministic session-id generator ("sid-1",
-// "sid-2", …) a test swaps in for runner.NewSessionID, so an event's published
-// id can be compared against the exact invocation the FakeRunner captured.
-func scriptedSessionIDs() func() string {
-	n := 0
-	return func() string {
-		n++
-		return fmt.Sprintf("sid-%d", n)
-	}
-}
-
 // TestScheduler_EventStreamNodeStartedPublishesSessionID proves the live-view
-// promise: a fresh-session claude node's node_started publishes the very
-// session id its subprocess is then invoked under (the FakeRunner captures
-// the invocation), so a consumer can locate a RUNNING node's transcript
-// without waiting for the terminal event. A session-handoff node publishes
-// none — its transcript is the parent session, whose id the parent's own
-// terminal event already carried — and its invocation resumes rather than
-// pre-assigns, keeping SessionID and ResumeSession mutually exclusive as the
-// runner documents.
+// promise: node_started publishes the session id owned by the selected runtime.
+// A fresh runtime reports its new id; a session-handoff reports the parent id
+// it resumes. The scheduler neither mints nor guesses either value.
 func TestScheduler_EventStreamNodeStartedPublishesSessionID(t *testing.T) {
 	g := mustGraph(t, `
 name: session-publish
@@ -198,11 +244,10 @@ nodes:
   - { id: b, prompt: b, depends_on: [a], handoff: session }
 `)
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
-		"a": pass("s-a", 0.10), "b": pass("s-b", 0.20),
+		"a": pass("s-a", 0.10), "b": pass("s-a", 0.20),
 	})
 	feed, path := newEventStream(t, "run-session-publish")
 	s, h, led := newHarness(t, fake, Options{EventSink: feed})
-	s.sessionIDs = scriptedSessionIDs()
 
 	if err := s.Run(context.Background(), g, h, led); err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -218,24 +263,22 @@ nodes:
 	if got := eventTypes(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
-	if startedA := events[1]; startedA.SessionID != "sid-1" {
-		t.Errorf("node_started a session_id = %q, want %q", startedA.SessionID, "sid-1")
+	if startedA := events[1]; startedA.SessionID != "s-a" {
+		t.Errorf("node_started a session_id = %q, want runtime-owned %q", startedA.SessionID, "s-a")
 	}
-	if startedB := events[3]; startedB.SessionID != "" {
-		t.Errorf("node_started b session_id = %q, want none (b resumes its parent's session)", startedB.SessionID)
+	if startedB := events[3]; startedB.SessionID != "s-a" {
+		t.Errorf("node_started b session_id = %q, want resumed parent %q", startedB.SessionID, "s-a")
 	}
 
 	invocations := fake.Invocations()
 	if len(invocations) != 2 {
 		t.Fatalf("invocations = %d, want 2", len(invocations))
 	}
-	if invocations[0].SessionID != "sid-1" || invocations[0].ResumeSession != "" {
-		t.Errorf("a's invocation = session %q / resume %q, want the published sid-1 and no resume",
-			invocations[0].SessionID, invocations[0].ResumeSession)
+	if invocations[0].ResumeSession != "" {
+		t.Errorf("a's invocation resume = %q, want a fresh runtime session", invocations[0].ResumeSession)
 	}
-	if invocations[1].SessionID != "" || invocations[1].ResumeSession != "s-a" {
-		t.Errorf("b's invocation = session %q / resume %q, want no pre-assigned id and resume s-a",
-			invocations[1].SessionID, invocations[1].ResumeSession)
+	if invocations[1].ResumeSession != "s-a" {
+		t.Errorf("b's invocation resume = %q, want s-a", invocations[1].ResumeSession)
 	}
 
 	// The absence must be a truly ABSENT key, not an empty string: RUN-FEED.md
@@ -245,11 +288,11 @@ nodes:
 		t.Fatalf("read event stream: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if !strings.Contains(lines[1], `"session_id":"sid-1"`) {
-		t.Errorf("node_started a line = %s, want a session_id key carrying sid-1", lines[1])
+	if !strings.Contains(lines[1], `"session_id":"s-a"`) {
+		t.Errorf("node_started a line = %s, want a session_id key carrying s-a", lines[1])
 	}
-	if strings.Contains(lines[3], "session_id") {
-		t.Errorf("node_started b line = %s, want no session_id key at all", lines[3])
+	if !strings.Contains(lines[3], `"session_id":"s-a"`) {
+		t.Errorf("node_started b line = %s, want the resumed session_id", lines[3])
 	}
 }
 
@@ -266,12 +309,12 @@ nodes:
     success_check: { result_matches: "PASS" }
     retry: { max: 1, on: [result_mismatch] }
 `)
-	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
-		"flaky": {Result: "NOPE", SessionID: "s-flaky", TotalCostUSD: 0.05},
-	})
+	fake := &sequenceRunner{outcomes: []runner.NodeOutcome{
+		{Result: "NOPE", SessionID: "s-1", TotalCostUSD: 0.05},
+		{Result: "NOPE", SessionID: "s-2", TotalCostUSD: 0.05},
+	}}
 	feed, path := newEventStream(t, "run-retry-session")
 	s, h, led := newHarness(t, fake, Options{EventSink: feed})
-	s.sessionIDs = scriptedSessionIDs()
 
 	if err := s.Run(context.Background(), g, h, led); err == nil {
 		t.Fatal("expected run to fail after retries exhausted")
@@ -287,23 +330,11 @@ nodes:
 	if got := eventTypes(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
-	if started := events[1]; started.SessionID != "sid-1" {
-		t.Errorf("node_started session_id = %q, want %q", started.SessionID, "sid-1")
+	if started := events[1]; started.SessionID != "s-1" {
+		t.Errorf("node_started session_id = %q, want %q", started.SessionID, "s-1")
 	}
-	if retried := events[2]; retried.SessionID != "sid-2" {
-		t.Errorf("node_retried session_id = %q, want the fresh %q", retried.SessionID, "sid-2")
-	}
-
-	invocations := fake.Invocations()
-	if len(invocations) != 2 {
-		t.Fatalf("invocations = %d, want 2", len(invocations))
-	}
-	if invocations[0].SessionID != "sid-1" || invocations[1].SessionID != "sid-2" {
-		t.Errorf("invocation session ids = %q, %q, want sid-1 then sid-2",
-			invocations[0].SessionID, invocations[1].SessionID)
-	}
-	if invocations[1].ResumeSession != "" {
-		t.Errorf("retried invocation resume = %q, want none", invocations[1].ResumeSession)
+	if retried := events[2]; retried.SessionID != "s-2" {
+		t.Errorf("node_retried session_id = %q, want the fresh %q", retried.SessionID, "s-2")
 	}
 }
 

@@ -97,7 +97,7 @@ func routerPrompt(message string) string {
 }
 
 const routerPromptTemplate = `You are the chat router for oh-my-graph, an orchestrator that runs each node
-of a DAG as its own claude subprocess. The user typed one message into an
+of a DAG through its selected model CLI. The user typed one message into an
 interactive chat. Decide whether it is conversation to answer directly, or a
 unit of work oh-my-graph should plan and run as a graph.
 

@@ -127,6 +127,32 @@ func TestAssess_ParsesVerdictAndCarriesCallCost(t *testing.T) {
 	}
 }
 
+func TestAssess_PreservesUnknownCostAndTokenUsage(t *testing.T) {
+	outcome := runner.NodeOutcome{
+		Result: assessMetReply, CostUnknown: true,
+		Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3},
+	}
+	fake, _ := newPlannerFake(outcome)
+	assessment, err := New(fake).Assess(context.Background(), "make the tests green", CycleEvidence{RunID: "r1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !assessment.CostUnknown || assessment.CostUSD != 0 || assessment.Usage != outcome.Usage {
+		t.Errorf("assessment accounting = cost %v unknown %v usage %+v", assessment.CostUSD, assessment.CostUnknown, assessment.Usage)
+	}
+}
+
+func TestAssessMaterial_UnknownCostIsNeverPresentedAsZero(t *testing.T) {
+	got := assessMaterial(CycleEvidence{
+		RunID: "r1", RunPassed: true, RunCostUnknown: true,
+		Usage: runner.TokenUsage{InputTokens: 11, OutputTokens: 5},
+		Nodes: []NodeEvidence{{ID: "work", Verdict: "PASS", CostUnknown: true, Usage: runner.TokenUsage{InputTokens: 11, OutputTokens: 5}}},
+	}, "nonce")
+	if strings.Contains(got, "cost $0.0000") || !strings.Contains(got, "run cost unknown") || !strings.Contains(got, "tokens input 11") {
+		t.Errorf("assessment material misrepresented unknown accounting:\n%s", got)
+	}
+}
+
 // The prompt is the whole feed: goal, run outcome, per-node verdicts with
 // detail and cost, artifact excerpts marked as data, and the previous cycle's
 // remaining — and nothing else reaches the assessor.

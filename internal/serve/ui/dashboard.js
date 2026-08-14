@@ -171,7 +171,10 @@ function render() {
   $("live-empty").hidden = live.length > 0;
 
   const cost = all.reduce((sum, c) => sum + (c.cost_usd || 0), 0);
-  $("dash-cost").textContent = `$${cost.toFixed(4)}`;
+  const unknown = all.some((c) => c.cost_unknown);
+  $("dash-cost").textContent = unknown
+    ? (cost > 0 ? `unknown · known $${cost.toFixed(4)}` : "unknown")
+    : `$${cost.toFixed(4)}`;
   paintCounts(all);
 }
 
@@ -223,7 +226,14 @@ function cardEl(card) {
 
   const meta = el("div", "card-meta");
   meta.append(withText(el("span", "elapsed"), elapsedText(card)));
-  meta.append(withText(el("span", "cost"), `$${(card.cost_usd || 0).toFixed(4)}`));
+  const cardCost = card.cost_unknown
+    ? ((card.cost_usd || 0) > 0 ? `unknown · known $${card.cost_usd.toFixed(4)}` : "unknown")
+    : `$${(card.cost_usd || 0).toFixed(4)}`;
+  meta.append(withText(el("span", "cost"), cardCost));
+  if (card.usage) {
+    meta.append(withText(el("span", "tokens"),
+      `${card.usage.input_tokens || 0}/${card.usage.cached_input_tokens || 0}/${card.usage.output_tokens || 0}/${card.usage.reasoning_output_tokens || 0} tok`));
+  }
   for (const [state, n] of countChips(card)) {
     const chip = el("span", "chip");
     chip.append(el("i", `dot ${state}`), text(String(n)));

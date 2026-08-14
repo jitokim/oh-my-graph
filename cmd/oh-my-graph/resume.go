@@ -54,10 +54,14 @@ func hasSnapshot(runDir string) bool {
 }
 
 // runResume is the `resume` subcommand: parse argv and wire the production
-// ClaudeCLIRunner. Split from executeResume the same way runGraph/runAuto are
+// CLIRunner. Split from executeResume the same way runGraph/runAuto are
 // split from executeGraph/executePlan, so a test can inject a FakeRunner
 // instead of spawning a real claude subprocess.
 func runResume(args []string) error {
+	return runResumeRuntime(runner.RuntimeClaude, false, args)
+}
+
+func runResumeRuntime(requested runner.Runtime, requestedSet bool, args []string) error {
 	flags := newResumeFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -67,7 +71,29 @@ func runResume(args []string) error {
 	// same real launcher behind the fourth exec seam (ADR 0006). Watching the
 	// rest of a run is worth as much as watching its beginning, and the leg a
 	// human just decided a gate on is precisely one they are sitting at.
-	return executeResume(flags, runner.NewClaudeCLIRunner(), webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
+	nodeRunner, err := persistedNodeRunner(flags.runID, requested, requestedSet)
+	if err != nil {
+		return err
+	}
+	return executeResume(flags, nodeRunner, webOpener(flags.noWeb, os.Stdout, browser.NewExecOpener()))
+}
+
+// persistedNodeRunner reconstructs the run-wide CLI from state.json. The
+// runtime never comes from a fresh default on resume; an explicit global flag
+// may only confirm, not change, the persisted choice.
+func persistedNodeRunner(runID string, requested runner.Runtime, requestedSet bool) (runner.NodeRunner, error) {
+	snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
+	if err != nil {
+		return nil, fmt.Errorf("load run %q runtime: %w", runID, err)
+	}
+	runtime, err := runner.ParseRuntime(snap.Runtime)
+	if err != nil {
+		return nil, fmt.Errorf("load run %q runtime: %w", runID, err)
+	}
+	if requestedSet && requested != runtime {
+		return nil, fmt.Errorf("run %q uses runtime %q; cannot resume it with --runtime %s", runID, runtime, requested)
+	}
+	return runner.NewCLIRunner(runtime), nil
 }
 
 // executeResume loads a run's snapshot and continues it in one of two modes:
@@ -325,6 +351,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		}
 		g, unmapped = dropped, droppedIDs
 	}
+	runtime, err := runner.ParseRuntime(snap.Runtime)
+	if err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
+	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
 	// A resumed leg re-warns exactly as `run` did at load: the warning is
 	// promised to be loud and never silent (DESIGN.md), and a resume may be
 	// far from the terminal session that saw the first one.
@@ -408,11 +441,20 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	}
 
 	led := ledger.New(runID)
+	led.RecordPlanning(snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
+		InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
+		OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
+	})
 	for nodeID, rec := range records {
 		led.Record(ledger.Record{
-			NodeID:     nodeID,
-			SessionID:  rec.SessionID,
-			CostUSD:    rec.CostUSD,
+			NodeID:      nodeID,
+			SessionID:   rec.SessionID,
+			CostUSD:     rec.CostUSD,
+			CostUnknown: rec.CostUnknown,
+			Usage: ledger.TokenUsage{
+				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+			},
 			BudgetUSD:  rec.BudgetUSD,
 			Verdict:    ledger.Verdict(rec.Verdict),
 			Duration:   rec.Duration,
@@ -432,13 +474,17 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	dropSkillActivation(os.Stdout, snap.ToolPolicies, policies, flags.noSkillActivation, unmapped)
 
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
-		RunID:           runID,
-		GraphSourcePath: snap.GraphSourcePath,
-		GraphSHA256:     snap.GraphSHA256,
-		Graph:           snap.Graph,
-		Inputs:          snap.Inputs,
-		ContinueOnFail:  snap.ContinueOnFail,
-		ToolPolicies:    toNodeToolPolicies(policies),
+		RunID:               runID,
+		Runtime:             snap.Runtime,
+		PlanningCostUSD:     snap.PlanningCostUSD,
+		PlanningCostUnknown: snap.PlanningCostUnknown,
+		PlanningUsage:       snap.PlanningUsage,
+		GraphSourcePath:     snap.GraphSourcePath,
+		GraphSHA256:         snap.GraphSHA256,
+		Graph:               snap.Graph,
+		Inputs:              snap.Inputs,
+		ContinueOnFail:      snap.ContinueOnFail,
+		ToolPolicies:        toNodeToolPolicies(policies),
 		// Goal lineage carries across legs: a resumed cycle of a goal loop
 		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
 		// group membership just because a second process finished it.

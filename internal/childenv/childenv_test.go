@@ -2,13 +2,14 @@ package childenv
 
 import "testing"
 
-// TestScrub_RemovesBillingSwitchingVars is the policy itself: both variables
-// that flip claude from subscription (OAuth) to metered API billing must be
-// gone from any child environment built here.
+// TestScrub_RemovesBillingSwitchingVars is the policy itself: provider API
+// authentication variables must be gone from any child environment built here.
 func TestScrub_RemovesBillingSwitchingVars(t *testing.T) {
 	got := Scrub([]string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
 		"ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed",
+		"OPENAI_API_KEY=sk-openai-should-be-scrubbed",
+		"CODEX_API_KEY=sk-codex-should-be-scrubbed",
 		"PATH=/usr/bin",
 	})
 
@@ -18,6 +19,12 @@ func TestScrub_RemovesBillingSwitchingVars(t *testing.T) {
 		}
 		if kv == "ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed" {
 			t.Error("ANTHROPIC_AUTH_TOKEN survived the scrub")
+		}
+		if kv == "OPENAI_API_KEY=sk-openai-should-be-scrubbed" {
+			t.Error("OPENAI_API_KEY survived the scrub")
+		}
+		if kv == "CODEX_API_KEY=sk-codex-should-be-scrubbed" {
+			t.Error("CODEX_API_KEY survived the scrub")
 		}
 	}
 	if !contains(got, "PATH=/usr/bin") {
@@ -72,6 +79,10 @@ func TestScrub_MatchesKeyCaseInsensitively(t *testing.T) {
 		"anthropic_auth_token=tok-lowercase",
 		"Anthropic_Auth_Token=tok-mixed",
 		"ANTHROPIC_AUTH_token=tok-partly-lowered",
+		"openai_api_key=sk-openai-lowercase",
+		"OpenAI_Api_Key=sk-openai-mixed",
+		"codex_api_key=sk-codex-lowercase",
+		"Codex_Api_Key=sk-codex-mixed",
 	}
 
 	got := Scrub(append(append([]string{}, variants...), "PATH=/usr/bin"))

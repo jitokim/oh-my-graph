@@ -1,16 +1,15 @@
 # Security & Terms-of-Service stance
 
-oh-my-graph is a **personal, local** tool that re-uses **your own** logged-in
-`claude` session. This document states, honestly, what that means and where the
-line is.
+oh-my-graph is a **personal, local** tool that re-uses **your own** saved
+`claude` or `codex` login. This document states, honestly, what that means and
+where the line is.
 
 ## What oh-my-graph is
 
-- A subprocess scheduler that runs each DAG node as `claude -p ...` on the
-  machine you run it from, under the account **you** are already logged into.
-- The same standing as running `claude -p` yourself, or as tools like
-  [claude-squad](https://github.com/smtg-ai/claude-squad): it drives a CLI you
-  have already authenticated.
+- A subprocess scheduler that runs each DAG node through the selected local
+  CLI on the machine you run it from, under an account **you** authenticated.
+- The same standing as invoking `claude` or `codex` yourself: it drives a CLI
+  you have already authenticated.
 
 ## What oh-my-graph is NOT
 
@@ -20,16 +19,17 @@ line is.
 - It **never ships credentials**, **never proxies auth**, and **never** stores or
   transmits your tokens.
 
-## Subscription-auth guarantees (enforced in code)
+## Saved-login guarantees (enforced in code)
 
 - **API-key scrub.** Every child process oh-my-graph spawns — a node
   subprocess, a `success_check.verify` command, the git commands behind a
   node's `worktree:` (a repo's own hooks may invoke claude), and the
   `open`/`xdg-open` launch of the `serve` URL (the URL handler it dispatches
   to is arbitrary user-configured code) — starts from your environment with
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted**. Those variables
-  silently switch `claude` from your subscription (OAuth) to metered API
-  billing. Deletion matches the whole variable name without regard to case, on
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, and
+  `CODEX_API_KEY` **deleted**. Those variables can switch the selected CLI from
+  its saved login to API-key authentication. Deletion matches the whole
+  variable name without regard to case, on
   every platform, so it holds where environment lookups are case-insensitive
   (Windows) as well as where they are not — that rule is unconditional rather
   than platform-tagged so Linux CI executes the guarantee it states. Keys that
@@ -39,9 +39,26 @@ line is.
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) that sets
   both variables in the parent process and proves neither survives into the
   built child command.
-- **Never `--bare`.** That flag disables OAuth; oh-my-graph never passes it.
-- **Never the Agent SDK / API.** The node runtime is exclusively the `claude`
-  CLI subprocess.
+- **Never `--bare`.** On Claude that flag disables OAuth; oh-my-graph never
+  passes it.
+- **Never an Agent SDK / direct API.** The node runtime is exclusively the
+  selected local CLI subprocess.
+
+## Runtime selection and persistence
+
+`--runtime claude|codex` is one choice for the whole run. The default is
+Claude. Fresh runs persist it in `state.json`; terminal resume and browser gate
+actions load that value. An explicit mismatch is refused, so a session never
+changes provider or permission semantics halfway through.
+
+Codex receives `--skip-git-repo-check` because a reviewed graph may explicitly
+set `cwd` to a non-git directory. This removes Codex's repository-presence
+precondition; it does not widen the selected filesystem sandbox.
+
+Codex threads are accepted only from the `thread.started` event emitted by
+`codex exec --json`. The same id is persisted for `handoff: session` and
+`codex exec resume`. Claude continues to use its preassigned UUID and JSON
+envelope. Neither id is invented by the scheduler.
 
 ## Least privilege per node
 
@@ -113,6 +130,31 @@ graph's `verify:` has had since ADR 0002, running on the same seam and
 executing repo-authored code (`gradlew`, `Makefile`, `npm`) the way your own
 terminal does. Stated, not closed: the difference from a repo-file-derived
 grant is that you chose it.
+
+### Codex planned-node isolation
+
+Codex cannot express Claude's per-tool rule grammar. For a planned invocation,
+oh-my-graph instead passes `--ignore-user-config`, `--ignore-rules`,
+`project_doc_max_bytes=0`, and an empty `mcp_servers` table, then maps the
+graph permission mode to Codex's sandbox:
+
+| graph permission mode | Codex sandbox |
+|---|---|
+| `plan` | `read-only` |
+| ordinary unattended/edit modes | `workspace-write` |
+| `bypassPermissions` | `danger-full-access` |
+
+Approval policy is always `never`; a node cannot pause an unattended graph for
+an interactive permission answer. The planner itself keeps the user's normal
+Codex context because its input is the user's own goal. Planned nodes and the
+assessor do not. A hand-written graph also keeps the user's normal config,
+matching the existing reviewed-artifact boundary.
+
+This is a filesystem sandbox stance, not granular enforcement of
+`allowed_tools`. Positive `budget_usd`, `agent:`, and the goal-level USD budget
+flag are rejected for Codex rather than silently ignored. Claude agent mapping
+and skill activation are not attempted. Codex USD cost is recorded as unknown;
+its provider-reported token counts are the accounting surface.
 
 Relatedly, oh-my-graph may *detect* build markers (`gradlew`, `package.json`,
 `Cargo.toml`, …) in the invocation directory. Detection only ever prints a
@@ -487,7 +529,7 @@ artifacts** — that is, the text of earlier nodes' replies.
 
 **Known, and not currently fixed.** The fix would be to feed the prompt on
 stdin, and that is a change to the most lifecycle-sensitive seam in the repo:
-`ClaudeCLIRunner` owns `waitDelay`, process-group kill and `--output-format
+`CLIRunner` owns `waitDelay`, process-group kill and `--output-format
 json` parsing, writing to a child's stdin adds a deadlock surface, and the
 interaction with `--resume` is unmeasured. It would need a real `make smoke`
 measurement against a live CLI before anyone should believe it. Until then it is

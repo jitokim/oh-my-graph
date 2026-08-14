@@ -46,7 +46,7 @@ one-token `C1` arm. Nothing in `internal/` changes for this measurement.
 `_harness/main.go` (`//go:build ignore`) drives `coordinator.Plan` (real
 validation, real `applyAgentMapping`, real `applySkillActivation`),
 `Plan.BindSkillStaging`, `schedule`'s `buildInvocation` field for field, and the
-real `runner.ClaudeCLIRunner`, with the claude binary replaced by `shim.sh`.
+real `runner.CLIRunner`, with the claude binary replaced by `shim.sh`.
 Recorded, verbatim (`argv/*.argv.txt`, `plan-report.json`):
 
 | | agent-mapped `omg-probe-writer` | agent-mapped `omg-probe-ceiling` | activated `standalone-render` |

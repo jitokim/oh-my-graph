@@ -6,13 +6,13 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>Describe the goal — it runs the graph, on your Claude subscription.</em></p>
+<p align="center"><em>Describe the goal — run the graph with your Claude or Codex login.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
   <a href="go.mod"><img src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.25" /></a>
-  <img src="https://img.shields.io/badge/runs%20on-Claude%20subscription-ff8a65?logo=anthropic&amp;logoColor=white" alt="Runs on your Claude subscription" />
+  <img src="https://img.shields.io/badge/runtime-Claude%20%7C%20Codex-ff8a65" alt="Claude and Codex runtimes" />
 </p>
 
 <p align="center">
@@ -20,19 +20,16 @@
 </p>
 
 > A graph-native multi-agent orchestrator whose node runtime is your own
-> logged-in `claude` CLI — not the Anthropic API.
+> logged-in `claude` or `codex` CLI — not an API key.
 
 ## What it is
 
-Graph engineering — wiring specialized agents together as a DAG — currently
-forces you onto the Anthropic API, the Agent SDK, and a metered
-`ANTHROPIC_API_KEY`. Every existing graph-native orchestrator bills per token.
-
-oh-my-graph doesn't. You describe the work as a DAG in YAML, and each node runs
-as a raw `claude -p` subprocess on the Max/Pro plan you already pay for. **That
-is not the same as free.** It spends your subscription, a run has a real price,
-and the ledger prints it per node — the claim is that there is no *second*,
-metered bill, not that the work costs nothing. [Bring your own
+oh-my-graph does not require a direct model API or Agent SDK. You describe the
+work as a DAG in YAML, and
+each node runs through the CLI login you already use: `claude` by default, or
+`codex` when selected for the run. **That is not the same as free.** It spends
+your plan allowance. Claude reports USD cost; Codex reports token usage and the
+ledger labels USD cost `unknown` rather than inventing `$0`. [Bring your own
 login](#bring-your-own-login) is how that is enforced in code, and
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md) is how it compares to its nearest
 neighbours — conductor, OMK, open-multi-agent.
@@ -56,15 +53,28 @@ oh-my-graph init
 # Zero config — describe the goal and let auto plan the graph:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# Codex is a run-wide opt-in; the global flag must precede the subcommand:
+oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD
+
 # Or run a shipped graph — the cheapest real end-to-end check (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
 
-No `ANTHROPIC_API_KEY` needed — this runs on your logged-in `claude`
-subscription, and if the key is set in your shell it is deleted from each
-node's subprocess environment before that node runs. Add `--plan-only` to
-`auto` to buy the plan and read it without executing a node.
+Log in once with the selected CLI (`claude` or `codex login`). No API key is
+needed: Anthropic and OpenAI API-key variables are deleted from child process
+environments so the CLI uses its saved login. The default remains Claude;
+`--runtime codex` applies to the whole run, is saved in `state.json`, and is
+reused by `resume` and browser gate actions. Add `--plan-only` to `auto` to buy
+the plan and read it without executing a node.
+
+Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
+`workspace-write`, and `bypassPermissions` to `danger-full-access`. Codex does
+not report USD or implement Claude's per-call `budget_usd` and `agent:`
+selector, so those two graph fields and `--max-goal-budget-usd` are rejected
+before a Codex run spends anything. Claude Code agent mapping and skill
+activation are Claude-only; Codex `auto` runs use Codex sandbox isolation
+instead.
 
 You get a live line per node as the graph runs, then a cost ledger:
 
@@ -151,8 +161,9 @@ whose process died, are a documented, stable contract —
 [docs/RUN-FEED.md](docs/RUN-FEED.md); the six run statuses `runs list` prints
 are listed with the rest of the command surface in
 [docs/EXAMPLES.md](docs/EXAMPLES.md#the-command-surface). Nodes also run with
-session persistence **on**, so every node is an ordinary claude session in
-`~/.claude/projects` that any transcript reader can pick up.
+session persistence **on**. Claude nodes remain ordinary sessions in
+`~/.claude/projects`; Codex nodes persist and resume the thread id emitted by
+`codex exec --json`.
 
 ## It ships itself
 
@@ -170,14 +181,12 @@ dogfooding run is walked through in
 ## One boundary to read before you trust it
 
 `auto` executes a plan an LLM wrote, unattended, on your machine. oh-my-graph
-bounds what a planned node may call — no `permission_mode: bypassPermissions`,
-no planner-authored engine shell, a fixed tool allowlist, and
-`--setting-sources ""` so a node declaring `Bash(git *)` cannot borrow a
-standing `Bash(*)` from your own settings (measured against a real `claude`, not
-read off `--help`). **That is a reduction, not a sandbox.** MCP closure was
-never measured, slash-command surface is not enumerable by any of these
-mechanisms, and the whole ceiling rests on one CLI version's behaviour. Run
-`auto` in a directory you are willing to have modified.
+bounds planned execution using the selected runtime's mechanism. Claude uses
+the measured layered tool ceiling described below; Codex discards user config,
+project rules/AGENTS files and MCP servers for planned nodes, then applies its
+read-only or workspace sandbox. **These are reductions, not a security
+boundary around the repository you launched from.** Run `auto` only in a
+directory you are willing to have modified.
 
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support
@@ -188,15 +197,14 @@ and what is deliberately deferred are in
 ## Bring your own login
 
 oh-my-graph never ships credentials, never proxies auth, and never runs as a
-shared service. It re-uses **your own** already-logged-in `claude` session — the
-same standing as running `claude -p` yourself, or as
-[claude-squad](https://github.com/smtg-ai/claude-squad). It is a personal, local
-tool. Nodes run inside the Max/Pro plan you already pay for, with no metered key
-involved.
+shared service. It re-uses **your own** saved `claude` or `codex` login. It is a
+personal, local tool with the same standing as invoking the selected CLI
+yourself.
 
 To keep that guarantee real, every node subprocess starts from your environment
-with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` **deleted** — those silently
-switch `claude` to metered API billing. The scrub is one shared policy
+with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, and
+`CODEX_API_KEY` **deleted** — those can switch the selected CLI away from its
+saved login. The scrub is one shared policy
 (`internal/childenv`), unit-tested on its own and again at each of the four exec
 seams; oh-my-graph never uses `--bare` (which disables OAuth) and never touches
 the Agent SDK. Full stance: [SECURITY.md](SECURITY.md).

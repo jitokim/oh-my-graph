@@ -28,10 +28,12 @@ const assessFileName = "assess.json"
 // types are owned by runstate: the file is a persisted consumer contract, not
 // a dump of the runtime coordinator.Assessment.
 type assessRecord struct {
-	GoalMet       bool    `json:"goal_met"`
-	Remaining     string  `json:"remaining,omitempty"`
-	Evidence      string  `json:"evidence,omitempty"`
-	AssessCostUSD float64 `json:"assess_cost_usd"`
+	GoalMet           bool              `json:"goal_met"`
+	Remaining         string            `json:"remaining,omitempty"`
+	Evidence          string            `json:"evidence,omitempty"`
+	AssessCostUSD     float64           `json:"assess_cost_usd"`
+	AssessCostUnknown bool              `json:"assess_cost_unknown,omitempty"`
+	Usage             runner.TokenUsage `json:"usage,omitzero"`
 }
 
 // planAndExecuteCycles is planAndExecute's iterated shape (ADR 0011): it
@@ -87,11 +89,12 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 
 	execute := func(ctx context.Context, cycle int, plan coordinator.Plan) (coordinator.CycleEvidence, error) {
 		runID := cycleRunID
+		leg.setPlanningAccounting(plan.CostUSD, plan.CostUnknown, plan.Usage)
 		specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
 		if err != nil {
 			return coordinator.CycleEvidence{}, err
 		}
-		printPlan(out, plan, specPath)
+		printPlanForRuntime(out, plan, specPath, flags.runtime)
 
 		// Unreachable in v1 production — `auto` passes a nil confirm and
 		// chat, the one confirm-bearing caller, is single-cycle (ADR 0011
@@ -170,7 +173,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// (an invalid MaxCycles, a nil executor) — no run exists, so plans/ is
 		// the only honest home, exactly as for --plan-only.
 		if cycleRunID != "" {
-			closeLeg(leg, runfeed.OutcomeFailed)
+			closeRejectedPlanning(leg, err)
 			return noteRejectedPlan(out, runDirFor(cycleRunID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
@@ -210,9 +213,11 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		return coordinator.CycleEvidence{}, fmt.Errorf("read cycle snapshot for assessment: %w", err)
 	}
 	evidence := coordinator.CycleEvidence{
-		RunID:      runID,
-		RunPassed:  runPassed,
-		RunCostUSD: plan.CostUSD,
+		RunID:          runID,
+		RunPassed:      runPassed,
+		RunCostUSD:     plan.CostUSD,
+		RunCostUnknown: plan.CostUnknown,
+		Usage:          plan.Usage,
 	}
 	// Graph order, not map order, so the assessor's material is
 	// deterministic for a given run.
@@ -222,11 +227,21 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 			continue
 		}
 		evidence.RunCostUSD += rec.CostUSD
+		evidence.RunCostUnknown = evidence.RunCostUnknown || rec.CostUnknown
+		evidence.Usage = addTokenUsage(evidence.Usage, runner.TokenUsage{
+			InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+			OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+		})
 		nodeEvidence := coordinator.NodeEvidence{
-			ID:      node.ID,
-			Verdict: string(rec.Verdict),
-			Detail:  rec.Detail,
-			CostUSD: rec.CostUSD,
+			ID:          node.ID,
+			Verdict:     string(rec.Verdict),
+			Detail:      rec.Detail,
+			CostUSD:     rec.CostUSD,
+			CostUnknown: rec.CostUnknown,
+			Usage: runner.TokenUsage{
+				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+			},
 		}
 		if rec.ArtifactPath != "" {
 			if content, readErr := readArtifactBounded(rec.ArtifactPath); readErr == nil {
@@ -290,8 +305,11 @@ func printCycleVerdict(w io.Writer, report coordinator.CycleReport) {
 	if report.Assessment.GoalMet {
 		verdict = "goal met"
 	}
-	fmt.Fprintf(w, "Cycle %d assessment (run %s): %s (assessment cost $%.4f)\n",
-		report.Cycle, report.RunID, verdict, report.Assessment.CostUSD)
+	fmt.Fprintf(w, "Cycle %d assessment (run %s): %s (assessment cost %s)\n",
+		report.Cycle, report.RunID, verdict, formatCost(report.Assessment.CostUSD, report.Assessment.CostUnknown))
+	if report.Assessment.Usage != (runner.TokenUsage{}) {
+		fmt.Fprintf(w, "  assessment tokens: %s\n", formatUsage(report.Assessment.Usage))
+	}
 	if report.Assessment.Remaining != "" {
 		fmt.Fprintf(w, "  remaining: %s\n", report.Assessment.Remaining)
 	}
@@ -307,10 +325,12 @@ func printCycleVerdict(w io.Writer, report coordinator.CycleReport) {
 // evidence the assessor read out of the run.
 func saveAssessment(runDir string, a coordinator.Assessment) error {
 	data, err := json.MarshalIndent(assessRecord{
-		GoalMet:       a.GoalMet,
-		Remaining:     a.Remaining,
-		Evidence:      a.Evidence,
-		AssessCostUSD: a.CostUSD,
+		GoalMet:           a.GoalMet,
+		Remaining:         a.Remaining,
+		Evidence:          a.Evidence,
+		AssessCostUSD:     a.CostUSD,
+		AssessCostUnknown: a.CostUnknown,
+		Usage:             a.Usage,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode assessment: %w", err)
@@ -337,8 +357,13 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	}
 	fmt.Fprintf(w, "\nGOAL SUMMARY — %q\n", goal)
 	total := 0.0
+	anyUnknown := false
+	var usage runner.TokenUsage
 	for _, c := range result.Cycles {
 		total += c.RunCostUSD + c.Assessment.CostUSD
+		anyUnknown = anyUnknown || c.RunCostUnknown || c.Assessment.CostUnknown
+		usage = addTokenUsage(usage, c.Usage)
+		usage = addTokenUsage(usage, c.Assessment.Usage)
 		outcome := "FAILED"
 		if c.RunPassed {
 			outcome = "PASSED"
@@ -347,11 +372,14 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 		if c.Assessment.GoalMet {
 			verdict = "met"
 		}
-		fmt.Fprintf(w, "  cycle %d: run %s  %s  run $%.4f  assess $%.4f  → %s\n",
-			c.Cycle, c.RunID, outcome, c.RunCostUSD, c.Assessment.CostUSD, verdict)
+		fmt.Fprintf(w, "  cycle %d: run %s  %s  run %s  assess %s  → %s\n",
+			c.Cycle, c.RunID, outcome, formatCost(c.RunCostUSD, c.RunCostUnknown), formatCost(c.Assessment.CostUSD, c.Assessment.CostUnknown), verdict)
 	}
 	if loopErr == nil {
-		fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d cycle(s)\n", total, len(result.Cycles))
+		fmt.Fprintf(w, "GOAL TOTAL: %s across %d cycle(s)\n", formatCost(total, anyUnknown), len(result.Cycles))
+		if usage != (runner.TokenUsage{}) {
+			fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
+		}
 		return
 	}
 	incomplete := len(result.Cycles) + 1
@@ -360,20 +388,35 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	switch {
 	case errors.As(loopErr, &assessErr):
 		total += assessErr.CostUSD
-		fmt.Fprintf(w, "  cycle %d: incomplete — its assessment failed after spending $%.4f (counted); its run spend appears only on its own ledger above\n",
-			incomplete, assessErr.CostUSD)
+		anyUnknown = anyUnknown || assessErr.CostUnknown
+		usage = addTokenUsage(usage, assessErr.Usage)
+		fmt.Fprintf(w, "  cycle %d: incomplete — its assessment failed after spending %s (counted); its run spend appears only on its own ledger above\n",
+			incomplete, formatCost(assessErr.CostUSD, assessErr.CostUnknown))
 	case errors.As(loopErr, &rejection):
 		// A refused plan has no ledger of its own — nothing ran — so this is
 		// the only place its spend can be counted. Uncounted, a loop whose
 		// cycle-k plan was refused twice would hide two whole planner calls
 		// from the multiplier the ADR requires printed.
 		total += rejection.CostUSD
-		fmt.Fprintf(w, "  cycle %d: incomplete — its planning was refused after spending $%.4f (counted); nothing ran, so it has no ledger above\n",
-			incomplete, rejection.CostUSD)
+		anyUnknown = anyUnknown || rejection.CostUnknown
+		usage = addTokenUsage(usage, rejection.Usage)
+		fmt.Fprintf(w, "  cycle %d: incomplete — its planning was refused after spending %s (counted); nothing ran, so it has no ledger above\n",
+			incomplete, formatCost(rejection.CostUSD, rejection.CostUnknown))
 	default:
 		fmt.Fprintf(w, "  cycle %d: incomplete — it never reached assessment; its spend (if any) appears only in its own output above\n", incomplete)
 	}
-	fmt.Fprintf(w, "GOAL TOTAL: $%.4f across %d assessed cycle(s) + 1 incomplete cycle\n", total, len(result.Cycles))
+	fmt.Fprintf(w, "GOAL TOTAL: %s across %d assessed cycle(s) + 1 incomplete cycle\n", formatCost(total, anyUnknown), len(result.Cycles))
+	if usage != (runner.TokenUsage{}) {
+		fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
+	}
+}
+
+func addTokenUsage(a, b runner.TokenUsage) runner.TokenUsage {
+	a.InputTokens += b.InputTokens
+	a.CachedInputTokens += b.CachedInputTokens
+	a.OutputTokens += b.OutputTokens
+	a.ReasoningOutputTokens += b.ReasoningOutputTokens
+	return a
 }
 
 // goalExit maps a cleanly-stopped goal loop onto the process exit contract

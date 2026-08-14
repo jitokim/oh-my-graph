@@ -75,6 +75,46 @@ func TestResume_ApprovedGateContinuesToCompletion(t *testing.T) {
 	}
 }
 
+func TestResume_PreservesPlanningAccountingInLedgerAndSnapshot(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := pausedGateFlowRun(t)
+	statePath := filepath.Join(runDirFor(runID), stateFileName)
+	snap, err := runstate.Load(statePath)
+	if err != nil {
+		t.Fatalf("load paused snapshot: %v", err)
+	}
+	snap.PlanningCostUSD = 0.25
+	snap.PlanningCostUnknown = true
+	snap.PlanningUsage = runstate.TokenUsage{InputTokens: 13, CachedInputTokens: 3, OutputTokens: 5, ReasoningOutputTokens: 2}
+	if err := runstate.Write(statePath, snap); err != nil {
+		t.Fatalf("seed planning accounting: %v", err)
+	}
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("executeResume returned error: %v", resumeErr)
+	}
+	if !strings.Contains(out, "PLANNING COST: $0.2500") || !strings.Contains(out, "TOTAL COST: unknown") {
+		t.Fatalf("resumed ledger dropped planning cost accounting:\n%s", out)
+	}
+	if !strings.Contains(out, "TOKEN USAGE: input 13, cached 3, output 5, reasoning 2") {
+		t.Fatalf("resumed ledger dropped planning token usage:\n%s", out)
+	}
+
+	resumed, err := runstate.Load(statePath)
+	if err != nil {
+		t.Fatalf("load resumed snapshot: %v", err)
+	}
+	if resumed.PlanningCostUSD != snap.PlanningCostUSD || resumed.PlanningCostUnknown != snap.PlanningCostUnknown || resumed.PlanningUsage != snap.PlanningUsage {
+		t.Fatalf("resumed snapshot planning accounting = cost %v unknown %v usage %+v, want cost %v unknown %v usage %+v",
+			resumed.PlanningCostUSD, resumed.PlanningCostUnknown, resumed.PlanningUsage,
+			snap.PlanningCostUSD, snap.PlanningCostUnknown, snap.PlanningUsage)
+	}
+}
+
 // --- reject prunes the subtree and is reported as a failure, not a crash ----
 
 func TestResume_RejectedGatePrunesSubtree(t *testing.T) {
@@ -425,7 +465,7 @@ func TestMainExitCode_PauseMapsToExitCode2(t *testing.T) {
 	dir := t.TempDir()
 	graphPath := filepath.Join(dir, "gate-only.yaml")
 	// A graph whose only node is a root gate never touches the NodeRunner, so
-	// this drives the real `run` subcommand (and its real ClaudeCLIRunner)
+	// this drives the real `run` subcommand (and its real CLIRunner)
 	// end to end without spawning a claude subprocess.
 	if err := os.WriteFile(graphPath, []byte("name: gate-only\nnodes:\n  - { id: approve, type: gate }\n"), 0o644); err != nil {
 		t.Fatalf("write graph file: %v", err)

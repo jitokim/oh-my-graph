@@ -23,7 +23,7 @@ import (
 // any failure go to the serve process's own stdout/stderr, while the browser
 // watches the same run feed the CLI writes.
 type cliGateResumer struct {
-	nodeRunner runner.NodeRunner
+	runnerFor func(runID string) (runner.NodeRunner, error)
 	// errOut receives the leg's failure, since the HTTP response is long gone
 	// by the time a leg ends (the POST is answered 202 the moment the leg
 	// starts). A rejected gate's run failure lands here too — it is the
@@ -59,8 +59,11 @@ func (r cliGateResumer) Resume(_ context.Context, runID, gateID string, decision
 		return fmt.Errorf("resume gate %q: %q is not a decision a live view can apply", gateID, decision)
 	}
 
-	//nolint:contextcheck // deliberate: the leg installs its own signal-cancelled context (see above).
-	err := executeResume(flags, r.nodeRunner, nil)
+	nodeRunner, err := r.runnerFor(runID)
+	if err == nil {
+		//nolint:contextcheck // deliberate: the leg installs its own signal-cancelled context (see above).
+		err = executeResume(flags, nodeRunner, nil)
+	}
 	if err != nil {
 		fmt.Fprintf(r.errOut, "live view: resume of run %s at gate %s: %v\n", runID, gateID, err)
 	}

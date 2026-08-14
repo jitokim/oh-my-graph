@@ -32,7 +32,11 @@ func (r *capturingRunner) Run(_ context.Context, spec runner.NodeInvocation) (ru
 	}
 	r.invoked[spec.Prompt] = spec
 	r.mu.Unlock()
-	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
+	outcome := runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}
+	if spec.SessionStarted != nil {
+		spec.SessionStarted(outcome.SessionID)
+	}
+	return outcome, nil
 }
 
 func (r *capturingRunner) invocationFor(prompt string) runner.NodeInvocation {
@@ -118,6 +122,28 @@ func TestExecuteGraph_HandWrittenPathImposesNoCeiling(t *testing.T) {
 	}
 }
 
+func TestRunGraphWithRuntime_CodexDisclosesAllowedToolsAreDeclarations(t *testing.T) {
+	isolateRunHome(t)
+	path := writeGraphFile(t, `name: handwritten
+nodes:
+  - id: only
+    prompt: only
+    allowed_tools: [Read, Edit]
+`)
+	rec := &capturingRunner{}
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runGraphWithRuntime(runner.RuntimeCodex, []string{path, "--no-web"}, rec, nil, os.Stdout)
+	})
+	if runErr != nil {
+		t.Fatalf("Codex handwritten run returned error: %v", runErr)
+	}
+	if !strings.Contains(out, "allowed_tools declarations do not become granular Codex permissions") {
+		t.Fatalf("Codex handwritten run hid its permission mapping:\n%s", out)
+	}
+}
+
 // barrierRunner holds every node's Run at a rendezvous until width nodes have
 // arrived, then releases them all at once — so the scheduler goroutines'
 // subsequent event-stream emits and snapshot writes genuinely overlap instead
@@ -135,6 +161,9 @@ type barrierRunner struct {
 }
 
 func (r *barrierRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	if spec.SessionStarted != nil {
+		spec.SessionStarted("s-" + spec.Prompt)
+	}
 	r.mu.Lock()
 	r.arrived++
 	if r.arrived == r.width {

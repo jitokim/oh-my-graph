@@ -124,7 +124,7 @@ func runActivationProbe(t *testing.T, opts ...Option) (runner.NodeInvocation, st
 	if plan.SkillActivation != nil {
 		staging = plan.SkillActivation.Staging
 	}
-	rec := &policyRecorder{next: GuardStaging(runner.NewClaudeCLIRunner(), staging)}
+	rec := &policyRecorder{next: GuardStaging(runner.NewCLIRunner(runner.RuntimeClaude), staging)}
 
 	cwd := probeCwd(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -237,7 +237,7 @@ func TestManual_SkillActivationCeilingHolds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	outcome, err := runner.NewClaudeCLIRunner().Run(ctx, runner.NodeInvocation{
+	outcome, err := runner.NewCLIRunner(runner.RuntimeClaude).Run(ctx, runner.NodeInvocation{
 		Prompt:         node.Prompt,
 		Cwd:            t.TempDir(),
 		PermissionMode: "dontAsk",

@@ -68,6 +68,28 @@ func TestWatchRun_PrintsWholeStreamAndStopsAtRunFinished(t *testing.T) {
 	}
 }
 
+func TestFormatEvent_UnknownCostShowsTokenUsage(t *testing.T) {
+	got := formatEvent(runfeed.Event{
+		Type: runfeed.EventNodePassed, NodeID: "work", Verdict: runfeed.VerdictPass,
+		CostUnknown: true,
+		Usage:       runfeed.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3},
+	})
+	if strings.Contains(got, "$0.0000") || !strings.Contains(got, "cost unknown") || !strings.Contains(got, "tokens 11/2/5/3") {
+		t.Errorf("formatEvent() = %q, want unknown cost and token usage", got)
+	}
+}
+
+func TestFormatEvent_FeedbackRetryShowsCompletedAttemptAccounting(t *testing.T) {
+	got := formatEvent(runfeed.Event{
+		Type: runfeed.EventNodeRetried, NodeID: "review",
+		CostUnknown: true,
+		Usage:       runfeed.TokenUsage{InputTokens: 13, CachedInputTokens: 4, OutputTokens: 6, ReasoningOutputTokens: 2},
+	})
+	if !strings.Contains(got, "cost unknown") || !strings.Contains(got, "tokens 13/4/6/2") {
+		t.Errorf("formatEvent() = %q, want the completed feedback attempt's accounting", got)
+	}
+}
+
 // TestWatchRun_FollowsAppendedEvents pins the tail -f behavior: events
 // appended after the watcher has caught up with end-of-stream still appear,
 // and the appended run_finished ends the watch.
@@ -304,5 +326,18 @@ func TestFormatEvent_APlanningLegSaysWhichPhaseItOpened(t *testing.T) {
 	// hand-written run's stream still reads exactly as before.
 	if plain := formatEvent(runfeed.Event{Type: runfeed.EventRunStarted}); plain != "▶ run started" {
 		t.Errorf("an untagged leg's opening line = %q, want it unchanged", plain)
+	}
+}
+
+func TestFormatEvent_RunBoundaryShowsPlannerAccounting(t *testing.T) {
+	usage := runfeed.TokenUsage{InputTokens: 19, CachedInputTokens: 5, OutputTokens: 8, ReasoningOutputTokens: 4}
+	for _, event := range []runfeed.Event{
+		{Type: runfeed.EventRunStarted, CostUnknown: true, Usage: usage},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed, CostUnknown: true, Usage: usage},
+	} {
+		got := formatEvent(event)
+		if !strings.Contains(got, "cost unknown") || !strings.Contains(got, "tokens 19/5/8/4") {
+			t.Errorf("formatEvent(%s) = %q, want planner accounting", event.Type, got)
+		}
 	}
 }

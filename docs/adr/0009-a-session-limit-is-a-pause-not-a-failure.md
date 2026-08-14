@@ -48,7 +48,7 @@ mitigations rather than pretending otherwise:
 is the same situation: the run cannot usefully continue right now, nothing is
 broken, and a later `resume` should pick up exactly where it stopped.
 
-- **The runner classifies.** `ClaudeCLIRunner.Run` sets
+- **The runner classifies.** `CLIRunner.Run` sets
   `NodeOutcome.SessionLimited` when the captured `FailureCause` (envelope
   error report, else stderr tail) matches the limit's message shape — the
   same typed-flag pattern `BudgetExhausted` established, and the matcher's

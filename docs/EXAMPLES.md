@@ -26,8 +26,22 @@ Walkthroughs, in order:
 ## The command surface
 
 ```text
-oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph [--runtime claude|codex] <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
+
+`--runtime` is a global, run-wide selector and must appear before the
+subcommand. It defaults to `claude`. It applies to `run`, `auto`, `lint`,
+`chat`, `resume`, and `serve`; read-only history commands need no selector.
+Every fresh run persists the choice. `resume` and a live view's gate buttons
+read that persisted runtime; passing a different explicit value is an error.
+
+With `--runtime codex`, `permission_mode: plan` maps to `read-only`, ordinary
+modes map to `workspace-write`, and `bypassPermissions` maps to
+`danger-full-access`. Codex reports tokens but no USD total, so the ledger says
+`cost unknown` and prints input/cached/output/reasoning tokens. Positive
+`budget_usd`, `agent:`, and `auto --max-goal-budget-usd` are rejected before
+execution because Codex cannot honor their USD or Claude-agent semantics.
+Claude agent mapping and staged skill activation are disabled for Codex.
 
 | subcommand | purpose |
 |---|---|

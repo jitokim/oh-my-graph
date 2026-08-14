@@ -33,7 +33,7 @@ claude -p <prompt> --output-format json --permission-mode dontAsk
 
 That is a **hand-reconstruction** and is labelled one. What binds it to the
 shipped code is a second, independent artifact: `skillactivation_manual_test.go`
-routes a real spawn through `runner.NewClaudeCLIRunner` under a real `Plan`'s
+routes a real spawn through `runner.NewCLIRunner` under a real `Plan`'s
 own `ToolPolicy` and asserts the policy fields, so the shipped path is checked
 by construction rather than by transcription.
 
@@ -223,7 +223,7 @@ layer 5 — is untouched by this record.
 Round 1: a node declaring `Bash(git *)` attempted `touch <path>` out of scope
 (**G**); the file did not appear. The in-scope control (**G2**, `git status
 --porcelain`) ran. Round 2 re-ran the shipped guard on 2.1.224 through the real
-`ClaudeCLIRunner`, judged by file existence, output recorded verbatim at
+`CLIRunner`, judged by file existence, output recorded verbatim at
 `probes/0017-skill-activation-yield/manual-guard-2.1.224.txt`:
 `TestManual_SkillActivationStillFires` (treatment and control) and
 `TestManual_SkillActivationCeilingHolds`, all PASS, $0.248 for the three

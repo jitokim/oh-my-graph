@@ -39,8 +39,11 @@ import (
 // stream now carries transitions its version did not define.
 //
 // History: 1 — the initial six node/run lifecycle types; 2 — added the gate
-// decision events (gate_paused, gate_approved, gate_rejected).
-const Schema = 2
+// decision events (gate_paused, gate_approved, gate_rejected); 3 — added
+// cost_unknown and usage accounting, including planner/feedback boundaries.
+// Those fields are not safely ignorable: doing so presents Codex's unreported
+// USD cost as a known $0 and drops paid calls with no terminal node event.
+const Schema = 3
 
 // FileName is the event stream's file name inside a run directory, next to
 // state.json — ~/.oh-my-graph/runs/<run-id>/events.jsonl.
@@ -56,7 +59,7 @@ const (
 	// EventRunStarted opens one scheduler leg. A resumed run appends a second
 	// run_started to the same stream, so a consumer sees legs, not just runs.
 	EventRunStarted EventType = "run_started"
-	// EventNodeStarted marks a node beginning execution (claude node or gate).
+	// EventNodeStarted marks a node beginning execution (model-CLI node or gate).
 	EventNodeStarted EventType = "node_started"
 	// EventNodePassed is a node's terminal PASS, carrying verdict, cost,
 	// session id and retry count.
@@ -159,14 +162,17 @@ type Event struct {
 	NodeID string `json:"node_id,omitempty"`
 	// Verdict is PASS or FAIL on terminal node events (node_passed/node_failed).
 	Verdict string `json:"verdict,omitempty"`
-	// CostUSD is the node's reported spend on terminal node events (omitted
-	// when zero — e.g. a gate, which spawns no subprocess).
+	// CostUSD and its companions account for one paid CLI call. They appear on
+	// terminal node events, a feedback node_retried whose prior attempt is
+	// intentionally non-terminal, or the run boundary that settles planning.
 	CostUSD float64 `json:"cost_usd,omitempty"`
-	// SessionID is the claude session the node runs under. On node_started and
-	// node_retried it is the PRE-ASSIGNED id the engine hands claude via
-	// --session-id, published early so a consumer can locate a RUNNING node's
-	// transcript; on terminal node events it is the id the claude envelope
-	// reported (the same id, envelope-sourced). Empty when no session exists or
+	// CostUnknown marks an accounted call whose runtime reported no USD amount.
+	CostUnknown bool       `json:"cost_unknown,omitempty"`
+	Usage       TokenUsage `json:"usage,omitzero"`
+	// SessionID is the selected CLI's resumable session. It is published as
+	// soon as that CLI owns it (pre-assigned for Claude, thread.started for
+	// Codex) so a consumer can locate a RUNNING node's transcript; terminal
+	// events repeat the parsed id. Empty when no session exists or
 	// none was pre-assigned: a gate, a spawn failure, or a session-handoff
 	// node's start (its transcript is the parent session, already published on
 	// the parent's terminal event).
@@ -209,6 +215,14 @@ type Event struct {
 	// none — on the committed path a planning phase is closed by the untagged
 	// run_started, not by a run_finished of its own (docs/RUN-FEED.md).
 	Phase string `json:"phase,omitempty"`
+}
+
+// TokenUsage is provider-reported token accounting on a terminal node event.
+type TokenUsage struct {
+	InputTokens           int64 `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
 }
 
 // PhasePlanning is Event.Phase's one defined value: this run_started opens the

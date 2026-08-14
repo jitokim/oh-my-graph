@@ -375,13 +375,16 @@ func TestGitManager_ScrubsBillingVarsFromGitChildren(t *testing.T) {
 		return []string{
 			"ANTHROPIC_API_KEY=sk-live-secret",
 			"ANTHROPIC_AUTH_TOKEN=tok-secret",
+			"OPENAI_API_KEY=sk-openai-secret",
+			"CODEX_API_KEY=sk-codex-secret",
 			"HOME=/home/u",
 		}
 	}
 
 	cmd := m.gitCmd(context.Background(), "status")
 	for _, kv := range cmd.Env {
-		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") || strings.HasPrefix(kv, "ANTHROPIC_AUTH_TOKEN=") {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") || strings.HasPrefix(kv, "ANTHROPIC_AUTH_TOKEN=") ||
+			strings.HasPrefix(kv, "OPENAI_API_KEY=") || strings.HasPrefix(kv, "CODEX_API_KEY=") {
 			t.Errorf("billing variable leaked into the git child env: %s", kv)
 		}
 	}

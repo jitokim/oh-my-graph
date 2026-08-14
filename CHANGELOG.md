@@ -12,6 +12,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **Codex is now a run-wide model CLI runtime.** Use
+  `oh-my-graph --runtime codex <run|auto|chat|lint|resume|serve> ...`; Claude
+  remains the default. One `CLIRunner` owns both protocols, runtime identity is
+  persisted for resume and browser gate actions, Codex sandbox modes map from
+  graph permission modes, and planned Codex nodes exclude user config,
+  project rules/AGENTS files and MCP servers. Codex thread ids support session
+  handoff. USD cost is explicitly unknown while provider token usage is
+  preserved through the ledger, snapshot/feed contracts and web UI. Codex
+  rejects Claude-only `budget_usd`, `agent:`, goal USD budgets, agent mapping
+  and skill activation before execution. `state.json` and `events.jsonl` move
+  to schema 3 so older readers cannot misread unknown cost or runtime identity.
+
 - **`lint` / `run --dry-run` warn when a `success_check.verify.command`
   splices a model's own text into the shell command line the engine runs.** A
   verify command interpolates exactly like a prompt — `resolveVerification`
@@ -2783,7 +2795,7 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   keeps a "ready set" running concurrently, capped by `concurrency` (ceiling
   10, default 4). Halt-on-fail by default; `--continue-on-fail` prunes only
   the failed subtree instead of stopping the whole run.
-- **`ClaudeCLIRunner` with subscription-auth env scrub.** The node runtime is
+- **`CLIRunner` with subscription-auth env scrub.** The node runtime is
   a raw `claude -p ... --output-format json` subprocess. Every child process's
   environment has `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted so a
   node can never silently fall back to metered API billing — this is
@@ -2817,7 +2829,7 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   scheduler's default, so a forgotten injection fails loudly instead of
   spawning) and `FakeVerifier` (tests). The project invariant is restated, not
   weakened: exactly two objects may spawn a process —
-  `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its own
+  `runner.CLIRunner` and `verify.ShellVerifier` — each behind its own
   injected interface, and the whole engine still runs its tests with zero real
   spawns. See `docs/adr/0002-verification-is-a-second-exec-seam.md`.
 - **Shared child-environment scrub (`internal/childenv`).** The

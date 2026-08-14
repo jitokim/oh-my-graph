@@ -18,6 +18,30 @@ import (
 	"time"
 )
 
+// Accounting is the model-CLI accounting carried by events in one stream.
+type Accounting struct {
+	CostUSD     float64
+	CostUnknown bool
+	Usage       TokenUsage
+}
+
+// ReadAccounting folds every event's accounting fields. Node terminal events,
+// feedback retry markers, and planner phase boundaries each carry one paid
+// invocation exactly once.
+func ReadAccounting(path string) (Accounting, error) {
+	var total Accounting
+	err := Walk(path, func(event Event) error {
+		total.CostUSD += event.CostUSD
+		total.CostUnknown = total.CostUnknown || event.CostUnknown
+		total.Usage.InputTokens += event.Usage.InputTokens
+		total.Usage.CachedInputTokens += event.Usage.CachedInputTokens
+		total.Usage.OutputTokens += event.Usage.OutputTokens
+		total.Usage.ReasoningOutputTokens += event.Usage.ReasoningOutputTokens
+		return nil
+	})
+	return total, err
+}
+
 // maxLineBytes is the longest events.jsonl line any reader in this package
 // accepts. The writer emits lines orders of magnitude smaller (an Event is a
 // handful of short fields), so a longer line means a corrupt or foreign file,

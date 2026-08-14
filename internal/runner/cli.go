@@ -1,0 +1,255 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/jitokim/oh-my-graph/internal/childenv"
+)
+
+const (
+	defaultTimeout   = 20 * time.Minute
+	maxStderrInError = 500
+	waitDelay        = 2 * time.Second
+)
+
+// NodeOutputError marks CLI output that could not be decoded into an outcome.
+type NodeOutputError struct {
+	Runtime string
+	Reason  string
+	Output  string
+	Stderr  string
+	Err     error
+}
+
+func (e *NodeOutputError) Error() string {
+	msg := fmt.Sprintf("node output error: %s", e.Reason)
+	if e.Err != nil {
+		msg += fmt.Sprintf(": %v", e.Err)
+	}
+	if e.Stderr != "" {
+		runtime := e.Runtime
+		if runtime == "" {
+			runtime = string(RuntimeClaude)
+		}
+		msg += fmt.Sprintf(" (%s stderr: %s)", runtime, flattenLines(e.Stderr))
+	}
+	return msg
+}
+
+func (e *NodeOutputError) Unwrap() error { return e.Err }
+
+// NodeTimeoutError reports the bound owned by the CLI runner expiring.
+type NodeTimeoutError struct {
+	Runtime string
+	Timeout time.Duration
+	Err     error
+}
+
+func (e *NodeTimeoutError) Error() string {
+	runtime := e.Runtime
+	if runtime == "" {
+		runtime = string(RuntimeClaude)
+	}
+	return fmt.Sprintf("%s run: timed out after %s (node timeout)", runtime, e.Timeout)
+}
+
+func (e *NodeTimeoutError) Unwrap() error { return e.Err }
+
+type cliProtocol interface {
+	runtime() Runtime
+	binary() string
+	prepareSession(*NodeInvocation) string
+	sessionFromLine([]byte) string
+	buildArgs(NodeInvocation) []string
+	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
+}
+
+// protocolOutput retains stdout for terminal decoding while publishing any
+// session-creation event as soon as its complete line arrives. The protocol,
+// not the scheduler, decides which line creates a session.
+type protocolOutput struct {
+	protocol cliProtocol
+	report   func(string)
+	all      bytes.Buffer
+	pending  []byte
+}
+
+func (w *protocolOutput) Write(p []byte) (int, error) {
+	n, err := w.all.Write(p)
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		w.observe(w.pending[:newline])
+		w.pending = w.pending[newline+1:]
+	}
+	return n, err
+}
+
+func (w *protocolOutput) finish() {
+	if len(w.pending) > 0 {
+		w.observe(w.pending)
+		w.pending = nil
+	}
+}
+
+func (w *protocolOutput) observe(line []byte) {
+	if id := w.protocol.sessionFromLine(bytes.TrimSuffix(line, []byte{'\r'})); id != "" {
+		w.report(id)
+	}
+}
+
+// CLIRunner is the single model-CLI os/exec seam. Provider protocols own only
+// argv and output decoding; cancellation, process groups, timeouts, exit codes,
+// and environment policy stay identical.
+type CLIRunner struct {
+	protocol cliProtocol
+	binary   string
+	timeout  time.Duration
+	environ  func() []string
+}
+
+// CLIOption configures a CLIRunner.
+type CLIOption func(*CLIRunner)
+
+// WithBinary overrides the selected protocol's executable.
+func WithBinary(binary string) CLIOption {
+	return func(r *CLIRunner) { r.binary = binary }
+}
+
+// WithTimeout overrides the default per-node timeout.
+func WithTimeout(d time.Duration) CLIOption {
+	return func(r *CLIRunner) { r.timeout = d }
+}
+
+func withEnviron(environ func() []string) CLIOption {
+	return func(r *CLIRunner) { r.environ = environ }
+}
+
+// NewCLIRunner builds the production runner for one run-wide runtime.
+func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
+	var protocol cliProtocol = claudeProtocol{}
+	if runtime == RuntimeCodex {
+		protocol = codexProtocol{}
+	}
+	r := &CLIRunner{
+		protocol: protocol,
+		binary:   protocol.binary(),
+		timeout:  defaultTimeout,
+		environ:  os.Environ,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+func (r *CLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, r.binary, r.buildArgs(spec)...)
+	cmd.Dir = spec.Cwd
+	cmd.Env = childenv.Scrub(r.environ())
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = waitDelay
+	return cmd
+}
+
+func (r *CLIRunner) buildArgs(spec NodeInvocation) []string {
+	return r.protocol.buildArgs(spec)
+}
+
+// Run executes and decodes one provider CLI invocation.
+func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error) {
+	timeout := r.timeout
+	if spec.Timeout > 0 {
+		timeout = spec.Timeout
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	reportedSession := false
+	sessionID := ""
+	reportSession := func(id string) {
+		if reportedSession || id == "" {
+			return
+		}
+		sessionID = id
+		reportedSession = true
+		if spec.SessionStarted != nil {
+			spec.SessionStarted(id)
+		}
+	}
+	if id := r.protocol.prepareSession(&spec); id != "" {
+		reportSession(id)
+	}
+
+	cmd := r.buildCmd(runCtx, spec)
+	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	stdout.finish()
+
+	exitCode := 0
+	if runErr != nil {
+		if ctxErr := runCtx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) && ctx.Err() == nil {
+				return NodeOutcome{SessionID: sessionID, CostUnknown: true}, &NodeTimeoutError{Runtime: string(r.protocol.runtime()), Timeout: timeout, Err: ctxErr}
+			}
+			return NodeOutcome{SessionID: sessionID, CostUnknown: true}, fmt.Errorf("%s run: %w", r.protocol.runtime(), ctxErr)
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			return NodeOutcome{SessionID: sessionID}, fmt.Errorf("%s run: spawn failed: %w", r.protocol.runtime(), runErr)
+		}
+		exitCode = exitErr.ExitCode()
+	}
+
+	outcome, err := r.protocol.parse(stdout.all.Bytes(), stderr.Bytes(), reportSession)
+	if err != nil {
+		return NodeOutcome{SessionID: sessionID, CostUnknown: true}, err
+	}
+	if exitCode != 0 {
+		outcome.ExitCode = exitCode
+	}
+	if exitCode != 0 && outcome.FailureCause == "" {
+		outcome.FailureCause = flattenLines(tailOf(stderr.Bytes(), maxStderrInError))
+	}
+	if r.protocol.runtime() == RuntimeClaude {
+		outcome.SessionLimited = isSessionLimitCause(outcome.FailureCause)
+	}
+	return outcome, nil
+}
+
+func flattenLines(s string) string {
+	fields := make([]string, 0, 4)
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			fields = append(fields, trimmed)
+		}
+	}
+	return strings.Join(fields, " / ")
+}
+
+func tailOf(b []byte, n int) string {
+	trimmed := strings.TrimSpace(string(b))
+	if len(trimmed) <= n {
+		return trimmed
+	}
+	tail := trimmed[len(trimmed)-n:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return "…(truncated) " + tail
+}

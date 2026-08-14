@@ -123,6 +123,13 @@ has no open issue behind it.
   overshoot before the abort lands; and each node's cap is independent — there is
   no whole-graph budget. Closing the first needs incremental cost
   (`--output-format stream-json`), a `NodeRunner`-contract change.
+- **Codex has token accounting, not USD budgeting.** Under `--runtime codex`,
+  USD cost is explicitly unknown and token usage is persisted and printed.
+  Positive `budget_usd`, `agent:`, and `--max-goal-budget-usd` are rejected
+  before execution. Claude Code agent mapping and skill activation do not run
+  on Codex. Codex also cannot enforce Claude's granular `allowed_tools`
+  patterns; its boundary is the selected filesystem sandbox, with user config,
+  project rules/AGENTS files and MCP servers removed from planned invocations.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
 - **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
   approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`

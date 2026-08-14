@@ -90,6 +90,20 @@ func TestPlan_ReturnsValidatedNormalizedGraph(t *testing.T) {
 	}
 }
 
+func TestPlan_PreservesUnknownCostAndUsage(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{
+		Result: validSpec, CostUnknown: true,
+		Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1},
+	})
+	plan, err := New(fake).Plan(context.Background(), "do it", nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !plan.CostUnknown || plan.CostUSD != 0 || plan.Usage.InputTokens != 11 || plan.Usage.ReasoningOutputTokens != 1 {
+		t.Errorf("plan accounting = cost %v unknown %v usage %+v", plan.CostUSD, plan.CostUnknown, plan.Usage)
+	}
+}
+
 func TestPlan_MakesExactlyOneReadOnlyCallCarryingGoalAndInputs(t *testing.T) {
 	fake, captured := newPlannerFake(runner.NodeOutcome{Result: validSpec})
 

@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
@@ -42,10 +44,10 @@ type runSummary struct {
 	runID     string
 	graphName string
 	nodeCount int
-	// costUSD is the sum of the run's per-node reported costs so far. The
-	// snapshot does not persist an auto run's one-time planning cost, so that
-	// call is not included here (unlike the end-of-run ledger total).
-	costUSD float64
+	// costUSD is the sum of planning and per-node reported costs so far.
+	costUSD     float64
+	costUnknown bool
+	usage       runner.TokenUsage
 	// status is the run's ONE user-visible status, from the shared derivation
 	// and nowhere else (runstatus.Of, ADR 0023). This row used to carry a
 	// second `verdict` string it composed itself out of the status and the
@@ -64,7 +66,8 @@ type runSummary struct {
 	// that far, one still inside its planner call, and — since ADR 0023 §3 —
 	// every refused plan, permanently. Graph name, node count and cost are
 	// simply not known for any of them, and render as placeholders.
-	hasSnapshot bool
+	hasSnapshot   bool
+	hasAccounting bool
 }
 
 // listRuns renders one row per run directory under root, newest first, plus a
@@ -163,7 +166,19 @@ func summarizeRun(root, runID string) (runSummary, error) {
 	snap, err := runstate.Load(filepath.Join(runDir, stateFileName))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return runSummary{runID: runID, status: status, spoken: spoken}, nil
+			accounting, accountingErr := runfeed.ReadAccounting(filepath.Join(runDir, runfeed.FileName))
+			if accountingErr != nil && !errors.Is(accountingErr, fs.ErrNotExist) {
+				return runSummary{}, accountingErr
+			}
+			usage := runner.TokenUsage{
+				InputTokens: accounting.Usage.InputTokens, CachedInputTokens: accounting.Usage.CachedInputTokens,
+				OutputTokens: accounting.Usage.OutputTokens, ReasoningOutputTokens: accounting.Usage.ReasoningOutputTokens,
+			}
+			return runSummary{
+				runID: runID, status: status, spoken: spoken,
+				costUSD: accounting.CostUSD, costUnknown: accounting.CostUnknown, usage: usage,
+				hasAccounting: accounting.CostUSD != 0 || accounting.CostUnknown || usage != (runner.TokenUsage{}),
+			}, nil
 		}
 		return runSummary{}, err
 	}
@@ -172,21 +187,34 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		return runSummary{}, fmt.Errorf("reconstruct graph: %w", err)
 	}
 
-	var cost float64
+	cost := snap.PlanningCostUSD
+	costUnknown := snap.PlanningCostUnknown
+	usage := runner.TokenUsage{
+		InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
+		OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
+	}
 	for _, rec := range snap.Nodes {
 		cost += rec.CostUSD
+		costUnknown = costUnknown || rec.CostUnknown
+		usage.InputTokens += rec.Usage.InputTokens
+		usage.CachedInputTokens += rec.Usage.CachedInputTokens
+		usage.OutputTokens += rec.Usage.OutputTokens
+		usage.ReasoningOutputTokens += rec.Usage.ReasoningOutputTokens
 	}
 	return runSummary{
 		// The directory name, not snap.RunID: the directory name is the handle
 		// `resume <run-id>` actually takes, so it is the one worth printing
 		// even for a snapshot copied in from elsewhere.
-		runID:       runID,
-		graphName:   g.Name,
-		nodeCount:   len(g.Nodes),
-		costUSD:     cost,
-		status:      status,
-		spoken:      spoken,
-		hasSnapshot: true,
+		runID:         runID,
+		graphName:     g.Name,
+		nodeCount:     len(g.Nodes),
+		costUSD:       cost,
+		costUnknown:   costUnknown,
+		usage:         usage,
+		status:        status,
+		spoken:        spoken,
+		hasSnapshot:   true,
+		hasAccounting: cost != 0 || costUnknown || usage != (runner.TokenUsage{}),
 	}, nil
 }
 
@@ -220,29 +248,48 @@ func statusCell(row runSummary) string {
 // recorded this column as not a contract, so the rename costs nothing the
 // content change did not already cost.
 func printRuns(w io.Writer, rows []runSummary) {
-	fmt.Fprintf(w, "%-17s %-24s %6s %10s  %s\n", "RUN", "GRAPH", "NODES", "COST(USD)", "STATUS")
-	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 70))
+	fmt.Fprintf(w, "%-17s %-24s %6s %10s %-19s  %s\n", "RUN", "GRAPH", "NODES", "COST(USD)", "TOKENS(I/C/O/R)", "STATUS")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 90))
 
 	var total float64
+	var anyUnknown bool
 	for _, row := range rows {
 		total += row.costUSD
-		graphName, nodes, cost := row.graphName, "-", "-"
-		if row.hasSnapshot {
+		anyUnknown = anyUnknown || row.costUnknown
+		graphName, nodes, cost, tokens := row.graphName, "-", "-", "-"
+		if row.hasSnapshot || row.hasAccounting {
 			nodes = strconv.Itoa(row.nodeCount)
+			if !row.hasSnapshot {
+				nodes = "-"
+			}
 			cost = fmt.Sprintf("%.4f", row.costUSD)
+			if row.costUnknown {
+				cost = "unknown"
+			}
+			if row.usage != (runner.TokenUsage{}) {
+				tokens = fmt.Sprintf("%d/%d/%d/%d", row.usage.InputTokens, row.usage.CachedInputTokens, row.usage.OutputTokens, row.usage.ReasoningOutputTokens)
+			}
 		} else {
 			graphName = "-"
 		}
-		fmt.Fprintf(w, "%-17s %-24s %6s %10s  %s\n",
+		if !row.hasSnapshot {
+			graphName = "-"
+		}
+		fmt.Fprintf(w, "%-17s %-24s %6s %10s %-19s  %s\n",
 			row.runID,
 			graphName,
 			nodes,
 			cost,
+			tokens,
 			statusCell(row),
 		)
 	}
-	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 70))
-	fmt.Fprintf(w, "%d run(s), TOTAL COST: $%.4f\n", len(rows), total)
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 90))
+	if anyUnknown {
+		fmt.Fprintf(w, "%d run(s), TOTAL COST: %s\n", len(rows), formatCost(total, true))
+	} else {
+		fmt.Fprintf(w, "%d run(s), TOTAL COST: $%.4f\n", len(rows), total)
+	}
 
 	// The per-row hints, under the table rather than interleaved between rows:
 	// ABANDONED and PAUSED are the two rows a reader cannot act on without

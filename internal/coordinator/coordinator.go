@@ -3,7 +3,7 @@
 // It also classifies chat turns (Route, router.go) for the `chat` prototype.
 //
 // Each Plan call makes a planner call through the same NodeRunner seam every
-// node uses (ClaudeCLIRunner in production: env-scrubbed, subscription-auth,
+// node uses (CLIRunner in production: env-scrubbed, subscription-auth,
 // never the Agent SDK), asking for a graph spec as a JSON object. JSON is a
 // YAML subset, so the reply is loaded through the existing graph parser,
 // normalization, and DAG validation — an invalid plan fails before anything
@@ -155,6 +155,9 @@ type Plan struct {
 	// MaxGoalBudgetUSD check: reporting only the surviving call would make
 	// both undercount silently.
 	CostUSD float64
+	// CostUnknown means one or more planner calls reported no USD amount.
+	CostUnknown bool
+	Usage       runner.TokenUsage
 	// Repaired is non-nil when this plan cost two planner calls instead of
 	// one: the first reply was refused by validation and a corrected one was
 	// bought. Nil on the ordinary first-try plan. The caller must print it
@@ -227,7 +230,7 @@ type Plan struct {
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
 // it with New (constructor injection — no globals); production injects
-// ClaudeCLIRunner, tests inject FakeRunner.
+// CLIRunner, tests inject FakeRunner.
 type Coordinator struct {
 	runner runner.NodeRunner
 	// agentMappingOff disables subagent auto-mapping (agentmap.go) — the
@@ -399,21 +402,23 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	}
 
 	prompt := base
-	spentUSD := 0.0
+	spent := callAccounting{}
 	var repaired *PlanRepair
 	for attempt := 0; ; attempt++ {
-		plan, costUSD, refusal := c.attemptPlan(ctx, goal, prompt)
-		spentUSD += costUSD
+		plan, accounting, refusal := c.attemptPlan(ctx, goal, prompt)
+		spent.add(accounting)
 		if refusal == nil {
 			// The sum, never the last call alone: three ADRs claim planning
 			// cost stays honest, and this figure flows on into the run
 			// ledger and the goal loop's budget check.
-			plan.CostUSD = spentUSD
+			plan.CostUSD = spent.costUSD
+			plan.CostUnknown = spent.costUnknown
+			plan.Usage = spent.usage
 			plan.Repaired = repaired
 			return plan, nil
 		}
 		if !refusal.repairable || attempt >= maxPlanRepairAttempts {
-			return Plan{}, &PlanRejection{Err: refusal.err, Spec: refusal.spec, CostUSD: spentUSD, Repaired: repaired}
+			return Plan{}, &PlanRejection{Err: refusal.err, Spec: refusal.spec, CostUSD: spent.costUSD, CostUnknown: spent.costUnknown, Usage: spent.usage, Repaired: repaired}
 		}
 		section, err := repairSection(refusal.issues)
 		if err != nil {
@@ -422,12 +427,12 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 			// report $0 planning cost for a call the user was charged for, and
 			// would destroy the rejected spec — the two things PlanRejection
 			// exists to carry.
-			return Plan{}, &PlanRejection{Err: err, Spec: refusal.spec, CostUSD: spentUSD, Repaired: repaired}
+			return Plan{}, &PlanRejection{Err: err, Spec: refusal.spec, CostUSD: spent.costUSD, CostUnknown: spent.costUnknown, Usage: spent.usage, Repaired: repaired}
 		}
 		// base, not prompt: the corrected attempt answers the refusals of the
 		// reply it is correcting, not a growing pile of every earlier one.
 		prompt = base + section
-		repaired = &PlanRepair{Issues: refusal.issues, RejectedCostUSD: spentUSD}
+		repaired = &PlanRepair{Issues: refusal.issues, RejectedCostUSD: spent.costUSD, RejectedCostUnknown: spent.costUnknown, RejectedUsage: spent.usage}
 	}
 }
 
@@ -485,16 +490,16 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // call whose job is to understand this repository. Widening the ceiling here
 // is a product decision about plan quality, not a safety fix, so it is not
 // made silently as part of one.
-func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, float64, *planRefusal) {
+func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, callAccounting, *planRefusal) {
 	outcome, err := c.runner.Run(ctx, coordinatorInvocation(prompt))
 	if err != nil {
 		// No reply, so nothing was produced and nothing is repairable: this
 		// is the spawn/transport fault, not the planner's judgment.
-		return Plan{}, 0, &planRefusal{err: fmt.Errorf("planner run: %w", err)}
+		return Plan{}, callAccounting{}, &planRefusal{err: fmt.Errorf("planner run: %w", err)}
 	}
-	costUSD := outcome.TotalCostUSD
+	accounting := accountingFromOutcome(outcome)
 	if outcome.ExitCode != 0 {
-		return Plan{}, costUSD, &planRefusal{err: &PlanError{
+		return Plan{}, accounting, &planRefusal{err: &PlanError{
 			Reason: fmt.Sprintf("planner exited with code %d", outcome.ExitCode),
 			Output: outcome.Result,
 		}}
@@ -502,7 +507,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 
 	spec := extractJSON(outcome.Result)
 	if spec == "" {
-		return Plan{}, costUSD, &planRefusal{err: &PlanError{
+		return Plan{}, accounting, &planRefusal{err: &PlanError{
 			Reason: "planner reply contained no JSON object",
 			Output: outcome.Result,
 		}}
@@ -525,7 +530,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 			planErr := &PlanError{
 				Reason: fmt.Sprintf("planned node %q references a fragment (use:/with:); planned nodes may not reference fragments — trusted code resolves local files, the planner never names them", unresolved.NodeID),
 			}
-			return Plan{}, costUSD, &planRefusal{err: planErr, spec: []byte(spec), issues: []string{planErr.Reason}, repairable: true}
+			return Plan{}, accounting, &planRefusal{err: planErr, spec: []byte(spec), issues: []string{planErr.Reason}, repairable: true}
 		}
 		// A structural refusal carries a precise, machine-generated
 		// diagnosis, so it is worth handing back. It carries only ONE:
@@ -534,7 +539,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		// which tells the planner the list is not exhaustive.
 		var invalid *graph.GraphValidationError
 		if errors.As(err, &invalid) {
-			return Plan{}, costUSD, &planRefusal{
+			return Plan{}, accounting, &planRefusal{
 				err:        fmt.Errorf("generated graph is invalid: %w", err),
 				spec:       []byte(spec),
 				issues:     []string{invalid.Error()},
@@ -544,10 +549,10 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		// A decode failure: the reply was not loadable as YAML/JSON at all.
 		// There is no per-node diagnosis to hand back, so re-planning would
 		// be a blind retry on a paid runtime rather than a repair.
-		return Plan{}, costUSD, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
+		return Plan{}, accounting, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
 	}
 	if issues := validatePlannedNodes(g, outcome.Result); len(issues) > 0 {
-		return Plan{}, costUSD, &planRefusal{
+		return Plan{}, accounting, &planRefusal{
 			err:        issues[0],
 			spec:       []byte(spec),
 			issues:     planIssueReasons(issues),
@@ -578,7 +583,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	// the more to a plan that was valid, and it is the planner's own reply, not
 	// a half-mapped rebuild.
 	if err := c.applyAgentMapping(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Last of the SPEC-WRITING mutations, so the command lands in the graph
 	// that becomes the final Spec — the artifact `--plan-only` prints and
@@ -591,7 +596,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	// plan() already validated it before spending the first one. The spec still
 	// travels, because this plan was one validation ACCEPTED.
 	if err := c.attachVerifyCommand(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// LAST, and after every step that writes plan.Spec — that ordering is the
 	// whole of "the notice is never persisted". Activation is the one mutation
@@ -606,9 +611,28 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	// which nodes carry agent: (those are excluded — ADR 0017 §Compatibility)
 	// and it adjusts plan.ToolPolicies, which agent mapping also writes to.
 	if err := c.applySkillActivation(&plan); err != nil {
-		return Plan{}, costUSD, &planRefusal{err: err, spec: []byte(spec)}
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
 	}
-	return plan, costUSD, nil
+	return plan, accounting, nil
+}
+
+type callAccounting struct {
+	costUSD     float64
+	costUnknown bool
+	usage       runner.TokenUsage
+}
+
+func accountingFromOutcome(outcome runner.NodeOutcome) callAccounting {
+	return callAccounting{costUSD: outcome.TotalCostUSD, costUnknown: outcome.CostUnknown, usage: outcome.Usage}
+}
+
+func (a *callAccounting) add(other callAccounting) {
+	a.costUSD += other.costUSD
+	a.costUnknown = a.costUnknown || other.costUnknown
+	a.usage.InputTokens += other.usage.InputTokens
+	a.usage.CachedInputTokens += other.usage.CachedInputTokens
+	a.usage.OutputTokens += other.usage.OutputTokens
+	a.usage.ReasoningOutputTokens += other.usage.ReasoningOutputTokens
 }
 
 // planIssueReasons is the text a repair prompt hands back: each refusal's
@@ -762,7 +786,7 @@ func toolName(rule string) string {
 //   - every planned node must declare a non-empty allowed_tools, and every
 //     tool it names must be in plannedToolAllowlist. Omitting allowed_tools
 //     is rejected too: the runner only appends --allowedTools when the list
-//     is non-empty (internal/runner.ClaudeCLIRunner.buildArgs), so an empty
+//     is non-empty (internal/runner.CLIRunner.buildArgs), so an empty
 //     list would run under the CLI's own default tool set instead of this
 //     allowlist — that gap would make the allowlist opt-in for an attacker
 //     simply by leaving the field off;
@@ -1350,7 +1374,7 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 const plannedVerdictPattern = "^[*_`\\s]*PASS[*_`\\s]*$"
 
 const plannerPromptTemplate = `You are the planning coordinator for oh-my-graph, an orchestrator that runs
-each node of a DAG as its own claude subprocess.
+each node of a DAG through its selected model CLI.
 
 Design the smallest graph of nodes that accomplishes this goal:
 

@@ -23,7 +23,7 @@ const openTimeout = 10 * time.Second
 // system's default-browser launcher (see the build-tagged openArgv files for
 // the per-platform command). It is the only object in this package that
 // spawns a process, and one of exactly four in the project (the others:
-// runner.ClaudeCLIRunner, verify.ShellVerifier and worktree.GitManager) —
+// runner.CLIRunner, verify.ShellVerifier and worktree.GitManager) —
 // see docs/adr/0006.
 //
 // Construct it in cmd/oh-my-graph and inject it; nothing in internal/serve

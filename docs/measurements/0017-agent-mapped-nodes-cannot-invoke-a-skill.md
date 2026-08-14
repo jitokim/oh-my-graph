@@ -43,7 +43,7 @@ coordinator.Plan            real validation, real applyAgentMapping,
 Plan.BindSkillStaging       the staged plugin dir, as `auto` binds it
 buildInvocation             re-created field for field from
                             schedule/scheduler.go:1323
-runner.ClaudeCLIRunner.Run  runner.buildArgs — the thing under measurement
+runner.CLIRunner.Run  runner.buildArgs — the thing under measurement
 ```
 
 Exactly two things are substituted, and both are ends of that chain rather than

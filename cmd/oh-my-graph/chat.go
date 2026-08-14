@@ -64,6 +64,10 @@ func (f *chatFlags) parse(args []string) error {
 // with the live progress feed and the run's events.jsonl). Everything else
 // stays prototype scope — the loop and the router, nothing else.
 func runChat(args []string) error {
+	return runChatRuntime(runner.RuntimeClaude, args)
+}
+
+func runChatRuntime(runtime runner.Runtime, args []string) error {
 	flags := newChatFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -72,9 +76,15 @@ func runChat(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nodeRunner := runner.NewClaudeCLIRunner()
-	coord := coordinator.New(nodeRunner, mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)...)
-	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{inputs: inputFlag{}})
+	nodeRunner := runner.NewCLIRunner(runtime)
+	var options []coordinator.Option
+	if runtime == runner.RuntimeClaude {
+		options = mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)
+	} else {
+		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
+	}
+	coord := coordinator.New(nodeRunner, options...)
+	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{runtime: runtime, inputs: inputFlag{}})
 }
 
 // errConfirmEOF marks stdin closing at the plan-confirmation prompt. chatLoop

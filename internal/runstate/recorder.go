@@ -75,6 +75,8 @@ func (r *SnapshotRecorder) RecordNode(nodeID string, rec NodeRecord) error {
 	}
 	if prior, ok := r.snap.Nodes[nodeID]; ok && supersedesRound(prior, rec) {
 		rec.CostUSD += prior.CostUSD
+		rec.CostUnknown = rec.CostUnknown || prior.CostUnknown
+		rec.Usage.add(prior.Usage)
 	}
 	r.snap.Nodes[nodeID] = rec
 	return Write(r.path, r.snap)

@@ -36,7 +36,7 @@ func noSettings() *string {
 // configuration that can never occur. `--agent`'s own position is pinned by
 // TestBuildCmd_AgentArgv against the shape that does occur.
 func TestBuildCmd_Argv(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		Cwd:            "/tmp/omg",
@@ -85,7 +85,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 // flag quietly vanished fails here — which is the failure that would turn a
 // capability change into a ceiling change without anyone noticing.
 func TestBuildCmd_SkillActivationArgv(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
@@ -121,7 +121,7 @@ func TestBuildCmd_SkillActivationArgv(t *testing.T) {
 // so a renderer that joined the entries with a comma, or emitted only the
 // first, would pass them all while naming a directory that does not exist.
 func TestBuildCmd_RepeatsPluginDirPerEntry(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt: testPrompt,
 		Policy: ToolPolicy{PluginDirs: []string{"/runs/r1/a", "/runs/r1/b"}},
@@ -142,7 +142,7 @@ func TestBuildCmd_RepeatsPluginDirPerEntry(t *testing.T) {
 // every hand-written graph and every planned run with activation off, and a
 // stray empty flag would change what the CLI loads.
 func TestBuildCmd_NoPluginDirsEmitsNoFlag(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
@@ -159,7 +159,7 @@ func TestBuildCmd_NoPluginDirsEmitsNoFlag(t *testing.T) {
 // occurs in: a hand-written node, which carries its own allow rules and no
 // ceiling layer at all.
 func TestBuildCmd_AgentArgv(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "plan",
@@ -187,11 +187,11 @@ func TestBuildCmd_AgentArgv(t *testing.T) {
 // node_started, so the flag rendering here is the other half of that promise:
 // the transcript a live view went looking for is the one this child writes.
 func TestBuildCmd_SessionIDArgv(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
-		SessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+		sessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
 		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
 	})
 
@@ -212,7 +212,7 @@ func TestBuildCmd_SessionIDArgv(t *testing.T) {
 // nothing configured it — a fan-in node with a clean session, no tool grants
 // and no imposed ceiling.
 func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "plan",
@@ -238,7 +238,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 // disable a user's own settings, hooks and MCP servers in the path whose whole
 // purpose is precise user control.
 func TestBuildCmd_HandWrittenGraphArgvIsUnchanged(t *testing.T) {
-	r := NewClaudeCLIRunner(WithBinary("claude"))
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
@@ -264,7 +264,7 @@ func TestBuildCmd_HandWrittenGraphArgvIsUnchanged(t *testing.T) {
 // Bash(*) grant and reopening the exact gap this change closes. The distinction
 // is carried by *string precisely so it cannot collapse: nil omits, &"" emits.
 func TestBuildCmd_SettingSourcesEmptyIsRenderedNotOmitted(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 
 	isolated := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
@@ -290,7 +290,7 @@ func TestBuildCmd_SettingSourcesEmptyIsRenderedNotOmitted(t *testing.T) {
 // which is the opposite of "use the default set" — so a non-nil empty slice
 // must render the flag, and only nil may omit it.
 func TestBuildCmd_ToolsNilOmitsEmptyDisables(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 
 	omitted := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt: testPrompt, PermissionMode: "dontAsk",
@@ -315,7 +315,7 @@ func TestBuildCmd_ToolsNilOmitsEmptyDisables(t *testing.T) {
 // dropping either silently would still look like a working ceiling in every
 // other test, so they are asserted individually rather than as one blob.
 func TestBuildCmd_PlannedNodeCeilingRendersEveryLayer(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
@@ -346,7 +346,7 @@ func TestBuildCmd_PlannedNodeCeilingRendersEveryLayer(t *testing.T) {
 // --agent <name> and that the default (no agent) leaves plain `claude -p`
 // exactly as it was.
 func TestBuildCmd_AgentOnlyWhenNamed(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 
 	named := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt: testPrompt, PermissionMode: "dontAsk", Agent: "code-reviewer",
@@ -370,7 +370,7 @@ func TestBuildCmd_AgentOnlyWhenNamed(t *testing.T) {
 // before this guard existed. The value is a plain decimal, never scientific
 // notation, so even a tiny budget is a token claude parses.
 func TestBuildCmd_MaxBudgetOnlyWhenPositive(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 
 	budgeted := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
@@ -426,7 +426,7 @@ func TestParseEnvelope_BudgetExhausted(t *testing.T) {
 // --bare disables OAuth, and --no-session-persistence hides the run from
 // fleetops. Neither must ever appear.
 func TestBuildCmd_NeverBareOrNoSessionPersistence(t *testing.T) {
-	r := NewClaudeCLIRunner()
+	r := NewCLIRunner(RuntimeClaude)
 	cmd := r.buildCmd(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	joined := strings.Join(cmd.Args, " ")
 	for _, forbidden := range []string{"--bare", "--no-session-persistence"} {
@@ -457,20 +457,19 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	parentEnv := []string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
 		"ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed",
+		"OPENAI_API_KEY=sk-openai-should-be-scrubbed",
+		"CODEX_API_KEY=sk-codex-should-be-scrubbed",
 		"PATH=/usr/bin",
 		"HOME=/home/dev",
 	}
-	r := NewClaudeCLIRunner(withEnviron(func() []string { return parentEnv }))
+	r := NewCLIRunner(RuntimeClaude, withEnviron(func() []string { return parentEnv }))
 
 	cmd := r.buildCmd(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 
 	for _, kv := range cmd.Env {
 		key, _, _ := strings.Cut(kv, "=")
-		if key == "ANTHROPIC_API_KEY" {
-			t.Errorf("ANTHROPIC_API_KEY leaked into child env: %q", kv)
-		}
-		if key == "ANTHROPIC_AUTH_TOKEN" {
-			t.Errorf("ANTHROPIC_AUTH_TOKEN leaked into child env: %q", kv)
+		if key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" {
+			t.Errorf("provider API variable leaked into child env: %q", kv)
 		}
 	}
 
@@ -545,7 +544,7 @@ JSON
 exit 1
 `)
 
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
 	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if err != nil {
 		t.Fatalf("a non-zero exit with a parseable envelope is an outcome, not a Run error: %v", err)
@@ -570,7 +569,7 @@ echo '{"session_id":"s-1","result":"partial","total_cost_usd":0.02}'
 echo "You've hit your session limit" >&2
 exit 1
 `)
-	r := NewClaudeCLIRunner(WithBinary(failing))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(failing))
 	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if err != nil {
 		t.Fatalf("unexpected Run error: %v", err)
@@ -584,7 +583,7 @@ echo '{"session_id":"s-2","result":"PASS","total_cost_usd":0.01}'
 echo "warning: noisy but harmless" >&2
 exit 0
 `)
-	r = NewClaudeCLIRunner(WithBinary(clean))
+	r = NewCLIRunner(RuntimeClaude, WithBinary(clean))
 	outcome, err = r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if err != nil {
 		t.Fatalf("unexpected Run error: %v", err)
@@ -614,18 +613,21 @@ done
 printf '{"session_id":"%s","result":"PASS","total_cost_usd":0.01}' "$sid"
 `)
 
-	assigned := NewSessionID()
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
+	var started string
 	outcome, err := r.Run(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
-		SessionID:      assigned,
+		SessionStarted: func(id string) { started = id },
 	})
 	if err != nil {
 		t.Fatalf("unexpected Run error: %v", err)
 	}
-	if outcome.SessionID != assigned {
-		t.Errorf("outcome session id = %q, want the pre-assigned %q", outcome.SessionID, assigned)
+	if !uuidV4Pattern.MatchString(started) {
+		t.Errorf("session callback id = %q, want a canonical UUIDv4", started)
+	}
+	if outcome.SessionID != started {
+		t.Errorf("outcome session id = %q, want the runtime-owned %q", outcome.SessionID, started)
 	}
 }
 
@@ -661,7 +663,7 @@ func TestRun_CancelledRunKillsTheChild(t *testing.T) {
 		t.Fatalf("write stub: %v", err)
 	}
 
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -718,7 +720,7 @@ func TestRun_InvocationTimeoutBoundsTheRun(t *testing.T) {
 	}
 	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
 
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
 	start := time.Now()
 	_, err := r.Run(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
@@ -761,7 +763,7 @@ func TestRun_ZeroInvocationTimeoutFallsBackToRunnerDefault(t *testing.T) {
 	}
 	stub := writeStub(t, "#!/bin/sh\nsleep 30\n")
 
-	r := NewClaudeCLIRunner(WithBinary(stub), WithTimeout(100*time.Millisecond))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub), WithTimeout(100*time.Millisecond))
 	_, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected the runner's own timeout to fire, got %T: %v", err, err)
@@ -798,7 +800,7 @@ func TestRun_InheritedDeadlineIsNotThisNodesTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
 	_, err := r.Run(ctx, NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",

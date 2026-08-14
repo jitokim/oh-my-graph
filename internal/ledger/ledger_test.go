@@ -65,6 +65,25 @@ func TestRender_IncludesRowsAndTotal(t *testing.T) {
 	}
 }
 
+func TestRender_UnknownCostShowsTokensAndNeverZeroDollars(t *testing.T) {
+	l := New("run-codex")
+	l.Record(Record{
+		NodeID: "work", SessionID: "thread-1", Verdict: VerdictPass,
+		CostUnknown: true,
+		Usage:       TokenUsage{InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1},
+	})
+
+	out := l.Render()
+	if strings.Contains(out, "$0.0000") {
+		t.Fatalf("unknown Codex spend rendered as zero dollars:\n%s", out)
+	}
+	for _, want := range []string{"unknown", "TOKEN USAGE", "input 11", "cached 3", "output 2", "reasoning 1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestBudgetDeltaUSD(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -390,7 +409,7 @@ func TestTotalCost_IncludesPlanningCost(t *testing.T) {
 	l := New("auto-run")
 	l.Record(Record{NodeID: "write", CostUSD: 0.7977, Verdict: VerdictPass})
 	l.Record(Record{NodeID: "critique", CostUSD: 0.5327, Verdict: VerdictPass})
-	l.RecordPlanningCost(0.6069)
+	l.RecordPlanning(0.6069, false, TokenUsage{})
 
 	// 0.7977 + 0.5327 + 0.6069 = 1.9373 — the planning call is part of the total.
 	if got := l.TotalCost(); got < 1.9372 || got > 1.9374 {
@@ -402,7 +421,7 @@ func TestRender_ShowsPlanningLineAndFoldedTotal(t *testing.T) {
 	l := New("auto-run")
 	l.Record(Record{NodeID: "write", CostUSD: 0.7977, Verdict: VerdictPass})
 	l.Record(Record{NodeID: "critique", CostUSD: 0.5327, Verdict: VerdictPass})
-	l.RecordPlanningCost(0.6069)
+	l.RecordPlanning(0.6069, false, TokenUsage{})
 
 	out := l.Render()
 	for _, want := range []string{"PLANNING COST: $0.6069", "TOTAL COST: $1.9373"} {

@@ -36,6 +36,8 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	parentEnv := []string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
 		"ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed",
+		"OPENAI_API_KEY=sk-openai-should-be-scrubbed",
+		"CODEX_API_KEY=sk-codex-should-be-scrubbed",
 		"PATH=/usr/bin",
 		"HOME=/home/dev",
 	}
@@ -45,11 +47,8 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 
 	for _, kv := range cmd.Env {
 		key, _, _ := strings.Cut(kv, "=")
-		if key == "ANTHROPIC_API_KEY" {
-			t.Errorf("ANTHROPIC_API_KEY leaked into the verification child env: %q", kv)
-		}
-		if key == "ANTHROPIC_AUTH_TOKEN" {
-			t.Errorf("ANTHROPIC_AUTH_TOKEN leaked into the verification child env: %q", kv)
+		if key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" {
+			t.Errorf("provider API variable leaked into the verification child env: %q", kv)
 		}
 	}
 	// Surgical: a verification command needs the rest of the environment (PATH

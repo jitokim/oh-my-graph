@@ -9,16 +9,20 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // commonRunFlags are the execution options `run` and `auto` share. One
 // register method wires them onto each subcommand's FlagSet so the flag names
 // and usage strings can never drift between the two.
 type commonRunFlags struct {
-	inputs         inputFlag
-	concurrency    int
-	continueOnFail bool
-	noWeb          bool
+	runtime             runner.Runtime
+	inputs              inputFlag
+	concurrency         int
+	continueOnFail      bool
+	noWeb               bool
+	planningCostUnknown bool
+	planningUsage       runner.TokenUsage
 }
 
 func (c *commonRunFlags) register(set *flag.FlagSet) {

@@ -1,10 +1,9 @@
 // Package childenv owns the one environment policy every process oh-my-graph
-// spawns must obey: the variables that silently switch the claude CLI from the
-// user's logged-in subscription (OAuth) to metered API-key billing are DELETED
-// from the child's environment.
+// spawns must obey: variables that switch Claude or Codex from the user's saved
+// login to API-key authentication are DELETED from the child's environment.
 //
 // It is a dependency-free leaf package because there are FOUR spawners —
-// runner.ClaudeCLIRunner (a claude node), verify.ShellVerifier (a
+// runner.CLIRunner (a claude node), verify.ShellVerifier (a
 // success_check.verify command), worktree.GitManager (the git worktree
 // commands behind a node's worktree:) and browser.ExecOpener (the open/xdg-open
 // launch of the serve URL) — and they must not be able to disagree about the
@@ -28,10 +27,14 @@ package childenv
 import "strings"
 
 // scrubbedVars are the environment variables deleted from every child process.
-// Both are read by the claude CLI as "use API-key billing instead of the
-// logged-in subscription", so leaving either in place would silently spend
-// metered credits for a run the user expects to be inside their plan.
-var scrubbedVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+// These are the provider-specific API authentication switches. Leaving one in
+// place can make the selected CLI ignore its saved login.
+var scrubbedVars = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"OPENAI_API_KEY",
+	"CODEX_API_KEY",
+}
 
 // Scrub returns parent with every scrubbed variable removed, leaving everything
 // else untouched. Matching is on the WHOLE KEY (the text before the first '='),

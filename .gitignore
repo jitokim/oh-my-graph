@@ -12,3 +12,6 @@
 
 # Local scratch working memory — never tracked
 /.notes/
+
+# Local isolated development worktrees
+/.worktrees/

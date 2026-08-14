@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // ErrPlanDeclined is the sentinel an ExecuteCycle callback returns when a
@@ -102,11 +104,13 @@ const (
 // CycleReport is one completed, assessed cycle's record — the goal summary's
 // row: which run it was, how it ended, what it cost, and how it was judged.
 type CycleReport struct {
-	Cycle      int
-	RunID      string
-	RunPassed  bool
-	RunCostUSD float64
-	Assessment Assessment
+	Cycle          int
+	RunID          string
+	RunPassed      bool
+	RunCostUSD     float64
+	RunCostUnknown bool
+	Usage          runner.TokenUsage
+	Assessment     Assessment
 }
 
 // GoalResult is the loop's outcome: every completed cycle in order, and why
@@ -177,11 +181,13 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 		}
 		spentUSD += evidence.RunCostUSD + assessment.CostUSD
 		report := CycleReport{
-			Cycle:      cycle,
-			RunID:      evidence.RunID,
-			RunPassed:  evidence.RunPassed,
-			RunCostUSD: evidence.RunCostUSD,
-			Assessment: assessment,
+			Cycle:          cycle,
+			RunID:          evidence.RunID,
+			RunPassed:      evidence.RunPassed,
+			RunCostUSD:     evidence.RunCostUSD,
+			RunCostUnknown: evidence.RunCostUnknown,
+			Usage:          evidence.Usage,
+			Assessment:     assessment,
 		}
 		result.Cycles = append(result.Cycles, report)
 		if opts.OnCycleAssessed != nil {
