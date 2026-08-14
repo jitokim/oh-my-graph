@@ -24,6 +24,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   and skill activation before execution. `state.json` and `events.jsonl` move
   to schema 3 so older readers cannot misread unknown cost or runtime identity.
 
+- **The pre-run Codex disclosure now names the four differences a user
+  otherwise met only after spending.** Alongside the filesystem sandbox and the
+  documentary status of `allowed_tools`: a sandboxed node has **no network**
+  (`gh` and `git ls-remote` fail), which is where the shipped publishing graphs
+  end — `graphs/fragments/pr-publish.yaml`, `adr-driven-dev`, `merge-shepherd`
+  — and Codex's `sandbox_workspace_write.network_access=true` is stated as what
+  it is rather than as a remedy, since `gh`'s keyring token stays out of reach;
+  **USD cost is unknown for every node**, not merely unbudgetable;
+  `approval_policy="never"` is passed unconditionally; and **ADR 0009's
+  session-limit pause does not exist on Codex**
+  ([#171](https://github.com/jitokim/oh-my-graph/issues/171)). The long form is
+  in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
 - **`lint` / `run --dry-run` warn when a `success_check.verify.command`
   splices a model's own text into the shell command line the engine runs.** A
   verify command interpolates exactly like a prompt — `resolveVerification`
