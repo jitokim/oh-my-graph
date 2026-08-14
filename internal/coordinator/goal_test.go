@@ -55,6 +55,15 @@ func passingEvidence(runID string, costUSD float64) CycleEvidence {
 	}
 }
 
+// unknownCostEvidence is a passing cycle whose run reported no USD amount —
+// a runtime that reports tokens, or a node killed before it reported.
+func unknownCostEvidence(runID string) CycleEvidence {
+	evidence := passingEvidence(runID, 0)
+	evidence.RunCostUnknown = true
+	evidence.Nodes[0].CostUnknown = true
+	return evidence
+}
+
 // Governance is validated before anything spends: a missing or nonsensical
 // bound must be unrepresentable, not defaulted (ADR 0011 §1).
 func TestRunGoal_RejectsInvalidGovernanceBeforeAnyCall(t *testing.T) {
@@ -425,6 +434,97 @@ func TestRunGoal_BudgetCeilingUnderSpendKeepsIterating(t *testing.T) {
 	}
 	if result.Stop != StopGoalMet || len(result.Cycles) != 2 {
 		t.Errorf("stop = %q with %d cycles, want goal met on cycle 2", result.Stop, len(result.Cycles))
+	}
+}
+
+// An unknown cost under a ceiling is not $0: the loop cannot tell whether it
+// is under the ceiling, so it refuses to plan another cycle rather than iterate
+// on a number it does not have (ADR 0025: budgets are never evaluated against
+// an unknown cost).
+func TestRunGoal_UnknownCostUnderACeilingStopsTheLoop(t *testing.T) {
+	cases := []struct {
+		name     string
+		evidence CycleEvidence
+		assess   runner.NodeOutcome
+	}{
+		{
+			name:     "the run cost is unknown",
+			evidence: unknownCostEvidence("r1"),
+			assess:   runner.NodeOutcome{Result: assessNotMetReply, TotalCostUSD: 0.01},
+		},
+		{
+			name:     "the assessment cost is unknown",
+			evidence: passingEvidence("r1", 0.01),
+			assess:   runner.NodeOutcome{Result: assessNotMetReply, CostUnknown: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newGoalFake(map[string]runner.NodeOutcome{
+				"plan-1":   {Result: validSpec},
+				"assess-1": tc.assess,
+			})
+			executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: tc.evidence}}
+
+			result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+				GoalOptions{MaxCycles: 5, MaxGoalBudgetUSD: 10}, executor.execute)
+			if !errors.Is(err, ErrBudgetUnknownCost) {
+				t.Fatalf("err = %v, want ErrBudgetUnknownCost", err)
+			}
+			if len(result.Cycles) != 1 {
+				t.Errorf("%d completed cycles reported, want the one that did run", len(result.Cycles))
+			}
+			if got := fake.InvocationCount("plan-2"); got != 0 {
+				t.Errorf("a cycle was planned under an unmeasurable ceiling: %d calls", got)
+			}
+		})
+	}
+}
+
+// The known part of a spend is a floor on the true spend, so a ceiling already
+// reached by what IS known stays a sound stop however much went unreported —
+// that is the one comparison an unknown does not poison.
+func TestRunGoal_KnownSpendPastTheCeilingStopsCleanlyDespiteAnUnknown(t *testing.T) {
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessNotMetReply, CostUnknown: true},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: passingEvidence("r1", 0.06)}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 5, MaxGoalBudgetUSD: 0.05}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop != StopBudgetExceeded || len(result.Cycles) != 1 {
+		t.Fatalf("stop = %q with %d cycles, want budget stop after cycle 1", result.Stop, len(result.Cycles))
+	}
+}
+
+// Without a ceiling there is nothing to evaluate, so an unknown cost is simply
+// reported and the loop runs on — the refusal is the budget's, not the cost's.
+func TestRunGoal_UnknownCostWithoutACeilingKeepsIterating(t *testing.T) {
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessNotMetReply, CostUnknown: true},
+		"plan-2":   {Result: validSpec},
+		"assess-2": {Result: assessMetReply, CostUnknown: true},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{
+		1: unknownCostEvidence("r1"),
+		2: unknownCostEvidence("r2"),
+	}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green",
+		GoalOptions{MaxCycles: 5}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop != StopGoalMet || len(result.Cycles) != 2 {
+		t.Fatalf("stop = %q with %d cycles, want goal met on cycle 2", result.Stop, len(result.Cycles))
+	}
+	if !result.Cycles[0].RunCostUnknown {
+		t.Error("cycle 1 reported a known cost, want the unknown carried into the report")
 	}
 }
 

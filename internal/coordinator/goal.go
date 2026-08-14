@@ -14,6 +14,18 @@ import (
 // retry, no assessment of a run that never started — with StopDeclined.
 var ErrPlanDeclined = errors.New("plan declined by the confirm hook")
 
+// ErrBudgetUnknownCost is what a budgeted goal loop stops with when a completed
+// cycle reported no USD amount. "Budgets are never evaluated against an unknown
+// cost" (ADR 0025) is a property of the system, not of one command: the CLI
+// refuses --max-goal-budget-usd with a runtime that reports tokens instead of
+// USD, but a cost can also go unknown at runtime — a node killed before it
+// reported, a garbled envelope — and the library must hold the guarantee on its
+// own. Counting an unknown as $0 would let a capped loop iterate forever under
+// a ceiling it can no longer measure, so the loop refuses to continue rather
+// than continue on a number it does not have. Only a ceiling makes the unknown
+// matter; without one the loop never compares anything and runs on.
+var ErrBudgetUnknownCost = errors.New("goal budget cannot be evaluated against an unknown cost")
+
 // GoalOptions is the goal loop's governance. The loop runs on a paid runtime,
 // so unbounded iteration is unrepresentable: MaxCycles is required (there is
 // no unbounded spelling), and the optional budget ceiling adds a second,
@@ -32,7 +44,9 @@ type GoalOptions struct {
 	// goal has spent so far (each cycle's run total, planning included, plus
 	// each assessment's cost) against it and stops with StopBudgetExceeded.
 	// The honest overshoot is therefore up to one cycle plus one assessment.
-	// Zero means no ceiling; negative is rejected.
+	// Zero means no ceiling; negative is rejected. A cycle whose cost is
+	// unknown ends a ceilinged loop with ErrBudgetUnknownCost rather than
+	// counting as $0 (ADR 0025).
 	MaxGoalBudgetUSD float64
 	// InputKeys are the --input names every cycle's planner call may
 	// reference, identical across cycles.
@@ -132,7 +146,8 @@ type GoalResult struct {
 // The loop returns an error when a cycle could not complete — a *PlanError
 // (planning or validation failed mid-cycle), an *AssessError (garbage
 // verdict), or whatever the executor returned (a pause, an infra failure) —
-// always with the completed cycles so far in GoalResult, so the caller can
+// and when a ceilinged loop can no longer measure itself, ErrBudgetUnknownCost.
+// Always with the completed cycles so far in GoalResult, so the caller can
 // still print the goal summary for what did run.
 func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions, execute ExecuteCycle) (GoalResult, error) {
 	if opts.MaxCycles < 1 {
@@ -147,11 +162,23 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 
 	var result GoalResult
 	spentUSD := 0.0
+	spendUnknown := false
 	remaining := ""
 	for cycle := 1; cycle <= opts.MaxCycles; cycle++ {
-		if cycle > 1 && opts.MaxGoalBudgetUSD > 0 && spentUSD >= opts.MaxGoalBudgetUSD {
-			result.Stop = StopBudgetExceeded
-			return result, nil
+		if cycle > 1 && opts.MaxGoalBudgetUSD > 0 {
+			// Order matters, and it is the only place the unknown is
+			// tolerable: what IS known can only be a floor on true spend, so
+			// "the known part already reaches the ceiling" stays sound however
+			// much went unreported, and stopping on it is honest. Only when
+			// the known part is under the ceiling does an unknown decide the
+			// comparison — and then there is no answer, so the loop refuses.
+			if spentUSD >= opts.MaxGoalBudgetUSD {
+				result.Stop = StopBudgetExceeded
+				return result, nil
+			}
+			if spendUnknown {
+				return result, fmt.Errorf("goal loop: cycle %d reported no USD cost: %w", cycle-1, ErrBudgetUnknownCost)
+			}
 		}
 
 		if opts.OnCyclePlanning != nil {
@@ -180,6 +207,7 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 			return result, err
 		}
 		spentUSD += evidence.RunCostUSD + assessment.CostUSD
+		spendUnknown = spendUnknown || evidence.RunCostUnknown || assessment.CostUnknown
 		report := CycleReport{
 			Cycle:          cycle,
 			RunID:          evidence.RunID,
