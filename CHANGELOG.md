@@ -10,6 +10,71 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-08-15
+
+**Minor because the CLI grew a token you may type.** Compared by name rather
+than by diff line: the long flags registered in `flags.go` are the same
+seventeen as at v0.7.0, the eleven subcommands are the same eleven, and the
+global flags gained exactly one — `--runtime`. Nothing was renamed or removed.
+
+The headline is a **second node runtime**, contributed by
+[@minkichoe-lbox](https://github.com/minkichoe-lbox) in
+[#170](https://github.com/jitokim/oh-my-graph/pull/170) — the project's first
+outside contribution, and a 117-file one that kept every load-bearing invariant
+intact, including the one most at risk: `childenv.Scrub` still takes no runtime
+and has no branch.
+
+Four PRs: [#170](https://github.com/jitokim/oh-my-graph/pull/170),
+[#172](https://github.com/jitokim/oh-my-graph/pull/172),
+[#173](https://github.com/jitokim/oh-my-graph/pull/173),
+[#174](https://github.com/jitokim/oh-my-graph/pull/174).
+
+### Fixed
+
+- **A goal budget can no longer be measured against a number the loop does not
+  have.** `RunGoal` compared `--max-goal-budget-usd` against known spend alone
+  and accumulated only the known halves, so unknown spend counted as $0 and a
+  capped loop could iterate under a ceiling it could no longer measure. ADR 0025
+  states that guarantee as a property of the system, and the CLI refusing the
+  runtime/budget combination up front is not the same thing — **a cost can also
+  go unknown at runtime**, from a node killed before it reported or a garbled
+  envelope. The check is ordered so the honest half still fires first: known
+  spend is a *floor* on true spend, so "the known part already reaches the
+  ceiling" stays sound however much went unreported and still stops with
+  `StopBudgetExceeded`; only when the known part is under the ceiling does the
+  unknown decide, and there the loop stops with the new
+  `StopBudgetUnmeasurable` rather than continue.
+
+  It is a stop reason and not an error, for the reason `StopDeclined` is: by
+  then every cycle completed and was assessed. As an error it cost the
+  `remaining:` line every clean stop prints, and — because the check runs before
+  the next cycle's planning hook — made the goal summary bill a cycle that never
+  existed. **Known blast radius, stated rather than discovered:** one ordinary
+  20-minute node timeout also sets `CostUnknown`, so a single timed-out node can
+  end a budgeted loop that ADR 0011 §2 would otherwise keep iterating.
+
+- **A node's stderr is bounded again.** Collecting it by hand replaced
+  `cmd.Output()`'s stdlib cap with an unbounded buffer — **paid by the Claude
+  path too** — while the only consumer reads 500 bytes. Restored as a 32 KiB
+  tail: the tail, because every consumer reads through `tailOf` and a CLI's
+  fatal line is its last one; 32 KiB, because that is the ceiling
+  `prefixSuffixSaver` kept rather than a tighter number invented here.
+
+- **`make local` failed on every mac** after the runtime landed, while CI stayed
+  green. macOS charges a security scan on the first exec of a newly written
+  file, per file, so a stub written into a fresh `t.TempDir()` paid it every
+  run: 384-1607 ms, against 6-15 ms to re-run the same file. Two tests raced
+  that against a wall clock and lost before the code under test was involved.
+  Fixed by warming the stub outside the timed window rather than by widening a
+  deadline — with a cost spanning 4x, no constant is both tight enough to test
+  the property and loose enough to stay green, so a bigger number would have
+  turned a red suite into a flaky one.
+
+### Changed
+
+- **The README is a front page again** — 904 lines to 223
+  ([#169](https://github.com/jitokim/oh-my-graph/pull/169)).
+
 ### Added
 
 - **Codex is now a run-wide model CLI runtime.** Use
@@ -2931,7 +2996,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.8.0...HEAD
+[v0.8.0]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...v0.7.0
 [v0.6.1]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/jitokim/oh-my-graph/compare/v0.5.5...v0.6.0
