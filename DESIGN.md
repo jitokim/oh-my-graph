@@ -82,9 +82,12 @@ On a failed run the runner also captures WHY as a one-line
 downstream (ledger, events.jsonl, watch, serve) names the cause (a
 subscription session limit, say) instead of only "exit code 1".
 - **Subscription auth crux:** start from `os.Environ()` and **DELETE
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`** from the child env (they
-  silently switch to metered API billing). Enforced in code + asserted by a unit
-  test on the built argv/env. NEVER `--bare` (disables OAuth). NEVER the Agent SDK.
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY`** from the child env (they silently switch to metered API
+  billing). One list, no runtime branch: a Claude node drops the OpenAI
+  switches and a Codex node drops the Anthropic ones, so neither list can fall
+  behind the other. Enforced in code + asserted by a unit
+  test on the built argv/env. NEVER `--bare` (disables OAuth). NEVER an Agent SDK.
 - Per-node `context.WithTimeout` (default ~20m) so a wedged child can't hang the graph.
 - Non-JSON/parse failure = node failure (`NodeOutputError`), never a silent zero result.
 - permission modes are a **closed, load-validated set** — the `claude` CLI's own
@@ -141,6 +144,39 @@ token usage; the last completed `agent_message` is the node result. A
 `turn.failed` event is a failed node even if the CLI process itself exits zero.
 `--skip-git-repo-check` preserves the graph contract that a node `cwd` may be a
 non-git directory; oh-my-graph already chooses that directory explicitly.
+
+The sandbox is a NETWORK boundary as well as a filesystem one: under
+`workspace-write` a node cannot reach the network (measured 2026-08-14,
+`gh api rate_limit` → "error connecting to api.github.com", `git ls-remote` →
+"Could not resolve host"), so under `--runtime codex` a graph halts at the
+FIRST node that publishes. **Where that node sits varies, and it decides what
+the failure costs** — the shipped graphs cover all three shapes:
+
+| where | graphs | what a Codex run does first |
+|---|---|---|
+| last node | `adr-driven-dev` (`finalize`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
+| first node | `apply-flags` (`dev` applies, commits and pushes; `verify` is `permission_mode: plan` and reads only) | fails immediately, having done nothing |
+| several | `merge-shepherd` — `gh` in all five model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
+
+So "does the work and then fails" is only the last-node case. A graph can also
+publish from a node that is not its last (`apply-flags`), which is why the
+disclosure names positions rather than a list of "graphs that publish".
+
+Two remedies exist, both per node rather than per run, and both are the user's
+call rather than something oh-my-graph selects: `permission_mode:
+bypassPermissions` maps to `danger-full-access`, which is not a sandbox at all,
+so such a node keeps network AND keyring; and Codex's
+`sandbox_workspace_write.network_access=true` lifts the network block, which is
+enough for `git push`/`git ls-remote` (what `pr-publish` and `adr-driven-dev`'s
+`finalize` need) but not for `gh` **on a machine where a keyring is available** —
+`gh` uses the OS keyring only then, and the sandbox denies it ("no oauth token
+found for github.com", measured 2026-08-14 on macOS). Where there is no keyring
+(a headless Linux box, say) `gh` reads `~/.config/gh/hosts.yml`, a plain file a
+`workspace-write` sandbox restricts writes and network for but not reads — so
+`network_access=true` probably does fix `gh` there. That case is unmeasured.
+The run prints the limitation before any node spends
+(`noteCodexRuntimePolicy`) and records it in
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Graph model — YAML (committed)
 Edges are inline `depends_on` (no separate edges list — single source of truth).
@@ -492,7 +528,9 @@ The runner classifies it (`NodeOutcome.SessionLimited`); the scheduler then
 stops launching, drains in-flight siblings instead of cancelling them, records
 the limited node nowhere, and returns `*LimitPausedError` → exit code 2 with a
 `resume --retry-failed` hint. Full semantics under "Gate nodes and `resume`"
-below — the limit rides the same pause/drain machinery a gate does.
+below — the limit rides the same pause/drain machinery a gate does. Claude only:
+under `--runtime codex` nothing sets `SessionLimited`, so the same situation is
+an ordinary node failure (open question, #171).
 
 **Feedback edges (ADR 0010) — the fourth intercepted signal.** A node may
 declare `feedback: { rerun: <ancestor>, max: N }`: when it fails for a
@@ -1211,7 +1249,7 @@ zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
 
 **The env scrub applies to verification commands too.** `verify: { command:
 "claude -p ..." }` is legal and would otherwise run on metered API billing if
-the key happened to be set. `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` are
+the key happened to be set. All four provider API-key switches are
 deleted from the verification child's env by the same shared policy the runner
 uses (`internal/childenv`), asserted by its own unit test.
 
@@ -1392,9 +1430,19 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   nodes with no record at all (a session-limit pause leaves exactly that
   state — ADR 0009), in which case the leg runs them as "running unfinished
   nodes"; a gate-paused run is still redirected to `--approve`/`--reject`.
-- **A subscription session limit is a pause, not a failure (ADR 0009).** The
+- **A subscription session limit is a pause, not a failure (ADR 0009) — on
+  Claude.** The
   runner classifies the CLI's limit message (`NodeOutcome.SessionLimited`,
-  matcher pinned in `internal/runner/sessionlimit.go`); the scheduler then
+  matcher pinned in `internal/runner/sessionlimit.go` against Claude's own
+  prose, and set only for the Claude runtime), so a `--runtime codex` run
+  reaches no SESSION-LIMIT pause: the limit is an ordinary node failure — a
+  retry first only if that node declares a `retry:` block, since `shouldRetry`
+  returns false when `node.Retry` is nil — which `resume --retry-failed` still
+  salvages. Only that ONE pause is runtime-shaped: a `gate` node is an engine
+  construct with no runtime branch, so a Codex run pauses at a gate exactly as
+  a Claude run does (`merge-shepherd`, the graph named above, has one).
+  Whether ADR 0009 is a promise of the
+  engine or of the Claude runtime is open — #171. The scheduler then
   stops launching new work but drains in-flight siblings (which may
   themselves limit and join the paused set), records the limited node
   NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
@@ -2418,7 +2466,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
-internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
+internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped: #171) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
@@ -2454,8 +2502,8 @@ Personal/local tool re-using YOUR OWN logged-in claude session (same standing as
 claude-squad / running `claude -p` yourself). NOT a hosted/redistributed product
 authenticating others via subscription OAuth (that violates ToS). Never ships
 credentials, never proxies auth, never runs as a shared service. Scrubs
-ANTHROPIC_API_KEY/AUTH_TOKEN from every child (unit-tested). Never --bare, never
-Agent SDK. Least privilege per node (allowed_tools + permission_mode); bypassPermissions
+ANTHROPIC_API_KEY/AUTH_TOKEN plus OPENAI_API_KEY/CODEX_API_KEY from every child
+(one list, no runtime branch; unit-tested). Never --bare, never an Agent SDK. Least privilege per node (allowed_tools + permission_mode); bypassPermissions
 opt-in per node with a loud warning, never a default. For auto-planned graphs
 (untrusted LLM output run unattended under `dontAsk`), least privilege is not
 just a prompt convention and not just a declaration check:

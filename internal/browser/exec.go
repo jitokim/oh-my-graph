@@ -95,8 +95,9 @@ func requireLoopbackHTTP(rawURL string) error {
 
 // openCmd assembles the exact *exec.Cmd for one launch: the platform argv and
 // the scrubbed child environment. It is the unit under test — exec_test.go
-// calls it directly to assert that ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
-// are absent from cmd.Env. Nothing here spawns; Open wires it to the OS.
+// calls it directly to assert that all four scrubbed variables
+// (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, CODEX_API_KEY) are
+// absent from cmd.Env. Nothing here spawns; Open wires it to the OS.
 //
 // The env scrub is not an optional nicety for the launcher either: the URL
 // handler it dispatches to is arbitrary user-configured code (a .desktop

@@ -318,9 +318,10 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 
 // gitCmd assembles the exact *exec.Cmd for one git invocation: argv, the
 // repository to run against, and the scrubbed child environment. It is the
-// unit under test — git_test.go calls it directly to assert that
-// ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are absent from cmd.Env. Nothing
-// here spawns; git wires it to the OS.
+// unit under test — git_test.go calls it directly to assert that all four
+// scrubbed variables (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY,
+// CODEX_API_KEY) are absent from cmd.Env. Nothing here spawns; git wires it to
+// the OS.
 //
 // The env scrub is not an optional nicety for git either: a repository's own
 // hooks (post-checkout fires on `git worktree add`) are arbitrary user code

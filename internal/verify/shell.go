@@ -121,9 +121,10 @@ func NewShellVerifier(opts ...ShellOption) *ShellVerifier {
 
 // buildCmd assembles the exact *exec.Cmd for a request: argv, cwd, the scrubbed
 // child environment, and the cancellation behaviour. It is the unit under test —
-// shell_test.go calls it directly to assert both the argv AND that
-// ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are absent from cmd.Env. Nothing here
-// spawns; Verify wires it to the OS.
+// shell_test.go calls it directly to assert both the argv AND that all four
+// scrubbed variables (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY,
+// CODEX_API_KEY) are absent from cmd.Env. Nothing here spawns; Verify wires it
+// to the OS.
 //
 // The env scrub is not an optional nicety for verification: `verify: { command:
 // "claude -p ..." }` is a legal thing to write, and an unscrubbed child would

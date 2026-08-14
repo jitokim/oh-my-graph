@@ -3,7 +3,7 @@
 // login to API-key authentication are DELETED from the child's environment.
 //
 // It is a dependency-free leaf package because there are FOUR spawners —
-// runner.CLIRunner (a claude node), verify.ShellVerifier (a
+// runner.CLIRunner (a model node, claude or codex), verify.ShellVerifier (a
 // success_check.verify command), worktree.GitManager (the git worktree
 // commands behind a node's worktree:) and browser.ExecOpener (the open/xdg-open
 // launch of the serve URL) — and they must not be able to disagree about the
