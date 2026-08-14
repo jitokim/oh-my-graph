@@ -109,6 +109,9 @@ type NodeInvocation struct {
 	// so the scheduler never sets both. Empty means "let claude mint the id",
 	// which is exactly the pre-flag behaviour.
 	SessionID string
+	// SessionStarted is called once the selected CLI owns a resumable session.
+	// Claude can know that before spawn; Codex learns it from thread.started.
+	SessionStarted func(string)
 	// Agent, when non-empty, is the name of a Claude Code subagent (as defined
 	// in the user's own ~/.claude/agents or <cwd>/.claude/agents) this node
 	// runs as, rendered as `--agent <name>`. The node then inherits that
@@ -159,7 +162,11 @@ type NodeOutcome struct {
 	SessionID    string
 	Result       string
 	TotalCostUSD float64
-	ExitCode     int
+	// CostUnknown distinguishes a runtime that reports no USD total from a
+	// genuinely free invocation. Codex reports token usage instead.
+	CostUnknown bool
+	Usage       TokenUsage
+	ExitCode    int
 	// FailureCause is a concise single-line explanation of WHY the subprocess
 	// failed, present only when the run actually failed (an error envelope, or
 	// a non-zero exit). ClaudeCLIRunner fills it from the most informative
@@ -183,6 +190,14 @@ type NodeOutcome struct {
 	// FAIL. FailureCause still carries the full message, including the "resets
 	// <time>" hint the CLI prints.
 	SessionLimited bool
+}
+
+// TokenUsage is the provider-reported token accounting for one invocation.
+type TokenUsage struct {
+	InputTokens           int64 `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
 }
 
 // NodeRunner runs one node to completion and returns its outcome. A non-nil

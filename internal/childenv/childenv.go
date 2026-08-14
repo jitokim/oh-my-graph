@@ -31,7 +31,12 @@ import "strings"
 // Both are read by the claude CLI as "use API-key billing instead of the
 // logged-in subscription", so leaving either in place would silently spend
 // metered credits for a run the user expects to be inside their plan.
-var scrubbedVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+var scrubbedVars = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"OPENAI_API_KEY",
+	"CODEX_API_KEY",
+}
 
 // Scrub returns parent with every scrubbed variable removed, leaving everything
 // else untouched. Matching is on the WHOLE KEY (the text before the first '='),
