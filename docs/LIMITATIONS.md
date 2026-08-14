@@ -144,8 +144,9 @@ has no open issue behind it.
   to api.github.com" (the same call on the host returns 5000), `git ls-remote`
   → "Could not resolve host". Every shipped graph that publishes finishes on
   such a node — `graphs/fragments/pr-publish.yaml` (used by `self-dev`,
-  `dev-review-pr` and twice by `backlog-batch`), `adr-driven-dev`'s inline
-  `gh pr create`, and `merge-shepherd`, which is `gh` end to end — so under
+  `dev-review-pr` and twice by `backlog-batch`), `adr-driven-dev`'s `finalize`
+  node, which pushes the branch and opens the PR through its own
+  `Bash(gh *)` grant, and `merge-shepherd`, which is `gh` end to end — so under
   `--runtime codex` those runs do all the work and then fail on the last node.
   Codex's `sandbox_workspace_write.network_access=true` is **not** the remedy:
   it lifts the network block, and `gh` still fails with "no oauth token found
