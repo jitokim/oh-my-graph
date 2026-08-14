@@ -548,10 +548,19 @@ func writeStub(t *testing.T, script string) string {
 // The stub cooperates by exiting immediately when OMG_TEST_WARMUP is set; the
 // variable is set only on this call, never in the test process, so a stub run
 // through the runner under test never sees it.
+//
+// The environment is the empty set plus that one variable — NOT os.Environ().
+// Nothing here needs the parent's environment (the shebang resolves /bin/sh by
+// absolute path and the script exits on its first line), so inheriting it would
+// hand a child every credential this process holds for no reason at all. That
+// is the habit this repo scrubs for, and a test helper is exactly where a bad
+// habit gets copied from. It is deliberately not routed through CLIRunner
+// either: this is a throwaway exec whose only purpose is to touch the file, and
+// running the protocol would put the very cost being warmed back inside it.
 func warmStubExec(t *testing.T, stub string) {
 	t.Helper()
 	cmd := exec.Command(stub)
-	cmd.Env = append(os.Environ(), "OMG_TEST_WARMUP=1")
+	cmd.Env = []string{"OMG_TEST_WARMUP=1"}
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("warm stub exec: %v", err)
 	}
