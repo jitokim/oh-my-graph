@@ -261,13 +261,15 @@ behaviour change: if your `auto` runs depended on an MCP server, they will stop.
 **Through v0.6.0 agent-mapped nodes were the exception in both directions** — no
 *settings* were dropped for them, so your CLAUDE.md and hooks, and the
 repository's, did load, and they were correspondingly less isolated, not more.
-**Since 2026-08-12 they are not**: the staged-definition change above keeps
+**Since 2026-08-12 (KST) they are not**: the staged-definition change above keeps
 Layer 1 at `""` for a mapped node too, so it drops the same things every other
 planned node drops (measured for settings, skills and agent discovery; implied
 for `CLAUDE.md` and hooks). **MCP was never part of that exception.** Layer 4 is
 a flag, not a settings scope: `--strict-mcp-config` has always shipped on a
 mapped node's argv too, with no `--mcp-config` beside it, so an `auto` run that
-depended on an MCP server stops there as well.
+depended on an MCP server is *expected* to stop there as well. That expectation
+is read off the argv, not measured: closure against a real MCP server was never
+tested and remains unverified.
 
 Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would

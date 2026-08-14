@@ -47,7 +47,7 @@ oh-my-graph <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
 10), `--continue-on-fail`, and `--no-web` (do not serve or open the web live
 view for this run). Both print a live per-node feed as the graph executes, then
 a cost ledger. A graph can also declare the failure policy itself with
-graph-level `on_fail: continue` (default `halt`) — the right default for a batch
+graph-level `on_fail: continue` (default `halt`) — the right setting for a batch
 of independent lanes, where one lane's failure should not cancel the others'
 in-flight work. The flag ORs with the field: either saying continue means
 continue.
@@ -316,7 +316,7 @@ tools beyond the node's planned allowlist is skipped with a note), every mapping
 is shown in the printed plan before anything runs, and `--no-agent-mapping`
 turns it off.
 
-The project directory was scanned until 2026-08-12, and the reason it stopped is
+The project directory was scanned until 2026-08-12 (KST), and the reason it stopped is
 worth a sentence. A matched definition is now *copied* into the run and handed to
 the node as its system prompt, so scanning the repository under work meant a file
 that arrives with a `git clone` could write the instructions an unattended node
@@ -330,7 +330,7 @@ runs as settings-isolated as any other planned node: oh-my-graph copies that
 agent's definition into the run's own directory and hands the node that copy, so
 `--agent` resolves without your settings loading. Its declared scope binds — a
 node declaring `Bash(git *)` cannot run a non-git command even if your settings
-would allow one, measured on 2026-08-12 against the argv this build emits,
+would allow one, measured on 2026-08-12 (KST) against the argv this build emits,
 staged directory and all: denied 3 of 3, against a breach for the argv shipped
 through v0.6.0 on the same machine the same hour, with an in-scope control still
 running 2 of 2
@@ -342,7 +342,7 @@ the same source list and are implied rather than measured, and it holds no
 `Skill` tool, so it can invoke no skill at all. (Its argv also carries
 `--strict-mcp-config`, as every planned node's always has; whether that closes
 MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
-a mapped node was the one exception to that isolation; from 2026-08-12 it is
+a mapped node was the one exception to that isolation; from 2026-08-12 (KST) it is
 not.** The agent file is read once, at plan time, and pinned by hash, so editing
 it mid-run changes nothing; a resumed leg maps nothing at all and says so. If
 you want one node's `Skill` tool back, `--no-agent <name>` declines that one
@@ -365,7 +365,7 @@ agent-mapped, on a run where activation is on at all — an empty or missing
 says so on its own line.
 
 An **agent-mapped node is excluded** and gets neither half. That exclusion was
-measured on 2026-08-12 and kept, because a mapped node then loaded your settings
+measured on 2026-08-12 (KST) and kept, because a mapped node then loaded your settings
 and a skill name resolved against definitions the repository you are working in
 can write — and it *still stands*, though the ground under it is gone: since ADR
 0022 such a node loads no settings and those definitions no longer reach it
@@ -377,7 +377,7 @@ tool.
 
 **What that exclusion costs is not small, and the plan printout says so.** An
 excluded node invokes **no skill at all** — not the staged corpus, and not your
-own installed skills. Measured 2026-08-09 on 10 real spawns: told outright to
+own installed skills. Measured 2026-08-09 (KST) on 10 real spawns: told outright to
 use a skill it fired 0 of 3 under the argv oh-my-graph really sends, and 3 of 3
 with `Skill` added to that argv's `--tools` and nothing else changed — and 0 of
 1 against 1 of 1 when the skill sat in `~/.claude/skills` rather than in the
@@ -390,7 +390,7 @@ gained a subagent, `--no-agent-mapping` turns agent mapping off for the whole
 run, and `--no-agent <name>` declines a single agent so the price is the nodes
 that one agent would have taken rather than every mapping in the plan.
 
-Lifting the exclusion was measured on 2026-08-12 and **refused** — 21 spawns,
+Lifting the exclusion was measured on 2026-08-12 (KST) and **refused** — 21 spawns,
 $4.16, pre-registered in its own commit
 ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md)). Not
 because adding the tool fails: it works, 3 of 3. It was refused because on those
@@ -547,7 +547,7 @@ oh-my-graph serve 20260729-101600    # straight to one run, --port to move it
 <p align="center">
   <img src="../assets/dashboard.png" alt="oh-my-graph dashboard: a LIVE header with 4 running / 1 gate-paused / 126 passed / 30 failed run chips and a cumulative spend total, an IN FLIGHT row of four live run cards each drawing its own mini-DAG with per-node states — one of them a fan-out whose three parallel nodes are mid-flight — and a collapsed SETTLED group of 159 runs" width="100%" />
 </p>
-<p align="center"><em>A real dogfood board: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header is cumulative subscription usage across the project's whole development — not a per-run price, and not free.</em></p>
+<p align="center"><em>A real dogfood board, captured 2026-08-06 (KST) — a historical snapshot, not today's numbers: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header was cumulative subscription usage across the project's whole development at that moment — not a per-run price, and not free.</em></p>
 
 It binds to loopback only. It is read-only except for one thing: a run paused
 at a human gate can be approved or rejected from the page. Unlike the live view

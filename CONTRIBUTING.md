@@ -103,14 +103,14 @@ the trailer; like any trailer it is a convention, not cryptographic proof of
 authorship.
 
 **Auditing the claim.** The trailer above names the *pipeline*, and only from
-2026-08-02 on. The trailer that names the *model* is Claude's own, it predates
+2026-08-02 (KST) on. The trailer that names the *model* is Claude's own, it predates
 that convention, and it is the one to count:
 
 ```sh
 git log main --first-parent -i --grep="co-authored-by: claude"
 ```
 
-The verifiable snapshot, taken 2026-08-06 and only going up: **49 of the 114
+The verifiable snapshot, taken 2026-08-06 (KST) and only going up: **49 of the 114
 pull requests** merged into `main` carry a Claude co-author trailer in their
 squash commit — the receipt that a claude session wrote them. The command above
 reported **50** matches at that snapshot, because `--first-parent` also reaches
