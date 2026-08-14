@@ -124,13 +124,42 @@ has no open issue behind it.
   no whole-graph budget. Closing the first needs incremental cost
   (`--output-format stream-json`), a `NodeRunner`-contract change.
 - **Codex has token accounting, not USD budgeting.** Under `--runtime codex`,
-  USD cost is explicitly unknown and token usage is persisted and printed.
+  USD cost is explicitly unknown and token usage is persisted and printed —
+  `parseCodexJSONL` starts every outcome at `CostUnknown: true` and never
+  writes a dollar figure, so per-node cost, the run total and any budget
+  comparison are all absent for the whole run. That is not a gap in one
+  reading: it is the trade the runtime makes, and the run says so before it
+  starts (`noteCodexRuntimePolicy`).
   Positive `budget_usd`, `agent:`, and `--max-goal-budget-usd` are rejected
   before execution. Claude Code agent mapping and skill activation do not run
   on Codex. Codex also cannot enforce Claude's granular `allowed_tools`
   patterns; its boundary is the selected filesystem sandbox, with user config,
   project rules/AGENTS files and MCP servers removed from planned invocations.
+  Every Codex node also runs with `approval_policy="never"`: a non-interactive
+  scheduler cannot answer a prompt, so nothing is escalated for approval.
   ([#8](https://github.com/jitokim/oh-my-graph/issues/8))
+- **A Codex node has no network — which is where most of our graphs END.**
+  The Codex sandbox is a network boundary as well as a filesystem one. Measured
+  2026-08-14 under `workspace-write`: `gh api rate_limit` → "error connecting
+  to api.github.com" (the same call on the host returns 5000), `git ls-remote`
+  → "Could not resolve host". Every shipped graph that publishes finishes on
+  such a node — `graphs/fragments/pr-publish.yaml` (used by `self-dev`,
+  `dev-review-pr` and twice by `backlog-batch`), `adr-driven-dev`'s inline
+  `gh pr create`, and `merge-shepherd`, which is `gh` end to end — so under
+  `--runtime codex` those runs do all the work and then fail on the last node.
+  Codex's `sandbox_workspace_write.network_access=true` is **not** the remedy:
+  it lifts the network block, and `gh` still fails with "no oauth token found
+  for github.com", because gh's token lives in the OS keyring and the sandbox
+  denies keyring access. Use `--runtime claude` (the default) for a graph that
+  publishes, or end the Codex graph before its network node and publish
+  separately.
+- **ADR 0009's session-limit pause does not exist on Codex.** A Claude node
+  that hits a plan session limit becomes a resumable pause (exit 2). The
+  matcher is Claude's own prose and `SessionLimited` is set only for the Claude
+  runtime, so the same situation under `--runtime codex` is an ordinary node
+  failure — recoverable with `resume --retry-failed`, but not the pause the ADR
+  promises. Whether that promise belongs to the engine or to the Claude runtime
+  is open. ([#171](https://github.com/jitokim/oh-my-graph/issues/171))
 - **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
   approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
   cannot pre-approve one: every gate stops the run with a resumable snapshot and

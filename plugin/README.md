@@ -187,7 +187,8 @@ This is safe and intentional, not recursion gone wrong:
 
 - Each child `claude -p` subprocess is a fully isolated session with its own
   auth. `oh-my-graph` starts every child from a copy of the environment with
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted (see the main
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` deleted (see the main
   [README](../README.md#bring-your-own-login) and
   [SECURITY.md](../SECURITY.md)), so there's no metered-billing leak and no
   auth conflict between parent and children.
