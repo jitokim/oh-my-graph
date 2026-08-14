@@ -543,6 +543,73 @@ func TestPlanAndExecute_GoalBudgetCeilingThreadsThroughToTheLoop(t *testing.T) {
 	}
 }
 
+// TestPlanAndExecute_UnmeasurableSpendStopsCleanlyWithoutBillingAGhostCycle is
+// the exit-text half of the unknown-cost stop, and it exists because that stop
+// used to be an error. As an error it took the whole error path: no `remaining:`
+// (goalExit never ran, so the "what to do next" line was thrown away for an
+// exit code of 1 either way), and a goal summary that billed "1 assessed cycle
+// + 1 incomplete cycle" for a cycle that never happened — the boundary check
+// fires BEFORE the planning hook, so nothing was ever planned, let alone bought.
+// A wrong count in a printed multiplier is a wrong bill (ADR 0011 §4).
+//
+// The cause is checked per case: both halves of a cycle's accounting feed one
+// sticky flag, so a message that blamed "the run" when the ASSESSMENT was the
+// unknown half would send a reader to a log that says nothing.
+func TestPlanAndExecute_UnmeasurableSpendStopsCleanlyWithoutBillingAGhostCycle(t *testing.T) {
+	cases := []struct {
+		name      string
+		work      runner.NodeOutcome
+		assess    runner.NodeOutcome
+		wantCause string
+		wantTotal string
+	}{
+		{
+			name:      "the run reported no USD cost",
+			work:      runner.NodeOutcome{SessionID: "s-1", Result: "PASS", ExitCode: 0, CostUnknown: true},
+			assess:    runner.NodeOutcome{Result: cycleAssessNotMet, TotalCostUSD: 0.02},
+			wantCause: "cycle 1's run reported no USD cost",
+			wantTotal: "GOAL TOTAL: unknown (known subtotal $0.1200) across 1 cycle(s)",
+		},
+		{
+			name:      "only the assessment reported no USD cost",
+			work:      runner.NodeOutcome{SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+			assess:    runner.NodeOutcome{Result: cycleAssessNotMet, CostUnknown: true},
+			wantCause: "cycle 1's assessment reported no USD cost (its run priced itself fine)",
+			wantTotal: "GOAL TOTAL: unknown (known subtotal $0.6000) across 1 cycle(s)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{
+				"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.10},
+				"work-1":   tc.work,
+				"assess-1": tc.assess,
+			})
+
+			out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3, maxGoalBudgetUSD: 5}, nil)
+			if err == nil {
+				t.Fatal("a goal the ceiling can no longer measure must apply the unmet-goal exit")
+			}
+			for _, want := range []string{tc.wantCause, "remaining: add the README section"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("exit error %q is missing %q", err, want)
+				}
+			}
+			// The summary is the bill: one cycle ran, one cycle is charged.
+			if !strings.Contains(out, tc.wantTotal) {
+				t.Errorf("output is missing %q:\n%s", tc.wantTotal, out)
+			}
+			if strings.Contains(out, "incomplete cycle") {
+				t.Errorf("the summary billed a cycle that never began:\n%s", out)
+			}
+			if got := fake.InvocationCount("plan-2"); got != 0 {
+				t.Errorf("cycle 2 was planned under a ceiling nothing can be compared to: %d calls", got)
+			}
+		})
+	}
+}
+
 // TestPlanAndExecute_DeclinedLaterCycleIsTheUnmetGoalExit: a confirm hook's
 // decline at cycle k ≥ 2 ends the goal loop as a final human stop — no
 // replan, no execution of the declined plan, and the unmet-goal exit with the

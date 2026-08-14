@@ -442,9 +442,36 @@ func goalExit(w io.Writer, result coordinator.GoalResult) error {
 		return fmt.Errorf("goal not met: the cycle %d plan was declined; %s", len(result.Cycles)+1, finalRemaining(result))
 	case coordinator.StopBudgetExceeded:
 		return fmt.Errorf("goal not met: the goal budget ceiling was reached after cycle %d; %s", len(result.Cycles), finalRemaining(result))
+	case coordinator.StopBudgetUnmeasurable:
+		return fmt.Errorf("goal not met: the goal budget can no longer be measured — %s, so the ceiling cannot be evaluated (ADR 0025); %s",
+			unmeasurableCause(result), finalRemaining(result))
 	default: // StopCyclesExhausted
 		return fmt.Errorf("goal not met after %d cycle(s); %s", len(result.Cycles), finalRemaining(result))
 	}
+}
+
+// unmeasurableCause names the first cycle whose accounting went unknown and
+// which half of it did. Which half matters: a run's cost and its assessment's
+// both feed the loop's one sticky flag, so a message that blames "the cycle"
+// sends a reader to the wrong log half the time — an assessment that reported
+// no USD says nothing about a run that priced itself fine. Scanning in order
+// rather than reading the last report keeps the answer right by construction;
+// the loop stops at the very next boundary after the unknown, so today those
+// are the same cycle.
+func unmeasurableCause(result coordinator.GoalResult) string {
+	for _, c := range result.Cycles {
+		switch {
+		case c.RunCostUnknown && c.Assessment.CostUnknown:
+			return fmt.Sprintf("neither cycle %d's run nor its assessment reported a USD cost", c.Cycle)
+		case c.RunCostUnknown:
+			return fmt.Sprintf("cycle %d's run reported no USD cost", c.Cycle)
+		case c.Assessment.CostUnknown:
+			return fmt.Sprintf("cycle %d's assessment reported no USD cost (its run priced itself fine)", c.Cycle)
+		}
+	}
+	// Defensive only: the loop sets this stop from the same per-cycle flags
+	// these reports carry, so an unknown always has a cycle to name.
+	return "a cycle reported no USD cost"
 }
 
 // finalRemaining phrases the last assessment's `remaining` for an unmet-goal

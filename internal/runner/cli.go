@@ -17,8 +17,73 @@ import (
 const (
 	defaultTimeout   = 20 * time.Minute
 	maxStderrInError = 500
-	waitDelay        = 2 * time.Second
+	// maxStderrRetained bounds what one node's stderr may cost in memory. A
+	// node can stream progress to stderr for twenty minutes, so collecting it
+	// whole to read 500 bytes of it is unbounded growth for a fixed need. The
+	// cap is deliberately far above maxStderrInError, the only amount any
+	// consumer reads today: a human handed a crash wants the surrounding
+	// context, not one truncated line, and 32 KiB is exactly the tail
+	// cmd.Output's prefixSuffixSaver kept before stderr was collected by hand
+	// here — restoring the old ceiling rather than inventing a tighter one.
+	maxStderrRetained = 32 << 10
+	waitDelay         = 2 * time.Second
 )
+
+// tailBuffer is an io.Writer that retains at most the last limit bytes written
+// to it. The tail, not the head, is what survives: every consumer of a node's
+// stderr reads it through tailOf, and a CLI's fatal line is its last one.
+//
+// Build one with newTailBuffer; the zero value is not usable.
+type tailBuffer struct {
+	limit int
+	buf   []byte
+}
+
+// newTailBuffer returns a buffer retaining the last limit bytes. The
+// constructor exists so the window cannot be forgotten: a zero limit makes
+// `n >= b.limit` true for every write, so a `tailBuffer{}` that compiles fine
+// would silently discard a whole node's stderr — the same reason MaxCycles has
+// no unbounded spelling. A non-positive limit is a programmer error at a call
+// site that passes a constant, so it fails loudly at the first exercise rather
+// than quietly at a crash nobody can then explain.
+func newTailBuffer(limit int) *tailBuffer {
+	if limit < 1 {
+		panic(fmt.Sprintf("newTailBuffer: retention limit must be at least 1, got %d", limit))
+	}
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if n >= b.limit {
+		b.buf = append(b.buf[:0], p[n-b.limit:]...)
+		return n, nil
+	}
+	b.buf = append(b.buf, p...)
+	// Trim in bulk at twice the limit rather than on every write, so a node
+	// writing many small lines pays one copy per limit bytes, not one per
+	// write. Peak retention is therefore 2*limit, still a constant.
+	if len(b.buf) > 2*b.limit {
+		b.buf = append(b.buf[:0], b.buf[len(b.buf)-b.limit:]...)
+	}
+	return n, nil
+}
+
+// Bytes returns the retained tail, never more than limit bytes.
+//
+// The result ALIASES the buffer's storage and both trim paths rewrite that
+// storage in place, so a slice taken here changes under the caller after the
+// next Write — unlike the bytes.Buffer this replaced, whose Bytes() stayed
+// valid until the next append reallocated. Read it after the process has
+// exited, or copy it. Every call site today is safe on both counts: Run touches
+// stderr only after cmd.Run has returned, and tailOf copies by converting to
+// string. Anyone holding a tail ACROSS writes must copy first.
+func (b *tailBuffer) Bytes() []byte {
+	if len(b.buf) > b.limit {
+		return b.buf[len(b.buf)-b.limit:]
+	}
+	return b.buf
+}
 
 // NodeOutputError marks CLI output that could not be decoded into an outcome.
 type NodeOutputError struct {
@@ -195,9 +260,9 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 
 	cmd := r.buildCmd(runCtx, spec)
 	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
-	var stderr bytes.Buffer
+	stderr := newTailBuffer(maxStderrRetained)
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	stdout.finish()
 
