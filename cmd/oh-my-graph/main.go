@@ -1052,6 +1052,16 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	fmt.Fprintln(w)
 }
 
+// noteCodexRuntimePolicy prints, before anything spends, every way a Codex run
+// differs from the Claude run this project's defaults describe. Each line is
+// here because the alternative is meeting it AFTER paying for the nodes that
+// led up to it: the network block lands on the publish node most shipped
+// graphs end with, cost-unknown lands in the ledger footer, and the missing
+// session-limit pause lands as a FAILED run someone expected to resume.
+//
+// Deliberately one line per difference and no more. A disclosure long enough
+// to scroll past is one nobody reads, so anything that is merely interesting
+// belongs in docs/LIMITATIONS.md, not here.
 func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph, isolated bool) {
 	if runtime != runner.RuntimeCodex {
 		return
@@ -1064,6 +1074,13 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 		fmt.Fprintln(w, "  allowed_tools declarations do not become granular Codex permissions; they remain graph documentation.")
 		break
 	}
+	// Named files, because the user's own graph is the thing at risk: these are
+	// the shipped graphs whose LAST node is the one this breaks.
+	fmt.Fprintln(w, "  No network: a sandboxed node cannot reach it — `gh` and `git ls-remote` fail — so a graph ending in a publish node (graphs/fragments/pr-publish.yaml, used by self-dev, dev-review-pr and backlog-batch; adr-driven-dev; merge-shepherd) does the work and then fails on that node.")
+	fmt.Fprintln(w, "    Codex's sandbox_workspace_write.network_access=true lifts the network block but does NOT fix gh: its token is in the OS keyring, which the sandbox denies (\"no oauth token found for github.com\").")
+	fmt.Fprintln(w, "  Cost is unknown for every Codex node: tokens are counted, USD never is, so this run reports no dollar figure per node or in total.")
+	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
+	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (issue #171).")
 	if isolated {
 		fmt.Fprintln(w, "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.")
 	}
