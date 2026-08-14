@@ -6,7 +6,7 @@
 
 **Architecture:** Keep `NodeRunner` as the scheduler boundary and replace the Claude-specific process object with one `CLIRunner` composed with a Claude or Codex protocol. Parse the runtime once at the CLI boundary, persist it in `state.json`, and let resume/serve reconstruct the same runner from that state.
 
-**Tech Stack:** Go 1.24, standard `flag`/`os/exec`/`encoding/json`, YAML graph schema, JSONL run feed, embedded HTML/JavaScript live view.
+**Tech Stack:** Go 1.25, standard `flag`/`os/exec`/`encoding/json`, YAML graph schema, JSONL run feed, embedded HTML/JavaScript live view.
 
 **Spec:** `docs/adr/0025-one-run-one-cli-runtime.md`
 
@@ -160,8 +160,9 @@ git commit -m "feat(runner): execute Claude or Codex protocols"
 - Test: `internal/runner/preflight_test.go`
 
 **Interfaces:**
-- Produces: `runner.ValidateGraph(runtime Runtime, graph *graph.Graph) error`.
-- Produces: `runfeed.EventNodeSessionStarted` carrying `session_id` and retry ordinal.
+- Produces: `runner.ValidateGraphForRuntime(runtime Runtime, graph *graph.Graph) error`.
+- Reuses `node_started` / `node_retried`, emitted when the runtime owns the
+  session id.
 
 - [ ] **Step 1: Write failing ownership and unsupported-field tests**
 
@@ -173,7 +174,7 @@ func TestValidateGraphCodexRejectsClaudeOnlyFields(t *testing.T) {
 ```
 
 Add a scheduler test whose fake invokes `spec.SessionStarted("thread-1")` and
-asserts a session-started event appears before the terminal event.
+asserts the existing start event appears before the terminal event.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -182,10 +183,10 @@ Expected: FAIL because preflight and session event do not exist.
 
 - [ ] **Step 3: Remove scheduler UUID minting and connect the callback**
 
-`runNode` emits `node_started` without inventing a session. Immediately before
-each `Run`, it assigns a callback that emits `node_session_started`. Retries
-reset the callback with their retry number. `prepareRetry` only clears resume
-state and rebuilds the prompt.
+`runNode` emits no start event before the runtime owns a session. Immediately
+before each `Run`, it assigns a callback that emits the existing `node_started`
+or `node_retried` event. Retries reset the callback with their retry number.
+`prepareRetry` only clears resume state and rebuilds the prompt.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
@@ -216,7 +217,8 @@ git commit -m "refactor(schedule): let runtimes own sessions"
 - Tests: matching `_test.go` files in those packages
 
 **Interfaces:**
-- Produces: optional snapshot `runtime`, `cost_unknown`, and `usage` fields; absent runtime decodes as Claude.
+- Produces: snapshot `runtime`, `cost_unknown`, and `usage` fields under
+  state/feed schema 3; an empty in-memory runtime canonicalizes to Claude.
 - Produces: ledger rendering `unknown` plus a known subtotal and token totals.
 
 - [ ] **Step 1: Write failing round-trip and rendering tests**
@@ -232,7 +234,7 @@ func TestRenderUnknownCostIsNeverZeroDollars(t *testing.T) {
 
 Round-trip a Codex snapshot and assert `show`, `runs list`, watch events, and
 serve card JSON preserve unknown cost and tokens. Round-trip a legacy snapshot
-without `runtime` and assert it selects Claude.
+with `runtime: "claude"` and assert it selects Claude.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -390,4 +392,3 @@ Expected: GitHub returns the PR URL.
 
 Include the URL, test/build results, real runtime smoke result, and any
 provider limitation that remains.
-

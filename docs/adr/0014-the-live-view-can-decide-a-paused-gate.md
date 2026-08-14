@@ -99,7 +99,7 @@ real auth story first.
 
 **The exec-seam invariant is untouched.** `internal/serve` imports no
 `os/exec` and starts no process; the resumed leg's nodes run through
-`runner.ClaudeCLIRunner` — seam 1 — constructed in `cmd/oh-my-graph` and
+`runner.CLIRunner` — seam 1 — constructed in `cmd/oh-my-graph` and
 injected, exactly as every other collaborator in this repo is. There is no
 fifth spawner. What did change is *which process* may spawn: a `serve` process
 now can, where before it never did. That is the boundary this ADR records.

@@ -65,6 +65,40 @@ func eventTypes(events []runfeed.Event) []string {
 	return out
 }
 
+type sessionErrorRunner struct{}
+
+func (sessionErrorRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	const sessionID = "thread-interrupted"
+	if spec.SessionStarted != nil {
+		spec.SessionStarted(sessionID)
+	}
+	return runner.NodeOutcome{SessionID: sessionID, CostUnknown: true}, errors.New("codex run: context canceled")
+}
+
+func TestScheduler_TerminalFailureRetainsTheRuntimeOwnedSession(t *testing.T) {
+	g := mustGraph(t, `
+name: interrupted
+nodes:
+  - { id: work, prompt: work }
+`)
+	feed, path := newEventStream(t, "run-interrupted")
+	s, h, led := newHarness(t, sessionErrorRunner{}, Options{EventSink: feed})
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("interrupted node must fail the run")
+	}
+	events := readEventStream(t, path)
+	if len(events) < 4 {
+		t.Fatalf("event sequence too short: %+v", events)
+	}
+	started, failed := events[1], events[2]
+	if started.Type != runfeed.EventNodeStarted || failed.Type != runfeed.EventNodeFailed {
+		t.Fatalf("node lifecycle = %s then %s", started.Type, failed.Type)
+	}
+	if started.SessionID != "thread-interrupted" || failed.SessionID != started.SessionID {
+		t.Fatalf("session started %q, terminal %q; terminal failure must retain the owned session", started.SessionID, failed.SessionID)
+	}
+}
+
 // TestScheduler_EventStreamSequence proves a passing linear run emits exactly
 // the documented lifecycle sequence, and that every event carries the schema
 // version, the run id, and a parseable RFC 3339 timestamp — the contract
@@ -115,6 +149,35 @@ nodes:
 	}
 	if finished := events[len(events)-1]; finished.Outcome != runfeed.OutcomePassed {
 		t.Errorf("run_finished outcome = %q, want %q", finished.Outcome, runfeed.OutcomePassed)
+	}
+}
+
+func TestScheduler_EventStreamPreservesUnknownCostAndUsage(t *testing.T) {
+	g := mustGraph(t, `
+name: codex-accounting
+nodes:
+  - { id: work, prompt: work }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"work": {
+			SessionID: "thread-1", Result: "PASS", CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1},
+		},
+	})
+	feed, path := newEventStream(t, "run-codex-accounting")
+	s, h, led := newHarness(t, fake, Options{EventSink: feed})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	events := readEventStream(t, path)
+	passed := events[2]
+	if !passed.CostUnknown || passed.CostUSD != 0 || passed.Usage.InputTokens != 11 || passed.Usage.ReasoningOutputTokens != 1 {
+		t.Errorf("node_passed accounting = %+v", passed)
+	}
+	row := led.Records()[0]
+	if !row.CostUnknown || row.Usage.InputTokens != 11 {
+		t.Errorf("ledger accounting = %+v", row)
 	}
 }
 

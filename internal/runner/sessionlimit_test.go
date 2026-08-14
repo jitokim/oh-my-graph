@@ -54,7 +54,7 @@ func TestSessionLimitReset_BestEffort(t *testing.T) {
 }
 
 // TestRun_ClassifiesSessionLimitFromEnvelope proves the classification happens
-// where ADR 0009 says it does — in ClaudeCLIRunner.Run, on the captured
+// where ADR 0009 says it does — in CLIRunner.Run, on the captured
 // failure cause — so the scheduler receives a typed SessionLimited outcome,
 // never a string it has to re-interpret.
 func TestRun_ClassifiesSessionLimitFromEnvelope(t *testing.T) {
@@ -67,7 +67,7 @@ cat <<'JSON'
 JSON
 exit 1
 `)
-	r := NewClaudeCLIRunner(WithBinary(stub))
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
 	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
 	if err != nil {
 		t.Fatalf("a limit-killed run with a parseable envelope is an outcome, not a Run error: %v", err)

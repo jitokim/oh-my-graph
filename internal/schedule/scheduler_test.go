@@ -1786,7 +1786,7 @@ nodes:
 // TestScheduler_NodeAgentReachesInvocation proves a node's `agent:` YAML field
 // survives buildInvocation and arrives at the NodeRunner as
 // NodeInvocation.Agent — the plumbing that lets a hand-written node run as the
-// user's own Claude Code subagent via ClaudeCLIRunner's `--agent <name>`.
+// user's own Claude Code subagent via CLIRunner's `--agent <name>`.
 func TestScheduler_NodeAgentReachesInvocation(t *testing.T) {
 	g := mustGraph(t, `
 name: agent-node
@@ -1813,7 +1813,7 @@ nodes:
 // TestScheduler_NodeTimeoutReachesInvocation proves a node's `timeout:` YAML
 // field survives buildInvocation and arrives at the NodeRunner as
 // NodeInvocation.Timeout, already parsed — the plumbing that lets a
-// legitimately long node replace ClaudeCLIRunner's 20m default (ADR 0007). A
+// legitimately long node replace CLIRunner's 20m default (ADR 0007). A
 // node that declared none carries zero, which the runner reads as "apply the
 // default".
 func TestScheduler_NodeTimeoutReachesInvocation(t *testing.T) {

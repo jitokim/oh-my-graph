@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
@@ -86,6 +87,18 @@ func showRun(w io.Writer, runDir, runID string) error {
 				fmt.Fprintf(w, "Run %s\n", runID)
 			}
 			fmt.Fprintf(w, "No per-node record yet: %s\n", noRecordReason(status, spoken, runDir))
+			accounting, accountingErr := runfeed.ReadAccounting(filepath.Join(runDir, runfeed.FileName))
+			if accountingErr != nil && !errors.Is(accountingErr, fs.ErrNotExist) {
+				return accountingErr
+			}
+			usage := ledger.TokenUsage{
+				InputTokens: accounting.Usage.InputTokens, CachedInputTokens: accounting.Usage.CachedInputTokens,
+				OutputTokens: accounting.Usage.OutputTokens, ReasoningOutputTokens: accounting.Usage.ReasoningOutputTokens,
+			}
+			if accounting.CostUSD != 0 || accounting.CostUnknown || usage != (ledger.TokenUsage{}) {
+				fmt.Fprintf(w, "PLANNING COST: %s\n", formatCost(accounting.CostUSD, accounting.CostUnknown))
+				printAccountingFooter(w, accounting.CostUSD, accounting.CostUnknown, usage)
+			}
 			return nil
 		}
 		return fmt.Errorf("load run %q: %w", runID, err)
@@ -93,7 +106,11 @@ func showRun(w io.Writer, runDir, runID string) error {
 	if statusErr != nil {
 		fmt.Fprintf(w, "WARNING: this run's status could not be derived: %v\n", statusErr)
 	}
-	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap))
+	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap),
+		snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
+			InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
+			OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
+		})
 	return nil
 }
 
@@ -149,9 +166,14 @@ func showRecords(snap runstate.Snapshot) []ledger.Record {
 	records := make([]ledger.Record, 0, len(snap.Nodes))
 	for nodeID, rec := range snap.Nodes {
 		records = append(records, ledger.Record{
-			NodeID:     nodeID,
-			SessionID:  rec.SessionID,
-			CostUSD:    rec.CostUSD,
+			NodeID:      nodeID,
+			SessionID:   rec.SessionID,
+			CostUSD:     rec.CostUSD,
+			CostUnknown: rec.CostUnknown,
+			Usage: ledger.TokenUsage{
+				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+			},
 			BudgetUSD:  rec.BudgetUSD,
 			Verdict:    ledger.Verdict(rec.Verdict),
 			Duration:   rec.Duration,
@@ -183,9 +205,9 @@ const (
 // column style mirrors the end-of-run ledger table so the two read as one
 // tool; unlike that table it shows the full session id (this is the detail
 // view someone copies an id out of) and each node's wall-clock duration. The
-// total is the per-node sum: the snapshot does not persist an auto run's
-// one-time planning cost, so that call is not included here (unlike the
-// end-of-run ledger total).
+// total includes the snapshot's run-wide planning accounting plus every node
+// record, matching the end-of-run ledger even when the runtime reports tokens
+// without a USD total.
 //
 // The VERDICT column renders through ledger.VerdictCell, so a PASS is
 // qualified here exactly as it is in the end-of-run table (ADR 0016 §6).
@@ -198,7 +220,7 @@ const (
 // already lands on; empty means the derivation could not answer and the header
 // says only what it knows. It is deliberately not a column: it describes the
 // run, and every row below it describes a node.
-func printRunDetail(w io.Writer, runID, status string, records []ledger.Record) {
+func printRunDetail(w io.Writer, runID, status string, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
 	if status != "" {
 		fmt.Fprintf(w, "Run %s — %s, %d node(s)\n", runID, status, len(records))
 	} else {
@@ -213,20 +235,43 @@ func printRunDetail(w io.Writer, runID, status string, records []ledger.Record) 
 		"DETAIL")
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", showRuleWidth))
 
-	var total float64
+	total := planningCostUSD
+	costUnknown := planningCostUnknown
+	usage := planningUsage
 	for _, rec := range records {
 		total += rec.CostUSD
-		fmt.Fprintf(w, "%-*s %-*s %-*s %*.4f %*s  %s\n",
+		costUnknown = costUnknown || rec.CostUnknown
+		usage.Add(rec.Usage)
+		cost := fmt.Sprintf("%.4f", rec.CostUSD)
+		if rec.CostUnknown {
+			cost = "unknown"
+		}
+		fmt.Fprintf(w, "%-*s %-*s %-*s %*s %*s  %s\n",
 			showNodeWidth, rec.NodeID,
 			ledger.VerdictWidth, ledger.VerdictCell(rec),
 			showSessionWidth, sessionOrDash(rec.SessionID),
-			showCostWidth, rec.CostUSD,
+			showCostWidth, cost,
 			showDurationWidth, formatDuration(rec.Duration),
 			rec.Detail,
 		)
 	}
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", showRuleWidth))
-	fmt.Fprintf(w, "TOTAL COST: $%.4f\n", total)
+	if planningCostUnknown || planningCostUSD != 0 {
+		fmt.Fprintf(w, "PLANNING COST: %s\n", formatCost(planningCostUSD, planningCostUnknown))
+	}
+	printAccountingFooter(w, total, costUnknown, usage)
+}
+
+func printAccountingFooter(w io.Writer, total float64, costUnknown bool, usage ledger.TokenUsage) {
+	if costUnknown {
+		fmt.Fprintf(w, "TOTAL COST: %s\n", formatCost(total, true))
+	} else {
+		fmt.Fprintf(w, "TOTAL COST: $%.4f\n", total)
+	}
+	if usage != (ledger.TokenUsage{}) {
+		fmt.Fprintf(w, "TOKEN USAGE: input %d, cached %d, output %d, reasoning %d\n",
+			usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens)
+	}
 }
 
 // sessionOrDash renders an empty session id as "-", matching the end-of-run

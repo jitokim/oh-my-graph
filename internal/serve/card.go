@@ -74,13 +74,13 @@ type runCard struct {
 	// to be re-polled just to advance a clock.
 	StartedAt string `json:"started_at,omitempty"`
 	EndedAt   string `json:"ended_at,omitempty"`
-	// CostUSD is the sum of the snapshot's per-node reported spend — the same
+	// CostUSD is the sum of planning and per-node reported spend — the same
 	// accounting `runs list` prints, deliberately, so the two never disagree.
-	// A run whose first node has not completed costs 0 here, which is honest
-	// rather than unknown: nothing has been billed to the snapshot yet.
-	CostUSD float64    `json:"cost_usd"`
-	Counts  cardCounts `json:"counts"`
-	Nodes   []cardNode `json:"nodes,omitempty"`
+	CostUSD     float64             `json:"cost_usd"`
+	CostUnknown bool                `json:"cost_unknown,omitempty"`
+	Usage       runstate.TokenUsage `json:"usage,omitzero"`
+	Counts      cardCounts          `json:"counts"`
+	Nodes       []cardNode          `json:"nodes,omitempty"`
 	// Goal is the goal-lineage block when this run is one cycle of an iterated
 	// auto goal (ADR 0011), same shape /api/graph serves.
 	Goal *goalPayload `json:"goal,omitempty"`
@@ -189,6 +189,9 @@ func buildCard(runsRoot, runID string) runCard {
 	if g != nil {
 		card.Available = true
 		card.Name = g.Name
+		card.CostUSD = snap.PlanningCostUSD
+		card.CostUnknown = snap.PlanningCostUnknown
+		card.Usage = snap.PlanningUsage
 		for _, node := range g.Nodes {
 			card.Nodes = append(card.Nodes, cardNode{
 				ID: node.ID, Type: node.Type, DependsOn: node.DependsOn,
@@ -197,6 +200,11 @@ func buildCard(runsRoot, runID string) runCard {
 		}
 		for _, rec := range snap.Nodes {
 			card.CostUSD += rec.CostUSD
+			card.CostUnknown = card.CostUnknown || rec.CostUnknown
+			card.Usage.InputTokens += rec.Usage.InputTokens
+			card.Usage.CachedInputTokens += rec.Usage.CachedInputTokens
+			card.Usage.OutputTokens += rec.Usage.OutputTokens
+			card.Usage.ReasoningOutputTokens += rec.Usage.ReasoningOutputTokens
 		}
 		if snap.Goal != nil {
 			card.Goal = &goalPayload{
@@ -205,6 +213,12 @@ func buildCard(runsRoot, runID string) runCard {
 			}
 		}
 	} else {
+		card.CostUSD = walked.costUSD
+		card.CostUnknown = walked.costUnknown
+		card.Usage = runstate.TokenUsage{
+			InputTokens: walked.usage.InputTokens, CachedInputTokens: walked.usage.CachedInputTokens,
+			OutputTokens: walked.usage.OutputTokens, ReasoningOutputTokens: walked.usage.ReasoningOutputTokens,
+		}
 		// The stream still knows which nodes have started, so the card renders
 		// those as an edgeless mini-DAG that gains its shape the moment the
 		// first node completes — the same honesty `runs list` shows with its
@@ -329,6 +343,12 @@ type walkedStream struct {
 	// lastOutcome is the last run_finished's outcome, which is where PAUSED
 	// comes from.
 	lastOutcome string
+	// Accounting is folded from the same walk for the snapshot-less states:
+	// an in-flight planner and a refused plan. Once a snapshot exists it is the
+	// durable source instead, avoiding a replay double count across legs.
+	costUSD     float64
+	costUnknown bool
+	usage       runfeed.TokenUsage
 }
 
 // walkNodeStates reads a run's stream once and returns what it says.
@@ -349,6 +369,12 @@ type walkedStream struct {
 func walkNodeStates(feedPath string) (walkedStream, error) {
 	walked := walkedStream{states: map[string]string{}}
 	err := runfeed.Walk(feedPath, func(event runfeed.Event) error {
+		walked.costUSD += event.CostUSD
+		walked.costUnknown = walked.costUnknown || event.CostUnknown
+		walked.usage.InputTokens += event.Usage.InputTokens
+		walked.usage.CachedInputTokens += event.Usage.CachedInputTokens
+		walked.usage.OutputTokens += event.Usage.OutputTokens
+		walked.usage.ReasoningOutputTokens += event.Usage.ReasoningOutputTokens
 		switch event.Type {
 		case runfeed.EventRunStarted:
 			if walked.started == "" {

@@ -8,35 +8,32 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>목표를 설명하세요 — 그래프는 Claude subscription 위에서 실행됩니다.</em></p>
+<p align="center"><em>목표를 설명하세요 — Claude 또는 Codex 로그인으로 그래프를 실행합니다.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
   <a href="go.mod"><img src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.25" /></a>
-  <img src="https://img.shields.io/badge/runs%20on-Claude%20subscription-ff8a65?logo=anthropic&amp;logoColor=white" alt="Runs on your Claude subscription" />
+  <img src="https://img.shields.io/badge/runtime-Claude%20%7C%20Codex-ff8a65" alt="Claude and Codex runtimes" />
 </p>
 
 <p align="center">
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
 
-> 노드 런타임이 Anthropic API가 아니라 — 직접 로그인한 `claude` CLI인,
-> graph-native 멀티 에이전트 오케스트레이터.
+> 노드 런타임이 API key가 아니라 — 직접 로그인한 `claude` 또는 `codex`
+> CLI인 graph-native 멀티 에이전트 오케스트레이터.
 
 <a id="what-it-is"></a>
 
 ## 무엇인가
 
-특화된 에이전트들을 DAG로 엮는 graph engineering은 지금까지 Anthropic API,
-Agent SDK, 그리고 종량제 `ANTHROPIC_API_KEY`를 강요해 왔습니다. 기존의
-graph-native 오케스트레이터는 전부 토큰 단위로 과금됩니다.
-
-oh-my-graph는 그러지 않습니다. 할 일을 DAG로 YAML에 기술하면, 각 노드는 이미
-결제 중인 Max/Pro 플랜 위에서 순수한 `claude -p` 서브프로세스로 실행됩니다.
-**이것은 공짜라는 뜻이 아닙니다.** 구독을 소모하고, run에는 실제 가격이 있고,
-ledger가 노드마다 그 값을 출력합니다 — 주장하는 것은 *두 번째* 종량제 청구서가
-없다는 것이지, 작업이 공짜라는 것이 아닙니다. 이것이 코드로 어떻게 강제되는지는
+oh-my-graph에는 직접 model API나 Agent SDK가 필요하지 않습니다. 할 일을 DAG로
+YAML에 기술하면 각
+노드는 기본값인 `claude`, 또는 run에 선택한 `codex`의 저장된 로그인으로
+실행됩니다. **이것은 공짜라는 뜻이 아닙니다.** 플랜 사용량을 소모합니다. Claude는
+USD 비용을 보고하고, Codex는 token 사용량을 보고하므로 ledger는 USD를 `$0`으로
+꾸미지 않고 `unknown`으로 표시합니다. 이것이 코드로 어떻게 강제되는지는
 [Bring your own login](#bring-your-own-login)에, 가장 가까운 이웃들 — conductor,
 OMK, open-multi-agent — 과의 비교는
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md)에 있습니다.
@@ -60,15 +57,27 @@ oh-my-graph init
 # Zero config — 목표를 말하면 auto가 그래프를 설계합니다:
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
 
+# Codex는 run 전체에 적용되는 opt-in입니다. global flag는 subcommand 앞에 둡니다:
+oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD
+
 # 또는 기본 제공 그래프 실행 — 가장 저렴한 실제 end-to-end 체크(몇 센트):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
 
-`ANTHROPIC_API_KEY`는 필요 없습니다 — 로그인된 `claude` subscription으로
-실행되며, 셸에 그 키가 설정되어 있다면 각 노드가 실행되기 전에 그 노드의
-서브프로세스 환경에서 삭제됩니다. `auto`에 `--plan-only`를 붙이면 플랜을 사서
-읽기만 하고 노드는 하나도 실행하지 않습니다.
+선택할 CLI에 한 번 로그인하세요(`claude` 또는 `codex login`). API key는 필요
+없습니다. child process에서는 Anthropic/OpenAI API-key 환경 변수를 삭제해 저장된
+로그인을 사용합니다. 기본값은 계속 Claude입니다. `--runtime codex`는 run 전체에
+적용되어 `state.json`에 저장되고, `resume`과 브라우저 gate 동작도 같은 런타임을
+사용합니다. `auto`에 `--plan-only`를 붙이면 플랜을 사서 읽기만 하고 노드는 하나도
+실행하지 않습니다.
+
+Codex는 `permission_mode: plan`을 read-only sandbox로, 일반 모드를
+`workspace-write`로, `bypassPermissions`를 `danger-full-access`로 매핑합니다.
+Codex에는 Claude의 호출별 `budget_usd`와 `agent:` 선택자가 없고 USD도 보고하지
+않으므로, 이 두 graph field와 `--max-goal-budget-usd`는 실행 전에 거부합니다.
+Claude Code agent mapping과 skill activation은 Claude 전용이며, Codex `auto`는
+Codex sandbox isolation을 사용합니다.
 
 그래프가 실행되는 동안에는 노드별 라이브 라인이 보이고, 끝나면 비용 ledger가
 나옵니다:
@@ -157,9 +166,9 @@ append-only `events.jsonl`. 이 레이아웃과, 살아 있는 run을 프로세�
 [docs/RUN-FEED.md](docs/RUN-FEED.md). `runs list`가 출력하는 여섯 개의 run
 status는 나머지 커맨드 표면과 함께
 [docs/EXAMPLES.md](docs/EXAMPLES.md#the-command-surface)에 있습니다. 또한 노드는
-session persistence가 **켜진** 채 실행되므로, 모든 노드가 `~/.claude/projects`에
-평범한 claude 세션으로 남고 그 transcript를 읽는 어떤 도구든 그대로 집어갈 수
-있습니다.
+session persistence가 **켜진** 채 실행됩니다. Claude 노드는
+`~/.claude/projects`의 일반 세션으로 남고, Codex 노드는 `codex exec --json`이
+내보낸 thread id를 저장해 resume합니다.
 
 ## 스스로를 배포합니다
 
@@ -176,15 +185,12 @@ dogfooding run은
 
 ## 믿기 전에 읽어야 할 경계 하나
 
-`auto`는 LLM이 쓴 플랜을 당신의 머신에서 무인으로 실행합니다. oh-my-graph는
-플랜된 노드가 무엇을 호출할 수 있는지를 제한합니다 — `permission_mode:
-bypassPermissions` 금지, planner가 작성한 엔진 셸 금지, 고정된 tool allowlist,
-그리고 `Bash(git *)`를 선언한 노드가 당신 settings의 상시 `Bash(*)`를 빌려 쓸 수
-없게 하는 `--setting-sources ""`(`--help`를 읽은 것이 아니라 실제 `claude`에
-대고 측정했습니다). **하지만 이것은 sandbox가 아니라 축소입니다.** MCP가 실제로
-닫히는지는 측정된 적이 없고, slash-command 표면은 이 메커니즘들로 열거되지
-않으며, ceiling 전체가 특정 CLI 버전의 동작에 기대고 있습니다. `auto`는 수정되어도
-괜찮은 디렉토리에서 실행하세요.
+`auto`는 LLM이 쓴 플랜을 당신의 머신에서 무인으로 실행합니다. oh-my-graph는 선택한
+런타임의 메커니즘으로 실행을 제한합니다. Claude는 아래 문서의 측정된 tool
+ceiling을 사용하고, Codex는 planned node에서 user config, project rules/AGENTS,
+MCP server를 제외한 뒤 read-only 또는 workspace sandbox를 적용합니다. **둘 다
+실행을 시작한 repository를 둘러싼 완전한 보안 경계는 아닙니다.** `auto`는
+수정되어도 괜찮은 디렉토리에서 실행하세요.
 
 계층별 입장과 그 뒤의 모든 측정은 [SECURITY.md](SECURITY.md)에, 나머지 정직한
 빈틈들과 플랫폼 지원 매트릭스(macOS·Linux 지원, WSL first-class, 네이티브
@@ -196,15 +202,13 @@ Windows는 best-effort), 그리고 의도적으로 보류한 목록은
 ## Bring your own login
 
 oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 않으며, 공유
-서비스로 실행되지도 않습니다. 이미 로그인된 **본인의** `claude` 세션을
-재사용합니다 — 직접 `claude -p`를 실행하는 것, 혹은
-[claude-squad](https://github.com/smtg-ai/claude-squad)와 같은 위치입니다.
-개인용, 로컬 도구입니다. 노드는 이미 결제 중인 Max/Pro 플랜 안에서 실행되며,
-종량제 키는 개입하지 않습니다.
+서비스로 실행되지도 않습니다. **본인의** 저장된 `claude` 또는 `codex` 로그인을
+재사용하는 개인용 로컬 도구로, 선택한 CLI를 직접 호출하는 것과 같은 위치입니다.
 
 이 보장을 실제로 지키기 위해, 모든 노드 서브프로세스는 환경에서
-`ANTHROPIC_API_KEY`와 `ANTHROPIC_AUTH_TOKEN`이 **삭제된** 상태로 시작합니다 —
-이 변수들은 `claude`를 조용히 종량제 API 과금으로 전환시킵니다. 이 scrub은 하나의
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`가
+**삭제된** 상태로 시작합니다 — 선택한 CLI가 저장된 로그인 대신 API key를 쓰지
+않게 하기 위해서입니다. 이 scrub은 하나의
 공유 정책(`internal/childenv`)이며, 정책 자체와 네 개의 exec seam 각각에서 유닛
 테스트로 검증됩니다. oh-my-graph는 (OAuth를 비활성화하는) `--bare`를 절대 쓰지
 않고, Agent SDK도 절대 건드리지 않습니다. 전체 입장:

@@ -14,6 +14,20 @@ Contributors iterating on the source want neither of these: `make build` plus a
 symlink onto `PATH` is the loop for that, and it is described in
 [CONTRIBUTING.md](../CONTRIBUTING.md#build-test-smoke).
 
+## Runtime prerequisite
+
+Install and sign in to at least one supported model CLI:
+
+- Claude (the default): install `claude` and complete its normal login.
+- Codex: install `codex`, run `codex login`, then put the run-wide selector
+  before the subcommand: `oh-my-graph --runtime codex run graph.yaml`.
+
+oh-my-graph deliberately uses the CLI's saved login. It removes Anthropic and
+OpenAI API-key environment variables from child processes. The selected
+runtime is persisted with the run, so `resume` and browser gate actions reuse
+it; an explicit different runtime is refused rather than converting a run
+midstream.
+
 ## Prebuilt binaries
 
 Each tagged release also publishes prebuilt binaries on the [GitHub Releases

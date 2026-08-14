@@ -316,7 +316,7 @@ func Of(runDir string) (Status, error) {
 
 // OrphanWarning is the sentence every surface prints beside an abandoned run,
 // and it is the ONLY mitigation ADR 0015 accepts for its largest cost. The lock
-// fd is O_CLOEXEC, so a `claude` child does not hold it: a death that takes the
+// fd is O_CLOEXEC, so a model-CLI child does not hold it: a death that takes the
 // engine without taking its children (SIGHUP from a closed terminal, kill -9, a
 // panic, an OOM kill — the ordinary ways a multi-hour run dies) leaves an
 // orphaned subprocess still running and still spending while the run reads
@@ -325,9 +325,9 @@ func Of(runDir string) (Status, error) {
 // what stands between the operator and a double spend, on every surface.
 //
 // It covers a planner call too, and needs no rewording to do it: a planner call
-// is a `claude` subprocess spawned through the same seam, in its own process
+// is a model-CLI subprocess spawned through the same seam, in its own process
 // group, and it can outlive the engine exactly as a node's can (ADR 0023 §2.2).
-const OrphanWarning = "a `claude` subprocess started by the dead leg may still be running and spending, so check for one before you spend again"
+const OrphanWarning = "a model-CLI subprocess started by the dead leg may still be running and spending, so check for one before you spend again"
 
 // Recovery is what an operator can actually do about an abandoned run, and it
 // splits on whether the run ever wrote a snapshot.

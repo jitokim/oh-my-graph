@@ -53,7 +53,7 @@ objects:
 - each node is turned into a `runner.NodeInvocation` the way
   `schedule.Scheduler.buildInvocation` does (prompt, `dontAsk`,
   `node.Agent`, `plan.ToolPolicies[id]`);
-- it is executed by the real `runner.ClaudeCLIRunner`, with
+- it is executed by the real `runner.CLIRunner`, with
   `runner.WithBinary(<shim>)`. The shim writes its own `argv` to disk and exits.
 
 So the recorded argv comes out of `runner.buildArgs`, not out of a shell script

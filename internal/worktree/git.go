@@ -24,7 +24,7 @@ const gitTimeout = 30 * time.Second
 // worktree name as a real `git worktree add` off the invocation repo's HEAD,
 // once per unique name, and tears everything down at run end without ever
 // losing work. It is the only object in this package that spawns a process,
-// and one of exactly four in the project (the others: runner.ClaudeCLIRunner,
+// and one of exactly four in the project (the others: runner.CLIRunner,
 // verify.ShellVerifier and browser.ExecOpener) — see docs/adr/0005 and
 // docs/adr/0006.
 //

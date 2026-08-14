@@ -2,9 +2,8 @@ package childenv
 
 import "testing"
 
-// TestScrub_RemovesBillingSwitchingVars is the policy itself: both variables
-// that flip claude from subscription (OAuth) to metered API billing must be
-// gone from any child environment built here.
+// TestScrub_RemovesBillingSwitchingVars is the policy itself: provider API
+// authentication variables must be gone from any child environment built here.
 func TestScrub_RemovesBillingSwitchingVars(t *testing.T) {
 	got := Scrub([]string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",

@@ -1,13 +1,13 @@
 # oh-my-graph — build & quality targets.
 #
-# CI runs: build, vet, fmt, test. The `smoke` target spawns a REAL claude and is
-# a manual step only — never wire it into CI (it costs money and needs a login).
+# CI runs: build, vet, fmt, test. Smoke targets spawn a REAL model CLI and are
+# manual only — never wire them into CI (they spend plan allowance and need a login).
 
 BINARY := oh-my-graph
 PKG    := ./cmd/oh-my-graph
 SMOKE_DIR ?= /tmp/omg-smoke
 
-.PHONY: build test vet fmt fmt-check smoke clean
+.PHONY: build test vet fmt fmt-check smoke smoke-codex clean
 
 build: ## Build the oh-my-graph binary.
 	go build -o bin/$(BINARY) $(PKG)
@@ -32,6 +32,11 @@ fmt-check: ## Fail if any Go source is not gofmt-clean (CI gate).
 smoke: build ## Manually run the haiku smoke graph against real claude.
 	mkdir -p $(SMOKE_DIR)
 	./bin/$(BINARY) run graphs/haiku-smoke.yaml --input dir=$(SMOKE_DIR)
+
+# MANUAL ONLY — spawns real Codex using the saved login.
+smoke-codex: build ## Manually run the haiku smoke graph against real Codex.
+	mkdir -p $(SMOKE_DIR)
+	./bin/$(BINARY) --runtime codex run graphs/haiku-smoke.yaml --input dir=$(SMOKE_DIR)
 
 clean: ## Remove build artifacts.
 	rm -rf bin

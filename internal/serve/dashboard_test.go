@@ -25,6 +25,16 @@ func newTestDashboard(root string) *Dashboard {
 	return d
 }
 
+func TestRunCard_OmitsEmptyUsage(t *testing.T) {
+	encoded, err := json.Marshal(runCard{RunID: "run-1", State: statePending})
+	if err != nil {
+		t.Fatalf("marshal run card: %v", err)
+	}
+	if strings.Contains(string(encoded), `"usage"`) {
+		t.Fatalf("zero token usage must be absent, got %s", encoded)
+	}
+}
+
 // runsRootWith creates a runs root holding one directory per named run and
 // returns the root. The per-run fixtures are written by the callers through
 // the real writers (writeSnapshot / writeEvents), as everywhere else here.
@@ -174,6 +184,33 @@ func TestDashboard_CardsForInFlightAndSettledRuns(t *testing.T) {
 	}
 	if got := (cardCounts{Total: 2, Passed: 2}); done.Counts != got {
 		t.Errorf("settled card counts = %+v, want %+v", done.Counts, got)
+	}
+}
+
+func TestDashboard_CardCarriesUnknownCostAndTokens(t *testing.T) {
+	root := runsRootWith(t, "codex-run")
+	dir := filepath.Join(root, "codex-run")
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "codex-run", Graph: json.RawMessage(twoNodeGraph),
+		PlanningCostUSD: 0.4, PlanningCostUnknown: true,
+		PlanningUsage: runstate.TokenUsage{InputTokens: 7, CachedInputTokens: 1, OutputTokens: 2, ReasoningOutputTokens: 1},
+		Nodes: map[string]runstate.NodeRecord{
+			"a": {Verdict: runstate.VerdictPass, CostUSD: 0.1,
+				Usage: runstate.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3}},
+		},
+	})
+	writeEvents(t, dir, "codex-run",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass, CostUnknown: true},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+
+	card := buildCard(root, "codex-run")
+	if !card.CostUnknown || card.CostUSD != 0.5 {
+		t.Errorf("card cost = %v unknown %v, want unknown with $0.50 known subtotal", card.CostUSD, card.CostUnknown)
+	}
+	if card.Usage.InputTokens != 18 || card.Usage.CachedInputTokens != 3 || card.Usage.OutputTokens != 7 || card.Usage.ReasoningOutputTokens != 4 {
+		t.Errorf("card usage = %+v", card.Usage)
 	}
 }
 
@@ -472,7 +509,9 @@ func TestBuildCard_ARefusedPlanRendersAsFailedNotPending(t *testing.T) {
 	dir := filepath.Join(root, "run-refused")
 	writeEvents(t, dir, "run-refused",
 		runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
-		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed,
+			CostUSD: 0.3, CostUnknown: true,
+			Usage: runfeed.TokenUsage{InputTokens: 9, CachedInputTokens: 2, OutputTokens: 4, ReasoningOutputTokens: 1}},
 	)
 	// buildCard never reads this file; it is here so the fixture is the whole
 	// directory shape ADR 0023 §3 describes, and so a future card that DOES
@@ -491,6 +530,12 @@ func TestBuildCard_ARefusedPlanRendersAsFailedNotPending(t *testing.T) {
 	}
 	if card.Available {
 		t.Error("a refused plan has no graph, so the card must not claim a structure")
+	}
+	if card.CostUSD != 0.3 || !card.CostUnknown {
+		t.Errorf("refused plan card cost = %v unknown %v, want unknown with $0.30 known subtotal", card.CostUSD, card.CostUnknown)
+	}
+	if card.Usage != (runstate.TokenUsage{InputTokens: 9, CachedInputTokens: 2, OutputTokens: 4, ReasoningOutputTokens: 1}) {
+		t.Errorf("refused plan card usage = %+v", card.Usage)
 	}
 }
 

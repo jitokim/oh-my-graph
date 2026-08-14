@@ -38,6 +38,10 @@ type Record struct {
 	NodeID    string
 	SessionID string
 	CostUSD   float64
+	// CostUnknown means the runtime reported no USD amount. CostUSD is then a
+	// known subtotal of zero, never evidence that the invocation was free.
+	CostUnknown bool
+	Usage       TokenUsage
 	// BudgetUSD is the budget_usd the node declared, or 0 when it declared none.
 	// Recorded next to CostUSD so the budget-vs-actual delta is derivable from a
 	// Record alone, without consulting the graph it came from.
@@ -65,11 +69,30 @@ type Record struct {
 	Provenance string
 }
 
+// TokenUsage is provider-reported token accounting for one invocation.
+type TokenUsage struct {
+	InputTokens           int64
+	CachedInputTokens     int64
+	OutputTokens          int64
+	ReasoningOutputTokens int64
+}
+
+func (u *TokenUsage) Add(other TokenUsage) {
+	u.InputTokens += other.InputTokens
+	u.CachedInputTokens += other.CachedInputTokens
+	u.OutputTokens += other.OutputTokens
+	u.ReasoningOutputTokens += other.ReasoningOutputTokens
+}
+
+func (u TokenUsage) empty() bool {
+	return u == (TokenUsage{})
+}
+
 // BudgetDeltaUSD reports how far the node's actual cost landed from its declared
 // budget (positive = over, negative = under) and whether there was a budget to
 // compare against at all. A node with no budget_usd has no delta to report.
 func (r Record) BudgetDeltaUSD() (delta float64, declared bool) {
-	if r.BudgetUSD <= 0 {
+	if r.BudgetUSD <= 0 || r.CostUnknown {
 		return 0, false
 	}
 	return r.CostUSD - r.BudgetUSD, true
@@ -86,7 +109,7 @@ func (r Record) BudgetDeltaUSD() (delta float64, declared bool) {
 // landed at or over its budget (exactly at budget passes — see the scheduler's
 // strictly-greater rule), and 99.6% of a budget is still 99% spent.
 func (r Record) BudgetUsedPercent() (percent int, declared bool) {
-	if r.BudgetUSD <= 0 {
+	if r.BudgetUSD <= 0 || r.CostUnknown {
 		return 0, false
 	}
 	return int(math.Floor(r.CostUSD / r.BudgetUSD * 100)), true
@@ -103,7 +126,9 @@ type RunLedger struct {
 	// the run's total (auto mode only). Zero for a hand-written `run`, which has
 	// no planning step — so its summary shows no planning line and its total is
 	// unchanged. Guarded by mu, matching records.
-	planningCostUSD float64
+	planningCostUSD     float64
+	planningCostUnknown bool
+	planningUsage       TokenUsage
 }
 
 // New builds an empty ledger tagged with the run id.
@@ -118,16 +143,18 @@ func (l *RunLedger) Record(rec Record) {
 	l.records = append(l.records, rec)
 }
 
-// RecordPlanningCost adds the coordinator's one planning-call cost to the run's
+// RecordPlanning adds the coordinator's planning-call accounting to the run's
 // total. Auto mode calls it once with plan.CostUSD so the end-of-run total is
 // honest about the planning step; `run` (hand-written YAML, no planning) passes
 // 0, which is a no-op that renders no planning line. It is additive and lock-
 // guarded, so it is safe to call concurrently with Record, though in practice
 // the CLI calls it once before the run starts.
-func (l *RunLedger) RecordPlanningCost(costUSD float64) {
+func (l *RunLedger) RecordPlanning(costUSD float64, costUnknown bool, usage TokenUsage) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.planningCostUSD += costUSD
+	l.planningCostUnknown = l.planningCostUnknown || costUnknown
+	l.planningUsage.Add(usage)
 }
 
 // planningCost returns the recorded planning cost under the lock.
@@ -159,6 +186,32 @@ func (l *RunLedger) TotalCost() float64 {
 	total := l.planningCostUSD
 	for _, rec := range l.records {
 		total += rec.CostUSD
+	}
+	return total
+}
+
+// CostUnknown reports whether any recorded invocation omitted its USD cost.
+func (l *RunLedger) CostUnknown() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.planningCostUnknown {
+		return true
+	}
+	for _, rec := range l.records {
+		if rec.CostUnknown {
+			return true
+		}
+	}
+	return false
+}
+
+// TotalUsage sums provider-reported usage across planning and node calls.
+func (l *RunLedger) TotalUsage() TokenUsage {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	total := l.planningUsage
+	for _, rec := range l.records {
+		total.Add(rec.Usage)
 	}
 	return total
 }
@@ -265,7 +318,20 @@ func (l *RunLedger) Render() string {
 	if planning := l.planningCost(); planning != 0 {
 		fmt.Fprintf(&b, "PLANNING COST: $%.4f\n", planning)
 	}
-	fmt.Fprintf(&b, "TOTAL COST: $%.4f\n", l.TotalCost())
+	total := l.TotalCost()
+	if l.CostUnknown() {
+		if total > 0 {
+			fmt.Fprintf(&b, "TOTAL COST: unknown (known subtotal: $%.4f)\n", total)
+		} else {
+			fmt.Fprintln(&b, "TOTAL COST: unknown")
+		}
+	} else {
+		fmt.Fprintf(&b, "TOTAL COST: $%.4f\n", total)
+	}
+	if usage := l.TotalUsage(); !usage.empty() {
+		fmt.Fprintf(&b, "TOKEN USAGE: input %d, cached %d, output %d, reasoning %d\n",
+			usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens)
+	}
 	return b.String()
 }
 
@@ -349,6 +415,9 @@ func anyBudgetDeclared(records []Record) bool {
 // money at all.
 func costCell(rec Record, budgeted bool) string {
 	cost := fmt.Sprintf("%10.4f", rec.CostUSD)
+	if rec.CostUnknown {
+		cost = fmt.Sprintf("%10s", "unknown")
+	}
 	if !budgeted {
 		return cost
 	}

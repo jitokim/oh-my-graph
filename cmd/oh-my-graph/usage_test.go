@@ -201,10 +201,19 @@ func TestUsage_PackageDocCarriesTheSameSynopsis(t *testing.T) {
 	}
 
 	var documented []string
+	foundRuntimeUsage := false
 	for _, line := range strings.Split(file.Doc.Text(), "\n") {
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "oh-my-graph ") {
+		line = strings.TrimSpace(line)
+		if line == runtimeUsage {
+			foundRuntimeUsage = true
+			continue
+		}
+		if strings.HasPrefix(line, "oh-my-graph ") {
 			documented = append(documented, line)
 		}
+	}
+	if !foundRuntimeUsage {
+		t.Errorf("package doc omits global runtime syntax %q", runtimeUsage)
 	}
 
 	var printed []string

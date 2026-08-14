@@ -6,11 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
 func strptr(s string) *string { return &s }
+
+func TestAccountingRecords_OmitEmptyUsage(t *testing.T) {
+	for name, value := range map[string]any{
+		"node":     NodeRecord{},
+		"snapshot": Snapshot{},
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if strings.Contains(string(encoded), `"usage"`) || strings.Contains(string(encoded), `"planning_usage"`) {
+			t.Fatalf("%s zero token usage must be absent, got %s", name, encoded)
+		}
+	}
+}
 
 // sampleSnapshot is a fully-populated snapshot exercising every field, including
 // the load-bearing distinctions (a SettingSources pointer to "", a FAIL record, a
@@ -18,6 +34,7 @@ func strptr(s string) *string { return &s }
 func sampleSnapshot() Snapshot {
 	return Snapshot{
 		RunID:           "run-123",
+		Runtime:         "codex",
 		GraphSourcePath: "graphs/dev-review-pr.yaml",
 		GraphSHA256:     "abc123",
 		Graph:           json.RawMessage(`{"name":"g","nodes":[{"id":"dev","prompt":"dev"}]}`),
@@ -41,6 +58,10 @@ func sampleSnapshot() Snapshot {
 				Duration:     1500 * time.Millisecond,
 				ArtifactPath: ".oh-my-graph/runs/run-123/dev.out",
 				Detail:       "under budget by $0.3800",
+				CostUnknown:  true,
+				Usage: TokenUsage{
+					InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1,
+				},
 			},
 			"e2e": {
 				Verdict:   VerdictFail,

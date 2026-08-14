@@ -17,12 +17,12 @@ Closing it means the engine must run something itself: a command whose exit code
 and output the engine judges, independent of what the node claims. That collides
 with a load-bearing rule recorded in CONTRIBUTING.md and ADR 0001:
 
-> `internal/runner.ClaudeCLIRunner` is **the only object in this codebase that
+> `internal/runner.CLIRunner` is **the only object in this codebase that
 > may import `os/exec`**.
 
 Three ways to satisfy the feature:
 
-1. Teach `ClaudeCLIRunner` to also run verification commands.
+1. Teach `CLIRunner` to also run verification commands.
 2. Let the `Scheduler` exec the command directly.
 3. Give verification its own, narrower seam in a new package.
 
@@ -46,12 +46,12 @@ type Verifier interface {
 - `FakeVerifier` (scripted, keyed by command) is what tests inject, so the whole
   verify path stays spawn-free in CI.
 - `cmd/oh-my-graph` injects `ShellVerifier` by constructor, next to
-  `ClaudeCLIRunner`. The `Scheduler` never constructs either.
+  `CLIRunner`. The `Scheduler` never constructs either.
 
 The invariant is **restated, not weakened**:
 
 > Exactly two objects in oh-my-graph may spawn a process —
-> `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its own
+> `runner.CLIRunner` and `verify.ShellVerifier` — each behind its own
 > injected interface. No other package imports `os/exec`.
 
 > **Update (2026-08-05):** superseded in part — the count only. The invariant
@@ -114,7 +114,7 @@ A planned (`auto`) node may not set `success_check.verify` at all.
 
 ## Alternatives considered
 
-- **Extend `ClaudeCLIRunner`.** Rejected: it is the claude-invocation object.
+- **Extend `CLIRunner`.** Rejected: it is the claude-invocation object.
   Verification is not a claude invocation, and merging them makes `FakeRunner`
   responsible for faking two unrelated subsystems.
 - **Exec from the `Scheduler`.** Rejected outright: the Scheduler's defining

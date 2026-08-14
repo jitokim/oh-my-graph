@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/gate"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
@@ -95,7 +96,7 @@ func approveViaLiveView(t *testing.T) legOutcome {
 	// cliGateResumer, so this exercises the CLI's own resume, not a stub of it.
 	legDone := make(chan error, 1)
 	resumer := gateResumerFunc(func(ctx context.Context, id, gateID string, decision gate.Decision) error {
-		err := cliGateResumer{nodeRunner: rec, errOut: io.Discard}.Resume(ctx, id, gateID, decision)
+		err := cliGateResumer{runnerFor: func(string) (runner.NodeRunner, error) { return rec, nil }, errOut: io.Discard}.Resume(ctx, id, gateID, decision)
 		legDone <- err
 		return err
 	})
@@ -180,7 +181,7 @@ func TestLiveViewReject_RecordsTheRejectionLikeTheCLI(t *testing.T) {
 
 	legDone := make(chan error, 1)
 	resumer := gateResumerFunc(func(ctx context.Context, id, gateID string, decision gate.Decision) error {
-		err := cliGateResumer{nodeRunner: rec, errOut: io.Discard}.Resume(ctx, id, gateID, decision)
+		err := cliGateResumer{runnerFor: func(string) (runner.NodeRunner, error) { return rec, nil }, errOut: io.Discard}.Resume(ctx, id, gateID, decision)
 		legDone <- err
 		return err
 	})

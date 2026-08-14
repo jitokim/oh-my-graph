@@ -18,13 +18,13 @@ Creating a worktree means running `git worktree add` — a subprocess. That
 collides with the invariant CONTRIBUTING.md and ADR 0002 police:
 
 > Exactly two objects in oh-my-graph may spawn a process —
-> `runner.ClaudeCLIRunner` and `verify.ShellVerifier` — each behind its own
+> `runner.CLIRunner` and `verify.ShellVerifier` — each behind its own
 > injected interface. No other package imports `os/exec`. A **third** spawner
 > needs an ADR first.
 
 This is that ADR. The options mirror ADR 0002's:
 
-1. Teach `ClaudeCLIRunner` (or `ShellVerifier`) to also run git.
+1. Teach `CLIRunner` (or `ShellVerifier`) to also run git.
 2. Let the `Scheduler` or the CLI exec git directly.
 3. Give worktree provisioning its own, narrower seam in a new package.
 
@@ -49,7 +49,7 @@ type Provider interface {
   loudly instead of silently spawning git.
 - `FakeManager` (scripted, keyed by name, deterministic paths) is what tests
   inject, so the scheduler's whole worktree path stays spawn-free in CI.
-- `cmd/oh-my-graph` constructs `GitManager` next to `ClaudeCLIRunner` and
+- `cmd/oh-my-graph` constructs `GitManager` next to `CLIRunner` and
   `ShellVerifier` and calls its `Cleanup` after the run. Cleanup is
   deliberately NOT on the `Provider` interface: the Scheduler only ever asks
   where a node runs; run-end teardown is the CLI's job.
@@ -57,7 +57,7 @@ type Provider interface {
 The invariant is **restated, not weakened**:
 
 > Exactly three objects in oh-my-graph may spawn a process —
-> `runner.ClaudeCLIRunner`, `verify.ShellVerifier` and `worktree.GitManager`
+> `runner.CLIRunner`, `verify.ShellVerifier` and `worktree.GitManager`
 > — each behind its own injected interface. No other package imports
 > `os/exec`.
 

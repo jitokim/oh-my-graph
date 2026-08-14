@@ -21,7 +21,7 @@ import (
 const limitCauseMsg = "You've hit your session limit · resets 5:20pm"
 
 // limitRunner limits the FIRST invocation of each prompt named in limitFirst
-// — returning the outcome ClaudeCLIRunner classifies for a limit-killed
+// — returning the outcome CLIRunner classifies for a limit-killed
 // subprocess — and passes everything else, counting invocations so a test can
 // prove exactly what each leg launched.
 type limitRunner struct {
@@ -116,7 +116,7 @@ func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 }
 
 // TestMainExitCode_SessionLimitMapsToExitCode2 drives the REAL `run`
-// subcommand — real ClaudeCLIRunner, real matcher — against a stub `claude`
+// subcommand — real CLIRunner, real matcher — against a stub `claude`
 // on PATH that dies exactly the way a limit-killed CLI does, and pins the
 // resumable exit code.
 func TestMainExitCode_SessionLimitMapsToExitCode2(t *testing.T) {

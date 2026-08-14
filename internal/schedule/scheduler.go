@@ -281,6 +281,17 @@ type Options struct {
 	// declarer's remaining budget is max − k. nil for a fresh run — every
 	// node starts at round 0.
 	NodeRounds map[string]int
+	// OpeningAccounting is accounting completed immediately before this
+	// scheduler leg opened, currently the planner phase of an auto run. It is
+	// attached to run_started so the phase transition is durable in one event.
+	OpeningAccounting RunAccounting
+}
+
+// RunAccounting is provider accounting attached to a run lifecycle boundary.
+type RunAccounting struct {
+	CostUSD     float64
+	CostUnknown bool
+	Usage       runfeed.TokenUsage
 }
 
 // Scheduler executes graphs. Construct it with NewScheduler (constructor
@@ -307,6 +318,7 @@ type Scheduler struct {
 	settledNodes map[string]bool
 	// nodeRounds seeds the feedback state per Run — see Options.NodeRounds.
 	nodeRounds map[string]int
+	opening    RunAccounting
 	// serializedVerify is the set of node ids whose verifications are mutually
 	// exclusive run-wide — see Options.SerializedVerifyNodes.
 	serializedVerify map[string]bool
@@ -328,7 +340,7 @@ type Scheduler struct {
 }
 
 // NewScheduler builds a Scheduler bound to a NodeRunner. The runner is the seam:
-// production injects ClaudeCLIRunner, tests inject FakeRunner.
+// production injects CLIRunner, tests inject FakeRunner.
 func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	gateController := opts.Gate
 	if gateController == nil {
@@ -368,6 +380,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		completedNodes:   opts.CompletedNodes,
 		settledNodes:     opts.SettledNodes,
 		nodeRounds:       opts.NodeRounds,
+		opening:          opts.OpeningAccounting,
 		serializedVerify: opts.SerializedVerifyNodes,
 	}
 }
@@ -386,7 +399,10 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 // helpers emit (see EventSink). Bracketing here rather than at the CLI keeps
 // every lifecycle emission behind one seam.
 func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff, led *ledger.RunLedger) error {
-	s.emitEvent(runfeed.Event{Type: runfeed.EventRunStarted})
+	s.emitEvent(runfeed.Event{
+		Type: runfeed.EventRunStarted, CostUSD: s.opening.CostUSD,
+		CostUnknown: s.opening.CostUnknown, Usage: s.opening.Usage,
+	})
 	err := s.execute(ctx, g, h, led)
 	s.emitEvent(runFinishedEvent(err))
 	return err
@@ -733,7 +749,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 	invocation, err := s.buildInvocation(ctx, node, h)
 	if err != nil {
-		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, err)
 	}
 
 	// basePrompt is the interpolated node prompt with nothing appended, kept
@@ -794,7 +810,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				// coupling for a diagnostic — so the detail says so instead.
 				runErr = fmt.Errorf("%w; cost unknown (killed before reporting)", runErr)
 			}
-			return s.recordFail(led, h, node, "", 0, time.Since(start), attempt, runErr)
+			return s.recordFail(led, h, node, outcome, time.Since(start), attempt, runErr)
 		}
 
 		if outcome.SessionLimited {
@@ -831,7 +847,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
 				s.keepFailedReply(h, node, outcome.Result)
-				return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, persistErr)
+				return s.recordFail(led, h, node, outcome, time.Since(start), attempt, persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
 			// node that did useful work before blowing its budget still leaves
@@ -873,7 +889,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		// reacting to node_failed on the event stream never beats the file
 		// onto disk.
 		s.keepFailedReply(h, node, outcome.Result)
-		return s.recordFail(led, h, node, outcome.SessionID, outcome.TotalCostUSD, time.Since(start), attempt, finalErr)
+		return s.recordFail(led, h, node, outcome, time.Since(start), attempt, finalErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -902,7 +918,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
 	decision, err := s.gate.Evaluate(ctx, node)
 	if err != nil {
-		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
 	}
 
 	switch decision {
@@ -911,13 +927,13 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 	case gate.DecisionReject:
 		s.recordGateDecision(node, runstate.GateReject)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGateRejected, NodeID: node.ID})
-		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, &rejectSignal{NodeID: node.ID})
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, &rejectSignal{NodeID: node.ID})
 	case gate.DecisionPause:
 		s.logProgress("⏸ %s  gate paused\n", node.ID)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGatePaused, NodeID: node.ID})
 		return &pauseSignal{NodeID: node.ID}
 	default:
-		return s.recordFail(led, h, node, "", 0, time.Since(start), 0,
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0,
 			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision))
 	}
 }
@@ -927,9 +943,9 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 // event, then returns cause so callers can `return s.recordFail(...)` directly.
 // attempt is the 0-based index of the terminal attempt — i.e. how many retries
 // preceded it (0 for a path that never retries, such as a gate).
-func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, sessionID string, cost float64, duration time.Duration, attempt int, cause error) error {
+func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, cause error) error {
 	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
-	rec := failRecord(node, sessionID, cost, duration, cause)
+	rec := failRecord(node, outcome, duration, cause)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
 	// isJudgmentFailure here, at the one place a terminal failure is recorded,
@@ -990,7 +1006,11 @@ func (s *Scheduler) dropFailedReply(h *handoff.Handoff, node graph.Node) {
 // the same record into the resumable snapshot, and the matching node_passed
 // event, then returns nil so callers can `return s.recordPass(...)` directly.
 func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) error {
-	s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
+	if outcome.CostUnknown {
+		s.logProgress("✓ %s  %s  cost unknown  %s\n", node.ID, ledger.VerdictPass, duration.Round(time.Millisecond))
+	} else {
+		s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
+	}
 	s.dropFailedReply(h, node)
 	rec := passRecord(node, outcome, duration, attempt, coldStart)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
@@ -1165,9 +1185,14 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int, judged bool
 		verdict = runstate.VerdictPass
 	}
 	return runstate.NodeRecord{
-		Verdict:      verdict,
-		SessionID:    rec.SessionID,
-		CostUSD:      rec.CostUSD,
+		Verdict:     verdict,
+		SessionID:   rec.SessionID,
+		CostUSD:     rec.CostUSD,
+		CostUnknown: rec.CostUnknown,
+		Usage: runstate.TokenUsage{
+			InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+			OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+		},
 		BudgetUSD:    rec.BudgetUSD,
 		Duration:     rec.Duration,
 		ArtifactPath: artifactPath,
@@ -1188,10 +1213,15 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int, judged bool
 // round is the feedback round the execution belonged to (0 outside a loop).
 func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, round int) runfeed.Event {
 	return runfeed.Event{
-		Type:      eventType,
-		NodeID:    rec.NodeID,
-		Verdict:   string(rec.Verdict),
-		CostUSD:   rec.CostUSD,
+		Type:        eventType,
+		NodeID:      rec.NodeID,
+		Verdict:     string(rec.Verdict),
+		CostUSD:     rec.CostUSD,
+		CostUnknown: rec.CostUnknown,
+		Usage: runfeed.TokenUsage{
+			InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
+			OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
+		},
 		SessionID: rec.SessionID,
 		Retries:   retries,
 		Detail:    rec.Detail,
@@ -1625,7 +1655,7 @@ func exitDetail(outcome runner.NodeOutcome) string {
 // it catches the one in-flight call that can overshoot before the native
 // abort lands.
 func evaluateBudget(node graph.Node, outcome runner.NodeOutcome) error {
-	if node.BudgetUSD <= 0 || outcome.TotalCostUSD <= node.BudgetUSD {
+	if node.BudgetUSD <= 0 || outcome.CostUnknown || outcome.TotalCostUSD <= node.BudgetUSD {
 		return nil
 	}
 	return &NodeBudgetError{
@@ -1696,9 +1726,14 @@ func causeFromCheck(err error) string {
 // result, keeping the record shape in one place.
 func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) ledger.Record {
 	rec := ledger.Record{
-		NodeID:     node.ID,
-		SessionID:  outcome.SessionID,
-		CostUSD:    outcome.TotalCostUSD,
+		NodeID:      node.ID,
+		SessionID:   outcome.SessionID,
+		CostUSD:     outcome.TotalCostUSD,
+		CostUnknown: outcome.CostUnknown,
+		Usage: ledger.TokenUsage{
+			InputTokens: outcome.Usage.InputTokens, CachedInputTokens: outcome.Usage.CachedInputTokens,
+			OutputTokens: outcome.Usage.OutputTokens, ReasoningOutputTokens: outcome.Usage.ReasoningOutputTokens,
+		},
 		BudgetUSD:  node.BudgetUSD,
 		Verdict:    ledger.VerdictPass,
 		Duration:   duration,
@@ -1727,11 +1762,16 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 	return rec
 }
 
-func failRecord(node graph.Node, sessionID string, cost float64, duration time.Duration, cause error) ledger.Record {
+func failRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, cause error) ledger.Record {
 	return ledger.Record{
-		NodeID:    node.ID,
-		SessionID: sessionID,
-		CostUSD:   cost,
+		NodeID:      node.ID,
+		SessionID:   outcome.SessionID,
+		CostUSD:     outcome.TotalCostUSD,
+		CostUnknown: outcome.CostUnknown,
+		Usage: ledger.TokenUsage{
+			InputTokens: outcome.Usage.InputTokens, CachedInputTokens: outcome.Usage.CachedInputTokens,
+			OutputTokens: outcome.Usage.OutputTokens, ReasoningOutputTokens: outcome.Usage.ReasoningOutputTokens,
+		},
 		BudgetUSD: node.BudgetUSD,
 		Verdict:   ledger.VerdictFail,
 		Duration:  duration,

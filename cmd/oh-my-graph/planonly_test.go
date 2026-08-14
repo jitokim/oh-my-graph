@@ -175,6 +175,32 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 	}
 }
 
+func TestRunAutoWith_CodexPlanPrintsSandboxNotGranularToolClaims(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {ExitCode: 0, Result: cycleSpec, CostUnknown: true},
+	})
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runAutoWithRuntime(runner.RuntimeCodex,
+			[]string{"add a README section", "--plan-only"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if runErr != nil {
+		t.Fatalf("Codex --plan-only returned error: %v", runErr)
+	}
+	for _, misleading := range []string{"[tools:", "scope like Bash(git *) is enforced"} {
+		if strings.Contains(out, misleading) {
+			t.Errorf("Codex plan claims unsupported granular enforcement %q:\n%s", misleading, out)
+		}
+	}
+	for _, want := range []string{"Codex filesystem sandbox", "allowed_tools declarations"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Codex plan does not disclose %q:\n%s", want, out)
+		}
+	}
+}
+
 // solePlanDir returns the one plan directory the isolated OMG_HOME holds,
 // failing if there is not exactly one — so the assertions above cannot be
 // satisfied by a plan-only that kept nothing at all.

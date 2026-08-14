@@ -1,19 +1,19 @@
-# haiku-smoke — the cheapest real-claude smoke test (a few cents).
+# haiku-smoke — the cheapest real-runtime smoke test.
 #
 # Two nodes, one artifact edge:
 #   write     — writes a 3-line haiku to haiku.txt (acceptEdits, may edit files)
 #   critique  — reads the written file via the artifact handoff, plan mode (read-only)
 #
-# Proves, end to end: subscription auth works with the API key scrubbed,
-# a sequential edge with artifact handoff, JSON capture (two session_ids +
-# costs), the RunLedger table, that both nodes stay readable afterwards as
-# ordinary claude sessions under ~/.claude/projects, and that
+# Proves, end to end: saved-login auth works with API keys scrubbed,
+# a sequential edge with artifact handoff, provider JSON capture (two session
+# ids plus USD or token accounting), the RunLedger table, and that
 # success_check.verify really runs a command and judges it (the `write` node
 # passes only if haiku.txt actually exists — saying DONE is not enough).
 #
 # Run it manually (never in CI):
 #   mkdir -p /tmp/omg-smoke
 #   oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
+#   oh-my-graph --runtime codex run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 name: haiku-smoke
 version: "0.1"
 inputs: [dir]

@@ -338,7 +338,7 @@ nodes:
 	if !strings.Contains(rec.prompts[2], "CHILD-FIRST-REPLY") {
 		t.Errorf("the cold retry was not handed its own previous reply:\n%s", rec.prompts[2])
 	}
-	if !strings.Contains(rec.prompts[2], "FRESH claude session") {
+	if !strings.Contains(rec.prompts[2], "FRESH model-CLI session") {
 		t.Errorf("the quote does not tell the node the attempt is not in its context, which for a "+
 			"session node is the difference between notes and an impossible instruction:\n%s", rec.prompts[2])
 	}
@@ -410,7 +410,7 @@ nodes:
 		t.Errorf("the child resumed session %q while its own prompt told it it is a FRESH session with "+
 			"no conversation behind it; a retry is cold in this process or the last one", rec.resumes[1])
 	}
-	if !strings.Contains(rec.prompts[1], "FRESH claude session") {
+	if !strings.Contains(rec.prompts[1], "FRESH model-CLI session") {
 		t.Errorf("the quote dropped the paragraph that makes it readable as notes:\n%s", rec.prompts[1])
 	}
 

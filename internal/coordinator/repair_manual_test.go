@@ -72,7 +72,7 @@ func TestManual_RepairPromptConvergesOnARealPlanner(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.what, func(t *testing.T) {
-			stub := &stubbedFirstReply{real: runner.NewClaudeCLIRunner(), refused: tc.refused}
+			stub := &stubbedFirstReply{real: runner.NewCLIRunner(runner.RuntimeClaude), refused: tc.refused}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()

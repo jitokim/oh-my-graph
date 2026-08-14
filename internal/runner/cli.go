@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -66,8 +67,46 @@ type cliProtocol interface {
 	runtime() Runtime
 	binary() string
 	prepareSession(*NodeInvocation) string
+	sessionFromLine([]byte) string
 	buildArgs(NodeInvocation) []string
 	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
+}
+
+// protocolOutput retains stdout for terminal decoding while publishing any
+// session-creation event as soon as its complete line arrives. The protocol,
+// not the scheduler, decides which line creates a session.
+type protocolOutput struct {
+	protocol cliProtocol
+	report   func(string)
+	all      bytes.Buffer
+	pending  []byte
+}
+
+func (w *protocolOutput) Write(p []byte) (int, error) {
+	n, err := w.all.Write(p)
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		w.observe(w.pending[:newline])
+		w.pending = w.pending[newline+1:]
+	}
+	return n, err
+}
+
+func (w *protocolOutput) finish() {
+	if len(w.pending) > 0 {
+		w.observe(w.pending)
+		w.pending = nil
+	}
+}
+
+func (w *protocolOutput) observe(line []byte) {
+	if id := w.protocol.sessionFromLine(bytes.TrimSuffix(line, []byte{'\r'})); id != "" {
+		w.report(id)
+	}
 }
 
 // CLIRunner is the single model-CLI os/exec seam. Provider protocols own only
@@ -115,15 +154,6 @@ func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 	return r
 }
 
-// Compatibility aliases keep existing callers compiling while runtime
-// selection is moved to the CLI boundary in the next task.
-type ClaudeCLIRunner = CLIRunner
-type ClaudeCLIOption = CLIOption
-
-func NewClaudeCLIRunner(opts ...CLIOption) *CLIRunner {
-	return NewCLIRunner(RuntimeClaude, opts...)
-}
-
 func (r *CLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.binary, r.buildArgs(spec)...)
 	cmd.Dir = spec.Cwd
@@ -148,10 +178,12 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	defer cancel()
 
 	reportedSession := false
+	sessionID := ""
 	reportSession := func(id string) {
 		if reportedSession || id == "" {
 			return
 		}
+		sessionID = id
 		reportedSession = true
 		if spec.SessionStarted != nil {
 			spec.SessionStarted(id)
@@ -162,32 +194,37 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	}
 
 	cmd := r.buildCmd(runCtx, spec)
-	stdout, runErr := cmd.Output()
+	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	stdout.finish()
 
 	exitCode := 0
-	var stderr []byte
 	if runErr != nil {
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			if errors.Is(ctxErr, context.DeadlineExceeded) && ctx.Err() == nil {
-				return NodeOutcome{}, &NodeTimeoutError{Runtime: string(r.protocol.runtime()), Timeout: timeout, Err: ctxErr}
+				return NodeOutcome{SessionID: sessionID, CostUnknown: true}, &NodeTimeoutError{Runtime: string(r.protocol.runtime()), Timeout: timeout, Err: ctxErr}
 			}
-			return NodeOutcome{}, fmt.Errorf("%s run: %w", r.protocol.runtime(), ctxErr)
+			return NodeOutcome{SessionID: sessionID, CostUnknown: true}, fmt.Errorf("%s run: %w", r.protocol.runtime(), ctxErr)
 		}
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
-			return NodeOutcome{}, fmt.Errorf("%s run: spawn failed: %w", r.protocol.runtime(), runErr)
+			return NodeOutcome{SessionID: sessionID}, fmt.Errorf("%s run: spawn failed: %w", r.protocol.runtime(), runErr)
 		}
 		exitCode = exitErr.ExitCode()
-		stderr = exitErr.Stderr
 	}
 
-	outcome, err := r.protocol.parse(stdout, stderr, reportSession)
+	outcome, err := r.protocol.parse(stdout.all.Bytes(), stderr.Bytes(), reportSession)
 	if err != nil {
-		return NodeOutcome{}, err
+		return NodeOutcome{SessionID: sessionID, CostUnknown: true}, err
 	}
-	outcome.ExitCode = exitCode
+	if exitCode != 0 {
+		outcome.ExitCode = exitCode
+	}
 	if exitCode != 0 && outcome.FailureCause == "" {
-		outcome.FailureCause = flattenLines(tailOf(stderr, maxStderrInError))
+		outcome.FailureCause = flattenLines(tailOf(stderr.Bytes(), maxStderrInError))
 	}
 	if r.protocol.runtime() == RuntimeClaude {
 		outcome.SessionLimited = isSessionLimitCause(outcome.FailureCause)

@@ -25,6 +25,16 @@ func readLines(t *testing.T, path string) []string {
 	return lines
 }
 
+func TestEvent_OmitsEmptyUsage(t *testing.T) {
+	encoded, err := json.Marshal(Event{Type: EventRunStarted})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if strings.Contains(string(encoded), `"usage"`) {
+		t.Fatalf("zero token usage must be absent, got %s", encoded)
+	}
+}
+
 // TestStreamWriter_StampsEveryEvent proves Emit stamps the schema version, the
 // run id, and a parseable RFC 3339 timestamp onto every line, in emission
 // order, one JSON object per line.
@@ -80,13 +90,15 @@ func TestStreamWriter_TerminalFieldsRoundTrip(t *testing.T) {
 	defer w.Close()
 
 	in := Event{
-		Type:      EventNodeFailed,
-		NodeID:    "flaky",
-		Verdict:   VerdictFail,
-		CostUSD:   0.25,
-		SessionID: "s-1",
-		Retries:   2,
-		Detail:    "result did not match /PASS/",
+		Type:        EventNodeFailed,
+		NodeID:      "flaky",
+		Verdict:     VerdictFail,
+		CostUSD:     0.25,
+		SessionID:   "s-1",
+		Retries:     2,
+		Detail:      "result did not match /PASS/",
+		CostUnknown: true,
+		Usage:       TokenUsage{InputTokens: 11, CachedInputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1},
 	}
 	if err := w.Emit(in); err != nil {
 		t.Fatalf("Emit: %v", err)
@@ -97,7 +109,8 @@ func TestStreamWriter_TerminalFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if out.NodeID != in.NodeID || out.Verdict != in.Verdict || out.CostUSD != in.CostUSD ||
-		out.SessionID != in.SessionID || out.Retries != in.Retries || out.Detail != in.Detail {
+		out.SessionID != in.SessionID || out.Retries != in.Retries || out.Detail != in.Detail ||
+		out.CostUnknown != in.CostUnknown || out.Usage != in.Usage {
 		t.Fatalf("round trip changed the event: got %+v, want payload of %+v", out, in)
 	}
 }

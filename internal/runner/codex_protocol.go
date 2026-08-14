@@ -13,23 +13,25 @@ type codexProtocol struct{}
 func (codexProtocol) runtime() Runtime { return RuntimeCodex }
 func (codexProtocol) binary() string   { return defaultCodexBinary }
 
-func (codexProtocol) prepareSession(spec *NodeInvocation) string {
-	return spec.ResumeSession
+func (codexProtocol) prepareSession(_ *NodeInvocation) string {
+	return ""
+}
+
+func (codexProtocol) sessionFromLine(line []byte) string {
+	var event codexEvent
+	if json.Unmarshal(line, &event) == nil && event.Type == "thread.started" {
+		return event.ThreadID
+	}
+	return ""
 }
 
 func (codexProtocol) buildArgs(spec NodeInvocation) []string {
-	sandbox := "workspace-write"
-	switch spec.PermissionMode {
-	case "plan":
-		sandbox = "read-only"
-	case "bypassPermissions":
-		sandbox = "danger-full-access"
-	}
 	args := []string{
 		"exec",
 		"--json",
 		"--color", "never",
-		"--sandbox", sandbox,
+		"--skip-git-repo-check",
+		"--sandbox", CodexSandbox(spec.PermissionMode),
 		"--config", `approval_policy="never"`,
 	}
 	if spec.Policy.SettingSources != nil {
@@ -44,6 +46,21 @@ func (codexProtocol) buildArgs(spec NodeInvocation) []string {
 		return append(args, "resume", spec.ResumeSession, spec.Prompt)
 	}
 	return append(args, spec.Prompt)
+}
+
+// CodexSandbox is the filesystem sandbox Codex receives for one graph
+// permission_mode. It is exported so the CLI can describe the exact policy it
+// will execute instead of presenting Claude's granular tool grants as if
+// Codex enforced them.
+func CodexSandbox(permissionMode string) string {
+	switch permissionMode {
+	case "plan":
+		return "read-only"
+	case "bypassPermissions":
+		return "danger-full-access"
+	default:
+		return "workspace-write"
+	}
 }
 
 type codexEvent struct {
@@ -98,6 +115,7 @@ func parseCodexJSONL(stdout, stderr []byte, sessionStarted func(string)) (NodeOu
 		case "turn.failed":
 			terminal = true
 			failed = true
+			outcome.ExitCode = 1
 			outcome.FailureCause = codexFailureMessage(event.Error)
 		}
 	}

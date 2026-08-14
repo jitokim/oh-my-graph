@@ -90,6 +90,29 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 	}
 }
 
+func TestListRuns_UnknownCostUsesTokensInsteadOfZeroDollars(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "codex-run",
+		`{"name":"codex","nodes":[{"id":"work","prompt":"work"}]}`,
+		map[string]runner.NodeOutcome{
+			"work": {SessionID: "thread-1", Result: "PASS", CostUnknown: true,
+				Usage: runner.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3}},
+		})
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+	got := out.String()
+	row := lineContaining(t, got, "codex-run")
+	if !strings.Contains(row, "unknown") || !strings.Contains(row, "11/2/5/3") {
+		t.Errorf("Codex row is missing unknown cost or tokens: %q", row)
+	}
+	if strings.Contains(got, "TOTAL COST: $0.0000") || !strings.Contains(got, "TOTAL COST: unknown") {
+		t.Errorf("unknown total was rendered as a known zero:\n%s", got)
+	}
+}
+
 // --- a paused run is neither a PASS nor a FAIL -------------------------------
 
 // TestListRuns_APausedRunRendersAsPaused is #163's second defect, end to end
@@ -425,6 +448,27 @@ func TestListRuns_StatusFollowsRunLifecycle(t *testing.T) {
 				t.Errorf("the row must count toward the run count:\n%s", got)
 			}
 		})
+	}
+}
+
+func TestListRuns_RefusedPlanShowsDurablePlannerAccounting(t *testing.T) {
+	root := t.TempDir()
+	runID := "refused-codex-plan"
+	dir := filepath.Join(root, runID)
+	writeEventFixture(t, dir, runID, []runfeed.Event{
+		{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed, CostUnknown: true,
+			Usage: runfeed.TokenUsage{InputTokens: 5, CachedInputTokens: 1, OutputTokens: 3, ReasoningOutputTokens: 2}},
+	})
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, root); err != nil {
+		t.Fatalf("listRuns: %v", err)
+	}
+	got := out.String()
+	row := lineContaining(t, got, runID)
+	if !strings.Contains(row, "unknown") || !strings.Contains(row, "5/1/3/2") || !strings.Contains(got, "TOTAL COST: unknown") {
+		t.Errorf("refused plan accounting was hidden:\n%s", got)
 	}
 }
 

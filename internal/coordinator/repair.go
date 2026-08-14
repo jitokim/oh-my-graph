@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // maxPlanRepairAttempts is how many EXTRA planner calls one plan() invocation
@@ -65,7 +66,9 @@ type PlanRepair struct {
 	// maxPlanRepairAttempts is 1). It is ALREADY included in Plan.CostUSD (and
 	// in a PlanRejection's CostUSD); naming it separately is what makes the
 	// repair's price visible instead of folded into a larger number.
-	RejectedCostUSD float64
+	RejectedCostUSD     float64
+	RejectedCostUnknown bool
+	RejectedUsage       runner.TokenUsage
 }
 
 // PlanRejection is what plan() returns when planning ended in a refusal: the
@@ -89,7 +92,9 @@ type PlanRejection struct {
 	// CostUSD is what this planning step spent in total, every attempt
 	// included. Non-zero even though nothing is returned: the calls were paid
 	// for.
-	CostUSD float64
+	CostUSD     float64
+	CostUnknown bool
+	Usage       runner.TokenUsage
 	// Repaired is non-nil when a re-plan was attempted and also refused.
 	Repaired *PlanRepair
 }
@@ -99,9 +104,24 @@ func (e *PlanRejection) Error() string {
 		return e.Err.Error()
 	}
 	return fmt.Sprintf(
-		"%s\n(this plan was bought twice: the first reply drew %d validation refusal(s) and cost $%.4f, a corrected reply was requested, and it did not produce a usable plan either — $%.4f spent planning in total)",
-		e.Err.Error(), len(e.Repaired.Issues), e.Repaired.RejectedCostUSD, e.CostUSD,
+		"%s\n(this plan was bought twice: the first reply drew %d validation refusal(s) and cost %s, a corrected reply was requested, and it did not produce a usable plan either — %s spent planning in total)",
+		e.Err.Error(), len(e.Repaired.Issues), formatCallCost(e.Repaired.RejectedCostUSD, e.Repaired.RejectedCostUnknown), formatCallCost(e.CostUSD, e.CostUnknown),
 	)
+}
+
+func formatCallCost(costUSD float64, unknown bool) string {
+	if unknown {
+		if costUSD > 0 {
+			return fmt.Sprintf("unknown (known subtotal $%.4f)", costUSD)
+		}
+		return "unknown"
+	}
+	return fmt.Sprintf("$%.4f", costUSD)
+}
+
+func formatTokenUsage(usage runner.TokenUsage) string {
+	return fmt.Sprintf("input %d, cached %d, output %d, reasoning %d",
+		usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens)
 }
 
 func (e *PlanRejection) Unwrap() error { return e.Err }

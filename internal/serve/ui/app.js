@@ -65,6 +65,7 @@ function statusColor(state) {
 const nodes = new Map();
 let cy = null;
 let totalCost = 0;
+let totalCostUnknown = false;
 let runStartedMs = null;
 let runEndedMs = null;
 // Whether this page currently believes the run's open leg has no process behind
@@ -78,7 +79,8 @@ const $ = (id) => document.getElementById(id);
 function nodeInfo(id) {
   if (!nodes.has(id)) {
     nodes.set(id, {
-      state: "pending", verdict: "", sessionId: "", costUsd: 0, detail: "",
+      state: "pending", verdict: "", sessionId: "", costUsd: 0,
+      costUnknown: false, usage: null, detail: "",
       startedMs: null, endedMs: null,
       // The node's handoff artifact, fetched lazily once the node settles:
       // resultState is "none" | "loading" | "loaded" | "empty" | "error".
@@ -88,6 +90,39 @@ function nodeInfo(id) {
     });
   }
   return nodes.get(id);
+}
+
+function addUsage(total, usage) {
+  if (!usage) return total;
+  const sum = total || { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
+  sum.input_tokens += usage.input_tokens || 0;
+  sum.cached_input_tokens += usage.cached_input_tokens || 0;
+  sum.output_tokens += usage.output_tokens || 0;
+  sum.reasoning_output_tokens += usage.reasoning_output_tokens || 0;
+  return sum;
+}
+
+function addAccounting(info, event) {
+  if (info) {
+    info.costUsd += event.cost_usd || 0;
+    info.costUnknown = info.costUnknown || !!event.cost_unknown;
+    info.usage = addUsage(info.usage, event.usage);
+  }
+  totalCost += event.cost_usd || 0;
+  totalCostUnknown = totalCostUnknown || !!event.cost_unknown;
+  $("run-cost").textContent = totalCostUnknown
+    ? (totalCost > 0 ? `unknown · known $${totalCost.toFixed(4)}` : "unknown")
+    : `$${totalCost.toFixed(4)}`;
+}
+
+function resetAccounting() {
+  totalCost = 0;
+  totalCostUnknown = false;
+  for (const info of nodes.values()) {
+    info.costUsd = 0;
+    info.costUnknown = false;
+    info.usage = null;
+  }
 }
 
 // --- theme -------------------------------------------------------------------
@@ -468,7 +503,7 @@ function connect() {
     // derived from the stream — the feed and the cost total — resets here so
     // the replay rebuilds it without duplicates (idempotence).
     setStatus("reconnecting", false);
-    totalCost = 0;
+    resetAccounting();
     resetFeed();
   };
 }
@@ -497,11 +532,13 @@ function apply(event) {
       // status it can (abandoned, above); a live leg's phase is a fact the
       // stream itself carries, rendered here the way `watch` renders it.
       setStatus(event.phase === "planning" ? "planning" : "running", true);
+      addAccounting(null, event);
       break;
     case "node_started":
     case "node_retried": {
       const info = nodeInfo(event.node_id);
       info.state = "running";
+      if (event.event === "node_retried") addAccounting(info, event);
       // A (re)started node's previous result is stale by definition; reset
       // here, on the state change itself, so the next settled entry
       // refetches. The generation bump makes any fetch still in flight for
@@ -521,11 +558,9 @@ function apply(event) {
       info.state = event.event === "node_passed" ? "passed" : "failed";
       info.verdict = event.verdict || "";
       info.sessionId = event.session_id || "";
-      info.costUsd = event.cost_usd || 0;
       info.detail = event.detail || "";
       if (!Number.isNaN(ts)) info.endedMs = ts;
-      totalCost += event.cost_usd || 0;
-      $("run-cost").textContent = `$${totalCost.toFixed(4)}`;
+      addAccounting(info, event);
       break;
     }
     case "gate_paused":
@@ -540,6 +575,7 @@ function apply(event) {
       nodeInfo(event.node_id).state = "failed";
       break;
     case "run_finished":
+      addAccounting(null, event);
       runEndedMs = Number.isNaN(ts) ? Date.now() : ts;
       setStatus(event.outcome, false);
       break;
@@ -789,7 +825,10 @@ function appendFeed(event, ts) {
       const dotState = outcome === "passed" || outcome === "failed" ? outcome : "pending";
       const elapsed = runStartedMs != null && runEndedMs != null
         ? ` · ${fmtDuration(runEndedMs - runStartedMs)}` : "";
-      entryHead(li, dotState, "", `run ${outcome}${elapsed} · $${totalCost.toFixed(4)}`);
+      const cost = totalCostUnknown
+        ? (totalCost > 0 ? `unknown · known $${totalCost.toFixed(4)}` : "unknown")
+        : `$${totalCost.toFixed(4)}`;
+      entryHead(li, dotState, "", `run ${outcome}${elapsed} · ${cost}`);
       break;
     }
     default:
@@ -893,7 +932,7 @@ function buildArtifactBlock(id, inline) {
 // session ref keeps its label and copy affordance); with neither part there
 // is no line at all.
 function buildMetaLine(info) {
-  if (!info.sessionId && !info.costUsd) return null;
+  if (!info.sessionId && !info.costUsd && !info.costUnknown && !info.usage) return null;
   const meta = document.createElement("p");
   meta.className = "entry-meta";
   if (info.sessionId) {
@@ -914,10 +953,19 @@ function buildMetaLine(info) {
     });
     meta.appendChild(session);
   }
-  if (info.costUsd) {
+  if (info.costUnknown) {
+    const cost = document.createElement("span");
+    cost.textContent = info.costUsd > 0 ? `cost unknown · known $${info.costUsd.toFixed(4)}` : "cost unknown";
+    meta.appendChild(cost);
+  } else if (info.costUsd) {
     const cost = document.createElement("span");
     cost.textContent = `$${info.costUsd.toFixed(4)}`;
     meta.appendChild(cost);
+  }
+  if (info.usage) {
+    const usage = document.createElement("span");
+    usage.textContent = `tokens ${info.usage.input_tokens || 0}/${info.usage.cached_input_tokens || 0}/${info.usage.output_tokens || 0}/${info.usage.reasoning_output_tokens || 0}`;
+    meta.appendChild(usage);
   }
   return meta;
 }

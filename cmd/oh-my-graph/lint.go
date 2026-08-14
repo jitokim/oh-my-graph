@@ -7,18 +7,23 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // runLint is the `lint` subcommand: parse argv and statically validate one
 // graph file without running it.
 func runLint(args []string) error {
+	return runLintRuntime(runner.RuntimeClaude, args)
+}
+
+func runLintRuntime(runtime runner.Runtime, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("lint: missing graph file (usage: oh-my-graph lint <graph.yaml>)")
 	}
 	if len(args) > 1 {
 		return fmt.Errorf("lint: unexpected argument %q (usage: oh-my-graph lint <graph.yaml>)", args[1])
 	}
-	return lintGraph(os.Stdout, os.Stderr, args[0])
+	return lintGraphForRuntime(os.Stdout, os.Stderr, args[0], runtime)
 }
 
 // lintGraph reports every load-time problem graph.LintLoadFile finds — fragment
@@ -62,14 +67,22 @@ func runLint(args []string) error {
 // early copy of that failure. `run --dry-run` prints the same warnings
 // through the same helper (see dryRunGraph).
 func lintGraph(w, warnW io.Writer, path string) error {
+	return lintGraphForRuntime(w, warnW, path, runner.RuntimeClaude)
+}
+
+func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime) error {
 	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
 	}
 	if len(issues) == 0 {
+		if err := runner.ValidateGraphForRuntime(runtime, loaded.Graph); err != nil {
+			return err
+		}
 		printFragmentResolutions(w, loaded.Resolutions)
 		warnAdvisories(warnW, path, loaded.Graph)
 		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
+		noteCodexRuntimePolicy(w, runtime, loaded.Graph, false)
 		fmt.Fprintf(w, "%s: valid\n", path)
 		return nil
 	}

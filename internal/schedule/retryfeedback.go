@@ -127,7 +127,7 @@ and the run was billed for the attempt anyway. Your own reply from that attempt
 is quoted below. Nothing else about it is quoted, and only the ONE attempt
 immediately before this one is ever quoted.
 
-You are a FRESH claude session. That attempt is not in your context and neither
+You are a FRESH model-CLI session. That attempt is not in your context and neither
 is any conversation it belonged to; the quote is all of it you get. Read it as
 your own working notes: keep whatever it already got right so this attempt does
 not pay to rediscover it, and change what it got wrong.

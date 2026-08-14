@@ -34,12 +34,13 @@ developer command/configuration references on 2026-08-14.
 whole invocation. The default remains `claude`; nodes in one run may not mix
 runtimes. `run`, `auto`, `chat`, and runtime-aware `lint` consume the selection.
 Fresh run snapshots persist it. `resume` and browser gate resumes read it from
-the snapshot, so a continuation cannot silently switch CLIs. A snapshot without
-the field means Claude for backward compatibility.
+the snapshot, so a continuation cannot silently switch CLIs. `state.json`
+schema 3 makes the field mandatory for compatible persisted runs; an empty
+in-memory value still canonicalizes to Claude at the CLI boundary.
 
 ### One process seam, two protocols
 
-Delete `ClaudeCLIRunner` as the production abstraction. Replace it with one
+Delete the Claude-specific production runner abstraction. Replace it with one
 `CLIRunner`, still the first of the program's exactly four `os/exec` seams.
 Claude and Codex protocol values beneath it own binary name, argv construction,
 and output decoding. The scheduler continues to depend only on `NodeRunner`.
@@ -79,17 +80,21 @@ auto runs.
 A Codex graph containing positive `budget_usd` or non-empty `agent:` is
 rejected during runtime preflight. No runner-side fallback drops either field.
 `--max-goal-budget-usd` is likewise rejected for Codex before planning because
-the runtime reports no USD value. The planner prompt is runtime-aware so it
-does not deliberately emit unsupported fields, but trusted preflight remains
-the contract.
+the runtime reports no USD value. The planner contract already excludes both
+fields, but trusted preflight remains the contract.
 
 ### Honest accounting
 
 Codex outcomes carry input, cached-input, output, and reasoning-output token
-counts and mark USD cost unknown. Ledger, snapshot, events, `show`, `runs`, and
+counts and mark USD cost unknown. Ledger, snapshot, events, `watch`, `show`, `runs`, and
 the live view preserve that distinction. They may show a known Claude subtotal
 beside unknown Codex spend, but never render Codex as `$0.0000`. Budgets are
 never evaluated against an unknown cost.
+
+Both persisted consumer contracts move to schema 3. An older reader ignoring
+`cost_unknown` would turn unknown USD into a known zero, and an older snapshot
+reader would resume with the wrong runtime; those are semantic
+misinterpretations, not safely additive fields.
 
 ### Authentication environment
 
@@ -109,4 +114,3 @@ by default. Prefixes and values containing those names remain untouched.
   sandbox isolation replaces scoped tool-name grants and the CLI says so.
 - `agent:` and USD budget fields remain valid graph syntax because Claude uses
   them; runtime preflight, not duplicated schemas, owns compatibility.
-

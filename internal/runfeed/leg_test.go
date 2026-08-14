@@ -194,12 +194,9 @@ func TestInFlight_StaysLastLegsAnswer(t *testing.T) {
 
 // TestEvent_PhaseIsAdditiveAndOmitted pins the compatibility claim ADR 0023 §6
 // rests on: the field is absent from every event that does not set it, so the
-// bytes of a `run` or `resume` leg's stream are unchanged and no schema bump is
-// owed. Schema itself must not have moved.
+// bytes of a `run` or `resume` leg's event payload are unchanged. The schema
+// later moved for Codex accounting, which is independent of this field.
 func TestEvent_PhaseIsAdditiveAndOmitted(t *testing.T) {
-	if Schema != 2 {
-		t.Fatalf("Schema = %d, want 2 — ADR 0023 adds an optional field and bumps nothing", Schema)
-	}
 	line, err := json.Marshal(Event{Schema: Schema, Type: EventRunStarted})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

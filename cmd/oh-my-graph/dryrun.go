@@ -8,6 +8,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
 // dryRunGraph is the `run --dry-run` path: load the graph through the same
@@ -24,6 +25,10 @@ import (
 // fragment drift smell) go to warnW through the same warnAdvisories /
 // warnFragmentAdvisories helpers `lint` uses, and never affect the exit code.
 func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
+	return dryRunGraphForRuntime(w, warnW, path, inputs, runner.RuntimeClaude)
+}
+
+func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]string, runtime runner.Runtime) error {
 	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
@@ -35,9 +40,13 @@ func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) erro
 	}
 
 	g := loaded.Graph
+	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+		return err
+	}
 	warnAdvisories(warnW, path, g)
 	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
 	printResolvedPlan(w, g)
+	noteCodexRuntimePolicy(w, runtime, g, false)
 
 	if issues := inputIssues(g, inputs); len(issues) > 0 {
 		return reportDryRunIssues(w, path, issues)

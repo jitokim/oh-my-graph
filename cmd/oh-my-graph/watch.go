@@ -147,28 +147,25 @@ func formatEvent(e runfeed.Event) string {
 		// reason. The PLANNING→RUNNING transition is the whole of what ADR 0023
 		// made visible.
 		if e.Phase != "" {
-			return fmt.Sprintf("▶ run started (%s)", e.Phase)
+			return appendEventAccounting(fmt.Sprintf("▶ run started (%s)", e.Phase), e)
 		}
-		return "▶ run started"
+		return appendEventAccounting("▶ run started", e)
 	case runfeed.EventNodeStarted:
 		return fmt.Sprintf("▶ %s  running…", e.NodeID)
 	case runfeed.EventNodePassed:
 		// Cost is omitted when zero, matching the stream itself (a gate spawns
 		// no subprocess); the detail then carries the story ("gate approved").
-		line := fmt.Sprintf("✓ %s  %s", e.NodeID, e.Verdict)
-		if e.CostUSD > 0 {
-			line += fmt.Sprintf("  $%.4f", e.CostUSD)
-		}
+		line := appendEventAccounting(fmt.Sprintf("✓ %s  %s", e.NodeID, e.Verdict), e)
 		if e.Detail != "" {
 			line += "  " + e.Detail
 		}
 		return line
 	case runfeed.EventNodeFailed:
-		return fmt.Sprintf("✗ %s  FAILED: %s", e.NodeID, e.Detail)
+		return appendEventAccounting(fmt.Sprintf("✗ %s  FAILED: %s", e.NodeID, e.Detail), e)
 	case runfeed.EventNodeRetried:
-		return fmt.Sprintf("↻ %s  retry", e.NodeID)
+		return appendEventAccounting(fmt.Sprintf("↻ %s  retry", e.NodeID), e)
 	case runfeed.EventRunFinished:
-		return fmt.Sprintf("■ run finished: %s", e.Outcome)
+		return appendEventAccounting(fmt.Sprintf("■ run finished: %s", e.Outcome), e)
 	default:
 		line := "• "
 		if e.NodeID != "" {
@@ -180,4 +177,16 @@ func formatEvent(e runfeed.Event) string {
 		}
 		return line
 	}
+}
+
+func appendEventAccounting(line string, e runfeed.Event) string {
+	if e.CostUnknown {
+		line += "  cost unknown"
+	} else if e.CostUSD > 0 {
+		line += fmt.Sprintf("  $%.4f", e.CostUSD)
+	}
+	if e.Usage != (runfeed.TokenUsage{}) {
+		line += fmt.Sprintf("  tokens %d/%d/%d/%d", e.Usage.InputTokens, e.Usage.CachedInputTokens, e.Usage.OutputTokens, e.Usage.ReasoningOutputTokens)
+	}
+	return line
 }

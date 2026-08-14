@@ -106,6 +106,49 @@ func TestShowRun_RendersPerNodeLedgerAndTotal(t *testing.T) {
 	}
 }
 
+func TestShowRun_UnknownCostIsNeverRenderedAsZero(t *testing.T) {
+	dir := t.TempDir()
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID: "codex-run",
+		Graph: json.RawMessage(`{"name":"codex","nodes":[{"id":"work","prompt":"work"}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			"work": {
+				Verdict: runstate.VerdictPass, CostUnknown: true,
+				Usage: runstate.TokenUsage{InputTokens: 11, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 3},
+			},
+		},
+	})
+
+	var out strings.Builder
+	if err := showRun(&out, dir, "codex-run"); err != nil {
+		t.Fatalf("showRun returned error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "TOTAL COST: $0.0000") || !strings.Contains(got, "TOTAL COST: unknown") {
+		t.Errorf("unknown cost was rendered as a known zero:\n%s", got)
+	}
+	if !strings.Contains(got, "TOKEN USAGE: input 11, cached 2, output 5, reasoning 3") {
+		t.Errorf("token usage missing:\n%s", got)
+	}
+}
+
+func TestShowRun_RefusedPlanShowsDurablePlannerAccounting(t *testing.T) {
+	dir := t.TempDir()
+	writeEventFixture(t, dir, "refused-plan", []runfeed.Event{
+		{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning},
+		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed, CostUnknown: true,
+			Usage: runfeed.TokenUsage{InputTokens: 5, CachedInputTokens: 1, OutputTokens: 3, ReasoningOutputTokens: 2}},
+	})
+	var out strings.Builder
+	if err := showRun(&out, dir, "refused-plan"); err != nil {
+		t.Fatalf("showRun: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "TOTAL COST: unknown") || !strings.Contains(got, "TOKEN USAGE: input 5, cached 1, output 3, reasoning 2") {
+		t.Errorf("refused plan accounting was hidden:\n%s", got)
+	}
+}
+
 func TestShowRun_UnknownRunID(t *testing.T) {
 	var out strings.Builder
 	err := showRun(&out, filepath.Join(t.TempDir(), "no-such-run"), "no-such-run")

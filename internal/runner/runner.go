@@ -1,6 +1,6 @@
-// Package runner is the claude-execution seam of oh-my-graph. It defines the
+// Package runner is the model-CLI execution seam of oh-my-graph. It defines the
 // NodeRunner interface the Scheduler depends on, the value types crossing that
-// boundary, and two implementations: ClaudeCLIRunner (one of the exactly
+// boundary, and two implementations: CLIRunner (one of the exactly
 // four objects in the whole program that touch os/exec —
 // verify.ShellVerifier, worktree.GitManager and browser.ExecOpener are the
 // others; see ADR 0002, ADR 0005 and ADR 0006) and FakeRunner (scripted, for
@@ -8,8 +8,8 @@
 //
 // The seam exists so the entire scheduler — topological order, fan-out, fan-in,
 // retry, halt-on-fail, cost summation — is unit-testable against FakeRunner with
-// zero real claude subprocesses. The Scheduler never learns whether a real
-// claude ran; it only ever sees a NodeOutcome or an error.
+// zero real model-CLI subprocesses. The Scheduler never learns which provider
+// ran; it only ever sees a NodeOutcome or an error.
 package runner
 
 import (
@@ -99,8 +99,9 @@ type NodeInvocation struct {
 	// SessionStarted is called once the selected CLI owns a resumable session.
 	// Claude can know that before spawn; Codex learns it from thread.started.
 	SessionStarted func(string)
-	// sessionID is Claude protocol state, minted inside CLIRunner immediately
-	// before argv is built. It is deliberately not exported to the scheduler.
+	// sessionID is protocol state owned by CLIRunner. Claude mints it before
+	// argv is built; Codex leaves it empty until thread.started. It is not
+	// exported to the scheduler.
 	sessionID string
 	// Agent, when non-empty, is the name of a Claude Code subagent (as defined
 	// in the user's own ~/.claude/agents or <cwd>/.claude/agents) this node
@@ -145,7 +146,7 @@ type NodeInvocation struct {
 	Policy ToolPolicy
 }
 
-// NodeOutcome is the parsed result of one node run: the claude session id (for
+// NodeOutcome is the parsed result of one node run: the CLI session id (for
 // session handoff and the ledger), the .result text (for success_check and
 // artifact handoff), the reported cost, and the process exit code.
 type NodeOutcome struct {
@@ -159,7 +160,7 @@ type NodeOutcome struct {
 	ExitCode    int
 	// FailureCause is a concise single-line explanation of WHY the subprocess
 	// failed, present only when the run actually failed (an error envelope, or
-	// a non-zero exit). ClaudeCLIRunner fills it from the most informative
+	// a non-zero exit). CLIRunner fills it from the most informative
 	// source available — the errors the CLI reported inside its own JSON
 	// envelope, else the tail of its stderr — so a failure detail can name the
 	// real cause (a subscription session limit, say) instead of only "exit

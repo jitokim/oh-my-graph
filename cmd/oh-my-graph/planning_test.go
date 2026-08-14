@@ -52,7 +52,10 @@ func isPlannerCall(spec runner.NodeInvocation) bool {
 func TestPlanAndExecute_ThePlannerCallIsVisibleWhileItRuns(t *testing.T) {
 	isolateRunHome(t)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
-		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"plan-1": {
+			Result: cycleSpec, CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 19, CachedInputTokens: 5, OutputTokens: 8, ReasoningOutputTokens: 4},
+		},
 		"work-1": {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
 	})
 
@@ -140,7 +143,10 @@ func TestPlanAndExecute_ThePlannerCallIsVisibleWhileItRuns(t *testing.T) {
 func TestPlanAndExecute_TheCommittedPlanClosesThePlanningPhaseOnTheStream(t *testing.T) {
 	isolateRunHome(t)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
-		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"plan-1": {
+			Result: cycleSpec, CostUnknown: true,
+			Usage: runner.TokenUsage{InputTokens: 19, CachedInputTokens: 5, OutputTokens: 8, ReasoningOutputTokens: 4},
+		},
 		"work-1": {SessionID: "s-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
 	})
 	var out strings.Builder
@@ -174,10 +180,55 @@ func TestPlanAndExecute_TheCommittedPlanClosesThePlanningPhaseOnTheStream(t *tes
 	// The phase field is what disambiguates a leg count, so the SECOND open
 	// must carry none — "the latest run_started says nothing" is what makes the
 	// run read RUNNING affirmatively rather than by absence of node events.
+	var runningOpen runfeed.Event
 	for _, e := range events[1:] {
 		if e.Type == runfeed.EventRunStarted && e.Phase != "" {
 			t.Errorf("the scheduler's own run_started must carry no phase, got %q", e.Phase)
 		}
+		if e.Type == runfeed.EventRunStarted && e.Phase == "" {
+			runningOpen = e
+		}
+	}
+	if !runningOpen.CostUnknown || runningOpen.Usage.InputTokens != 19 || runningOpen.Usage.ReasoningOutputTokens != 4 {
+		t.Errorf("scheduler run_started accounting = unknown:%v usage:%+v, want the planner phase's completed accounting", runningOpen.CostUnknown, runningOpen.Usage)
+	}
+}
+
+func TestPlanAndExecute_PreSchedulerFailureKeepsPaidPlanningAccounting(t *testing.T) {
+	for _, blockedPath := range []string{generatedSpecFileName, stateFileName} {
+		t.Run(blockedPath, func(t *testing.T) {
+			isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{
+				"plan-1": {
+					Result: cycleSpec, TotalCostUSD: 0.35, CostUnknown: true,
+					Usage: runner.TokenUsage{InputTokens: 17, CachedInputTokens: 4, OutputTokens: 6, ReasoningOutputTokens: 2},
+				},
+			})
+			observed := observingRunner{inner: fake, observe: func(spec runner.NodeInvocation) {
+				if !isPlannerCall(spec) {
+					return
+				}
+				if err := os.Mkdir(filepath.Join(soleRunDir(t), blockedPath), 0o700); err != nil {
+					t.Fatalf("block %s: %v", blockedPath, err)
+				}
+			}}
+
+			var out strings.Builder
+			err := planAndExecute(context.Background(), &out, coordinator.New(observed), observed,
+				commonRunFlags{inputs: inputFlag{}}, "add a README section", singleCycle, false, nil, nil)
+			if err == nil {
+				t.Fatalf("blocking %s must fail before the scheduler starts", blockedPath)
+			}
+
+			events := readStreamEvents(t, soleRunDir(t))
+			finished := events[len(events)-1]
+			if finished.Type != runfeed.EventRunFinished || finished.Outcome != runfeed.OutcomeFailed {
+				t.Fatalf("last event = %+v, want failed run_finished", finished)
+			}
+			if finished.CostUSD != 0.35 || !finished.CostUnknown || finished.Usage.InputTokens != 17 || finished.Usage.ReasoningOutputTokens != 2 {
+				t.Fatalf("pre-scheduler failure planning accounting = cost %v unknown %v usage %+v", finished.CostUSD, finished.CostUnknown, finished.Usage)
+			}
+		})
 	}
 }
 
@@ -436,8 +487,8 @@ func TestPlanAndExecuteCycles_ARefusedCycleLeavesNoOpenLeg(t *testing.T) {
 		// Cycle 2's plan is refused, and its one correction too: RunGoal
 		// returns from c.plan, with cycle 2's leg open and executeGraph never
 		// reached.
-		"plan-2": {Result: refusedCycleSpec, TotalCostUSD: 0.02},
-		"plan-3": {Result: refusedCycleSpec, TotalCostUSD: 0.04},
+		"plan-2": {Result: refusedCycleSpec, CostUnknown: true, Usage: runner.TokenUsage{InputTokens: 2, OutputTokens: 1}},
+		"plan-3": {Result: refusedCycleSpec, CostUnknown: true, Usage: runner.TokenUsage{InputTokens: 3, OutputTokens: 2, ReasoningOutputTokens: 1}},
 	})
 
 	out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
@@ -457,6 +508,11 @@ func TestPlanAndExecuteCycles_ARefusedCycleLeavesNoOpenLeg(t *testing.T) {
 	}
 	if status != runstatus.Fail {
 		t.Errorf("the refused cycle reads %v, want %v — a leaked leg would read ABANDONED on a clean exit", status, runstatus.Fail)
+	}
+	events := readStreamEvents(t, refused)
+	closed := events[len(events)-1]
+	if closed.Type != runfeed.EventRunFinished || !closed.CostUnknown || closed.Usage.InputTokens != 5 || closed.Usage.ReasoningOutputTokens != 1 {
+		t.Errorf("refused planning close accounting = %+v, want both paid planner attempts", closed)
 	}
 
 	// And no surface says a subprocess may still be spending, because none is.

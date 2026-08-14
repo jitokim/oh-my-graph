@@ -1,9 +1,13 @@
-// Command oh-my-graph runs a YAML-defined DAG of claude-run nodes on your own
-// logged-in claude subscription. It wires the concrete collaborators together —
-// the real ClaudeCLIRunner, a per-run Handoff and RunLedger — and hands them to
+// Command oh-my-graph runs a YAML-defined DAG through a selected model CLI on
+// the user's existing subscription. It wires the concrete collaborators together —
+// the real CLIRunner, a per-run Handoff and RunLedger — and hands them to
 // the Scheduler by constructor injection; there are no globals.
 //
-// Usage (the same text run() prints; usage_test.go derives both from the
+// Global runtime selection precedes the subcommand:
+//
+//	oh-my-graph [--runtime claude|codex] <command> ...
+//
+// Usage (the same command list run() prints; usage_test.go derives both from the
 // dispatch switch and every subcommand's FlagSet, so neither can drift):
 //
 //	oh-my-graph init [dir]
@@ -125,39 +129,55 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph version`
 
+const runtimeUsage = "oh-my-graph [--runtime claude|codex] <command> ..."
+
 // run parses argv and dispatches to the subcommand. It returns an error rather
 // than exiting so the exit path lives in exactly one place (mainExitCode).
 func run(args []string) error {
-	runtime, args, err := parseCommandLine(args)
+	runtime, runtimeSet, args, err := parseCommandLine(args)
 	if err != nil {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("usage: " + usageLines)
+		return errors.New("usage: " + runtimeUsage + "\ncommands:\n       " + usageLines)
 	}
-	_ = runtime
 	switch args[0] {
 	case "init":
+		if runtimeSet {
+			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+		}
 		return runInit(args[1:])
 	case "run":
-		return runGraph(args[1:])
+		return runGraphRuntime(runtime, args[1:])
 	case "auto":
-		return runAuto(args[1:])
+		return runAutoRuntime(runtime, args[1:])
 	case "lint":
-		return runLint(args[1:])
+		return runLintRuntime(runtime, args[1:])
 	case "resume":
-		return runResume(args[1:])
+		return runResumeRuntime(runtime, runtimeSet, args[1:])
 	case "runs":
+		if runtimeSet {
+			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+		}
 		return runRuns(args[1:])
 	case "show":
+		if runtimeSet {
+			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+		}
 		return runShow(args[1:])
 	case "watch":
+		if runtimeSet {
+			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+		}
 		return runWatch(args[1:])
 	case "serve":
-		return runServe(args[1:])
+		return runServeRuntime(runtime, runtimeSet, args[1:])
 	case "chat":
-		return runChat(args[1:])
+		return runChatRuntime(runtime, args[1:])
 	case "version":
+		if runtimeSet {
+			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+		}
 		printVersion(os.Stdout)
 		return nil
 	default:
@@ -168,7 +188,7 @@ func run(args []string) error {
 // parseCommandLine consumes global flags before the subcommand. Runtime is a
 // run-wide choice, so it lives here rather than being repeated on every
 // subcommand FlagSet; flags after the subcommand remain that command's argv.
-func parseCommandLine(args []string) (runner.Runtime, []string, error) {
+func parseCommandLine(args []string) (runner.Runtime, bool, []string, error) {
 	runtime := runner.RuntimeClaude
 	seenRuntime := false
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
@@ -177,7 +197,7 @@ func parseCommandLine(args []string) (runner.Runtime, []string, error) {
 		switch {
 		case arg == "--runtime":
 			if len(args) < 2 {
-				return "", nil, errors.New("--runtime needs a value (want claude or codex)")
+				return "", false, nil, errors.New("--runtime needs a value (want claude or codex)")
 			}
 			value = args[1]
 			args = args[2:]
@@ -185,22 +205,22 @@ func parseCommandLine(args []string) (runner.Runtime, []string, error) {
 			value = strings.TrimPrefix(arg, "--runtime=")
 			args = args[1:]
 		default:
-			return runtime, args, nil
+			return runtime, seenRuntime, args, nil
 		}
 		if seenRuntime {
-			return "", nil, errors.New("--runtime may be specified only once")
+			return "", false, nil, errors.New("--runtime may be specified only once")
 		}
 		if value == "" {
-			return "", nil, errors.New("--runtime needs a value (want claude or codex)")
+			return "", false, nil, errors.New("--runtime needs a value (want claude or codex)")
 		}
 		parsed, err := runner.ParseRuntime(value)
 		if err != nil {
-			return "", nil, err
+			return "", false, nil, err
 		}
 		runtime = parsed
 		seenRuntime = true
 	}
-	return runtime, args, nil
+	return runtime, seenRuntime, args, nil
 }
 
 // inputFlag collects repeated --input k=v pairs into a map.
@@ -238,11 +258,15 @@ func (f *agentNameFlag) Set(name string) error {
 // With --dry-run it stops after validation and the plan print — nothing is
 // wired and no node runs.
 func runGraph(args []string) error {
+	return runGraphRuntime(runner.RuntimeClaude, args)
+}
+
+func runGraphRuntime(runtime runner.Runtime, args []string) error {
 	// One of the four sites (with runAuto, runResume and runServe) injecting
 	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
 	// ADR 0006); everywhere else the Opener stays refusing or absent.
 	// webOpener still gates whether it is ever used.
-	return runGraphWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
+	return runGraphWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout)
 }
 
 // runGraphWith is runGraph with its seams injectable: the runner (so a test
@@ -251,12 +275,16 @@ func runGraph(args []string) error {
 // gates it (so a test can prove a terminal run opens the view and a
 // non-terminal run changes nothing, with a FakeOpener and no real spawn).
 func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
+	return runGraphWithRuntime(runner.RuntimeClaude, args, nodeRunner, opener, stdout)
+}
+
+func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
 	flags := newRunFlags()
 	if err := flags.parse(args); err != nil {
 		return err
 	}
 	if flags.dryRun {
-		return dryRunGraph(os.Stdout, os.Stderr, flags.graphPath, flags.inputs)
+		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, runtime)
 	}
 
 	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
@@ -270,6 +298,11 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 		return err
 	}
 	g := loaded.Graph
+	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+		return err
+	}
+	noteCodexRuntimePolicy(stdout, runtime, g, false)
+	flags.runtime = runtime
 	printFragmentResolutions(os.Stdout, loaded.Resolutions)
 	// The advisory half of the same disclosure, through the same helper `lint`
 	// and `--dry-run` use: a run that announces which fragments it spliced must
@@ -304,10 +337,14 @@ func runGraphWith(args []string, nodeRunner runner.NodeRunner, opener browser.Op
 // into bypassPermissions (the coordinator rejects them), so no warning pass is
 // needed here.
 func runAuto(args []string) error {
+	return runAutoRuntime(runner.RuntimeClaude, args)
+}
+
+func runAutoRuntime(runtime runner.Runtime, args []string) error {
 	// One of the four sites (with runGraph, runResume and runServe) injecting
 	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
 	// ADR 0006).
-	return runAutoWith(args, runner.NewClaudeCLIRunner(), browser.NewExecOpener(), os.Stdout)
+	return runAutoWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout)
 }
 
 // runAutoWith is runAuto with its seams injectable, mirroring runGraphWith and
@@ -317,10 +354,18 @@ func runAuto(args []string) error {
 // gates the live view (a non-terminal one leaves it off), so a test needs no
 // real spawn on that seam either.
 func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
+	return runAutoWithRuntime(runner.RuntimeClaude, args, nodeRunner, opener, stdout)
+}
+
+func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
 	flags := newAutoFlags()
 	if err := flags.parse(args); err != nil {
 		return err
 	}
+	if runtime == runner.RuntimeCodex && flags.maxGoalBudgetUSD > 0 {
+		return errors.New("auto: --max-goal-budget-usd is unavailable with --runtime codex because Codex reports tokens, not USD")
+	}
+	flags.runtime = runtime
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -337,8 +382,12 @@ func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Ope
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
 	// re-enters the same coordinator and plans afresh, so every cycle's sinks
 	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
-	options := append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation),
-		coordinator.WithVerifyCommand(verifyCommand))
+	options := []coordinator.Option{coordinator.WithVerifyCommand(verifyCommand)}
+	if runtime == runner.RuntimeClaude {
+		options = append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation), options...)
+	} else {
+		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; the generated plan will show the filesystem sandbox policy used for each node.")
+	}
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
@@ -505,18 +554,21 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		// given and diagnosed it, which is what a FAIL is. "paused" would make
 		// it print a resume command for a run with nothing to resume.
 		if leg != nil {
-			closeLeg(leg, runfeed.OutcomeFailed)
+			closeRejectedPlanning(leg, err)
 			return noteRejectedPlan(out, runDirFor(runID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
+	if leg != nil {
+		leg.setPlanningAccounting(plan.CostUSD, plan.CostUnknown, plan.Usage)
+	}
 
 	if planOnly {
-		return notePlanOnlyPreview(out, plan)
+		return notePlanOnlyPreview(out, plan, flags.runtime)
 	}
 
 	if !committed {
-		accepted, err := confirmPlan(out, plan, confirm)
+		accepted, err := confirmPlan(out, plan, flags.runtime, confirm)
 		if err != nil || !accepted {
 			return err
 		}
@@ -530,7 +582,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlan(out, plan, specPath)
+		printPlanForRuntime(out, plan, specPath, flags.runtime)
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -551,18 +603,18 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // finished), not RUNNING, not ABANDONED (its process left on purpose), and it
 // has no verdict about work, because there was no work. So it mints no run id
 // at any point, its planner call included.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan) error {
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime) error {
 	specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
 	if err != nil {
 		return err
 	}
-	printPlan(out, plan, specPath)
+	printPlanForRuntime(out, plan, specPath, runtime)
 	fmt.Fprintf(out,
-		"plan only: no node was executed. The %s still paid for ($%.4f) —\n"+
+		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
 			"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
 			"about it. Run it with `oh-my-graph run %s`.\n",
-		plannerCallsPhrase(plan), plan.CostUSD, specPath, specPath)
+		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, specPath)
 	return nil
 }
 
@@ -580,8 +632,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan) error {
 //
 // A failure to save the declined spec is reported and swallowed: losing the
 // artifact must not turn a decline into an error.
-func confirmPlan(out io.Writer, plan coordinator.Plan, confirm func() (bool, error)) (bool, error) {
-	printPlan(out, plan, "")
+func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, confirm func() (bool, error)) (bool, error) {
+	printPlanForRuntime(out, plan, "", runtime)
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -647,13 +699,15 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
 	// fragment-free by construction and stays reusable verbatim.
+	flags.planningCostUnknown = plan.CostUnknown
+	flags.planningUsage = plan.Usage
 	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, false, web, goal, leg)
 }
 
 // executeGraph wires the per-run collaborators (Handoff, RunLedger, Scheduler)
 // around an already-validated graph and runs it — the shared back half of both
 // `run` and `auto`. This is where the engine's exec seams are injected: the
-// ClaudeCLIRunner the caller passed (a node's claude subprocess), a
+// CLIRunner the caller passed (a node's model-CLI subprocess), a
 // ShellVerifier (a node's success_check.verify command), and a
 // worktree.GitManager (a node's managed `worktree:` checkout) — three of the
 // program's four seams; the fourth arrives already injected as web. A planned
@@ -680,6 +734,14 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // `run` and single-cycle auto ever pass — keeps the snapshot byte-identical
 // to today's.
 func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner runner.NodeRunner, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, graphSourcePath string, rawSource []byte, fragmentsResolved bool, web browser.Opener, goal *runstate.GoalRef, leg *runLeg) error {
+	runtime := flags.runtime
+	if runtime == "" {
+		runtime = runner.RuntimeClaude
+	}
+	flags.runtime = runtime
+	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+		return err
+	}
 	// The leg holds the run's resume.lock for its whole duration — the same
 	// flock every `resume` takes (internal/runstate.AcquireLock). Without it, a
 	// `resume <run-id> --retry-failed` raced against a still-in-flight first leg
@@ -721,9 +783,12 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	h := handoff.New(runDirFor(runID), flags.inputs)
 	led := ledger.New(runID)
-	led.RecordPlanningCost(planningCostUSD)
+	led.RecordPlanning(planningCostUSD, flags.planningCostUnknown, ledger.TokenUsage{
+		InputTokens: flags.planningUsage.InputTokens, CachedInputTokens: flags.planningUsage.CachedInputTokens,
+		OutputTokens: flags.planningUsage.OutputTokens, ReasoningOutputTokens: flags.planningUsage.ReasoningOutputTokens,
+	})
 
-	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, goal)
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, planningCostUSD, goal)
 	if err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
@@ -782,6 +847,13 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		SerializedVerifyNodes: serializedVerify,
 		Recorder:              recorder,
 		EventSink:             leg.feed,
+		OpeningAccounting: schedule.RunAccounting{
+			CostUSD: planningCostUSD, CostUnknown: flags.planningCostUnknown,
+			Usage: runfeed.TokenUsage{
+				InputTokens: flags.planningUsage.InputTokens, CachedInputTokens: flags.planningUsage.CachedInputTokens,
+				OutputTokens: flags.planningUsage.OutputTokens, ReasoningOutputTokens: flags.planningUsage.ReasoningOutputTokens,
+			},
+		},
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
@@ -827,7 +899,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 // unresolved-fragment backstop. The rawSource-verbatim shortcut is only legal
 // for a document resolution never touched; with that, resume works on
 // fragment-free material by construction.
-func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
 	graphJSON := rawSource
 	if fragmentsResolved || !json.Valid(rawSource) {
 		marshaled, err := json.Marshal(g)
@@ -839,7 +911,14 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 
 	statePath := filepath.Join(runDirFor(runID), runstate.SnapshotFileName)
 	base := runstate.Snapshot{
-		RunID:           runID,
+		RunID:               runID,
+		Runtime:             string(flags.runtime),
+		PlanningCostUSD:     planningCostUSD,
+		PlanningCostUnknown: flags.planningCostUnknown,
+		PlanningUsage: runstate.TokenUsage{
+			InputTokens: flags.planningUsage.InputTokens, CachedInputTokens: flags.planningUsage.CachedInputTokens,
+			OutputTokens: flags.planningUsage.OutputTokens, ReasoningOutputTokens: flags.planningUsage.ReasoningOutputTokens,
+		},
 		GraphSourcePath: graphSourcePath,
 		GraphSHA256:     sha256Hex(rawSource),
 		Graph:           graphJSON,
@@ -895,6 +974,21 @@ func saveSpecAs(dir, name string, spec []byte) (string, error) {
 	return path, nil
 }
 
+func formatCost(costUSD float64, unknown bool) string {
+	if unknown {
+		if costUSD > 0 {
+			return fmt.Sprintf("unknown (known subtotal $%.4f)", costUSD)
+		}
+		return "unknown"
+	}
+	return fmt.Sprintf("$%.4f", costUSD)
+}
+
+func formatUsage(usage runner.TokenUsage) string {
+	return fmt.Sprintf("input %d, cached %d, output %d, reasoning %d",
+		usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens)
+}
+
 // printPlan shows the planned topology (node ids, edges, each node's tools)
 // and the planning cost before execution. The full prompts live in the saved
 // spec file, which is named here so the user can review it.
@@ -912,30 +1006,43 @@ func saveSpecAs(dir, name string, spec []byte) (string, error) {
 // [y/N] this screen is being printed for, so the header cannot name a path it
 // does not know. The caller announces the location once the answer picks one.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude)
+}
+
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime) {
 	g := plan.Graph
 	if specPath == "" {
-		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f):\n", g.Name, len(g.Nodes), plan.CostUSD)
+		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
 	} else {
-		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost $%.4f, saved to %s):\n", g.Name, len(g.Nodes), plan.CostUSD, specPath)
+		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s, saved to %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown), specPath)
+	}
+	if plan.Usage != (runner.TokenUsage{}) {
+		fmt.Fprintf(w, "  planning tokens: %s\n", formatUsage(plan.Usage))
 	}
 	for _, node := range g.Nodes {
 		line := "  - " + node.ID
 		if len(node.DependsOn) > 0 {
 			line += " (after " + strings.Join(node.DependsOn, ", ") + ")"
 		}
-		if len(node.AllowedTools) > 0 {
+		if runtime == runner.RuntimeCodex {
+			line += " [sandbox: " + runner.CodexSandbox(node.PermissionMode) + "]"
+		} else if len(node.AllowedTools) > 0 {
 			line += " [tools: " + strings.Join(node.AllowedTools, ", ") + "]"
 		}
-		if node.Agent != "" {
+		if runtime != runner.RuntimeCodex && node.Agent != "" {
 			line += " [agent: " + node.Agent + "]"
 		}
 		fmt.Fprintln(w, line)
 	}
-	noteAgentMappings(w, plan.AgentMappings, plan.AgentStaging)
-	noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
+	if runtime == runner.RuntimeCodex {
+		noteCodexRuntimePolicy(w, runtime, g, true)
+	} else {
+		noteAgentMappings(w, plan.AgentMappings, plan.AgentStaging)
+		noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
+		noteCeiling(w, anyAgentMapped(g))
+	}
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteReplan(w, plan.Repaired)
-	noteCeiling(w, anyAgentMapped(g))
 	// Last, and deliberately after the ceiling: that paragraph says planned
 	// nodes "run isolated", meaning settings and tools. This one narrows it —
 	// filesystem isolation is a different isolation, and in auto mode there is
@@ -943,6 +1050,23 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 	// contradictory.
 	noteUnisolatedPaths(w, plan.Unisolated)
 	fmt.Fprintln(w)
+}
+
+func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph, isolated bool) {
+	if runtime != runner.RuntimeCodex {
+		return
+	}
+	fmt.Fprintln(w, "  Codex filesystem sandbox: permission_mode plan is read-only, bypassPermissions is danger-full-access, and every other mode is workspace-write.")
+	for _, node := range g.Nodes {
+		if len(node.AllowedTools) == 0 {
+			continue
+		}
+		fmt.Fprintln(w, "  allowed_tools declarations do not become granular Codex permissions; they remain graph documentation.")
+		break
+	}
+	if isolated {
+		fmt.Fprintln(w, "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.")
+	}
 }
 
 // noteReplan discloses that this plan was bought twice: the first planner
@@ -959,7 +1083,10 @@ func noteReplan(w io.Writer, repair *coordinator.PlanRepair) {
 	if repair == nil {
 		return
 	}
-	fmt.Fprintf(w, "  re-planned: the first reply was refused by validation (cost $%.4f, included above) and a corrected one was requested:\n", repair.RejectedCostUSD)
+	fmt.Fprintf(w, "  re-planned: the first reply was refused by validation (cost %s, included above) and a corrected one was requested:\n", formatCost(repair.RejectedCostUSD, repair.RejectedCostUnknown))
+	if repair.RejectedUsage != (runner.TokenUsage{}) {
+		fmt.Fprintf(w, "    tokens: %s\n", formatUsage(repair.RejectedUsage))
+	}
 	for _, issue := range repair.Issues {
 		fmt.Fprintf(w, "    ! %s\n", issue)
 	}
@@ -1092,8 +1219,11 @@ func noteRejectedPlan(w io.Writer, dir string, err error) error {
 	if !errors.As(err, &rejection) {
 		return err
 	}
-	if rejection.CostUSD > 0 {
-		fmt.Fprintf(w, "planning failed after spending $%.4f — a planner call is paid for whether or not its graph loads.\n", rejection.CostUSD)
+	if rejection.CostUSD > 0 || rejection.CostUnknown {
+		fmt.Fprintf(w, "planning failed after spending %s — a planner call is paid for whether or not its graph loads.\n", formatCost(rejection.CostUSD, rejection.CostUnknown))
+	}
+	if rejection.Usage != (runner.TokenUsage{}) {
+		fmt.Fprintf(w, "planning tokens: %s\n", formatUsage(rejection.Usage))
 	}
 	if len(rejection.Spec) == 0 {
 		return err

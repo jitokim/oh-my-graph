@@ -14,7 +14,7 @@ import (
 )
 
 // limitedOutcome is the scripted NodeOutcome of a subprocess the subscription
-// session limit killed, exactly as ClaudeCLIRunner classifies it
+// session limit killed, exactly as CLIRunner classifies it
 // (internal/runner/sessionlimit.go).
 func limitedOutcome() runner.NodeOutcome {
 	return runner.NodeOutcome{

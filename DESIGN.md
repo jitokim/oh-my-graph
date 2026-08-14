@@ -1,16 +1,13 @@
 # oh-my-graph — Architecture & MVP Design (implementation spec)
 
 > A graph-native multi-agent orchestrator whose node runtime is your own
-> logged-in `claude` CLI (subscription auth), not the Anthropic API.
+> logged-in `claude` or `codex` CLI, not a direct model API.
 
 ## Thesis
-Graph engineering (wiring specialized agents as a DAG) currently forces you onto
-the Anthropic API + Agent SDK + `ANTHROPIC_API_KEY` (metered). oh-my-graph runs
-each DAG node as a raw `claude -p` subprocess on your existing subscription —
-$0 marginal, inside your Max/Pro plan. Whitespace confirmed: no existing
-graph-native orchestrator drives the subscription `claude` CLI (all go through
-Agent SDK + API key). Personal/local, bring-your-own-login (ToS-compliant, like
-claude-squad); NOT a redistributed hosted product.
+oh-my-graph runs each DAG node as a raw subprocess of the selected local model
+CLI instead of integrating an Agent SDK or direct API. The run uses the saved
+Claude or Codex login and its plan allowance; it never redistributes that login
+as a hosted product. Personal/local, bring-your-own-login.
 
 ## Language — Go (committed)
 Go 1.25+. This tool *is* a subprocess scheduler: `errgroup` + buffered-channel
@@ -20,8 +17,30 @@ Python). Single static binary (`go install`).
 Deps: stdlib `os/exec`+`context`, `golang.org/x/sync/errgroup`, `gopkg.in/yaml.v3`,
 stdlib `flag` (cobra optional/later).
 
+## Run-wide model CLI
+
+One run uses exactly one runtime, selected by the global
+`--runtime claude|codex` flag before the subcommand. Claude is the default.
+The choice is persisted in `state.json`; resume and browser gate actions load
+it, and an explicit mismatch is refused. The scheduler depends only on
+`NodeRunner`; `CLIRunner` is its one model-process exec seam and delegates only
+argv/session/output protocol details.
+
+Provider session ownership is intentionally asymmetric. Claude assigns a UUID
+before spawn because its CLI accepts `--session-id`; Codex publishes the
+authoritative thread id in `thread.started`. The scheduler stores whichever id
+the selected protocol reports and uses it for `handoff: session`.
+
+Codex reports token usage but no USD total. `CostUnknown` is durable through
+the ledger, `state.json`, `events.jsonl`, CLI history views and web UI; it must
+never render as `$0`. Positive `budget_usd`, `agent:`, and the goal-level USD
+budget are refused at preflight for Codex.
+
 ## Node runtime mechanics (ground truth — use exactly)
-A node = one subprocess:
+
+### Claude
+
+A Claude node is one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --max-budget-usd <amount> ] \
@@ -51,7 +70,7 @@ only `AllowedTools`, so its argv is the first line plus `--allowedTools`, then
 `NodeInvocation.BudgetUSD`, which the scheduler passes for every node, planned
 or hand-written).
 Every fresh-session node gets `--session-id` with a UUID the
-scheduler pre-assigned (`runner.NewSessionID`), so the id is published on
+Claude protocol assigned, so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
 transcript; a resuming node gets `--resume` instead — the two are mutually
 exclusive (`claude --help`, verified 2026-08-02: `--session-id <uuid>`, "must
@@ -102,6 +121,26 @@ subscription session limit, say) instead of only "exit code 1".
   `--strict-mcp-config` or `--disallowedTools`: they are the user's own reviewed
   artifact and are *meant* to run under the user's own settings, hooks and MCP.
   `bypassPermissions` opt-in per node only, loud warning at load, never a graph default.
+
+### Codex
+
+A Codex node uses the same `CLIRunner` process lifecycle with this protocol:
+
+```text
+codex exec --json --color never --skip-git-repo-check --sandbox <mode> \
+  --config 'approval_policy="never"' [isolation options] \
+  [resume <thread_id>] <rendered prompt>
+```
+
+`plan` maps to `read-only`, `bypassPermissions` to `danger-full-access`, and
+the remaining permission modes to `workspace-write`. Planned nodes and the
+assessor add `--ignore-user-config`, `--ignore-rules`,
+`project_doc_max_bytes=0`, and `mcp_servers={}`. Hand-written nodes and the
+planner keep normal Codex config. A `turn.completed` event supplies the final
+token usage; the last completed `agent_message` is the node result. A
+`turn.failed` event is a failed node even if the CLI process itself exits zero.
+`--skip-git-repo-check` preserves the graph contract that a node `cwd` may be a
+non-git directory; oh-my-graph already chooses that directory explicitly.
 
 ## Graph model — YAML (committed)
 Edges are inline `depends_on` (no separate edges list — single source of truth).
@@ -1161,9 +1200,9 @@ type Verifier interface {
   that dispatches on the declared kind — no scheduler change. v1.1 ships exactly
   one kind: minimal implementation, sufficient interface.
 
-**This narrows the "only ClaudeCLIRunner touches `os/exec`" invariant, on
+**This narrows the "only CLIRunner touches `os/exec`" invariant, on
 purpose.** The invariant's restated form: *exactly four objects may spawn a
-process — `runner.ClaudeCLIRunner`, `verify.ShellVerifier`,
+process — `runner.CLIRunner`, `verify.ShellVerifier`,
 `worktree.GitManager` (see "Worktree isolation") and `browser.ExecOpener`
 (ADR 0006) — each behind its own injected interface, and no other package
 imports `os/exec`.* Both purposes survive: the subscription-auth scrub still
@@ -1672,7 +1711,7 @@ one, and it answers 409 like any other view that cannot resume.
 - **Spawns nothing itself.** The `internal/serve` package imports no
   `os/exec` and starts no process; the two processes its features imply are
   reached through injected seams the CLI builds — a resumed leg's nodes
-  through `runner.ClaudeCLIRunner` behind `serve.GateResumer` (ADR 0014), so
+  through `runner.CLIRunner` behind `serve.GateResumer` (ADR 0014), so
   a gate decided in the browser spawns exactly what `oh-my-graph resume`
   would. The server itself never shells out to
   `open`/`xdg-open`; browser-open lives behind its own seam —
@@ -1740,7 +1779,7 @@ one, and it answers 409 like any other view that cannot resume.
 `oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path. Planning a graph is ONE
-planner call through the same NodeRunner seam every node uses (ClaudeCLIRunner:
+planner call through the same NodeRunner seam every node uses (CLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
 Coordinator makes exactly that one call per PLAN — per cycle, not per `auto`
 run — plus at most one more for that same plan:
@@ -2250,7 +2289,7 @@ ledger — so the summary never under-counts silently.
   type NodeInvocation struct { Prompt, Cwd, PermissionMode, ResumeSession, SessionID, Agent string; BudgetUSD float64; Timeout time.Duration; Policy ToolPolicy }
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted, SessionLimited bool }
   ```
-  - `ClaudeCLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
+  - `CLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
     execs under context, parses JSON. One of the exactly four objects that
     spawn a process (the others: `ShellVerifier`, `worktree.GitManager`,
     `browser.ExecOpener`).
@@ -2337,7 +2376,7 @@ the verification.
 
 ## MVP scope (v0.1) — smallest thing that runs a real multi-node graph
 IN: YAML loader + DAG/cycle validation; {{inputs}}/{{artifacts}} interpolation;
-concurrent ready-set scheduler + cap + halt-on-fail; ClaudeCLIRunner (exact argv,
+concurrent ready-set scheduler + cap + halt-on-fail; CLIRunner (exact argv,
 ENV SCRUB, timeout, JSON parse); FakeRunner + full scheduler unit tests (no real
 claude in CI); artifact handoff (default) + session handoff (simple one→one);
 success_check (exit_zero + result_matches); RunLedger table + total cost;
@@ -2376,10 +2415,10 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject ClaudeCLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
+cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
-internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + ClaudeCLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
+internal/runner/{runner,claude,session,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + pre-assigned session ids (session.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate

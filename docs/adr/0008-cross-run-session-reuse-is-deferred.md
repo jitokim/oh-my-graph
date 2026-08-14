@@ -75,7 +75,7 @@ actively hides. Each concern, argued:
   police it across arbitrary time and repo drift.
 - **Config re-supply is the one concern that is NOT a blocker.** Resume
   restores no flags or permission mode, but oh-my-graph never relied on
-  restoration: `ClaudeCLIRunner` builds the full argv — model, tools,
+  restoration: `CLIRunner` builds the full argv — model, tools,
   permission mode — from the graph YAML on every invocation. The engine is
   *better* placed than a human at the raw CLI here. This weighs for the
   feature, and is why the recommendation is defer, not reject.

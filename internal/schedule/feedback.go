@@ -11,7 +11,6 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
-	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // feedbackState is one Run's view of every feedback arc (ADR 0010): the
@@ -246,7 +245,7 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 	// — a runstate FAIL here would settle the declarer and collapse the
 	// loop on resume), and node_retried on the stream — never node_failed,
 	// which stays terminal.
-	rec := failRecord(node, outcome.SessionID, outcome.TotalCostUSD, duration, cause)
+	rec := failRecord(node, outcome, duration, cause)
 	rec.Detail = capDetail(fmt.Sprintf("feedback round %d/%d: %v", round, f.Max, cause))
 
 	// The marker must be durable before anything narrates the round: a paid
@@ -254,26 +253,18 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 	// write is terminal (returned, never just logged) — the caller falls
 	// through to recordFail, which prices this execution's single FAIL row.
 	artifactPath, _ := h.ArtifactPath(node.ID)
-	marker := runstate.NodeRecord{
-		SessionID:    rec.SessionID,
-		CostUSD:      rec.CostUSD,
-		BudgetUSD:    rec.BudgetUSD,
-		Duration:     rec.Duration,
-		ArtifactPath: artifactPath,
-		Detail:       rec.Detail,
-		Round:        round,
-	}
+	marker := toNodeRecord(rec, artifactPath, round, false)
+	marker.Verdict = ""
 	if err := s.recorder.RecordNode(node.ID, marker); err != nil {
 		return nil, fmt.Errorf("persist feedback marker for node %q: %w", node.ID, err)
 	}
 	led.Record(rec)
 
-	s.emitEvent(runfeed.Event{
-		Type:   runfeed.EventNodeRetried,
-		NodeID: node.ID,
-		Round:  round,
-		Detail: capDetail(fmt.Sprintf("feedback round %d/%d: re-running %s → %s", round, f.Max, f.Rerun, node.ID)),
-	})
+	retried := terminalEvent(runfeed.EventNodeRetried, rec, 0, round)
+	retried.Verdict = ""
+	retried.SessionID = ""
+	retried.Detail = capDetail(fmt.Sprintf("feedback round %d/%d: re-running %s → %s", round, f.Max, f.Rerun, node.ID))
+	s.emitEvent(retried)
 
 	return &feedbackSignal{NodeID: node.ID, Target: f.Rerun, Round: round}, nil
 }

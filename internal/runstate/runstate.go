@@ -43,7 +43,7 @@ import (
 // the types below alters the on-disk bytes in a way an older reader could
 // misinterpret; Load refuses any snapshot whose Schema does not equal this.
 //
-// Schema 2 (this version) adds NodeRecord.BudgetUSD and NodeRecord.Detail —
+// Schema 2 added NodeRecord.BudgetUSD and NodeRecord.Detail —
 // the gate/resume wiring PR that NodeRecord's original doc comment deferred
 // them to. `resume` reconstructs a full ledger.Record per completed node so
 // the resumed leg's end-of-run table and TOTAL COST are honest about the
@@ -53,7 +53,11 @@ import (
 // field for. A schema-1 snapshot is refused by Load rather than silently
 // read with these two fields zeroed, because a resumed leg's ledger would
 // then understate a carried-forward node's budget without saying so.
-const Schema = 2
+//
+// Schema 3 adds Snapshot.Runtime plus NodeRecord.CostUnknown and Usage. An old
+// reader would otherwise resume a Codex run with Claude and render an
+// unreported USD cost as a known $0, so this is not safely additive.
+const Schema = 3
 
 // Verdict is a node's terminal judgement as persisted in the snapshot. The
 // string values match ledger.Verdict so the resume path can carry a record
@@ -155,7 +159,7 @@ type NodeRecord struct {
 	// Verdict is the node's terminal judgement. Only VerdictPass nodes are treated
 	// as completed for resume topology.
 	Verdict Verdict `json:"verdict"`
-	// SessionID is the claude session id the node ran under. This is the one datum
+	// SessionID is the model CLI's session id. This is the one datum
 	// resume cannot recompute: without it a handoff: session child cannot --resume
 	// its parent on the second leg, because the id lived only in Handoff.sessions
 	// in memory on the first leg. Handoff.Seed reads it back out of here.
@@ -163,6 +167,10 @@ type NodeRecord struct {
 	// CostUSD is the node's reported spend, carried forward so the resumed leg's
 	// total does not understate what the run has already cost across processes.
 	CostUSD float64 `json:"cost_usd"`
+	// CostUnknown distinguishes an unreported USD amount from a free call
+	// (schema 3), while Usage preserves the runtime's token accounting.
+	CostUnknown bool       `json:"cost_unknown,omitempty"`
+	Usage       TokenUsage `json:"usage,omitzero"`
 	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none
 	// (schema 2). Mirrors ledger.Record.BudgetUSD so `resume` can rebuild a
 	// Record that reports the same budget-vs-actual delta the original leg's
@@ -232,6 +240,21 @@ type NodeRecord struct {
 	Provenance string `json:"provenance,omitempty"`
 }
 
+// TokenUsage is provider-reported token accounting persisted with a node.
+type TokenUsage struct {
+	InputTokens           int64 `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
+}
+
+func (u *TokenUsage) add(other TokenUsage) {
+	u.InputTokens += other.InputTokens
+	u.CachedInputTokens += other.CachedInputTokens
+	u.OutputTokens += other.OutputTokens
+	u.ReasoningOutputTokens += other.ReasoningOutputTokens
+}
+
 // GoalRef links an iterated auto run — one cycle of a goal loop (ADR 0011) —
 // to its goal group. It is an additive optional block under RUN-FEED's own
 // rule: absent entirely on single-cycle runs, so today's snapshots stay
@@ -278,6 +301,14 @@ type Snapshot struct {
 	// RunID is the run this snapshot belongs to (the <run-id> in its path). Held in
 	// the file too so a snapshot is self-identifying if copied out of its directory.
 	RunID string `json:"run_id"`
+	// Runtime is the run-wide model CLI. Fresh writers always persist it; an
+	// empty in-memory value is canonicalized to Claude by the CLI boundary.
+	Runtime string `json:"runtime,omitempty"`
+	// Planning accounting is the coordinator call that produced an auto run's
+	// graph. It is top-level because it belongs to the run, not to any node.
+	PlanningCostUSD     float64    `json:"planning_cost_usd,omitempty"`
+	PlanningCostUnknown bool       `json:"planning_cost_unknown,omitempty"`
+	PlanningUsage       TokenUsage `json:"planning_usage,omitzero"`
 
 	// GraphSourcePath is where the graph was originally loaded from — the .yaml for
 	// a hand-written `run`, or the generated graph.json for an auto run. It is

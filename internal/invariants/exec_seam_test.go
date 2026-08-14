@@ -244,7 +244,7 @@ func TestNoDirectProcessSpawns(t *testing.T) {
 		t.Errorf("%s references %s, which spawns a process without going through os/exec — so "+
 			"the import allowlist in TestOnlyTheFourExecSeamsImportOsExec cannot see it and "+
 			"TestExecSeamCallSitesScrubEnv cannot prove its child environment is scrubbed, which "+
-			"is what keeps ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN out of the child and the tool "+
+			"is what keeps provider API-auth variables out of the child and the tool "+
 			"on subscription billing. Naming it at all is the finding: a spawn primitive stored in "+
 			"a variable, a field or an argument is called somewhere. Route the spawn through one of "+
 			"the four exec seams, or write the ADR for a new one (docs/adr/0002, 0005, 0006).",
@@ -568,7 +568,7 @@ func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 				t.Errorf("%s: %s constructs *exec.Cmd %q but never assigns %s.Env = %s.Scrub(...) on "+
 					"that same receiver. Every exec seam's call site MUST set the scrubbed child "+
 					"environment on the constructed command before the process runs, or "+
-					"ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN leak into the child and it silently "+
+					"provider API-auth variables leak into the child and it silently "+
 					"falls back to metered API billing — the one invariant childenv.Scrub exists to "+
 					"hold (see CLAUDE.md, docs/adr/0002, 0005, 0006).", rel, fn.Name.Name, recvName, recvName, childenvName)
 				return

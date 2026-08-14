@@ -26,7 +26,7 @@ import (
 // given directly. Neither joins the two, so a policy that is built correctly
 // and then never reaches the process — the whole class of "the plan printout
 // says ENABLED and the node runs without it" — passes both. These tests close
-// that by driving the real `auto` argv path with a real ClaudeCLIRunner
+// that by driving the real `auto` argv path with a real CLIRunner
 // pointed at a stub binary that records the argv it was spawned with, and
 // asserting on those bytes.
 //
@@ -154,10 +154,10 @@ func newArgvProbe(t *testing.T) *argvProbe {
 	return probe
 }
 
-// runner is a REAL ClaudeCLIRunner pointed at the stub — the whole point of
+// runner is a REAL CLIRunner pointed at the stub — the whole point of
 // this file is that nothing between the policy and the argv is faked.
 func (p *argvProbe) runner() runner.NodeRunner {
-	return runner.NewClaudeCLIRunner(runner.WithBinary(p.stub))
+	return runner.NewCLIRunner(runner.RuntimeClaude, runner.WithBinary(p.stub))
 }
 
 // freshArgvDir points the stub at an empty recording directory, so a second

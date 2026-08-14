@@ -140,13 +140,13 @@ func TestListRuns_ASnapshotlessAbandonedRunIsStillListed(t *testing.T) {
 	if !strings.Contains(row, runstatus.Abandoned.String()) {
 		t.Errorf("row = %q, want an %v row with placeholders", row, runstatus.Abandoned)
 	}
-	// GRAPH, NODES and COST are unknowable without a snapshot, so the row must
-	// carry three "-" placeholders between the run id and the verdict. Asserted
+	// GRAPH, NODES, COST and TOKENS are unknowable without a snapshot, so the row must
+	// carry four "-" placeholders between the run id and the verdict. Asserted
 	// per column, not over the whole row: the run id itself contains a "-", so
 	// a substring check would pass on real values too.
-	if fields := strings.Fields(row); len(fields) != 5 ||
-		fields[1] != "-" || fields[2] != "-" || fields[3] != "-" {
-		t.Errorf("row = %q, want the graph, node and cost columns rendered as %q placeholders", row, "-")
+	if fields := strings.Fields(row); len(fields) != 6 ||
+		fields[1] != "-" || fields[2] != "-" || fields[3] != "-" || fields[4] != "-" {
+		t.Errorf("row = %q, want the graph, node, cost and token columns rendered as %q placeholders", row, "-")
 	}
 	// Nothing to resume FROM: the honest recovery is to run the graph again.
 	if strings.Contains(got, "oh-my-graph resume") {

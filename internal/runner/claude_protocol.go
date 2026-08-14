@@ -25,6 +25,8 @@ func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 	return spec.sessionID
 }
 
+func (claudeProtocol) sessionFromLine(_ []byte) string { return "" }
+
 func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,

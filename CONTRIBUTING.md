@@ -36,7 +36,7 @@ never costs money.
 
 One file is a **sanctioned exception to "spawns nothing"**, and it is still an
 exception to nothing above: `cmd/oh-my-graph/skillargv_test.go` drives the real
-`ClaudeCLIRunner` against a temporary `#!/bin/sh` stub it writes itself, so it
+`CLIRunner` against a temporary `#!/bin/sh` stub it writes itself, so it
 can assert the bytes of a node's argv — the one layer a real node obeys, and
 the one a `FakeRunner` cannot reach. It never launches `claude`, never touches
 the network, and costs nothing; what it does depend on is a POSIX `/bin/sh` and
@@ -54,12 +54,13 @@ only CI flake and survived four review layers before being caught.
 
 ```sh
 make smoke   # builds the binary, then runs graphs/haiku-smoke.yaml for real
+make smoke-codex  # the same graph through a saved Codex login
 ```
 
-`make smoke` is the one command that spawns a **real** `claude` subprocess. It
-costs a few cents on your own subscription and requires you to be logged in.
-It is a manual, local-only step — **never** add it to CI, and don't submit a
-PR that wires it into a workflow.
+These are the only commands that intentionally spawn a **real** model CLI.
+They spend plan allowance and require the selected CLI to be logged in. They
+are manual, local-only steps — **never** add either to CI, and don't submit a
+PR that wires one into a workflow.
 
 ## Branch and PR conventions
 
@@ -124,7 +125,7 @@ its own injected interface:
 
 | object | runs | interface |
 |---|---|---|
-| `internal/runner.ClaudeCLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
+| `internal/runner.CLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 | `internal/worktree.GitManager` | the `git worktree` commands behind a node's `worktree:` | `worktree.Provider` |
 | `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
@@ -156,7 +157,7 @@ per spawner.
 
 If your change needs to run a subprocess, it belongs behind one of the four
 existing seams. A PR that spawns a process (via `os/exec` or any other way of
-shelling out) outside `runner.ClaudeCLIRunner`, `verify.ShellVerifier`,
+shelling out) outside `runner.CLIRunner`, `verify.ShellVerifier`,
 `worktree.GitManager` and `browser.ExecOpener` should be treated as a design
 regression, not a normal review comment — a **fifth** spawner needs an ADR
 first, the way the second, third and fourth got
