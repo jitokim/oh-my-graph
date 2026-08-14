@@ -182,8 +182,17 @@ without an explicit, discussed design change should not be merged:
   environment by the shared `internal/childenv.Scrub`. There is one list and
   no runtime branch — a Claude node drops the OpenAI switches and a Codex node
   drops the Anthropic ones — because a per-runtime list is one provider
-  variable away from billing silently. Those variables
-  silently switch the CLI to metered API billing;
+  variable away from billing silently. Each of those variables can make the
+  selected CLI ignore its saved login and authenticate by API key instead —
+  which is metered — and that is the defensible form of the claim
+  (`internal/childenv/childenv.go` states it the same way). It is stated per
+  variable rather than proven per variable: `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN` are documented `claude` behaviour, while
+  `OPENAI_API_KEY` and `CODEX_API_KEY` are scrubbed on the same reasoning
+  applied to the other CLI — nothing in this repo establishes which of the two
+  `codex` actually reads, and the cost of being wrong is asymmetric. Scrub
+  first, measure later; don't upgrade the wording to a proven claim without the
+  measurement.
   `verify: { command: "claude -p ..." }` is a legal thing to write, a repo's
   own git hooks may invoke claude too, and the URL handler `open` dispatches
   to is arbitrary user-configured code — so every one of the four spawners

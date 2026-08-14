@@ -156,6 +156,30 @@ flag are rejected for Codex rather than silently ignored. Claude agent mapping
 and skill activation are not attempted. Codex USD cost is recorded as unknown;
 its provider-reported token counts are the accounting surface.
 
+**It is also a NETWORK boundary, and that half applies to every Codex node —
+hand-written as well as planned.** Measured 2026-08-14 under `workspace-write`:
+`gh api rate_limit` → "error connecting to api.github.com", `git ls-remote` →
+"Could not resolve host". `read-only` is narrower still. So under
+`--runtime codex` a graph halts at the first node that needs the network,
+wherever that node sits — see
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) for which shipped graphs put it
+first, last, or throughout, and note the security consequence of each way out:
+
+- `danger-full-access` — which is what `permission_mode: bypassPermissions`
+  maps to in the table above — removes the filesystem sandbox **and** the
+  network boundary together. There is no mode that opens the network and keeps
+  the filesystem restriction; that is the trade the loud load-time warning is
+  about.
+- Codex's `sandbox_workspace_write.network_access=true` opens the network while
+  keeping the filesystem sandbox, which is the narrower of the two. It is the
+  user's own Codex configuration, not something oh-my-graph sets or can see.
+- Neither is a credential boundary in the direction a reader may assume. What
+  the sandbox denies `gh` is the OS **keyring**, on a machine that has one; it
+  does not deny reads of `~/.config/gh/hosts.yml`, so on a machine where `gh`
+  fell back to that file, a `workspace-write` node can read the token out of it
+  regardless of `network_access`. Treat a Codex node's read access to your home
+  directory as unrestricted unless you set the sandbox narrower yourself.
+
 Relatedly, oh-my-graph may *detect* build markers (`gradlew`, `package.json`,
 `Cargo.toml`, …) in the invocation directory. Detection only ever prints a
 suggested command. It never derives a grant, because a write-capable planned

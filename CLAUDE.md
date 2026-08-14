@@ -60,11 +60,18 @@ let them drift apart.
   session-parent.
 - **Never a provider SDK. Never `--bare`. Never `--no-session-persistence`.**
   A node runs as the provider's own CLI subprocess — `claude` or `codex`, one
-  runtime for the whole run (ADR 0025) — on that provider's saved login, with
-  OAuth intact and session persistence on (so every node stays observable as an
-  ordinary session transcript). A second runtime widens which CLI, never the
-  rule: no direct model API, and no flag that detaches a node from its
-  session.
+  runtime for the whole run (ADR 0025) — on whatever login that CLI has saved,
+  with session persistence on (so every node stays observable as an ordinary
+  session transcript). A second runtime widens which CLI, never the rule: no
+  direct model API, and no flag that detaches a node from its session.
+  Be exact about what the billing guarantee IS: oh-my-graph guarantees the env
+  scrub above and never passing `--bare`, so nothing IT does switches a CLI off
+  its saved login. It cannot guarantee that login is OAuth — `codex login
+  --api-key` writes a key into `~/.codex/auth.json`, which no scrub touches, and
+  the same holds for any credential a CLI persists on disk. SECURITY.md and
+  `internal/childenv/childenv.go` state it in that narrower form ("can make the
+  selected CLI ignore its saved login"); this file must not state it in a wider
+  one.
 
 See [SECURITY.md](SECURITY.md) for the full ToS/security stance and
 [CONTRIBUTING.md](CONTRIBUTING.md) for how these invariants are enforced in
