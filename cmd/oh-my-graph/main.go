@@ -128,9 +128,14 @@ const usageLines = `oh-my-graph init [dir]
 // run parses argv and dispatches to the subcommand. It returns an error rather
 // than exiting so the exit path lives in exactly one place (mainExitCode).
 func run(args []string) error {
+	runtime, args, err := parseCommandLine(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return errors.New("usage: " + usageLines)
 	}
+	_ = runtime
 	switch args[0] {
 	case "init":
 		return runInit(args[1:])
@@ -158,6 +163,44 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q (want init, run, auto, lint, resume, runs, show, watch, serve, chat, or version)", args[0])
 	}
+}
+
+// parseCommandLine consumes global flags before the subcommand. Runtime is a
+// run-wide choice, so it lives here rather than being repeated on every
+// subcommand FlagSet; flags after the subcommand remain that command's argv.
+func parseCommandLine(args []string) (runner.Runtime, []string, error) {
+	runtime := runner.RuntimeClaude
+	seenRuntime := false
+	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		arg := args[0]
+		var value string
+		switch {
+		case arg == "--runtime":
+			if len(args) < 2 {
+				return "", nil, errors.New("--runtime needs a value (want claude or codex)")
+			}
+			value = args[1]
+			args = args[2:]
+		case strings.HasPrefix(arg, "--runtime="):
+			value = strings.TrimPrefix(arg, "--runtime=")
+			args = args[1:]
+		default:
+			return runtime, args, nil
+		}
+		if seenRuntime {
+			return "", nil, errors.New("--runtime may be specified only once")
+		}
+		if value == "" {
+			return "", nil, errors.New("--runtime needs a value (want claude or codex)")
+		}
+		parsed, err := runner.ParseRuntime(value)
+		if err != nil {
+			return "", nil, err
+		}
+		runtime = parsed
+		seenRuntime = true
+	}
+	return runtime, args, nil
 }
 
 // inputFlag collects repeated --input k=v pairs into a map.
