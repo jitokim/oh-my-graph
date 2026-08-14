@@ -17,8 +17,49 @@ import (
 const (
 	defaultTimeout   = 20 * time.Minute
 	maxStderrInError = 500
-	waitDelay        = 2 * time.Second
+	// maxStderrRetained bounds what one node's stderr may cost in memory. A
+	// node can stream progress to stderr for twenty minutes, so collecting it
+	// whole to read 500 bytes of it is unbounded growth for a fixed need. The
+	// cap is deliberately far above maxStderrInError, the only amount any
+	// consumer reads today: a human handed a crash wants the surrounding
+	// context, not one truncated line, and 32 KiB is exactly the tail
+	// cmd.Output's prefixSuffixSaver kept before stderr was collected by hand
+	// here — restoring the old ceiling rather than inventing a tighter one.
+	maxStderrRetained = 32 << 10
+	waitDelay         = 2 * time.Second
 )
+
+// tailBuffer is an io.Writer that retains at most the last limit bytes written
+// to it. The tail, not the head, is what survives: every consumer of a node's
+// stderr reads it through tailOf, and a CLI's fatal line is its last one.
+type tailBuffer struct {
+	limit int
+	buf   []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if n >= b.limit {
+		b.buf = append(b.buf[:0], p[n-b.limit:]...)
+		return n, nil
+	}
+	b.buf = append(b.buf, p...)
+	// Trim in bulk at twice the limit rather than on every write, so a node
+	// writing many small lines pays one copy per limit bytes, not one per
+	// write. Peak retention is therefore 2*limit, still a constant.
+	if len(b.buf) > 2*b.limit {
+		b.buf = append(b.buf[:0], b.buf[len(b.buf)-b.limit:]...)
+	}
+	return n, nil
+}
+
+// Bytes returns the retained tail, never more than limit bytes.
+func (b *tailBuffer) Bytes() []byte {
+	if len(b.buf) > b.limit {
+		return b.buf[len(b.buf)-b.limit:]
+	}
+	return b.buf
+}
 
 // NodeOutputError marks CLI output that could not be decoded into an outcome.
 type NodeOutputError struct {
@@ -195,7 +236,7 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 
 	cmd := r.buildCmd(runCtx, spec)
 	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
-	var stderr bytes.Buffer
+	stderr := tailBuffer{limit: maxStderrRetained}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
