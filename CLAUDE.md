@@ -11,6 +11,11 @@ logged-in Claude subscription (never the metered Anthropic API). Nodes run
 with session persistence on, so every node is also an ordinary claude session
 in `~/.claude/projects` that any external tool can read.
 
+Since ADR 0025 a run may instead select `--runtime codex`, which spawns
+`codex exec` on the user's own Codex login by the same rule — one runtime for
+the whole run, the provider's own CLI, that provider's saved login. Claude is
+the default and the path every unqualified statement in this file describes.
+
 **DESIGN.md is the spec.** Read it before touching the scheduler, the graph
 schema, the `NodeRunner` interface, or handoff. If code and DESIGN.md
 disagree, treat that as a bug in one of them, and fix both together — don't
@@ -19,8 +24,9 @@ let them drift apart.
 ## Load-bearing invariants — do not weaken these
 
 - **Subscription-auth env scrub.** Every child process's environment must have
-  `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` deleted, via the shared
-  `internal/childenv.Scrub` — used by ALL spawners (a claude node, a
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` deleted, via the shared
+  `internal/childenv.Scrub` — used by ALL spawners (a model node, a
   `success_check.verify` command, the git commands behind a node's
   `worktree:`, and the browser launch of the `serve` URL). This is what keeps
   the tool on subscription billing instead of silently falling back to
@@ -29,8 +35,13 @@ let them drift apart.
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) — don't
   touch env construction without keeping those tests meaningful.
+  There is ONE list and NO runtime branch: a Claude node drops the OpenAI
+  switches and a Codex node drops the Anthropic ones. Splitting it in two —
+  "each runtime only needs its own" — is the tempting optimisation, and the
+  half that then falls behind a new provider variable bills silently, with
+  nothing failing to say so.
 - **The four exec seams.** Exactly four objects may spawn a process:
-  `runner.CLIRunner` (a node's claude subprocess),
+  `runner.CLIRunner` (a node's model CLI subprocess, claude or codex),
   `verify.ShellVerifier` (a node's evidence command),
   `worktree.GitManager` (the `git worktree` commands behind a node's
   `worktree:`) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
@@ -47,10 +58,13 @@ let them drift apart.
   `OMG_HOME`); `handoff: session`
   (resuming `--resume <session_id>`) is opt-in and only valid with exactly one
   session-parent.
-- **Never the Agent SDK. Never `--bare`. Never `--no-session-persistence`.**
-  The node runtime is exclusively the `claude` CLI subprocess, with OAuth
-  intact and session persistence on (so every node stays observable as an
-  ordinary session transcript).
+- **Never a provider SDK. Never `--bare`. Never `--no-session-persistence`.**
+  A node runs as the provider's own CLI subprocess — `claude` or `codex`, one
+  runtime for the whole run (ADR 0025) — on that provider's saved login, with
+  OAuth intact and session persistence on (so every node stays observable as an
+  ordinary session transcript). A second runtime widens which CLI, never the
+  rule: no direct model API, and no flag that detaches a node from its
+  session.
 
 See [SECURITY.md](SECURITY.md) for the full ToS/security stance and
 [CONTRIBUTING.md](CONTRIBUTING.md) for how these invariants are enforced in
@@ -77,7 +91,7 @@ scheduling/runtime behavior, write the test against `FakeRunner`, not a real
 cmd/oh-my-graph/       CLI entrypoint and flag parsing
 internal/graph/        Graph/Node value objects, YAML load, DAG validation
 internal/schedule/     ready-set scheduler (the engine's core)
-internal/runner/       NodeRunner interface, CLIRunner, FakeRunner
+internal/runner/       NodeRunner interface, CLIRunner + its claude/codex protocols (argv, session, output), FakeRunner
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
