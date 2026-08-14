@@ -65,6 +65,7 @@ func (e *NodeTimeoutError) Unwrap() error { return e.Err }
 type cliProtocol interface {
 	runtime() Runtime
 	binary() string
+	prepareSession(*NodeInvocation) string
 	buildArgs(NodeInvocation) []string
 	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
 }
@@ -146,6 +147,20 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	reportedSession := false
+	reportSession := func(id string) {
+		if reportedSession || id == "" {
+			return
+		}
+		reportedSession = true
+		if spec.SessionStarted != nil {
+			spec.SessionStarted(id)
+		}
+	}
+	if id := r.protocol.prepareSession(&spec); id != "" {
+		reportSession(id)
+	}
+
 	cmd := r.buildCmd(runCtx, spec)
 	stdout, runErr := cmd.Output()
 
@@ -166,7 +181,7 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 		stderr = exitErr.Stderr
 	}
 
-	outcome, err := r.protocol.parse(stdout, stderr, spec.SessionStarted)
+	outcome, err := r.protocol.parse(stdout, stderr, reportSession)
 	if err != nil {
 		return NodeOutcome{}, err
 	}

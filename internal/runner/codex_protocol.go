@@ -13,6 +13,10 @@ type codexProtocol struct{}
 func (codexProtocol) runtime() Runtime { return RuntimeCodex }
 func (codexProtocol) binary() string   { return defaultCodexBinary }
 
+func (codexProtocol) prepareSession(spec *NodeInvocation) string {
+	return spec.ResumeSession
+}
+
 func (codexProtocol) buildArgs(spec NodeInvocation) []string {
 	sandbox := "workspace-write"
 	switch spec.PermissionMode {

@@ -32,7 +32,11 @@ func (r *capturingRunner) Run(_ context.Context, spec runner.NodeInvocation) (ru
 	}
 	r.invoked[spec.Prompt] = spec
 	r.mu.Unlock()
-	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
+	outcome := runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}
+	if spec.SessionStarted != nil {
+		spec.SessionStarted(outcome.SessionID)
+	}
+	return outcome, nil
 }
 
 func (r *capturingRunner) invocationFor(prompt string) runner.NodeInvocation {
@@ -135,6 +139,9 @@ type barrierRunner struct {
 }
 
 func (r *barrierRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	if spec.SessionStarted != nil {
+		spec.SessionStarted("s-" + spec.Prompt)
+	}
 	r.mu.Lock()
 	r.arrived++
 	if r.arrived == r.width {

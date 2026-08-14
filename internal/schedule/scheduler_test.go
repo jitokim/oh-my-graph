@@ -1465,7 +1465,7 @@ type sequenceRunner struct {
 	outcomes []runner.NodeOutcome
 }
 
-func (r *sequenceRunner) Run(_ context.Context, _ runner.NodeInvocation) (runner.NodeOutcome, error) {
+func (r *sequenceRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	i := r.calls
@@ -1473,7 +1473,11 @@ func (r *sequenceRunner) Run(_ context.Context, _ runner.NodeInvocation) (runner
 	if i >= len(r.outcomes) {
 		i = len(r.outcomes) - 1
 	}
-	return r.outcomes[i], nil
+	outcome := r.outcomes[i]
+	if spec.SessionStarted != nil && outcome.SessionID != "" {
+		spec.SessionStarted(outcome.SessionID)
+	}
+	return outcome, nil
 }
 
 // haltRunner fails one node and blocks another until the context is cancelled
@@ -1552,6 +1556,9 @@ func (r *recordingRunner) Run(_ context.Context, spec runner.NodeInvocation) (ru
 	r.callOrder = append(r.callOrder, key)
 	outcome := r.outcomes[key]
 	r.mu.Unlock()
+	if spec.SessionStarted != nil && outcome.SessionID != "" {
+		spec.SessionStarted(outcome.SessionID)
+	}
 	return outcome, nil
 }
 

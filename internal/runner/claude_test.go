@@ -191,7 +191,7 @@ func TestBuildCmd_SessionIDArgv(t *testing.T) {
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
-		SessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
+		sessionID:      "0f5a1c9e-2b3d-4a5e-8f6a-7b8c9d0e1f2a",
 		Policy:         ToolPolicy{AllowedTools: []string{"Read"}},
 	})
 
@@ -614,18 +614,21 @@ done
 printf '{"session_id":"%s","result":"PASS","total_cost_usd":0.01}' "$sid"
 `)
 
-	assigned := NewSessionID()
 	r := NewClaudeCLIRunner(WithBinary(stub))
+	var started string
 	outcome, err := r.Run(context.Background(), NodeInvocation{
 		Prompt:         testPrompt,
 		PermissionMode: "dontAsk",
-		SessionID:      assigned,
+		SessionStarted: func(id string) { started = id },
 	})
 	if err != nil {
 		t.Fatalf("unexpected Run error: %v", err)
 	}
-	if outcome.SessionID != assigned {
-		t.Errorf("outcome session id = %q, want the pre-assigned %q", outcome.SessionID, assigned)
+	if !uuidV4Pattern.MatchString(started) {
+		t.Errorf("session callback id = %q, want a canonical UUIDv4", started)
+	}
+	if outcome.SessionID != started {
+		t.Errorf("outcome session id = %q, want the runtime-owned %q", outcome.SessionID, started)
 	}
 }
 

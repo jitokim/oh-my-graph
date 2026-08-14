@@ -96,22 +96,12 @@ type NodeInvocation struct {
 	Cwd            string
 	PermissionMode string
 	ResumeSession  string
-	// SessionID, when non-empty, is the PRE-ASSIGNED claude session id for this
-	// invocation, rendered as `--session-id <uuid>` ("Use a specific session ID
-	// for the conversation (must be a valid UUID)" — claude --help, verified
-	// 2026-08-02, help text only). Assigning the id before the child spawns is
-	// what lets the scheduler publish it on node_started, so a live view can
-	// locate a RUNNING node's transcript instead of waiting for the terminal
-	// envelope. Produce it with NewSessionID.
-	//
-	// Mutually exclusive with ResumeSession: a resuming node continues an
-	// EXISTING session (whose id is already known — it is the resume target),
-	// so the scheduler never sets both. Empty means "let claude mint the id",
-	// which is exactly the pre-flag behaviour.
-	SessionID string
 	// SessionStarted is called once the selected CLI owns a resumable session.
 	// Claude can know that before spawn; Codex learns it from thread.started.
 	SessionStarted func(string)
+	// sessionID is Claude protocol state, minted inside CLIRunner immediately
+	// before argv is built. It is deliberately not exported to the scheduler.
+	sessionID string
 	// Agent, when non-empty, is the name of a Claude Code subagent (as defined
 	// in the user's own ~/.claude/agents or <cwd>/.claude/agents) this node
 	// runs as, rendered as `--agent <name>`. The node then inherits that

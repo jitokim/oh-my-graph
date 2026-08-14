@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -12,6 +14,16 @@ type claudeProtocol struct{}
 
 func (claudeProtocol) runtime() Runtime { return RuntimeClaude }
 func (claudeProtocol) binary() string   { return defaultClaudeBinary }
+
+func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
+	if spec.ResumeSession != "" {
+		return spec.ResumeSession
+	}
+	if spec.sessionID == "" {
+		spec.sessionID = newClaudeSessionID()
+	}
+	return spec.sessionID
+}
 
 func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
@@ -47,10 +59,21 @@ func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	if spec.ResumeSession != "" {
 		args = append(args, "--resume", spec.ResumeSession)
 	}
-	if spec.SessionID != "" {
-		args = append(args, "--session-id", spec.SessionID)
+	if spec.sessionID != "" {
+		args = append(args, "--session-id", spec.sessionID)
 	}
 	return args
+}
+
+// newClaudeSessionID returns the canonical UUIDv4 required by Claude's
+// --session-id flag. Session allocation belongs to this protocol, not to the
+// scheduler, because Codex obtains its corresponding id from thread.started.
+func newClaudeSessionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 const budgetExhaustedSubtype = "error_max_budget_usd"

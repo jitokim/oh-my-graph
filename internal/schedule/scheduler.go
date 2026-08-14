@@ -321,14 +321,6 @@ type Scheduler struct {
 	// is safe because every caller constructs a Scheduler per run; a second
 	// sequential Run simply rebuilds it.
 	feedback *feedbackState
-	// sessionIDs mints the pre-assigned session id for each fresh-session
-	// claude attempt (runner.NewSessionID in production; tests script it for
-	// determinism). Assigning the id BEFORE the child spawns is what lets
-	// node_started/node_retried publish it, so a live view can locate a
-	// RUNNING node's transcript instead of waiting for the terminal envelope.
-	// Parallel nodes mint from separate goroutines, so the function must be
-	// safe for concurrent use (crypto/rand is).
-	sessionIDs func() string
 	// progressMu serializes writes to progress: parallel nodes emit events from
 	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
 	// concurrent use without one.
@@ -377,7 +369,6 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		settledNodes:     opts.SettledNodes,
 		nodeRounds:       opts.NodeRounds,
 		serializedVerify: opts.SerializedVerifyNodes,
-		sessionIDs:       runner.NewSessionID,
 	}
 }
 
@@ -735,25 +726,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		priorLegReply, retryingPriorLeg = h.TakePriorReply(node.ID)
 	}
 
-	// A fresh-session claude node has its session id minted HERE, before
-	// anything spawns, so node_started can publish it and a live view can
-	// locate the transcript of a node that is still RUNNING — the terminal
-	// events used to be the id's first appearance. A gate spawns no subprocess
-	// and a session-handoff node continues its parent's session (whose id the
-	// parent's own terminal event already published), so neither carries one —
-	// unless this is the retry of a prior leg, where the session node resumes
-	// nothing and so needs its own id after all.
-	sessionID := ""
-	if node.Type != graph.TypeGate && (node.Handoff != graph.HandoffSession || retryingPriorLeg) {
-		sessionID = s.sessionIDs()
-	}
-	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
-
 	if node.Type == graph.TypeGate {
+		s.emitEvent(runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: node.ID, Round: s.feedback.roundOf(node.ID)})
 		return s.evaluateGate(ctx, node, h, led, start)
 	}
 
-	invocation, err := s.buildInvocation(ctx, node, h, sessionID)
+	invocation, err := s.buildInvocation(ctx, node, h)
 	if err != nil {
 		return s.recordFail(led, h, node, "", 0, time.Since(start), 0, err)
 	}
@@ -765,9 +743,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 	basePrompt := invocation.Prompt
 
 	// The seeded reply taken above is quoted here, and this execution starts
-	// cold with it — startCold without the session id prepareRetry mints,
-	// because this execution's id was minted above so node_started could
-	// publish it.
+	// cold with it.
 	if retryingPriorLeg {
 		s.startCold(&invocation, node, basePrompt, priorLegReply)
 	}
@@ -779,6 +755,14 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
+		eventType := runfeed.EventNodeStarted
+		if attempt > 0 {
+			eventType = runfeed.EventNodeRetried
+		}
+		retryNumber := attempt
+		invocation.SessionStarted = func(sessionID string) {
+			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
+		}
 		outcome, runErr := s.runner.Run(ctx, invocation)
 		if runErr != nil {
 			// A context kill (the node's own timeout, a halt's cancellation,
@@ -798,7 +782,8 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				// DROPS a quote an earlier attempt may have carried, because
 				// the attempt immediately before this one is the one that died
 				// mid-spawn, and it is the only one a prompt may quote.
-				s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, ""))
+				s.recordRetry(node)
+				s.prepareRetry(&invocation, node, basePrompt, "")
 				continue
 			}
 			if killedBeforeReporting {
@@ -870,7 +855,8 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			if isJudgmentFailure(verdictErr) {
 				prior = outcome.Result
 			}
-			s.recordRetry(node, attempt+1, s.prepareRetry(&invocation, node, basePrompt, prior))
+			s.recordRetry(node)
+			s.prepareRetry(&invocation, node, basePrompt, prior)
 			continue
 		}
 		// The feedback arc is consulted exactly where the failure would
@@ -1080,8 +1066,7 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 	return nil
 }
 
-// prepareRetry rebinds invocation for the attempt after a failed one and
-// returns the fresh session id that attempt will run under. A retry never
+// prepareRetry rebinds invocation for the attempt after a failed one. A retry never
 // resumes a session — not the failed attempt's own, and not a session-handoff
 // parent's either: the retried attempt starts fresh, which passRecord's
 // detail states outright for a session node so the ledger, snapshot and
@@ -1097,10 +1082,8 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 // basePrompt each time is what guarantees both (retryfeedback.go). priorReply
 // is the reply of the attempt just finished, or "" when that attempt produced
 // none or produced one no check judged.
-func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) string {
+func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
 	s.startCold(invocation, node, basePrompt, priorReply)
-	invocation.SessionID = s.sessionIDs()
-	return invocation.SessionID
 }
 
 // startCold is what "a retry starts cold" MEANS to an invocation: the prompt is
@@ -1137,12 +1120,11 @@ func (s *Scheduler) quotePriorAttempt(invocation *runner.NodeInvocation, node gr
 	invocation.Prompt = prompt
 }
 
-// recordRetry writes the node's live "↻ retry" progress line and the matching
-// node_retried event, carrying the retried attempt's pre-assigned session id.
-// retryNumber is 1-based: the first retry after the initial attempt is 1.
-func (s *Scheduler) recordRetry(node graph.Node, retryNumber int, sessionID string) {
+// recordRetry writes the node's live retry progress line. The selected runtime
+// emits node_retried through SessionStarted once that next attempt owns a
+// resumable session.
+func (s *Scheduler) recordRetry(node graph.Node) {
 	s.logProgress("↻ %s  retry\n", node.ID)
-	s.emitEvent(runfeed.Event{Type: runfeed.EventNodeRetried, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
 }
 
 // recordSnapshot converts rec into a runstate.NodeRecord — filling in
@@ -1282,11 +1264,8 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 // prompt and cwd, swap in the managed worktree for a node that declares one,
 // resolve the session it resumes (if any), default the permission mode, and
 // attach the node's tool policy. It takes the run context because acquiring a
-// worktree may spawn git (behind the injected worktree.Provider). sessionID
-// is the pre-assigned session id runNode already published on node_started —
-// empty exactly when the node resumes a parent's session instead, which keeps
-// SessionID and ResumeSession mutually exclusive as the runner documents.
-func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *handoff.Handoff, sessionID string) (runner.NodeInvocation, error) {
+// worktree may spawn git (behind the injected worktree.Provider).
+func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
 	prompt, err := h.Interpolate(node.Prompt)
 	if err != nil {
 		return runner.NodeInvocation{}, err
@@ -1325,7 +1304,6 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		Cwd:            cwd,
 		PermissionMode: permissionMode,
 		ResumeSession:  resume,
-		SessionID:      sessionID,
 		Agent:          node.Agent,
 		BudgetUSD:      node.BudgetUSD,
 		Timeout:        node.TimeoutDuration(),
