@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -525,6 +526,44 @@ func writeStub(t *testing.T, script string) string {
 		t.Fatalf("write stub: %v", err)
 	}
 	return stub
+}
+
+// warmStubExec pays macOS's first-exec cost for a freshly written file BEFORE
+// the window a timing test measures.
+//
+// Measured on this project's mac: the first exec of a newly written script
+// costs 384, 395, 401, 407, 831, 1019 and 1607 ms across samples, while
+// re-running the SAME file costs 6-15 ms. macOS charges a security scan on the
+// first exec of a file, and it charges it per file — so a stub written into a
+// fresh t.TempDir() on every run pays it on every run. Reading the script with
+// `sh <file>` does not pay it for you: that costs 12 ms and the direct exec
+// afterwards still cost 1019 ms.
+//
+// This is why the two timing tests warm their stub instead of widening a
+// deadline. The cost is not merely large, it is UNSTABLE across a 4x range, so
+// no constant is both tight enough to still test the property and loose enough
+// to be reliably green. Linux does not charge it at all, which is why CI stayed
+// green while `make local` failed on every mac.
+//
+// The stub cooperates by exiting immediately when OMG_TEST_WARMUP is set; the
+// variable is set only on this call, never in the test process, so a stub run
+// through the runner under test never sees it.
+//
+// The environment is the empty set plus that one variable — NOT os.Environ().
+// Nothing here needs the parent's environment (the shebang resolves /bin/sh by
+// absolute path and the script exits on its first line), so inheriting it would
+// hand a child every credential this process holds for no reason at all. That
+// is the habit this repo scrubs for, and a test helper is exactly where a bad
+// habit gets copied from. It is deliberately not routed through CLIRunner
+// either: this is a throwaway exec whose only purpose is to touch the file, and
+// running the protocol would put the very cost being warmed back inside it.
+func warmStubExec(t *testing.T, stub string) {
+	t.Helper()
+	cmd := exec.Command(stub)
+	cmd.Env = []string{"OMG_TEST_WARMUP=1"}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("warm stub exec: %v", err)
+	}
 }
 
 // TestRun_NonzeroExitCarriesEnvelopeErrorCause reproduces the incident this

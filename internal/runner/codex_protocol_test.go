@@ -154,11 +154,13 @@ func TestCodexRunPublishesThreadWhileProcessIsRunning(t *testing.T) {
 	}
 	release := t.TempDir() + "/release"
 	stub := writeStub(t, `#!/bin/sh
+[ -n "$OMG_TEST_WARMUP" ] && exit 0
 echo '{"type":"thread.started","thread_id":"thread-live"}'
 while [ ! -f '`+release+`' ]; do sleep 0.01; done
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"PASS"}}'
 echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 `)
+	warmStubExec(t, stub)
 
 	started := make(chan string, 1)
 	done := make(chan error, 1)
@@ -195,9 +197,11 @@ func TestCodexRunReturnsKnownThreadOnTimeout(t *testing.T) {
 		t.Skip("the stub is a shebang script; this pins the unix path")
 	}
 	stub := writeStub(t, `#!/bin/sh
+[ -n "$OMG_TEST_WARMUP" ] && exit 0
 echo '{"type":"thread.started","thread_id":"thread-timeout"}'
 sleep 30
 `)
+	warmStubExec(t, stub)
 
 	started := make(chan string, 1)
 	type result struct {
