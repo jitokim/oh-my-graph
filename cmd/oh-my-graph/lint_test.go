@@ -269,6 +269,56 @@ nodes:
 	}
 }
 
+// TestLintGraph_VerifyInliningWarningKeepsExitZero is the inlining sweep at the
+// CLI boundary. A `success_check.verify.command` interpolates like a prompt and
+// is then run by the second exec seam through the user's own shell, so a
+// well-formed `{{ artifacts.<id> | inline }}` there puts a model's free-form
+// reply on a command line — valid graph, valid token, nothing else says a word.
+// The finding rides the warning writer and exit 0 like every other advisory,
+// and the line must name the fix (the filterless token is a file path) rather
+// than merely report that a filter was used.
+func TestLintGraph_VerifyInliningWarningKeepsExitZero(t *testing.T) {
+	path := writeGraphFile(t, `
+name: inlined-verify
+nodes:
+  - id: impl
+    prompt: "Do the work"
+    allowed_tools: [Read, Edit]
+  - id: check
+    prompt: "Check the work"
+    depends_on: [impl]
+    allowed_tools: []
+    success_check:
+      exit_zero: true
+      verify: { command: "test {{ artifacts.impl | inline }}" }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("an inlining advisory must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	if !strings.Contains(warnings.String(), "warning: "+path+`: node "check": success_check.verify.command: `) {
+		t.Errorf("warning writer should carry the node-scoped line:\n%s", warnings.String())
+	}
+	if !strings.Contains(warnings.String(), "Drop the filter") {
+		t.Errorf("the line should say what to do about it:\n%s", warnings.String())
+	}
+	// The producing node has no verify block of its own, so it draws no line —
+	// asserted by counting lines rather than by looking for its id, which the
+	// warning legitimately quotes as whose reply is being spliced.
+	if got := strings.Count(warnings.String(), "warning: "); got != 1 {
+		t.Errorf("only the node carrying the verify command should warn, got %d lines:\n%s", got, warnings.String())
+	}
+	if strings.Contains(warnings.String(), `: node "impl": `) {
+		t.Errorf("a node with no verify command must stay silent:\n%s", warnings.String())
+	}
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only an inlining warning exited %d, want 0", code)
+	}
+}
+
 // --- success case -----------------------------------------------------------
 
 func TestLintGraph_ValidGraphPasses(t *testing.T) {

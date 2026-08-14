@@ -8,6 +8,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 `NodeRunner` interface may change without notice before `v1.0.0`.
 
+## [Unreleased]
+
+### Added
+
+- **`lint` / `run --dry-run` warn when a `success_check.verify.command`
+  splices a model's own text into the shell command line the engine runs.** A
+  verify command interpolates exactly like a prompt — `resolveVerification`
+  calls the same `Handoff.Interpolate` — and the result is handed to
+  `verify.ShellVerifier`, the second exec seam, which runs it under your own
+  shell. Two token shapes carry model-written text there:
+  `{{ artifacts.<id> | inline }}`, which is the node's own reply, and
+  `{{ feedback.<id> }}`, which always inlines the declarer's payload and takes
+  no filter. Neither is malformed, so the existing placeholder sweep passed
+  both in silence. `handoff.LintVerifyInlining` is the fifth advisory sweep in
+  that package, wired into the one `warnAdvisories` helper `lint` and
+  `run --dry-run` share.
+
+  The message names the fix rather than the filter. For an artifact the fix is
+  usually the DEFAULT: with no filter the token is the persisted `.out` file
+  path, which the engine computes, so `grep -q '^PASS' "{{ artifacts.impl }}"`
+  gets the same content without quoting a reply into argv. A feedback token has
+  no filterless form, so it gets a different sentence: the payload belongs in
+  the node's prompt. `{{ inputs.<name> }}` is deliberately never warned about —
+  an input is bound from your own `--input` and has the standing the command
+  line itself has, which is the shipped `backlog-batch.yaml` shape
+  (`{{ inputs.checks_command }}`). Only `command` is swept: a verify `cwd`
+  becomes `exec.Cmd.Dir`, which is not shell-interpreted, so no part of a reply
+  there is parsed as syntax or becomes a command of its own.
+
+  A token the placeholder sweep already condemns as unresolvable — a node's own
+  artifact, or a node the graph does not have — is skipped here, so one token
+  does not draw two lines where the second one's sentence would be false and
+  its fix untakeable. A reference to a node that EXISTS but is not an ancestor
+  still draws both: it may resolve, and if it does, the reply is on the command
+  line.
+
+  **It was measured before it shipped and it fires on nothing.** Over this
+  repo's shipped graphs plus a 20-graph operator lane corpus — 93 nodes and 34
+  `verify` blocks after fragment resolution — zero verify commands inline a
+  model's text, and the only tokens in any verify command at all are the two
+  `{{ inputs.checks_command }}` above, which the predicate correctly leaves
+  alone. So this is documentation with a test attached, and it ships as that
+  on purpose: it is the one sweep in the package whose subject is not a run
+  that comes out wrong but a run that executes text nobody wrote, it is
+  invisible by construction, and the test is what keeps the documentation true
+  — if the default filter ever changes,
+  `TestLintVerifyInlining_TheDefaultFilterIsAPath` fails.
+
+  Advisory, never a load error, for the standing reason: only a person can
+  write what it condemns. `validatePlannedNodeVerify` refuses a
+  planner-authored `verify:`, so the only verification a planned graph carries
+  is the `--verify-cmd` you supplied — advisory-eligible like any other command
+  line, but your own string — and a hand-written `verify:` block is your own
+  reviewed artifact.
+
 ## [v0.7.0] - 2026-08-13
 
 **Minor because the schema grew a value you may type.** Compared by token name

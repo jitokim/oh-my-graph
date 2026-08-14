@@ -46,7 +46,11 @@ func runLint(args []string) error {
 // the node's implied exit-zero guard), for nodes that can observe no tool
 // denial at all (handoff.LintToolGrants — neither an `allowed_tools` grant nor
 // a `success_check.verify`, so a denied tool leaves only prose a
-// `result_matches` passes on), and for a feedback arc that cannot
+// `result_matches` passes on), for a `success_check.verify.command` that
+// splices a model's own text into the shell command line the engine runs
+// (handoff.LintVerifyInlining — `{{ artifacts.<id> | inline }}` or
+// `{{ feedback.<id> }}`, where the filterless artifacts token would be the
+// engine's own file path), and for a feedback arc that cannot
 // reach a producer its declarer fans in from (graph.LintFeedbackReach — the
 // loop would re-judge an unchanged artifact until its rounds are spent).
 // Those are printed to
@@ -82,15 +86,17 @@ func lintGraph(w, warnW io.Writer, path string) error {
 
 // warnAdvisories prints one `warning:` line per advisory finding in an
 // already-validated graph — the shared reporting half of `lint` and
-// `run --dry-run`, covering the four handoff sweeps (unresolvable
+// `run --dry-run`, covering the five handoff sweeps (unresolvable
 // placeholder-like tokens, session-handoff resumes that may start cold,
-// verdicts a node's own success_check cannot read, and nodes that can observe
-// no tool denial) plus the graph-topology
+// verdicts a node's own success_check cannot read, nodes that can observe
+// no tool denial, and a verify command carrying a model's own text into the
+// shell) plus the graph-topology
 // one (a feedback arc that cannot reach one of its declarer's producers).
 // Warnings are advice only: they never affect any exit code.
 func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 	advisories := append(handoff.LintPlaceholders(g), handoff.LintSessions(g)...)
 	advisories = append(advisories, handoff.LintToolGrants(g)...)
+	advisories = append(advisories, handoff.LintVerifyInlining(g)...)
 	for _, warning := range append(advisories, handoff.LintVerdicts(g)...) {
 		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
 	}

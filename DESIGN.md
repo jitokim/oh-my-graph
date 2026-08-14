@@ -716,6 +716,26 @@ success_check:
     output_matches: "^ok\\s+github"       # optional; regex over the FULL combined stdout+stderr — no length bound, so an anchored pattern still means what it reads as
 ```
 
+**`command` and `cwd` interpolate exactly like a prompt** — the scheduler runs
+them through the same `Handoff.Interpolate` — and the resolved `command` is
+then what the second exec seam runs through your shell. So the placeholder you
+choose decides whether a MODEL's text lands on that command line.
+`{{ artifacts.<id> }}` is safe by default: with no filter it is the persisted
+`.out` FILE PATH, which the engine computes, and a command that reads the file
+gets the same content without ever quoting it into argv. The two shapes that
+do splice model text are `{{ artifacts.<id> | inline }}` — the node's own reply
+— and `{{ feedback.<id> }}`, which always inlines and has no filterless form;
+`handoff.LintVerifyInlining` warns on both — in `command` only, since a `cwd`
+becomes `exec.Cmd.Dir` rather than a command line, and in no prompt, where
+inlining is the designed use. It is an advisory, not a load error, for the
+reason every sweep in that package is one: only a person can write what it
+condemns. A hand-written graph is the user's own reviewed artifact, and a
+planned graph carries no verification a MODEL wrote either —
+`validatePlannedNodeVerify` refuses a planner-authored `verify:`, so the only
+one it can carry is the `--verify-cmd` the user supplied, which is
+advisory-eligible like any other command line but is still the user's own
+string.
+
 ```go
 type SuccessCheck struct {
 	ExitZero      bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
@@ -2367,7 +2387,7 @@ internal/invariants/exec_seam_test.go          test-only: asserts only the four 
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
-internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154)
+internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — and a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
