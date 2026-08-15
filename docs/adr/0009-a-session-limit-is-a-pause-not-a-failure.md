@@ -48,6 +48,29 @@ mitigations rather than pretending otherwise:
 is the same situation: the run cannot usefully continue right now, nothing is
 broken, and a later `resume` should pick up exactly where it stopped.
 
+**Scope — this is a promise of the CLAUDE runtime, not of the engine**
+(settled 2026-08-15, closing #171; the question did not exist when this ADR was
+written, because there was only one runtime). ADR 0025 later made the runtime
+selectable, and the pause does not carry across:
+
+- the detection above is prose matching against **Claude's** wording, so there
+  is nothing for another runtime's message to match;
+- `CLIRunner` gates the classification on `RuntimeClaude`, which is the second
+  layer, not the cause — removing that gate would not produce a pause under
+  Codex, it would produce a pause that can never fire, which is worse than an
+  absence somebody wrote down.
+
+So a second runtime does **not** owe a session-limit signal, and adding one is
+not a prerequisite for adding a runtime. What a runtime owes is the honest
+degradation this ADR already specifies below: the node FAILs carrying the
+message, and `resume --retry-failed` salvages the run. The cost of that
+narrowing is real and is stated where a user meets it — the pre-run disclosure
+names the absence, and `docs/LIMITATIONS.md` carries the long form.
+
+Should a future runtime expose a **structured** limit signal, that is a reason
+to revisit — and it would be a better foundation than this one, since the whole
+mitigation list below exists to survive matching prose.
+
 - **The runner classifies.** `CLIRunner.Run` sets
   `NodeOutcome.SessionLimited` when the captured `FailureCause` (envelope
   error report, else stderr tail) matches the limit's message shape — the

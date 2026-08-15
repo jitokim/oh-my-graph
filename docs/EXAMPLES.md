@@ -116,7 +116,9 @@ Everything else in this file describes the default, Claude. Under Codex:
   [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md). The detection
   is gated on the runtime, not on wording, so a Codex limit can never be read as
   a pause; `resume --retry-failed` still salvages it
-  ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
+  (scoped to the Claude runtime by
+  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md), so no
+  runtime owes one).
 - **The live view shows no per-node transcript tail.** Node states, verdicts and
   the settled per-node result render as they do for a Claude run, with the cost
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).

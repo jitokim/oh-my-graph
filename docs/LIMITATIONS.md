@@ -186,8 +186,13 @@ has no open issue behind it.
   matcher is Claude's own prose and `SessionLimited` is set only for the Claude
   runtime, so the same situation under `--runtime codex` is an ordinary node
   failure — recoverable with `resume --retry-failed`, but not the pause the ADR
-  promises. Whether that promise belongs to the engine or to the Claude runtime
-  is open. ([#171](https://github.com/jitokim/oh-my-graph/issues/171))
+  promises. **Settled 2026-08-15: that promise belongs to the Claude runtime,
+  not to the engine**, so no runtime owes a session-limit signal and this
+  entry describes a decision rather than a gap
+  ([ADR 0009 "Scope"](adr/0009-a-session-limit-is-a-pause-not-a-failure.md),
+  closing [#171](https://github.com/jitokim/oh-my-graph/issues/171)). Removing
+  the runtime gate would not add the pause — the matcher is Claude's prose, so
+  it would only add a pause that can never fire.
 - **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
   approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
   cannot pre-approve one: every gate stops the run with a resumable snapshot and

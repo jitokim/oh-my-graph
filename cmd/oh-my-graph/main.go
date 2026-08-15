@@ -1086,7 +1086,7 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 	fmt.Fprintln(w, "    Two remedies, both per node: permission_mode: bypassPermissions maps to danger-full-access, which is no sandbox — that node keeps network AND keyring. Or Codex's sandbox_workspace_write.network_access=true, which lifts the block for `git push`/`git ls-remote` but not for `gh` on a machine where gh's token is in an OS keyring the sandbox denies (measured 2026-08-14, macOS: \"no oauth token found for github.com\"; where no keyring exists gh reads ~/.config/gh/hosts.yml, which the sandbox can read).")
 	fmt.Fprintln(w, "  Cost is unknown for every Codex node: tokens are counted, USD never is, so this run reports no dollar figure per node or in total.")
 	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
-	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (issue #171).")
+	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (ADR 0009 scopes it to the Claude runtime).")
 	if isolated {
 		fmt.Fprintln(w, "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.")
 	}
