@@ -285,7 +285,9 @@ func New(runDir, runID string) *Server {
 //	/api/graph   the run's DAG structure as JSON (node ids + depends_on edges,
 //	             plus the goal-lineage block when the run is a goal cycle, plus
 //	             the abandoned answer and its recovery hint when the run's open
-//	             leg has no process left behind it — ADR 0015 §4)
+//	             leg has no process left behind it — ADR 0015 §4, plus the
+//	             transcript-tail note when this run's runtime keeps no per-node
+//	             transcript to tail — #178, transcriptTailNote)
 //	/api/events  the run's event stream as SSE: replay events.jsonl, then follow
 //	/api/result  one node's handoff artifact as text/plain (?node=<id>)
 //	/api/transcript  a RUNNING node's live transcript tail as JSON (?node=<id>)
@@ -408,6 +410,20 @@ type graphPayload struct {
 	// card that links here (ADR 0015 §4, the residual-hazard paragraph).
 	Abandoned bool   `json:"abandoned,omitempty"`
 	Hint      string `json:"hint,omitempty"`
+	// TranscriptNote is the other run-level fact the page cannot derive: this
+	// run's runtime keeps no per-node session transcript, so the live tail
+	// cannot exist here (transcriptTailNote, #178). It carries the sentence to
+	// show in the tail's place, and its ABSENCE means the tail works — so a
+	// claude run's payload is byte-identical to before.
+	//
+	// It rides on /api/graph, not on /api/transcript, because it is the answer
+	// that lets the page stop asking: knowing it up front is what retires a
+	// per-running-node request every 3 seconds that could never succeed. It is
+	// a run-level field because the runtime is run-wide (ADR 0025), and it is
+	// available only once the snapshot is (Available above) — the runtime is
+	// snapshot-only, carried by no event, so before the run's first terminal
+	// verdict this side does not know it either.
+	TranscriptNote string `json:"transcript_note,omitempty"`
 }
 
 // goalPayload is runstate.GoalRef re-encoded for the UI rather than embedded,
@@ -434,23 +450,25 @@ type graphNode struct {
 // endpoint's honest answer differs); any other failure is a load/parse error
 // worth a 500 carrying the reason.
 func (s *Server) loadRunGraph() (*graph.Graph, error) {
-	g, _, err := s.loadRunGraphAndGoal()
+	g, _, err := s.loadRunGraphAndSnapshot()
 	return g, err
 }
 
-// loadRunGraphAndGoal is loadRunGraph plus the snapshot's goal-lineage block,
-// for the one endpoint (/api/graph) that renders it. Kept as one load so the
-// graph and the goal always come from the same snapshot read.
-func (s *Server) loadRunGraphAndGoal() (*graph.Graph, *runstate.GoalRef, error) {
+// loadRunGraphAndSnapshot is loadRunGraph plus the snapshot it was
+// reconstructed from, for the one endpoint (/api/graph) that renders more of
+// it than the DAG: the goal-lineage block and the runtime behind the
+// transcript-tail answer. Kept as one load so every field of a payload comes
+// from the same snapshot read.
+func (s *Server) loadRunGraphAndSnapshot() (*graph.Graph, runstate.Snapshot, error) {
 	snap, err := runstate.Load(filepath.Join(s.runDir, stateFileName))
 	if err != nil {
-		return nil, nil, err
+		return nil, runstate.Snapshot{}, err
 	}
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reconstruct graph: %w", err)
+		return nil, runstate.Snapshot{}, fmt.Errorf("reconstruct graph: %w", err)
 	}
-	return g, snap.Goal, nil
+	return g, snap, nil
 }
 
 // handleGraph serves the run's DAG structure, plus the run-level liveness
@@ -458,7 +476,7 @@ func (s *Server) loadRunGraphAndGoal() (*graph.Graph, *runstate.GoalRef, error) 
 // read (corrupt, or a schema this binary does not understand — runstate.Load's
 // loud refusal) is a 500 carrying the reason, not a silent empty graph.
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
-	g, goal, err := s.loadRunGraphAndGoal()
+	g, snap, err := s.loadRunGraphAndSnapshot()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeJSON(w, s.withRunStatus(graphPayload{RunID: s.runID, Available: false}))
@@ -468,8 +486,15 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload := graphPayload{RunID: s.runID, Available: true, Name: g.Name}
-	if goal != nil {
+	payload := graphPayload{
+		RunID:     s.runID,
+		Available: true,
+		Name:      g.Name,
+		// Empty on a claude run, and then omitted: the tail works and the page
+		// polls it exactly as it always has.
+		TranscriptNote: transcriptTailNote(snap.Runtime),
+	}
+	if goal := snap.Goal; goal != nil {
 		payload.Goal = &goalPayload{Text: goal.Text, Cycle: goal.Cycle, MaxCycles: goal.MaxCycles, FirstRunID: goal.FirstRunID}
 	}
 	for _, node := range g.Nodes {

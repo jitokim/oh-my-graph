@@ -1801,7 +1801,15 @@ one, and it answers 409 like any other view that cannot resume.
   id gets `/api/result`'s membership guard, with one widening: before the
   first snapshot exists (exactly when the first node is running), the run's
   own feed vouches instead. Not running / no session id (a gate, a
-  session-handoff node) / no transcript yet → 204.
+  session-handoff node) / no transcript yet → 204. That transcript is
+  claude's file, so the tail is a Claude-runtime supplement: on a run whose
+  snapshot names a runtime that keeps no such file, `/api/graph` carries a
+  `transcript_note` and the page renders that one sentence in the tail's slot
+  instead of polling an endpoint that could only 204 (#178). That field is the
+  view's ONE runtime branch — computed server-side in
+  `serve.transcriptTailNote`, so the page itself stays runtime-unaware — and
+  the honest line is deliberate: an empty tail is indistinguishable from a node
+  that has not printed yet, which is the harm that made the silence a bug.
 - **Deciding the paused gate** is the view's one action: the gate the run is
   parked at carries approve/reject buttons on its feed entry and nowhere
   else. They are derived from the stream like the rest of the feed — a
