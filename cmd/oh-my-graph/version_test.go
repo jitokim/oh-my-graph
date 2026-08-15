@@ -29,33 +29,41 @@ func TestPrintVersion(t *testing.T) {
 // in the release PR is far better than failing after a tag is pushed (a tag is
 // public the moment it lands; a red PR is not).
 //
-// Three non-blank lines is a floor, not a standard. It cannot judge whether the
-// prose is any good — only a reviewer can — but it does catch the two ways a
-// release actually goes out empty: bumping the version and forgetting the
-// entries, and promoting an `## [Unreleased]` heading that had nothing under it.
+// Three lines is a floor, not a standard: it cannot judge whether the prose is
+// any good — only a reviewer can. What it does catch is the two ways a release
+// actually goes out empty: bumping the version and forgetting the entries, and
+// promoting an `## [Unreleased]` heading whose Keep-a-Changelog subheadings had
+// nothing under them.
+//
+// The second is why HEADING LINES DO NOT COUNT. A section of
+// `### Added` / `### Fixed` / `### Changed` and nothing else is three non-blank
+// lines, so counting them made this test pass on precisely the emptiness it
+// claimed to catch — and the release body would then have been three
+// subheadings. A line only counts if it is prose.
 func TestChangelogSectionHasSubstance(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("read CHANGELOG.md: %v", err)
 	}
 	heading := "## [v" + Version + "]"
-	var collecting bool
-	var substantive int
+	var found, collecting bool
+	var prose int
 	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, heading):
-			collecting = true
+			found, collecting = true, true
 		case collecting && strings.HasPrefix(line, "## ["):
 			collecting = false
-		case collecting && strings.TrimSpace(line) != "":
-			substantive++
+		case collecting && trimmed != "" && !strings.HasPrefix(trimmed, "#"):
+			prose++
 		}
 	}
-	if !collecting && substantive == 0 {
+	if !found {
 		t.Fatalf("CHANGELOG.md has no %s section — the release body is built from it", heading)
 	}
-	if substantive < 3 {
-		t.Fatalf("CHANGELOG.md's %s section has %d non-blank line(s); a release body needs more than a heading", heading, substantive)
+	if prose < 3 {
+		t.Fatalf("CHANGELOG.md's %s section has %d line(s) of prose (headings do not count); a release body needs more than a heading", heading, prose)
 	}
 }
 

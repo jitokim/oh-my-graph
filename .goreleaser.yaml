@@ -41,12 +41,9 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# No `changelog:` block: the release body is supplied by
+# `scripts/release-notes.sh` through `--release-notes`, which makes goreleaser
+# skip its own changelog generation entirely. A filter list here would be dead
+# config that reads as if it still shaped the release page, and would drift.
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
-      - Merge pull request
-      - Merge branch
+  disable: true
