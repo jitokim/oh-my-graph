@@ -5,6 +5,11 @@
 // is that consumer, in-repo: it finds `<session-id>.jsonl` under the user's
 // claude projects directory and serves the last few entries' human-relevant
 // content (assistant text and tool-use names).
+//
+// That file is claude's, so the tail is a claude-only supplement to the run
+// feed. transcriptTailNote below is the one place that says so — the whole
+// view's single runtime branch, and the sentence /api/graph hands the page to
+// render instead of a tail on a run whose runtime keeps no such file (#178).
 
 package serve
 
@@ -21,7 +26,47 @@ import (
 	"path/filepath"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 )
+
+// transcriptTailNote answers, for a whole run, whether the live tail above can
+// exist at all — and it is THE ONE place in this view that branches on the
+// run's runtime (ADR 0025). Empty means the tail works (claude, including the
+// absent/empty snapshot value the run-feed contract reads as claude); a
+// non-empty string means it cannot, and IS the sentence the view shows in the
+// tail's place.
+//
+// WHICH OF THE TWO DEFENSIBLE FIXES (#178), and why. Dropping the tail
+// silently was rejected: an empty tail is exactly what the defect already
+// looked like, so silence would fix the wasted polling and leave the harm that
+// matters — a viewer of a Codex run cannot tell "working as designed" from
+// "broken". So the view says it, once, where the tail would have been. The
+// sentence is composed HERE rather than in the page for the same reason the
+// runtime branch is here: the page renders whatever string this side hands it
+// and stays free of runtime knowledge, which is what keeps docs/RUN-FEED.md's
+// "the view has no runtime branch" true of the page and precise about the one
+// exception.
+//
+// It deliberately does NOT gate handleTranscript below. That endpoint's 204
+// ("nothing to show") is already the honest answer for a node with no
+// transcript, whatever the reason, and is what docs/RUN-FEED.md publishes; the
+// page simply stops asking, which is where the pointless per-3-second poll
+// goes away. A second branch there would buy nothing and be a second place to
+// keep in step.
+//
+// The phrasing is generic over the runtime name rather than codex-specific:
+// the fact is "this runtime's per-node output is not a file this view can
+// tail", and a third runtime with the same property needs no new sentence.
+func transcriptTailNote(runtime string) string {
+	switch runner.Runtime(runtime) {
+	case "", runner.RuntimeClaude:
+		return ""
+	default:
+		return fmt.Sprintf(
+			"no live transcript: the %s runtime keeps no per-node session file this view can tail — the node's output arrives when it settles",
+			runtime)
+	}
+}
 
 // transcriptTailEntries caps how many parsed entries a response carries: the
 // tail is "what is it doing right now", not a transcript browser.
@@ -301,10 +346,13 @@ func capRunes(s string, n int) string {
 //
 // The node id from the URL is matched against the run's node set exactly
 // like /api/result — with one widening /api/result does not need: while no
-// snapshot exists (state.json lands only at the first terminal verdict, and
-// the first node RUNNING is this endpoint's whole purpose), a node the run's
-// own feed has named in a node_started is vouched for by the feed instead.
-// An id neither source knows is a 404 either way.
+// snapshot exists, a node the run's own feed has named in a node_started is
+// vouched for by the feed instead. An id neither source knows is a 404 either
+// way. That widening is defensive rather than load-bearing today: state.json is
+// written before the first node starts (runstate.SnapshotRecorder.WriteInitial),
+// so the snapshot-less shapes are the ones with no node running at all — an
+// `auto` run inside its planner call, or one whose plan was refused
+// (docs/RUN-FEED.md, ADR 0023).
 func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("node")
 

@@ -88,12 +88,23 @@ session id) are what let any consumer locate it.
 **That supplement exists for Claude runs only, and there is no Codex
 equivalent.** `/api/transcript` looks for `<session-id>.jsonl` under
 `~/.claude/projects` and nowhere else, so for a Codex node — whose published id
-is a `codex exec` thread rather than a file there — it answers 204 and the live
-view renders no tail at all. Nothing else about the view takes a second code
-path: node states, verdicts, cost and the settled per-node result all come from
-the two files this document contracts, and the view has no runtime branch — the
+is a `codex exec` thread rather than a file there — it answers 204, and that is
+unchanged: 204 is the honest "nothing to show" the endpoint already gives any
+node with no transcript, and it takes no runtime branch to say it.
+
+What the live view does with that answer IS runtime-aware, in exactly one
+place. `/api/graph` reads the snapshot's `runtime` and, for a runtime that
+keeps no per-node transcript, carries a `transcript_note` — one sentence saying
+so, which the page renders in the tail's slot on each running node's feed line
+instead of polling an endpoint that could only 204. The key is **absent** on a
+Claude run, where the tail works as before. This is the view's ONE runtime
+branch, and it is the narrowest true statement of it: nothing else about the
+view takes a second code path — node states, verdicts, cost and the settled
+per-node result all come from the two files this document contracts, and the
 cost figure differs only because the data does, reading `cost unknown` off the
-`cost_unknown` flag described below.
+`cost_unknown` flag described below. The page itself still holds no runtime
+knowledge: it renders whatever string that field hands it.
+
 A consumer building its own live output for Codex has no in-repo reader to
 follow.
 

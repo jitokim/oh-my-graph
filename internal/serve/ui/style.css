@@ -260,6 +260,15 @@ main { flex: 1; display: flex; min-height: 0; }
   color: var(--muted);
 }
 
+/* The tail's stand-in on a run whose runtime keeps no per-node transcript
+   (#178): the same slot, but italic prose rather than monospace, because it is
+   the page explaining an absence — not the node's own words. Saying it is the
+   whole point; an empty tail is what the silent version already looked like. */
+.live-tail.tail-note {
+  font-family: inherit;
+  font-style: italic;
+}
+
 /* A rich settled entry: the node's card in the stream. Failure emphasis is
    weight and a status-color border bar on the cause line — never red text. */
 .entry.rich {

@@ -269,6 +269,46 @@ func jsStringList(t *testing.T, js, name string) map[string]bool {
 	return items
 }
 
+// jsFunctionBody returns the body of a top-level `function NAME(…) { … }` in a
+// JS asset, brace-matched from its opening `{`. It is jsStringList's sibling
+// and cssRuleBodies' JS counterpart, and it exists for the same reason: a test
+// asserting what a block CONTAINS survives a reformat of that block, while one
+// pinning an exact source line reddens with the wiring intact. Brace counting
+// is naive — a `{` inside a string literal or a comment in the function would
+// confuse it — so read functions whose braces are code.
+func jsFunctionBody(t *testing.T, js, name string) string {
+	t.Helper()
+	loc := regexp.MustCompile(`function ` + regexp.QuoteMeta(name) + `\s*\([^)]*\)\s*\{`).FindStringIndex(js)
+	if loc == nil {
+		t.Fatalf("the served JS has no `function %s(...)` declaration. These tests hold a guard inside that "+
+			"function; if it was renamed or restructured, teach this reader the new shape rather than "+
+			"dropping the guard", name)
+	}
+	depth := 0
+	for i := loc[1] - 1; i < len(js); i++ {
+		switch js[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return js[loc[1]:i]
+			}
+		}
+	}
+	t.Fatalf("the served JS's %s() is never closed", name)
+	return ""
+}
+
+// jsCodeOnly strips `//` line comments and collapses runs of whitespace, so a
+// statement can be matched as CODE — indentation, a line break or a trailing
+// comment moved onto its own line then make no difference. (A `//` inside a
+// string literal would be cut too; the callers match code that has none.)
+func jsCodeOnly(js string) string {
+	stripped := regexp.MustCompile(`//[^\n]*`).ReplaceAllString(js, " ")
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(stripped, " "))
+}
+
 func contains(list []string, want string) bool {
 	for _, item := range list {
 		if item == want {

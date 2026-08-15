@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
@@ -351,5 +353,143 @@ func TestTranscript_UnsafeSessionIdIs204(t *testing.T) {
 		if got := sessionIDSafe(id); got != want {
 			t.Errorf("sessionIDSafe(%q) = %v, want %v", id, got, want)
 		}
+	}
+}
+
+// --- #178: a runtime that keeps no transcript says so -------------------------
+
+// TestTranscriptTailNote_IsEmptyOnlyWhereATailCanExist pins the view's ONE
+// runtime branch: exactly the claude values — the constant, plus the empty
+// snapshot value the run-feed contract reads as claude — may answer "a tail
+// exists here", and codex must not.
+//
+// The runtimes below are TRANSCRIBED, not enumerated: `runner` exports the two
+// constants and ParseRuntime and no vocabulary to range over, so this test asks
+// about exactly the ones it names. A third runtime is covered by the production
+// code's shape rather than by this test — transcriptTailNote branches with a
+// `default` arm, so a new runtime gets the note until someone deliberately
+// moves it, which is the safe direction since the tail is claude's file.
+func TestTranscriptTailNote_IsEmptyOnlyWhereATailCanExist(t *testing.T) {
+	for _, value := range []string{"", string(runner.RuntimeClaude)} {
+		if note := transcriptTailNote(value); note != "" {
+			t.Errorf("transcriptTailNote(%q) = %q, want empty: claude is the runtime whose transcript "+
+				"this view tails, and an absent runtime means claude (docs/RUN-FEED.md)", value, note)
+		}
+	}
+	note := transcriptTailNote(string(runner.RuntimeCodex))
+	if note == "" {
+		t.Fatal("transcriptTailNote(codex) = \"\": a codex node publishes a thread, not a file under " +
+			"~/.claude/projects, so the tail can never fill — and an empty tail is indistinguishable " +
+			"from a node that has printed nothing yet, which is the whole of #178")
+	}
+	if !strings.Contains(note, string(runner.RuntimeCodex)) {
+		t.Errorf("note = %q, want it to name the runtime it is about", note)
+	}
+}
+
+// TestHandleGraph_CodexRunCarriesTheTranscriptNote: the page cannot derive the
+// runtime — no event carries it (docs/RUN-FEED.md) — so the one read that can,
+// /api/graph, hands it the sentence to render in the tail's place.
+func TestHandleGraph_CodexRunCarriesTheTranscriptNote(t *testing.T) {
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID:   "run-1",
+		Runtime: string(runner.RuntimeCodex),
+		Graph:   json.RawMessage(twoNodeGraph),
+	})
+
+	payload, _ := graphOf(t, dir, "run-1")
+	if payload.TranscriptNote != transcriptTailNote(string(runner.RuntimeCodex)) {
+		t.Errorf("transcript_note = %q, want the codex note — without it the live view polls a tail "+
+			"that can never fill and tells the reader nothing", payload.TranscriptNote)
+	}
+}
+
+// TestHandleGraph_ClaudeRunOmitsTheTranscriptNote: on the runtime whose
+// transcripts this view really does tail, the payload is byte-identical to
+// before — the KEY is absent, not an empty string the page might render as a
+// blank line. The absent-runtime snapshot takes the same arm, since absent
+// means claude.
+func TestHandleGraph_ClaudeRunOmitsTheTranscriptNote(t *testing.T) {
+	for _, runtime := range []string{"", string(runner.RuntimeClaude)} {
+		dir := t.TempDir()
+		writeSnapshot(t, dir, runstate.Snapshot{
+			RunID:   "run-1",
+			Runtime: runtime,
+			Graph:   json.RawMessage(twoNodeGraph),
+		})
+
+		payload, body := graphOf(t, dir, "run-1")
+		if payload.TranscriptNote != "" {
+			t.Errorf("runtime %q: transcript_note = %q, want empty — this run's tail works", runtime, payload.TranscriptNote)
+		}
+		if strings.Contains(body, "transcript_note") {
+			t.Errorf("runtime %q: payload carries a transcript_note key: %s", runtime, body)
+		}
+	}
+}
+
+// TestTranscript_CodexRunningNodeIs204AndTheNoteIsTheCue pins the split this
+// fix rests on, in one run: /api/transcript keeps answering 204 for a codex
+// node — the honest "nothing to show" it already gave, and the behaviour
+// docs/RUN-FEED.md publishes — while /api/graph carries the cue that stops the
+// page asking and tells the reader why. The endpoint gains no second runtime
+// branch.
+func TestTranscript_CodexRunningNodeIs204AndTheNoteIsTheCue(t *testing.T) {
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID:   "run-1",
+		Runtime: string(runner.RuntimeCodex),
+		Graph:   json.RawMessage(twoNodeGraph),
+	})
+	// The id is UUID-SHAPED on purpose. A codex thread id looks exactly like
+	// this — the repo's own fixture is `019c5a2b-…` (codex_protocol_test.go) —
+	// so it PASSES sessionIDSafe and the request reaches the real lookup, which
+	// then finds no file under ~/.claude/projects. That is the arm a codex run
+	// actually takes. An id that fails the safety check would 204 too, and for
+	// the wrong reason: it would re-test what TestTranscript_UnsafeSessionIdIs204
+	// already covers while leaving this path unexercised.
+	writeEvents(t, dir, "run-1",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a", SessionID: "019c5a2b-62d5-7d81-98a7-68c9f4d84f84"},
+	)
+	s, _ := newTranscriptServer(t, dir)
+
+	if rec := getTranscript(t, s, "a"); rec.Code != 204 {
+		t.Errorf("running codex node: status = %d, want 204 (body %q)", rec.Code, rec.Body.String())
+	}
+	if payload, _ := graphOf(t, dir, "run-1"); payload.TranscriptNote == "" {
+		t.Error("the 204 above is silent by itself: /api/graph must carry the note that explains it")
+	}
+}
+
+// TestTranscriptNote_IsRenderedByTheServedPage holds the wiring no compiler
+// checks: the field name the server emits, the page that reads it, and the CSS
+// rule that styles it are three files with no build step between them. A rename
+// on any one side leaves a codex run silent again — the exact defect — with a
+// green Go test run.
+func TestTranscriptNote_IsRenderedByTheServedPage(t *testing.T) {
+	app := readAsset(t, "app.js")
+	style := readAsset(t, "style.css")
+
+	if !strings.Contains(app, "transcript_note") {
+		t.Error("ui/app.js never reads payload.transcript_note: the server computes the sentence and " +
+			"nothing renders it, so a codex run's live view is silent again (#178)")
+	}
+	// The page must also stop polling on that answer — the note is only half
+	// the fix; the other half is retiring a request every 3s that can only 204.
+	// Matched as a guard INSIDE pollLiveTail's body, the way cssRuleBodies
+	// matches a rule's body: adding braces or moving the trailing comment must
+	// not redden intact wiring. A bare Contains(app, "transcriptNote") would not
+	// do either — paintTailNote reads it too, so the guard could go and the file
+	// would still mention the name.
+	guard := regexp.MustCompile(`if\s*\(\s*transcriptNote\s*\)\s*\{?\s*return\b`)
+	if !guard.MatchString(jsCodeOnly(jsFunctionBody(t, app, "pollLiveTail"))) {
+		t.Error("ui/app.js's pollLiveTail no longer short-circuits on transcriptNote: the tail is " +
+			"polled every few seconds per running node, and on such a run every poll can only 204")
+	}
+	if !strings.Contains(style, ".live-tail.tail-note") {
+		t.Error("ui/style.css has no `.live-tail.tail-note` rule: the note renders as monospace tail " +
+			"content, reading as words the node itself printed")
 	}
 }

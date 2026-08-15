@@ -7,11 +7,15 @@
 // absorbs its started-line (retry lines stay — a retry is a real
 // transition). Four read sources, mirroring the run-feed contract
 // (docs/RUN-FEED.md), and — on a paused gate's entry only — one write:
-//   /api/graph   the DAG structure (polled until the snapshot exists — a
-//                fresh run has no state.json until its first node completes),
+//   /api/graph   the DAG structure (polled until the snapshot exists — which
+//                is written up front, so the only snapshot-less runs are the
+//                legitimate ones: still planning, or a refused plan),
 //                plus the one fact no stream carries: whether this run's open
 //                leg still has a process behind it (ADR 0015 — the answer
-//                needs the run lock, which only the server can probe)
+//                needs the run lock, which only the server can probe), and
+//                whether this run's runtime keeps a per-node transcript to
+//                tail at all (#178 — the runtime is in the snapshot, which
+//                only the server reads)
 //   /api/events  the event stream over SSE (replay, then follow)
 //   /api/result  one node's handoff artifact, fetched lazily for that
 //                node's settled feed entries (200 body / 204 none / 404
@@ -20,7 +24,9 @@
 //   /api/transcript  a running node's live "now doing" tail (assistant text
 //                and tool-use names from its session transcript), polled
 //                every few seconds onto the node's open feed line and gone
-//                the moment the node settles (200 entries / 204 nothing)
+//                the moment the node settles (200 entries / 204 nothing) —
+//                not polled at all on a run /api/graph says keeps no such
+//                transcript, whose feed lines carry that sentence instead
 //   /api/gate/approve, /api/gate/reject  POSTed by the approve/reject buttons
 //                on the entry of the gate the run is paused at, carrying the
 //                per-process token this page was served with (see decideGate;
@@ -373,8 +379,10 @@ async function loadGraph() {
   renderGoal(payload.goal);
   if (gen === statusGen) applyRunStatus(payload);
   if (!payload.available) {
-    // Honest window: structure is unknown until the first node's terminal
-    // verdict writes state.json. Keep polling; events still stream meanwhile.
+    // Honest window: the run has no state.json yet — an auto run inside its
+    // planner call, or one whose plan was refused (docs/RUN-FEED.md). NOT
+    // "until the first node settles": a run with a graph writes its snapshot
+    // before the first node starts. Keep polling; events still stream meanwhile.
     // An abandoned snapshot-less run keeps the status applyRunStatus set: it
     // will never write a state.json, so "waiting for structure" would be a
     // promise nothing is going to keep.
@@ -382,6 +390,9 @@ async function loadGraph() {
     setTimeout(loadGraph, 2000);
     return;
   }
+  // Only on the available arm: the transcript answer comes from the snapshot,
+  // so "absent" above means unknown, not "the tail works".
+  applyTranscriptNote(payload);
   render(payload);
 }
 
@@ -979,7 +990,38 @@ function buildMetaLine(info) {
 // 204 (no session id published — a session-handoff node or a gate — or no
 // transcript on disk yet) simply keeps the element hidden; polling stops the
 // moment the node leaves running, because settle removes the element.
+//
+// ONE run-level answer switches all of that off: /api/graph's transcript_note
+// (#178). Some runtimes keep no per-node transcript at all, and there polling
+// could only ever 204 — so the note replaces the tail, in the tail's own slot,
+// saying so once per running node. The page does not know WHICH runtime that
+// is or why; transcriptNote is a string it renders, which is what keeps the
+// runtime branch on the server side alone (see transcriptTailNote).
 const TAIL_POLL_MS = 3000;
+
+// The sentence to show instead of a tail, "" while the tail works. Empty until
+// /api/graph answers with a snapshot behind it — the runtime is snapshot-only.
+// In practice that is the FIRST answer on any run with a graph, since the
+// snapshot is written before the first node starts; the no-state.json shapes
+// (an auto run inside its planner call) run no node, so the assume-a-tail
+// default is never what a reader sees. applyTranscriptNote still repaints the
+// tails already on screen when the answer lands, so the order of the two
+// fetches cannot leave a tail element polling.
+let transcriptNote = "";
+
+function applyTranscriptNote(payload) {
+  transcriptNote = payload.transcript_note || "";
+  if (!transcriptNote) return;
+  for (const pre of liveTails.values()) paintTailNote(pre);
+}
+
+// The note is styled apart from a real tail: it is the page talking about the
+// run, not the run's own words.
+function paintTailNote(pre) {
+  pre.className = "live-tail tail-note";
+  pre.textContent = transcriptNote;
+  pre.hidden = false;
+}
 
 function attachLiveTail(li, nodeId) {
   removeLiveTail(nodeId); // a superseded running line's tail dies with it
@@ -988,6 +1030,12 @@ function attachLiveTail(li, nodeId) {
   pre.hidden = true;
   li.appendChild(pre);
   liveTails.set(nodeId, pre);
+  // Registered in liveTails either way, so the note's lifetime is the running
+  // line's lifetime — removeLiveTail on settle takes it away like any tail.
+  if (transcriptNote) {
+    paintTailNote(pre);
+    return;
+  }
   pollLiveTail(nodeId); // first paint now, not a full interval later
 }
 
@@ -998,6 +1046,7 @@ function removeLiveTail(nodeId) {
 }
 
 function pollLiveTail(nodeId) {
+  if (transcriptNote) return; // this run keeps no transcript; asking is pointless
   const pre = liveTails.get(nodeId);
   const info = nodes.get(nodeId);
   if (!pre || !info || info.state !== "running") return;
