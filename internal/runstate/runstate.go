@@ -287,6 +287,14 @@ type GateState struct {
 	Decisions map[string]GateDecision `json:"decisions,omitempty"`
 }
 
+// RuntimeClaude is the default runtime, and the value an absent `runtime` has
+// always meant (docs/RUN-FEED.md, "state.json — the snapshot"). It is declared
+// here rather than imported from runner for the same reason Verdict and
+// GateDecision are: the on-disk vocabulary belongs to the persistence format,
+// so Schema stays the single gate on what the bytes mean. Its string value
+// matches runner.RuntimeClaude.
+const RuntimeClaude = "claude"
+
 // Snapshot is the whole resumable state of a run — everything a second
 // `oh-my-graph` process needs to continue where the first left off, and nothing
 // that can be recomputed from it. In particular it does NOT hold in-degree counts
@@ -301,9 +309,20 @@ type Snapshot struct {
 	// RunID is the run this snapshot belongs to (the <run-id> in its path). Held in
 	// the file too so a snapshot is self-identifying if copied out of its directory.
 	RunID string `json:"run_id"`
-	// Runtime is the run-wide model CLI. Fresh writers always persist it; an
-	// empty in-memory value is canonicalized to Claude by the CLI boundary.
-	Runtime string `json:"runtime,omitempty"`
+	// Runtime is the run-wide model CLI (ADR 0025): RuntimeClaude or "codex".
+	// It is ALWAYS present in the file. An empty in-memory value is
+	// canonicalized to RuntimeClaude by Snapshot.MarshalJSON — the type's own
+	// serialization boundary, so no writer can produce a snapshot without it
+	// (see that method, and the tag: deliberately NOT omitempty).
+	//
+	// Reading is unchanged and stays where it was: an absent `runtime` on a
+	// snapshot written before this — a schema-3 file from v0.8.0 — decodes to
+	// the empty string, which every reader already treats as claude. Load does
+	// not rewrite it, so no file on disk changed meaning; what changed is only
+	// that no NEW file can leave the question open. That is also why Schema
+	// stays 3: the field went from "absent, meaning claude" to "present,
+	// saying claude", which no reader of either version can misread.
+	Runtime string `json:"runtime"`
 	// Planning accounting is the coordinator call that produced an auto run's
 	// graph. It is top-level because it belongs to the run, not to any node.
 	PlanningCostUSD     float64    `json:"planning_cost_usd,omitempty"`
@@ -352,6 +371,47 @@ type Snapshot struct {
 	// Gate is the run's gate progress: decisions so far and the gate it is paused
 	// at, if any.
 	Gate GateState `json:"gate"`
+}
+
+// MarshalJSON encodes the snapshot with Runtime canonicalized: an empty value
+// is written as RuntimeClaude, never omitted and never as "". Everything else
+// is encoded exactly as the struct tags say, so the bytes are unchanged for
+// every snapshot that already named its runtime.
+//
+// This lives on the type, not on Write and not on the CLI's path, because the
+// hole it closes is not one caller's bug. `runtime` was `omitempty`, and the
+// only thing keeping it in the file was that the CLI happened to canonicalize
+// an unset runtime before writing. A future writer calling Write — or
+// marshaling a Snapshot by any other route — would have persisted a schema-3
+// snapshot with NO runtime, which every consumer then reads as claude even
+// when the run was Codex. Schema 3 was bumped precisely so an older reader
+// could not misread runtime identity; a field that can silently go missing
+// reopens the hole the bump was taken to close.
+//
+// The two lesser fixes were rejected for being weaker in the same way. Merely
+// dropping `omitempty` still lets a caller persist `"runtime": ""` — the same
+// missing answer wearing a different shape. Canonicalizing inside Write covers
+// Write and nothing else, so the guarantee would again be a property of one
+// code path rather than of the format. Go cannot make the zero value
+// unrepresentable in memory (there is no non-empty string zero value, and an
+// unexported field behind a constructor would break every Snapshot literal in
+// the repo), but the bad state that matters is the one on DISK, and this makes
+// that one impossible: the value is canonicalized at the boundary where the
+// contract is actually produced.
+//
+// The receiver is a value, so canonicalization is local to the encoding and
+// never rewrites the caller's snapshot — SnapshotRecorder's base keeps whatever
+// it was seeded with. One Go footgun to know about: a struct that EMBEDS
+// Snapshot promotes this method and would marshal as a bare snapshot. Hold a
+// Snapshot in a named field instead.
+func (s Snapshot) MarshalJSON() ([]byte, error) {
+	// A local defined type strips Snapshot's method set, so json.Marshal below
+	// uses the struct tags instead of recursing into this method.
+	type snapshot Snapshot
+	if s.Runtime == "" {
+		s.Runtime = RuntimeClaude
+	}
+	return json.Marshal(snapshot(s))
 }
 
 // CompletedNodes returns the set of node ids that have completed successfully —
@@ -428,7 +488,11 @@ func (e *SchemaMismatchError) Error() string {
 // Marshaling happens before anything on disk is touched, so a snapshot that
 // cannot be encoded (e.g. a Graph holding invalid JSON) fails without disturbing
 // an existing good file at path. Write stamps s.Schema to the current Schema
-// constant, so the caller cannot accidentally persist a wrong version.
+// constant, so the caller cannot accidentally persist a wrong version, and the
+// marshal itself canonicalizes an unset runtime (Snapshot.MarshalJSON), so the
+// caller cannot accidentally persist a snapshot that does not say which CLI ran
+// it either. Both stamps are on the value copy: the caller's snapshot is
+// untouched.
 //
 // A snapshot is owner-only at rest, which matters because Graph carries every
 // node's prompt verbatim and Inputs carries the values interpolated into them.
