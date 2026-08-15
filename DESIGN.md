@@ -530,7 +530,9 @@ the limited node nowhere, and returns `*LimitPausedError` → exit code 2 with a
 `resume --retry-failed` hint. Full semantics under "Gate nodes and `resume`"
 below — the limit rides the same pause/drain machinery a gate does. Claude only:
 under `--runtime codex` nothing sets `SessionLimited`, so the same situation is
-an ordinary node failure (open question, #171).
+an ordinary node failure — settled: the pause is a promise of the Claude
+runtime, not of the engine, so no runtime owes a session-limit signal
+(ADR 0009 "Scope", closing #171).
 
 **Feedback edges (ADR 0010) — the fourth intercepted signal.** A node may
 declare `feedback: { rerun: <ancestor>, max: N }`: when it fails for a
@@ -1442,7 +1444,8 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   construct with no runtime branch, so a Codex run pauses at a gate exactly as
   a Claude run does (`merge-shepherd`, the graph named above, has one).
   Whether ADR 0009 is a promise of the
-  engine or of the Claude runtime is open — #171. The scheduler then
+  engine or of the Claude runtime is SETTLED as the runtime's (ADR 0009
+  "Scope", closing #171). The scheduler then
   stops launching new work but drains in-flight siblings (which may
   themselves limit and join the paused set), records the limited node
   NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
@@ -2480,7 +2483,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
-internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped: #171) + FakeRunner
+internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped by decision, not by omission) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate

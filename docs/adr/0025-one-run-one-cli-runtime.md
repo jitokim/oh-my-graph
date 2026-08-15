@@ -114,3 +114,10 @@ by default. Prefixes and values containing those names remain untouched.
   sandbox isolation replaces scoped tool-name grants and the CLI says so.
 - `agent:` and USD budget fields remain valid graph syntax because Claude uses
   them; runtime preflight, not duplicated schemas, owns compatibility.
+- **ADR 0009's session-limit pause does not apply.** It is a promise of the
+  Claude runtime rather than of the engine — settled 2026-08-15, closing #171,
+  and written into ADR 0009's own Decision. Its detection matches Claude's
+  prose, so under `--runtime codex` a session limit is an ordinary node failure
+  carrying the provider's message, salvageable with `resume --retry-failed`.
+  **A new runtime therefore does not owe a session-limit signal.** The absence
+  is disclosed before the run spends, not discovered in the ledger afterwards.
