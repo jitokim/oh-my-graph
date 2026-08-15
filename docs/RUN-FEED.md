@@ -85,6 +85,16 @@ feed, not a substitute — the transcript is claude's file, on claude's schema,
 and the run-feed events (`node_started`/`node_retried` publishing the attempt's
 session id) are what let any consumer locate it.
 
+**That supplement exists for Claude runs only, and there is no Codex
+equivalent.** `/api/transcript` looks for `<session-id>.jsonl` under
+`~/.claude/projects` and nowhere else, so for a Codex node — whose published id
+is a `codex exec` thread rather than a file there — it answers 204 and the live
+view renders no tail at all. Nothing else about the view changes: node states,
+verdicts, cost and the settled per-node result all come from the two files this
+document contracts, so they render for a Codex run exactly as for a Claude one.
+A consumer building its own live output for Codex has no in-repo reader to
+follow.
+
 A third file, `resume.lock`, is **not** internal any more: it is how a reader
 tells a run that is thinking from one whose process is gone. See "Liveness —
 `resume.lock`" below.
@@ -131,6 +141,16 @@ terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
+
+`runtime` is the run-wide model CLI (ADR 0025). It is omitted when empty and
+**absent means `claude`** — the CLI canonicalizes an unset runtime before
+writing, so a fresh writer always persists it. It is also the **only** place the
+runtime is recorded: no event carries it (`runfeed.Event` has no such field), so
+a consumer that only tails the stream cannot tell a Codex run from a Claude one
+and must read the snapshot to know. The consequence most likely to matter is
+accounting: **a Codex invocation reports no USD at all**, so every one of its
+records and events carries `cost_unknown` with no `cost_usd` — token counts and
+nothing else. Treat that as absent, never as a known zero.
 
 `judged` (additive, ADR 0020 — no schema bump) marks a FAIL a check rendered a
 verdict **on**, as opposed to one the machinery caused: a failed `success_check`
@@ -329,7 +349,9 @@ by roughly 300 runes", never as "exactly ≤ 240" — and rely on the 1 MiB
 per-line cap below for the actual hard limit. Zero/empty values are
 **omitted** from the JSON. Under schema 3, treat absent `cost_unknown` as false
 and absent token members as zero; never infer that absent `cost_usd` means a
-known zero when `cost_unknown` is true. A gate spawns no subprocess, so its
+known zero when `cost_unknown` is true — under Codex that is every paid
+invocation of the run, so a consumer summing `cost_usd` over such a stream
+totals zero dollars for work that was paid for. A gate spawns no subprocess, so its
 `node_passed` carries no cost, usage, or session.
 
 `node_passed` additionally carries `provenance`: **how** the PASS was reached

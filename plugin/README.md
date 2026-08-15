@@ -26,6 +26,30 @@ The command is scoped to `allowed-tools: Bash(oh-my-graph run *), Bash(oh-my-gra
 so any `oh-my-graph run ...` or `oh-my-graph auto ...` invocation runs without a
 per-use permission prompt, but nothing outside those command prefixes is granted.
 
+## The plugin runs Claude nodes
+
+oh-my-graph v0.8.0 added a second node runtime, selected with a global
+`--runtime codex` that must precede the subcommand. **`/graph` cannot reach it,
+by construction:** the grants above match the command prefixes
+`oh-my-graph run ` and `oh-my-graph auto `, and
+`oh-my-graph --runtime codex run ...` begins with neither, so it would raise a
+per-use permission prompt rather than run. There is no other spelling to fall
+back on — the flag is rejected after the subcommand (`oh-my-graph run g.yaml
+--runtime codex` exits with `flag provided but not defined: -runtime`). Every
+node this plugin starts is therefore a `claude` subprocess on your saved Claude
+login, which is what the rest of this file describes.
+
+**The grants are deliberately not widened, and that is a design note rather than
+a limitation to fix.** A prefix grant matches literal argv, so covering the flag
+means enumerating its spellings — `--runtime codex run`, `--runtime=codex run`,
+and the same two for `auto` and for `claude` — six entries to express one
+boolean, and the enumeration multiplies the day a second global flag appears. A
+grant list nobody can read at a glance is worse than a missing convenience,
+especially for the one list standing between a session and an unprompted spend.
+Run Codex graphs from a shell (`oh-my-graph --runtime codex run graph.yaml`);
+what `--runtime codex` changes about a run is in
+[docs/EXAMPLES.md](../docs/EXAMPLES.md#what---runtime-codex-changes).
+
 ## `/graph` invocation UX
 
 > **Namespacing:** when the plugin is installed via a marketplace, Claude Code

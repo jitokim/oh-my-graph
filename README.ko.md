@@ -74,6 +74,8 @@ oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 
 Codex는 `permission_mode: plan`을 read-only sandbox로, 일반 모드를
 `workspace-write`로, `bypassPermissions`를 `danger-full-access`로 매핑합니다.
+이 sandbox는 네트워크 경계이기도 해서, Codex 그래프는 push하거나 `gh`를
+호출하는 첫 번째 노드에서 멈춥니다.
 Codex에는 Claude의 호출별 `budget_usd`와 `agent:` 선택자가 없고 USD도 보고하지
 않으므로, 이 두 graph field와 `--max-goal-budget-usd`는 실행 전에 거부합니다.
 Claude Code agent mapping과 skill activation은 Claude 전용이며, Codex `auto`는
@@ -144,8 +146,8 @@ nodes:
 그리고 실패는 당신이 유지보수하는 glue 코드가 아니라 일급 문법입니다: 근거 검사,
 원인별 `retry`, 그래프 레벨 `on_fail`, 경계가 있는 `feedback:` 리뷰 루프, 사람의
 승인을 위해 run을 멈추는 `type: gate` 노드, 그리고 run을 실패시키는 대신
-*일시정지*시키는 구독 세션 한도 — `resume --retry-failed`가 나중에 실행되지 못한
-작업만 정확히 마저 끝냅니다.
+*일시정지*시키는 Claude 구독 세션 한도 — `resume --retry-failed`가 나중에
+실행되지 못한 작업만 정확히 마저 끝냅니다.
 
 모든 subcommand와 플래그, 노드 필드별 레시피 — `auto` 심화, goal cycle, 플랜된
 노드를 당신의 Claude Code 에이전트·스킬에 매핑하는 방식 포함 — 는

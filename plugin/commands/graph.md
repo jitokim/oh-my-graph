@@ -9,6 +9,12 @@ Run `oh-my-graph $ARGUMENTS` via Bash. The two subcommands are:
 - `run <graph.yaml> [--input key=value ...]` — execute an existing graph file.
 - `auto "<goal>"` — let the coordinator plan a graph from the goal, then run it.
 
+Nodes run on the user's saved Claude login. oh-my-graph's other runtime is
+selected by a global `--runtime codex` placed BEFORE the subcommand, which this
+command's grants do not cover — if the user asks for a Codex run, say that it
+has to be started from a shell (`oh-my-graph --runtime codex run <graph.yaml>`)
+and do not try to work around the grants.
+
 When it finishes, report the run ledger back to the user: one line per node
 (node id, verdict, session id, cost, detail) and the total cost. If a node
 failed, surface its failure reason. For `auto`, also show the planned graph

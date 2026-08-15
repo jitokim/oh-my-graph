@@ -69,7 +69,9 @@ reused by `resume` and browser gate actions. Add `--plan-only` to `auto` to buy
 the plan and read it without executing a node.
 
 Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
-`workspace-write`, and `bypassPermissions` to `danger-full-access`. Codex does
+`workspace-write`, and `bypassPermissions` to `danger-full-access`. That sandbox
+is also a network boundary, so a Codex graph halts at its first node that
+pushes or calls `gh`. Codex does
 not report USD or implement Claude's per-call `budget_usd` and `agent:`
 selector, so those two graph fields and `--max-goal-budget-usd` are rejected
 before a Codex run spends anything. Claude Code agent mapping and skill
@@ -139,7 +141,7 @@ other run concurrently, up to a cap. `allowed_tools` is the node's own grant,
 not a hint. And failure is a first-class grammar rather than glue code you
 maintain: evidence checks, per-cause `retry`, graph-level `on_fail`, bounded
 `feedback:` review loops, `type: gate` nodes that stop the run for a human
-approval, and a subscription session limit that *pauses* the run so
+approval, and a Claude subscription session limit that *pauses* the run so
 `resume --retry-failed` can later finish exactly the work that never ran.
 
 Every subcommand, every flag, and a recipe per node field — including `auto` in

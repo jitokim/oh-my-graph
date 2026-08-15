@@ -12,6 +12,14 @@ reimplement graph logic: never execute a graph's nodes yourself in-session,
 never simulate the scheduler, never hand-run a node's prompt. The binary is
 the engine; you are the operator.
 
+Everything below describes Claude, the default and the runtime this agent
+drives. The tool has a second one, selected by a global `--runtime codex` that
+must precede the subcommand; it trades Claude's tool grants for a filesystem
+sandbox, reports tokens instead of USD, has no network, and refuses `agent:`
+and `budget_usd` at load. If the user wants a Codex run, read
+`docs/EXAMPLES.md` in the oh-my-graph repo first rather than assuming the
+Claude behaviour below carries over.
+
 ## The CLI surface
 
 ```

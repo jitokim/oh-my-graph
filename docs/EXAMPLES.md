@@ -9,6 +9,8 @@ Reference:
 
 - [The command surface](#the-command-surface) — every subcommand and the
   flags `run`/`auto` share.
+- [What `--runtime codex` changes](#what---runtime-codex-changes) — the one
+  place this file is not about the default runtime.
 - [Reading the ledger](#reading-the-ledger--what-a-pass-says) — what a `PASS`
   actually says it did.
 
@@ -30,18 +32,12 @@ oh-my-graph [--runtime claude|codex] <init|run|auto|lint|chat|resume|runs|show|w
 ```
 
 `--runtime` is a global, run-wide selector and must appear before the
-subcommand. It defaults to `claude`. It applies to `run`, `auto`, `lint`,
+subcommand — `oh-my-graph run g.yaml --runtime codex` is a hard error (`flag
+provided but not defined: -runtime`), not a second spelling. It defaults to
+`claude`. It applies to `run`, `auto`, `lint`,
 `chat`, `resume`, and `serve`; read-only history commands need no selector.
 Every fresh run persists the choice. `resume` and a live view's gate buttons
 read that persisted runtime; passing a different explicit value is an error.
-
-With `--runtime codex`, `permission_mode: plan` maps to `read-only`, ordinary
-modes map to `workspace-write`, and `bypassPermissions` maps to
-`danger-full-access`. Codex reports tokens but no USD total, so the ledger says
-`cost unknown` and prints input/cached/output/reasoning tokens. Positive
-`budget_usd`, `agent:`, and `auto --max-goal-budget-usd` are rejected before
-execution because Codex cannot honor their USD or Claude-agent semantics.
-Claude agent mapping and staged skill activation are disabled for Codex.
 
 | subcommand | purpose |
 |---|---|
@@ -87,10 +83,46 @@ distinction on the planning leg: a command that *dies* mid-planner-call reads
 normally closes its leg with a verdict and the run reads `FAIL`.
 
 `ABANDONED` carries a warning
-worth reading before you act on it — the engine spawns each `claude` in its own
+worth reading before you act on it — the engine spawns each model CLI in its own
 process group, so the death that abandoned the run may have left a subprocess
 still running and still spending. Check before you resume, or you pay for the
 same node twice.
+
+### What `--runtime codex` changes
+
+Everything else in this file describes the default, Claude. Under Codex:
+
+- **The sandbox replaces the tool grants.** `permission_mode: plan` maps to
+  `read-only`, ordinary modes to `workspace-write`, `bypassPermissions` to
+  `danger-full-access`. A node's `allowed_tools` list is **not** translated into
+  Codex permissions — it stays graph documentation, and the run says so before
+  it starts. Everything `lint` advises below about tool grants and tool denials
+  is therefore about the Claude runtime.
+- **No network.** The sandbox blocks it, so `gh`, `git push` and `git ls-remote`
+  fail and a graph halts at its **first** publishing node, wherever that sits.
+  The measurements, the shipped graphs at each of the three positions, and the
+  per-node remedies are in [LIMITATIONS](LIMITATIONS.md#known-limitations).
+- **No USD, anywhere.** Codex counts tokens and never reports dollars, so every
+  node's `COST(USD)` cell reads `unknown`, the run prints `TOTAL COST: unknown`
+  above a `TOKEN USAGE:` line, and there is no spend to compare a budget against.
+- **Three declarations are refused before anything spends:** a positive
+  `budget_usd`, `agent:`, and `auto --max-goal-budget-usd`. Claude agent mapping
+  and staged skill activation are not refused but not attempted — a planned
+  Codex run prints one line saying so.
+- **A session limit is an ordinary failure**, not the resumable pause of
+  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md); `resume
+  --retry-failed` still salvages it ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
+- **The live view shows no per-node transcript tail.** Everything else on the
+  page is unchanged — see [Watch a run](#watch-a-run).
+
+**Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
+`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/` at v0.8.0, all
+eight lint clean under Claude and **five are refused under Codex** —
+`adr-driven-dev` (`agent:` and `budget_usd`), `review-loop`, `dev-review-pr`,
+`self-dev` and `backlog-batch` (`budget_usd`, the last three inheriting it from
+the `e2e-verify` fragment). Of the three that pass, `apply-flags` and
+`merge-shepherd` both publish, so they hit the network wall — `haiku-smoke` is
+the one shipped graph that runs end to end on Codex.
 
 ### What `lint` checks
 
@@ -158,7 +190,10 @@ it. The ledger reports how a verdict was reached, never whether the check was a
 good one. A `FAIL` carries no qualifier — it states its cause in `DETAIL`
 instead. The same closed set is the `provenance` field on a `node_passed` event,
 so an external consumer reads exactly what the terminal prints
-([docs/RUN-FEED.md](RUN-FEED.md#event-types-and-their-extra-fields)).
+([docs/RUN-FEED.md](RUN-FEED.md#event-types-and-their-extra-fields)). The
+qualifier is the engine's own answer and does not move with the runtime; the
+money column does — on a Codex run every cost cell reads `unknown` and the total
+is `TOTAL COST: unknown` above a `TOKEN USAGE:` line.
 
 **Which qualifier a node can earn depends on the path.** A hand-written graph
 earns `verified` by declaring `success_check.verify` — your own reviewed
@@ -196,7 +231,7 @@ such a command has.
 ## Zero-config: auto mode (the headline)
 
 Don't want to write YAML? Give `auto` a goal in plain language and a
-coordinator plans the DAG for you — one claude call (through the same
+coordinator plans the DAG for you — one planner call (through the same
 subscription-auth, env-scrubbed runner every node uses) turns the goal into a
 graph spec, which is validated and executed by the same engine as a
 hand-written graph:
@@ -240,8 +275,11 @@ tools from a fixed allowlist — the coordinator rejects all of those before
 anything runs.
 
 Declaring a narrow tool list is not the same as being held to it, so each
-planned node also runs under a layered execution ceiling. The load-bearing part
-is `--setting-sources ""`: your own `~/.claude/settings.json` is loaded as
+planned node also runs under a layered execution ceiling. **The ceiling below is
+the Claude runtime's**; a planned Codex node is bounded by its filesystem
+sandbox instead, with user config, project rules/AGENTS files and MCP servers
+dropped ([SECURITY.md](../SECURITY.md#codex-planned-node-isolation)). The
+load-bearing part of the Claude ceiling is `--setting-sources ""`: your own `~/.claude/settings.json` is loaded as
 another source of permission *rules*, so a standing `Bash(*)` there used to
 match before a planned node's narrower `Bash(git *)` ever mattered. Loading none
 of your settings leaves oh-my-graph's own argv as the only allow-rule source,
@@ -286,6 +324,11 @@ each other; reach for `auto` when you'd rather describe the outcome and let
 the planner design the DAG.
 
 ### `auto` in depth — goal cycles, agents, skills
+
+Goal cycles (minus `--max-goal-budget-usd`), the plan preview and the one-repair
+bound run on either runtime. **Agent mapping and skill activation do not: they
+are Claude Code mechanisms, and a Codex run attempts neither** — it prints one
+line saying so, and each planned node's sandbox policy instead.
 
 **Goal cycles.** Want `auto` to keep going until the goal is actually met?
 `--max-cycles N` (default 1) turns one invocation into a bounded loop of up to N
@@ -550,9 +593,10 @@ Any of the examples above can be watched while it runs, from three angles.
 already serve the web live view of the leg they are starting on an ephemeral
 `127.0.0.1` port and open it in your browser — the node output feed on the
 left, the DAG map colored as nodes pass, cost and elapsed time in the header.
-A node that is still running shows the tail of its own transcript, so you can
-read what it is doing rather than waiting for a verdict. `--no-web` turns it
-off for a run.
+A node that is still running shows the tail of its own claude transcript, so you
+can read what it is doing rather than waiting for a verdict — that one panel is
+Claude-only, and a Codex node's line carries its state and result but no tail.
+`--no-web` turns it off for a run.
 
 To open it yourself — from a second terminal tab, or after the fact — `serve`
 takes an optional run id. With no id it is a **dashboard** of every run: one
@@ -597,8 +641,10 @@ All four read the same per-run artifacts under `~/.oh-my-graph/runs/<run-id>/`
 — a `state.json` snapshot and an append-only `events.jsonl` — which are a
 documented, stable contract ([docs/RUN-FEED.md](RUN-FEED.md)), so anything
 else you want to point at a run can read them too. Separately, every node runs
-with session persistence on, so it is also an ordinary claude session in
-`~/.claude/projects` from the moment it starts.
+with session persistence on: a claude node is an ordinary session in
+`~/.claude/projects` from the moment it starts, and a Codex node's `codex exec`
+thread id — the `SESSION` column, and `session_id` in both files — is what
+`codex exec resume` takes.
 
 ## Ambient chat (prototype)
 
@@ -668,7 +714,9 @@ remembering yesterday.
 
 Add `agent: <name>` to a node and it runs as one of your existing Claude Code
 subagents instead of plain `claude -p` — the review node runs as *your*
-`code-reviewer`, with its system prompt, its tools and its model:
+`code-reviewer`, with its system prompt, its tools and its model. It is a Claude
+Code mechanism, so a graph declaring it is refused at load under `--runtime
+codex`, before anything spends:
 
 ```yaml
   - id: review
@@ -752,9 +800,9 @@ Edges say *when* a node runs; `handoff` says *what* it inherits from its parent.
 
 |                    | `artifact` (default) | `session` |
 |--------------------|----------------------|-----------|
-| The child inherits | the parent's **final reply**, persisted to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **claude session**, resumed with `--resume`: everything the parent read, did and concluded, not just its reply. The conversation, not the configuration — `allowed_tools`, `permission_mode`, `agent`, `cwd` and `budget_usd` are always the child's own |
+| The child inherits | the parent's **final reply**, persisted to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and substituted wherever `{{ artifacts.<id> }}` appears — the file path by default, the reply text itself with the `\| inline` filter | the parent's **session**, resumed by the selected CLI (claude `--resume`, or the parent's thread through `codex exec resume`): everything the parent read, did and concluded, not just its reply. The conversation, not the configuration — `allowed_tools`, `permission_mode`, `agent`, `cwd` and `budget_usd` are always the child's own |
 | Parents allowed    | any number — fan-in and fan-out belong to artifact | exactly one `claude-run` node (a root, a fan-in or a gate parent is rejected at load time), sharing the parent's `cwd`/`worktree` — `lint` warns on a mismatch |
-| Session shape      | each node is a fresh claude session | a sequential chain continuing one conversation |
+| Session shape      | each node is a fresh session | a sequential chain continuing one conversation |
 
 Why it matters: with `artifact`, context the parent didn't put into its final
 reply is gone — the child starts cold. With `session`, the child picks up
@@ -822,7 +870,9 @@ Spec:
 is compared against the budget; spending more than it declared fails the node
 exactly like a failed `success_check` — the ledger row reads `FAIL` with the
 budgeted-vs-actual overage, and by default the run halts so no dependent spends
-on top of it. Omit `budget_usd` (or set it to 0) and nothing is enforced.
+on top of it. Omit `budget_usd` (or set it to 0) and nothing is enforced. A
+positive one is refused at load under `--runtime codex`, which reports no USD to
+enforce it against.
 
 ```yaml
   - id: e2e
@@ -961,7 +1011,11 @@ Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v1
 
 ## Session limits pause, not fail
 
-When your subscription hits its session limit mid-run, the limited node is not
+This one is the Claude runtime's: the detection reads claude's own prose, so a
+Codex session limit is an ordinary node failure that `resume --retry-failed`
+still salvages ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
+
+When your Claude subscription hits its session limit mid-run, the limited node is not
 marked failed: the run stops launching new work, lets in-flight nodes finish,
 and exits with code 2 and a hint like `Resume after 5:20pm with: oh-my-graph
 resume <run-id> --retry-failed` — which later finishes exactly the work that
