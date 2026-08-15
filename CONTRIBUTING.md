@@ -77,14 +77,49 @@ PR that wires one into a workflow.
 
 ### Merging
 
-- Graph lanes open PRs as **drafts** — CodeRabbit deliberately skips drafts,
-  so marking the PR ready for review is what starts its review.
-- A PR is merged only after CI is green **and** CodeRabbit's review has
-  completed with every comment triaged: either applied (mechanical fixes may
-  be applied by hand within the one-to-two-line threshold; anything more goes
-  through `graphs/apply-flags.yaml`) or answered with a reason.
-- Admin merge is for bypassing the merge-queue mechanics, never for bypassing
-  an unfinished review.
+**What `main` enforces**, and it applies to the maintainer too:
+
+| rule | |
+|---|---|
+| `test` and `stress` must pass | both required; `stress` is the `-count=N` repeat that catches a race a single run hides |
+| the branch must be up to date with `main` | so the checks that passed are the checks for the merged tree |
+| every conversation resolved | a review comment cannot be merged past by ignoring it |
+| **administrators included** | there is no bypass, for anyone |
+
+**There is deliberately no required-approval count**, and the reason is worth
+stating because removing a rule usually means loosening one. This repo had one,
+and it was unsatisfiable: GitHub forbids approving your own pull request, the
+maintainer is currently the only person who merges, and the automated reviewer
+rate-limits for days at a time. So the rule was not met — it was bypassed, six
+times in one day, with `--admin`.
+
+That was strictly worse than not having it. **`--admin` does not bypass the
+review; it bypasses everything**, tests included, and a rule reached for with a
+bypass every time teaches the bypass rather than the rule. Trading it for
+administrator enforcement makes `main` harder to merge into than it was before,
+not easier: nothing now reaches `main` without green checks, including a
+maintainer in a hurry.
+
+**Review is still required — as work, not as a checkbox:**
+
+- Every PR gets a deep review before merge. In practice that is a review node in
+  the lane that produced it (`graphs/backlog-batch.yaml` and friends gate their
+  own lane on it) or a review run against the branch; either way the findings
+  are **posted in the PR thread**, so what was examined is on the record.
+- Every finding is applied or answered with a reason. Mechanical fixes may be
+  applied by hand within the one-to-two-line threshold; anything more goes
+  through `graphs/apply-flags.yaml`.
+- CodeRabbit reviews when it can, and its findings are triaged the same way. It
+  is **not** a gate: it skips drafts, skips PRs above its file limit, and
+  rate-limits — so treating it as the gate is how a repo ends up unable to merge
+  at all.
+- An outside contribution is reviewed and approved by the maintainer, as
+  [#170](https://github.com/jitokim/oh-my-graph/pull/170) was. That is the
+  practice; it is simply no longer a rule that can deadlock the repository when
+  the only available reviewer is the author.
+
+Graph lanes open PRs as **drafts** — CodeRabbit skips drafts, so marking the PR
+ready is what invites it.
 
 ### Attribution
 
@@ -244,12 +279,21 @@ Maintainer checklist for cutting a release:
   v0.3.0 (`TestVersionMatchesChangelog` fails if they drift).
 - **Bump the plugin manifests to the same version.**
   `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
-  move together with the release — CI does not guard these two, so the
-  checklist is the only thing that does.
+  move together with the release. This one IS guarded now
+  (`TestPluginManifestsMatchVersion`) — it used to say the checklist was the
+  only thing guarding it, and then v0.8.0 shipped with both manifests still
+  reading 0.7.0. A checklist item that depends on someone reading it is a note
+  about a guard nobody wrote.
 - **Sync the Korean README.** A release must not ship a stale translation:
   fold any `README.md` changes since the last release into `README.ko.md`
   (English is the source of truth; the ko file carries the precedence
   notice). Nothing in CI guards this — the checklist does.
+- **Write the release's CHANGELOG section as prose.** The release body IS that
+  section — `scripts/release-notes.sh` extracts it and the workflow fails the
+  release if it is missing, so there is no auto-generated fallback to fall back
+  on. `TestChangelogSectionHasSubstance` catches an empty one in the PR, where
+  it is still cheap; a tag is public the moment it lands. The Contributors line
+  is computed from `git log`, so it needs nothing from you.
 - **`make smoke` before tagging.** Run the real-`claude` smoke locally as the
   last gate — it is the only check that exercises an actual subprocess, and
   it never runs in CI.

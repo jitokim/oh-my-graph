@@ -104,3 +104,33 @@ func TestVersionMatchesChangelog(t *testing.T) {
 	}
 	t.Fatal("no `## [` release heading found in CHANGELOG.md")
 }
+
+// TestPluginManifestsMatchVersion pins the two plugin manifests to the Version
+// constant.
+//
+// It exists because the release checklist said, in as many words, that "CI does
+// not guard these two — the checklist is the only thing that does" — and then
+// v0.8.0 shipped with both manifests still reading 0.7.0. A checklist item that
+// depends on a person reading it is not a guard; it is a note about a guard
+// nobody wrote. This is the same argument that produced
+// TestVersionMatchesChangelog after two releases went out reporting a stale
+// version, and it has now been made twice by the same failure.
+//
+// The manifests are read as text rather than decoded: the assertion is about
+// one field, and a JSON round-trip would let an unrelated schema change here
+// fail a test whose subject is the version string.
+func TestPluginManifestsMatchVersion(t *testing.T) {
+	want := `"version": "` + Version + `"`
+	for _, rel := range []string{
+		filepath.Join("..", "..", "plugin", ".claude-plugin", "plugin.json"),
+		filepath.Join("..", "..", ".claude-plugin", "marketplace.json"),
+	} {
+		data, err := os.ReadFile(rel)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), want) {
+			t.Errorf("%s does not carry %s — bump it with cmd/oh-my-graph/version.go", rel, want)
+		}
+	}
+}
