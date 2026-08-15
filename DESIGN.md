@@ -1798,9 +1798,12 @@ one, and it answers 409 like any other view that cannot resume.
   the run's own sessions: the file read is named by the feed-published,
   shape-checked UUID (found by session-id filename, not by reproducing the
   CLI's undocumented cwd-to-dirname mangling), never by URL input. The node
-  id gets `/api/result`'s membership guard, with one widening: before the
-  first snapshot exists (exactly when the first node is running), the run's
-  own feed vouches instead. Not running / no session id (a gate, a
+  id gets `/api/result`'s membership guard, with one widening: while no
+  snapshot exists, the run's own feed vouches instead. (Defensive rather than
+  load-bearing: a run with a graph writes `state.json` before its first node
+  starts, so the snapshot-less shapes — an `auto` run inside its planner call,
+  or one whose plan was refused — are the ones running no node at all.) Not
+  running / no session id (a gate, a
   session-handoff node) / no transcript yet → 204. That transcript is
   claude's file, so the tail is a Claude-runtime supplement: on a run whose
   snapshot names a runtime that keeps no such file, `/api/graph` carries a

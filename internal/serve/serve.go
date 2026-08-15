@@ -383,12 +383,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(page.Bytes())
 }
 
-// graphPayload is /api/graph's response body. Available is false during the
-// window where the run exists but its snapshot does not yet: state.json is
-// written only after each node's terminal verdict (docs/RUN-FEED.md), so a
-// fresh run's structure is honestly "not known yet" until its first node
-// completes — the UI polls until Available flips true rather than the server
-// inventing a structure from anywhere else.
+// graphPayload is /api/graph's response body. Available is false while the run
+// exists but its snapshot does not — which is NOT "until the first node
+// settles": `run`/`auto` writes state.json up front, before the scheduler
+// starts (runstate.SnapshotRecorder.WriteInitial). The snapshot-less shapes are
+// the ones docs/RUN-FEED.md names as legitimate: an `auto` run still inside its
+// planner call, and one whose planner reply was refused (ADR 0023). There the
+// structure is honestly "not known yet" — the UI polls until Available flips
+// true rather than the server inventing a structure from anywhere else.
 type graphPayload struct {
 	RunID     string      `json:"run_id"`
 	Available bool        `json:"available"`
@@ -420,9 +422,12 @@ type graphPayload struct {
 	// that lets the page stop asking: knowing it up front is what retires a
 	// per-running-node request every 3 seconds that could never succeed. It is
 	// a run-level field because the runtime is run-wide (ADR 0025), and it is
-	// available only once the snapshot is (Available above) — the runtime is
-	// snapshot-only, carried by no event, so before the run's first terminal
-	// verdict this side does not know it either.
+	// available whenever the snapshot is — which, since state.json is written
+	// before the first node starts (Available above), means the page has the
+	// answer in its FIRST fetch on every run that has a graph at all. The
+	// snapshot-less shapes carry no answer because the runtime is snapshot-only,
+	// carried by no event; they are also the shapes where no node is running, so
+	// there is no tail to be wrong about.
 	TranscriptNote string `json:"transcript_note,omitempty"`
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -358,12 +359,16 @@ func TestTranscript_UnsafeSessionIdIs204(t *testing.T) {
 // --- #178: a runtime that keeps no transcript says so -------------------------
 
 // TestTranscriptTailNote_IsEmptyOnlyWhereATailCanExist pins the view's ONE
-// runtime branch against the runtime vocabulary itself rather than a
-// transcribed list: every runtime `runner` defines is asked, and exactly the
-// claude ones (plus the empty snapshot value the run-feed contract reads as
-// claude) may answer "a tail exists here". A third runtime added tomorrow
-// lands in the default arm and gets the note — the safe direction, since the
-// tail is claude's file.
+// runtime branch: exactly the claude values — the constant, plus the empty
+// snapshot value the run-feed contract reads as claude — may answer "a tail
+// exists here", and codex must not.
+//
+// The runtimes below are TRANSCRIBED, not enumerated: `runner` exports the two
+// constants and ParseRuntime and no vocabulary to range over, so this test asks
+// about exactly the ones it names. A third runtime is covered by the production
+// code's shape rather than by this test — transcriptTailNote branches with a
+// `default` arm, so a new runtime gets the note until someone deliberately
+// moves it, which is the safe direction since the tail is claude's file.
 func TestTranscriptTailNote_IsEmptyOnlyWhereATailCanExist(t *testing.T) {
 	for _, value := range []string{"", string(runner.RuntimeClaude)} {
 		if note := transcriptTailNote(value); note != "" {
@@ -468,7 +473,13 @@ func TestTranscriptNote_IsRenderedByTheServedPage(t *testing.T) {
 	}
 	// The page must also stop polling on that answer — the note is only half
 	// the fix; the other half is retiring a request every 3s that can only 204.
-	if !strings.Contains(app, "if (transcriptNote) return;") {
+	// Matched as a guard INSIDE pollLiveTail's body, the way cssRuleBodies
+	// matches a rule's body: adding braces or moving the trailing comment must
+	// not redden intact wiring. A bare Contains(app, "transcriptNote") would not
+	// do either — paintTailNote reads it too, so the guard could go and the file
+	// would still mention the name.
+	guard := regexp.MustCompile(`if\s*\(\s*transcriptNote\s*\)\s*\{?\s*return\b`)
+	if !guard.MatchString(jsCodeOnly(jsFunctionBody(t, app, "pollLiveTail"))) {
 		t.Error("ui/app.js's pollLiveTail no longer short-circuits on transcriptNote: the tail is " +
 			"polled every few seconds per running node, and on such a run every poll can only 204")
 	}

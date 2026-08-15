@@ -346,10 +346,13 @@ func capRunes(s string, n int) string {
 //
 // The node id from the URL is matched against the run's node set exactly
 // like /api/result — with one widening /api/result does not need: while no
-// snapshot exists (state.json lands only at the first terminal verdict, and
-// the first node RUNNING is this endpoint's whole purpose), a node the run's
-// own feed has named in a node_started is vouched for by the feed instead.
-// An id neither source knows is a 404 either way.
+// snapshot exists, a node the run's own feed has named in a node_started is
+// vouched for by the feed instead. An id neither source knows is a 404 either
+// way. That widening is defensive rather than load-bearing today: state.json is
+// written before the first node starts (runstate.SnapshotRecorder.WriteInitial),
+// so the snapshot-less shapes are the ones with no node running at all — an
+// `auto` run inside its planner call, or one whose plan was refused
+// (docs/RUN-FEED.md, ADR 0023).
 func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("node")
 

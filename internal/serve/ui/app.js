@@ -378,8 +378,10 @@ async function loadGraph() {
   renderGoal(payload.goal);
   if (gen === statusGen) applyRunStatus(payload);
   if (!payload.available) {
-    // Honest window: structure is unknown until the first node's terminal
-    // verdict writes state.json. Keep polling; events still stream meanwhile.
+    // Honest window: the run has no state.json yet — an auto run inside its
+    // planner call, or one whose plan was refused (docs/RUN-FEED.md). NOT
+    // "until the first node settles": a run with a graph writes its snapshot
+    // before the first node starts. Keep polling; events still stream meanwhile.
     // An abandoned snapshot-less run keeps the status applyRunStatus set: it
     // will never write a state.json, so "waiting for structure" would be a
     // promise nothing is going to keep.
@@ -997,10 +999,13 @@ function buildMetaLine(info) {
 const TAIL_POLL_MS = 3000;
 
 // The sentence to show instead of a tail, "" while the tail works. Empty until
-// /api/graph answers with a snapshot behind it — the runtime is snapshot-only,
-// so during a fresh run's no-state.json window this page assumes a tail and
-// polls, exactly as it did before, and applyTranscriptNote repaints the tails
-// already on screen the moment the answer lands.
+// /api/graph answers with a snapshot behind it — the runtime is snapshot-only.
+// In practice that is the FIRST answer on any run with a graph, since the
+// snapshot is written before the first node starts; the no-state.json shapes
+// (an auto run inside its planner call) run no node, so the assume-a-tail
+// default is never what a reader sees. applyTranscriptNote still repaints the
+// tails already on screen when the answer lands, so the order of the two
+// fetches cannot leave a tail element polling.
 let transcriptNote = "";
 
 function applyTranscriptNote(payload) {
