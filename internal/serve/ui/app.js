@@ -7,8 +7,9 @@
 // absorbs its started-line (retry lines stay — a retry is a real
 // transition). Four read sources, mirroring the run-feed contract
 // (docs/RUN-FEED.md), and — on a paused gate's entry only — one write:
-//   /api/graph   the DAG structure (polled until the snapshot exists — a
-//                fresh run has no state.json until its first node completes),
+//   /api/graph   the DAG structure (polled until the snapshot exists — which
+//                is written up front, so the only snapshot-less runs are the
+//                legitimate ones: still planning, or a refused plan),
 //                plus the one fact no stream carries: whether this run's open
 //                leg still has a process behind it (ADR 0015 — the answer
 //                needs the run lock, which only the server can probe), and

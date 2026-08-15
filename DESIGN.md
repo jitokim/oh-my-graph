@@ -1778,10 +1778,13 @@ one, and it answers 409 like any other view that cannot resume.
   `--no-open` is `serve`'s name for `--no-web`'s opt-out, and a non-terminal
   stdout reaches no Opener at all, leaving its output byte-identical to
   before.
-- The graph structure appears when it is known: `state.json` is written only
-  after each node's terminal verdict, so a fresh run's `/api/graph` honestly
-  reports the structure unavailable until the first node completes (the UI
-  polls); events stream from the start.
+- The graph structure appears when it is known, and that is **before the first
+  node**, not after it: `run`/`auto` writes `state.json` up front
+  (`runstate.SnapshotRecorder.WriteInitial`) and again after every terminal
+  verdict. `/api/graph` reports the structure unavailable only while a run
+  legitimately has no snapshot at all — an `auto` run still inside its planner
+  call, or one whose planner reply was refused (docs/RUN-FEED.md). The UI polls;
+  events stream from the start.
 - **Node results:** `/api/result?node=<id>` serves that node's handoff
   artifact (`<run-dir>/<node-id>.out`) as text/plain for the feed's settled
   entries —

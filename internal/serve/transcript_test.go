@@ -442,11 +442,16 @@ func TestTranscript_CodexRunningNodeIs204AndTheNoteIsTheCue(t *testing.T) {
 		Runtime: string(runner.RuntimeCodex),
 		Graph:   json.RawMessage(twoNodeGraph),
 	})
-	// A codex thread id is not a UUID naming a file under ~/.claude/projects;
-	// this is what the run's own feed publishes for a running codex node.
+	// The id is UUID-SHAPED on purpose. A codex thread id looks exactly like
+	// this — the repo's own fixture is `019c5a2b-…` (codex_protocol_test.go) —
+	// so it PASSES sessionIDSafe and the request reaches the real lookup, which
+	// then finds no file under ~/.claude/projects. That is the arm a codex run
+	// actually takes. An id that fails the safety check would 204 too, and for
+	// the wrong reason: it would re-test what TestTranscript_UnsafeSessionIdIs204
+	// already covers while leaving this path unexercised.
 	writeEvents(t, dir, "run-1",
 		runfeed.Event{Type: runfeed.EventRunStarted},
-		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a", SessionID: "01998f2c-thread-not-a-file"},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "a", SessionID: "019c5a2b-62d5-7d81-98a7-68c9f4d84f84"},
 	)
 	s, _ := newTranscriptServer(t, dir)
 
