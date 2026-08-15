@@ -146,13 +146,32 @@ execution outside one), and `gate` (`paused_at`, `decisions`).
 
 `runtime` is the run-wide model CLI (ADR 0025). It is omitted when empty and
 **absent means `claude`** — the CLI canonicalizes an unset runtime before
-writing, so a fresh writer always persists it. It is also the **only** place the
-runtime is recorded: no event carries it (`runfeed.Event` has no such field), so
-a consumer that only tails the stream cannot tell a Codex run from a Claude one
-and must read the snapshot to know. The consequence most likely to matter is
-accounting: **a Codex invocation reports no USD at all**, so every one of its
-records and events carries `cost_unknown` with no `cost_usd` — token counts and
-nothing else. Treat that as absent, never as a known zero.
+writing, so every snapshot the CLI writes carries it. Read that as the rule for
+reading, not as a guarantee about writers: the field is `omitempty` and the
+canonicalization lives on the CLI's path rather than in `runstate.Write`, so a
+caller of the package could still leave it out
+([#179](https://github.com/jitokim/oh-my-graph/issues/179)). Either way the
+absent case has one meaning and it is `claude`.
+
+It is also the **only** place the runtime is recorded: no event carries it
+(`runfeed.Event` has no such field), so a consumer that only tails the stream
+cannot tell a Codex run from a Claude one and must read the snapshot to know.
+
+The consequence most likely to matter is accounting: **a Codex invocation
+reports no USD at all.** Every such record and event carries `cost_unknown`, and
+what you find beside it differs by file — which is exactly where a consumer goes
+wrong:
+
+| | `cost_unknown` | `cost_usd` |
+|---|---|---|
+| `events.jsonl` (`runfeed.Event`) | `true` | **omitted** (`omitempty`) |
+| `state.json` (`runstate.NodeRecord`) | `true` | **present, and it reads `0`** |
+
+So the snapshot hands you the very thing this document tells you not to infer.
+`cost_unknown: true` makes the number beside it non-authoritative: it is not a
+measurement, and a `0` there is filler, not a free call. **Never sum `cost_usd`
+across records without checking `cost_unknown` first** — over a Codex run that
+sum is $0.00 for work that was paid for.
 
 `judged` (additive, ADR 0020 — no schema bump) marks a FAIL a check rendered a
 verdict **on**, as opposed to one the machinery caused: a failed `success_check`

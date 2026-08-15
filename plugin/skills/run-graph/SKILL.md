@@ -11,7 +11,8 @@ oh-my-graph is a standalone Go CLI that runs a DAG of model-CLI subprocess
 nodes on the user's own saved login. This skill is a thin wrapper: it does not
 reimplement any graph logic, it just invokes the binary.
 
-The `allowed-tools` grant above matches `oh-my-graph run ` only, so what it
+The `allowed-tools` grant above matches the prefix `oh-my-graph run` (with its
+trailing space) only, so what it
 starts is a `claude -p` node — the default runtime. Reaching the second one
 (`oh-my-graph --runtime codex run ...`) is not pre-granted here, for the same
 reason and with the same consequences as for `/graph`; see

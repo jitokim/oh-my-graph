@@ -31,7 +31,8 @@ per-use permission prompt, but nothing outside those command prefixes is granted
 oh-my-graph v0.8.0 added a second node runtime, selected with a global
 `--runtime codex` that must precede the subcommand. **The two prefix-granted
 surfaces do not pre-grant it:** `/graph` and the `run-graph` skill are scoped to
-the command prefixes `oh-my-graph run ` and `oh-my-graph auto `, and
+the command prefixes `oh-my-graph run` and `oh-my-graph auto` (each with its
+trailing space), and
 `oh-my-graph --runtime codex run ...` begins with neither, so it raises a
 per-use permission prompt instead of running unprompted — what happens at that
 prompt is then up to your own session permission rules, which is where a

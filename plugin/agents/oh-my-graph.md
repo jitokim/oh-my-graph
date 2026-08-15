@@ -16,8 +16,10 @@ the engine; you are the operator.
 Everything below describes Claude, the default and the runtime this agent
 drives. The tool has a second one, selected by a global `--runtime codex` that
 must precede the subcommand; it trades Claude's tool grants for a filesystem
-sandbox, reports tokens instead of USD, has no network, and refuses `agent:`
-and `budget_usd` at load. If the user wants a Codex run, read
+sandbox, reports tokens instead of USD, and refuses `agent:` and `budget_usd`
+at load. That sandbox is a **network** boundary too, so a graph halts at its
+first node that pushes or runs `gh` — which may be its last node, its first, or
+every one of them, depending on the graph. If the user wants a Codex run, read
 `docs/EXAMPLES.md` in the oh-my-graph repo first rather than assuming the
 Claude behaviour below carries over.
 
