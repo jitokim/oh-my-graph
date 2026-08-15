@@ -293,7 +293,15 @@ type GateState struct {
 // GateDecision are: the on-disk vocabulary belongs to the persistence format,
 // so Schema stays the single gate on what the bytes mean. Its string value
 // matches runner.RuntimeClaude.
-const RuntimeClaude = "claude"
+const (
+	RuntimeClaude = "claude"
+	// RuntimeCodex is declared beside it so the on-disk vocabulary this package
+	// owns is complete. Only RuntimeClaude is load-bearing — it is what an empty
+	// value canonicalizes to — but half a vocabulary is worse than either whole
+	// option: it invites the pair to be written as one constant and one string
+	// literal, which is how a value set stops being a value set.
+	RuntimeCodex = "codex"
+)
 
 // Snapshot is the whole resumable state of a run — everything a second
 // `oh-my-graph` process needs to continue where the first left off, and nothing
@@ -309,7 +317,8 @@ type Snapshot struct {
 	// RunID is the run this snapshot belongs to (the <run-id> in its path). Held in
 	// the file too so a snapshot is self-identifying if copied out of its directory.
 	RunID string `json:"run_id"`
-	// Runtime is the run-wide model CLI (ADR 0025): RuntimeClaude or "codex".
+	// Runtime is the run-wide model CLI (ADR 0025): RuntimeClaude or
+	// RuntimeCodex.
 	// It is ALWAYS present in the file. An empty in-memory value is
 	// canonicalized to RuntimeClaude by Snapshot.MarshalJSON — the type's own
 	// serialization boundary, so no writer can produce a snapshot without it
@@ -384,9 +393,8 @@ type Snapshot struct {
 // an unset runtime before writing. A future writer calling Write — or
 // marshaling a Snapshot by any other route — would have persisted a schema-3
 // snapshot with NO runtime, which every consumer then reads as claude even
-// when the run was Codex. Schema 3 was bumped precisely so an older reader
-// could not misread runtime identity; a field that can silently go missing
-// reopens the hole the bump was taken to close.
+// when the run was Codex — reopening the hole the schema-3 bump was taken to
+// close (see the Runtime field's comment for that argument, stated once).
 //
 // The two lesser fixes were rejected for being weaker in the same way. Merely
 // dropping `omitempty` still lets a caller persist `"runtime": ""` — the same

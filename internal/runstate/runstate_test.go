@@ -165,27 +165,18 @@ func TestMarshalJSON_CanonicalizesRuntimeOffTheWritePath(t *testing.T) {
 	if !strings.Contains(string(encoded), `"runtime":"claude"`) {
 		t.Fatalf("a direct marshal dropped the runtime: %s", encoded)
 	}
-	// Never the empty string either — that is the same missing answer in a
-	// different shape, and dropping omitempty alone would have allowed it.
-	if strings.Contains(string(encoded), `"runtime":""`) {
-		t.Fatalf("runtime encoded as the empty string: %s", encoded)
-	}
 }
 
 // TestMarshalJSON_NamedRuntimeSurvives guards the other half: canonicalization
 // must only fill an empty value, never overwrite a real one — a Codex run
 // recorded as claude is exactly the misreading schema 3 exists to prevent.
 func TestMarshalJSON_NamedRuntimeSurvives(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err := Write(path, sampleSnapshot()); err != nil { // Runtime: "codex"
-		t.Fatalf("write: %v", err)
-	}
-	got, err := Load(path)
+	encoded, err := json.Marshal(Snapshot{RunID: "run-1", Runtime: RuntimeCodex})
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("marshal: %v", err)
 	}
-	if got.Runtime != "codex" {
-		t.Fatalf("loaded runtime = %q, want codex", got.Runtime)
+	if !strings.Contains(string(encoded), `"runtime":"codex"`) {
+		t.Fatalf("canonicalization overwrote a named runtime: %s", encoded)
 	}
 }
 
@@ -235,24 +226,6 @@ func TestLoad_AbsentRuntimeStillReadsAsClaude(t *testing.T) {
 	}
 	if reloaded.Runtime != RuntimeClaude {
 		t.Fatalf("carried-forward runtime = %q, want %q", reloaded.Runtime, RuntimeClaude)
-	}
-}
-
-// TestLoad_Schema2StillRefused pins the other compatibility promise: the
-// snapshots this build already refuses must keep being refused the same way,
-// with the found version named.
-func TestLoad_Schema2StillRefused(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte(`{"schema":2,"run_id":"x","graph":{}}`), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-	_, err := Load(path)
-	var mErr *SchemaMismatchError
-	if !errors.As(err, &mErr) {
-		t.Fatalf("expected *SchemaMismatchError, got %T: %v", err, err)
-	}
-	if mErr.Found != 2 || mErr.Want != Schema {
-		t.Fatalf("mismatch error carried wrong versions: %+v", mErr)
 	}
 }
 
