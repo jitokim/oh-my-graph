@@ -124,6 +124,111 @@ func TestWriteLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+// --- the runtime is always written -----------------------------------------
+
+// TestWrite_UnsetRuntimeIsWrittenAsClaude is the write hole itself: a snapshot
+// whose Runtime the caller never set must still land on disk NAMING its
+// runtime, because a consumer reading a schema-3 file cannot tell "the writer
+// forgot" from "this was a Claude run".
+func TestWrite_UnsetRuntimeIsWrittenAsClaude(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	snap := sampleSnapshot()
+	snap.Runtime = "" // a caller of the package, not the CLI's canonicalizing path
+
+	if err := Write(path, snap); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !strings.Contains(string(raw), `"runtime": "claude"`) {
+		t.Fatalf("snapshot on disk does not name its runtime:\n%s", raw)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Runtime != RuntimeClaude {
+		t.Fatalf("loaded runtime = %q, want %q", got.Runtime, RuntimeClaude)
+	}
+}
+
+// TestMarshalJSON_CanonicalizesRuntimeOffTheWritePath proves the guarantee is
+// the type's and not Write's: a future writer that marshals a Snapshot by any
+// other route gets the same canonicalized bytes.
+func TestMarshalJSON_CanonicalizesRuntimeOffTheWritePath(t *testing.T) {
+	encoded, err := json.Marshal(Snapshot{RunID: "run-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"runtime":"claude"`) {
+		t.Fatalf("a direct marshal dropped the runtime: %s", encoded)
+	}
+}
+
+// TestMarshalJSON_NamedRuntimeSurvives guards the other half: canonicalization
+// must only fill an empty value, never overwrite a real one — a Codex run
+// recorded as claude is exactly the misreading schema 3 exists to prevent.
+func TestMarshalJSON_NamedRuntimeSurvives(t *testing.T) {
+	encoded, err := json.Marshal(Snapshot{RunID: "run-1", Runtime: RuntimeCodex})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"runtime":"codex"`) {
+		t.Fatalf("canonicalization overwrote a named runtime: %s", encoded)
+	}
+}
+
+// TestMarshalJSON_DoesNotMutateCaller keeps the canonicalization local to the
+// encoding: SnapshotRecorder marshals the same base snapshot after every node,
+// and a marshaler that rewrote it would be changing a caller's value behind its
+// back.
+func TestMarshalJSON_DoesNotMutateCaller(t *testing.T) {
+	snap := Snapshot{RunID: "run-1"}
+	if _, err := json.Marshal(snap); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if snap.Runtime != "" {
+		t.Fatalf("marshaling rewrote the caller's snapshot: runtime = %q", snap.Runtime)
+	}
+}
+
+// TestLoad_AbsentRuntimeStillReadsAsClaude is the backward-compatibility half:
+// a schema-3 snapshot written by v0.8.0 with no `runtime` key must keep loading
+// exactly as it does today — the read rule did not change, only the write side
+// did. The empty value it decodes to is the absent case, and it still means
+// claude; re-writing that snapshot now says so out loud.
+func TestLoad_AbsentRuntimeStillReadsAsClaude(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(path, []byte(`{"schema":3,"run_id":"old-run","graph":{}}`), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("an existing schema-3 snapshot must still load: %v", err)
+	}
+	if got.Runtime != "" {
+		t.Fatalf("Load must not rewrite an absent runtime, got %q", got.Runtime)
+	}
+
+	// Carried forward by a resumed leg, the same run is now explicit — same
+	// meaning, said rather than assumed.
+	rewritten := filepath.Join(dir, "resumed.json")
+	if err := Write(rewritten, got); err != nil {
+		t.Fatalf("write carried-forward snapshot: %v", err)
+	}
+	reloaded, err := Load(rewritten)
+	if err != nil {
+		t.Fatalf("load carried-forward snapshot: %v", err)
+	}
+	if reloaded.Runtime != RuntimeClaude {
+		t.Fatalf("carried-forward runtime = %q, want %q", reloaded.Runtime, RuntimeClaude)
+	}
+}
+
 func TestWriteLoad_SettingSourcesEmptyPointerSurvives(t *testing.T) {
 	// The pointer distinction is the Layer-1 isolation switch: nil = flag omitted,
 	// &"" = "load no settings". A round-trip must not collapse &"" into nil.

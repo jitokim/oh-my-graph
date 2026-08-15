@@ -144,14 +144,17 @@ in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
 
-`runtime` is the run-wide model CLI (ADR 0025). It is omitted when empty and
-**absent means `claude`** — the CLI canonicalizes an unset runtime before
-writing, so every snapshot the CLI writes carries it. Read that as the rule for
-reading, not as a guarantee about writers: the field is `omitempty` and the
-canonicalization lives on the CLI's path rather than in `runstate.Write`, so a
-caller of the package could still leave it out
-([#179](https://github.com/jitokim/oh-my-graph/issues/179)). Either way the
-absent case has one meaning and it is `claude`.
+`runtime` is the run-wide model CLI (ADR 0025). **Every snapshot written by this
+build carries it**, and that is now a property of the format rather than of one
+writer's discipline: the field is no longer `omitempty`, and an unset runtime is
+canonicalized to `"claude"` inside `Snapshot.MarshalJSON`, so it is present
+whichever code path produced the file
+([#179](https://github.com/jitokim/oh-my-graph/issues/179)). It is never written
+as the empty string either.
+
+Older snapshots may still have no `runtime` key — a schema-3 file written by
+v0.8.0, before the field was made unconditional. The reading rule is unchanged
+and covers them: **absent means `claude`.**
 
 It is also the **only** place the runtime is recorded: no event carries it
 (`runfeed.Event` has no such field), so a consumer that only tails the stream
