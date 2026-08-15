@@ -103,17 +103,23 @@ Everything else in this file describes the default, Claude. Under Codex:
   The measurements, the shipped graphs at each of the three positions, and the
   per-node remedies are in [LIMITATIONS](LIMITATIONS.md#known-limitations).
 - **No USD, anywhere.** Codex counts tokens and never reports dollars, so every
-  node's `COST(USD)` cell reads `unknown`, the run prints `TOTAL COST: unknown`
-  above a `TOKEN USAGE:` line, and there is no spend to compare a budget against.
+  node that *invokes* it has a `COST(USD)` cell reading `unknown`, the run prints
+  `TOTAL COST: unknown` above a `TOKEN USAGE:` line, and there is no spend to
+  compare a budget against. (A row for a node that spawned nothing — an approved
+  gate, a node that died before its subprocess started — still reads `0.0000`,
+  which is what it cost.)
 - **Three declarations are refused before anything spends:** a positive
   `budget_usd`, `agent:`, and `auto --max-goal-budget-usd`. Claude agent mapping
   and staged skill activation are not refused but not attempted — a planned
   Codex run prints one line saying so.
 - **A session limit is an ordinary failure**, not the resumable pause of
-  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md); `resume
-  --retry-failed` still salvages it ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
-- **The live view shows no per-node transcript tail.** Everything else on the
-  page is unchanged — see [Watch a run](#watch-a-run).
+  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md). The detection
+  is gated on the runtime, not on wording, so a Codex limit can never be read as
+  a pause; `resume --retry-failed` still salvages it
+  ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
+- **The live view shows no per-node transcript tail.** Node states, verdicts and
+  the settled per-node result render as they do for a Claude run, with the cost
+  figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
 
 **Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
 `oh-my-graph --runtime codex lint <graph>`. Run against `graphs/` at v0.8.0, all
@@ -121,8 +127,8 @@ eight lint clean under Claude and **five are refused under Codex** —
 `adr-driven-dev` (`agent:` and `budget_usd`), `review-loop`, `dev-review-pr`,
 `self-dev` and `backlog-batch` (`budget_usd`, the last three inheriting it from
 the `e2e-verify` fragment). Of the three that pass, `apply-flags` and
-`merge-shepherd` both publish, so they hit the network wall — `haiku-smoke` is
-the one shipped graph that runs end to end on Codex.
+`merge-shepherd` both publish, so they hit the network wall — leaving
+`haiku-smoke` as the one shipped graph with no node that needs the network.
 
 ### What `lint` checks
 
@@ -192,8 +198,8 @@ instead. The same closed set is the `provenance` field on a `node_passed` event,
 so an external consumer reads exactly what the terminal prints
 ([docs/RUN-FEED.md](RUN-FEED.md#event-types-and-their-extra-fields)). The
 qualifier is the engine's own answer and does not move with the runtime; the
-money column does — on a Codex run every cost cell reads `unknown` and the total
-is `TOTAL COST: unknown` above a `TOKEN USAGE:` line.
+money column does ([What `--runtime codex`
+changes](#what---runtime-codex-changes)).
 
 **Which qualifier a node can earn depends on the path.** A hand-written graph
 earns `verified` by declaring `success_check.verify` — your own reviewed
@@ -1011,9 +1017,8 @@ Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v1
 
 ## Session limits pause, not fail
 
-This one is the Claude runtime's: the detection reads claude's own prose, so a
-Codex session limit is an ordinary node failure that `resume --retry-failed`
-still salvages ([#171](https://github.com/jitokim/oh-my-graph/issues/171)).
+This one is the Claude runtime's ([What `--runtime codex`
+changes](#what---runtime-codex-changes)).
 
 When your Claude subscription hits its session limit mid-run, the limited node is not
 marked failed: the run stops launching new work, lets in-flight nodes finish,

@@ -89,9 +89,11 @@ session id) are what let any consumer locate it.
 equivalent.** `/api/transcript` looks for `<session-id>.jsonl` under
 `~/.claude/projects` and nowhere else, so for a Codex node — whose published id
 is a `codex exec` thread rather than a file there — it answers 204 and the live
-view renders no tail at all. Nothing else about the view changes: node states,
-verdicts, cost and the settled per-node result all come from the two files this
-document contracts, so they render for a Codex run exactly as for a Claude one.
+view renders no tail at all. Nothing else about the view takes a second code
+path: node states, verdicts, cost and the settled per-node result all come from
+the two files this document contracts, and the view has no runtime branch — the
+cost figure differs only because the data does, reading `cost unknown` off the
+`cost_unknown` flag described below.
 A consumer building its own live output for Codex has no in-repo reader to
 follow.
 
