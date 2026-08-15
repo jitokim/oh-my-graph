@@ -26,6 +26,41 @@ The command is scoped to `allowed-tools: Bash(oh-my-graph run *), Bash(oh-my-gra
 so any `oh-my-graph run ...` or `oh-my-graph auto ...` invocation runs without a
 per-use permission prompt, but nothing outside those command prefixes is granted.
 
+## Which entry point can reach the second runtime
+
+oh-my-graph v0.8.0 added a second node runtime, selected with a global
+`--runtime codex` that must precede the subcommand. **The two prefix-granted
+surfaces do not pre-grant it:** `/graph` and the `run-graph` skill are scoped to
+the command prefixes `oh-my-graph run` and `oh-my-graph auto` (each with its
+trailing space), and
+`oh-my-graph --runtime codex run ...` begins with neither, so it raises a
+per-use permission prompt instead of running unprompted — what happens at that
+prompt is then up to your own session permission rules, which is where a
+standing `Bash(*)` would still match. There is no other spelling to fall back on
+— the flag is rejected after the subcommand (`oh-my-graph run g.yaml --runtime
+codex` exits with `flag provided but not defined: -runtime`). Through those two
+surfaces, a node starts as a `claude` subprocess on your saved Claude login,
+which is what the rest of this file describes.
+
+**The agent is the exception.** `agents/oh-my-graph.md` names
+`Bash(oh-my-graph *)` in its `tools` list, a pattern that does cover
+`oh-my-graph --runtime codex run ...` — and that field does not restrict which
+commands run in the first place (see the **Plugin-agent limits** bullet below).
+So the agent — the surface this file recommends above — can reach Codex, and its
+prompt says what to read before a Codex run rather than pretending the option
+isn't there.
+
+**The command grants are deliberately not widened, and that is a design note
+rather than a limitation to fix.** A prefix grant matches literal argv, so
+covering the flag means enumerating its spellings — `--runtime codex run`,
+`--runtime=codex run`, and the same two for `auto` and for `claude` — six
+entries to express one boolean, and the enumeration multiplies the day a second
+global flag appears. A grant list nobody can read at a glance is worse than a
+missing convenience, especially for the one list standing between a session and
+an unprompted spend. Run Codex graphs from a shell (`oh-my-graph --runtime codex
+run graph.yaml`); what `--runtime codex` changes about a run is in
+[docs/EXAMPLES.md](../docs/EXAMPLES.md#what---runtime-codex-changes).
+
 ## `/graph` invocation UX
 
 > **Namespacing:** when the plugin is installed via a marketplace, Claude Code

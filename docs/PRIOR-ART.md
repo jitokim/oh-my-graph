@@ -1,13 +1,15 @@
 # Prior art
 
 How oh-my-graph compares to its nearest neighbours. The differentiator in one
-line: no existing graph-native orchestrator drives the **subscription**
-`claude` CLI — they all bill per token through the API.
+line: no existing graph-native orchestrator runs its nodes as the **provider's
+own CLI on that CLI's saved login** — `claude` by default, `codex` under
+`--runtime codex` ([ADR 0025](adr/0025-one-run-one-cli-runtime.md)) —
+they all bill per token through an API.
 
 - **[microsoft/conductor](https://github.com/microsoft/conductor)** — same
   philosophy: the graph is declared in YAML and the LLM is kept out of the
-  orchestration loop, only executing nodes. It doesn't drive the subscription
-  `claude` CLI specifically — that's oh-my-graph's differentiator.
+  orchestration loop, only executing nodes. It doesn't run its nodes as a
+  provider's own logged-in CLI — that's oh-my-graph's differentiator.
 - **[OMK](https://github.com/dmae97/omk)** — the closest sibling. Runs coding
   agents (including Claude Code) in scoped DAG lanes, and verifies node
   success against external evidence rather than the node's own self-report.
