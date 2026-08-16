@@ -113,8 +113,10 @@ Everything else in this file describes the default, Claude. Under Codex:
   is not refused ([ADR 0026](adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md)):
   without USD there is nothing to bound, so the graph loads and one warning per
   budgeted node says the cap cannot apply and names the `timeout:` still
-  guarding that node. The goal ceiling is refused because it is the only bound
-  on an iterating loop, not because it is a dollar figure. Claude agent mapping
+  guarding that node. The goal ceiling is refused because it is checked only at
+  a cycle boundary — accepting an unmeasurable one buys a whole cycle to learn
+  that — not because it is a dollar figure; `--max-cycles` bounds the loop
+  either way. Claude agent mapping
   and staged skill activation are not refused but not attempted — a planned
   Codex run prints one line saying so.
 - **A session limit is an ordinary failure**, not the resumable pause of

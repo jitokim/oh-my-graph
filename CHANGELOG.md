@@ -22,8 +22,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the runner's 20m default. Measured on `graphs/*.yaml`: **five refused under
   `--runtime codex` before, one after** (`adr-driven-dev`, for its `agent:`).
   `auto --max-goal-budget-usd` stays refused and that is not an inconsistency:
-  a goal ceiling is the only bound on an iterating loop, so an unmeasurable one
-  would buy a whole cycle to discover it cannot be checked.
+  it is checked only at a cycle boundary, so an unmeasurable ceiling would buy a
+  whole cycle before stopping to say it cannot be checked, where an inapplicable
+  node cap costs nothing extra. The loop stays bounded either way —
+  `--max-cycles` is what bounds iterations.
   `internal/runner/shipped_graphs_runtime_test.go` now lints every shipped
   graph under both runtimes and asserts the verdict by name, so a graph that
   becomes unloadable under Codex fails `make test` instead of a user's run.

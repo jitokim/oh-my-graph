@@ -85,7 +85,7 @@ Preflight returns two verdicts instead of one, and the third case does not move:
 | --- | --- | --- |
 | `agent:` | **REFUSE** | dropping it changes what the node *is* |
 | node `budget_usd` | **ACCEPT + say the cap cannot apply** | nothing to bound; `timeout:` still guards |
-| `auto --max-goal-budget-usd` | **REFUSE** (unchanged) | the only bound on an iterating loop |
+| `auto --max-goal-budget-usd` | **REFUSE** (unchanged) | checked only at a cycle boundary, so accepting it buys a cycle |
 
 `ValidateGraphForRuntime` therefore returns `([]string, error)`. The warning
 names the node, the declared cap, why it cannot apply, **and which guard remains
@@ -103,15 +103,26 @@ know what the budget will and will not do.
 This is the part a later reader will otherwise "fix" into consistency, so it is
 written down: **the asymmetry is deliberate.**
 
-A per-node `budget_usd` is one node's runaway insurance, and that node has
-another bound — its timeout — that survives the runtime change. A goal ceiling
-is the **only** thing bounding an ITERATING `auto` loop: without it the loop's
-sole stop condition is `--max-cycles`, and the ceiling is what a user reaches
-for when cycles alone are not a spend they can predict. Under Codex it can never
-be evaluated, so a loop that accepted it would stop at its first cycle boundary
-with `StopBudgetUnmeasurable` (`internal/coordinator/goal.go`) — having bought
-a whole cycle to learn what preflight can say for free, before anything spends.
-Refusing up front is the honest answer.
+It is tempting to write that the goal ceiling is the *only* bound on an
+iterating loop. That is false, and stating it would hand the next reader a
+premise the code denies: `--max-cycles` hard-bounds every loop, has no unbounded
+spelling, and is validated at parse before anything spends (ADR 0011 §1,
+`flags.go`) — which is also why the ceiling is refused unless `--max-cycles` is
+at least 2. Drop the ceiling and the loop is still bounded, exactly as a node
+keeps its `timeout:`. The ceiling is the only **spend**-shaped bound; cycles
+bound iterations, not dollars.
+
+The distinction that does hold is **when each one discovers it cannot be
+evaluated**, and it is verifiable in the code. A per-node `budget_usd` costs
+nothing extra to accept: it is simply never compared against a cost
+(`schedule.evaluateBudget` returns nil for an unknown cost), and the node's
+timeout is unaffected. The goal ceiling is a **cycle-boundary** check — the
+`cycle > 1` block in `internal/coordinator/goal.go` — so a loop that accepted an
+unmeasurable one would run a whole cycle, then stop at the first boundary with
+`StopBudgetUnmeasurable`, having bought that cycle to learn what preflight can
+say for free. Refusing up front is the honest answer, and it is honest about its
+reason: not "you would be unbounded", but "you would pay a cycle for an answer
+available at parse".
 
 The rule underneath both, stated once: **refuse a declaration when accepting it
 would change what runs or spend money to discover it is unenforceable; warn
@@ -121,18 +132,27 @@ when the declaration simply has nothing to act on.**
 
 There are five `ValidateGraphForRuntime` call sites — `run`, `executeGraph`,
 `lint`, `run --dry-run`, and `resume`. All five print, through one
-`warnRuntimePreflight` helper, on the advisory `warning:` channel that never
-touches an exit code. `run` alone passes `io.Discard` into `executeGraph`, so
-its single invocation prints the list once (in the pre-run Codex disclosure)
-rather than twice; a nil writer there means stderr, never silence. A warning
-nobody prints is the silent drop this whole change exists to avoid.
+`warnRuntimePreflight` helper, as `warning:` lines that never touch an exit
+code. Four of them use the advisory stream (stderr); `run` routes its copy to
+the stdout its pre-run Codex disclosure prints on, because the disclosure block
+directly below refers back to those lines ("each such node is warned by name")
+and splitting a reference from its referent across two streams reads worse than
+the inconsistency. `run` alone passes `io.Discard` into `executeGraph`, so its
+single invocation prints the list once rather than twice; a nil writer there
+means stderr, never silence. A warning nobody prints is the silent drop this
+whole change exists to avoid — which is why `cmd/oh-my-graph/runtime_test.go`
+pins the printing at the spawn-free sites (`lint`, `--dry-run`) and pins that
+`run` prints the list exactly once, rather than leaving the claim to a comment
+any deletion would leave green.
 
 ### A test that keeps it true
 
 `internal/runner/shipped_graphs_runtime_test.go` lints every `go:embed`ed graph
 under both runtimes and asserts the expected verdict **per named graph**, with
-the reason recorded beside it — not a count, so a failure says *which* graph
-changed. It also fails when a graph ships with no row at all. Preflight spawns
+the reason recorded beside it — never one aggregate number, so a failure says
+*which* graph changed. Per graph the warnings ARE counted, against the table in
+§1: a presence check would stay green when `review-loop` loses one of its two
+caps. It also fails when a graph ships with no row at all. Preflight spawns
 no process and needs no login, so this is free and deterministic, and it belongs
 in `make test` rather than a CI shell step.
 

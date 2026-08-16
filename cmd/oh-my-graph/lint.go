@@ -128,6 +128,15 @@ func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 // cap), and a warning nobody prints is exactly the silent drop the split
 // exists to avoid. path may be empty, for the callers that judge a graph in
 // memory rather than a file on disk. Advice only: never an exit code.
+//
+// The writer is the caller's, and the callers do not all pick the same stream:
+// `lint`, `--dry-run`, `resume` and executeGraph's default put these on stderr
+// with every other `warning:` line, while `run` deliberately routes them to the
+// stdout its pre-run Codex DISCLOSURE prints on. That is not drift. The
+// disclosure block immediately below them (noteCodexRuntimePolicy) refers back
+// to these very lines — "each such node is warned by name" — and a reference
+// that lands on a different stream than its referent is a worse read than a
+// warning that is not on the advisory channel.
 func warnRuntimePreflight(warnW io.Writer, path string, warnings []string) {
 	for _, warning := range warnings {
 		if path == "" {

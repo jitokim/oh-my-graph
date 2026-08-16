@@ -135,9 +135,11 @@ has no open issue behind it.
   The cap has nothing to bound, so the graph loads and prints one warning per
   budgeted node saying the cap cannot apply and which guard still holds — that
   node's `timeout:`, or the runner's 20m default. The goal ceiling differs
-  because it is the only bound on an ITERATING loop: an unmeasurable one would
-  stop at its first cycle boundary having bought a cycle to learn what preflight
-  says for free. Claude Code agent mapping and skill activation do not run
+  because it is checked only at a CYCLE BOUNDARY: an unmeasurable one would stop
+  at the first boundary having bought a whole cycle to learn what preflight says
+  for free, where an inapplicable node cap costs nothing extra. The loop is
+  bounded either way — `--max-cycles` bounds iterations, and the ceiling is only
+  its spend-shaped bound. Claude Code agent mapping and skill activation do not run
   on Codex. Codex also cannot enforce Claude's granular `allowed_tools`
   patterns; its boundary is the selected filesystem sandbox, with user config,
   project rules/AGENTS files and MCP servers removed from planned invocations.

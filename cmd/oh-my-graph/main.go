@@ -304,7 +304,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// identical list is produced again inside executeGraph, which is the gate
 	// `auto` and a chat-started graph reach WITHOUT passing here; runtimeWarnW
 	// below tells that call not to print this run's copy twice.
-	warnRuntimePreflight(stdout, "", runtimeWarnings)
+	warnRuntimePreflight(stdout, flags.graphPath, runtimeWarnings)
 	if err != nil {
 		return err
 	}
@@ -1103,7 +1103,7 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 	fmt.Fprintln(w, "    Last node: adr-driven-dev (finalize), and every user of graphs/fragments/pr-publish.yaml (self-dev, dev-review-pr, backlog-batch). First node: apply-flags (dev pushes before verify reads). Every node: merge-shepherd, which is `gh` end to end and fails at node 1 having done nothing.")
 	fmt.Fprintln(w, "    Two remedies, both per node: permission_mode: bypassPermissions maps to danger-full-access, which is no sandbox — that node keeps network AND keyring. Or Codex's sandbox_workspace_write.network_access=true, which lifts the block for `git push`/`git ls-remote` but not for `gh` on a machine where gh's token is in an OS keyring the sandbox denies (measured 2026-08-14, macOS: \"no oauth token found for github.com\"; where no keyring exists gh reads ~/.config/gh/hosts.yml, which the sandbox can read).")
 	fmt.Fprintln(w, "  Cost is unknown for every Codex node: tokens are counted, USD never is, so this run reports no dollar figure per node or in total.")
-	fmt.Fprintln(w, "  A node's budget_usd therefore loads but cannot apply — there is no spend to compare it against, and that node's runaway guard is its timeout: (each such node is warned by name). `auto --max-goal-budget-usd` is refused instead, because a goal ceiling is the ONLY bound on an iterating loop and an unmeasurable one would buy a cycle to learn so (ADR 0026).")
+	fmt.Fprintln(w, "  A node's budget_usd therefore loads but cannot apply — there is no spend to compare it against, and that node's runaway guard is its timeout: (each such node is warned by name). `auto --max-goal-budget-usd` is refused instead, because it is checked only at a cycle boundary: an unmeasurable ceiling would buy a whole cycle before stopping to say it cannot be checked, where an inapplicable node cap costs nothing extra. The loop stays bounded either way — --max-cycles is what bounds iterations (ADR 0026).")
 	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
 	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (ADR 0009 scopes it to the Claude runtime).")
 	if isolated {

@@ -16,10 +16,15 @@ import (
 // makes it unloadable — empty means it loads clean — and why records the
 // decision, so a failure reads as a changed verdict rather than a changed
 // number.
+//
+// budgetWarnings is a COUNT, not a bool, because ADR 0026's measurement table
+// records counts (×2 for review-loop and backlog-batch, ×1 for the rest): a
+// bool would stay green when review-loop loses one of its two caps, which is
+// exactly the drift this table exists to catch.
 type shippedGraphUnderCodex struct {
-	refusedFor  string
-	warnsBudget bool
-	why         string
+	refusedFor     string
+	budgetWarnings int
+	why            string
 }
 
 // shippedGraphsUnderCodex names EVERY graph this binary embeds and the verdict
@@ -37,19 +42,19 @@ type shippedGraphUnderCodex struct {
 // that only the merge queue would ever run.
 var shippedGraphsUnderCodex = map[string]shippedGraphUnderCodex{
 	"adr-driven-dev.yaml": {
-		refusedFor:  "agent",
-		warnsBudget: true,
-		why:         "three review nodes name Claude Code subagents; without those system prompts they are different nodes (ADR 0026). Its localrun budget_usd only warns.",
+		refusedFor:     "agent",
+		budgetWarnings: 1,
+		why:            "three review nodes name Claude Code subagents; without those system prompts they are different nodes (ADR 0026). Its localrun budget_usd only warns.",
 	},
 	"apply-flags.yaml":   {why: "declares neither agent: nor budget_usd"},
-	"backlog-batch.yaml": {warnsBudget: true, why: "both lanes inherit budget_usd from the e2e-verify fragment; the cap cannot apply, timeout: still guards"},
-	"dev-review-pr.yaml": {warnsBudget: true, why: "its e2e node inherits budget_usd from the e2e-verify fragment"},
+	"backlog-batch.yaml": {budgetWarnings: 2, why: "both lanes inherit budget_usd from the e2e-verify fragment; the cap cannot apply, timeout: still guards"},
+	"dev-review-pr.yaml": {budgetWarnings: 1, why: "its e2e node inherits budget_usd from the e2e-verify fragment"},
 	"haiku-smoke.yaml":   {why: "the smoke graph declares neither"},
 	"merge-shepherd.yaml": {
 		why: "gh end to end, but declares neither agent: nor budget_usd",
 	},
-	"review-loop.yaml": {warnsBudget: true, why: "impl and review both cap spend; the caps cannot apply under Codex"},
-	"self-dev.yaml":    {warnsBudget: true, why: "its e2e node inherits budget_usd from the e2e-verify fragment"},
+	"review-loop.yaml": {budgetWarnings: 2, why: "impl and review both cap spend; the caps cannot apply under Codex"},
+	"self-dev.yaml":    {budgetWarnings: 1, why: "its e2e node inherits budget_usd from the e2e-verify fragment"},
 }
 
 // TestShippedGraphsUnderEachRuntime lints every embedded graph under BOTH
@@ -85,8 +90,8 @@ func TestShippedGraphsUnderEachRuntime(t *testing.T) {
 		case want.refusedFor != "" && !strings.Contains(err.Error(), want.refusedFor):
 			t.Errorf("%s refused under codex for the wrong reason: want %s (%s), got %v", name, want.refusedFor, want.why, err)
 		}
-		if got := len(warnings) > 0; got != want.warnsBudget {
-			t.Errorf("%s under codex: budget warnings = %v, want %v (%s); warnings were %q", name, got, want.warnsBudget, want.why, warnings)
+		if got := len(warnings); got != want.budgetWarnings {
+			t.Errorf("%s under codex: %d budget warning(s), want %d (%s); warnings were %q", name, got, want.budgetWarnings, want.why, warnings)
 		}
 		for _, warning := range warnings {
 			// Every accepted cap must say which guard survives it, or the

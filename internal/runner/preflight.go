@@ -26,11 +26,16 @@ import (
 //     e2e-verify.yaml says so beside its own `budget_usd: 10.00`).
 //
 // The goal-level `auto --max-goal-budget-usd` stays refused at the CLI boundary
-// and that is deliberately NOT symmetric with the node-level cap: a per-node
-// budget is one node's insurance and simply has no quantity to bound, while a
-// goal ceiling is the only thing bounding an ITERATING loop, so under Codex the
-// loop would stop at its first boundary with StopBudgetUnmeasurable having
-// bought a whole cycle to learn what preflight can say for free.
+// and that is deliberately NOT symmetric with the node-level cap. The asymmetry
+// is about WHEN each declaration discovers it cannot be evaluated, not about
+// what is left unbounded: an iterating loop is hard-bounded by --max-cycles
+// either way, a flag with no unbounded spelling (ADR 0011 §1, enforced at
+// parse), and the ceiling is only its SPEND-shaped bound. What differs is the
+// price of accepting it. An inapplicable node cap costs nothing extra — it is
+// simply never compared. The goal ceiling is checked at a CYCLE BOUNDARY only
+// (coordinator/goal.go, the `cycle > 1` block), so accepting an unmeasurable
+// one would buy a whole cycle before StopBudgetUnmeasurable stops the loop to
+// say what preflight can say for free, before anything spends.
 //
 // Warnings are returned rather than printed because this function must stay
 // side-effect free — every caller surfaces them, and none may drop them.
