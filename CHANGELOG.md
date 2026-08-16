@@ -82,14 +82,25 @@ Eight PRs: [#176](https://github.com/jitokim/oh-my-graph/pull/176),
 
 ### Fixed
 
-- **The changelog guard no longer turns `main` red at every release**
-  ([#189](https://github.com/jitokim/oh-my-graph/pull/189)). The guard added in
-  #188 counted the release-prep PR against itself — a release cut does not
+- **The changelog guard no longer turns `main` red on its own maintenance**
+  ([#189](https://github.com/jitokim/oh-my-graph/pull/189),
+  [#191](https://github.com/jitokim/oh-my-graph/pull/191)). The guard added in
+  #188 counted two kinds of commit against themselves. A **release cut** does not
   describe itself, so its own number is always absent from the section it just
-  wrote, leaving the check green on the release PR and red on `main` the instant
-  it landed. The cut is now exempt, recognised by what it touched (`CHANGELOG.md`
-  and `version.go` together, which nothing else does) rather than by how its
-  subject is worded.
+  wrote — green on the release PR, red on `main` the instant it landed. And a
+  **changelog-only** commit has no change to describe, so demanding an entry made
+  the check eat its own tail: the PR adding a missing entry is itself missing
+  one, and so is the PR adding that. Both are exempt now, recognised by what the
+  commit touched rather than by how its subject is worded — a cut changes
+  `CHANGELOG.md` and `version.go` together, which nothing else does; changelog-only
+  means exactly one file. Each exemption is mutation-checked: disabling either
+  turns the test red.
+
+  Recorded because the trade is not free: the guard caught **five** genuinely
+  missing entries in this release, two of them user-visible fixes that would
+  have shipped a release page never mentioning them — and its edges then cost
+  four round trips, every one of them on a commit whose subject was the
+  changelog itself.
 
 - **A Codex run's live view says there is no tail, instead of showing nothing**
   ([#182](https://github.com/jitokim/oh-my-graph/pull/182)). The view polled
