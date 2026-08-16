@@ -31,6 +31,47 @@ func TestValidate_Feedback_ValidLoopIsAccepted(t *testing.T) {
 	}
 }
 
+// TestValidate_FeedbackPlaceholder_SeesNamespacedTokens is the load-time half
+// of ADR 0027's charset move, and the one that fails SILENTLY if forgotten.
+// handoff.placeholderPattern gained '/' so a spliced {{ feedback.qa-a/review }}
+// interpolates; feedbackTokenPattern must gain it in the same change, or this
+// validator — the check that confines a feedback token to its arc's body —
+// would stop seeing the token altogether. Not seeing it is not a loud failure:
+// the feedback namespace resolves to "" whenever no round has fired, so an
+// unconfined token would just be empty forever, in a paid prompt, for the life
+// of the graph.
+//
+// Both halves are asserted: an out-of-body namespaced token is refused, and an
+// in-body one is accepted (a check that refused both would pass this test while
+// making every loop fragment unloadable).
+func TestValidate_FeedbackPlaceholder_SeesNamespacedTokens(t *testing.T) {
+	const spliced = `
+name: spliced-loop
+nodes:
+  - id: qa-a/impl
+    prompt: "implement; findings follow: {{ feedback.qa-a/review }}"
+  - id: qa-a/review
+    depends_on: [qa-a/impl]
+    prompt: judge the work
+    feedback: { rerun: qa-a/impl, max: 1 }
+  - id: pr
+    depends_on: [qa-a/review]
+    prompt: "open a PR"
+`
+	if _, err := Parse([]byte(spliced)); err != nil {
+		t.Fatalf("an in-body namespaced feedback token must be accepted: %v", err)
+	}
+
+	outOfBody := strings.Replace(spliced,
+		`    prompt: "open a PR"`,
+		`    prompt: "open a PR quoting {{ feedback.qa-a/review }}"`, 1)
+	_, err := Parse([]byte(outOfBody))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "pr" || !strings.Contains(vErr.Reason, "only legal inside the body") {
+		t.Fatalf("an out-of-body namespaced feedback token must be refused at load: %+v", vErr)
+	}
+}
+
 // TestValidate_Feedback_Failures is the failure-first table: every shape
 // ADR 0010's load validation must refuse, each named by the substring its
 // error must carry so the test proves the RIGHT rule fired.

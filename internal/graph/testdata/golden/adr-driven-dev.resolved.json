@@ -1,0 +1,303 @@
+{
+  "name": "adr-driven-dev",
+  "version": "0.1",
+  "inputs": [
+    "repo",
+    "task"
+  ],
+  "concurrency": 1,
+  "on_fail": "halt",
+  "nodes": [
+    {
+      "id": "adr",
+      "type": "claude-run",
+      "prompt": "Task: {{ inputs.task }}\n\nWrite (or finalize, if a draft exists) an ADR for this task in the\nproject's ADR location (docs/adr/ or its equivalent), following the\nhouse ADR style if the repo has one. Cover the context, the decision,\nthe alternatives considered and why they lost, and the failure modes\nand compatibility consequences. No implementation code yet — the ADR\ncomes first. Commit the ADR, ending the commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nWrite and commit it BEFORE you reply: your FINAL reply IS the verdict,\nso an ADR you promise to finish afterwards is never finished. START your\nreply with the bare token ADR followed immediately by the committed\nfile's path (`ADR docs/adr/0014-thing.md`) — those characters FIRST, no\nmarkdown emphasis (`**ADR**` is WRONG), no heading, no preamble — then a\none-line summary of the decision. Anything you need to qualify goes\nAFTER the path, never before it: a line of context ahead of the token\nfails this node even when the ADR is committed.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write",
+        "Bash(git *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*ADR[*_`\\s:]*\\S+\\.md\\b"
+      },
+      "timeout": "30m"
+    },
+    {
+      "id": "adr-review",
+      "type": "claude-run",
+      "depends_on": [
+        "adr"
+      ],
+      "prompt": "Deep-review the ADR just written for this task. The author reported:\n{{ artifacts.adr | inline }}\n\nJudge design fitness, not wording: does the decision actually solve\nthe task ({{ inputs.task }})? Were the right alternatives weighed?\nWhat failure modes, migration or compatibility consequences, or\nsimpler designs did it miss? If you have a code-review or\ncoding-rules skill, apply it. This is a review round: do NOT edit\nanything.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict:\nthe node's turn ends the moment you reply, so a question you promise\nto look into afterwards is never looked into. START the reply with\nexactly one of these two bare tokens, as the very FIRST characters,\nwith no markdown emphasis (`**CLEAN**` is WRONG), no heading, no\npreamble:\n  - CLEAN — you judged the whole ADR and have no design concerns.\n  - FINDINGS: — followed by a prioritized list, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git *)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
+      },
+      "timeout": "30m",
+      "agent": "code-reviewer-deep"
+    },
+    {
+      "id": "adr-apply",
+      "type": "claude-run",
+      "depends_on": [
+        "adr-review"
+      ],
+      "prompt": "Apply this design feedback to the ADR — before any code exists:\n{{ artifacts.adr-review | inline }}\n\nAddress every finding: incorporate it, or record in the ADR why it\nwas rejected. Commit the updated ADR, ending the commit message with\nthe trailer `Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e`\n(the attribution convention in CONTRIBUTING.md).\nEvery finding must be handled BEFORE you reply: your FINAL reply IS\nthe verdict, so a finding you promise to address afterwards is never\naddressed. When the updated ADR is committed, START your reply with\nthe bare word DONE — those four characters FIRST, no markdown\nemphasis (`**DONE**` is WRONG), no heading, no preamble — then a\none-line summary of what changed. Anything you need to qualify goes\nAFTER the verdict, never before it: a line of context ahead of the\ntoken fails this node even when the work is done. If findings remain\nunhandled, do NOT write DONE: start with a bare BLOCKED and which ones.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash(git *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*DONE\\b"
+      }
+    },
+    {
+      "id": "impl",
+      "type": "claude-run",
+      "depends_on": [
+        "adr-apply"
+      ],
+      "prompt": "Implement the ADR this branch just finalized (task: {{ inputs.task }}).\nWrite the implementation AND its tests — success and failure cases\n(invalid params, early exits, error paths), not just the happy path —\nand run the tests locally until green. Choose a commit granularity\nthat fits the work — one commit per refactoring unit for refactors,\nper file for sweeps, per feature slice for new code — and state your\nchoice in the first commit message. Commit as you go: a node timeout\nmust never lose finished work. End every commit message with the\ntrailer `Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the\nattribution convention in CONTRIBUTING.md). Run the tests\nSYNCHRONOUSLY and wait for them to finish — never in the background.\nYour FINAL reply is the verdict: never end the turn on an interim\nreport. When tests are green, START the reply with the bare word PASS —\nthose four characters FIRST, no markdown emphasis (`**PASS**` is\nWRONG), no heading, no preamble — then a one-line summary. Otherwise\nstart it with a bare FAIL and what is broken.\nAnything you need to qualify goes AFTER the verdict, never before it: a\nline of context ahead of the token fails this node even when the tests\nare green.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(make *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS"
+      },
+      "timeout": "1h"
+    },
+    {
+      "id": "localrun",
+      "type": "claude-run",
+      "depends_on": [
+        "impl"
+      ],
+      "prompt": "Run the project's real local execution beyond unit tests — `make\nlocal` here, or the project's closest equivalent — and exercise the\nnew behavior end to end. Run every check SYNCHRONOUSLY and wait for\nit to finish — never in the background.\n\nIf the diff touches concurrency-sensitive code, also stress the\naffected packages' tests under the race detector. A fixed repetition\ncount belongs to a repository, never to a template, so DERIVE one\nfrom the budget below and then SAY what you derived:\n\n  1. BUDGET. This node is killed at 20 minutes, and a node killed by\n     its own timeout produces NO verdict at all — the run is\n     discarded with the implementation already committed. Spend at\n     most half of that on stress, and leave the rest for the\n     end-to-end run and for reporting.\n  2. DERIVE. Time ONE repetition of each affected package first\n     (`-count=1`), then pick a per-package count that fits step 1.\n     Measured in this repository once: 40 repetitions of one package\n     took 113s, while 300 of another would have taken 72 minutes. A\n     smaller count that finishes beats a larger one that is killed.\n  3. RAISE THE PER-TEST TIMEOUT — this part is not optional. `go\n     test` kills a package after 10 minutes BY DEFAULT and prints\n     FAIL, so any long stress run reports a failure that never\n     happened, and a FAIL here halts the whole pipeline. Pass\n     `-timeout` ABOVE your step-1 budget and BELOW this node's own\n     bound (`go test \u003cpkg\u003e -race -count=\u003cn\u003e -timeout 12m`), or your\n     stack's equivalent. A value outside the node's life is no guard\n     at all: the node kills the wedged run first, and a node killed\n     by its own timeout produces no verdict — see step 1.\n  4. REPORT. Name every package you stressed with the count and the\n     wall time it took (`internal/serve -race -count=40, 113s`), or\n     say plainly that you stressed nothing and why. A verdict that\n     does not say what was exercised cannot be told from one that\n     exercised nothing.\n\nYour FINAL reply is the verdict: never end the turn on an interim\nreport. START it with the bare word PASS, or with a bare FAIL and the\nfailing step — the verdict word must be the very FIRST characters of\nthe reply, with no markdown emphasis (`**PASS**` is WRONG), no\nheading, no preamble. Anything you need to qualify goes AFTER the\nverdict, never before it: a line of context ahead of the token fails\nthis node even when every check passed.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Bash(make *)",
+        "Bash(go test *)",
+        "Bash(git *)"
+      ],
+      "permission_mode": "dontAsk",
+      "budget_usd": 10,
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS",
+        "verify": {
+          "command": "make local",
+          "timeout": "5m"
+        }
+      },
+      "retry": {
+        "max": 1,
+        "on": [
+          "nonzero_exit",
+          "verify_failed"
+        ]
+      },
+      "timeout": "20m"
+    },
+    {
+      "id": "round1/review",
+      "type": "claude-run",
+      "depends_on": [
+        "localrun"
+      ],
+      "prompt": "Deep-review the WHOLE diff for this task (git diff against the base\nbranch, git log for the commit story). Judge three things:\n  - design fitness: does the implementation match the ADR, and does\n    the ADR's design survive contact with the real code?\n  - test coverage: are edge and failure cases genuinely covered, or\n    only the happy path?\n  - hidden bugs: races, error paths, resource leaks, boundary\n    conditions.\nIf you have a code-review or coding-rules skill, apply it. This is a\nreview round: do NOT edit anything.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict:\nthe node's turn ends the moment you reply, so a file you promise to\nread afterwards is never read. START the reply with exactly one of\nthese two bare tokens, as the very FIRST characters, with no markdown\nemphasis (`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — you judged the whole diff and found nothing.\n  - FINDINGS: — followed by a prioritized list, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git *)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
+      },
+      "timeout": "30m",
+      "agent": "code-reviewer-deep"
+    },
+    {
+      "id": "round1/apply",
+      "type": "claude-run",
+      "depends_on": [
+        "round1/review"
+      ],
+      "prompt": "Apply this review feedback:\n{{ artifacts.round1/review | inline }}\n\nAddress every finding — fix it, or commit a note explaining why it\nis wrong.\nUpdate the tests to cover what the review exposed, and run them until green.\nThis is an apply round: do NOT re-review.\nCommit as you go, ending every commit message with the\ntrailer `Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the\nattribution convention in CONTRIBUTING.md). Run the tests\nSYNCHRONOUSLY and wait for them to finish — never in the background.\nYour FINAL reply is the verdict: never end the turn on an interim\nreport. When tests are green, START the reply with the bare word PASS —\nthose four characters FIRST, no markdown emphasis (`**PASS**` is\nWRONG), no heading, no preamble. Otherwise start it with a bare FAIL\nand what is broken. Anything you need to qualify goes AFTER the\nverdict, never before it: a line of context ahead of the token fails\nthis node even when the tests are green.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(make *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS",
+        "verify": {
+          "command": "make local",
+          "timeout": "5m"
+        }
+      },
+      "retry": {
+        "max": 1,
+        "on": [
+          "nonzero_exit",
+          "verify_failed"
+        ]
+      },
+      "timeout": "45m"
+    },
+    {
+      "id": "round2/review",
+      "type": "claude-run",
+      "depends_on": [
+        "round1/apply"
+      ],
+      "prompt": "Standard review of the current diff: style, naming, simplicity,\ndocstring and comment drift, dead code, obvious correctness issues.\nIf you have a code-review or coding-rules skill, apply it. This is a\nreview round: do NOT edit anything.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict:\nthe node's turn ends the moment you reply, so a file you promise to\nread afterwards is never read. START the reply with exactly one of\nthese two bare tokens, as the very FIRST characters, with no markdown\nemphasis (`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — you judged the whole diff and found nothing.\n  - FINDINGS: — followed by a prioritized list, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git *)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
+      }
+    },
+    {
+      "id": "round2/apply",
+      "type": "claude-run",
+      "depends_on": [
+        "round2/review"
+      ],
+      "prompt": "Apply this review feedback:\n{{ artifacts.round2/review | inline }}\n\nAddress every finding — fix it, or commit a note explaining why it\nis wrong.\nKeep the tests updated and green.\nThis is an apply round: do NOT re-review.\nCommit as you go, ending every commit message with the\ntrailer `Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the\nattribution convention in CONTRIBUTING.md). Run the tests\nSYNCHRONOUSLY and wait for them to finish — never in the background.\nYour FINAL reply is the verdict: never end the turn on an interim\nreport. When tests are green, START the reply with the bare word PASS —\nthose four characters FIRST, no markdown emphasis (`**PASS**` is\nWRONG), no heading, no preamble. Otherwise start it with a bare FAIL\nand what is broken. Anything you need to qualify goes AFTER the\nverdict, never before it: a line of context ahead of the token fails\nthis node even when the tests are green.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(make *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS",
+        "verify": {
+          "command": "make local",
+          "timeout": "5m"
+        }
+      },
+      "retry": {
+        "max": 1,
+        "on": [
+          "nonzero_exit",
+          "verify_failed"
+        ]
+      },
+      "timeout": "45m"
+    },
+    {
+      "id": "round3",
+      "type": "claude-run",
+      "depends_on": [
+        "round2/apply"
+      ],
+      "prompt": "Final deep review — fresh eyes on the FINAL state, not the history.\nRead the code as it now stands and judge: does it fit the purpose\nthe ADR states (task: {{ inputs.task }})? Are edge and failure cases\ngenuinely covered by the tests, or only nominally? Would you merge\nthis? If you have a code-review or coding-rules skill, apply it.\nThis is a review round: do NOT edit anything.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict:\nthe node's turn ends the moment you reply, so a file you promise to\nread afterwards is never read. START the reply with exactly one of\nthese two bare tokens, as the very FIRST characters, with no markdown\nemphasis (`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — you would merge this as it stands; no flags remain.\n  - FINDINGS: — followed by the remaining flags, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git *)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*(FINDINGS[*_`\\s]*:|CLEAN\\b)"
+      },
+      "timeout": "30m",
+      "agent": "code-reviewer-deep"
+    },
+    {
+      "id": "finalize",
+      "type": "claude-run",
+      "depends_on": [
+        "round3"
+      ],
+      "prompt": "Final review verdict:\n{{ artifacts.round3 | inline }}\n\nApply any remaining flags (small fixes only — a big finding at this\nstage means another round, done manually), keep the tests green, and\nend any commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the\nattribution convention in CONTRIBUTING.md). Then push the branch and\nopen a DRAFT pull request whose body summarizes the ADR decision,\nthe implementation, and the three review rounds.\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR\nyou promise to open afterwards is never opened. START your reply with\nthe bare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters\nFIRST, with no markdown emphasis (`**PR**` is WRONG), no heading, no\npreamble. Anything you need to qualify goes AFTER the URL, never\nbefore it: a line of context ahead of the token fails this node even\nwhen the PR is open.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(gh *)",
+        "Bash(make *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PR[*_`\\s:]*https?://\\S",
+        "verify": {
+          "command": "make local",
+          "timeout": "5m"
+        }
+      },
+      "timeout": "30m"
+    }
+  ]
+}

@@ -790,6 +790,9 @@ func toolName(rule string) string {
 //     list would run under the CLI's own default tool set instead of this
 //     allowlist — that gap would make the allowlist opt-in for an attacker
 //     simply by leaving the field off;
+//   - no planned node may carry a '/' in its id
+//     (validatePlannedNodeID) — the namespace a multi-node fragment splice
+//     mints (ADR 0027), which no author may write either;
 //   - no planned node may set cwd (validatePlannedNodeCwd);
 //   - no planned node may set success_check.verify
 //     (validatePlannedNodeVerify);
@@ -858,6 +861,7 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 				Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
 			})
 		}
+		add(validatePlannedNodeID(node))
 		add(validatePlannedNodeCwd(node))
 		add(validatePlannedNodeVerify(node))
 		add(validatePlannedNodeAgent(node))
@@ -1165,6 +1169,28 @@ func validatePlannedNodeAgent(node graph.Node) *PlanError {
 	}
 	return &PlanError{
 		Reason: fmt.Sprintf("planned node %q requested agent %q; auto mode never runs a planned node as one of your subagents", node.ID, node.Agent),
+	}
+}
+
+// validatePlannedNodeID rejects a planned node whose id carries a '/'. That
+// separator is the namespace a multi-node fragment splice mints
+// (`<using-id>/<internal-id>`, ADR 0027), and it is minted by the SPLICER
+// alone: the file loader refuses a '/' in any id an author writes, and this
+// refuses it in any id the planner writes.
+//
+// It cannot live in graph.Validate, which accepts the joined form as a
+// backstop (it cannot tell a spliced graph from a hand-written one, and a
+// resumed leg re-parses a snapshot full of joined ids). So without a refusal
+// HERE, widening nodeIDPattern would let auto mode mint a namespaced id
+// legitimately — carrying the whole namespace question, encapsulation
+// included, into a path where no loader ever runs and no fragment was ever
+// cited.
+func validatePlannedNodeID(node graph.Node) *PlanError {
+	if !strings.Contains(node.ID, "/") {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf("planned node %q carries a '/' in its id; that namespace is minted only by a multi-node fragment splice, never written", node.ID),
 	}
 }
 

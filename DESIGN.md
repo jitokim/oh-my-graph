@@ -220,6 +220,12 @@ resolved away at load time — see "Fragments" below):
     checks: run `make local` (build + test + vet).
 ```
 
+The cited fragment may declare **several** nodes and the edges among them — a
+review/repair round, a QA loop — and the citing site is unchanged. It splices
+as `<this id>/<the fragment's own id>`, so the node above would become
+`e2e/review`, `e2e/apply`, and `depends_on: [e2e]` downstream still means
+"after it" (ADR 0027, "Fragments" below).
+
 Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
 see "Execution engine" step 4), `nodes: [..]`.
@@ -233,11 +239,13 @@ other bodies, and `max` required ≥ 1 — an unbounded loop on a paid runtime i
 unrepresentable). Iteration is a *runtime* phenomenon; full semantics in
 ADR 0010 and under "Execution engine" below.
 
-### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013)
+### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013, 0027)
 
-A fragment is a **single-node definition file** with declared substitution
-points — a proven node shape (the e2e gate, the security review) written
-once, upstream, instead of copy-varied across graphs:
+A fragment is a **definition file** with declared substitution points — a
+proven shape written once, upstream, instead of copy-varied across graphs. It
+declares **either** one node's behavior (`node:`, below) **or** a whole
+subgraph (`nodes:` + `exit:`, further below — the loop). The citing site is the
+same for both: a node with `use:` and `with:`.
 
 ```yaml
 # graphs/fragments/e2e-verify.yaml
@@ -298,8 +306,8 @@ substitution points or it is a different shape. The behavior fields
 (`allowed_tools`, `permission_mode`, `budget_usd`, `timeout`, `handoff`,
 `success_check`, `retry`, `agent`, `type`) default from the fragment; a key
 written in the using node overrides the **whole** top-level subtree (never a
-deep merge). A fragment may not declare wiring — `id`, `depends_on`, `cwd`,
-`worktree`, `feedback` (load error) — nor `use:` itself (no nesting in v1) —
+deep merge). A **single-node** fragment may not declare wiring — `id`, `depends_on`, `cwd`,
+`worktree`, `feedback` (load error) — nor `use:` itself (no nesting) —
 nor a **YAML alias or `<<:` merge key inside the `node:` block** (load error):
 a spliced body has to be walkable in full, or a `{{ with.x }}` hiding behind
 an alias would be neither declaration-checked nor substituted and would reach
@@ -318,9 +326,90 @@ would survive resolution into a paid prompt verbatim. A
 declared-but-unreferenced point and a stray `{{ with.x }}` in a plain node are
 advisories.
 
+**The multi-node form — a fragment that declares a LOOP (ADR 0027).** A
+fragment file may declare `nodes:` (a list, each with its own `id`) plus a
+required `exit:`, instead of `node:`. Never both, never neither.
+
+```yaml
+# graphs/fragments/repair-round.yaml
+fragment: repair-round
+description: one review/repair round — a review that never edits, then a gated apply
+substitutions: [review_focus, review_agent, review_timeout, apply_scope, verify_command]
+exit: apply
+nodes:
+  - id: review
+    agent: "{{ with.review_agent }}"
+    prompt: "{{ with.review_focus }} …"
+    permission_mode: plan
+  - id: apply
+    depends_on: [review]
+    prompt: "Apply this: {{ artifacts.review | inline }} …"
+    success_check: { verify: { command: "{{ with.verify_command }}", timeout: 5m } }
+```
+
+The invariant is one sentence covering both forms: **a fragment may never name
+an id it does not itself declare.** A single-node fragment declares none, so
+`id`/`depends_on`/`feedback` stay load errors for it; a multi-node one declares
+its own, so edges among *those* are legal and naming anything else — in
+`depends_on`, in `feedback.rerun`, or in an `{{ artifacts.<id> }}` token — is a
+load error charged to the fragment file. `cwd`/`worktree` stay refused in both:
+they are the using node's location, not wiring among declared ids.
+
+Resolution, in the order it happens:
+
+- Spliced ids are **`<using-id>/<internal-id>`** — `round1/review`,
+  `round1/apply`. `/` cannot appear in anything anyone writes: in an entry
+  graph the loader refuses it in a node `id`, a `depends_on`, a
+  `feedback.rerun` **and in any `{{ artifacts.<id> }}` / `{{ feedback.<id> }}`
+  token in any scalar** (a binding included — the token is the spelling that
+  would otherwise read a loop's internal output from outside, with every other
+  check satisfied); a multi-node fragment file is held to the same rule by its
+  declared-ids invariant, and a **single-node** one — whose tokens name the
+  citing graph and so are checked against no such set — by a namespaced-token
+  refusal of its own; `coordinator.validatePlannedNodeID` refuses it in a
+  planner reply. So a spliced id can never collide with an authored one.
+  `Validate` accepts the joined form as a backstop — it cannot tell a spliced
+  graph from a resumed snapshot, and must not learn.
+- A multi-node `use:` id may not **collide** with another node's id. The splice
+  replaces the using node, so post-splice uniqueness would see only distinct
+  ids while every downstream `depends_on: [qa]` and `{{ artifacts.qa }}` was
+  rewritten to the loop's exit — past a node literally named `qa`.
+- Each internal node is **namespaced before substitution**: its id, its
+  `depends_on`, its `feedback.rerun` and every `{{ artifacts.<id> }}` /
+  `{{ feedback.<id> }}` token it wrote. A value bound at the using site is
+  inserted afterwards and is **never** rewritten — it belongs to the citing
+  graph's namespace, and a bound artifact id that names no node there is a load
+  error rather than a run-time surprise.
+- **Entry nodes** (no internal parent) inherit the using node's `depends_on`;
+  `cwd`/`worktree` on the using node **propagate to every** spliced node.
+  Entry-hood is decided by the key's *presence*, so an empty `depends_on: []`
+  inside a fragment node is a load error rather than a silent opt-out that
+  would start the node at the top of the citing graph.
+- From outside, the loop is one thing whose value is its exit's: both
+  `depends_on: [round1]` and `{{ artifacts.round1 }}` resolve to
+  `round1/<exit>`. `feedback: { rerun: round1 }` does **not** — it is a load
+  error, because rewriting it to the exit would silently re-run one node for an
+  author who asked to re-run a loop.
+- `exit:` is **required and never inferred** from the unique sink: inference is
+  right only while there is exactly one sink, and when it is wrong it is wrong
+  silently. It may not lie strictly inside one of the fragment's own feedback
+  bodies, so no citing graph's downstream edge can manufacture a side exit in a
+  fragment whose author wrote nothing wrong.
+- A multi-node `use:` may declare **wiring only** (`id`, `depends_on`, `cwd`,
+  `worktree`, `with`): a behavior key on it is a load error naming the key,
+  since there is no coherent way to overlay one node's `success_check` onto
+  five. A loop needing different behavior needs a substitution point or a
+  different fragment.
+
+Non-goals, refused rather than deferred quietly: `use:` inside a fragment
+(nesting needs cycle detection over fragment *resolution*), `rerun:` over a
+whole loop, loop-until-dry convergence (`max: N` stays the only one), and
+dynamic fan-out.
+
 Downstream of the loader **no fragment concept exists**: `run` and `lint` both
 print one disclosure line per resolved fragment (source file + the fragment's
-own description + every overridden key) plus the same fragment advisories on
+own description + every overridden key, or — for a multi-node splice, which
+overrides nothing — the ids it spliced) plus the same fragment advisories on
 the warning channel (`run` discloses what it spliced, so it discloses the
 drift smell too; the four *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never
@@ -333,8 +422,11 @@ alongside the templates (`//go:embed *.yaml fragments/*.yaml`), so
 it tops that tree up with payload files it does not have yet (a fragment added
 by a later release), keeping every file already there;
 `internal/graph/testdata/golden/` holds the resolved goldens — one per
-fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`) — that
-turn any fragment edit into a reviewed multi-template diff.
+fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`,
+`adr-driven-dev`) — that turn any fragment edit into a reviewed multi-template
+diff. A multi-node fragment multiplies that blast radius by its node count, on
+purpose: one edit to `repair-round` moves four nodes in `adr-driven-dev`'s
+golden, and the reviewer sees all four.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
@@ -889,10 +981,13 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **26
+  is a sweep that cannot silently miss a node. That sweep counts **24
   declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: three of the 26
-  live in `graphs/fragments/` and carry ten of the nodes between them. The
+  once and every node citing it gets it, which is the point: five of the 24
+  live in `graphs/fragments/` and carry fourteen of the nodes between them.
+  The gap widened by two when `adr-driven-dev`'s two repair rounds became two
+  `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
+  places to correct the sentence in. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —

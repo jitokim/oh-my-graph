@@ -471,10 +471,14 @@ const findingsVerdict = "**FINDINGS:**\n\n- the persisting branch returns withou
 // decides it mechanically — `LintFeedbackReach` is the nearest thing and it is
 // advisory and fan-in-only; in these graphs it is load rules 3 and 6 that
 // happen to refuse every arc that could not reach back. Second, the sweep is
-// keyed on the RESOLUTIONS, so it sees only nodes that spliced a `review-*`
-// fragment: a review node written out by hand — `adr-driven-dev`'s four
-// rounds — is outside it, and would need the fragment (or a widened sweep)
-// before this test could speak for it.
+// keyed on the RESOLUTIONS and on the fragment NAME, so it sees only nodes that
+// spliced a `review-*` fragment. Two kinds of review are therefore outside it:
+// one written out by hand, and one that is a node INSIDE a multi-node fragment
+// (ADR 0027) — `repair-round`'s `review`, whose file is named for the round
+// rather than for the review. Both would need a widened sweep before this test
+// could speak for them; what a multi-node fragment does buy is that such a
+// review's arc, if it has one, is declared in the same file as the review and
+// is validated fragment-locally.
 func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 	gating := 0
 	for _, name := range shippedTemplateNames(t) {
@@ -484,6 +488,21 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 		}
 		for _, res := range loaded.Resolutions {
 			if !strings.HasPrefix(res.Fragment, "review-") {
+				continue
+			}
+			if len(res.Spliced) > 0 {
+				// A multi-node resolution's NodeID names the USING node, which
+				// no longer exists as a node — its spliced ids do. Skipped
+				// rather than looked up, per the second limit above; the lookup
+				// below would otherwise fail on a shape that is not a defect.
+				//
+				// Unreachable as graphs/fragments/ stands today: the only
+				// multi-node fragment is `repair-round`, which the prefix test
+				// above has already skipped. It is kept because it is what makes
+				// the second limit TRUE rather than merely stated — the day a
+				// `review-*` fragment grows a second node, the alternative is
+				// this test dying on the Fatalf below with a message about a
+				// missing node, which names neither the cause nor the fix.
 				continue
 			}
 			node, ok := loaded.Graph.byID[res.NodeID]
@@ -528,7 +547,7 @@ const qualifierClause = "Anything you need to qualify"
 //     fragment. That gap is the point DESIGN.md is making, so a change that
 //     closes it (fragments abandoned, say) should fail here and be re-argued.
 func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
-	const wantDeclarations, wantNodes = 26, 33
+	const wantDeclarations, wantNodes = 24, 33
 
 	declarations := 0
 	for _, dir := range []string{

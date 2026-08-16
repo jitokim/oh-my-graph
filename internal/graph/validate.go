@@ -309,15 +309,39 @@ func (g *Graph) validateWorktrees() []error {
 	return issues
 }
 
-// nodeIDPattern is the shape a node id must take: one path element, starting
-// with an alphanumeric, using only alphanumerics, '.', '_' and '-' — the same
-// rule worktreeNamePattern enforces, for the same reason. A node id becomes
-// both an artifact filename under the run dir (<node-id>.out) and a URL
-// parameter (serve's /api/result), so a path separator or a leading dot
-// ("../x" escapes the run directory) would surface as a filesystem escape or
-// a broken route mid-run — exactly the class of error load-time validation
-// exists to move earlier.
-var nodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+// nodeIDSegment is one element of a node id: starting with an alphanumeric,
+// using only alphanumerics, '.', '_' and '-' — the same rule
+// worktreeNamePattern enforces, for the same reason. A node id becomes both an
+// artifact filename under the run dir (handoff.SanitizeNodeID(<id>).out) and a
+// URL parameter (serve's /api/result), so a leading dot ("../x" escapes the run
+// directory) or whitespace would surface as a filesystem escape or a broken
+// route mid-run — exactly the class of error load-time validation exists to
+// move earlier.
+const nodeIDSegment = `[A-Za-z0-9][A-Za-z0-9._-]*`
+
+// nodeIDSegmentPattern is a single segment on its own. Its one caller is
+// judgeMultiNodeIDs, on a fragment file's own `nodes:`: those ids are the half
+// the splicer joins to the using id, so a separator there would mint a
+// two-slash id no validator admits, and each must be a whole segment before
+// the join rather than merely after it.
+//
+// It is NOT how the other two authorship sites are enforced. An entry graph's
+// `nodes:` (refuseAuthoredNamespaces) and a planner reply
+// (coordinator.validatePlannedNodeID) test for a '/' and nothing else, leaving
+// the rest of the shape to nodeIDPattern below — same net effect, different
+// check, so a reader looking for this symbol there will not find it.
+var nodeIDSegmentPattern = regexp.MustCompile(`^` + nodeIDSegment + `$`)
+
+// nodeIDPattern is the shape a VALIDATED node id must take: one segment, or
+// two joined by a single '/' — the `<using-id>/<internal-id>` a multi-node
+// fragment splice mints (ADR 0027). Validate accepts the joined form as the
+// backstop it is: it cannot tell a spliced graph from a hand-written one and
+// must not learn, and a resumed leg re-parses a snapshot that already holds
+// joined ids. The refusal of an AUTHORED '/' lives where authorship happens —
+// graph.refuseAuthoredNamespaces for a file, coordinator.validatePlannedNodeID
+// for a planner reply — because those two are the only places an id is written
+// rather than read.
+var nodeIDPattern = regexp.MustCompile(`^` + nodeIDSegment + `(?:/` + nodeIDSegment + `)?$`)
 
 // validateNodeIDs enforces that every node id is a single safe path element.
 // An empty id is skipped here — validateNodesUnique already reports it, and
@@ -331,7 +355,7 @@ func (g *Graph) validateNodeIDs() []error {
 		if !nodeIDPattern.MatchString(n.ID) {
 			issues = append(issues, &GraphValidationError{
 				NodeID: n.ID,
-				Reason: fmt.Sprintf("node id %q must be a single path element: alphanumerics, '.', '_' or '-', starting with an alphanumeric", n.ID),
+				Reason: fmt.Sprintf("node id %q must be a path element — alphanumerics, '.', '_' or '-', starting with an alphanumeric — optionally namespaced as <using-id>/<internal-id> by a multi-node fragment splice", n.ID),
 			})
 		}
 	}

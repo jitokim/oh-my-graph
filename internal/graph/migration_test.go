@@ -23,8 +23,14 @@ var update = flag.Bool("update", false, "regenerate testdata/golden resolved-gra
 // equivalence claim (its gates gain a real success_check.verify, so the graph
 // also gains a required `checks_command` input), so it has no frozen
 // pre-migration fixture to be judged against — but a fragment edit still
-// changes it, and that has to show up in a PR diff.
-var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml"}
+// changes it, and that has to show up in a PR diff. adr-driven-dev.yaml joins
+// it on the same footing for the multi-node conversion (ADR 0027): its two
+// repair rounds became two `use:` of one fragment, converging four
+// near-identical prompts onto two, which is a reviewed change rather than an
+// equivalence claim — and its golden now carries FOUR spliced nodes per edit
+// of that one fragment, which is exactly the blast radius this fixture exists
+// to put in front of a reviewer.
+var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml", "adr-driven-dev.yaml"}
 
 // migratedTemplates are the two shipped templates ADR 0013's migration
 // converted onto fragments WITHOUT changing what they do, with the exact
