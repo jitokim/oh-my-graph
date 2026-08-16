@@ -33,6 +33,50 @@ jobs:
 
   # Heavy -race repetition over the concurrency-sensitive packages (flake
   # post-mortem, v0.3.0). Gated on a paths filter so it only runs when the
+  # A PR that changes anything but the changelog must say what changed.
+  #
+  # This replaces a Go test that asked the same question with the wrong trigger.
+  # It ran on `main` over `git log <lastTag>..HEAD`, so a PR's own merge commit
+  # did not exist while its CI was green and did exist the instant it landed:
+  # every merge turned `main` red until somebody wrote the entry afterwards. It
+  # caught five genuinely missing entries in v0.9.0 — two of them user-visible
+  # fixes — and then cost five round trips to its own timing.
+  #
+  # Asked here instead, it is answerable BEFORE the merge, by the person who
+  # knows what changed, while they are still looking at it.
+  #
+  # Skipping stays allowed and stays loud: put `no-changelog` in the PR body.
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: an entry, or a reason
+        run: |
+          set -o pipefail
+          base="origin/${{ github.base_ref }}"
+          changed=$(git diff --name-only "$(git merge-base "$base" HEAD)"...HEAD)
+          echo "$changed" | sed 's/^/  /'
+          outside=$(echo "$changed" | grep -v '^CHANGELOG\.md$' || true)
+          touched=$(echo "$changed" | grep -c '^CHANGELOG\.md$' || true)
+          if [ -z "$outside" ] || [ "$touched" -gt 0 ]; then
+            echo "ok"; exit 0
+          fi
+          if printf '%s' "$BODY" | grep -qi 'no-changelog'; then
+            echo "excused by the PR body"; exit 0
+          fi
+          echo "::error::this PR changes files but adds no CHANGELOG.md entry." >&2
+          echo "Write one under ## [Unreleased], or put 'no-changelog' in the PR body with a reason." >&2
+          exit 1
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+
   # diff touches those packages — unrelated PRs skip it entirely. Advisory
   # until promoted: do NOT add it to branch protection required checks yet.
   stress:
