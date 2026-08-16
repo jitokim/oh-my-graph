@@ -82,6 +82,15 @@ Eight PRs: [#176](https://github.com/jitokim/oh-my-graph/pull/176),
 
 ### Fixed
 
+- **The changelog guard no longer turns `main` red at every release**
+  ([#189](https://github.com/jitokim/oh-my-graph/pull/189)). The guard added in
+  #188 counted the release-prep PR against itself — a release cut does not
+  describe itself, so its own number is always absent from the section it just
+  wrote, leaving the check green on the release PR and red on `main` the instant
+  it landed. The cut is now exempt, recognised by what it touched (`CHANGELOG.md`
+  and `version.go` together, which nothing else does) rather than by how its
+  subject is worded.
+
 - **A Codex run's live view says there is no tail, instead of showing nothing**
   ([#182](https://github.com/jitokim/oh-my-graph/pull/182)). The view polled
   `/api/transcript` every three seconds per running node, and the endpoint looks
