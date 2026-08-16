@@ -173,6 +173,17 @@ func TestPrintFragmentResolutions_NamesEveryOverriddenKey(t *testing.T) {
 	if want := ` — node overrides: success_check, retry`; !strings.HasSuffix(lines[1], want) {
 		t.Errorf("line 1 = %q, want suffix %q", lines[1], want)
 	}
+
+	// A multi-node resolution overrides nothing — the using node may declare
+	// only wiring — so the same duty is discharged by naming what it spliced.
+	var loop strings.Builder
+	printFragmentResolutions(&loop, []graph.FragmentResolution{
+		{NodeID: "qa-a", Fragment: "qa-loop", Description: "a repair loop", Source: "graphs/fragments/qa-loop.yaml",
+			Spliced: []string{"qa-a/impl", "qa-a/review"}},
+	})
+	if want := ` — nodes: qa-a/impl, qa-a/review` + "\n"; !strings.HasSuffix(loop.String(), want) {
+		t.Errorf("multi-node line = %q, want suffix %q", loop.String(), want)
+	}
 }
 
 // TestLintGraph_SurfacesTheFragmentDescription pins why description: is a

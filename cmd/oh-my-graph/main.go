@@ -1577,9 +1577,18 @@ func inputKeys(inputs inputFlag) []string {
 // visible to whoever reads the file. The description is what makes the line
 // readable without opening the fragment, which is why an empty one is a load
 // error rather than an empty tail here. Silent for a fragment-free graph.
+//
+// A MULTI-NODE resolution (ADR 0027) overrides nothing — the using node may
+// declare only wiring — so its line names the ids it spliced instead. That is
+// the same disclosure duty in the shape the multi-node form takes: the reader
+// of a run log learns that one `use:` became five nodes, and which five,
+// without opening the fragment file.
 func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolution) {
 	for _, r := range resolutions {
 		line := fmt.Sprintf("fragment: node %q spliced from %q (%s) — %s", r.NodeID, r.Fragment, r.Source, r.Description)
+		if len(r.Spliced) > 0 {
+			line += " — nodes: " + strings.Join(r.Spliced, ", ")
+		}
 		if len(r.Overridden) > 0 {
 			line += " — node overrides: " + strings.Join(r.Overridden, ", ")
 		}
