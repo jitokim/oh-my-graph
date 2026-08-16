@@ -416,6 +416,25 @@ nodes:
 			wantErr: "is not a proper depends_on-ancestor",
 		},
 		{
+			// TWO arcs whose bodies both contain the exit, which is what pins
+			// the ORDER the bodies are judged in: b lies inside c's body
+			// (rerun: a) and inside d's (rerun: b), so which of the two errors
+			// is reported first must be the fragment's own declaration order —
+			// c, then d — and not a map walk's. LoadFile and LintFile load this
+			// file separately, so a shuffled order would not even be shuffled
+			// the same way for the two views the assertion below compares.
+			name:  "exit lying inside two feedback bodies at once",
+			entry: using(citeLoop),
+			fragments: map[string]string{"qa-loop": loop(`exit: b
+nodes:
+  - { id: a, prompt: "{{ with.task }}" }
+  - { id: b, depends_on: [a], prompt: "{{ with.checks_command }}" }
+  - { id: c, depends_on: [b], prompt: judge, feedback: { rerun: a, max: 1 } }
+  - { id: d, depends_on: [c], prompt: judge again, feedback: { rerun: b, max: 1 } }
+`)},
+			wantErr: `lies inside the feedback body "c" declares (rerun: "a")`,
+		},
+		{
 			name:      "exit on a single-node fragment",
 			entry:     using(citeLoop),
 			fragments: map[string]string{"qa-loop": loop("exit: whatever\nnode: { prompt: \"{{ with.task }}{{ with.checks_command }}\" }\n")},
@@ -581,6 +600,70 @@ nodes:
 	}
 }
 
+// TestLoadFile_TwoBodyExitErrorOrderIsStable is the assertion one load cannot
+// make. Go randomizes map iteration per `range`, so a fragmentFeedbackBodies
+// keyed on its arcs map reports the two errors below in whichever order that
+// run drew — passing any single check and disagreeing with itself across
+// repeats. Loading the same file many times is what turns "it happened to be
+// right once" into the property the package promises everywhere else: the first
+// error is a deterministic one LoadFile and LintFile agree on.
+func TestLoadFile_TwoBodyExitErrorOrderIsStable(t *testing.T) {
+	path := writeGraphDir(t, `name: t
+nodes:
+  - { id: plan, prompt: p }
+  - id: qa
+    use: qa-loop
+    depends_on: [plan]
+    with: { task: do it }
+`, map[string]string{"qa-loop": `fragment: qa-loop
+description: a loop whose exit sits in two bodies
+substitutions: [task]
+exit: b
+nodes:
+  - { id: a, prompt: "{{ with.task }}" }
+  - { id: b, depends_on: [a], prompt: check }
+  - { id: c, depends_on: [b], prompt: judge, feedback: { rerun: a, max: 1 } }
+  - { id: d, depends_on: [c], prompt: judge again, feedback: { rerun: b, max: 1 } }
+`})
+
+	// Declaration order, so `c`'s arc is judged before `d`'s.
+	const want = `lies inside the feedback body "c" declares (rerun: "a")`
+
+	var first string
+	for i := 0; i < 64; i++ {
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Fatal("a fragment whose exit lies inside two feedback bodies must not load")
+		}
+		if i == 0 {
+			first = err.Error()
+			if !strings.Contains(first, want) {
+				t.Fatalf("LoadFile error = %q, want the body %q declares to be reported first", first, "c")
+			}
+			continue
+		}
+		if err.Error() != first {
+			t.Fatalf("load %d reported %q, load 0 reported %q — the two-body error order is not deterministic", i, err, first)
+		}
+	}
+
+	// And the collect-all view agrees, which it cannot do by luck: LintFile
+	// loads the fragment file on its own, so its map order is independent of
+	// every load above.
+	for i := 0; i < 64; i++ {
+		issues, _, lintErr := LintFile(path)
+		if lintErr != nil {
+			t.Fatalf("LintFile I/O error: %v", lintErr)
+		}
+		if len(issues) == 0 {
+			t.Fatal("LintFile found nothing where LoadFile failed")
+		}
+		if issues[0].Error() != first {
+			t.Fatalf("LintFile first issue %q != LoadFile error %q", issues[0], first)
+		}
+	}
+}
+
 // TestLoadFile_SplicedNodesFaceTheGraphsOwnValidationsToo pins the half of the
 // design that is deliberately NOT new machinery: a spliced node is an ordinary
 // node, so the graph-level rules judge it exactly as they would a hand-written
@@ -677,5 +760,47 @@ func TestLoadFile_SingleNodeFragmentIsUnchanged(t *testing.T) {
 	}
 	if len(res.Resolutions) != 1 || len(res.Resolutions[0].Spliced) != 0 {
 		t.Errorf("a single-node resolution splices no extra ids: %+v", res.Resolutions)
+	}
+}
+
+// TestLoadFile_SingleNodeBoundArtifactTokenIsNotJudgedAsALoop pins the OTHER
+// half of "generalized, not weakened": the bound-artifact existence check is a
+// consequence of namespacing, so it applies to the multi-node form alone.
+//
+// A single-node `use:` mints no namespace and rewrites no token — its body
+// lands on the using node's own id — so a bound `{{ artifacts.x }}` there is
+// the same thing as the same token typed into a plain node's prompt, and this
+// package leaves that to the advisory sweep (handoff.LintPlaceholders)
+// everywhere else. Judging it here would say two false things out loud: that a
+// token naming a nonexistent node is a hard load error for one spelling of an
+// ordinary node, and — for a node quoting its OWN id — that the graph contains
+// a loop, an exit and a descendant, none of which a single-node splice has.
+func TestLoadFile_SingleNodeBoundArtifactTokenIsNotJudgedAsALoop(t *testing.T) {
+	cases := []struct {
+		name  string
+		bound string
+	}{
+		{name: "naming a node this graph does not have", bound: "run make local, then read {{ artifacts.ghost | inline }}"},
+		{name: "naming the using node itself", bound: "run make local, then read {{ artifacts.e2e | inline }}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeGraphDir(t, usingGraph("  - id: e2e\n    use: e2e-verify\n    depends_on: [dev]\n    with:\n      checks: \""+tc.bound+"\"\n"),
+				map[string]string{"e2e-verify": testFragment})
+			res, err := LoadFile(path)
+			if err != nil {
+				t.Fatalf("a single-node use: must not face the loop's bound-reference rules: %v", err)
+			}
+			node, ok := res.Graph.NodeByID("e2e")
+			if !ok {
+				t.Fatal("the single-node form must keep the using node's own id")
+			}
+			// And the binding still substituted verbatim — the token survives
+			// resolution and is interpolated (or refused) at run time, exactly
+			// as one written inline would be.
+			if !strings.Contains(node.Prompt, tc.bound) {
+				t.Errorf("bound value did not reach the spliced prompt: %q", node.Prompt)
+			}
+		})
 	}
 }

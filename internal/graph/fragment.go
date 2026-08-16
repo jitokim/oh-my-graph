@@ -628,7 +628,9 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 }
 
 // checkBoundReferences proves every artifact id a using node bound into a
-// fragment names a node the resolved graph actually has. It is the residue of
+// MULTI-NODE fragment names a node the resolved graph actually has — the only
+// bindings recordBoundReferences collects, and both messages below say "loop"
+// because that is the only shape reaching here. It is the residue of
 // the rewrite ORDER: the namespace rewrite applies to the fragment file's own
 // text and applies BEFORE substitution, so a value bound at the using site is
 // inserted afterwards and is never rewritten. A using author who writes
@@ -723,14 +725,13 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		fail(bindErrs...)
 		return nil
 	}
-	recordBoundReferences(id, bindings, out)
-
 	if lf.frag.isMulti() {
 		loop, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
 		if len(errs) > 0 {
 			fail(errs...)
 			return nil
 		}
+		recordBoundReferences(id, bindings, out)
 		out.loops[id] = lf.frag.exit
 		out.resolutions = append(out.resolutions, FragmentResolution{
 			NodeID: id, Fragment: name, Description: lf.frag.description,
@@ -765,6 +766,16 @@ func splicedIDs(usingID string, frag *fragmentFile) []string {
 
 // recordBoundReferences notes every artifact id this using node bound, for the
 // existence check the resolved graph can answer and this moment cannot.
+//
+// Called from the MULTI-NODE branch alone, because the rule it feeds is a
+// consequence of namespacing and nothing else: a single-node `use:` mints no
+// namespace, rewrites no token, and splices its body onto the using node's own
+// id, so a bound `{{ artifacts.x }}` there means exactly what the same token
+// written inline in a plain node's prompt means. Artifact-token existence is
+// advisory everywhere that is true (handoff.LintPlaceholders), and ADR 0013's
+// single-node form shipped under that rule; making it a hard load error for
+// one spelling of an ordinary node would be a new rule wearing this one's
+// justification.
 func recordBoundReferences(nodeID string, bindings map[string]*yaml.Node, out *fragmentOutcome) {
 	for key, value := range bindings {
 		walkScalars(value, func(text string) {
@@ -1280,8 +1291,20 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 		return seen
 	}
 
+	// Walked over ids — the fragment's own declaration order — rather than over
+	// the arcs map, so a fragment whose exit lies inside two feedback bodies
+	// reports them in a fixed order. Its caller's errors are the deterministic
+	// first error LoadFile and LintFile must agree on, and those two load each
+	// fragment separately, so a map walk here would give them independently
+	// shuffled orders on the same file.
 	bodies := make([]fragmentBody, 0, len(arcs))
-	for declarer, rerun := range arcs {
+	walked := make(map[string]bool, len(arcs))
+	for _, declarer := range ids {
+		rerun, declaresArc := arcs[declarer]
+		if !declaresArc || walked[declarer] {
+			continue // ids repeats a duplicate id, which arcs holds once
+		}
+		walked[declarer] = true
 		ofDeclarer := ancestors(declarer)
 		// The same guard Graph.FeedbackBody applies: an arc whose target is
 		// not an ancestor of its declarer HAS no body, and the arc itself is
