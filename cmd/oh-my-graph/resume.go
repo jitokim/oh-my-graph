@@ -355,7 +355,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	if err != nil {
 		return fmt.Errorf("resume run %q: %w", runID, err)
 	}
-	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
+	// A resumed leg re-surfaces these for the same reason it re-warns about
+	// bypassPermissions below: the terminal that saw the first leg's copy may
+	// be long gone, and a cap that cannot apply is a fact about the nodes this
+	// leg is about to spend on (ADR 0026).
+	warnRuntimePreflight(os.Stderr, snap.GraphSourcePath, runtimeWarnings)
+	if err != nil {
 		return fmt.Errorf("resume run %q: %w", runID, err)
 	}
 	// A resumed leg re-warns exactly as `run` did at load: the warning is

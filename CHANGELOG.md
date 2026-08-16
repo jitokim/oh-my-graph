@@ -10,6 +10,26 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **A node's `budget_usd` no longer refuses a Codex graph
+  ([ADR 0026](docs/adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md)).**
+  Preflight had one sentence for two different facts: `agent:` names a subagent
+  whose system prompt the node would otherwise lose (a different node — still
+  refused), while `budget_usd` is a USD ceiling a runtime that reports no USD
+  has nothing to bound. Inapplicable is not unsafe, so the graph now loads and
+  warns per node, naming the guard still in force — that node's `timeout:`, or
+  the runner's 20m default. Measured on `graphs/*.yaml`: **five refused under
+  `--runtime codex` before, one after** (`adr-driven-dev`, for its `agent:`).
+  `auto --max-goal-budget-usd` stays refused and that is not an inconsistency:
+  a goal ceiling is the only bound on an iterating loop, so an unmeasurable one
+  would buy a whole cycle to discover it cannot be checked.
+  `internal/runner/shipped_graphs_runtime_test.go` now lints every shipped
+  graph under both runtimes and asserts the verdict by name, so a graph that
+  becomes unloadable under Codex fails `make test` instead of a user's run.
+  **The Claude path is unchanged**: `ValidateGraphForRuntime` still returns on
+  its first line for `RuntimeClaude`, warning nothing and refusing nothing.
+
 ## [v0.8.0] - 2026-08-15
 
 **Minor because the CLI grew a token you may type.** Compared by name rather

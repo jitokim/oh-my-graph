@@ -40,7 +40,9 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	}
 
 	g := loaded.Graph
-	if err := runner.ValidateGraphForRuntime(runtime, g); err != nil {
+	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
+	warnRuntimePreflight(warnW, path, runtimeWarnings)
+	if err != nil {
 		return err
 	}
 	warnAdvisories(warnW, path, g)

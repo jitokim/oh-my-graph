@@ -77,6 +77,15 @@ auto runs.
 
 ### Unsupported fields fail before node execution
 
+> **Amended by [ADR 0026](0026-an-inapplicable-cap-is-not-an-unsafe-one.md)
+> (2026-08-16): the `budget_usd` half of this section no longer holds.** A node's
+> `budget_usd` is accepted under Codex and warned about — it has no USD to bound,
+> which makes it inapplicable rather than unsafe, and the node's `timeout:`
+> remains its runaway guard. `agent:` and `--max-goal-budget-usd` are refused
+> exactly as decided below. The paragraph is left as written: it is what was
+> decided on 2026-08-14, and five of eight shipped graphs were unloadable under
+> Codex because of it.
+
 A Codex graph containing positive `budget_usd` or non-empty `agent:` is
 rejected during runtime preflight. No runner-side fallback drops either field.
 `--max-goal-budget-usd` is likewise rejected for Codex before planning because
@@ -113,7 +122,9 @@ by default. Prefixes and values containing those names remain untouched.
 - Codex auto mode has a coarser capability boundary than Claude auto mode;
   sandbox isolation replaces scoped tool-name grants and the CLI says so.
 - `agent:` and USD budget fields remain valid graph syntax because Claude uses
-  them; runtime preflight, not duplicated schemas, owns compatibility.
+  them; runtime preflight, not duplicated schemas, owns compatibility. (What
+  preflight concludes about a node's `budget_usd` was later split out of the
+  `agent:` verdict — [ADR 0026](0026-an-inapplicable-cap-is-not-an-unsafe-one.md).)
 - **ADR 0009's session-limit pause does not apply.** It is a promise of the
   Claude runtime rather than of the engine — settled 2026-08-15, closing #171,
   and written into ADR 0009's own Decision. Its detection matches Claude's

@@ -72,9 +72,11 @@ Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
 `workspace-write`, and `bypassPermissions` to `danger-full-access`. That sandbox
 is also a network boundary, so a Codex graph halts at its first node that
 pushes or calls `gh`. Codex does
-not report USD or implement Claude's per-call `budget_usd` and `agent:`
-selector, so those two graph fields and `--max-goal-budget-usd` are rejected
-before a Codex run spends anything. Claude Code agent mapping and skill
+not report USD or implement Claude's `agent:` selector, so `agent:` and
+`--max-goal-budget-usd` are rejected before a Codex run spends anything. A
+node's `budget_usd` is not rejected: with no USD to bound it simply cannot
+apply, so the graph loads and one warning per node says so and names the
+`timeout:` that still guards it. Claude Code agent mapping and skill
 activation are Claude-only; Codex `auto` runs use Codex sandbox isolation
 instead.
 

@@ -108,8 +108,13 @@ Everything else in this file describes the default, Claude. Under Codex:
   compare a budget against. (A row for a node that spawned nothing — an approved
   gate, a node that died before its subprocess started — still reads `0.0000`,
   which is what it cost.)
-- **Three declarations are refused before anything spends:** a positive
-  `budget_usd`, `agent:`, and `auto --max-goal-budget-usd`. Claude agent mapping
+- **Two declarations are refused before anything spends:** `agent:` and
+  `auto --max-goal-budget-usd`. A node's `budget_usd` is the third case and it
+  is not refused ([ADR 0026](adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md)):
+  without USD there is nothing to bound, so the graph loads and one warning per
+  budgeted node says the cap cannot apply and names the `timeout:` still
+  guarding that node. The goal ceiling is refused because it is the only bound
+  on an iterating loop, not because it is a dollar figure. Claude agent mapping
   and staged skill activation are not refused but not attempted — a planned
   Codex run prints one line saying so.
 - **A session limit is an ordinary failure**, not the resumable pause of
@@ -124,13 +129,19 @@ Everything else in this file describes the default, Claude. Under Codex:
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
 
 **Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
-`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/` at v0.8.0, all
-eight lint clean under Claude and **five are refused under Codex** —
-`adr-driven-dev` (`agent:` and `budget_usd`), `review-loop`, `dev-review-pr`,
-`self-dev` and `backlog-batch` (`budget_usd`, the last three inheriting it from
-the `e2e-verify` fragment). Of the three that pass, `apply-flags` and
-`merge-shepherd` both publish, so they hit the network wall — leaving
-`haiku-smoke` as the one shipped graph with no node that needs the network.
+`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all eight
+lint clean under Claude and **one is refused under Codex** — `adr-driven-dev`,
+for the `agent:` on its three review nodes. Four of the seven that load warn
+that a `budget_usd` cannot apply: `review-loop` (its own), and `dev-review-pr`,
+`self-dev` and `backlog-batch` (inherited from the `e2e-verify` fragment).
+Before ADR 0026 those four were refused as well, which is what made five of
+eight unloadable. Of the seven that load, `apply-flags`, `merge-shepherd`,
+`dev-review-pr`, `self-dev` and `backlog-batch` all publish, so they hit the
+network wall — leaving `haiku-smoke` and `review-loop` as the shipped graphs
+with no node that needs the network. The expected verdict for every shipped
+graph under both runtimes is asserted in
+`internal/runner/shipped_graphs_runtime_test.go`, so a graph that stops loading
+under Codex fails `make test` by name.
 
 ### What `lint` checks
 
