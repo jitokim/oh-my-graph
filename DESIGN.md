@@ -363,8 +363,10 @@ Resolution, in the order it happens:
   `feedback.rerun` **and in any `{{ artifacts.<id> }}` / `{{ feedback.<id> }}`
   token in any scalar** (a binding included — the token is the spelling that
   would otherwise read a loop's internal output from outside, with every other
-  check satisfied); a fragment file is held to the same rule by its
-  declared-ids invariant; `coordinator.validatePlannedNodeID` refuses it in a
+  check satisfied); a multi-node fragment file is held to the same rule by its
+  declared-ids invariant, and a **single-node** one — whose tokens name the
+  citing graph and so are checked against no such set — by a namespaced-token
+  refusal of its own; `coordinator.validatePlannedNodeID` refuses it in a
   planner reply. So a spliced id can never collide with an authored one.
   `Validate` accepts the joined form as a backstop — it cannot tell a spliced
   graph from a resumed snapshot, and must not learn.

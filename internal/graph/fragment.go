@@ -426,12 +426,16 @@ type boundReference struct {
 
 // resolveFragments walks the entry document's nodes and splices every `use:`
 // in place, collecting every error rather than stopping at the first — the
-// collect-all form LintFile needs; LoadFile fail-fasts by taking errs[0],
-// which is the first error in document order, so the two views agree on
-// which problem comes first. A node that fails to resolve has its use:/with:
-// keys stripped so the structural pass that follows reports each defect once
-// (the Validate backstop exists for documents that never came through here,
-// not to echo these errors).
+// collect-all form LintFile needs; LoadFile fail-fasts by taking errs[0], so
+// the two views agree on which problem comes first. Resolution is three
+// sequential passes (authored namespaces, then the splice itself, then the
+// loop-reference passes over the resolved sequence), each walking in document
+// order and all appending to one slice, so errs[0] is the first error of the
+// EARLIEST pass that has one — not the first in document order across passes.
+// That is what both views compute, which is the property that matters. A node
+// that fails to resolve has its use:/with: keys stripped so the structural pass
+// that follows reports each defect once (the Validate backstop exists for
+// documents that never came through here, not to echo these errors).
 func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
 	out := fragmentOutcome{loops: make(map[string]string)}
 	cache := make(map[string]*loadedFragment)
@@ -513,11 +517,13 @@ func refuseLoopIDCollisions(nodes *yaml.Node, out *fragmentOutcome) {
 
 // refuseAuthoredNamespaces is the loader's half of ADR 0027's encapsulation
 // guarantee: `<using-id>/<internal-id>` is minted by the splicer alone, so a
-// '/' in any id a FILE spells is a load error — an entry graph's `nodes:`
-// (checked here) or a fragment file's own `nodes:` (checked by
-// judgeMultiNodeIDs). The coordinator refuses the same shape in a planner
-// reply, and between the two, reaching into a loop's internals is refused
-// wherever it can be typed.
+// '/' in any id a FILE spells is a load error. This pass covers the entry
+// graph's `nodes:`; a fragment file's own ids are covered by judgeMultiNodeIDs,
+// and the one place neither reaches — a SINGLE-node fragment body, whose tokens
+// name the citing graph and are therefore never checked against declared ids —
+// is covered in loadFragmentFile beside that check. The coordinator refuses the
+// same shape in a planner reply, and between them, reaching into a loop's
+// internals is refused wherever it can be typed.
 //
 // It covers `depends_on`, `feedback.rerun` and every artifact/feedback TOKEN as
 // well as `id`, because those are where reaching IN is actually spelled:
@@ -574,20 +580,28 @@ func refuseAuthoredNamespaces(nodes *yaml.Node, out *fragmentOutcome) {
 //
 //   - `depends_on: [qa-a]` resolves to `qa-a/<exit>`. From outside, the loop's
 //     value is its exit's.
+//
 //   - `{{ artifacts.qa-a }}` resolves to `{{ artifacts.qa-a/<exit> }}`,
 //     symmetrically, filter and all. Without the symmetry the token would name
 //     a node that no longer exists, and `run` does not run the lint sweeps —
 //     so the graph would load, the upstream nodes would be paid for, and the
 //     citing node would die on an InterpolationError.
+//
 //   - `feedback: { rerun: qa-a }` is a load error. The symmetry is a trap
 //     here: rewritten to the exit, an author who asked to re-run their loop
 //     would silently get one node re-run instead. `depends_on: [qa-a]` means
 //     "after the loop" and the exit expresses that exactly; `rerun: qa-a`
 //     means "again, from the top" and the exit expresses the opposite.
 //
-// {{ feedback.qa-a }} gets no rewrite and needs none: a feedback token is legal
-// only inside the body of the arc that declares it, so from outside the loop it
-// was already a load error and stays one.
+//   - `{{ feedback.qa-a }}` is a load error too, and gets its own message here
+//     rather than the one it would inherit. It was already refused: a feedback
+//     token is legal only inside the body of the arc that declares it, so from
+//     outside the loop validateFeedbackPlaceholders reports that "qa-a"
+//     declares no feedback edge. But the splice REPLACED that node, so the
+//     generic message names an id the author is looking straight at in their
+//     own file, and says the one thing about it that is not the point. What is
+//     the point is the same as for rerun: a loop's arc is its own, declared
+//     inside the fragment and legal only in the body it declares there.
 func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 	if len(out.loops) == 0 {
 		return
@@ -617,6 +631,25 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 				})
 			}
 		}
+		// Every scalar, for the same reason refuseAuthoredNamespaces walks them
+		// all: a binding is authored text too. A spliced node cannot reach here
+		// with a loop's using id — the fragment's own tokens were namespaced,
+		// and it may name no id it does not declare — so every hit is written
+		// from outside the loop.
+		walkScalars(nodeMap, func(text string) {
+			for _, token := range idTokensIn(text) {
+				if token.kind != "feedback" {
+					continue
+				}
+				if _, isLoop := out.loops[token.ref]; !isLoop {
+					continue
+				}
+				out.errs = append(out.errs, &GraphValidationError{
+					NodeID: strings.TrimSpace(scalarValue(keys["id"])),
+					Reason: fmt.Sprintf("%s names %q, which cites a multi-node fragment — a loop's feedback arc is declared inside the fragment and its payload is legal only inside the body that fragment declares it over, so no node in THIS graph can read it. The loop's value from outside is its exit's artifact: {{ artifacts.%s }}", token.token, token.ref, token.ref),
+				})
+			}
+		})
 		rewriteIDTokens(nodeMap, func(kind, ref string) (string, bool) {
 			exit, isLoop := out.loops[ref]
 			if kind != "artifacts" || !isLoop {
@@ -843,6 +876,15 @@ func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings m
 		// node — exactly what backlog-batch writes by hand today, once per
 		// lane node. cwd propagates as a template string and interpolates per
 		// node at run time, as always.
+		//
+		// Propagation is by value, so a using node declaring BOTH gets the
+		// cwd/worktree contradiction reported once per spliced node instead of
+		// once at the line that caused it. Left that way on purpose: each
+		// spliced node genuinely carries the contradiction, its id names the
+		// using site, and pre-checking here would mean this splicer restating a
+		// rule validateWorktrees owns — and failing resolution, which strips
+		// the use: and cascades a worse report onto a node that now has no
+		// prompt. Noise, judged the cheaper of the two.
 		if cwd != nil {
 			setKey(body, "cwd", deepCopyNode(cwd))
 		}
@@ -1044,9 +1086,7 @@ func loadFragmentFile(name, source string) *loadedFragment {
 	// naming anything else names a node in a graph the fragment cannot see. It
 	// would survive resolution unrewritten and fail at RUN time, after the
 	// upstream nodes were paid for — `run` does not run the advisory lint
-	// sweeps. A single-node fragment declares no ids and is left alone here:
-	// its tokens name the using graph's nodes, which is the arrangement ADR
-	// 0013 shipped and every existing fragment relies on.
+	// sweeps.
 	if multi != nil {
 		walkScalars(body, func(value string) {
 			for _, token := range idTokensIn(value) {
@@ -1054,6 +1094,24 @@ func loadFragmentFile(name, source string) *loadedFragment {
 					continue
 				}
 				badFile(fmt.Sprintf("the fragment body contains %s, and this fragment declares no node %q — a multi-node fragment's artifact and feedback tokens are rewritten into its own namespace, so one naming an id it does not declare could only point at a node in whichever graph happened to cite it", token.token, token.ref))
+			}
+		})
+	} else {
+		// A single-node fragment declares no ids, so its tokens deliberately
+		// name the USING graph's nodes — the arrangement ADR 0013 shipped and
+		// every existing fragment relies on. That freedom is bounded by exactly
+		// one thing, and it has to be said here: no citing graph may spell a
+		// namespaced id, and refuseAuthoredNamespaces reads the entry document
+		// only, so this file is the last place a `{{ artifacts.round1/review }}`
+		// can be caught. Uncaught it is the same leak the entry-graph token is
+		// refused for — it resolves, names a real node and a real ancestor, and
+		// reads a loop's internal output from outside with LintPlaceholders
+		// satisfied.
+		walkScalars(body, func(value string) {
+			for _, token := range idTokensIn(value) {
+				if strings.Contains(token.ref, namespaceSeparator) {
+					badFile(fmt.Sprintf("the fragment body contains %s, whose id carries a '/' — that namespace is minted only by a multi-node fragment splice (ADR 0027), never written: a single-node fragment's tokens name the citing graph's own nodes, and no graph may name a node inside someone else's loop", token.token))
+				}
 			}
 		})
 	}

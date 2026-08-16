@@ -589,7 +589,10 @@ representable and is refused by the loader with a message. Before this
 ADR, reaching into a fragment's internals was impossible because fragments
 had no internals. After it, it is a load error — in a `depends_on`, in a
 `feedback.rerun`, in an **artifact or feedback token**, in an entry graph or
-a fragment file, and in a planner reply by the coordinator's own refusal.
+a fragment file (a multi-node one by its declared-ids invariant, a
+**single-node** one by a namespaced-token refusal of its own: its tokens name
+the citing graph, so no declared-ids set judges them — see finding 6), and in
+a planner reply by the coordinator's own refusal.
 That is a weaker guarantee than the brief assumed, stated plainly so nobody
 later reads "unrepresentable" and builds on it. What is *not* weakened is the
 collision property: distinct ids now also mean distinct files, by the
@@ -846,8 +849,8 @@ regression proof of that.
 
 ## What implementation found
 
-Five corrections, recorded because each one contradicts something this ADR
-asserted before any code existed. The last two came from review of the
+Six corrections, recorded because each one contradicts something this ADR
+asserted before any code existed. The last three came from review of the
 implementation rather than from writing it.
 
 **1. The conversion proof is `adr-driven-dev.yaml`, not `backlog-batch.yaml`,
@@ -926,3 +929,38 @@ aimed at someone else's output — arriving through a door the design did not
 think to watch, because the using node's id stops being an id and becomes a
 key in `out.loops`. Refused by `refuseLoopIDCollisions`, walked in document
 order so `LoadFile` and `LintFile` still agree on which problem comes first.
+
+**6. Finding 4's enumeration was still short by one, and the missing entry is
+a fragment file's own body.** Having widened `refuseAuthoredNamespaces` from
+three spellings to four, both the code and this ADR then said the refusal was
+total: "in an entry graph **or a fragment file**". A fragment file is held to
+it by the declared-ids check — which runs only when the file declares ids, and
+a **single-node** fragment declares none. Its tokens are *deliberately* allowed
+to name the citing graph's nodes (the arrangement ADR 0013 shipped, and what
+every existing fragment relies on), and nothing narrowed that to non-namespaced
+ids. So `fragments/foo.yaml` containing `{{ artifacts.round1/review | inline }}`
+loaded, resolved, and read a loop's internals from outside — with
+`LintPlaceholders` silent too, because `round1/review` really exists and really
+is an ancestor: the exact property finding 4 identified for the token spelling,
+arriving one file over. Narrow in practice (the fragment author must hard-code
+a citing graph's loop id, which defeats the point of a fragment) but the claim
+was total, so the gap was closed rather than the claim narrowed: the single-node
+branch of `loadFragmentFile` now refuses a namespaced token, beside the check
+that judges the multi-node one.
+
+Twice now the enumeration has been the defect and the mechanism has been fine.
+The lesson finding 4 drew — "an enumeration of where a thing can be typed is a
+conclusion, not a premise" — is restated with the harder half attached: an
+enumeration is also not repaired by extending it once. What made this entry
+invisible both times is that it lives in the *exception*, the one body the
+invariant deliberately does not judge.
+
+A message, not a hole, from the same pass: `{{ feedback.qa-a }}` written
+downstream of a loop was correctly refused, but by
+`validateFeedbackPlaceholders`' generic "references `qa-a`, which declares no
+feedback edge" — about a node the author wrote as `- id: qa-a` and is looking
+straight at, because the splice replaced it. `resolveLoopReferences` now says
+the thing that is actually true of it, symmetrically with the `feedback.rerun`
+refusal beside it: a loop's arc is declared inside the fragment, its payload is
+legal only in the body declared there, and the loop's value from outside is its
+exit's artifact.

@@ -519,6 +519,30 @@ nodes:
 			wantErr:   "a placeholder token carries a '/'",
 		},
 		{
+			// The FIFTH spelling, and the one no other pass can see: a
+			// single-node fragment's tokens are meant to name the citing
+			// graph's nodes, so they are checked against no declared-ids set —
+			// and refuseAuthoredNamespaces reads the entry document only. A
+			// namespaced token written HERE would resolve, name a real node and
+			// a real ancestor, and read a loop's internals from outside.
+			name:      "single-node fragment body reaching into a loop",
+			entry:     using(citeLoop),
+			fragments: map[string]string{"qa-loop": loop("node: { prompt: \"{{ with.task }} {{ with.checks_command }} {{ artifacts.round1/review | inline }}\" }\n")},
+			wantErr:   "whose id carries a '/'",
+		},
+		{
+			// The symmetric refusal to feedback.rerun's below, and the reason
+			// it is written rather than inherited: post-splice the using node
+			// is gone, so validateFeedbackPlaceholders would tell the author
+			// that "qa" declares no feedback edge — about a node they wrote as
+			// `- id: qa` and are looking straight at.
+			name: "feedback token naming a loop",
+			entry: using(citeLoop + `  - { id: pr, depends_on: [qa], prompt: "ship {{ feedback.qa }}" }
+`),
+			fragments: map[string]string{"qa-loop": loop(workingTail)},
+			wantErr:   "a loop's feedback arc is declared inside the fragment",
+		},
+		{
 			name: "authored feedback.rerun reaching into a loop",
 			entry: using(citeLoop + `  - { id: pr, depends_on: [qa], prompt: p, feedback: { rerun: qa/impl, max: 1 } }
 `),
