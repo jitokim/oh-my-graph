@@ -371,6 +371,9 @@ Resolution, in the order it happens:
   error rather than a run-time surprise.
 - **Entry nodes** (no internal parent) inherit the using node's `depends_on`;
   `cwd`/`worktree` on the using node **propagate to every** spliced node.
+  Entry-hood is decided by the key's *presence*, so an empty `depends_on: []`
+  inside a fragment node is a load error rather than a silent opt-out that
+  would start the node at the top of the citing graph.
 - From outside, the loop is one thing whose value is its exit's: both
   `depends_on: [round1]` and `{{ artifacts.round1 }}` resolve to
   `round1/<exit>`. `feedback: { rerun: round1 }` does **not** — it is a load

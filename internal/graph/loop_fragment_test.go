@@ -176,6 +176,67 @@ func TestLoadFile_MultiNodeFragmentArtifactFilesCannotCollide(t *testing.T) {
 	}
 }
 
+// TestLoadFile_MultiNodeUseCwdPropagates is worktree's twin, asserted directly
+// rather than only through a shipped graph's golden. cwd and worktree are the
+// two location keys a multi-node use: may carry, they propagate by the same two
+// lines of spliceLoop, and a test that covers one of a pair is a test that will
+// not notice the day the other stops.
+func TestLoadFile_MultiNodeUseCwdPropagates(t *testing.T) {
+	const entry = `name: located
+nodes:
+  - { id: plan, prompt: plan the work }
+  - id: qa
+    use: qa-loop
+    depends_on: [plan]
+    cwd: "{{ inputs.repo }}/service"
+    with: { task: do it, checks_command: make local }
+`
+	path := writeGraphDir(t, entry, map[string]string{"qa-loop": qaLoopFragment})
+	res, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, id := range []string{"qa/impl", "qa/verify", "qa/review"} {
+		n, ok := res.Graph.NodeByID(id)
+		if !ok {
+			t.Fatalf("no node %q in the resolved graph", id)
+		}
+		// Verbatim, template and all: cwd interpolates per node at run time.
+		if n.Cwd != "{{ inputs.repo }}/service" {
+			t.Errorf("node %q cwd = %q, want the using node's, propagated unevaluated", id, n.Cwd)
+		}
+	}
+}
+
+// TestLoadFile_MultiNodeUseDependsOnIsTrimmedBeforeNamespacing pins the one
+// word by which resolveLoopReferences and namespaceNode could disagree: the
+// loop is looked up TRIMMED, so it must be respelled trimmed too. A quoted
+// parent that minted " qa/review" would fail nodeIDPattern with a complaint
+// about a shape the author never wrote.
+func TestLoadFile_MultiNodeUseDependsOnIsTrimmedBeforeNamespacing(t *testing.T) {
+	const entry = `name: padded
+nodes:
+  - { id: plan, prompt: plan the work }
+  - id: qa
+    use: qa-loop
+    depends_on: [plan]
+    with: { task: do it, checks_command: make local }
+  - { id: pr, depends_on: [" qa"], prompt: ship it }
+`
+	path := writeGraphDir(t, entry, map[string]string{"qa-loop": qaLoopFragment})
+	res, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("a padded reference to a loop must resolve like any other: %v", err)
+	}
+	pr, ok := res.Graph.NodeByID("pr")
+	if !ok {
+		t.Fatal("no pr in the resolved graph")
+	}
+	if !reflect.DeepEqual(pr.DependsOn, []string{"qa/review"}) {
+		t.Errorf("depends_on = %q, want the exit with no padding carried into the id", pr.DependsOn)
+	}
+}
+
 // TestLoadFile_BoundValueResolvesInTheCitingGraphsNamespace pins the rewrite
 // ORDER, which is the one place two implementations would otherwise read the
 // design differently. The namespace rewrite applies to the fragment file's own
@@ -288,6 +349,16 @@ nodes:
 			wantErr:   `depends_on names "dev", which this fragment does not declare`,
 		},
 		{
+			// Entry-hood is decided by the key's PRESENCE, so an empty
+			// sequence is neither an entry node nor an internal child: it
+			// would inherit nothing and start at the top of the citing graph,
+			// in parallel with the work the using node said it comes after.
+			name:      "internal node declaring an empty depends_on",
+			entry:     using(citeLoop),
+			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, prompt: \"{{ with.task }}\", depends_on: [] }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\" }\n")},
+			wantErr:   "declares an empty depends_on",
+		},
+		{
 			name:      "internal feedback.rerun naming an id the fragment does not declare",
 			entry:     using(citeLoop),
 			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, prompt: \"{{ with.task }}\" }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\", feedback: { rerun: dev, max: 1 } }\n")},
@@ -325,6 +396,24 @@ nodes:
   - { id: review, depends_on: [verify], prompt: judge, feedback: { rerun: impl, max: 1 } }
 `)},
 			wantErr: "lies inside the feedback body",
+		},
+		{
+			// fragmentFeedbackBodies duplicates Graph.FeedbackBody, and this
+			// is the case that proves it duplicates the GUARD too: `side` is
+			// declared but is no ancestor of `review`, so that arc has no body
+			// at all. Without the guard the fragment would be refused for an
+			// exit "inside the feedback body" — a wrong error, reported at the
+			// file level, that would hide the true one entirely, since the
+			// splice never happens and validateFeedback never runs.
+			name:  "exit at a feedback target that is not an ancestor",
+			entry: using(citeLoop),
+			fragments: map[string]string{"qa-loop": loop(`exit: side
+nodes:
+  - { id: impl, prompt: "{{ with.task }}" }
+  - { id: side, prompt: "{{ with.checks_command }}" }
+  - { id: review, depends_on: [impl], prompt: judge, feedback: { rerun: side, max: 1 } }
+`)},
+			wantErr: "is not a proper depends_on-ancestor",
 		},
 		{
 			name:      "exit on a single-node fragment",

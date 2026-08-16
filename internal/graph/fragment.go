@@ -539,8 +539,12 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 		keys := mappingValues(nodeMap)
 		if dependsOn := keys["depends_on"]; dependsOn != nil && dependsOn.Kind == yaml.SequenceNode {
 			for _, parent := range dependsOn.Content {
-				if exit, isLoop := out.loops[strings.TrimSpace(scalarValue(parent))]; isLoop {
-					parent.Value = splicedID(parent.Value, exit)
+				// Look up trimmed and write trimmed, as namespaceNode does:
+				// a quoted `depends_on: [" qa"]` must not mint " qa/review",
+				// an id whose shape its author never wrote.
+				name := strings.TrimSpace(scalarValue(parent))
+				if exit, isLoop := out.loops[name]; isLoop {
+					parent.Value = splicedID(name, exit)
 				}
 			}
 		}
@@ -1082,9 +1086,19 @@ func judgeMultiNodeWiring(nodes *yaml.Node, declares map[string]bool, badFile fu
 		refuseNestedUse(internal, label, badFile)
 
 		if dependsOn := keys["depends_on"]; dependsOn != nil {
-			if dependsOn.Kind != yaml.SequenceNode {
+			switch {
+			case dependsOn.Kind != yaml.SequenceNode:
 				badFile(fmt.Sprintf("%s declares depends_on that is not a sequence of node ids", label))
-			} else {
+			case len(dependsOn.Content) == 0:
+				// Entry-hood is decided by the key's PRESENCE — an entry node
+				// is one with no internal parent, and it inherits the using
+				// node's depends_on. An empty sequence is therefore neither:
+				// it declares no internal parent yet is not treated as an
+				// entry, so it would inherit nothing, become a root of the
+				// citing graph, and start in parallel with the work the using
+				// node said it comes after. Say it, don't infer it.
+				badFile(fmt.Sprintf("%s declares an empty depends_on — a fragment node with no internal parent is an ENTRY node and inherits the using node's depends_on, which is decided by whether the key is there at all; an empty sequence would opt out of that inheritance silently and start this node at the top of the citing graph. Omit the key", label))
+			default:
 				for _, parent := range dependsOn.Content {
 					judgeInternalReference(parent, declares, label, "depends_on", badFile)
 				}
@@ -1208,6 +1222,15 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 	bodies := make([]fragmentBody, 0, len(arcs))
 	for declarer, rerun := range arcs {
 		ofDeclarer := ancestors(declarer)
+		// The same guard Graph.FeedbackBody applies: an arc whose target is
+		// not an ancestor of its declarer HAS no body, and the arc itself is
+		// refused post-splice by validateFeedback. Without this, an exit: there
+		// would draw a second, wrong "lies inside the feedback body" error
+		// beside the true one — the first line of drift in a duplication whose
+		// price is paid on the promise that the two computations agree.
+		if !ofDeclarer[rerun] {
+			continue
+		}
 		members := map[string]bool{declarer: true, rerun: true}
 		for _, id := range ids {
 			if id != "" && ofDeclarer[id] && ancestors(id)[rerun] {
