@@ -10,10 +10,33 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-08-17
+
+**Minor because the graph schema grew keys you may type.** Compared by name
+rather than by diff line: the seventeen long flags in `flags.go` are unchanged
+and so are the eleven subcommands — the CLI surface is byte-identical to
+v0.8.0. What grew is the FRAGMENT file schema, which gained `exit:` and made
+`nodes:` usable where it was previously refused (ADR 0027). No node or graph
+key was added, renamed or removed.
+
+The headline is that **the reusable unit is a loop, not a node**: a fragment may
+now carry several nodes and the edges among them, so a QA loop or a
+review/repair round is citable the way a single node has been since ADR 0013.
+
+Eight PRs: [#176](https://github.com/jitokim/oh-my-graph/pull/176),
+[#177](https://github.com/jitokim/oh-my-graph/pull/177),
+[#181](https://github.com/jitokim/oh-my-graph/pull/181),
+[#182](https://github.com/jitokim/oh-my-graph/pull/182),
+[#183](https://github.com/jitokim/oh-my-graph/pull/183),
+[#184](https://github.com/jitokim/oh-my-graph/pull/184),
+[#185](https://github.com/jitokim/oh-my-graph/pull/185),
+[#186](https://github.com/jitokim/oh-my-graph/pull/186).
+
 ### Added
 
-- **A fragment may declare a LOOP, not only a node
-  ([ADR 0027](docs/adr/0027-the-reusable-unit-is-a-loop-not-a-node.md)).** A
+- **A fragment may declare a LOOP, not only a node**
+  ([ADR 0027](docs/adr/0027-the-reusable-unit-is-a-loop-not-a-node.md),
+  [#186](https://github.com/jitokim/oh-my-graph/pull/186)). A
   fragment file may now declare `nodes:` (several, with the edges among them)
   plus a required `exit:`, and be cited with the same `use:`/`with:` a
   single-node fragment is. Spliced ids are `<using-id>/<internal-id>`, which no
@@ -36,8 +59,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
-- **A node's `budget_usd` no longer refuses a Codex graph
-  ([ADR 0026](docs/adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md)).**
+- **A node's `budget_usd` no longer refuses a Codex graph**
+  ([ADR 0026](docs/adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md),
+  [#185](https://github.com/jitokim/oh-my-graph/pull/185)).
   Preflight had one sentence for two different facts: `agent:` names a subagent
   whose system prompt the node would otherwise lose (a different node — still
   refused), while `budget_usd` is a USD ceiling a runtime that reports no USD
@@ -55,6 +79,62 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   becomes unloadable under Codex fails `make test` instead of a user's run.
   **The Claude path is unchanged**: `ValidateGraphForRuntime` still returns on
   its first line for `RuntimeClaude`, warning nothing and refusing nothing.
+
+### Fixed
+
+- **A Codex run's live view says there is no tail, instead of showing nothing**
+  ([#182](https://github.com/jitokim/oh-my-graph/pull/182)). The view polled
+  `/api/transcript` every three seconds per running node, and the endpoint looks
+  for `<session-id>.jsonl` under `~/.claude/projects` and nowhere else — so on a
+  Codex run every poll answered 204, for the whole run. The pointless polling
+  was the smaller half: **an empty tail is indistinguishable from "the node
+  hasn't printed anything yet"**, so the view looked broken with no way to learn
+  it was working as designed. `/api/graph` now carries a note when the run's
+  runtime keeps no per-node transcript, and the page renders it in place of the
+  tail and stops asking. The endpoint gains no runtime branch.
+
+- **`Snapshot.Runtime` is a property of the format, not of one writer**
+  ([#181](https://github.com/jitokim/oh-my-graph/pull/181)). The field was
+  `omitempty` and `docs/RUN-FEED.md` tells consumers an absent value means
+  claude — safe only because `executeGraph` happened to canonicalize before
+  writing. A future caller of `runstate.Write` could leave a **schema-3 snapshot
+  with no runtime**, which every consumer then reads as claude when it was not,
+  reopening the hole the schema-3 bump was taken to close. `Snapshot.MarshalJSON`
+  now canonicalizes, so the key is always present whichever writer produced it.
+  Reading is unchanged: an absent `runtime` in an existing file still means
+  claude.
+
+### Documented
+
+- **ADR 0009's session-limit pause is the Claude runtime's promise, not the
+  engine's** ([#184](https://github.com/jitokim/oh-my-graph/pull/184), closing
+  [#171](https://github.com/jitokim/oh-my-graph/issues/171)). Detection matches
+  Claude's own prose, so there is nothing for another runtime's message to
+  match, and the `RuntimeClaude` gate in `CLIRunner` is the second layer rather
+  than the cause — **deleting it would not add the pause under Codex, it would
+  add a pause that can never fire.** So a new runtime does not owe a
+  session-limit signal; what it owes is the honest degradation ADR 0009 already
+  specifies. No behaviour changed.
+
+- The **user-facing** documents now know about the second runtime
+  ([#177](https://github.com/jitokim/oh-my-graph/pull/177)) — `docs/EXAMPLES.md`
+  gains a section on what `--runtime codex` changes, `docs/RUN-FEED.md` tells
+  consumers the live-output supplement is Claude-only and that a Codex
+  `cost_usd` is `0` beside `cost_unknown: true` in the snapshot (present but not
+  authoritative), and `plugin/README.md` says which of the three plugin entry
+  points can reach the flag at all.
+
+### Repository
+
+- The **release body is now `CHANGELOG.md`'s own section** plus a Contributors
+  line computed from `git log`, never goreleaser's commit-subject list
+  ([#176](https://github.com/jitokim/oh-my-graph/pull/176)). A missing section
+  fails the release.
+- **`main` enforces a gate that can actually be met**
+  ([#183](https://github.com/jitokim/oh-my-graph/pull/183)): `test` **and**
+  `stress` required, administrators included, and no required-approval count —
+  which was unsatisfiable for a solo maintainer and so was being bypassed with
+  `--admin`, which bypasses the tests too. Strictly tighter than before.
 
 ## [v0.8.0] - 2026-08-15
 
@@ -3042,7 +3122,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.9.0...HEAD
+[v0.9.0]: https://github.com/jitokim/oh-my-graph/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...v0.7.0
 [v0.6.1]: https://github.com/jitokim/oh-my-graph/compare/v0.6.0...v0.6.1

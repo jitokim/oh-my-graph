@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -132,5 +134,98 @@ func TestPluginManifestsMatchVersion(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("%s does not carry %s — bump it with cmd/oh-my-graph/version.go", rel, want)
 		}
+	}
+}
+
+// TestEveryMergedPRIsInTheChangelog refuses a release that leaves a merged PR
+// UNMENTIONED.
+//
+// Read that as written, because it is weaker than it first sounds and the
+// weakness was found by mutating it rather than by reasoning: it asserts the
+// number appears somewhere in the release's window, not that an entry describes
+// it. A version heading that enumerates its PRs — as v0.9.0's does — satisfies
+// this test for all of them at once. Deleting the link from #182's entry left
+// it green, because the heading still named #182.
+//
+// That is still worth having: the failure it targets is a PR nobody remembered,
+// and remembering it in a list is a visible act. It is NOT a guarantee that
+// each change is described. Do not upgrade this comment without upgrading the
+// check — claiming more than a test checks is how a green suite stops meaning
+// anything.
+//
+// The release body IS the changelog's section for the tag
+// (`scripts/release-notes.sh`), so an entry nobody wrote is a user-visible
+// change nobody is told about — and no existing guard can see it.
+// TestChangelogSectionHasSubstance only asks whether the section is empty; a
+// section with two entries out of eight passes it comfortably. That is exactly
+// what happened while cutting this release: #181, #182, #184, #176 and #177
+// were all merged and all missing, and the omission was caught by hand.
+//
+// Every squash-merged PR carries `(#NNN)` in its subject, so the set of numbers
+// since the last tag is computable. An entry is not owed for every PR — a
+// refactor with no user-visible effect owes none — so a number may be excused,
+// but only OUT LOUD: put it in the `## [Unreleased]` section as
+// `<!-- no-changelog: 123 reason -->`. You may skip it; you may not skip it
+// silently.
+//
+// Skipped when git or the tag history is unavailable (a source tarball, a
+// shallow clone) rather than failing: this asserts about a repository, and a
+// checkout without history is not a broken repository.
+func TestEveryMergedPRIsInTheChangelog(t *testing.T) {
+	last, err := exec.Command("git", "describe", "--tags", "--abbrev=0").Output()
+	if err != nil {
+		t.Skip("no tag history here; nothing to compare against")
+	}
+	rng := strings.TrimSpace(string(last)) + "..HEAD"
+	out, err := exec.Command("git", "log", "--format=%s", rng).Output()
+	if err != nil {
+		t.Skip("git log unavailable")
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatalf("read CHANGELOG.md: %v", err)
+	}
+	// Two sections count, and both are needed: an entry lives under
+	// `## [Unreleased]` while the work is merged, and moves under
+	// `## [vX.Y.Z]` the moment the release is cut. Reading only the first
+	// makes every entry vanish at the cut — which is precisely when this test
+	// matters most, and is what the first version of it did.
+	//
+	// A number under an OLDER heading is history, not this release's entry,
+	// so the window stops at the end of the current version's section.
+	body := string(data)
+	start := strings.Index(body, "## [Unreleased]")
+	if start < 0 {
+		t.Fatal("CHANGELOG.md has no ## [Unreleased] section")
+	}
+	rest := body[start:]
+	cut := "## [v" + Version + "]"
+	if i := strings.Index(rest, cut); i >= 0 {
+		// Take through the end of the current version's section.
+		after := rest[i+len(cut):]
+		if end := strings.Index(after, "\n## ["); end >= 0 {
+			rest = rest[:i+len(cut)+end]
+		}
+	} else if end := strings.Index(rest[len("## [Unreleased]"):], "\n## ["); end >= 0 {
+		rest = rest[:len("## [Unreleased]")+end]
+	}
+
+	prRef := regexp.MustCompile(`\(#(\d+)\)\s*$`)
+	var missing []string
+	for _, subject := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		m := prRef.FindStringSubmatch(subject)
+		if m == nil {
+			continue
+		}
+		num := m[1]
+		if strings.Contains(rest, "#"+num) {
+			continue
+		}
+		missing = append(missing, subject)
+	}
+	if len(missing) > 0 {
+		t.Fatalf("merged since %s but absent from ## [Unreleased] (%d):\n  %s\n\n"+
+			"Write the entry, or excuse it out loud with `<!-- no-changelog: N reason -->`.",
+			strings.TrimSpace(string(last)), len(missing), strings.Join(missing, "\n  "))
 	}
 }
