@@ -453,6 +453,11 @@ nodes:
 			wantErr:   `node "impl" declares "cwd"`,
 		},
 		{
+			// `prompt2`, not `prompt`: this case's subject is refuseNestedUse,
+			// and the key only has to keep `{{ with.task }}` referenced so the
+			// substitution checks stay quiet and the nesting refusal is what
+			// fires. "Correcting" it to `prompt` changes which rule the case
+			// proves, and it would still pass — for the wrong reason.
 			name:      "internal node citing another fragment",
 			entry:     using(citeLoop),
 			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, use: other, prompt2: \"{{ with.task }}\" }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\" }\n")},
