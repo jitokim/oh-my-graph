@@ -445,6 +445,69 @@ nodes:
 	}
 }
 
+// TestLoadFile_SplicedNodesFaceTheGraphsOwnValidationsToo pins the half of the
+// design that is deliberately NOT new machinery: a spliced node is an ordinary
+// node, so the graph-level rules judge it exactly as they would a hand-written
+// one, and the error names the spliced id — which is enough to find the using
+// site, because the spliced id begins with it.
+//
+// Two shapes, both listed in ADR 0027's failure modes as inherent to splicing
+// into someone else's graph rather than as new checks:
+//
+//   - an ENTRY node with `handoff: session` inherits the using node's parents,
+//     whose ARITY the fragment cannot know. A using site with two parents
+//     therefore produces a session node with two, and the existing
+//     session-arity validation refuses it after resolution.
+//   - a gate inside a spliced feedback body is refused by the existing
+//     gate-in-body rule (ADR 0010 rule 4), post-splice, because whether the
+//     body contains one is a property of the resolved graph.
+func TestLoadFile_SplicedNodesFaceTheGraphsOwnValidationsToo(t *testing.T) {
+	t.Run("session entry node inheriting two parents", func(t *testing.T) {
+		const entry = `name: fan-in
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b }
+  - id: qa
+    use: session-loop
+    depends_on: [a, b]
+    with: { task: do it }
+`
+		path := writeGraphDir(t, entry, map[string]string{"session-loop": `fragment: session-loop
+description: a loop whose entry resumes its parent
+substitutions: [task]
+exit: review
+nodes:
+  - { id: impl, prompt: "{{ with.task }}", handoff: session }
+  - { id: review, depends_on: [impl], prompt: judge }
+`})
+		err := loadFileError(t, path, "handoff: session with 2 parents")
+		if !strings.Contains(err.Error(), `node "qa/impl"`) {
+			t.Errorf("the refusal must name the SPLICED id, which locates the using site: %v", err)
+		}
+	})
+
+	t.Run("gate inside a spliced feedback body", func(t *testing.T) {
+		const entry = `name: gated-loop
+nodes:
+  - { id: plan, prompt: p }
+  - { id: qa, use: gate-loop, depends_on: [plan], with: { task: do it } }
+`
+		path := writeGraphDir(t, entry, map[string]string{"gate-loop": `fragment: gate-loop
+description: a loop with a human gate in its body
+substitutions: [task]
+exit: review
+nodes:
+  - { id: impl, prompt: "{{ with.task }}" }
+  - { id: approve, type: gate, depends_on: [impl] }
+  - { id: review, depends_on: [approve], prompt: judge, feedback: { rerun: impl, max: 1 } }
+`})
+		err := loadFileError(t, path, "feedback body contains gate")
+		if !strings.Contains(err.Error(), `"qa/approve"`) {
+			t.Errorf("the refusal must name the spliced gate: %v", err)
+		}
+	})
+}
+
 // loadFileError asserts LoadFile refused and returns the refusal.
 func loadFileError(t *testing.T, path, want string) error {
 	t.Helper()
