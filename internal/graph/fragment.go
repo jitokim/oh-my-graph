@@ -462,9 +462,53 @@ func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
 	// The second pass is over the RESOLVED sequence, so it sees the host
 	// graph's own references and the ones a binding carried into a fragment
 	// alike — a loop cited by another loop's entry node included.
+	refuseLoopIDCollisions(nodes, &out)
 	resolveLoopReferences(nodes, &out)
-	checkBoundReferences(nodes, &out)
+	checkBoundReferences(declaredIDs(nodes), &out)
 	return out
+}
+
+// declaredIDs is the id of every node in a resolved sequence.
+func declaredIDs(nodes *yaml.Node) map[string]bool {
+	ids := make(map[string]bool, len(nodes.Content))
+	for _, nodeMap := range nodes.Content {
+		if nodeMap.Kind == yaml.MappingNode {
+			ids[strings.TrimSpace(scalarValue(mappingValues(nodeMap)["id"]))] = true
+		}
+	}
+	return ids
+}
+
+// refuseLoopIDCollisions closes the hole the splice opens in duplicate-id
+// detection. A multi-node `use:` REPLACES its node with the spliced ones, so
+// its own id survives in nothing but out.loops — and uniqueness is judged
+// post-splice, over ids that are now all distinct. A hand-written `qa` beside a
+// `use:` node also called `qa` was a loud duplicate-id error before ADR 0027;
+// after it the file loads, and every downstream `depends_on: [qa]` and
+// {{ artifacts.qa }} is rewritten to the LOOP's exit even though a node
+// literally named `qa` is what the author wrote. That is the substitute-then-
+// rewrite failure class — a working reference quietly aimed at someone else's
+// output — arriving by a different door, so it is refused at the same volume.
+//
+// Walked in document order rather than over out.loops, so the report is the
+// deterministic first error LoadFile and LintFile must agree on.
+func refuseLoopIDCollisions(nodes *yaml.Node, out *fragmentOutcome) {
+	if len(out.loops) == 0 {
+		return
+	}
+	for _, nodeMap := range nodes.Content {
+		if nodeMap.Kind != yaml.MappingNode {
+			continue
+		}
+		id := strings.TrimSpace(scalarValue(mappingValues(nodeMap)["id"]))
+		if _, isLoop := out.loops[id]; !isLoop {
+			continue
+		}
+		out.errs = append(out.errs, &GraphValidationError{
+			NodeID: id,
+			Reason: fmt.Sprintf("a node citing a multi-node fragment shares its id %q with this node — the loop's id survives the splice as the name downstream edges and {{ artifacts.%s }} resolve THROUGH, to its exit, so this node would silently be bypassed rather than reported as the duplicate it is", id, id),
+		})
+	}
 }
 
 // refuseAuthoredNamespaces is the loader's half of ADR 0027's encapsulation
@@ -475,9 +519,15 @@ func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
 // reply, and between the two, reaching into a loop's internals is refused
 // wherever it can be typed.
 //
-// It covers `depends_on` and `feedback.rerun` as well as `id`, because those
-// are where reaching IN is actually spelled: `depends_on: [qa-a/impl]` names a
-// node that really exists after a splice, so nothing downstream would object.
+// It covers `depends_on`, `feedback.rerun` and every artifact/feedback TOKEN as
+// well as `id`, because those are where reaching IN is actually spelled:
+// `depends_on: [qa-a/impl]` names a node that really exists after a splice, so
+// nothing downstream would object. The token is the spelling that actually
+// leaks data rather than merely ordering — `prompt: "{{ artifacts.qa-a/impl }}"`
+// names a real node AND a real ancestor, so LintPlaceholders is satisfied too
+// and the loop's internal output is simply read from outside. All four are
+// judged in this one pass because pre-splice is the only moment at which every
+// '/' in the document is provably one a human typed.
 func refuseAuthoredNamespaces(nodes *yaml.Node, out *fragmentOutcome) {
 	refuse := func(id, where, spelling string) {
 		out.errs = append(out.errs, &GraphValidationError{
@@ -506,6 +556,16 @@ func refuseAuthoredNamespaces(nodes *yaml.Node, out *fragmentOutcome) {
 				refuse(id, "feedback.rerun", rerun)
 			}
 		}
+		// Every scalar, not a field whitelist: a token reaching into a loop is
+		// as effective in a `with:` binding or a success_check as in a prompt,
+		// and a walk cannot be outrun by a field this schema grows later.
+		walkScalars(nodeMap, func(text string) {
+			for _, token := range idTokensIn(text) {
+				if strings.Contains(token.ref, namespaceSeparator) {
+					refuse(id, "a placeholder token", token.token)
+				}
+			}
+		})
 	}
 }
 
@@ -578,18 +638,19 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 // {{ artifacts.<loop> }} rewrite exists.
 //
 // A bound token whose id DOES exist keeps today's semantics exactly, advisory
-// ancestry lint included.
-func checkBoundReferences(nodes *yaml.Node, out *fragmentOutcome) {
-	if len(out.bound) == 0 {
-		return
-	}
-	exists := make(map[string]bool, len(nodes.Content))
-	for _, nodeMap := range nodes.Content {
-		if nodeMap.Kind == yaml.MappingNode {
-			exists[strings.TrimSpace(scalarValue(mappingValues(nodeMap)["id"]))] = true
-		}
-	}
+// ancestry lint included — with one exception, the last residue of mapping
+// loop→exit BEFORE the existence test: a using node binding its OWN id maps to
+// its own exit, which exists, so the test would pass on a node quoting a
+// descendant of itself. That is refused on its own terms below.
+func checkBoundReferences(exists map[string]bool, out *fragmentOutcome) {
 	for _, ref := range out.bound {
+		if ref.ref == ref.nodeID {
+			out.errs = append(out.errs, &GraphValidationError{
+				NodeID: ref.nodeID,
+				Reason: fmt.Sprintf("with: binds %q to a value referencing {{ artifacts.%s }}, which is this node itself — a loop cannot be given its own output as an input: from outside, {{ artifacts.%s }} is its EXIT, so the binding would splice a node quoting a descendant of itself and die on an interpolation error after the run had been paid for", ref.key, ref.ref, ref.ref),
+			})
+			continue
+		}
 		id := ref.ref
 		if exit, isLoop := out.loops[id]; isLoop {
 			id = splicedID(id, exit)

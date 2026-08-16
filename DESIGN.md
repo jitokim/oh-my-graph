@@ -358,11 +358,20 @@ they are the using node's location, not wiring among declared ids.
 Resolution, in the order it happens:
 
 - Spliced ids are **`<using-id>/<internal-id>`** — `round1/review`,
-  `round1/apply`. `/` cannot appear in an id anyone writes (the loader refuses
-  it in an entry graph and in a fragment file; `coordinator.validatePlannedNodeID`
-  refuses it in a planner reply), so a spliced id can never collide with an
-  authored one. `Validate` accepts the joined form as a backstop — it cannot
-  tell a spliced graph from a resumed snapshot, and must not learn.
+  `round1/apply`. `/` cannot appear in anything anyone writes: in an entry
+  graph the loader refuses it in a node `id`, a `depends_on`, a
+  `feedback.rerun` **and in any `{{ artifacts.<id> }}` / `{{ feedback.<id> }}`
+  token in any scalar** (a binding included — the token is the spelling that
+  would otherwise read a loop's internal output from outside, with every other
+  check satisfied); a fragment file is held to the same rule by its
+  declared-ids invariant; `coordinator.validatePlannedNodeID` refuses it in a
+  planner reply. So a spliced id can never collide with an authored one.
+  `Validate` accepts the joined form as a backstop — it cannot tell a spliced
+  graph from a resumed snapshot, and must not learn.
+- A multi-node `use:` id may not **collide** with another node's id. The splice
+  replaces the using node, so post-splice uniqueness would see only distinct
+  ids while every downstream `depends_on: [qa]` and `{{ artifacts.qa }}` was
+  rewritten to the loop's exit — past a node literally named `qa`.
 - Each internal node is **namespaced before substitution**: its id, its
   `depends_on`, its `feedback.rerun` and every `{{ artifacts.<id> }}` /
   `{{ feedback.<id> }}` token it wrote. A value bound at the using site is

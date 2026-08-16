@@ -588,12 +588,23 @@ consequence of charset change (3): after the loosening, `depends_on:
 representable and is refused by the loader with a message. Before this
 ADR, reaching into a fragment's internals was impossible because fragments
 had no internals. After it, it is a load error — in a `depends_on`, in a
-`feedback.rerun`, in an entry graph or a fragment file, and in a planner
-reply by the coordinator's own refusal. That is a weaker guarantee than the
-brief assumed, stated plainly so nobody later reads "unrepresentable" and
-builds on it. What is *not* weakened is the collision property: distinct ids
-now also mean distinct files, by the injective sanitizer, and that one is
-structural.
+`feedback.rerun`, in an **artifact or feedback token**, in an entry graph or
+a fragment file, and in a planner reply by the coordinator's own refusal.
+That is a weaker guarantee than the brief assumed, stated plainly so nobody
+later reads "unrepresentable" and builds on it. What is *not* weakened is the
+collision property: distinct ids now also mean distinct files, by the
+injective sanitizer, and that one is structural.
+
+The token belongs in that list first, not last, and the first draft of this
+ADR left it out of both the list and the code. It is the only one of the four
+that *reads the loop's output* rather than merely ordering against it, and it
+is the one every other check waves through: `prompt: "{{ artifacts.qa-a/impl
+| inline }}"` names a node that really exists after the splice and really is
+an ancestor of the node quoting it, so `LintPlaceholders` is satisfied too and
+nothing anywhere would have objected. Enforcement is one walk over every
+scalar of each authored node — pre-splice, where every `/` in the document is
+provably one a human typed — and it is a walk rather than a field list
+because a binding is authored text as surely as a prompt is.
 
 **Session handoff across the splice boundary.** A fragment's internal node
 may declare `handoff: session` and works normally when it has exactly one
@@ -835,8 +846,9 @@ regression proof of that.
 
 ## What implementation found
 
-Three corrections, recorded because each one contradicts something this ADR
-asserted before any code existed.
+Five corrections, recorded because each one contradicts something this ADR
+asserted before any code existed. The last two came from review of the
+implementation rather than from writing it.
 
 **1. The conversion proof is `adr-driven-dev.yaml`, not `backlog-batch.yaml`,
 and the blocker is this ADR's own non-goal.** The Failure modes section above
@@ -886,3 +898,31 @@ id is exactly that: not a node. Any `review-*` fragment that ever grows a
 second node would have failed the suite with a message about a missing node.
 Fixed to skip multi-node resolutions, with the blind spot stated where the
 sweep's other limits already are.
+
+**4. Encapsulation was enforced on three of the four spellings, and the
+missing one is the only one that leaks data.** The first implementation
+refused `/` in an `id`, a `depends_on` and a `feedback.rerun`, matching this
+ADR's own enumeration — which also listed three. It left the artifact token
+out: `prompt: "ship {{ artifacts.qa/review | inline }}"` loaded silently, ran
+silently, and read the loop's internal output from outside. It also left the
+host graph *laxer than the fragment*, which is backwards — a fragment naming
+an undeclared id in a token was already a load error. Both the enumeration
+above and `refuseAuthoredNamespaces` now walk every scalar of every authored
+node. The general lesson is the one the Alternatives section argued for `/` in
+the first place: an enumeration of "where a thing can be typed" is a
+conclusion, not a premise, and this one was short by the entry that mattered
+most.
+
+**5. The splice reopened duplicate-id detection, in the one direction that
+produces a working graph.** A multi-node `use:` REPLACES its node with the
+spliced ones, and uniqueness is judged post-splice — so a hand-written `qa`
+beside a `use:` node also called `qa` yields ids `qa`, `qa/impl`, `qa/review`,
+all distinct, and loads. Every downstream `depends_on: [qa]` and
+`{{ artifacts.qa }}` is then rewritten to the *loop's exit*, though a node
+literally named `qa` is what the author wrote. Before this ADR the same file
+was a loud duplicate-id error. This is the substitute-then-rewrite trap the
+design correctly refuses at the binding site — a working reference quietly
+aimed at someone else's output — arriving through a door the design did not
+think to watch, because the using node's id stops being an id and becomes a
+key in `out.loops`. Refused by `refuseLoopIDCollisions`, walked in document
+order so `LoadFile` and `LintFile` still agree on which problem comes first.

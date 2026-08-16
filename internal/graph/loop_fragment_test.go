@@ -476,6 +476,30 @@ nodes:
 			wantErr:   "node id carries a '/'",
 		},
 		{
+			// The fourth spelling, and the only one that reads the loop's
+			// output rather than merely ordering against it: `qa/impl` really
+			// exists after the splice AND really is an ancestor of pr, so
+			// LintPlaceholders is satisfied too and nothing else would ever
+			// object.
+			name: "authored artifact token reaching into a loop",
+			entry: using(citeLoop + `  - { id: pr, depends_on: [qa], prompt: "ship {{ artifacts.qa/impl | inline }}" }
+`),
+			fragments: map[string]string{"qa-loop": loop(workingTail)},
+			wantErr:   "a placeholder token carries a '/'",
+		},
+		{
+			// Not only a prompt: a binding is authored text too, and a walk
+			// over every scalar is what makes that so without a field list.
+			name: "a with: binding reaching into a loop",
+			entry: using(citeLoop + `  - id: qa2
+    use: qa-loop
+    depends_on: [qa]
+    with: { task: "redo {{ artifacts.qa/impl }}", checks_command: make local }
+`),
+			fragments: map[string]string{"qa-loop": loop(workingTail)},
+			wantErr:   "a placeholder token carries a '/'",
+		},
+		{
 			name: "authored feedback.rerun reaching into a loop",
 			entry: using(citeLoop + `  - { id: pr, depends_on: [qa], prompt: p, feedback: { rerun: qa/impl, max: 1 } }
 `),
@@ -506,6 +530,29 @@ nodes:
 `),
 			fragments: map[string]string{"qa-loop": loop(workingTail)},
 			wantErr:   "which is not a node in this graph",
+		},
+		{
+			// The residue of mapping loop→exit BEFORE the existence test: the
+			// ref maps to this node's own exit, which exists, so the check
+			// above would pass a node quoting a descendant of itself.
+			name: "bound value naming the using node itself",
+			entry: using(`  - id: qa
+    use: qa-loop
+    depends_on: [plan]
+    with: { task: "redo {{ artifacts.qa | inline }}", checks_command: make local }
+`),
+			fragments: map[string]string{"qa-loop": loop(workingTail)},
+			wantErr:   "which is this node itself",
+		},
+		{
+			// The splice REPLACES the using node, so post-splice uniqueness
+			// sees `qa`, `qa/impl`, `qa/review` — all distinct. Without a
+			// check of its own, a file that was a loud duplicate-id error
+			// before ADR 0027 becomes a graph wired to the wrong producer.
+			name:      "a multi-node use: id colliding with a hand-written node",
+			entry:     using("  - { id: qa, prompt: the hand-written one }\n" + citeLoop),
+			fragments: map[string]string{"qa-loop": loop(workingTail)},
+			wantErr:   `shares its id "qa" with this node`,
 		},
 	}
 
