@@ -10,6 +10,33 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release's page can no longer come out blank**
+  ([#193](https://github.com/jitokim/oh-my-graph/pull/193)). v0.9.0 published
+  with an empty body — one newline — while every step reported success and the
+  artifacts uploaded fine. The notes file was built correctly (the same script
+  produces 143 lines under the runner's own ubuntu/dash/mawk, reproduced in a
+  container), so goreleaser's `--release-notes` was not doing what it says
+  alongside `changelog.disable`. The body is no longer goreleaser's job:
+  `gh release edit` sets it from the same file, and the step then **reads it
+  back and fails under 200 bytes**, because the failure that already happened
+  was a green workflow over an unreadable release.
+
+### Changed
+
+- **The "did you write a changelog entry?" check moved from a Go test on `main`
+  to a CI job on the pull request**
+  ([#194](https://github.com/jitokim/oh-my-graph/pull/194)). The test asked the
+  right question with the wrong trigger: it read `git log <lastTag>..HEAD`, so a
+  PR's own merge commit did not exist while its CI was green and did exist the
+  instant it landed — **every merge turned `main` red** until somebody wrote the
+  entry afterwards. It caught five genuinely missing entries in v0.9.0, two of
+  them user-visible fixes, and then cost five round trips to its own timing.
+  Asked on the PR instead, it is answerable before the merge by the person who
+  knows what changed. Skipping stays allowed and stays loud: `no-changelog` in
+  the PR body.
+
 ## [v0.9.0] - 2026-08-17
 
 **Minor because the graph schema grew keys you may type.** Compared by name
