@@ -51,6 +51,34 @@ jobs:
         with:
           # Matches `version: 2` in .goreleaser.yaml.
           version: '~> v2'
-          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # goreleaser builds and publishes the ARTIFACTS; the body is set here.
+      #
+      # It used to be passed as `--release-notes`, and v0.9.0 shipped with an
+      # EMPTY body anyway — one newline — while the artifacts uploaded fine and
+      # every step reported success. The notes file was built correctly (the
+      # same script produces 143 lines under the runner's own ubuntu/dash/mawk,
+      # reproduced in a container), so the flag was not doing what it says with
+      # `changelog.disable` set. Rather than keep guessing at that interaction,
+      # the body stops being goreleaser's job: `gh` sets it, from the same file.
+      #
+      # Then it is VERIFIED, because the failure that already happened was
+      # silent — a green workflow and a blank release page. A release nobody can
+      # read is not a release, and it must not be able to pass again.
+      - name: set and verify the release body
+        run: |
+          set -o pipefail
+          gh release edit "${GITHUB_REF_NAME}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" --verify-tag
+          len=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq '.body | length')
+          echo "release body: ${len} bytes"
+          if [ "${len}" -lt 200 ]; then
+            echo "::error::release body is ${len} bytes — the notes did not reach the page" >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
