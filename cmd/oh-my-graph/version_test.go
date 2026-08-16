@@ -171,13 +171,42 @@ func TestPluginManifestsMatchVersion(t *testing.T) {
 // Skipped when git or the tag history is unavailable (a source tarball, a
 // shallow clone) rather than failing: this asserts about a repository, and a
 // checkout without history is not a broken repository.
+// isReleaseCut reports whether a commit is the release-prep commit — the one
+// that writes the version heading and bumps the constant.
+//
+// It owes no changelog entry because it IS the changelog entry, and without
+// this the check fails on every release, at the worst moment: green on the
+// release PR (its own number is not merged yet) and red on `main` the instant
+// it lands. That happened on v0.9.0.
+//
+// Recognised by what it touched, not by how its subject is worded: only a
+// release cut changes CHANGELOG.md and version.go together. A wording rule
+// would be a second thing to keep in sync with a habit.
+func isReleaseCut(sha string) bool {
+	out, err := exec.Command("git", "show", "--name-only", "--format=", sha).Output()
+	if err != nil {
+		return false
+	}
+	files := strings.Fields(string(out))
+	var changelog, version bool
+	for _, f := range files {
+		switch f {
+		case "CHANGELOG.md":
+			changelog = true
+		case "cmd/oh-my-graph/version.go":
+			version = true
+		}
+	}
+	return changelog && version
+}
+
 func TestEveryMergedPRIsInTheChangelog(t *testing.T) {
 	last, err := exec.Command("git", "describe", "--tags", "--abbrev=0").Output()
 	if err != nil {
 		t.Skip("no tag history here; nothing to compare against")
 	}
 	rng := strings.TrimSpace(string(last)) + "..HEAD"
-	out, err := exec.Command("git", "log", "--format=%s", rng).Output()
+	out, err := exec.Command("git", "log", "--format=%H %s", rng).Output()
 	if err != nil {
 		t.Skip("git log unavailable")
 	}
@@ -212,13 +241,17 @@ func TestEveryMergedPRIsInTheChangelog(t *testing.T) {
 
 	prRef := regexp.MustCompile(`\(#(\d+)\)\s*$`)
 	var missing []string
-	for _, subject := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		sha, subject := parts[0], parts[1]
 		m := prRef.FindStringSubmatch(subject)
 		if m == nil {
 			continue
 		}
-		num := m[1]
-		if strings.Contains(rest, "#"+num) {
+		if strings.Contains(rest, "#"+m[1]) || isReleaseCut(sha) {
 			continue
 		}
 		missing = append(missing, subject)
