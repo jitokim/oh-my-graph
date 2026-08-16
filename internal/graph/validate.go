@@ -319,10 +319,17 @@ func (g *Graph) validateWorktrees() []error {
 // move earlier.
 const nodeIDSegment = `[A-Za-z0-9][A-Za-z0-9._-]*`
 
-// nodeIDSegmentPattern is a single segment on its own — the shape of every id
-// a HUMAN may write. The file loader holds authors to it (an entry graph's
-// `nodes:`, a fragment file's `nodes:`) and the coordinator holds the planner
-// to it, so the joined form below is mintable only by the multi-node splice.
+// nodeIDSegmentPattern is a single segment on its own. Its one caller is
+// judgeMultiNodeIDs, on a fragment file's own `nodes:`: those ids are the half
+// the splicer joins to the using id, so a separator there would mint a
+// two-slash id no validator admits, and each must be a whole segment before
+// the join rather than merely after it.
+//
+// It is NOT how the other two authorship sites are enforced. An entry graph's
+// `nodes:` (refuseAuthoredNamespaces) and a planner reply
+// (coordinator.validatePlannedNodeID) test for a '/' and nothing else, leaving
+// the rest of the shape to nodeIDPattern below — same net effect, different
+// check, so a reader looking for this symbol there will not find it.
 var nodeIDSegmentPattern = regexp.MustCompile(`^` + nodeIDSegment + `$`)
 
 // nodeIDPattern is the shape a VALIDATED node id must take: one segment, or

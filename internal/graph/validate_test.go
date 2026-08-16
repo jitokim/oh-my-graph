@@ -728,8 +728,9 @@ nodes:
 //
 // The refusal of an AUTHORED '/' is not weakened by this; it moves to the two
 // places an id is WRITTEN rather than read: the file loader
-// (TestLoadFile_AuthoredNamespaceInIDRejected) and the coordinator
-// (nodeFieldDispositions["ID"]). Exactly one slash, each side an otherwise
+// (TestLoadFile_MultiNodeLoadErrors, "authored node id carrying the namespace
+// separator") and the coordinator (nodeFieldDispositions["ID"]). Exactly one
+// slash, each side an otherwise
 // valid segment — every other shape stays refused above.
 func TestParse_NamespacedNodeIDAcceptedAsBackstop(t *testing.T) {
 	g, err := Parse([]byte(`

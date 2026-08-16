@@ -495,6 +495,14 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 				// no longer exists as a node — its spliced ids do. Skipped
 				// rather than looked up, per the second limit above; the lookup
 				// below would otherwise fail on a shape that is not a defect.
+				//
+				// Unreachable as graphs/fragments/ stands today: the only
+				// multi-node fragment is `repair-round`, which the prefix test
+				// above has already skipped. It is kept because it is what makes
+				// the second limit TRUE rather than merely stated — the day a
+				// `review-*` fragment grows a second node, the alternative is
+				// this test dying on the Fatalf below with a message about a
+				// missing node, which names neither the cause nor the fix.
 				continue
 			}
 			node, ok := loaded.Graph.byID[res.NodeID]
