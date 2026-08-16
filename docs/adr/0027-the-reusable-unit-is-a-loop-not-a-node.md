@@ -1,6 +1,6 @@
 # ADR 0027 — The reusable unit is a loop, not a node
 
-**Status:** Accepted — design settled, not yet implemented
+**Status:** Accepted — implemented (see "What implementation found" below)
 
 **Date:** 2026-08-16
 
@@ -832,3 +832,57 @@ regression proof of that.
   `<sanitized-node-id>.out`, with the rule spelled out) must land in the same
   change that implements this, per the standing rule that code and DESIGN.md
   never drift apart.
+
+## What implementation found
+
+Three corrections, recorded because each one contradicts something this ADR
+asserted before any code existed.
+
+**1. The conversion proof is `adr-driven-dev.yaml`, not `backlog-batch.yaml`,
+and the blocker is this ADR's own non-goal.** The Failure modes section above
+worked out at length that `backlog-batch`'s lane A fits — right about the data
+flow, and wrong about the lane. Two of that lane's three nodes (`e2e-a`,
+`review-a`) are themselves `use:` citations, of `e2e-verify` and `review-style`.
+Folding the lane into a multi-node fragment therefore requires **`use:` inside
+a fragment**, which this same ADR forbids as a non-goal — so the only available
+conversion is to INLINE both fragments' bodies into the loop file, forking
+`e2e-verify` (cited by four graphs) and `review-style` (cited by three) into a
+third copy each. That is the drift ADR 0013 exists to kill, paid to demonstrate
+the mechanism that supersedes it. Not done.
+
+The honest reading is that the two facts compose the other way round from what
+was assumed: **a lane that already uses fragments well is the hardest lane to
+convert**, because nesting is exactly what it would need. The lanes that
+convert cleanly are the ones that never reached for a fragment at all — which
+is also, precisely, where the measured copy-paste is.
+
+`adr-driven-dev.yaml` is that lane, and this ADR already named it as the second
+candidate. It is hand-written throughout, it unrolls `review → apply` twice, it
+is under no equivalence freeze, and its conversion cost the file 119 lines for
+53. What stopped being copied is worth more than the count: the one-direction
+discipline, both verdict contracts, the apply's tool grant, its evidence gate
+and its retry were identical in all four nodes.
+
+Two prompt convergences are reviewed changes, not equivalence claims — round 2's
+verdict wording converges on round 1's, and the two apply prompts converge
+except for their one differing sentence — which is why the graph joins
+`goldenTemplates` and not `migratedTemplates`.
+
+**2. A multi-node fragment file is not loadable as a graph, and one test
+assumed every shipped YAML is.** A single-node fragment declares `node:`, which
+a graph decoder ignores, so `LoadFile` on the file yielded an empty graph that
+passed every check — which is how `TestLintFeedbackReach_ShippedGraphsAreQuiet`
+came to sweep fragments directly. A multi-node fragment declares `nodes:`, the
+key that decoder reads, and its scalars are templates: `timeout:
+"{{ with.review_timeout }}"` is not a duration. It is swept through the
+templates that cite it instead. Nothing about the sweep's value changes; the
+claim in its comment that "a fragment parses and validates on its own" was only
+ever true by accident.
+
+**3. The gating-review sweep held a latent crash, not merely a blind spot.**
+`TestAGatingReviewCarriesItsRecoveryArc` looks up `res.NodeID` in the resolved
+graph and `t.Fatalf`s when it is absent. For a multi-node resolution the using
+id is exactly that: not a node. Any `review-*` fragment that ever grows a
+second node would have failed the suite with a message about a missing node.
+Fixed to skip multi-node resolutions, with the blind spot stated where the
+sweep's other limits already are.

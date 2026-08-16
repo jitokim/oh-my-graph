@@ -10,6 +10,30 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A fragment may declare a LOOP, not only a node
+  ([ADR 0027](docs/adr/0027-the-reusable-unit-is-a-loop-not-a-node.md)).** A
+  fragment file may now declare `nodes:` (several, with the edges among them)
+  plus a required `exit:`, and be cited with the same `use:`/`with:` a
+  single-node fragment is. Spliced ids are `<using-id>/<internal-id>`, which no
+  author and no planner may write, so a spliced node can never collide with an
+  authored one; entry nodes inherit the citing node's `depends_on`, `cwd:` and
+  `worktree:` propagate from it, and `depends_on: [<loop>]` /
+  `{{ artifacts.<loop> }}` from downstream both resolve to the loop's exit.
+  `exit:` is never inferred from the unique sink — inference is right only
+  while there is exactly one, and when it is wrong it is wrong silently.
+  ADR 0013's rule is generalized, not weakened: **a fragment may never name an
+  id it does not itself declare**, of which "a single-node fragment may declare
+  no wiring at all" is now the special case, with every one of its tests kept.
+  Measured on the shipped corpus: `adr-driven-dev`'s two hand-unrolled
+  review/apply rounds became two `use:` of one fragment, **119 lines removed
+  for 53**, and the one-direction discipline, both verdict contracts, the
+  apply's tool grant, its evidence gate and its retry stopped being written out
+  four times. Scheduler, snapshot, event feed and ledger are untouched — a
+  spliced node is an ordinary node, and a consumer that wants the loop view
+  groups by the `<using-id>/` prefix.
+
 ### Changed
 
 - **A node's `budget_usd` no longer refuses a Codex graph

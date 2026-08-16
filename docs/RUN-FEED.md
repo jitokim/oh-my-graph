@@ -11,6 +11,8 @@ the very same files, and an external consumer reads exactly what they read:
   state.json     versioned atomic SNAPSHOT  — whole-run state, overwritten after every node
   events.jsonl   versioned append-only STREAM — one line per lifecycle transition
   <node-id>.out  per-node artifact — EVERY non-gate node that passes, whatever its handoff
+                 (the filename is the SANITIZED id — see below; identical to the
+                 id for every id a human can write)
   graph.json     the planned spec (auto runs only)
   rejected.json  a REFUSED planner reply, kept because the call was paid for (ADR 0023 §3.1)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
@@ -25,6 +27,19 @@ whether the parent's result is persisted (`Handoff.PersistOutput` is called on
 the one passing path, with no handoff branch). A consumer must not skip the
 `.out` beside a `handoff: session` node — it is there, and it holds that
 node's real result. A gate node spawns nothing and so has no `.out`.
+
+**The filename is the node id with `/` (and this platform's own path
+separator) replaced by `~`** — one file per node, flat, in one directory. That
+rule is a no-op for every id an author or a planner can write: both are held to
+one path element, and `~` is outside the id character set. It exists for the
+ids a MULTI-NODE fragment splice mints, `<using-id>/<internal-id>` (ADR 0027),
+which cannot be a filename as written. The replacement is `~` rather than `_`
+precisely so the map is injective: with `_`, the distinct nodes `a` + `b_c`,
+`a_b` + `c` and a hand-written `a_b_c` would share one file, and a consumer
+reading it would be handed another node's result with nothing failing. A
+consumer applies the rule in one line, or reads
+`state.json`'s per-node `artifact_path`, which records the path the run
+actually wrote.
 
 **A run directory may legitimately hold NEITHER `graph.json` NOR `state.json`,
 and this is not damage** (ADR 0023). Two shapes reach it. While an `auto` run is
