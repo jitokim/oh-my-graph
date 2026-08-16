@@ -889,10 +889,13 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **26
+  is a sweep that cannot silently miss a node. That sweep counts **24
   declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: three of the 26
-  live in `graphs/fragments/` and carry ten of the nodes between them. The
+  once and every node citing it gets it, which is the point: five of the 24
+  live in `graphs/fragments/` and carry fourteen of the nodes between them.
+  The gap widened by two when `adr-driven-dev`'s two repair rounds became two
+  `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
+  places to correct the sentence in. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —

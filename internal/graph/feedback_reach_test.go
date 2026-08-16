@@ -153,8 +153,22 @@ func TestLintFeedbackReach_LinearLoopIsQuiet(t *testing.T) {
 // vacuously. Its value is entirely forward-looking: it fails the moment
 // someone ships a fan-in reviewer whose arc misses a producer, which is the
 // mistake #118 was.
+//
+// A MULTI-NODE fragment file is excluded, and the reason is structural rather
+// than an exemption (ADR 0027). The sweep needs a *Graph, and a fragment only
+// becomes one when it is spliced: its `nodes:` carry `{{ with.x }}` where a
+// graph carries values, so loading the file itself would judge templates as
+// though they were durations and regexes. It is swept through every template
+// that cites it — which the loop above walks, and which
+// TestEmbeddedGraphsLoadFromTheBinarysOwnPayload proves at least one of exists.
+// A SINGLE-node fragment stays in, unchanged: it declares no `nodes:` at all,
+// so it loads as an empty graph and the sweep passes over it vacuously, exactly
+// as it always did.
 func TestLintFeedbackReach_ShippedGraphsAreQuiet(t *testing.T) {
 	for _, name := range shippedYAMLNames(t) {
+		if isMultiNodeFragmentFile(t, name) {
+			continue
+		}
 		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
 		if err != nil {
 			t.Fatalf("shipped YAML %s failed to load: %v", name, err)
@@ -163,6 +177,21 @@ func TestLintFeedbackReach_ShippedGraphsAreQuiet(t *testing.T) {
 			t.Errorf("shipped YAML %s warned: %v", name, advisories)
 		}
 	}
+}
+
+// isMultiNodeFragmentFile reports whether an embedded payload path is a
+// fragment declaring the multi-node form — the one shape that is a fragment AND
+// spells the `nodes:` key a graph decoder reads.
+func isMultiNodeFragmentFile(t *testing.T, name string) bool {
+	t.Helper()
+	if !strings.HasPrefix(name, "fragments/") {
+		return false
+	}
+	data, err := graphs.FS.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read embedded %s: %v", name, err)
+	}
+	return strings.Contains(string(data), "\nnodes:")
 }
 
 // shippedYAMLNames is every embedded YAML payload path, fragments included —

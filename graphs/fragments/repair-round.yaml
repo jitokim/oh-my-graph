@@ -1,0 +1,102 @@
+# repair-round — ADR 0027's founding shape: a review that never edits, then an
+# apply that never re-reviews. TWO nodes and the edge between them, cited by a
+# single `use:` the way one node is.
+#
+# This is the pair the corpus writes out longhand. `adr-driven-dev` unrolled it
+# twice (round1 → apply1 → round2 → apply2); across the operator lanes, 13 of 18
+# carry it, and 12 of those cite the `pr-publish` fragment on the very next node
+# — authors who were not unaware of fragments, but for whom the two nodes in
+# front of the one they cited were not citable. Now they are.
+#
+# What stays per-use is what only the citing graph can know: what this round
+# REVIEWS (`review_focus`), what its apply is additionally asked to do
+# (`apply_scope`), which deep-review agent judges it (`review_agent` — bind ""
+# for a plain claude session), how long the review may take (`review_timeout` —
+# bind "" for the runner's default), and the command the ENGINE runs as the
+# apply's evidence (`verify_command`). Bind that last one from an input or a
+# literal, never from an artifact: the engine runs it through `sh -c`, so an
+# artifact binding would hand a model's own output straight to a shell.
+#
+# What the fragment fixes, once, for every user: the one-direction discipline
+# (the review holds no write tool and runs permission_mode: plan; the apply
+# holds no review duty), both verdict contracts, and the apply's
+# evidence-grounded gate with its retry. Those are the parts that drifted
+# apart when the pair was copied.
+#
+# `cwd:` and `worktree:` are deliberately absent — they are the using node's,
+# and they propagate to BOTH spliced nodes, so a citing graph declares its
+# repository once instead of once per node.
+fragment: repair-round
+description: one review/repair round — a review that never edits, then a gated apply that never re-reviews
+substitutions: [review_focus, review_agent, review_timeout, apply_scope, verify_command]
+exit: apply
+nodes:
+  - id: review
+    type: claude-run
+    # Bound rather than fixed: a deep round names an opus-class reviewer, a
+    # standard round binds "" and runs as a plain claude session. `agent:` is
+    # not {{ inputs }}-interpolated, so the citing graph must spell a concrete
+    # name — a name that does not resolve fails the node LOUDLY at run time and
+    # never silently falls back.
+    agent: "{{ with.review_agent }}"
+    prompt: |
+      {{ with.review_focus }}
+      If you have a code-review or coding-rules skill, apply it. This is a
+      review round: do NOT edit anything.
+      Finish the review BEFORE you reply. Your FINAL reply IS the verdict:
+      the node's turn ends the moment you reply, so a file you promise to
+      read afterwards is never read. START the reply with exactly one of
+      these two bare tokens, as the very FIRST characters, with no markdown
+      emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
+        - CLEAN — you judged the whole diff and found nothing.
+        - FINDINGS: — followed by a prioritized list, worst first.
+      Anything you need to qualify goes AFTER the token, never before it: a
+      line of context ahead of it fails this node even when the review is
+      finished.
+    # A reviewer gets read verbs and nothing else — the other half of the
+    # one-direction discipline, enforced rather than asked for: with no
+    # Edit/Write and permission_mode: plan, "do NOT edit anything" is not a
+    # request the model can decline.
+    allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
+    permission_mode: plan
+    timeout: "{{ with.review_timeout }}"
+    handoff: artifact
+    # Either verdict passes; an interim "still reviewing" does not. A review's
+    # job is to judge, not to be clean — a citing graph that wants findings to
+    # STOP it narrows this on its own review node, which a multi-node use: may
+    # not do, so that graph needs a fragment of its own (ADR 0027).
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
+
+  - id: apply
+    type: claude-run
+    depends_on: [review]
+    prompt: |
+      Apply this review feedback:
+      {{ artifacts.review | inline }}
+
+      Address every finding — fix it, or commit a note explaining why it
+      is wrong.
+      {{ with.apply_scope }}
+      This is an apply round: do NOT re-review.
+      Commit as you go, ending every commit message with the
+      trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the
+      attribution convention in CONTRIBUTING.md). Run the tests
+      SYNCHRONOUSLY and wait for them to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. When tests are green, START the reply with the bare word PASS —
+      those four characters FIRST, no markdown emphasis (`**PASS**` is
+      WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
+      and what is broken. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when the tests are green.
+    allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 45m # hang guard — generous, so real work is never killed mid-flight
+    handoff: artifact
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
+      # The evidence. The engine runs this itself and judges the exit code, so
+      # an apply that reports PASS without the suite passing does not pass.
+      verify: { command: "{{ with.verify_command }}", timeout: 5m }
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
