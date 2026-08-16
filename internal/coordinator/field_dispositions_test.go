@@ -85,7 +85,12 @@ type fieldRule struct {
 // field name (not YAML key) so a rename shows up here as a test failure rather
 // than as a silently orphaned entry.
 var nodeFieldDispositions = map[string]fieldRule{
-	"ID":        {disposition: allowed, why: "the plan names its own nodes; graph.Validate enforces uniqueness"},
+	"ID": {
+		disposition:    constrained,
+		why:            "the plan names its own nodes and graph.Validate enforces uniqueness — but not the SHAPE: nodeIDPattern admits `<using-id>/<internal-id>` as the backstop for a multi-node fragment splice (ADR 0027), and that namespace is mintable by the splicer alone. An author is held to one segment by the file loader; a planner reply never passes a loader, so validatePlannedNodeID is its half of the same refusal",
+		probeJSON:      `"id":"probe/impl"`,
+		reasonContains: "'/' in its id",
+	},
 	"DependsOn": {disposition: allowed, why: "the plan's topology; graph.Validate enforces existence and acyclicity"},
 	"Handoff":   {disposition: allowed, why: "artifact/session are both safe; arity is enforced by graph.Validate"},
 	"BudgetUSD": {disposition: allowed, why: "a cap on spend — a planner can only make a node cheaper to fail"},

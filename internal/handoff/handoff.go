@@ -51,8 +51,15 @@ func (e *InterpolationError) Error() string {
 // artifacts; a feedback placeholder always inlines and resolveLocked rejects
 // a filter on it loudly (graph.Validate already refuses it at load for any
 // graph that came through Parse).
+//
+// '/' is in the reference class because a multi-node fragment splices
+// namespaced ids (ADR 0027): a spliced prompt contains
+// {{ artifacts.qa-a/impl }}, and without the '/' the token would not match,
+// the runtime would pass it through verbatim, and a paid prompt would ship a
+// literal placeholder. graph.feedbackTokenPattern carries the same class for
+// the same reason and must move with it.
 var placeholderPattern = regexp.MustCompile(
-	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
+	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._/-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
 // ContainsPlaceholder reports whether s holds any sequence Interpolate would
@@ -331,7 +338,7 @@ func (h *Handoff) SeedFeedback(nodeID string) error {
 // <id>.feedback.out would let a node literally named "x.feedback" produce an
 // artifact at node "x"'s payload path.
 func (h *Handoff) feedbackPath(nodeID string) string {
-	return filepath.Join(h.runDir, "feedback", sanitizeNodeID(nodeID)+".out")
+	return filepath.Join(h.runDir, "feedback", SanitizeNodeID(nodeID)+".out")
 }
 
 // failedDir holds one file per FAILED node, holding that node's own reply. It
@@ -403,7 +410,7 @@ func (h *Handoff) DropFailure(nodeID string) error {
 // found: a read-back surface locates it by the same computation that wrote it
 // rather than by re-spelling the layout somewhere else.
 func FailedOutputPath(runDir, nodeID string) string {
-	return filepath.Join(runDir, failedDir, sanitizeNodeID(nodeID)+".out")
+	return filepath.Join(runDir, failedDir, SanitizeNodeID(nodeID)+".out")
 }
 
 // failedExcerptMarker is the line excerptFailedReply leaves in place of what it
@@ -540,16 +547,38 @@ func (h *Handoff) ArtifactPath(nodeID string) (string, bool) {
 
 // artifactPath is the on-disk location of a node's persisted result.
 func (h *Handoff) artifactPath(nodeID string) string {
-	return filepath.Join(h.runDir, sanitizeNodeID(nodeID)+".out")
+	return filepath.Join(h.runDir, SanitizeNodeID(nodeID)+".out")
 }
 
-// sanitizeNodeID makes a node id safe as a single path element. Node ids are
-// validated (no path separators expected), but both '/' and this OS's own
-// separator are replaced so a stray separator can never escape the run
+// SanitizeNodeID makes a node id safe as a single path element: both '/' and
+// this OS's own separator are replaced, so a separator can never escape the run
 // directory on any platform — Windows resolves '/' as a separator too, so
 // sanitizing os.PathSeparator alone would leave a '/'-carrying id escaping
 // there.
-func sanitizeNodeID(nodeID string) string {
-	safe := strings.ReplaceAll(nodeID, "/", "_")
-	return strings.ReplaceAll(safe, string(os.PathSeparator), "_")
+//
+// The replacement is '~', and that choice is load-bearing rather than
+// cosmetic (ADR 0027). Since multi-node fragments mint `<using-id>/<internal>`
+// ids, this function is no longer the identity, and a NON-INJECTIVE map here
+// would silently point two distinct nodes at one file: with '_', using node
+// `a` + internal `b_c` and using node `a_b` + internal `c` both land on
+// `a_b_c.out`, as does a hand-written `a_b_c`. The ids differ, so
+// validateNodesUnique passes and the in-memory artifact map is fine; what
+// collides is the FILE, whichever node finishes last overwrites, and
+// `{{ artifacts.x | inline }}` inlines another node's output into a paid
+// prompt with nothing failing. '~' is outside nodeIDPattern's character class,
+// so no authored segment can contain it and no two distinct ids can sanitize
+// to the same name.
+//
+// Every id that could exist before ADR 0027 still sanitizes to itself, so no
+// existing artifact file moves and no resume is disturbed.
+//
+// Exported because the path must be computed in ONE place: serve's
+// /api/result and `run --dry-run`'s seeded paths used to re-spell
+// `<node-id>.out` themselves, which was harmless only while no id could carry
+// a '/' — after ADR 0027 it would look for `<run-dir>/qa-a/impl.out` while the
+// artifact sits at `<run-dir>/qa-a~impl.out`, and render "no result yet" for a
+// node that has a result.
+func SanitizeNodeID(nodeID string) string {
+	safe := strings.ReplaceAll(nodeID, "/", "~")
+	return strings.ReplaceAll(safe, string(os.PathSeparator), "~")
 }

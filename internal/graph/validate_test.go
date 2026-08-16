@@ -688,7 +688,7 @@ nodes:
 // surface mid-run as a filesystem escape — after other nodes have already run
 // and been paid for. Same rule as the worktree name, for the same reason.
 func TestParse_NodeIDUnsafeRejected(t *testing.T) {
-	for _, id := range []string{"a/b", `a\b`, "../escape", ".hidden", "-flag", "has space"} {
+	for _, id := range []string{`a\b`, "../escape", ".hidden", "-flag", "has space", "a/b/c", "a//b", "a/", "/b", "a/.hidden"} {
 		t.Run(id, func(t *testing.T) {
 			_, err := Parse([]byte(`
 name: bad-node-id
@@ -717,6 +717,32 @@ nodes:
 	}
 	if _, ok := g.NodeByID("Feature_2.x"); !ok {
 		t.Errorf("node id did not survive parsing")
+	}
+}
+
+// TestParse_NamespacedNodeIDAcceptedAsBackstop pins the ONE loosening ADR 0027
+// makes to the id grammar, and pins it here rather than leaving it implicit:
+// Validate accepts `<using-id>/<internal-id>` because it is handed graphs it
+// cannot tell apart — a multi-node fragment splice's output, and a resumed
+// leg's snapshot that already holds joined ids. Refusing here would break both.
+//
+// The refusal of an AUTHORED '/' is not weakened by this; it moves to the two
+// places an id is WRITTEN rather than read: the file loader
+// (TestLoadFile_AuthoredNamespaceInIDRejected) and the coordinator
+// (nodeFieldDispositions["ID"]). Exactly one slash, each side an otherwise
+// valid segment — every other shape stays refused above.
+func TestParse_NamespacedNodeIDAcceptedAsBackstop(t *testing.T) {
+	g, err := Parse([]byte(`
+name: spliced
+nodes:
+  - { id: qa-a/impl, prompt: a }
+  - { id: qa-a/review, prompt: b, depends_on: [qa-a/impl] }
+`))
+	if err != nil {
+		t.Fatalf("a spliced id must validate — a resumed snapshot is full of them: %v", err)
+	}
+	if _, ok := g.NodeByID("qa-a/review"); !ok {
+		t.Errorf("namespaced node id did not survive parsing")
 	}
 }
 

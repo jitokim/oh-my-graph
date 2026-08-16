@@ -69,6 +69,30 @@ func TestInterpolate_ArtifactInlineFilter(t *testing.T) {
 	}
 }
 
+// TestInterpolate_NamespacedArtifactAndFeedbackResolve is the runtime half of
+// ADR 0027's charset change. A spliced prompt says
+// {{ artifacts.qa-a/impl | inline }} and {{ feedback.qa-a/review }}; if the
+// reference class did not admit '/', neither token would match, and the
+// runtime would pass BOTH through verbatim into a paid prompt — the exact
+// silent-verbatim failure the load-time/run-time token split exists to abolish.
+func TestInterpolate_NamespacedArtifactAndFeedbackResolve(t *testing.T) {
+	h := New(t.TempDir(), nil)
+	if err := h.PersistOutput("qa-a/impl", "the implementation", "s-1"); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if err := h.SetFeedback("qa-a/review", "findings: fix the thing"); err != nil {
+		t.Fatalf("set feedback: %v", err)
+	}
+
+	got, err := h.Interpolate("did {{ artifacts.qa-a/impl | inline }} / said {{ feedback.qa-a/review }}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "did the implementation / said findings: fix the thing" {
+		t.Fatalf("namespaced tokens did not resolve: %q", got)
+	}
+}
+
 func TestInterpolate_ArtifactNotYetAvailable(t *testing.T) {
 	h := New(t.TempDir(), nil)
 	_, err := h.Interpolate("{{ artifacts.pending }}")
@@ -106,7 +130,7 @@ func TestPersistOutput_SlashInNodeIDCannotEscapeRunDir(t *testing.T) {
 	if err := h.PersistOutput("../escape", "BODY", "sess"); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
-	if _, err := os.ReadFile(filepath.Join(dir, ".._escape.out")); err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "..~escape.out")); err != nil {
 		t.Fatalf("sanitized artifact should live inside the run dir: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escape.out")); !os.IsNotExist(err) {

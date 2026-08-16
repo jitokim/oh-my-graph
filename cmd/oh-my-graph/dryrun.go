@@ -78,10 +78,15 @@ func printResolvedPlan(w io.Writer, g *graph.Graph) {
 // uses. Every node id is seeded with a placeholder artifact path first, and
 // any error still on the artifact side is skipped: artifacts materialize while
 // the run executes, so they are the one thing a static pass must not judge.
+//
+// The seeded placeholder path is the real writer's computation
+// (handoff.SanitizeNodeID), not a second spelling of it: a spliced node's id
+// carries a '/' (ADR 0027), and `node.ID+".out"` would print a path no run
+// ever writes.
 func inputIssues(g *graph.Graph, inputs map[string]string) []error {
 	h := handoff.New("", inputs)
 	for _, node := range g.Nodes {
-		h.Seed(node.ID, node.ID+".out", "")
+		h.Seed(node.ID, handoff.SanitizeNodeID(node.ID)+".out", "")
 	}
 
 	var issues []error

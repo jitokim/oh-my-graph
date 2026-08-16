@@ -69,6 +69,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
@@ -576,7 +577,14 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(s.runDir, nodeID+".out"))
+	// The filename is handoff's computation, not a second spelling of it: a
+	// spliced node's id carries a '/' (ADR 0027), which the writer maps to '~'.
+	// Re-spelling `nodeID+".out"` here would look for <run-dir>/qa-a/impl.out
+	// while the artifact sits at <run-dir>/qa-a~impl.out, and answer 204 "no
+	// result yet" for a node that has a result — a silent wrong answer, which
+	// is worse than an error. The id is already vouched for above, so
+	// sanitizing here narrows nothing.
+	data, err := os.ReadFile(filepath.Join(s.runDir, handoff.SanitizeNodeID(nodeID)+".out"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			w.WriteHeader(http.StatusNoContent)
