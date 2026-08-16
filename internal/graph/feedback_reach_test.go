@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jitokim/oh-my-graph/graphs"
 )
 
@@ -182,6 +184,13 @@ func TestLintFeedbackReach_ShippedGraphsAreQuiet(t *testing.T) {
 // isMultiNodeFragmentFile reports whether an embedded payload path is a
 // fragment declaring the multi-node form — the one shape that is a fragment AND
 // spells the `nodes:` key a graph decoder reads.
+//
+// The exclusion is structural, so it is decided structurally: the file is
+// unmarshalled and the top-level key tested. A substring test would drop a
+// SINGLE-node fragment whose prompt merely contains a line beginning `nodes:`,
+// which is not far-fetched in a repo whose prompts routinely quote graph YAML —
+// and it would drop it silently, from the very sweep that exists to catch what
+// nobody noticed.
 func isMultiNodeFragmentFile(t *testing.T, name string) bool {
 	t.Helper()
 	if !strings.HasPrefix(name, "fragments/") {
@@ -191,7 +200,13 @@ func isMultiNodeFragmentFile(t *testing.T, name string) bool {
 	if err != nil {
 		t.Fatalf("read embedded %s: %v", name, err)
 	}
-	return strings.Contains(string(data), "\nnodes:")
+	var file struct {
+		Nodes yaml.Node `yaml:"nodes"`
+	}
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		t.Fatalf("embedded fragment %s does not parse: %v", name, err)
+	}
+	return file.Nodes.Kind != 0 // zero Kind == the key was absent
 }
 
 // shippedYAMLNames is every embedded YAML payload path, fragments included —
