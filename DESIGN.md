@@ -33,8 +33,10 @@ the selected protocol reports and uses it for `handoff: session`.
 
 Codex reports token usage but no USD total. `CostUnknown` is durable through
 the ledger, `state.json`, `events.jsonl`, CLI history views and web UI; it must
-never render as `$0`. Positive `budget_usd`, `agent:`, and the goal-level USD
-budget are refused at preflight for Codex.
+never render as `$0`. `agent:` and the goal-level USD budget are refused at
+preflight for Codex; a node's `budget_usd` is not (ADR 0026) — it loads with a
+warning saying the cap cannot apply and naming the guard that still holds, that
+node's own `timeout:` or the runner's default.
 
 ## Node runtime mechanics (ground truth — use exactly)
 

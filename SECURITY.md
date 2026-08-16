@@ -151,8 +151,10 @@ assessor do not. A hand-written graph also keeps the user's normal config,
 matching the existing reviewed-artifact boundary.
 
 This is a filesystem sandbox stance, not granular enforcement of
-`allowed_tools`. Positive `budget_usd`, `agent:`, and the goal-level USD budget
-flag are rejected for Codex rather than silently ignored. Claude agent mapping
+`allowed_tools`. `agent:` and the goal-level USD budget flag are rejected for
+Codex rather than silently ignored. A node's `budget_usd` is neither rejected
+nor silently ignored: it is accepted with a warning that the cap cannot apply
+and that the node's `timeout:` is the guard still in force (ADR 0026). Claude agent mapping
 and skill activation are not attempted. Codex USD cost is recorded as unknown;
 its provider-reported token counts are the accounting surface.
 

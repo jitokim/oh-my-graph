@@ -130,8 +130,16 @@ has no open issue behind it.
   comparison are all absent for the whole run. That is not a gap in one
   reading: it is the trade the runtime makes, and the run says so before it
   starts (`noteCodexRuntimePolicy`).
-  Positive `budget_usd`, `agent:`, and `--max-goal-budget-usd` are rejected
-  before execution. Claude Code agent mapping and skill activation do not run
+  `agent:` and `--max-goal-budget-usd` are rejected before execution; a node's
+  `budget_usd` is not ([ADR 0026](adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md)).
+  The cap has nothing to bound, so the graph loads and prints one warning per
+  budgeted node saying the cap cannot apply and which guard still holds — that
+  node's `timeout:`, or the runner's 20m default. The goal ceiling differs
+  because it is checked only at a CYCLE BOUNDARY: an unmeasurable one would stop
+  at the first boundary having bought a whole cycle to learn what preflight says
+  for free, where an inapplicable node cap costs nothing extra. The loop is
+  bounded either way — `--max-cycles` bounds iterations, and the ceiling is only
+  its spend-shaped bound. Claude Code agent mapping and skill activation do not run
   on Codex. Codex also cannot enforce Claude's granular `allowed_tools`
   patterns; its boundary is the selected filesystem sandbox, with user config,
   project rules/AGENTS files and MCP servers removed from planned invocations.

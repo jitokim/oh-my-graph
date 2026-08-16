@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -118,5 +120,102 @@ func TestExecutePlanPersistsPlannerAccountingForShow(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "TOTAL COST: unknown") || !strings.Contains(got, "TOKEN USAGE: input 17, cached 4, output 7, reasoning 3") {
 		t.Errorf("persisted detail omitted planner accounting:\n%s", got)
+	}
+}
+
+// budgetedCodexGraph is one node with a cap the Codex runtime cannot evaluate —
+// the smallest fixture that makes runner.ValidateGraphForRuntime return a
+// warning and no error.
+const budgetedCodexGraph = `
+name: capped
+nodes:
+  - { id: work, prompt: work, budget_usd: 2.50 }
+`
+
+// budgetWarningMarker is the part of the warning that only the preflight line
+// can produce: noteCodexRuntimePolicy's prose also says "cannot apply", so
+// counting on that alone would count the disclosure as a second copy.
+const budgetWarningMarker = `node "work": budget_usd 2.50 cannot apply`
+
+// TestLintForRuntime_SurfacesBudgetWarning and its --dry-run twin pin the two
+// spawn-free call sites of runner.ValidateGraphForRuntime. ADR 0026's loudest
+// claim is that all five sites PRINT — deleting a warnRuntimePreflight call
+// otherwise leaves `make test` green, which makes the claim a comment rather
+// than a fact.
+func TestLintForRuntime_SurfacesBudgetWarning(t *testing.T) {
+	path := writeGraphFile(t, budgetedCodexGraph)
+
+	var out, warn strings.Builder
+	if err := lintGraphForRuntime(&out, &warn, path, runner.RuntimeCodex); err != nil {
+		t.Fatalf("a budgeted graph must still lint clean under codex: %v", err)
+	}
+	if got := warn.String(); !strings.Contains(got, budgetWarningMarker) || !strings.Contains(got, "timeout") {
+		t.Errorf("lint --runtime codex dropped the preflight warning:\n%s", got)
+	}
+	if got := warn.String(); !strings.Contains(got, path+": ") {
+		t.Errorf("warning should name the graph file %q:\n%s", path, got)
+	}
+
+	// The Claude half of the same call site: same file, no warning at all.
+	var claudeOut, claudeWarn strings.Builder
+	if err := lintGraphForRuntime(&claudeOut, &claudeWarn, path, runner.RuntimeClaude); err != nil {
+		t.Fatalf("lint under claude: %v", err)
+	}
+	if strings.Contains(claudeWarn.String(), "budget_usd") {
+		t.Errorf("the claude path must warn nothing about budget_usd:\n%s", claudeWarn.String())
+	}
+}
+
+func TestDryRunForRuntime_SurfacesBudgetWarning(t *testing.T) {
+	path := writeGraphFile(t, budgetedCodexGraph)
+
+	var out, warn strings.Builder
+	if err := dryRunGraphForRuntime(&out, &warn, path, map[string]string{}, runner.RuntimeCodex); err != nil {
+		t.Fatalf("dry run of a budgeted graph under codex: %v", err)
+	}
+	if got := warn.String(); !strings.Contains(got, budgetWarningMarker) || !strings.Contains(got, "timeout") {
+		t.Errorf("--dry-run --runtime codex dropped the preflight warning:\n%s", got)
+	}
+}
+
+// TestRunGraphWithRuntime_PrintsBudgetWarningExactlyOnce pins the other half of
+// the dedup: `run` reaches TWO call sites (its own load and executeGraph's
+// gate), and the io.Discard it passes is what keeps the user from reading the
+// same cap twice. Counted across BOTH streams, because the fix for a double
+// print must not be "move one copy somewhere the test isn't looking".
+func TestRunGraphWithRuntime_PrintsBudgetWarningExactlyOnce(t *testing.T) {
+	isolateRunHome(t)
+	path := writeGraphFile(t, budgetedCodexGraph)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"work": {Result: "PASS", CostUnknown: true},
+	})
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatalf("temp stdout: %v", err)
+	}
+	defer stdout.Close()
+
+	stderr, runErr := captureStderr(t, func() error {
+		return runGraphWithRuntime(runner.RuntimeCodex, []string{path}, fake, browser.NewFakeOpener(), stdout)
+	})
+	if runErr != nil {
+		t.Fatalf("run of a budgeted graph under codex: %v", runErr)
+	}
+	printed, err := os.ReadFile(stdout.Name())
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+
+	both := string(printed) + stderr
+	if n := strings.Count(both, budgetWarningMarker); n != 1 {
+		t.Errorf("`run` printed the preflight warning %d times across stdout+stderr, want exactly 1:\n--- stdout ---\n%s\n--- stderr ---\n%s", n, printed, stderr)
+	}
+	if !strings.Contains(string(printed), budgetWarningMarker) {
+		t.Errorf("the one copy must sit on the disclosure stream it is referenced from:\n%s", printed)
+	}
+	// The same `<path>: ` prefix the other four sites print: `run` has the
+	// graph path in hand, so its warning has no reason to be the anonymous one.
+	if !strings.Contains(string(printed), path+": "+budgetWarningMarker) {
+		t.Errorf("`run` should name the graph file %q on its warning:\n%s", path, printed)
 	}
 }

@@ -76,7 +76,9 @@ func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime
 		return err
 	}
 	if len(issues) == 0 {
-		if err := runner.ValidateGraphForRuntime(runtime, loaded.Graph); err != nil {
+		runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, loaded.Graph)
+		warnRuntimePreflight(warnW, path, runtimeWarnings)
+		if err != nil {
 			return err
 		}
 		printFragmentResolutions(w, loaded.Resolutions)
@@ -115,6 +117,33 @@ func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 	}
 	for _, advisory := range g.LintFeedbackReach() {
 		fmt.Fprintf(warnW, "warning: %s: %s\n", path, advisory)
+	}
+}
+
+// warnRuntimePreflight prints one `warning:` line per runtime-preflight
+// warning — today, a `budget_usd` the selected runtime cannot evaluate
+// (ADR 0026). It is called at EVERY runner.ValidateGraphForRuntime call site,
+// including the ones whose call also returns an error: the two verdicts are
+// independent (a graph refused for `agent:` may also carry an inapplicable
+// cap), and a warning nobody prints is exactly the silent drop the split
+// exists to avoid. path may be empty, for the callers that judge a graph in
+// memory rather than a file on disk. Advice only: never an exit code.
+//
+// The writer is the caller's, and the callers do not all pick the same stream:
+// `lint`, `--dry-run`, `resume` and executeGraph's default put these on stderr
+// with every other `warning:` line, while `run` deliberately routes them to the
+// stdout its pre-run Codex DISCLOSURE prints on. That is not drift. The
+// disclosure block immediately below them (noteCodexRuntimePolicy) refers back
+// to these very lines — "each such node is warned by name" — and a reference
+// that lands on a different stream than its referent is a worse read than a
+// warning that is not on the advisory channel.
+func warnRuntimePreflight(warnW io.Writer, path string, warnings []string) {
+	for _, warning := range warnings {
+		if path == "" {
+			fmt.Fprintf(warnW, "warning: %s\n", warning)
+			continue
+		}
+		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
 	}
 }
 

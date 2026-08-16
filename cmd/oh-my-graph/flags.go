@@ -23,6 +23,14 @@ type commonRunFlags struct {
 	noWeb               bool
 	planningCostUnknown bool
 	planningUsage       runner.TokenUsage
+	// runtimeWarnW receives the runtime-preflight warnings executeGraph's own
+	// runner.ValidateGraphForRuntime call produces (ADR 0026). Not a flag: the
+	// caller's answer to "have these already been shown?". `run` sets it to
+	// io.Discard because it surfaced the identical list at load, as part of the
+	// pre-run Codex disclosure; every other entry to executeGraph leaves it nil,
+	// which means os.Stderr — nil must never mean silence, or the one path that
+	// forgets to set it drops the warning.
+	runtimeWarnW io.Writer
 }
 
 func (c *commonRunFlags) register(set *flag.FlagSet) {

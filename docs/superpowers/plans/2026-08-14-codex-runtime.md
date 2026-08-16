@@ -10,6 +10,16 @@
 
 **Spec:** `docs/adr/0025-one-run-one-cli-runtime.md`
 
+> **Historical record — one item below has since been reversed.** This plan is
+> kept as written, as the record of what was built on 2026-08-14. Its
+> `budget_usd` line ("Codex rejects `agent:`, positive `budget_usd`, and
+> `--max-goal-budget-usd`") and the `TestValidateGraphCodexRejectsClaudeOnlyFields`
+> sketch in Task 6 no longer describe the code: a node's `budget_usd` is
+> accepted with a warning under Codex since
+> `docs/adr/0026-an-inapplicable-cap-is-not-an-unsafe-one.md`, which amends
+> ADR 0025. `agent:` and `--max-goal-budget-usd` are still refused, exactly as
+> planned here.
+
 ## Global Constraints
 
 - Default runtime is exactly `claude`; selecting Codex is `oh-my-graph --runtime codex <command>`.

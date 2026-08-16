@@ -76,8 +76,11 @@ Codex는 `permission_mode: plan`을 read-only sandbox로, 일반 모드를
 `workspace-write`로, `bypassPermissions`를 `danger-full-access`로 매핑합니다.
 이 sandbox는 네트워크 경계이기도 해서, Codex 그래프는 push하거나 `gh`를
 호출하는 첫 번째 노드에서 멈춥니다.
-Codex에는 Claude의 호출별 `budget_usd`와 `agent:` 선택자가 없고 USD도 보고하지
-않으므로, 이 두 graph field와 `--max-goal-budget-usd`는 실행 전에 거부합니다.
+Codex는 USD를 보고하지 않고 Claude의 `agent:` 선택자도 구현하지 않으므로,
+`agent:`와 `--max-goal-budget-usd`는 Codex run이 무언가를 쓰기 전에 거부합니다.
+노드의 `budget_usd`는 거부하지 않습니다. 묶을 USD가 없어 그저 적용될 수 없을
+뿐이므로, 그래프는 로드되고 노드마다 경고 한 줄이 그 사실과 함께 여전히 그
+노드를 지키는 `timeout:`을 알려줍니다.
 Claude Code agent mapping과 skill activation은 Claude 전용이며, Codex `auto`는
 Codex sandbox isolation을 사용합니다.
 
