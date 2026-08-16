@@ -182,22 +182,39 @@ func TestPluginManifestsMatchVersion(t *testing.T) {
 // Recognised by what it touched, not by how its subject is worded: only a
 // release cut changes CHANGELOG.md and version.go together. A wording rule
 // would be a second thing to keep in sync with a habit.
+// It also exempts a commit that changed NOTHING BUT the changelog. Such a
+// commit has no change to describe — it IS the description — and demanding an
+// entry for it makes the check eat its own tail: the PR that adds a missing
+// entry is itself missing one, and so is the PR that adds THAT. Three PRs into
+// v0.9.0 before the regress was recognised as structural rather than another
+// edge case.
 func isReleaseCut(sha string) bool {
 	out, err := exec.Command("git", "show", "--name-only", "--format=", sha).Output()
 	if err != nil {
 		return false
 	}
 	files := strings.Fields(string(out))
-	var changelog, version bool
+	if len(files) == 0 {
+		return false
+	}
+	var changelog, version, other bool
 	for _, f := range files {
 		switch f {
 		case "CHANGELOG.md":
 			changelog = true
 		case "cmd/oh-my-graph/version.go":
 			version = true
+		default:
+			other = true
 		}
 	}
-	return changelog && version
+	// A release cut writes the heading and bumps the constant together, which
+	// nothing else does — it may carry other files and still be one.
+	if changelog && version {
+		return true
+	}
+	// Changelog-only maintenance.
+	return changelog && !other
 }
 
 func TestEveryMergedPRIsInTheChangelog(t *testing.T) {
