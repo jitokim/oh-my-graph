@@ -86,6 +86,50 @@ reuse was unavailable at the size people actually work in.
 
 ## Decision
 
+### A node id is a KEY, and this is its grammar
+
+State this first, because everything about namespacing below follows from it
+and because the alternative — reading `/` and `~` as characters somebody
+picked — invites the wrong question ("what if an author writes one anyway?")
+instead of the right one ("what does the grammar admit?").
+
+A node id is a **domain-scoped key**, in the sense Redis keys are
+(`user:1000:sessions`): atoms joined by a delimiter the atoms may not contain.
+
+| part | rule |
+|---|---|
+| **atom** | `[A-Za-z0-9][A-Za-z0-9._-]*` — what a person or a planner writes |
+| **delimiter** | `/` — **only the splicer may write one** |
+| **composition** | `<using-id>/<internal-id>` |
+| **on disk** | `/` → `~` (`handoff.SanitizeNodeID`); `~` is outside the atom charset too |
+
+Two properties fall out, and neither needs defending case by case:
+
+1. **Decomposition is unique at any depth.** An atom cannot contain the
+   delimiter, so splitting on `/` recovers exactly the sequence that was
+   joined. `a/b/c` is `[a b c]` and can be nothing else — there is no reading
+   under which `a/b` was an atom.
+2. **The on-disk form is injective for the same reason**, not by luck: `~` is
+   as unwritable in an atom as `/` is, so two distinct ids cannot land on one
+   artifact file.
+
+**An authored `/` is a convention violation, and it is refused where authorship
+happens** — `graph.refuseAuthoredNamespaces` for a file,
+`coordinator.validatePlannedNodeID` for a planner reply. That refusal is what
+makes the properties above load-bearing rather than hopeful. It is also why the
+failure this design once seemed to risk — two nodes' artifacts collapsing onto
+one file, `| inline` feeding one node's reply into another's paid prompt —
+cannot occur quietly: the id that would cause it never loads.
+
+`Validate` accepts the joined form as a **backstop**, deliberately: it cannot
+tell a spliced graph from a resumed snapshot and must not learn.
+
+**The depth cap is enforcement of a non-goal, not a limit of the scheme.**
+`nodeIDPattern` admits `segment(/segment)?` — at most one join — because
+nesting a `use:` inside a fragment is out of scope here. When that scope opens,
+the change is `?` → `*` and nothing else: the grammar already survives depth,
+by property 1. **Do not re-litigate the delimiter then.**
+
 ### Surface: a fragment may declare `nodes:` plus `exit:`
 
 A fragment file gains two optional keys. The using site is **unchanged**: a
