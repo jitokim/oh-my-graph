@@ -324,3 +324,33 @@ func reasons(issues []*PlanError) []string {
 	}
 	return out
 }
+
+// TestIssuesForPrompt_FirstRefusalTooLongStillDisclosesTheRest is the edge the
+// kept-count loop reaches when the FIRST refusal fits alone but not alongside
+// the omission note.
+//
+// The earlier code truncated the JOINED list there, so the later refusals
+// disappeared and their count disappeared with them: the planner was told less
+// than it had been refused for, and nothing said so. That is the exact failure
+// issuesForPrompt exists to prevent, reached through its own boundary — which
+// is why this case is pinned rather than left to the general test above.
+func TestIssuesForPrompt_FirstRefusalTooLongStillDisclosesTheRest(t *testing.T) {
+	// Fits inside the budget alone; cannot fit once the note is reserved.
+	first := "first: " + strings.Repeat("x", maxIssuesInPrompt-10)
+	issues := []string{first, "second: a refusal the planner must know exists"}
+
+	got := issuesForPrompt(issues)
+
+	if len(got) > maxIssuesInPrompt {
+		t.Fatalf("rendered %d bytes, over the %d budget", len(got), maxIssuesInPrompt)
+	}
+	if !strings.Contains(got, "1 further refusal") {
+		t.Errorf("the omitted refusal is not disclosed:\n%s", got[max(0, len(got)-200):])
+	}
+	if strings.Contains(got, "second: a refusal") {
+		t.Error("the second refusal was kept whole; this case is about disclosing, not keeping")
+	}
+	if !strings.HasPrefix(got, "first: ") {
+		t.Error("the first refusal's head was lost")
+	}
+}

@@ -127,8 +127,24 @@ func issuesForPrompt(issues []string) string {
 		kept++
 	}
 	if kept == 0 {
-		// One refusal alone overruns the whole budget — no shorter honest
-		// rendering exists, so bound it the old way and let the marker say so.
+		// The first refusal does not fit ALONGSIDE the note. Truncating the
+		// joined string here was silently wrong: it cut mid-way through the
+		// list, so the later refusals vanished AND their count vanished with
+		// them — the planner was told less than it was refused for, and
+		// nothing said so. That is the failure this whole function exists to
+		// avoid, reached by its own edge case.
+		//
+		// So the note is reserved for first and the first refusal is bounded
+		// to what remains. What the planner loses is then the TAIL of one
+		// refusal, which the truncation marker announces, plus a count of the
+		// rest, which the note announces.
+		if len(issues) > 1 {
+			if budget := maxIssuesInPrompt - len(omittedRefusalNote(len(issues)-1)); budget > 0 {
+				return fence.Truncate(issues[0], budget) + omittedRefusalNote(len(issues)-1)
+			}
+		}
+		// A single refusal, or a budget too small to hold even the note: there
+		// is no shorter honest rendering, so bound it and let the marker speak.
 		return fence.Truncate(joined, maxIssuesInPrompt)
 	}
 	return strings.Join(issues[:kept], "\n") + omittedRefusalNote(len(issues)-kept)

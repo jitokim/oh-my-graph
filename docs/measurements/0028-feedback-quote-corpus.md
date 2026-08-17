@@ -196,12 +196,22 @@ for p in sorted(glob.glob(os.path.expanduser("~/.oh-my-graph/runs/*/state.json")
     decl = [n["id"] for n in g["nodes"] if n.get("feedback")]
     if not decl: continue
     run, src = os.path.basename(os.path.dirname(p)), d.get("graph_source_path", "")
-    print(run, len(decl), "planner" if os.path.basename(src) == "graph.json" and run in src else "hand", src)
+    # 정확 비교. `run in src` 로 쓰면 부분 문자열이라, run id 가 경로 어디에
+    # 있기만 해도 planner 로 센다 — 측정 도구가 측정 대상보다 느슨하면 안 된다.
+    own = os.path.join(os.path.expanduser("~/.oh-my-graph/runs"), run, "graph.json")
+    planner = os.path.realpath(src) == os.path.realpath(own)
+    print(run, len(decl), "planner" if planner else "hand", src)
 EOF
 ```
 
 Output on 2026-08-17: 7 rows, 3 marked `planner` (1 declarer each) and 4 marked
 `hand` (8 declarers), summing to the 11 run-corpus declarers above.
+
+The exact-path rule was a review finding, and the split is unchanged under it —
+the first draft tested `run in src`, a substring, which would have counted any
+path merely CONTAINING the run id. Re-measured with the equality above:
+`rows=7 planner=3 hand=4`, `declarers: planner=3 hand=8`. The claim survives a
+stricter method, which is the only reason to keep quoting it.
 
 ## What this does not measure
 
@@ -379,7 +389,7 @@ func assert(ok bool, label string, got int) {
 
 Output on 2026-08-17:
 
-```
+```text
 graphs loaded=8  unloadable=0 declarers=2 hits=0     # graphs/*.yaml
 graphs loaded=26 unloadable=0 declarers=2 hits=0     # lanes/graphs/*.yaml
 runs read=288 distinct graphs=201 unparseable=0 with a feedback arc=7 declarers=11 hits=3

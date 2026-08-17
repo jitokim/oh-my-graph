@@ -52,7 +52,7 @@ was repaired, because `qa-a/build`'s prompt never contains
 arrive*: no FEEDBACK section ever appears below, so the model wrote `draft` a
 second time and the second round failed identically to the first.
 
-```
+```text
 qa-a/build   PASS   feedback round 1/1
 qa-a/check   FAIL   feedback exhausted after 1 round of qa-a/build → qa-a/check
 ```
