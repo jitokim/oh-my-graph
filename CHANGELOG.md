@@ -106,8 +106,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   graph — so nothing observable changes; the guard and its test exist so the one
   case where the sweep and the runtime could disagree cannot open up quietly.
 
-### Fixed
-
 - **A release's page can no longer come out blank**
   ([#193](https://github.com/jitokim/oh-my-graph/pull/193)). v0.9.0 published
   with an empty body — one newline — while every step reported success and the
