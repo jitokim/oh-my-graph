@@ -1583,6 +1583,14 @@ func inputKeys(inputs inputFlag) []string {
 // the same disclosure duty in the shape the multi-node form takes: the reader
 // of a run log learns that one `use:` became five nodes, and which five,
 // without opening the fragment file.
+//
+// And a grant substitution ASSEMBLED — a fragment's own `{{ with.x }}` inside
+// its `allowed_tools`, bound by the citing node — is neither an override nor a
+// count of ids, so it gets its own clause naming the resolved list (#196).
+// That clause is the only one printed for a grant a fragment wrote verbatim:
+// none. A grant readable in one file is not what the two-file principle is
+// about, and one line per difference and no more is what keeps these lines
+// read at all.
 func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolution) {
 	for _, r := range resolutions {
 		line := fmt.Sprintf("fragment: node %q spliced from %q (%s) — %s", r.NodeID, r.Fragment, r.Source, r.Description)
@@ -1592,8 +1600,33 @@ func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolutio
 		if len(r.Overridden) > 0 {
 			line += " — node overrides: " + strings.Join(r.Overridden, ", ")
 		}
+		if len(r.Grants) > 0 {
+			line += " — allowed_tools resolved from with: " + strings.Join(grantClauses(r), "; ")
+		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+// grantClauses renders each substituted grant for the disclosure line. A
+// single-node resolution's one grant belongs to the node the line already
+// names, so it prints bare; a multi-node one qualifies each by its spliced id,
+// because a loop may parameterize the grant of some of its nodes and not
+// others, and "which of the five" is the whole question. A grant that resolved
+// to nothing prints as `(none)`: an empty list is a disclosure, not an absence,
+// and an empty tail would read as a truncated line.
+func grantClauses(r graph.FragmentResolution) []string {
+	clauses := make([]string, 0, len(r.Grants))
+	for _, grant := range r.Grants {
+		tools := strings.Join(grant.Tools, ", ")
+		if len(grant.Tools) == 0 {
+			tools = "(none)"
+		}
+		if grant.NodeID != r.NodeID {
+			tools = grant.NodeID + ": " + tools
+		}
+		clauses = append(clauses, tools)
+	}
+	return clauses
 }
 
 // warnBypassPermissions prints a loud, per-node warning for any node that opts
