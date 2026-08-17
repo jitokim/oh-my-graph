@@ -10,6 +10,48 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **`lint` / `run --dry-run` warn when a feedback loop's repair node never
+  quotes the feedback** (ADR 0028). `feedback: { rerun: R }` and
+  `{{ feedback.<declarer> }}` are two halves of one mechanism, and until now
+  either half loaded clean alone: the arc's topology is validated, a token that
+  IS written is validated, the arc's aim is swept for — nothing asked whether
+  both halves are present. Run `20260816-163759.091162000-1` is what that costs.
+  A two-node loop declared its arc correctly, its build prompt said "if a
+  FEEDBACK section appears below, write alpha", and no token existed to put one
+  there. The engine wrote the payload, re-ran the build, got identical output,
+  and the check failed identically. Twice the money, one round's worth of
+  information, ledger reading `feedback round 1/1`, and `lint` silent.
+
+  `handoff.LintFeedbackQuoting` is the sixth advisory sweep in that package,
+  wired into the one `warnAdvisories` helper `lint` and `run --dry-run` share.
+  The rule: for every node `D` declaring `feedback: { rerun: R }`, if no node in
+  the loop body other than `D` itself quotes `{{ feedback.D }}` in its **prompt**,
+  warn — on `R`, naming `D`, because `R`'s prompt is where the missing line
+  goes. A middle body node counts (`build → refine → check` quoted at `refine`
+  really does repair); the declarer's own quote does not (it is the judge, so
+  its re-run repairs nothing). Only prompts are read: a payload on a verify
+  command line is the fifth sweep's finding, and one in a `cwd` is a path.
+  Matching uses the runtime's own placeholder pattern, so the sweep holds after
+  fragment splicing — the specimen's real token was
+  `{{ feedback.qa-a/check }}`, a namespaced id the loader wrote — and both
+  shapes are tested. Advisory, never a load error, for the standing reason every
+  sweep in the package has one: the planner cannot author a `feedback:` at all,
+  so only a person can write what it condemns.
+
+  **It was measured before it shipped, and it has a control.** Over the shipped
+  `graphs/*.yaml` (8 graphs, 2 declarers), a 26-lane operator corpus (2
+  declarers) and 288 local run snapshots deduplicated to 201 distinct resolved
+  graphs (11 declarers): **3 hits, all 3 real, 0 noise** — the specimen's three
+  lanes. The same corpus holds that graph's repair, three minutes later, and the
+  sweep is correctly silent on it. No shipped graph fires; nothing in `graphs/`
+  needed fixing. Full method, every number asserted rather than reported:
+  [docs/measurements/0028-feedback-quote-corpus.md](docs/measurements/0028-feedback-quote-corpus.md).
+
+  No runtime behaviour changed: feedback's semantics, payload file, round
+  accounting and exit codes are untouched.
+
 ### Fixed
 
 - **A release's page can no longer come out blank**

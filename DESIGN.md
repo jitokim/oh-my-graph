@@ -456,6 +456,16 @@ golden, and the reviewer sees all four.
   consumer contract, in its own directory so it can never collide with an
   artifact (node ids allow dots, so a node named `x.feedback` is legal); the
   `.out` artifact keeps meaning "a *passed* node's result".
+  The arc and the token are two halves of one mechanism, so `lint` /
+  `run --dry-run` warn when a loop declares the first and never writes the
+  second (`handoff.LintFeedbackQuoting`, ADR 0028): if nothing in the body
+  except the declarer itself quotes `{{ feedback.<declarer> }}` in its
+  **prompt**, the re-run is handed the prompt it already ran, produces the same
+  output, and the declarer fails again for the same reason — twice the money,
+  the same result, and nothing else in the engine has anything to say about it.
+  The warning lands on the rerun target, because that is where the missing line
+  goes. Advisory, not a load error: a loop whose re-run reads the repository
+  rather than the reply is a legitimate, if rare, shape.
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -2588,7 +2598,7 @@ internal/invariants/exec_seam_test.go          test-only: asserts only the four 
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
-internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — and a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form)
+internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run` print (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
