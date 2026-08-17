@@ -46,7 +46,26 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   ```
 
   The multi-node form qualifies each grant by its minted id, because "which of
-  the five" is the question there. Two bounds keep it readable. It fires only
+  the five" is the question there; a splice that parameterized SEVERAL nodes'
+  grants gives each its own indented line instead, because inline they would
+  nest `,` inside `;` and the boundary between two nodes' grants would be the
+  weaker separator of the two:
+
+  ```text
+  fragment: node "x" spliced from "lanes" (graphs/fragments/lanes.yaml) — two lanes — nodes: x/build, x/review
+    allowed_tools resolved from with:
+      x/build: Read, Bash(go *)
+      x/review: Read, Write
+  ```
+
+  What the line names is what the node runs with, down to the empty cases,
+  where YAML's null and its empty string part company: an element bound null is
+  dropped by the decode and so is dropped from the line, an element bound to
+  `""` is kept by both, and a whole grant bound null prints `(none)` — the node
+  has no grant. Read as text those look identical, and announcing one as the
+  other is the drift this clause exists to prevent.
+
+  Two bounds keep it readable. It fires only
   when substitution CONTRIBUTED to the field — a grant written verbatim in the
   fragment is already readable in one file, and a line per grant per spliced
   node is one nobody reads (the failure the Codex disclosure work documented:

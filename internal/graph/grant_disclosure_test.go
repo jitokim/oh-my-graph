@@ -203,3 +203,65 @@ node:
 		t.Errorf("no grant to assemble, got %+v", got)
 	}
 }
+
+// TestDisclosedGrantIsTheGrantTheNodeRunsWith is the invariant every case above
+// assumes and none of them isolates: the announced list must EQUAL the resolved
+// node's AllowedTools. The cases that matter are the empty ones, where YAML's
+// null and its empty string part company — a null binding is dropped by the
+// decode (a whole-list null leaves no grant at all) while an empty string is a
+// real element. Read as text they look identical, and a disclosure that reads
+// one as the other announces a tool the node does not run with, or drops one it
+// does. Measured 2026-08-17: before this, `grant:` (null) announced `[""]`
+// against a real nil — the truncated-looking line the (none) branch was
+// written to prevent, printed for a node whose grant was empty.
+func TestDisclosedGrantIsTheGrantTheNodeRunsWith(t *testing.T) {
+	const wholeListFragment = `fragment: tools
+description: a gate whose whole grant is bound
+substitutions: [grant]
+node:
+  prompt: "check the work"
+  allowed_tools: "{{ with.grant }}"
+  success_check: { exit_zero: true }
+`
+	for _, tc := range []struct {
+		name     string
+		fragment string
+		with     string
+		want     []string // both the disclosure and the node's own grant
+	}{
+		{"an element bound null is dropped, as the decode drops it",
+			parameterizedGrantFragment, "extra:", []string{"Read"}},
+		{"an element bound to the empty string is kept, as the decode keeps it",
+			parameterizedGrantFragment, `extra: ""`, []string{"Read", ""}},
+		{"a whole grant bound null resolves to no tools at all",
+			wholeListFragment, "grant:", []string{}},
+		{"a whole grant bound to the empty list resolves to no tools at all",
+			wholeListFragment, "grant: []", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeGraphDir(t,
+				grantCitingGraph(`  - { id: x, use: tools, depends_on: [dev], with: { `+tc.with+` } }`+"\n"),
+				map[string]string{"tools": tc.fragment})
+
+			res, err := LoadFile(path)
+			if err != nil {
+				t.Fatalf("an empty binding must still load: %v", err)
+			}
+			want := []ResolvedGrant{{NodeID: "x", Tools: tc.want}}
+			if got := res.Resolutions[0].Grants; !reflect.DeepEqual(got, want) {
+				t.Errorf("Grants = %+v, want %+v", got, want)
+			}
+			// The half no unit test of the printer can reach: what the node runs.
+			x, _ := res.Graph.NodeByID("x")
+			if len(x.AllowedTools) != len(tc.want) {
+				t.Fatalf("announced %v, node runs with %v", tc.want, x.AllowedTools)
+			}
+			for i, tool := range tc.want {
+				if x.AllowedTools[i] != tool {
+					t.Errorf("announced %v, node runs with %v", tc.want, x.AllowedTools)
+					break
+				}
+			}
+		})
+	}
+}

@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -816,7 +817,7 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 	// A grant the USING node overrode is one file's text, already named in
 	// Overridden — and the substituted one overlayUsingNode just discarded is
 	// not what this node runs with. Announcing it would name a grant no node has.
-	if grant != nil && !declares(overridden, "allowed_tools") {
+	if grant != nil && !slices.Contains(overridden, "allowed_tools") {
 		resolution.Grants = []ResolvedGrant{{NodeID: id, Tools: grant}}
 	}
 	out.resolutions = append(out.resolutions, resolution)
@@ -1633,13 +1634,27 @@ func grantFingerprint(body *yaml.Node) string {
 // nil exactly when the node declares no grant; a declared-but-empty one comes
 // back as an empty slice, because "this splice resolved to no tools at all" is
 // disclosure, not absence.
+//
+// A NULL scalar is skipped, because the decode this document is about to go
+// through skips it too: `allowed_tools: [Read, "{{ with.x }}"]` with x bound
+// null decodes to [Read], and a whole-list binding of null decodes to no grant
+// at all. Reading it as "" instead would announce a tool the node does not run
+// with — the one drift this disclosure exists to prevent — and would render as
+// an empty tail, which is the truncated line grantClauses' (none) guards
+// against. An empty STRING is not skipped: `with: { x: "" }` really does decode
+// to a "" element, so dropping it would open the same drift from the other side.
 func grantList(body *yaml.Node) []string {
 	grant := grantOf(body)
 	if grant == nil {
 		return nil
 	}
 	tools := make([]string, 0, len(grant.Content))
-	walkScalarNodes(grant, func(scalar *yaml.Node) { tools = append(tools, scalar.Value) })
+	walkScalarNodes(grant, func(scalar *yaml.Node) {
+		if scalar.Tag == "!!null" {
+			return
+		}
+		tools = append(tools, scalar.Value)
+	})
 	return tools
 }
 
@@ -1649,17 +1664,6 @@ func grantOf(body *yaml.Node) *yaml.Node {
 		return nil
 	}
 	return mappingValues(body)["allowed_tools"]
-}
-
-// declares reports whether keys holds key — the override list read as the set
-// it is.
-func declares(keys []string, key string) bool {
-	for _, k := range keys {
-		if k == key {
-			return true
-		}
-	}
-	return false
 }
 
 // overlayUsingNode merges the using node's own keys over the substituted

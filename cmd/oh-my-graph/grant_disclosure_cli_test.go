@@ -101,6 +101,32 @@ func TestPrintFragmentResolutions_NamesAnAssembledGrant(t *testing.T) {
 	}
 }
 
+// TestPrintFragmentResolutions_SeveralGrantsGetALineEach — one clause rides the
+// line; beyond one it would nest `,` inside `;`, making the boundary between two
+// NODES' grants the weaker separator of the two. The precedent this disclosure
+// follows already spends a line per item for exactly that reason
+// (noteCodexRuntimePolicy's per-node network list).
+func TestPrintFragmentResolutions_SeveralGrantsGetALineEach(t *testing.T) {
+	var out strings.Builder
+	printFragmentResolutions(&out, []graph.FragmentResolution{{
+		NodeID: "x", Fragment: "lanes", Description: "two lanes",
+		Source:  "graphs/fragments/lanes.yaml",
+		Spliced: []string{"x/build", "x/review"},
+		Grants: []graph.ResolvedGrant{
+			{NodeID: "x/build", Tools: []string{"Read", "Bash(go *)"}},
+			{NodeID: "x/review", Tools: []string{"Read", "Write"}},
+		},
+	}})
+	want := `fragment: node "x" spliced from "lanes" (graphs/fragments/lanes.yaml) — two lanes` +
+		" — nodes: x/build, x/review\n" +
+		"  allowed_tools resolved from with:\n" +
+		"    x/build: Read, Bash(go *)\n" +
+		"    x/review: Read, Write\n"
+	if got := out.String(); got != want {
+		t.Errorf("two-grant disclosure =\n%q\nwant\n%q", got, want)
+	}
+}
+
 // TestPrintFragmentResolutions_AnEmptyResolvedGrantSaysSo — a binding that
 // resolves the grant to nothing is a disclosure, not an absence, and an empty
 // tail would read as a truncated line.
@@ -229,7 +255,9 @@ func TestGrantDisclosure_ReachesEveryCommandThatResolvesFragments(t *testing.T) 
 
 // TestGrantDisclosure_VerbatimGrantStaysSilentOnEveryCommand is the negative
 // control at the CLI level. Without it, an implementation that printed every
-// spliced node's grant would pass every case above.
+// spliced node's grant would pass every case above. It covers the same three
+// commands the positive does — a negative narrower than its positive is the
+// asymmetry the #185 standard is about, whichever direction it points.
 func TestGrantDisclosure_VerbatimGrantStaysSilentOnEveryCommand(t *testing.T) {
 	entry := "name: g\nnodes:\n" +
 		"  - { id: dev, prompt: build }\n" +
@@ -245,7 +273,19 @@ func TestGrantDisclosure_VerbatimGrantStaysSilentOnEveryCommand(t *testing.T) {
 	if err := dryRunGraph(&dryOut, &dryWarn, path, nil); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
-	for name, out := range map[string]string{"lint": lintOut.String(), "dry-run": dryOut.String()} {
+	isolateRunHome(t)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"build":                             {SessionID: "s-dev", Result: "ok", ExitCode: 0},
+		"check the work and run make local": {SessionID: "s-x", Result: "ok", ExitCode: 0},
+	})
+	var runErr error
+	runOut := captureStdout(t, func() {
+		runErr = runGraphWith([]string{path}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if runErr != nil {
+		t.Fatalf("run: %v", runErr)
+	}
+	for name, out := range map[string]string{"lint": lintOut.String(), "dry-run": dryOut.String(), "run": runOut} {
 		if strings.Contains(out, "allowed_tools resolved from with") {
 			t.Errorf("%s announced a grant readable in one file:\n%s", name, out)
 		}
