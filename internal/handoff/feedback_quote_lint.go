@@ -62,9 +62,8 @@ import (
 // `graph.LintFeedbackReach` already has, and for the same reason: planner output
 // has no author to read a warning (ADR 0028 §Decision 5).
 func LintFeedbackQuoting(g *graph.Graph) []Warning {
-	findings := FeedbackQuoteFindings(g)
-	warnings := make([]Warning, 0, len(findings))
-	for _, finding := range findings {
+	var warnings []Warning
+	for _, finding := range FeedbackQuoteFindings(g) {
 		warnings = append(warnings, Warning{
 			NodeID: finding.Rerun,
 			Field:  "prompt",
@@ -72,9 +71,6 @@ func LintFeedbackQuoting(g *graph.Graph) []Warning {
 				"node %[1]q reruns this node on failure, but nothing in the loop quotes {{ feedback.%[1]s }} — the re-run gets the prompt it already ran, produces the same output, and %[1]q fails again for the same reason, at twice the cost. Quote {{ feedback.%[1]s }} in this prompt where the repair should read it (it is empty on the first pass by design)",
 				finding.Declarer),
 		})
-	}
-	if len(warnings) == 0 {
-		return nil
 	}
 	return warnings
 }

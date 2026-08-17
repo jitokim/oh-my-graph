@@ -266,12 +266,18 @@ nodes:
 		t.Fatalf("a graph with no arc has no loop to judge: %v", warnings)
 	}
 
-	// An arc whose target is not an ancestor: FeedbackBody reports no body, and
-	// without the guard this sweep would invent a finding against a node the
-	// graph does not have. It is built as a struct rather than parsed because
-	// no loading path can produce it — Parse and LintLoadFile both refuse the
-	// arc first (validateFeedback), which is precisely why the guard is what
-	// keeps the sweep honest if it is ever called from somewhere new.
+	// A graph FeedbackBody reports no body for, so the `len(body) == 0` guard is
+	// the only thing between this sweep and a finding against `nowhere`, a node
+	// the graph does not have. Delete the guard and this fails.
+	//
+	// Be exact about WHICH way it returns nil, because the struct literal is a
+	// trap this branch has already fallen into once: a `&graph.Graph{Nodes: ...}`
+	// never runs fromRaw, so `byID` is nil and FeedbackBody returns at its FIRST
+	// lookup (internal/graph/feedback.go:48) — the declarer is not found at all.
+	// The non-ancestor branch below it is NOT reached from here and cannot be:
+	// graph.Parse and LintLoadFile both refuse `rerun: nowhere` (validateFeedback)
+	// before any sweep runs, so no loading path produces this value. What the
+	// case covers is the guard, not the branch that motivated it.
 	invalid := &graph.Graph{Nodes: []graph.Node{
 		{ID: "build", Prompt: "do the work"},
 		{ID: "check", DependsOn: []string{"build"}, Prompt: "judge the work",

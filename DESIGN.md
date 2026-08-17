@@ -411,7 +411,7 @@ print one disclosure line per resolved fragment (source file + the fragment's
 own description + every overridden key, or — for a multi-node splice, which
 overrides nothing — the ids it spliced) plus the same fragment advisories on
 the warning channel (`run` discloses what it spliced, so it discloses the
-drift smell too; the four *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
+drift smell too; the six *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never
 re-reads a fragment; `GraphSHA256` still hashes the entry file's bytes), and
 scheduler, handoff, the event stream and every consumer reading it see
