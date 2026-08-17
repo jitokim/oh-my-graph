@@ -471,19 +471,23 @@ refusals are graph-level, both lead the issue list `validatePlannedNodes`
 builds, and both scale with the number of declarers — so on a graph with two
 faulty arcs they crowd each OTHER rather than being crowded by the per-node
 refusals the ordering was written to outrank. Measured on the two-lane fixture
-(`twoBrokenLanesSpec`): 677 + 677 for reach, 641 for the compacted quoting
-refusal, 1998 bytes against what was a 2000-byte `maxIssuesInPrompt` — a
-budget the specimen graph of this ADR, a three-lane one, would have blown on
-its own. Past the cut the repair prompt lost a whole family silently, and the
+(`twoBrokenLanesSpec`), and pinned by
+`TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize` so these numbers keep an
+address: 677 + 677 for reach and 592 + 592 for the quoting refusal as it was
+written then, one sentence per arc — **2541 bytes** joined, against what was a
+2000-byte `maxIssuesInPrompt`. Compacted (below) the same pair renders **1997**,
+inside 2000 by three bytes, which the shortest per-node refusal beside it
+spends; the specimen graph of this ADR, a three-lane one, renders 2735 and
+would have blown the old budget on its own. Past the cut the repair prompt lost a whole family silently, and the
 one re-plan a refused plan buys (ADR 0011's bound) was spent on a fault it was
 never told about. Three changes bound it, all in this branch:
 
 - the quoting refusal is ONE sentence for every blind arc in the graph, not one
-  per declarer — the ~500-byte diagnosis is shared and only the ids repeat
-  (four arcs: 753 bytes, against 2272 before);
+  per declarer — the ~530-byte diagnosis is shared and only the ids repeat
+  (four arcs: 761 bytes, against 2368 before);
 - `maxIssuesInPrompt` is sized from the two families rather than picked: 3000
-  holds three declarers faulty both ways with room for per-node refusals beside
-  them;
+  holds three declarers faulty both ways (2735) with room for per-node refusals
+  beside them;
 - past the budget, `issuesForPrompt` drops WHOLE refusals from the tail and
   states how many it dropped, instead of cutting one mid-sentence and losing
   the rest without saying so. Half a refusal names a node and stops before the

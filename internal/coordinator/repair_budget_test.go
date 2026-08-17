@@ -20,7 +20,9 @@ import (
 //
 // It matters because the two refusal families are the longest sentences the
 // validator emits, they both lead the issue list, and until this test nothing
-// held them to a budget they share. Per declarer they render ~700 + ~560 bytes.
+// held them to a budget they share. It is also the fixture every byte figure in
+// maxIssuesInPrompt's comment is measured on, which
+// TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize is what keeps true.
 const twoBrokenLanesSpec = `{"name":"two-broken-lanes","version":"1","nodes":[` +
 	`{"id":"scope-a","prompt":"scope lane a","allowed_tools":["Read"]},` +
 	`{"id":"qa-a","depends_on":["scope-a"],"prompt":"write QA-PLAN-a.md","allowed_tools":["Write"]},` +
@@ -70,14 +72,16 @@ func TestValidatePlannedNodes_ReachLeadsQuotingLeadsPerNode(t *testing.T) {
 // the plan is then refused a second time and the run the user paid for is gone.
 // Leading the list is not enough on its own: both families lead it, both scale
 // with the number of declarers, and so they can crowd EACH OTHER out. Two
-// declarers that are each mis-aimed and blind rendered ~2488 bytes into what was
+// declarers that are each mis-aimed and blind rendered 2541 bytes into what was
 // a 2000-byte budget, and the head-only cut left one family half-written and the
 // rest silently missing.
 //
 // The five padded per-node refusals are what make this a real crowd rather
-// than a hair's breadth: the two families alone render 1998 bytes, which fitted
-// the old 2000-byte budget with two bytes to spare — one per-node slip beside
-// them and a family was cut. A plan wrong about its arcs is rarely right about
+// than a hair's breadth: compacted, the two families alone render 1997 bytes,
+// which fitted the old 2000-byte budget with three bytes to spare — one
+// per-node slip beside them and a family was cut. (Uncompacted, which is what
+// this branch replaced, the same two lanes rendered 2541 and a family was cut
+// with no company at all.) A plan wrong about its arcs is rarely right about
 // everything else, so the fixture is the two lanes plus ordinary company.
 //
 // What is asserted is the property, not the arithmetic: every id the planner
@@ -122,7 +126,7 @@ func TestRepairPromptHoldsBothGraphLevelRefusalFamilies(t *testing.T) {
 
 // TestPlan_TwoBlindArcsCostOneRefusal pins the compaction that makes the budget
 // above hold. Every blind arc in a graph is one refusal naming every pair, not
-// one refusal per declarer repeating a ~500-byte paragraph — and the compacted
+// one refusal per declarer repeating a ~530-byte paragraph — and the compacted
 // sentence must still name BOTH ends of BOTH pairs, or the saving was bought by
 // making the correction unactionable.
 func TestPlan_TwoBlindArcsCostOneRefusal(t *testing.T) {
@@ -147,6 +151,77 @@ func TestPlan_TwoBlindArcsCostOneRefusal(t *testing.T) {
 	// to understand, so the plural path is held to reading correctly.
 	if strings.Contains(issues[0].Reason, "declares a feedback arc") || strings.Contains(issues[0].Reason, "its loop body") {
 		t.Errorf("the two-arc refusal reads in the singular:\n%s", issues[0].Reason)
+	}
+}
+
+// brokenLanesSpec is twoBrokenLanesSpec widened to n lanes, each broken both
+// ways exactly as lanes a and b are. The extra ids are the same length as
+// theirs, so the per-lane byte costs the comments quote scale without a caveat.
+func brokenLanesSpec(n int) string {
+	spec := twoBrokenLanesSpec
+	for i := 2; i < n; i++ {
+		lane := string(rune('a' + i))
+		spec = strings.TrimSuffix(spec, "]}") + fmt.Sprintf(
+			`,{"id":"scope-%[1]s","prompt":"scope lane %[1]s","allowed_tools":["Read"]}`+
+				`,{"id":"qa-%[1]s","depends_on":["scope-%[1]s"],"prompt":"write QA-PLAN-%[1]s.md","allowed_tools":["Write"]}`+
+				`,{"id":"load-%[1]s","depends_on":["scope-%[1]s"],"prompt":"write load-%[1]s.js","allowed_tools":["Write"]}`+
+				`,{"id":"review-%[1]s","depends_on":["qa-%[1]s","load-%[1]s"],"prompt":"judge lane %[1]s",`+
+				`"allowed_tools":["Read"],"success_check":{"result_matches":"^PASS$"},"feedback":{"rerun":"load-%[1]s","max":2}}`,
+			lane) + "]}"
+	}
+	return spec
+}
+
+// TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize is the ADDRESS for every
+// byte figure the comments around this budget quote — maxIssuesInPrompt's
+// sizing paragraph, the ordering comment in validatePlannedNodes, the
+// compaction note at validatePlannedFeedbackQuoting, ADR 0028 §Failure modes
+// and the CHANGELOG entry. Those numbers are the only argument for
+// maxIssuesInPrompt being 3000 rather than a round guess, and while they were
+// estimates this one rendering was described at three different sizes in three
+// files at once, one of which said a family had been cut where the measurement
+// says it fitted.
+//
+// It is deliberately exact, and a reworded refusal is EXPECTED to fail it: the
+// fix is to read the new numbers off this failure and carry them to the
+// comments above, which is the entire reason they are pinned rather than
+// re-estimated. Nothing here asserts behaviour — the behaviour is
+// TestRepairPromptHoldsBothGraphLevelRefusalFamilies' subject.
+func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
+	for _, tc := range []struct{ lanes, reachEach, quoting, joined int }{
+		{lanes: 2, reachEach: 677, quoting: 641, joined: 1997},
+		{lanes: 3, reachEach: 677, quoting: 701, joined: 2735},
+		{lanes: 4, reachEach: 677, quoting: 761, joined: 3473},
+	} {
+		g, err := graph.Parse([]byte(brokenLanesSpec(tc.lanes)))
+		if err != nil {
+			t.Fatalf("%d lanes: the fixture must LOAD: %v", tc.lanes, err)
+		}
+		reach := validatePlannedFeedbackReach(g)
+		if len(reach) != tc.lanes {
+			t.Fatalf("%d lanes: want one reach refusal per declarer, got %d", tc.lanes, len(reach))
+		}
+		for _, issue := range reach {
+			if got := len(issue.Reason); got != tc.reachEach {
+				t.Errorf("%d lanes: a reach refusal renders %d bytes, the comments say %d", tc.lanes, got, tc.reachEach)
+			}
+		}
+		quoting := validatePlannedFeedbackQuoting(g)
+		if len(quoting) != 1 {
+			t.Fatalf("%d lanes: the quoting family is compacted to ONE refusal, got %d", tc.lanes, len(quoting))
+		}
+		if got := len(quoting[0].Reason); got != tc.quoting {
+			t.Errorf("%d lanes: the compacted quoting refusal renders %d bytes, the comments say %d", tc.lanes, got, tc.quoting)
+		}
+		if got := len(strings.Join(reasons(validatePlannedNodes(g, "")), "\n")); got != tc.joined {
+			t.Errorf("%d lanes: the two families joined render %d bytes, the comments say %d", tc.lanes, got, tc.joined)
+		}
+		// The claim the budget itself rests on: three such declarers fit, with
+		// room left for the per-node refusals that travel with them.
+		if tc.lanes == 3 && tc.joined >= maxIssuesInPrompt {
+			t.Errorf("maxIssuesInPrompt (%d) no longer holds three declarers faulty both ways (%d bytes), which is what it was sized for",
+				maxIssuesInPrompt, tc.joined)
+		}
 	}
 }
 

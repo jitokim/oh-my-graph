@@ -51,21 +51,36 @@ const maxPlanRepairAttempts = 1
 // fragments verbatim — node ids, placeholder tokens, tool names — so they are
 // bounded and fenced exactly like the assessor's `remaining`.
 //
-// It is SIZED, not picked. validatePlannedNodes emits two graph-level refusal
-// families, both of which can fire on the same arc, and they are an order of
-// magnitude longer than a per-node refusal (~700 bytes per mis-aimed declarer
-// for the reach family, ~560 plus ~40 per blind arc for the quoting one,
-// against 83–172 for a per-node one). At the 2000 this was, two declarers that
-// were each mis-aimed AND blind rendered ~2033 bytes and one of the two
-// families was cut — the exact failure the ordering in validatePlannedNodes
-// exists to prevent, arriving from the other direction. 3000 holds three
-// such declarers (~2780) with room for per-node refusals beside them, which is
-// past anything the corpus has seen: every planner-authored graph measured for
-// ADR 0028 declared exactly one arc
+// It is SIZED, not picked. Every byte figure below is MEASURED on one fixture,
+// twoBrokenLanesSpec in repair_budget_test.go — two declarers each mis-aimed
+// AND blind — and its three-lane extension, and every figure that is still
+// reachable is pinned by TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize,
+// so a reworded refusal fails there instead of leaving this paragraph quietly
+// false. Where a number describes the rendering this branch REPLACED it says
+// so; the two states are not comparable and were once written here as if they
+// were.
+//
+// validatePlannedNodes emits two graph-level refusal families, both of which
+// can fire on the same arc, and they are an order of magnitude longer than a
+// per-node refusal (83–172 bytes). Per mis-aimed declarer the reach family
+// renders 677 bytes. The quoting family renders 641 bytes for two blind arcs
+// and 701 for three — one shared diagnosis plus ~60 per arc — AFTER the
+// compaction in validatePlannedFeedbackQuoting; before it, the same family was
+// one 592-byte sentence per arc.
+//
+// At the 2000 this was, the fixture rendered 2541 bytes uncompacted
+// (677 + 677 + 592 + 592, joined) and one of the two families was cut — the
+// exact failure the ordering in validatePlannedNodes exists to prevent,
+// arriving from the other direction. Compacted it renders 1997, which fits
+// 2000 by three bytes: the shortest per-node refusal beside it takes it over
+// again, which is why the budget is not left standing on that margin. 3000
+// holds three such declarers (2735 compacted) with room for per-node refusals
+// beside them, which is past anything the corpus has seen: every
+// planner-authored graph measured for ADR 0028 declared exactly one arc
 // (docs/measurements/0028-feedback-quote-corpus.md).
 // TestRepairPromptHoldsBothGraphLevelRefusalFamilies pins the pair that
-// motivated the number, so a third family or a longer sentence fails here
-// rather than in a paid run.
+// motivated the number end to end, through a rendered prompt, so a third
+// family or a longer sentence fails here rather than in a paid run.
 //
 // The bound is still a bound: past it, issuesForPrompt drops whole refusals and
 // says how many.

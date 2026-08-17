@@ -854,8 +854,12 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// Being first is necessary and not sufficient, which is the correction this
 	// comment carried before: the two families can crowd EACH OTHER, since both
 	// fire on one arc independently and the reach family emits one sentence per
-	// declarer. Two arcs that are each mis-aimed and blind used to render 2488
-	// bytes into a 2000-byte budget. Two changes bound that rather than leaving
+	// declarer. Two arcs that are each mis-aimed and blind rendered 2541 bytes
+	// into a 2000-byte budget with the quoting family written one sentence per
+	// arc, and 1997 with it compacted — three bytes of headroom, which the
+	// shortest per-node refusal spends. Both figures are measured on
+	// twoBrokenLanesSpec; see maxIssuesInPrompt for the whole table. Two changes
+	// bound this rather than leaving
 	// it to the ordering — validatePlannedFeedbackQuoting compacts every blind
 	// arc into ONE sentence, and issuesForPrompt drops whole refusals and says
 	// how many it dropped instead of cutting one mid-sentence and silently
@@ -1049,14 +1053,16 @@ const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun
 // sentence still names both ends of each pair and the exact token to paste —
 // a finding that makes the reader work out where the missing line goes is read
 // twice — but everything AROUND those two ids is identical for every arc, and
-// that shared half is ~500 of the ~560 bytes. Repeated per declarer it is what
-// pushed the graph-level refusals past maxIssuesInPrompt: four blind arcs spent
-// ~2270 bytes of what was then a 2000-byte budget saying the same paragraph
-// four times, and crowded out the reach refusals standing beside them (the two
-// rules fire on one arc independently — ADR 0028 §Failure modes). Compacted,
-// four arcs cost the paragraph once plus ~50 bytes each: 753 bytes measured.
-// This is the same move validatePlannedFeedbackReach makes across producers,
-// one level up.
+// that shared half is ~530 of the 592 bytes the per-arc sentence rendered.
+// Repeated per declarer it is what pushed the graph-level refusals past
+// maxIssuesInPrompt: four blind arcs spent 2368 bytes of what was then a
+// 2000-byte budget saying the same paragraph four times, and crowded out the
+// reach refusals standing beside them (the two rules fire on one arc
+// independently — ADR 0028 §Failure modes). Compacted, four arcs cost the
+// paragraph once plus ~60 bytes each: 761 bytes. Both figures are measured on
+// twoBrokenLanesSpec's shape extended to four lanes; maxIssuesInPrompt carries
+// the table and names the test that pins it. This is the same move
+// validatePlannedFeedbackReach makes across producers, one level up.
 func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 	findings := handoff.FeedbackQuoteFindings(g)
 	if len(findings) == 0 {
