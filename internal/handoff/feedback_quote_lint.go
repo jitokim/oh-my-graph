@@ -122,6 +122,16 @@ func FeedbackQuoteFindings(g *graph.Graph) []FeedbackQuoteFinding {
 // with — so what this sweep counts as a quote and what the runtime actually
 // splices cannot drift apart, and a namespaced id spliced in from a multi-node
 // fragment is matched like any other.
+//
+// The FILTER group is part of that promise, not a detail: `{{ feedback.D |
+// inline }}` matches placeholderPattern, but the runtime does the opposite of
+// splicing it — resolveLocked returns an *InterpolationError and the node fails
+// (graph.Validate refuses the token at load, so no graph that came through Parse
+// carries one). Counting it as a quote would be the ONE way this sweep and the
+// runtime disagree: the runtime would fail the node, the sweep would call it
+// wired. Both of today's callers run on a parsed graph, so the guard is
+// unreachable today and is here so the pattern's third group cannot become a
+// hole the next caller falls into.
 func bodyQuotesFeedback(g *graph.Graph, body []string, declarerID string) bool {
 	for _, id := range body {
 		if id == declarerID {
@@ -132,7 +142,7 @@ func bodyQuotesFeedback(g *graph.Graph, body []string, declarerID string) bool {
 			continue
 		}
 		for _, groups := range placeholderPattern.FindAllStringSubmatch(node.Prompt, -1) {
-			if groups[1] == "feedback" && groups[2] == declarerID {
+			if groups[1] == "feedback" && groups[2] == declarerID && groups[3] == "" {
 				return true
 			}
 		}

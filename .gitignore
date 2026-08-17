@@ -1,6 +1,9 @@
 # Build output
 /bin/
 
+# goreleaser release artifacts — built locally, published from CI
+/dist/
+
 # Per-run artifacts written by the engine (node .out files, run dirs)
 /.oh-my-graph/
 

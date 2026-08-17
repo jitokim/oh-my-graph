@@ -310,6 +310,53 @@ nodes:
 	}
 }
 
+// TestLintFeedbackQuoting_NeverSeesAFilteredFeedbackToken pins the one seam
+// where this sweep could contradict the runtime, and the load-time invariant
+// that keeps it shut.
+//
+// `{{ feedback.check | inline }}` MATCHES placeholderPattern, but the runtime
+// does the opposite of splicing it: resolveLocked returns an
+// *InterpolationError and the node fails. A sweep that counted the filter group
+// as a quote would call WIRED a loop the runtime refuses to run — the single
+// case where "what this sweep counts as a quote and what the runtime splices
+// cannot drift apart" would be false.
+//
+// bodyQuotesFeedback guards on the filter group so the answer is right even if
+// such a graph ever reached it. Nothing can hand it one today, and that is what
+// this test asserts rather than simulating: graph.Validate refuses the token at
+// load, LintLoadFile returns a nil graph whenever it has issues, and the sweep's
+// two callers both run after that. If this assertion ever fails, the loader has
+// been relaxed and the guard — not the loader — has become what decides the
+// answer; re-read bodyQuotesFeedback then.
+func TestLintFeedbackQuoting_NeverSeesAFilteredFeedbackToken(t *testing.T) {
+	const filtered = `
+name: filtered
+nodes:
+  - id: build
+    prompt: "do the work; findings: {{ feedback.check | inline }}"
+  - id: check
+    depends_on: [build]
+    prompt: judge the work
+    success_check: { exit_zero: true, result_matches: PASS }
+    feedback: { rerun: build, max: 1 }
+`
+	_, err := graph.Parse([]byte(filtered))
+	if err == nil {
+		t.Fatal("the loader accepted a filtered feedback token: the sweep's filter guard is now load-bearing, not belt-and-braces")
+	}
+	if !strings.Contains(err.Error(), "takes no filter") {
+		t.Fatalf("the loader refused it for some other reason (%v) — the invariant this sweep leans on is not the one being tested", err)
+	}
+
+	// The negative control: the identical graph WITHOUT the filter loads and is
+	// quiet, so the refusal above is about the filter and not about the rest of
+	// the graph being malformed.
+	g := parseGraph(t, strings.Replace(filtered, "{{ feedback.check | inline }}", "{{ feedback.check }}", 1))
+	if warnings := LintFeedbackQuoting(g); len(warnings) != 0 {
+		t.Fatalf("the same token without a filter is a quote: %v", warnings)
+	}
+}
+
 // TestLintFeedbackQuoting_ShippedGraphsAreClean is the sweep's own regression
 // test, mirroring TestLintVerifyInlining_ShippedGraphsAreClean: no graph this
 // repo ships may declare a loop nothing in its body reads. It is also half of

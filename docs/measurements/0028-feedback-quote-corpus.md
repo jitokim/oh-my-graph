@@ -1,9 +1,12 @@
-# The feedback-quoting predicate fires 3 times in 11, and every hit is real
+# The feedback-quoting predicate fires 3 times in 15 declarers, and every hit is real
 
 **Verdict: the predicate is SOUND and it ships.** Over three corpora — this
 repo's shipped graphs, a 26-lane operator corpus, and 288 local run snapshots
 deduplicated to 201 distinct resolved graphs — `handoff.LintFeedbackQuoting`
-finds **11 feedback declarers and 3 hits, all 3 real** — with the caveat that
+finds **15 feedback declarers and 3 hits, all 3 real**. The denominator is not
+one number: **3 of the 11 declarers in the run-snapshot corpus, and 0 of the 4
+in the two file corpora** (2 shipped + 2 operator lanes), which is what the
+per-corpus table below totals — with the caveat that
 belongs on the number and not three paragraphs below it: **the 3 hits are three
 lanes of ONE graph in ONE run**, so the precision evidence is n=1 distinct
 defective graph against n=1 distinct control, not three independent
@@ -11,7 +14,7 @@ confirmations. **Noise: 0 of 3.** No shipped graph fires, so nothing in
 `graphs/` needed fixing. The corpus also carries the specimen's *repair*, three
 minutes later, and the sweep is correctly silent on it.
 
-**3 of the 11 declarers were written by the planner**, not by a person — which
+**3 of the 11 run-corpus declarers were written by the planner**, not by a person — which
 is the split that falsifies ADR 0028's first draft of decision 5 ("only a person
 can write what it condemns") and is why the ADR now escalates the sweep to a
 plan refusal for auto mode. All 3 quoted their payload correctly.
@@ -169,7 +172,7 @@ finding that operator lanes write their loops out longhand.
 ADR 0028 counts a quote in **any body node except the declarer**, not in the
 rerun target alone. The corpus contains two three-node bodies
 (`dev-a → e2e-a → review-a` and `impl → docs → verify`) and in both the quote
-sits at the rerun target, so **all 11 declarers get the same verdict under
+sits at the rerun target, so **all 11 run-corpus declarers get the same verdict under
 either rule**. The narrowing is therefore unfalsified rather than confirmed: it
 is reasoning about a shape (`build → refine → check`, quoted at `refine`) the
 corpus does not yet contain, taken in the direction that cannot produce a false
@@ -198,7 +201,7 @@ EOF
 ```
 
 Output on 2026-08-17: 7 rows, 3 marked `planner` (1 declarer each) and 4 marked
-`hand` (8 declarers), summing to the 11 above.
+`hand` (8 declarers), summing to the 11 run-corpus declarers above.
 
 ## What this does not measure
 
