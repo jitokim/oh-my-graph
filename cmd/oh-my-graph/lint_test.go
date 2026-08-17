@@ -319,6 +319,50 @@ nodes:
 	}
 }
 
+// TestLintGraph_BlindFeedbackLoopWarningKeepsExitZero is the sixth sweep at the
+// CLI boundary, on the specimen shape: a correct `feedback:` arc whose rerun
+// target never quotes the payload (ADR 0028). Every load rule holds — that is
+// the point, since the run this comes from cost two rounds and produced one
+// round's information while `lint` said nothing. The line must land on the
+// REPAIR node, name the declarer, and ride the warning writer at exit 0 like
+// every other advisory.
+func TestLintGraph_BlindFeedbackLoopWarningKeepsExitZero(t *testing.T) {
+	path := writeGraphFile(t, `
+name: blind-loop
+nodes:
+  - id: build
+    prompt: "Write the file. If a FEEDBACK section appears below, write alpha."
+    allowed_tools: [Read, Write]
+  - id: check
+    prompt: "Read the file and report what it contains"
+    depends_on: [build]
+    allowed_tools: [Read]
+    success_check:
+      exit_zero: true
+      result_matches: CHECKED
+    feedback: { rerun: build, max: 1 }
+`)
+	var out, warnings strings.Builder
+	if err := lintGraph(&out, &warnings, path); err != nil {
+		t.Fatalf("a feedback-quoting advisory must not fail lint: %v", err)
+	}
+	if !strings.Contains(out.String(), "valid") {
+		t.Errorf("the graph must still lint as valid:\n%s", out.String())
+	}
+	if !strings.Contains(warnings.String(), "warning: "+path+`: node "build": prompt: `) {
+		t.Errorf("the line belongs on the rerun target, where the fix goes:\n%s", warnings.String())
+	}
+	if !strings.Contains(warnings.String(), "{{ feedback.check }}") {
+		t.Errorf("the line should print the exact token to paste:\n%s", warnings.String())
+	}
+	if got := strings.Count(warnings.String(), "warning: "); got != 1 {
+		t.Errorf("one blind arc is one line, got %d:\n%s", got, warnings.String())
+	}
+	if code := mainExitCode([]string{"lint", path}); code != 0 {
+		t.Errorf("lint with only a feedback-quoting warning exited %d, want 0", code)
+	}
+}
+
 // --- success case -----------------------------------------------------------
 
 func TestLintGraph_ValidGraphPasses(t *testing.T) {

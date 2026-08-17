@@ -31,6 +31,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -802,9 +803,13 @@ func toolName(rule string) string {
 //     maxPlannedFeedbackRounds (validatePlannedNodeFeedback);
 //   - no planned feedback arc may leave a producer its declarer fans in from
 //     outside the loop, when the graph itself contains a target that would
-//     cover it (validatePlannedFeedbackReach — the only graph-LEVEL check
-//     here, since an arc's reach is a property of the topology, not of one
-//     node's fields);
+//     cover it (validatePlannedFeedbackReach — one of the two graph-LEVEL
+//     checks here, since an arc's reach is a property of the topology, not of
+//     one node's fields);
+//   - no planned feedback arc may leave its own payload unquoted by every node
+//     in its loop body (validatePlannedFeedbackQuoting — the other graph-level
+//     check, and ADR 0028's escalation: the planner prompt asks for the arc and
+//     the quote in one sentence, and this is the half that was prose only);
 //   - no planned node may declare a retry max above maxPlannedRetries
 //     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
@@ -837,13 +842,29 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
 	}
 	// The graph-level refusals come FIRST, and the order is load-bearing.
-	// repairSection truncates the joined reasons at maxIssuesInPrompt from the
-	// FRONT only, and validatePlannedFeedbackReach's sentence is by some margin
-	// the longest one this validator emits (~600 characters against 83–172 for
-	// a per-node refusal). Appended last, a dozen short per-node refusals would
-	// push it past the cut, the corrected reply would re-emit the same arc, and
-	// the single repair would be spent on being refused for it twice.
-	issues := validatePlannedFeedbackReach(g)
+	// repairSection drops refusals from the TAIL of this list when they do not
+	// all fit in maxIssuesInPrompt, and the two feedback-arc sentences are by
+	// some margin the longest ones this validator emits (~600 bytes against
+	// 83–172 for a per-node refusal). Appended last, a dozen short per-node
+	// refusals would push them out, the corrected reply would re-emit the same
+	// arc, and the single repair would be spent on being refused for it twice.
+	// Reach leads quoting because a mis-aimed arc makes the quote moot: the
+	// token would be pasted into a node the loop never re-runs.
+	//
+	// Being first is necessary and not sufficient, which is the correction this
+	// comment carried before: the two families can crowd EACH OTHER, since both
+	// fire on one arc independently and the reach family emits one sentence per
+	// declarer. Two arcs that are each mis-aimed and blind rendered 2541 bytes
+	// into a 2000-byte budget with the quoting family written one sentence per
+	// arc, and 1998 with it compacted — two bytes of headroom, which the
+	// shortest per-node refusal spends. Both figures are measured on
+	// twoBrokenLanesSpec; see maxIssuesInPrompt for the whole table. Two changes
+	// bound this rather than leaving
+	// it to the ordering — validatePlannedFeedbackQuoting compacts every blind
+	// arc into ONE sentence, and issuesForPrompt drops whole refusals and says
+	// how many it dropped instead of cutting one mid-sentence and silently
+	// losing the rest.
+	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	add := func(err *PlanError) {
 		if err != nil {
 			issues = append(issues, err)
@@ -991,6 +1012,101 @@ func validatePlannedFeedbackReach(g *graph.Graph) []*PlanError {
 // subject form got wrong in the plural.
 const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun: %[2]q}, whose loop body excludes %[3]s — %[4]s this one depends on, so nothing the arc re-runs can rewrite what %[5]s produced. A defect this node finds there is re-judged unchanged every round until the rounds are spent, at full cost. Which correction is right depends on what %[3]s %[6]s. If %[5]s %[6]s work this node judges, aim the arc at %[7]q instead: its loop body covers every producer this node depends on and still validates. If %[5]s %[6]s only stable context this node reads rather than work it judges, have %[2]q depend on %[8]s instead — context the work is built against belongs upstream of the loop, not beside it."
 
+// validatePlannedFeedbackQuoting refuses a planned feedback arc whose loop body
+// never quotes the declarer's payload — ADR 0028's shape, escalated from the
+// advisory `lint` prints for a hand-written graph, on
+// validatePlannedFeedbackReach's reasoning applied to the same author.
+//
+// The planner is ASKED for this pairing, in prose: the prompt above says to
+// declare the arc on the reviewing node "and have the implementing node's prompt
+// read {{ feedback.<reviewing-node-id> }}". Until this function, the two halves
+// of that one sentence had unequal standing — the arc's topology and its max
+// were machine-checked, the quote was not — so a plan could satisfy every check
+// and still spend `max` rounds re-running a prompt that cannot have changed.
+// That is the specimen of ADR 0028 with the one party who might have read a
+// warning removed: nobody runs `lint` on a graph `auto` planned, wrote to
+// graph.json and ran in the same breath.
+//
+// The predicate is NOT recomputed here. handoff.FeedbackQuoteFindings is the
+// single definition; this function reads it and decides what auto mode does with
+// it, the same split validatePlannedFeedbackReach has with
+// graph.LintFeedbackReach.
+//
+// WHY A REFUSAL HERE AND AN ADVISORY THERE — and why this one escalates on a
+// weaker warrant than the reach rule did. The reach escalation answered a
+// measured planner failure (#118, ~$14). This one has no measured planner
+// failure to answer: of the 11 feedback declarers in the local run corpus, 3
+// were planner-authored and all 3 quoted the payload correctly
+// (docs/measurements/0028-feedback-quote-corpus.md). What justifies it anyway is
+// the price of being wrong, which is lower here than anywhere else in this
+// validator. A refused plan buys one corrected re-plan (repair.go) carrying this
+// refusal's text, and the correction it asks for — one placeholder in the rerun
+// target's prompt — is HARMLESS EVEN WHEN THE REFUSAL IS WRONG: the feedback
+// namespace resolves to empty on the first pass by design, so a loop that
+// genuinely repairs from the repository rather than from the reply loses
+// nothing by carrying the token. Contrast the reach refusal, whose wrong
+// correction pulls a context node into the loop and pays for it every round —
+// which is why that one fires only when it can name a covering target, and why
+// this one needs no such weakening.
+//
+// ONE refusal for every blind arc in the graph, not one per declarer. The
+// sentence still names both ends of each pair and the exact token to paste —
+// a finding that makes the reader work out where the missing line goes is read
+// twice — but everything AROUND those two ids is identical for every arc, and
+// that shared half is ~530 of the 592 bytes the per-arc sentence rendered.
+// Repeated per declarer it is what pushed the graph-level refusals past
+// maxIssuesInPrompt: four blind arcs spent 2368 bytes of what was then a
+// 2000-byte budget saying the same paragraph four times, and crowded out the
+// reach refusals standing beside them (the two rules fire on one arc
+// independently — ADR 0028 §Failure modes). Compacted, four arcs cost the
+// paragraph once plus ~60 bytes each: 762 bytes. Both figures are measured on
+// twoBrokenLanesSpec's shape extended to four lanes; maxIssuesInPrompt carries
+// the table and names the test that pins it. This is the same move
+// validatePlannedFeedbackReach makes across producers, one level up.
+func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
+	findings := handoff.FeedbackQuoteFindings(g)
+	if len(findings) == 0 {
+		return nil
+	}
+	declarers := make([]string, 0, len(findings))
+	pastes := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		declarers = append(declarers, finding.Declarer)
+		pastes = append(pastes, fmt.Sprintf("{{ feedback.%s }} into %q's prompt", finding.Declarer, finding.Rerun))
+	}
+	n := len(findings)
+	return []*PlanError{{Reason: fmt.Sprintf(
+		plannedFeedbackQuoteRefusal,
+		plural(n, "planned node", "planned nodes"),
+		quoteIDs(declarers),
+		plural(n, "declares a feedback arc", "declare feedback arcs"),
+		plural(n, "its loop body", "their loop bodies"),
+		plural(n, "its payload", "their payloads"),
+		joinPhrases(pastes),
+		plural(n, "that prompt", "each of those prompts"),
+		plural(n, "that node's", "those nodes'"),
+	)}}
+}
+
+// plannedFeedbackQuoteRefusal is the sentence the planner gets back, and the one
+// a repair prompt quotes verbatim. It states the fault, the cost, and the edit —
+// including that the token is empty on the first pass, without which a planner
+// that "fixes" this by making the round conditional on the payload's presence
+// writes the specimen's own prompt back.
+//
+// It is written to say the shared half ONCE for any number of arcs: the ids
+// vary (%[2]s names the declarers, %[6]s the token-and-target pairs), the
+// diagnosis and the placement instruction do not.
+//
+// EVERY clause that refers back to that list agrees in number — the verbs
+// (%[3]s), the possessives (%[4]s, %[5]s, %[8]s) and the target of the paste
+// (%[7]s). This is not tidiness: it is a prompt the one repair call has to act
+// on, and "paste both tokens at the end of each of those prompts and after that
+// node's verdict contract" names a node the reader has to guess at.
+// TestPlan_TwoBlindArcsCostOneRefusal reads the plural rendering for exactly
+// that kind of leftover singular.
+const plannedFeedbackQuoteRefusal = "%[1]s %[2]s %[3]s, but nothing in %[4]s quotes %[5]s — the re-run gets the prompt it already ran, produces the same output, and the declaring node fails again for the same reason, at twice the cost, until the rounds are spent. Paste %[6]s, at the end of %[7]s and after %[8]s verdict contract, introduced as review feedback that is empty on the first pass. Do not make a node's work conditional on a feedback section appearing: on the first pass it never does."
+
 // quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
 // `"a", "b" and "c"`.
 func quoteIDs(ids []string) string {
@@ -998,10 +1114,16 @@ func quoteIDs(ids []string) string {
 	for _, id := range ids {
 		quoted = append(quoted, strconv.Quote(id))
 	}
-	if len(quoted) < 2 {
-		return strings.Join(quoted, "")
+	return joinPhrases(quoted)
+}
+
+// joinPhrases is quoteIDs' list grammar without the quoting, for a refusal that
+// enumerates whole clauses rather than ids — `x`, `x and y`, `x, y and z`.
+func joinPhrases(phrases []string) string {
+	if len(phrases) < 2 {
+		return strings.Join(phrases, "")
 	}
-	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+	return strings.Join(phrases[:len(phrases)-1], ", ") + " and " + phrases[len(phrases)-1]
 }
 
 // plural picks the verb/pronoun agreeing with a count, so a refusal about one
@@ -1465,7 +1587,12 @@ Rules:
   instead: "feedback": {"rerun": "<implementing-node-id>", "max": 2} on the
   node whose success_check judges the work, and have the implementing
   node's prompt read {{ feedback.<reviewing-node-id> }} ("review feedback
-  follows — empty on the first pass"). Keep max small (2): every round
+  follows — empty on the first pass"). BOTH halves are required and both are
+  checked: an arc whose loop body never quotes its declarer's payload is
+  rejected outright, because the re-run would get the prompt it already ran
+  and fail again for the same reason at twice the cost. Never make the work
+  conditional on a feedback section appearing — on the first pass it never
+  does. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a

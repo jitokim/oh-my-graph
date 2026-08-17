@@ -10,7 +10,105 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **`lint` / `run --dry-run` warn when a feedback loop's repair node never
+  quotes the feedback** (ADR 0028). `feedback: { rerun: R }` and
+  `{{ feedback.<declarer> }}` are two halves of one mechanism, and until now
+  either half loaded clean alone: the arc's topology is validated, a token that
+  IS written is validated, the arc's aim is swept for — nothing asked whether
+  both halves are present. Run `20260816-163759.091162000-1` is what that costs.
+  A two-node loop declared its arc correctly, its build prompt said "if a
+  FEEDBACK section appears below, write alpha", and no token existed to put one
+  there. The engine wrote the payload, re-ran the build, got identical output,
+  and the check failed identically. Twice the money, one round's worth of
+  information, ledger reading `feedback round 1/1`, and `lint` silent.
+
+  `handoff.LintFeedbackQuoting` is the sixth advisory sweep in that package,
+  wired into the one `warnAdvisories` helper `lint` and `run --dry-run` share.
+  The rule: for every node `D` declaring `feedback: { rerun: R }`, if no node in
+  the loop body other than `D` itself quotes `{{ feedback.D }}` in its **prompt**,
+  warn — on `R`, naming `D`, because `R`'s prompt is where the missing line
+  goes. A middle body node counts (`build → refine → check` quoted at `refine`
+  really does repair); the declarer's own quote does not (it is the judge, so
+  its re-run repairs nothing). Only prompts are read: a payload on a verify
+  command line is the fifth sweep's finding, and one in a `cwd` is a path.
+  Matching uses the runtime's own placeholder pattern, so the sweep holds after
+  fragment splicing — the specimen's real token was
+  `{{ feedback.qa-a/check }}`, a namespaced id the loader wrote — and both
+  shapes are tested. Advisory for a hand-written graph, never a load error: an
+  absent token has one legitimate reading (a loop that repairs from the
+  repository rather than from the reply), where the misplaced token ADR 0010
+  made an error has none.
+
+- **Auto mode refuses a planned feedback arc nothing in its loop body quotes**
+  (ADR 0028 §5). The planner is *asked* for both halves in one prompt sentence —
+  declare the arc on the reviewing node, and have the implementing node's prompt
+  read `{{ feedback.<reviewing-node-id> }}` — and until now only the arc half was
+  machine-checked (`coordinator.validatePlannedNodes` constrains a planned
+  `feedback:`; it never refused one). So the blind loop's worst instance, the one
+  with no author to read a warning, was the case left uncovered.
+  `coordinator.validatePlannedFeedbackQuoting` escalates the sweep to a plan
+  refusal the same way `validatePlannedFeedbackReach` escalates
+  `graph.LintFeedbackReach`, reading the same predicate rather than re-deciding
+  it. A refused plan buys one corrected re-plan carrying the refusal's text, and
+  the correction — one placeholder, empty on the first pass — is harmless even
+  when the refusal is wrong, which is why this one needs no
+  only-when-actionable weakening.
+
+  **It was measured before it shipped, and it has a control.** Over the shipped
+  `graphs/*.yaml` (8 graphs, 2 declarers), a 26-lane operator corpus (2
+  declarers) and 288 local run snapshots deduplicated to 201 distinct resolved
+  graphs (11 declarers): **3 hits, all 3 real, 0 noise** — with the caveat
+  attached to the number rather than to a later paragraph: the 3 are the three
+  *lanes* of one specimen graph in one run, so the precision evidence is one
+  distinct defective graph, not three independent ones. The same corpus holds
+  that graph's repair, three minutes later, and the sweep is correctly silent on
+  it. Of the 11 run-corpus declarers, **3 were planner-authored** (auto mode's `graph.json`)
+  and all 3 quoted the payload correctly — the escalation above guards a shape
+  the planner *can* write, not one it has been measured getting wrong. No shipped
+  graph fires; nothing in `graphs/` needed fixing, and a test now walks
+  `graphs/*.yaml` so that stays true. Full method, every number asserted rather
+  than reported:
+  [docs/measurements/0028-feedback-quote-corpus.md](docs/measurements/0028-feedback-quote-corpus.md).
+
+  No runtime behaviour changed: feedback's semantics, payload file, round
+  accounting and exit codes are untouched. The auto-mode refusal changes what
+  `auto` accepts as a plan, not how a graph runs — and note the reach of the
+  advisory half: `lint` and `run --dry-run` print it, a plain `run` does not, so
+  an operator who does not lint first still pays for a blind loop.
+
 ### Fixed
+
+- **A repair prompt no longer loses whole refusals to a silent cut.** Auto mode
+  hands a refused plan's refusals back to one corrected planner call, quoted into
+  a fenced section bounded by `maxIssuesInPrompt`. That bound was applied by
+  head-only truncation of the joined list, which on an over-long list left the
+  last refusal it kept ending mid-sentence and dropped every later one with no
+  trace — so the planner answered a prompt that never stated part of the fault,
+  the corrected reply re-committed it, and the plan the user paid for was gone.
+  The list is now packed in WHOLE refusals with the dropped count stated in the
+  prompt, and the budget is sized (3000, from 2000) rather than picked.
+
+  The fault was reachable because two refusal families are graph-level and both
+  scale with the number of faulty arcs: a mis-aimed arc and a blind one can be
+  the same arc (ADR 0028 §Failure modes), and two such declarers rendered 2541
+  bytes into a 2000-byte budget before a single per-node refusal joined them.
+  `coordinator.validatePlannedFeedbackQuoting` now compacts every blind arc into
+  one sentence naming each pair — four arcs cost 762 bytes instead of 2368 —
+  keeping the shared ~530-byte diagnosis out of the repeat, which brings the
+  same two declarers to 1998. Every one of those figures is measured on one
+  fixture and pinned by
+  `TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize`, so a reworded refusal
+  fails a test instead of leaving a comment quietly false.
+
+- **`{{ feedback.D | inline }}` no longer counts as quoting a feedback payload.**
+  `handoff.LintFeedbackQuoting` read the placeholder pattern's kind and reference
+  and ignored its filter group, where the runtime refuses a filtered feedback
+  token outright (`graph.Validate` at load, `Handoff.Interpolate` at run). No
+  graph that can be loaded today reaches it — both callers sweep a parsed
+  graph — so nothing observable changes; the guard and its test exist so the one
+  case where the sweep and the runtime could disagree cannot open up quietly.
 
 - **A release's page can no longer come out blank**
   ([#193](https://github.com/jitokim/oh-my-graph/pull/193)). v0.9.0 published
