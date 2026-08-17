@@ -311,7 +311,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	noteCodexRuntimePolicy(stdout, runtime, g, false)
 	flags.runtime = runtime
 	flags.runtimeWarnW = io.Discard
-	printFragmentResolutions(os.Stdout, loaded.Resolutions)
+	printFragmentResolutions(stdout, loaded.Resolutions)
 	// The advisory half of the same disclosure, through the same helper `lint`
 	// and `--dry-run` use: a run that announces which fragments it spliced must
 	// announce their drift smell too, or an identical file warns under `lint`
@@ -1583,6 +1583,15 @@ func inputKeys(inputs inputFlag) []string {
 // the same disclosure duty in the shape the multi-node form takes: the reader
 // of a run log learns that one `use:` became five nodes, and which five,
 // without opening the fragment file.
+//
+// And a grant substitution ASSEMBLED — a fragment's own `{{ with.x }}` inside
+// its `allowed_tools`, bound by the citing node — is neither an override nor a
+// count of ids, so it gets its own clause naming the resolved list (#196).
+// That clause is the only one printed for a grant a fragment wrote verbatim:
+// none. A grant readable in one file is not what the two-file principle is
+// about, and one line per difference and no more is what keeps these lines
+// read at all. A multi-node splice that parameterized SEVERAL nodes' grants is
+// the one case that outgrows the line: see grantClauses.
 func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolution) {
 	for _, r := range resolutions {
 		line := fmt.Sprintf("fragment: node %q spliced from %q (%s) — %s", r.NodeID, r.Fragment, r.Source, r.Description)
@@ -1592,8 +1601,46 @@ func printFragmentResolutions(w io.Writer, resolutions []graph.FragmentResolutio
 		if len(r.Overridden) > 0 {
 			line += " — node overrides: " + strings.Join(r.Overridden, ", ")
 		}
+		clauses := grantClauses(r)
+		if len(clauses) == 1 {
+			line += " — allowed_tools resolved from with: " + clauses[0]
+		}
 		fmt.Fprintln(w, line)
+		if len(clauses) > 1 {
+			fmt.Fprintln(w, "  allowed_tools resolved from with:")
+			for _, clause := range clauses {
+				fmt.Fprintln(w, "    "+clause)
+			}
+		}
 	}
+}
+
+// grantClauses renders each substituted grant for the disclosure line. A
+// single-node resolution's one grant belongs to the node the line already
+// names, so it prints bare; a multi-node one qualifies each by its spliced id,
+// because a loop may parameterize the grant of some of its nodes and not
+// others, and "which of the five" is the whole question. A grant that resolved
+// to nothing prints as `(none)`: an empty list is a disclosure, not an absence,
+// and an empty tail would read as a truncated line.
+//
+// One clause rides the line inline; beyond one, the caller gives each its own
+// indented line — the shape noteCodexRuntimePolicy already uses for a per-node
+// list. Inline they would nest `,` inside `;` (`x/build: Read, Bash(go *);
+// x/review: Read, Write`) and the boundary between two nodes' GRANTS would be
+// the weaker separator, which is the one thing a grant disclosure may not blur.
+func grantClauses(r graph.FragmentResolution) []string {
+	clauses := make([]string, 0, len(r.Grants))
+	for _, grant := range r.Grants {
+		tools := strings.Join(grant.Tools, ", ")
+		if len(grant.Tools) == 0 {
+			tools = "(none)"
+		}
+		if grant.NodeID != r.NodeID {
+			tools = grant.NodeID + ": " + tools
+		}
+		clauses = append(clauses, tools)
+	}
+	return clauses
 }
 
 // warnBypassPermissions prints a loud, per-node warning for any node that opts

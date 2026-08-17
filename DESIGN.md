@@ -406,10 +406,14 @@ Non-goals, refused rather than deferred quietly: `use:` inside a fragment
 whole loop, loop-until-dry convergence (`max: N` stays the only one), and
 dynamic fan-out.
 
-Downstream of the loader **no fragment concept exists**: `run` and `lint` both
-print one disclosure line per resolved fragment (source file + the fragment's
-own description + every overridden key, or — for a multi-node splice, which
-overrides nothing — the ids it spliced) plus the same fragment advisories on
+Downstream of the loader **no fragment concept exists**: `run`, `lint` and
+`run --dry-run` all print one disclosure line per resolved fragment (source
+file + the fragment's own description + every overridden key, or — for a
+multi-node splice, which overrides nothing — the ids it spliced; plus, when a
+fragment parameterized its own `allowed_tools` and the citing node bound it,
+the **resolved** grant of each spliced node substitution touched. A grant
+written verbatim in the fragment adds no clause: one line per difference and
+no more — ADR 0013's #196 amendment) plus the same fragment advisories on
 the warning channel (`run` discloses what it spliced, so it discloses the
 drift smell too; the six *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never

@@ -413,6 +413,28 @@ the fragment's own `description:` and every key the using node
 overrides** — the disclosure posture the agent-mapping design
 established, extended to overrides so a hollowed `success_check` or
 widened `allowed_tools` is announced at every run, and at every `lint`.
+*Amended 2026-08-17 (#196): a grant a fragment PARAMETERIZES is announced
+too.* The sentence above names two shapes — a key the using node overrides,
+and (ADR 0027) the ids a multi-node splice minted — and a third escapes both.
+A fragment may declare a substitution point inside its own grant
+(`allowed_tools: [Read, "{{ with.extra }}"]`) and a citing node bind it. That
+is not an override: the citing node declares only wiring, exactly as the
+design requires, so the override list is empty and the ids clause says only
+which nodes exist. The fragment file showed a slot, the citing graph showed a
+value, and the run log showed neither — inverting this paragraph's own claim
+for the one grant that needed two files to read. The disclosure line now
+carries the **resolved** `allowed_tools` of each spliced node substitution
+touched, in both fragment forms. Two bounds are part of the decision. It fires
+only when substitution CONTRIBUTED to the field — a grant written verbatim in
+the fragment is readable in one file, and a line per grant per spliced node is
+a line nobody reads. And the judgment is a before/after comparison of that
+field, never a scan of the fragment source for `{{`: a token can arrive
+through a nested structure, and a whole-list binding replaces the field's type
+as well as its text, so a source scan would drift from what substitution
+actually did. Nothing about what a fragment may DECLARE changed; the two
+alternatives the issue recorded — refusing a `with:` token inside
+`allowed_tools`, and amending the comment to claim less — were both declined.
+
 *Amended at implementation:* `fragment:` and `description:` were
 initially read by nothing. Both are now required — the first must equal
 the filename, since the filename is what a `use:` resolves and a

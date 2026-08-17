@@ -12,6 +12,76 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **The splice disclosure names a tool grant that was assembled across two
+  files** (#196, ADR 0013 amended). `FragmentResolution`'s own doc comment
+  states the principle — "a hollowed-out `success_check` or a widened
+  `allowed_tools` is announced at every run, not only visible to whoever reads
+  the file" — and names two shapes: a key the using node overrides, and (ADR
+  0027) the ids a multi-node splice minted. A third escaped both. A fragment
+  may declare a substitution point inside its own grant:
+
+  ```yaml
+  # fragments/tools.yaml
+  substitutions: [extra]
+  node:
+    allowed_tools: [Read, "{{ with.extra }}"]
+  ```
+
+  ```yaml
+  - { id: x, use: tools, with: { extra: "Bash(go *)" } }
+  ```
+
+  This loads clean today and the token really is substituted. It is not an
+  override — the citing node declares only wiring, exactly as the design
+  requires — so the override list was empty and nothing was announced. The
+  fragment file showed a slot, the citing graph showed a value, and the run log
+  showed neither: the one grant that needed two files to read was the one no run
+  could show.
+
+  The line now carries the resolved grant, in both fragment forms:
+
+  ```text
+  fragment: node "x" spliced from "tools" (graphs/fragments/tools.yaml) — a parameterized gate — allowed_tools resolved from with: Read, Bash(go *)
+  fragment: node "x" spliced from "lanes" (graphs/fragments/lanes.yaml) — two lanes — nodes: x/build, x/review — allowed_tools resolved from with: x/build: Read, Bash(go *)
+  ```
+
+  The multi-node form qualifies each grant by its minted id, because "which of
+  the five" is the question there; a splice that parameterized SEVERAL nodes'
+  grants gives each its own indented line instead, because inline they would
+  nest `,` inside `;` and the boundary between two nodes' grants would be the
+  weaker separator of the two:
+
+  ```text
+  fragment: node "x" spliced from "lanes" (graphs/fragments/lanes.yaml) — two lanes — nodes: x/build, x/review
+    allowed_tools resolved from with:
+      x/build: Read, Bash(go *)
+      x/review: Read, Write
+  ```
+
+  What the line names is what the node runs with, down to the empty cases,
+  where YAML's null and its empty string part company: an element bound null is
+  dropped by the decode and so is dropped from the line, an element bound to
+  `""` is kept by both, and a whole grant bound null prints `(none)` — the node
+  has no grant. Read as text those look identical, and announcing one as the
+  other is the drift this clause exists to prevent.
+
+  Two bounds keep it readable. It fires only
+  when substitution CONTRIBUTED to the field — a grant written verbatim in the
+  fragment is already readable in one file, and a line per grant per spliced
+  node is one nobody reads (the failure the Codex disclosure work documented:
+  one line per difference and no more). And the judgment is a before/after
+  comparison of that one field, never a scan of the fragment source for `{{`: a
+  token can arrive through a nested structure, and a whole-list binding
+  (`allowed_tools: "{{ with.grant }}"`) replaces the field's type as well as its
+  text, so a source scan would drift from what substitution actually did.
+
+  **Disclosure only — nothing that loaded before now refuses.** The two other
+  options the issue recorded (refuse a `with:` token inside `allowed_tools`;
+  amend the comment to claim less) were both declined. A grant the citing node
+  *overrides* keeps being announced as the override it is and adds no second
+  clause: the substituted one was discarded by the overlay, so naming it would
+  name a grant no node runs with.
+
 - **`lint` / `run --dry-run` warn when a feedback loop's repair node never
   quotes the feedback** (ADR 0028). `feedback: { rerun: R }` and
   `{{ feedback.<declarer> }}` are two halves of one mechanism, and until now
@@ -79,6 +149,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   an operator who does not lint first still pays for a blind loop.
 
 ### Fixed
+
+- **`run --dry-run` prints the fragment disclosure at all.** It shared the
+  advisory channel with `lint` and `run` but never called
+  `printFragmentResolutions`, so the one command a reader uses to check what a
+  graph WILL do before paying for it was the one that did not say which
+  fragments it spliced, from which files, or with which overrides. Same defect
+  class as #185's half-wired warning, and the reason the grant clause above is
+  tested at all three call sites rather than at the one that happened to be
+  found.
 
 - **A repair prompt no longer loses whole refusals to a silent cut.** Auto mode
   hands a refused plan's refusals back to one corrected planner call, quoted into

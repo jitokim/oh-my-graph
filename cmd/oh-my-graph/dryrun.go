@@ -15,7 +15,8 @@ import (
 // fragment-resolving graph.LintLoadFile pass the `lint` subcommand uses (ADR
 // 0013), report every issue — fragment resolution failures plus the resolved
 // graph's structural problems — resolve the {{ inputs.* }} references against
-// the bound --input values, print the resolved plan, and return without
+// the bound --input values, print the fragment disclosure `lint` and `run`
+// print plus the resolved plan, and return without
 // wiring a runner: no node spawns, no run directory is created, zero cost. It
 // differs from `lint` in exactly one way: lint judges the file alone, while a
 // dry run also holds the invocation's --input bindings, so it can
@@ -47,6 +48,12 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	}
 	warnAdvisories(warnW, path, g)
 	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
+	// The disclosure `lint` and `run` both print, on the third command that
+	// resolves fragments — and the one that had it missing. A dry run is where a
+	// reader checks what a graph WILL do before paying for it, so a splice
+	// announced under both neighbours and silent here is the disclosure
+	// contradicting itself, the same way the advisory channel above was.
+	printFragmentResolutions(w, loaded.Resolutions)
 	printResolvedPlan(w, g)
 	noteCodexRuntimePolicy(w, runtime, g, false)
 

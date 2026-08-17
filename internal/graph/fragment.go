@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -78,6 +79,34 @@ type FragmentResolution struct {
 	// reader of a run log learns that one `use:` became five nodes, and which
 	// five, without opening the fragment file.
 	Spliced []string
+	// Grants is the RESOLVED allowed_tools of every spliced node whose grant
+	// substitution contributed to — the third shape, which neither field above
+	// reaches (#196). A fragment may declare its own substitution point inside
+	// the grant (`allowed_tools: [Read, "{{ with.extra }}"]`) and a citing node
+	// bind it; that is not an override — the citing node declares only wiring —
+	// so Overridden is empty, and for a multi-node use Spliced says only which
+	// ids exist. The fragment file then shows a slot, the citing graph shows a
+	// value, and without this the run log shows neither: the one grant that
+	// needed two files to read is the one a run could not announce, which
+	// inverts the sentence above.
+	//
+	// Recorded when substitution TOUCHED the field, not for every spliced node.
+	// A grant written verbatim in the fragment file is already readable in one
+	// file, and a disclosure that prints every grant of every spliced node is
+	// one nobody reads. Judged by comparing the field before and after
+	// substitution — never by scanning the fragment source for `{{`, which a
+	// token arriving through a nested structure or a whole-list binding would
+	// walk straight past.
+	Grants []ResolvedGrant
+}
+
+// ResolvedGrant is one spliced node's allowed_tools as substitution left it —
+// the disclosure line's answer to "which grant did these two files assemble".
+// NodeID is the spliced id, which for the single-node form is the using node's
+// own and for the multi-node form carries the minted namespace.
+type ResolvedGrant struct {
+	NodeID string
+	Tools  []string
 }
 
 // FragmentAdvisory is an advisory finding about a fragment file — drift smell,
@@ -759,7 +788,7 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		return nil
 	}
 	if lf.frag.isMulti() {
-		loop, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
+		loop, grants, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
 		if len(errs) > 0 {
 			fail(errs...)
 			return nil
@@ -768,22 +797,30 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		out.loops[id] = lf.frag.exit
 		out.resolutions = append(out.resolutions, FragmentResolution{
 			NodeID: id, Fragment: name, Description: lf.frag.description,
-			Source: lf.frag.source, Spliced: splicedIDs(id, lf.frag),
+			Source: lf.frag.source, Spliced: splicedIDs(id, lf.frag), Grants: grants,
 		})
 		return loop
 	}
 
 	body := deepCopyNode(lf.frag.node)
-	if errs := substituteWithTokens(body, bindings, id, name); len(errs) > 0 {
+	grant, errs := substituteBody(body, bindings, id, name)
+	if len(errs) > 0 {
 		fail(errs...)
 		return nil
 	}
 
 	overridden := overlayUsingNode(nodeMap, body)
-	out.resolutions = append(out.resolutions, FragmentResolution{
+	resolution := FragmentResolution{
 		NodeID: id, Fragment: name, Description: lf.frag.description,
 		Source: lf.frag.source, Overridden: overridden,
-	})
+	}
+	// A grant the USING node overrode is one file's text, already named in
+	// Overridden — and the substituted one overlayUsingNode just discarded is
+	// not what this node runs with. Announcing it would name a grant no node has.
+	if grant != nil && !slices.Contains(overridden, "allowed_tools") {
+		resolution.Grants = []ResolvedGrant{{NodeID: id, Tools: grant}}
+	}
+	out.resolutions = append(out.resolutions, resolution)
 	return nil
 }
 
@@ -833,7 +870,13 @@ func recordBoundReferences(nodeID string, bindings map[string]*yaml.Node, out *f
 // loop. That is the worst available outcome: a working reference quietly aimed
 // at someone else's node. Rewrite-then-substitute keeps the two namespaces
 // apart, which is what an author of either file expects to be reading.
-func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings map[string]*yaml.Node) ([]*yaml.Node, []*FragmentError) {
+//
+// The grants returned beside the nodes are the disclosure half (#196): one
+// entry per spliced node whose allowed_tools substitution contributed to, in
+// fragment order. It is computed here rather than by a second pass over the
+// result because the before/after comparison needs both states of one body,
+// and this loop is where they exist.
+func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings map[string]*yaml.Node) ([]*yaml.Node, []ResolvedGrant, []*FragmentError) {
 	var errs []*FragmentError
 	bad := func(reason string) {
 		errs = append(errs, &FragmentError{NodeID: usingID, Fragment: frag.name, Source: frag.source, Reason: reason})
@@ -841,7 +884,7 @@ func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings m
 
 	if strings.TrimSpace(usingID) == "" {
 		bad("a node citing a multi-node fragment must declare an id — every spliced node's id is <this id>/<the fragment's own>, so without one there is no namespace to mint them in")
-		return nil, errs
+		return nil, nil, errs
 	}
 	// Deterministic in document order, so a node declaring several behavior
 	// keys reports them the way its author reads them.
@@ -851,19 +894,26 @@ func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings m
 		}
 	}
 	if len(errs) > 0 {
-		return nil, errs
+		return nil, nil, errs
 	}
 
 	keys := mappingValues(using)
 	dependsOn, cwd, worktree := keys["depends_on"], keys["cwd"], keys["worktree"]
 
 	spliced := make([]*yaml.Node, 0, len(frag.nodes))
+	var grants []ResolvedGrant
 	for _, internal := range frag.nodes {
 		body := deepCopyNode(internal)
+		// Namespaced BEFORE the grant is fingerprinted, so the only difference
+		// substituteBody can see is substitution's own.
 		namespaceNode(body, usingID, frag)
-		if subErrs := substituteWithTokens(body, bindings, usingID, frag.name); len(subErrs) > 0 {
+		grant, subErrs := substituteBody(body, bindings, usingID, frag.name)
+		if len(subErrs) > 0 {
 			errs = append(errs, subErrs...)
 			continue
+		}
+		if grant != nil {
+			grants = append(grants, ResolvedGrant{NodeID: scalarValue(mappingValues(body)["id"]), Tools: grant})
 		}
 		// An ENTRY node — one with no internal parent — inherits the using
 		// node's depends_on verbatim. A fragment may have several; all of them
@@ -894,9 +944,9 @@ func spliceLoop(using *yaml.Node, usingID string, frag *fragmentFile, bindings m
 		spliced = append(spliced, body)
 	}
 	if len(errs) > 0 {
-		return nil, errs
+		return nil, nil, errs
 	}
-	return spliced, nil
+	return spliced, grants, nil
 }
 
 // namespaceNode rewrites one fragment-internal node into the using node's
@@ -1536,6 +1586,84 @@ func substituteWithTokens(body *yaml.Node, bindings map[string]*yaml.Node, nodeI
 		scalar.Tag = "!!str"
 	})
 	return errs
+}
+
+// substituteBody is substituteWithTokens plus the one disclosure question ADR
+// 0013's principle asks of its result: did substitution CONTRIBUTE to this
+// node's allowed_tools? It returns the resolved grant when it did and nil when
+// it did not, so a fragment whose grant is written verbatim announces nothing
+// and only a two-file grant reaches a run log.
+//
+// The judgment is a before/after comparison of that one field, made here
+// because here is the only place holding both states of the same body. The
+// alternative — scanning the fragment source for `{{` — reads as equivalent
+// and is not: a token can arrive through a nested structure, and a whole-list
+// binding (`allowed_tools: "{{ with.tools }}"`) replaces the field's type as
+// well as its text. A source scan would drift from what substitution actually
+// did, in whichever direction the next binding shape happens to break it.
+func substituteBody(body *yaml.Node, bindings map[string]*yaml.Node, nodeID, fragment string) ([]string, []*FragmentError) {
+	before := grantFingerprint(body)
+	if errs := substituteWithTokens(body, bindings, nodeID, fragment); len(errs) > 0 {
+		return nil, errs
+	}
+	if grantFingerprint(body) == before {
+		return nil, nil
+	}
+	return grantList(body), nil
+}
+
+// grantFingerprint renders a node's allowed_tools as comparable text: every
+// scalar under the key, in document order, NUL-separated so a list's element
+// boundaries cannot be forged by concatenation. It answers "did this field
+// change" and nothing else. An absent key fingerprints as "", so a fragment
+// declaring no grant compares equal to itself and is never announced.
+func grantFingerprint(body *yaml.Node) string {
+	grant := grantOf(body)
+	if grant == nil {
+		return ""
+	}
+	var text strings.Builder
+	walkScalarNodes(grant, func(scalar *yaml.Node) {
+		text.WriteString(scalar.Value)
+		text.WriteByte(0)
+	})
+	return text.String()
+}
+
+// grantList is a node's resolved allowed_tools as the strings a reader sees.
+// nil exactly when the node declares no grant; a declared-but-empty one comes
+// back as an empty slice, because "this splice resolved to no tools at all" is
+// disclosure, not absence.
+//
+// A NULL scalar is skipped, because the decode this document is about to go
+// through skips it too: `allowed_tools: [Read, "{{ with.x }}"]` with x bound
+// null decodes to [Read], and a whole-list binding of null decodes to no grant
+// at all. Reading it as "" instead would announce a tool the node does not run
+// with — the one drift this disclosure exists to prevent — and would render as
+// an empty tail, which is the truncated line grantClauses' (none) guards
+// against. An empty STRING is not skipped: `with: { x: "" }` really does decode
+// to a "" element, so dropping it would open the same drift from the other side.
+func grantList(body *yaml.Node) []string {
+	grant := grantOf(body)
+	if grant == nil {
+		return nil
+	}
+	tools := make([]string, 0, len(grant.Content))
+	walkScalarNodes(grant, func(scalar *yaml.Node) {
+		if scalar.Tag == "!!null" {
+			return
+		}
+		tools = append(tools, scalar.Value)
+	})
+	return tools
+}
+
+// grantOf is a node mapping's allowed_tools value node, or nil.
+func grantOf(body *yaml.Node) *yaml.Node {
+	if body == nil || body.Kind != yaml.MappingNode {
+		return nil
+	}
+	return mappingValues(body)["allowed_tools"]
 }
 
 // overlayUsingNode merges the using node's own keys over the substituted
