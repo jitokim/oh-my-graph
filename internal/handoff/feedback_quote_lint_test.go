@@ -310,6 +310,37 @@ nodes:
 	}
 }
 
+// TestLintFeedbackQuoting_ShippedGraphsAreClean is the sweep's own regression
+// test, mirroring TestLintVerifyInlining_ShippedGraphsAreClean: no graph this
+// repo ships may declare a loop nothing in its body reads. It is also half of
+// the shipped measurement (docs/measurements/0028-feedback-quote-corpus.md — 8
+// entry graphs, 2 declarers, 0 hits), and pinning it here is what keeps that
+// claim from decaying silently: a template or a cited fragment that later grows
+// a blind loop fails in the test suite rather than in a paid run.
+//
+// Loaded through graph.LoadFile so `use:` fragments are resolved in (ADR 0013),
+// which is the only way a FRAGMENT's loop is judged at all — a fragment file is
+// not an entry graph and cannot be linted on its own (ADR 0028 §Failure modes).
+// `graphs/adr-driven-dev.yaml` citing `repair-round` twice is what brings that
+// fragment's spliced nodes, namespaced ids and all, into this population.
+func TestLintFeedbackQuoting_ShippedGraphsAreClean(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "graphs", "*.yaml"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("no shipped graphs found to sweep: %v", err)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			loaded, err := graph.LoadFile(path)
+			if err != nil {
+				t.Fatalf("load %s: %v", path, err)
+			}
+			if warnings := LintFeedbackQuoting(loaded.Graph); len(warnings) != 0 {
+				t.Fatalf("%s: a shipped loop must quote its own feedback payload, got %v", path, warnings)
+			}
+		})
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

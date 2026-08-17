@@ -3,15 +3,33 @@
 **Verdict: the predicate is SOUND and it ships.** Over three corpora — this
 repo's shipped graphs, a 26-lane operator corpus, and 288 local run snapshots
 deduplicated to 201 distinct resolved graphs — `handoff.LintFeedbackQuoting`
-finds **11 feedback declarers and 3 hits, all 3 real**, all three lanes of the
-run that motivated it. **Noise: 0 of 3.** No shipped graph fires, so nothing in
+finds **11 feedback declarers and 3 hits, all 3 real** — with the caveat that
+belongs on the number and not three paragraphs below it: **the 3 hits are three
+lanes of ONE graph in ONE run**, so the precision evidence is n=1 distinct
+defective graph against n=1 distinct control, not three independent
+confirmations. **Noise: 0 of 3.** No shipped graph fires, so nothing in
 `graphs/` needed fixing. The corpus also carries the specimen's *repair*, three
 minutes later, and the sweep is correctly silent on it.
 
+**3 of the 11 declarers were written by the planner**, not by a person — which
+is the split that falsifies ADR 0028's first draft of decision 5 ("only a person
+can write what it condemns") and is why the ADR now escalates the sweep to a
+plan refusal for auto mode. All 3 quoted their payload correctly.
+
 - **Date:** 2026-08-17 (KST), macOS (darwin 22.6.0), one machine.
 - **Corpora:**
-  - `graphs/*.yaml` in this checkout — 8 entry graphs (fragment files are not
-    entry graphs and are excluded by the loader, not by hand);
+  - `graphs/*.yaml` in this checkout — 8 entry graphs. `graphs/fragments/*.yaml`
+    is **not** a second corpus that came back clean: a fragment file cannot be
+    linted at all (`oh-my-graph lint graphs/fragments/repair-round.yaml` exits 1
+    on `invalid timeout "{{ with.review_timeout }}"`, because an unbound
+    substitution is not a valid graph), so a fragment's loop is judged only
+    through a graph that cites it. Of the five shipped fragments, `repair-round`
+    is cited (twice) by `adr-driven-dev.yaml` and so IS in this population,
+    spliced. Parsed rather than grepped, all five declare **0** `feedback:` arcs
+    — the four single-node ones may not carry one at all (ADR 0013: `feedback`
+    is the using graph's wiring), and the multi-node `repair-round` declares
+    none. Read the 0 as "no shipped fragment declares an arc today", not as
+    "fragments were swept";
   - `~/IdeaProjects/oh-my-graph-hq/lanes/graphs/*.yaml` — 26 operator lanes;
   - every `~/.oh-my-graph/runs/*/state.json` — 288 run directories,
     deduplicated by the full resolved graph JSON, so a re-run of a lane
@@ -37,7 +55,13 @@ body other than `D` itself quotes `{{ feedback.D }}` in its **prompt**, warn on
 |---|---:|---:|---:|---:|---:|
 | shipped `graphs/*.yaml` | 8 | 2 | **0** | — | — |
 | operator lanes | 26 | 2 | **0** | — | — |
-| run snapshots (deduped) | 201 | 7 graphs / **11** declarers | **3** | **3** | **0** |
+| run snapshots (deduped) | 201 | 7 graphs / **11** declarers | **3**¹ | **3** | **0** |
+
+¹ The 3 hits are the three lanes (`qa-a`, `qa-b`, `qa-c`) of one fragment cited
+three times in one graph, in one run. The dedup key is the resolved-graph JSON,
+which collapses re-runs but not lanes within a graph, so this is **one distinct
+defective graph judged three times**, and the control is likewise one graph.
+Enough to ship an advisory; not three independent measurements of precision.
 
 ### Every declarer in the run corpus, and its verdict
 
@@ -54,6 +78,37 @@ body other than `D` itself quotes `{{ feedback.D }}` in its **prompt**, warn on
 | `20260816-163954.329528000-1` | `qa-a/check` | `qa-a/build` | 2 nodes | quiet — the repair |
 | `20260816-163954.329528000-1` | `qa-b/check` | `qa-b/build` | 2 nodes | quiet — the repair |
 | `20260816-163954.329528000-1` | `qa-c/check` | `qa-c/build` | 2 nodes | quiet — the repair |
+
+### Who wrote these arcs: 3 planner, 8 hand-written
+
+The split ADR 0028's first draft assumed away. A run's `graph_source_path` says
+where its graph came from, and auto mode's accepted plan is saved as
+`graph.json` **inside the run directory** (`generatedSpecFileName`,
+cmd/oh-my-graph/main.go), so a source path that is this run's own `graph.json`
+is a planner-authored graph and anything else is a file a person wrote:
+
+| run | source | declarers | author |
+|---|---|---:|---|
+| `20260802-080142.150241000-1` | `/tmp/loop-demo/demo.yaml` | 1 | hand |
+| `20260803-081608.190042000-1` | this run's `graph.json` | 1 | **planner** |
+| `20260803-081635.836216000-1` | this run's `graph.json` | 1 | **planner** |
+| `20260803-084704.248072000-1` | this run's `graph.json` | 1 | **planner** |
+| `20260814-153554.116076000-1` | `graphs/backlog-batch.yaml` | 1 | hand |
+| `20260816-163759.091162000-1` | `graphs/qachain.yaml` | 3 | hand |
+| `20260816-163954.329528000-1` | `graphs/qachain.yaml` | 3 | hand |
+
+**3 planner-authored declarers, 8 hand-written**, and all three planner arcs
+quote their payload at `impl` — the planner followed the prompt sentence that
+asks for the pairing. Two consequences, both in ADR 0028:
+
+- "only a person can write what this condemns" is **false**, so the sweep's
+  standing had to be re-derived (advisory because an absent token has one
+  legitimate reading, not because no machine writes one);
+- the auto-mode escalation is a guard against a shape the planner *can* write,
+  with **zero measured planner failures** behind it — unlike the reach refusal,
+  which answered a measured $14 one (#118). What justifies it anyway is the
+  price of being wrong: one re-plan, and a correction that is harmless when
+  unnecessary.
 
 ### Judging the three hits: all real
 
@@ -119,6 +174,31 @@ either rule**. The narrowing is therefore unfalsified rather than confirmed: it
 is reasoning about a shape (`build → refine → check`, quoted at `refine`) the
 corpus does not yet contain, taken in the direction that cannot produce a false
 accusation.
+
+### Method for the authorship split
+
+Same snapshots, same dedup, reading one more field. Re-derivable:
+
+```sh
+python3 - <<'EOF'
+import json, glob, os
+seen = set()
+for p in sorted(glob.glob(os.path.expanduser("~/.oh-my-graph/runs/*/state.json"))):
+    d = json.load(open(p))
+    g = d.get("graph")
+    if not g: continue
+    key = json.dumps(g, sort_keys=True)
+    if key in seen: continue
+    seen.add(key)
+    decl = [n["id"] for n in g["nodes"] if n.get("feedback")]
+    if not decl: continue
+    run, src = os.path.basename(os.path.dirname(p)), d.get("graph_source_path", "")
+    print(run, len(decl), "planner" if os.path.basename(src) == "graph.json" and run in src else "hand", src)
+EOF
+```
+
+Output on 2026-08-17: 7 rows, 3 marked `planner` (1 declarer each) and 4 marked
+`hand` (8 declarers), summing to the 11 above.
 
 ## What this does not measure
 

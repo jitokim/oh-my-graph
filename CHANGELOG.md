@@ -36,21 +36,47 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   Matching uses the runtime's own placeholder pattern, so the sweep holds after
   fragment splicing — the specimen's real token was
   `{{ feedback.qa-a/check }}`, a namespaced id the loader wrote — and both
-  shapes are tested. Advisory, never a load error, for the standing reason every
-  sweep in the package has one: the planner cannot author a `feedback:` at all,
-  so only a person can write what it condemns.
+  shapes are tested. Advisory for a hand-written graph, never a load error: an
+  absent token has one legitimate reading (a loop that repairs from the
+  repository rather than from the reply), where the misplaced token ADR 0010
+  made an error has none.
+
+- **Auto mode refuses a planned feedback arc nothing in its loop body quotes**
+  (ADR 0028 §5). The planner is *asked* for both halves in one prompt sentence —
+  declare the arc on the reviewing node, and have the implementing node's prompt
+  read `{{ feedback.<reviewing-node-id> }}` — and until now only the arc half was
+  machine-checked (`coordinator.validatePlannedNodes` constrains a planned
+  `feedback:`; it never refused one). So the blind loop's worst instance, the one
+  with no author to read a warning, was the case left uncovered.
+  `coordinator.validatePlannedFeedbackQuoting` escalates the sweep to a plan
+  refusal the same way `validatePlannedFeedbackReach` escalates
+  `graph.LintFeedbackReach`, reading the same predicate rather than re-deciding
+  it. A refused plan buys one corrected re-plan carrying the refusal's text, and
+  the correction — one placeholder, empty on the first pass — is harmless even
+  when the refusal is wrong, which is why this one needs no
+  only-when-actionable weakening.
 
   **It was measured before it shipped, and it has a control.** Over the shipped
   `graphs/*.yaml` (8 graphs, 2 declarers), a 26-lane operator corpus (2
   declarers) and 288 local run snapshots deduplicated to 201 distinct resolved
-  graphs (11 declarers): **3 hits, all 3 real, 0 noise** — the specimen's three
-  lanes. The same corpus holds that graph's repair, three minutes later, and the
-  sweep is correctly silent on it. No shipped graph fires; nothing in `graphs/`
-  needed fixing. Full method, every number asserted rather than reported:
+  graphs (11 declarers): **3 hits, all 3 real, 0 noise** — with the caveat
+  attached to the number rather than to a later paragraph: the 3 are the three
+  *lanes* of one specimen graph in one run, so the precision evidence is one
+  distinct defective graph, not three independent ones. The same corpus holds
+  that graph's repair, three minutes later, and the sweep is correctly silent on
+  it. Of the 11 declarers, **3 were planner-authored** (auto mode's `graph.json`)
+  and all 3 quoted the payload correctly — the escalation above guards a shape
+  the planner *can* write, not one it has been measured getting wrong. No shipped
+  graph fires; nothing in `graphs/` needed fixing, and a test now walks
+  `graphs/*.yaml` so that stays true. Full method, every number asserted rather
+  than reported:
   [docs/measurements/0028-feedback-quote-corpus.md](docs/measurements/0028-feedback-quote-corpus.md).
 
   No runtime behaviour changed: feedback's semantics, payload file, round
-  accounting and exit codes are untouched.
+  accounting and exit codes are untouched. The auto-mode refusal changes what
+  `auto` accepts as a plan, not how a graph runs — and note the reach of the
+  advisory half: `lint` and `run --dry-run` print it, a plain `run` does not, so
+  an operator who does not lint first still pays for a blind loop.
 
 ### Fixed
 

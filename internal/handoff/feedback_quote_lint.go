@@ -48,16 +48,55 @@ import (
 // loader rewrote to was `{{ feedback.qa-a/check }}` (ADR 0027). A sweep that
 // only worked on hand-written ids would have missed the run that motivated it.
 //
-// It stays a warning rather than a load error for the standing reason every
-// sweep in this package does: only a person can write what it condemns.
-// `coordinator.validatePlannedNodes` refuses a planner-authored `feedback:`
-// outright, so every arc this sweep can see is in a human's own reviewed file —
-// and the shape is expressible on purpose, if barely: a body whose re-run reads
-// the repository rather than the reply (a formatter re-run after a linter
-// judged it) genuinely needs no payload. That author should still see the line
-// once.
+// It stays a warning rather than a load error because an ABSENT token has one
+// legitimate reading (a body whose re-run reads the repository rather than the
+// reply — a formatter re-run after a linter judged the tree — genuinely needs no
+// payload), where a MISPLACED one has none, which is why ADR 0010 made that a
+// load error. What it is NOT is advisory on the grounds that only a person can
+// write this shape — a machine writes it too:
+// `coordinator.validatePlannedNodes` constrains a planner-authored
+// `feedback:` (its max, and its reach) rather than refusing it, and the planner
+// prompt asks for this very pairing in prose. That half is machine-checked for a
+// PLANNED graph by `coordinator.validatePlannedFeedbackQuoting`, which escalates
+// these findings to a plan refusal — the same advisory-here/refusal-there split
+// `graph.LintFeedbackReach` already has, and for the same reason: planner output
+// has no author to read a warning (ADR 0028 §Decision 5).
 func LintFeedbackQuoting(g *graph.Graph) []Warning {
-	var warnings []Warning
+	findings := FeedbackQuoteFindings(g)
+	warnings := make([]Warning, 0, len(findings))
+	for _, finding := range findings {
+		warnings = append(warnings, Warning{
+			NodeID: finding.Rerun,
+			Field:  "prompt",
+			Detail: fmt.Sprintf(
+				"node %[1]q reruns this node on failure, but nothing in the loop quotes {{ feedback.%[1]s }} — the re-run gets the prompt it already ran, produces the same output, and %[1]q fails again for the same reason, at twice the cost. Quote {{ feedback.%[1]s }} in this prompt where the repair should read it (it is empty on the first pass by design)",
+				finding.Declarer),
+		})
+	}
+	if len(warnings) == 0 {
+		return nil
+	}
+	return warnings
+}
+
+// FeedbackQuoteFinding is one blind loop, named from both ends: the arc's
+// Declarer (whose payload nothing reads) and its Rerun target (whose prompt the
+// missing quote belongs in).
+//
+// It exists so the coordinator can escalate this sweep to a plan refusal
+// without re-deciding the predicate. Two computations of one rule drift — this
+// repository has paid for that once already — so the sweep stays the single
+// definition and the disposition lives at each caller, exactly as
+// `graph.LintFeedbackReach` and `coordinator.validatePlannedFeedbackReach` are
+// split.
+type FeedbackQuoteFinding struct {
+	Declarer string
+	Rerun    string
+}
+
+// FeedbackQuoteFindings is LintFeedbackQuoting's predicate, before it is worded.
+func FeedbackQuoteFindings(g *graph.Graph) []FeedbackQuoteFinding {
+	var findings []FeedbackQuoteFinding
 	for _, declarer := range g.Nodes {
 		if declarer.Feedback == nil {
 			continue
@@ -72,15 +111,9 @@ func LintFeedbackQuoting(g *graph.Graph) []Warning {
 		if bodyQuotesFeedback(g, body, declarer.ID) {
 			continue
 		}
-		warnings = append(warnings, Warning{
-			NodeID: declarer.Feedback.Rerun,
-			Field:  "prompt",
-			Detail: fmt.Sprintf(
-				"node %[1]q reruns this node on failure, but nothing in the loop quotes {{ feedback.%[1]s }} — the re-run gets the prompt it already ran, produces the same output, and %[1]q fails again for the same reason, at twice the cost. Quote {{ feedback.%[1]s }} in this prompt where the repair should read it (it is empty on the first pass by design)",
-				declarer.ID),
-		})
+		findings = append(findings, FeedbackQuoteFinding{Declarer: declarer.ID, Rerun: declarer.Feedback.Rerun})
 	}
-	return warnings
+	return findings
 }
 
 // bodyQuotesFeedback reports whether any node in the loop body except the
