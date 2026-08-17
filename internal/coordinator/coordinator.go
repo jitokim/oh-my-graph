@@ -856,7 +856,7 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// fire on one arc independently and the reach family emits one sentence per
 	// declarer. Two arcs that are each mis-aimed and blind rendered 2541 bytes
 	// into a 2000-byte budget with the quoting family written one sentence per
-	// arc, and 1997 with it compacted — three bytes of headroom, which the
+	// arc, and 1998 with it compacted — two bytes of headroom, which the
 	// shortest per-node refusal spends. Both figures are measured on
 	// twoBrokenLanesSpec; see maxIssuesInPrompt for the whole table. Two changes
 	// bound this rather than leaving
@@ -1059,7 +1059,7 @@ const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun
 // 2000-byte budget saying the same paragraph four times, and crowded out the
 // reach refusals standing beside them (the two rules fire on one arc
 // independently — ADR 0028 §Failure modes). Compacted, four arcs cost the
-// paragraph once plus ~60 bytes each: 761 bytes. Both figures are measured on
+// paragraph once plus ~60 bytes each: 762 bytes. Both figures are measured on
 // twoBrokenLanesSpec's shape extended to four lanes; maxIssuesInPrompt carries
 // the table and names the test that pins it. This is the same move
 // validatePlannedFeedbackReach makes across producers, one level up.
@@ -1084,6 +1084,7 @@ func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 		plural(n, "its payload", "their payloads"),
 		joinPhrases(pastes),
 		plural(n, "that prompt", "each of those prompts"),
+		plural(n, "that node's", "those nodes'"),
 	)}}
 }
 
@@ -1096,7 +1097,15 @@ func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 // It is written to say the shared half ONCE for any number of arcs: the ids
 // vary (%[2]s names the declarers, %[6]s the token-and-target pairs), the
 // diagnosis and the placement instruction do not.
-const plannedFeedbackQuoteRefusal = "%[1]s %[2]s %[3]s, but nothing in %[4]s quotes %[5]s — the re-run gets the prompt it already ran, produces the same output, and the declaring node fails again for the same reason, at twice the cost, until the rounds are spent. Paste %[6]s, at the end of %[7]s and after that node's verdict contract, introduced as review feedback that is empty on the first pass. Do not make a node's work conditional on a feedback section appearing: on the first pass it never does."
+//
+// EVERY clause that refers back to that list agrees in number — the verbs
+// (%[3]s), the possessives (%[4]s, %[5]s, %[8]s) and the target of the paste
+// (%[7]s). This is not tidiness: it is a prompt the one repair call has to act
+// on, and "paste both tokens at the end of each of those prompts and after that
+// node's verdict contract" names a node the reader has to guess at.
+// TestPlan_TwoBlindArcsCostOneRefusal reads the plural rendering for exactly
+// that kind of leftover singular.
+const plannedFeedbackQuoteRefusal = "%[1]s %[2]s %[3]s, but nothing in %[4]s quotes %[5]s — the re-run gets the prompt it already ran, produces the same output, and the declaring node fails again for the same reason, at twice the cost, until the rounds are spent. Paste %[6]s, at the end of %[7]s and after %[8]s verdict contract, introduced as review feedback that is empty on the first pass. Do not make a node's work conditional on a feedback section appearing: on the first pass it never does."
 
 // quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
 // `"a", "b" and "c"`.

@@ -475,18 +475,18 @@ refusals the ordering was written to outrank. Measured on the two-lane fixture
 `TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize` so these numbers keep an
 address: 677 + 677 for reach and 592 + 592 for the quoting refusal as it was
 written then, one sentence per arc — **2541 bytes** joined, against what was a
-2000-byte `maxIssuesInPrompt`. Compacted (below) the same pair renders **1997**,
-inside 2000 by three bytes, which the shortest per-node refusal beside it
-spends; the specimen graph of this ADR, a three-lane one, renders 2735 and
+2000-byte `maxIssuesInPrompt`. Compacted (below) the same pair renders **1998**,
+inside 2000 by two bytes, which the shortest per-node refusal beside it
+spends; the specimen graph of this ADR, a three-lane one, renders 2736 and
 would have blown the old budget on its own. Past the cut the repair prompt lost a whole family silently, and the
 one re-plan a refused plan buys (ADR 0011's bound) was spent on a fault it was
 never told about. Three changes bound it, all in this branch:
 
 - the quoting refusal is ONE sentence for every blind arc in the graph, not one
   per declarer — the ~530-byte diagnosis is shared and only the ids repeat
-  (four arcs: 761 bytes, against 2368 before);
+  (four arcs: 762 bytes, against 2368 before);
 - `maxIssuesInPrompt` is sized from the two families rather than picked: 3000
-  holds three declarers faulty both ways (2735) with room for per-node refusals
+  holds three declarers faulty both ways (2736) with room for per-node refusals
   beside them;
 - past the budget, `issuesForPrompt` drops WHOLE refusals from the tail and
   states how many it dropped, instead of cutting one mid-sentence and losing

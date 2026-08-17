@@ -63,18 +63,18 @@ const maxPlanRepairAttempts = 1
 // validatePlannedNodes emits two graph-level refusal families, both of which
 // can fire on the same arc, and they are an order of magnitude longer than a
 // per-node refusal (83–172 bytes). Per mis-aimed declarer the reach family
-// renders 677 bytes. The quoting family renders 641 bytes for two blind arcs
-// and 701 for three — one shared diagnosis plus ~60 per arc — AFTER the
+// renders 677 bytes. The quoting family renders 642 bytes for two blind arcs
+// and 702 for three — one shared diagnosis plus ~60 per arc — AFTER the
 // compaction in validatePlannedFeedbackQuoting; before it, the same family was
 // one 592-byte sentence per arc.
 //
 // At the 2000 this was, the fixture rendered 2541 bytes uncompacted
 // (677 + 677 + 592 + 592, joined) and one of the two families was cut — the
 // exact failure the ordering in validatePlannedNodes exists to prevent,
-// arriving from the other direction. Compacted it renders 1997, which fits
-// 2000 by three bytes: the shortest per-node refusal beside it takes it over
+// arriving from the other direction. Compacted it renders 1998, which fits
+// 2000 by two bytes: the shortest per-node refusal beside it takes it over
 // again, which is why the budget is not left standing on that margin. 3000
-// holds three such declarers (2735 compacted) with room for per-node refusals
+// holds three such declarers (2736 compacted) with room for per-node refusals
 // beside them, which is past anything the corpus has seen: every
 // planner-authored graph measured for ADR 0028 declared exactly one arc
 // (docs/measurements/0028-feedback-quote-corpus.md).

@@ -95,9 +95,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the same arc (ADR 0028 §Failure modes), and two such declarers rendered 2541
   bytes into a 2000-byte budget before a single per-node refusal joined them.
   `coordinator.validatePlannedFeedbackQuoting` now compacts every blind arc into
-  one sentence naming each pair — four arcs cost 761 bytes instead of 2368 —
+  one sentence naming each pair — four arcs cost 762 bytes instead of 2368 —
   keeping the shared ~530-byte diagnosis out of the repeat, which brings the
-  same two declarers to 1997. Every one of those figures is measured on one
+  same two declarers to 1998. Every one of those figures is measured on one
   fixture and pinned by
   `TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize`, so a reworded refusal
   fails a test instead of leaving a comment quietly false.

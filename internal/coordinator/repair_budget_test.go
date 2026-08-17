@@ -77,8 +77,8 @@ func TestValidatePlannedNodes_ReachLeadsQuotingLeadsPerNode(t *testing.T) {
 // rest silently missing.
 //
 // The five padded per-node refusals are what make this a real crowd rather
-// than a hair's breadth: compacted, the two families alone render 1997 bytes,
-// which fitted the old 2000-byte budget with three bytes to spare — one
+// than a hair's breadth: compacted, the two families alone render 1998 bytes,
+// which fitted the old 2000-byte budget with two bytes to spare — one
 // per-node slip beside them and a family was cut. (Uncompacted, which is what
 // this branch replaced, the same two lanes rendered 2541 and a family was cut
 // with no company at all.) A plan wrong about its arcs is rarely right about
@@ -148,9 +148,19 @@ func TestPlan_TwoBlindArcsCostOneRefusal(t *testing.T) {
 		}
 	}
 	// English, not a template: this sentence is a PROMPT the one repair call has
-	// to understand, so the plural path is held to reading correctly.
-	if strings.Contains(issues[0].Reason, "declares a feedback arc") || strings.Contains(issues[0].Reason, "its loop body") {
-		t.Errorf("the two-arc refusal reads in the singular:\n%s", issues[0].Reason)
+	// to understand, so the plural path is held to reading correctly. Every
+	// clause referring back to the list is checked, not only the first two — a
+	// leftover singular possessive in the PLACEMENT instruction ("after that
+	// node's verdict contract", beside a plural "each of those prompts") names a
+	// node the planner has to guess at, which is the half of the sentence it
+	// actually has to act on.
+	for _, singular := range []string{"declares a feedback arc", "its loop body", "its payload", "that node's", "that prompt"} {
+		if strings.Contains(issues[0].Reason, singular) {
+			t.Errorf("the two-arc refusal reads in the singular at %q:\n%s", singular, issues[0].Reason)
+		}
+	}
+	if !strings.Contains(issues[0].Reason, "those nodes' verdict contract") {
+		t.Errorf("the plural placement instruction does not name whose verdict contract to paste after:\n%s", issues[0].Reason)
 	}
 }
 
@@ -189,9 +199,9 @@ func brokenLanesSpec(n int) string {
 // TestRepairPromptHoldsBothGraphLevelRefusalFamilies' subject.
 func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
 	for _, tc := range []struct{ lanes, reachEach, quoting, joined int }{
-		{lanes: 2, reachEach: 677, quoting: 641, joined: 1997},
-		{lanes: 3, reachEach: 677, quoting: 701, joined: 2735},
-		{lanes: 4, reachEach: 677, quoting: 761, joined: 3473},
+		{lanes: 2, reachEach: 677, quoting: 642, joined: 1998},
+		{lanes: 3, reachEach: 677, quoting: 702, joined: 2736},
+		{lanes: 4, reachEach: 677, quoting: 762, joined: 3474},
 	} {
 		g, err := graph.Parse([]byte(brokenLanesSpec(tc.lanes)))
 		if err != nil {
