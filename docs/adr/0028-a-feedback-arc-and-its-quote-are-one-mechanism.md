@@ -119,7 +119,7 @@ graph with the token added, and the sweep is correctly silent on it. So the
 predicate separates the broken loop from its fix on real data, not on a fixture
 — once.
 
-**Three of the 11 declarers were written by the planner**, not by a person (their
+**Three of the 11 run-corpus declarers were written by the planner**, not by a person (their
 runs' `graph_source_path` is auto mode's own `graph.json`), and all three quote
 their payload correctly. That split is what decides decision 5, and drafting this
 ADR without it produced a false premise there; the measurement doc carries the
@@ -171,7 +171,7 @@ evidence. That is the specimen's failure with an extra step, not an exemption
 from it.
 
 Measured, the two predicates are **indistinguishable on every corpus row**:
-all 11 declarers get the same verdict either way, because in the two
+all 11 run-corpus declarers get the same verdict either way, because in the two
 three-node bodies that exist (`dev-a → e2e-a → review-a`, `impl → docs →
 verify`) the quote is at the rerun target anyway. So this is a judgement about
 a shape the corpus does not yet contain, taken in the direction that cannot
@@ -196,6 +196,20 @@ quote and what the runtime actually splices cannot drift apart.** A sweep that
 only worked on hand-written ids would have missed the very run that motivated
 it, so both shapes are tested.
 
+Sharing the pattern is necessary and not sufficient, and the first
+implementation showed where: the pattern has a THIRD group, the `| inline`
+filter, and reading only kind and reference counted `{{ feedback.D | inline }}`
+as a satisfied quote. The runtime does the opposite — `resolveLocked` returns an
+error on a filtered feedback token and the node fails — so that one token was
+the sweep and the runtime disagreeing in the worst direction: the runtime
+refuses to run the loop, the sweep calls it wired. `bodyQuotesFeedback` now
+requires the filter group to be empty. Nothing can reach that guard today
+(`graph.Validate` refuses the token at load and both callers sweep a parsed
+graph), which is itself the thing pinned:
+`TestLintFeedbackQuoting_NeverSeesAFilteredFeedbackToken` asserts the loader's
+refusal, so if that ever relaxes the guard becomes load-bearing with a test
+saying so rather than silently.
+
 ### 5. Advisory for a hand-written graph, a plan refusal for a planned one
 
 The first draft of this decision said "only a person can write what it condemns,
@@ -211,8 +225,8 @@ claim, the planner is **instructed to write exactly this pair**:
 > `{{ feedback.<reviewing-node-id> }}`
 
 — one sentence, two halves, of which only the first was machine-checked. The
-corpus confirms the planner acts on it: 3 of the 11 declarers measured are
-planner-authored. So the blind loop's worst instance — no human reviewer, no
+corpus confirms the planner acts on it: 3 of the 11 run-corpus declarers
+measured are planner-authored. So the blind loop's worst instance — no human reviewer, no
 `lint` (the coordinator never calls `warnAdvisories`; nobody lints a graph
 `auto` planned and ran in the same breath), money already committed — was the
 one case this sweep left uncovered.
@@ -447,12 +461,38 @@ Consequences, stated rather than fixed here:
 
 **Interaction with `LintFeedbackReach`.** Both can fire on one arc, and are not
 deduplicated. They are different faults with different fixes (re-aim the arc /
-quote the payload), and an arc can carry both.
+quote the payload), and an arc can carry both. The two corrections COMPOSE:
+re-aiming an arc at an earlier target keeps the old rerun target inside the
+body, so the token the quoting refusal asks for stays valid wherever it was
+pasted. Nothing has to be applied in an order.
+
+What does not compose is their SIZE, and review caught that before merge. Both
+refusals are graph-level, both lead the issue list `validatePlannedNodes`
+builds, and both scale with the number of declarers — so on a graph with two
+faulty arcs they crowd each OTHER rather than being crowded by the per-node
+refusals the ordering was written to outrank. Measured on the two-lane fixture
+(`twoBrokenLanesSpec`): 677 + 677 for reach, 641 for the compacted quoting
+refusal, 1998 bytes against what was a 2000-byte `maxIssuesInPrompt` — a
+budget the specimen graph of this ADR, a three-lane one, would have blown on
+its own. Past the cut the repair prompt lost a whole family silently, and the
+one re-plan a refused plan buys (ADR 0011's bound) was spent on a fault it was
+never told about. Three changes bound it, all in this branch:
+
+- the quoting refusal is ONE sentence for every blind arc in the graph, not one
+  per declarer — the ~500-byte diagnosis is shared and only the ids repeat
+  (four arcs: 753 bytes, against 2272 before);
+- `maxIssuesInPrompt` is sized from the two families rather than picked: 3000
+  holds three declarers faulty both ways with room for per-node refusals beside
+  them;
+- past the budget, `issuesForPrompt` drops WHOLE refusals from the tail and
+  states how many it dropped, instead of cutting one mid-sentence and losing
+  the rest without saying so. Half a refusal names a node and stops before the
+  correction, which is an instruction to guess.
 
 **On a planned graph it is a refusal, not a warning.** An earlier draft of this
 section claimed the sweep "never fires on a planned graph" because the
 coordinator "refuses a planner-authored `feedback:` entirely". It does not, the
-planner is asked for these arcs, and 3 of the 11 measured declarers are its own
+planner is asked for these arcs, and 3 of the 11 run-corpus declarers measured are its own
 — see decision 5, which takes the escalation that error hid. The failure mode
 that remains is the refusal's own: a planned loop that legitimately repairs from
 the repository is refused rather than warned, and pays one re-plan for it. A

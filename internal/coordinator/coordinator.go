@@ -842,14 +842,24 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
 	}
 	// The graph-level refusals come FIRST, and the order is load-bearing.
-	// repairSection truncates the joined reasons at maxIssuesInPrompt from the
-	// FRONT only, and the two feedback-arc sentences are by some margin the
-	// longest ones this validator emits (~600 characters against 83–172 for a
-	// per-node refusal). Appended last, a dozen short per-node refusals would
-	// push them past the cut, the corrected reply would re-emit the same arc,
-	// and the single repair would be spent on being refused for it twice. Reach
-	// leads quoting because a mis-aimed arc makes the quote moot: the token
-	// would be pasted into a node the loop never re-runs.
+	// repairSection drops refusals from the TAIL of this list when they do not
+	// all fit in maxIssuesInPrompt, and the two feedback-arc sentences are by
+	// some margin the longest ones this validator emits (~600 bytes against
+	// 83–172 for a per-node refusal). Appended last, a dozen short per-node
+	// refusals would push them out, the corrected reply would re-emit the same
+	// arc, and the single repair would be spent on being refused for it twice.
+	// Reach leads quoting because a mis-aimed arc makes the quote moot: the
+	// token would be pasted into a node the loop never re-runs.
+	//
+	// Being first is necessary and not sufficient, which is the correction this
+	// comment carried before: the two families can crowd EACH OTHER, since both
+	// fire on one arc independently and the reach family emits one sentence per
+	// declarer. Two arcs that are each mis-aimed and blind used to render 2488
+	// bytes into a 2000-byte budget. Two changes bound that rather than leaving
+	// it to the ordering — validatePlannedFeedbackQuoting compacts every blind
+	// arc into ONE sentence, and issuesForPrompt drops whole refusals and says
+	// how many it dropped instead of cutting one mid-sentence and silently
+	// losing the rest.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	add := func(err *PlanError) {
 		if err != nil {
@@ -1035,18 +1045,40 @@ const plannedFeedbackReachRefusal = "planned node %[1]q declares feedback {rerun
 // which is why that one fires only when it can name a covering target, and why
 // this one needs no such weakening.
 //
-// One refusal per declarer, and the sentence names both ends of the pair plus
-// the exact token to paste, for the same reason the advisory does: a finding
-// that makes the reader work out where the missing line goes is read twice.
+// ONE refusal for every blind arc in the graph, not one per declarer. The
+// sentence still names both ends of each pair and the exact token to paste —
+// a finding that makes the reader work out where the missing line goes is read
+// twice — but everything AROUND those two ids is identical for every arc, and
+// that shared half is ~500 of the ~560 bytes. Repeated per declarer it is what
+// pushed the graph-level refusals past maxIssuesInPrompt: four blind arcs spent
+// ~2270 bytes of what was then a 2000-byte budget saying the same paragraph
+// four times, and crowded out the reach refusals standing beside them (the two
+// rules fire on one arc independently — ADR 0028 §Failure modes). Compacted,
+// four arcs cost the paragraph once plus ~50 bytes each: 753 bytes measured.
+// This is the same move validatePlannedFeedbackReach makes across producers,
+// one level up.
 func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 	findings := handoff.FeedbackQuoteFindings(g)
-	issues := make([]*PlanError, 0, len(findings))
-	for _, finding := range findings {
-		issues = append(issues, &PlanError{Reason: fmt.Sprintf(
-			plannedFeedbackQuoteRefusal, finding.Declarer, finding.Rerun,
-		)})
+	if len(findings) == 0 {
+		return nil
 	}
-	return issues
+	declarers := make([]string, 0, len(findings))
+	pastes := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		declarers = append(declarers, finding.Declarer)
+		pastes = append(pastes, fmt.Sprintf("{{ feedback.%s }} into %q's prompt", finding.Declarer, finding.Rerun))
+	}
+	n := len(findings)
+	return []*PlanError{{Reason: fmt.Sprintf(
+		plannedFeedbackQuoteRefusal,
+		plural(n, "planned node", "planned nodes"),
+		quoteIDs(declarers),
+		plural(n, "declares a feedback arc", "declare feedback arcs"),
+		plural(n, "its loop body", "their loop bodies"),
+		plural(n, "its payload", "their payloads"),
+		joinPhrases(pastes),
+		plural(n, "that prompt", "each of those prompts"),
+	)}}
 }
 
 // plannedFeedbackQuoteRefusal is the sentence the planner gets back, and the one
@@ -1054,7 +1086,11 @@ func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 // including that the token is empty on the first pass, without which a planner
 // that "fixes" this by making the round conditional on the payload's presence
 // writes the specimen's own prompt back.
-const plannedFeedbackQuoteRefusal = "planned node %[1]q declares a feedback arc, but nothing in its loop body quotes {{ feedback.%[1]s }} — the re-run of %[2]q gets the prompt it already ran, produces the same output, and %[1]q fails again for the same reason, at twice the cost, until the rounds are spent. Quote {{ feedback.%[1]s }} in %[2]q's prompt where the repair should read it, at the end and after that node's verdict contract, introduced as review feedback that is empty on the first pass. Do not make the node's work conditional on a feedback section appearing: on the first pass it never does."
+//
+// It is written to say the shared half ONCE for any number of arcs: the ids
+// vary (%[2]s names the declarers, %[6]s the token-and-target pairs), the
+// diagnosis and the placement instruction do not.
+const plannedFeedbackQuoteRefusal = "%[1]s %[2]s %[3]s, but nothing in %[4]s quotes %[5]s — the re-run gets the prompt it already ran, produces the same output, and the declaring node fails again for the same reason, at twice the cost, until the rounds are spent. Paste %[6]s, at the end of %[7]s and after that node's verdict contract, introduced as review feedback that is empty on the first pass. Do not make a node's work conditional on a feedback section appearing: on the first pass it never does."
 
 // quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
 // `"a", "b" and "c"`.
@@ -1063,10 +1099,16 @@ func quoteIDs(ids []string) string {
 	for _, id := range ids {
 		quoted = append(quoted, strconv.Quote(id))
 	}
-	if len(quoted) < 2 {
-		return strings.Join(quoted, "")
+	return joinPhrases(quoted)
+}
+
+// joinPhrases is quoteIDs' list grammar without the quoting, for a refusal that
+// enumerates whole clauses rather than ids — `x`, `x and y`, `x, y and z`.
+func joinPhrases(phrases []string) string {
+	if len(phrases) < 2 {
+		return strings.Join(phrases, "")
 	}
-	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+	return strings.Join(phrases[:len(phrases)-1], ", ") + " and " + phrases[len(phrases)-1]
 }
 
 // plural picks the verb/pronoun agreeing with a count, so a refusal about one

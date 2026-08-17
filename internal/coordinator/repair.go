@@ -50,7 +50,82 @@ const maxPlanRepairAttempts = 1
 // refusals are engine-authored sentences, but they embed model-authored
 // fragments verbatim — node ids, placeholder tokens, tool names — so they are
 // bounded and fenced exactly like the assessor's `remaining`.
-const maxIssuesInPrompt = 2000
+//
+// It is SIZED, not picked. validatePlannedNodes emits two graph-level refusal
+// families, both of which can fire on the same arc, and they are an order of
+// magnitude longer than a per-node refusal (~700 bytes per mis-aimed declarer
+// for the reach family, ~560 plus ~40 per blind arc for the quoting one,
+// against 83–172 for a per-node one). At the 2000 this was, two declarers that
+// were each mis-aimed AND blind rendered ~2033 bytes and one of the two
+// families was cut — the exact failure the ordering in validatePlannedNodes
+// exists to prevent, arriving from the other direction. 3000 holds three
+// such declarers (~2780) with room for per-node refusals beside them, which is
+// past anything the corpus has seen: every planner-authored graph measured for
+// ADR 0028 declared exactly one arc
+// (docs/measurements/0028-feedback-quote-corpus.md).
+// TestRepairPromptHoldsBothGraphLevelRefusalFamilies pins the pair that
+// motivated the number, so a third family or a longer sentence fails here
+// rather than in a paid run.
+//
+// The bound is still a bound: past it, issuesForPrompt drops whole refusals and
+// says how many.
+const maxIssuesInPrompt = 3000
+
+// issuesForPrompt renders the refusal list into at most maxIssuesInPrompt
+// bytes, dropping WHOLE refusals from the tail and saying how many it dropped.
+//
+// It replaced a head-only fence.Truncate of the joined list, which cut at a
+// byte and so did two invisible things at once: it left the last refusal it
+// kept ending mid-sentence, and it dropped every refusal after it with no
+// trace. Either one spends the single repair (maxPlanRepairAttempts) on a
+// prompt that never stated part of the fault — the corrected reply re-violates
+// the rule it was not told about, is refused for it a second time, and the plan
+// the user paid for is gone. The failure is silent from both ends: the planner
+// cannot know a sentence was truncated, and the engine records the refusals it
+// COLLECTED, not the ones it managed to quote.
+//
+// Whole refusals only, because half a refusal is worse than none: it names a
+// node and stops before the correction, which is an instruction to guess. The
+// dropped count is stated in the prompt for the same reason PlanRepair exists —
+// a bound the reader cannot see is a bound that reads as "this was everything".
+// It also makes the template's closing sentence ("this list may be incomplete")
+// literally true rather than a hedge.
+//
+// Ordering is the caller's contract, not this function's: validatePlannedNodes
+// puts the graph-level refusals first precisely because this is where the tail
+// goes.
+func issuesForPrompt(issues []string) string {
+	joined := strings.Join(issues, "\n")
+	if len(joined) <= maxIssuesInPrompt {
+		return joined
+	}
+	used, kept := 0, 0
+	for i, issue := range issues {
+		cost := len(issue)
+		if i > 0 {
+			cost++ // the "\n" this refusal is joined with
+		}
+		if used+cost+len(omittedRefusalNote(len(issues)-i)) > maxIssuesInPrompt {
+			break
+		}
+		used += cost
+		kept++
+	}
+	if kept == 0 {
+		// One refusal alone overruns the whole budget — no shorter honest
+		// rendering exists, so bound it the old way and let the marker say so.
+		return fence.Truncate(joined, maxIssuesInPrompt)
+	}
+	return strings.Join(issues[:kept], "\n") + omittedRefusalNote(len(issues)-kept)
+}
+
+// omittedRefusalNote is the disclosure issuesForPrompt appends when the budget
+// cannot hold every refusal. It is counted against the budget before the last
+// refusal is kept, so the rendered text never exceeds maxIssuesInPrompt.
+func omittedRefusalNote(n int) string {
+	return fmt.Sprintf("\n(%d further %s could not fit in this prompt and %s omitted — re-check the whole graph against the rules above.)",
+		n, plural(n, "refusal", "refusals"), plural(n, "was", "were"))
+}
 
 // PlanRepair records that a plan was bought twice: the refusals the first
 // reply drew, and what that rejected reply cost. It exists for the same reason
@@ -160,7 +235,7 @@ func repairSection(issues []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(plannerRepairTemplate, nonce, fence.Truncate(strings.Join(issues, "\n"), maxIssuesInPrompt)), nil
+	return fmt.Sprintf(plannerRepairTemplate, nonce, issuesForPrompt(issues)), nil
 }
 
 // plannerRepairTemplate is appended to the planner prompt for the one extra

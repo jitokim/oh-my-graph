@@ -64,7 +64,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   *lanes* of one specimen graph in one run, so the precision evidence is one
   distinct defective graph, not three independent ones. The same corpus holds
   that graph's repair, three minutes later, and the sweep is correctly silent on
-  it. Of the 11 declarers, **3 were planner-authored** (auto mode's `graph.json`)
+  it. Of the 11 run-corpus declarers, **3 were planner-authored** (auto mode's `graph.json`)
   and all 3 quoted the payload correctly — the escalation above guards a shape
   the planner *can* write, not one it has been measured getting wrong. No shipped
   graph fires; nothing in `graphs/` needed fixing, and a test now walks
@@ -77,6 +77,34 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `auto` accepts as a plan, not how a graph runs — and note the reach of the
   advisory half: `lint` and `run --dry-run` print it, a plain `run` does not, so
   an operator who does not lint first still pays for a blind loop.
+
+### Fixed
+
+- **A repair prompt no longer loses whole refusals to a silent cut.** Auto mode
+  hands a refused plan's refusals back to one corrected planner call, quoted into
+  a fenced section bounded by `maxIssuesInPrompt`. That bound was applied by
+  head-only truncation of the joined list, which on an over-long list left the
+  last refusal it kept ending mid-sentence and dropped every later one with no
+  trace — so the planner answered a prompt that never stated part of the fault,
+  the corrected reply re-committed it, and the plan the user paid for was gone.
+  The list is now packed in WHOLE refusals with the dropped count stated in the
+  prompt, and the budget is sized (3000, from 2000) rather than picked.
+
+  The fault was reachable because two refusal families are graph-level and both
+  scale with the number of faulty arcs: a mis-aimed arc and a blind one can be
+  the same arc (ADR 0028 §Failure modes), and two such declarers rendered 1998
+  bytes into a 2000-byte budget before a single per-node refusal joined them.
+  `coordinator.validatePlannedFeedbackQuoting` now compacts every blind arc into
+  one sentence naming each pair — four arcs cost 753 bytes instead of 2272 —
+  keeping the shared ~500-byte diagnosis out of the repeat.
+
+- **`{{ feedback.D | inline }}` no longer counts as quoting a feedback payload.**
+  `handoff.LintFeedbackQuoting` read the placeholder pattern's kind and reference
+  and ignored its filter group, where the runtime refuses a filtered feedback
+  token outright (`graph.Validate` at load, `Handoff.Interpolate` at run). No
+  graph that can be loaded today reaches it — both callers sweep a parsed
+  graph — so nothing observable changes; the guard and its test exist so the one
+  case where the sweep and the runtime could disagree cannot open up quietly.
 
 ### Fixed
 
