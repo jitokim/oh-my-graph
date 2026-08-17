@@ -195,8 +195,18 @@ func brokenLanesSpec(n int) string {
 // It is deliberately exact, and a reworded refusal is EXPECTED to fail it: the
 // fix is to read the new numbers off this failure and carry them to the
 // comments above, which is the entire reason they are pinned rather than
-// re-estimated. Nothing here asserts behaviour — the behaviour is
+// re-estimated. carryTheNumbers says that IN the failure, because an
+// instruction that lives only in a comment above the test is not read by the
+// author who is looking at a red line in a terminal. Nothing here asserts
+// behaviour — the behaviour is
 // TestRepairPromptHoldsBothGraphLevelRefusalFamilies' subject.
+const carryTheNumbers = "This test is a MEASUREMENT, not a contract: if you reworded a refusal on purpose, " +
+	"the fix is to copy the measured numbers above into the four places that quote them — " +
+	"maxIssuesInPrompt's sizing paragraph in repair.go, the validatePlannedNodes and " +
+	"validatePlannedFeedbackQuoting comments in coordinator.go, " +
+	"docs/adr/0028-a-feedback-arc-and-its-quote-are-one-mechanism.md and CHANGELOG.md — " +
+	"and to update the table in this test."
+
 func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
 	for _, tc := range []struct{ lanes, reachEach, quoting, joined int }{
 		{lanes: 2, reachEach: 677, quoting: 642, joined: 1998},
@@ -213,7 +223,7 @@ func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
 		}
 		for _, issue := range reach {
 			if got := len(issue.Reason); got != tc.reachEach {
-				t.Errorf("%d lanes: a reach refusal renders %d bytes, the comments say %d", tc.lanes, got, tc.reachEach)
+				t.Errorf("%d lanes: a reach refusal renders %d bytes, the comments say %d.\n%s", tc.lanes, got, tc.reachEach, carryTheNumbers)
 			}
 		}
 		quoting := validatePlannedFeedbackQuoting(g)
@@ -221,10 +231,10 @@ func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
 			t.Fatalf("%d lanes: the quoting family is compacted to ONE refusal, got %d", tc.lanes, len(quoting))
 		}
 		if got := len(quoting[0].Reason); got != tc.quoting {
-			t.Errorf("%d lanes: the compacted quoting refusal renders %d bytes, the comments say %d", tc.lanes, got, tc.quoting)
+			t.Errorf("%d lanes: the compacted quoting refusal renders %d bytes, the comments say %d.\n%s", tc.lanes, got, tc.quoting, carryTheNumbers)
 		}
 		if got := len(strings.Join(reasons(validatePlannedNodes(g, "")), "\n")); got != tc.joined {
-			t.Errorf("%d lanes: the two families joined render %d bytes, the comments say %d", tc.lanes, got, tc.joined)
+			t.Errorf("%d lanes: the two families joined render %d bytes, the comments say %d.\n%s", tc.lanes, got, tc.joined, carryTheNumbers)
 		}
 		// The claim the budget itself rests on: three such declarers fit, with
 		// room left for the per-node refusals that travel with them.

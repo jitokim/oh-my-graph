@@ -151,6 +151,15 @@ func omittedRefusalNote(n int) string {
 type PlanRepair struct {
 	// Issues are the validator's refusals of the attempt this repair answered,
 	// verbatim — the exact text handed back to the planner.
+	//
+	// len(Issues) counts REFUSALS, not faults, and the two graph-level families
+	// no longer count the same way: validatePlannedFeedbackReach emits one per
+	// mis-aimed declarer, while validatePlannedFeedbackQuoting compacts every
+	// blind arc in the graph into one (see the ordering comment in
+	// validatePlannedNodes for why it compacts). So a three-lane graph blind in
+	// all three lanes contributes 1 here, not 3. Anything reporting this number
+	// to a human — PlanRejection.Error() below, noteReplan in cmd — must say
+	// "refusal", which is what it is; "problem" or "fault" would be false.
 	Issues []string
 	// RejectedCostUSD is what the rejected attempts cost (one, while
 	// maxPlanRepairAttempts is 1). It is ALREADY included in Plan.CostUSD (and
