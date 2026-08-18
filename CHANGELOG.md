@@ -10,6 +10,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **ADR 0029 — a fragment may cite a fragment, bounded by a chain and a depth.**
+  Opens the nesting non-goal ADR 0027 deferred, and settles what the deferral
+  named as its price: cycle detection over *resolution* (a repeat on the
+  current chain, not a global visit, so a diamond stays legal), a depth bound
+  of 3 with the argument for the number (measured need 2, one level of
+  headroom, deliberately falsifiable), and the composition rule for namespacing
+  an already-namespaced id. Decision record only — no behavior change yet;
+  `use:` inside a fragment is still a load error until the implementation
+  lands.
+
+  The ADR also records that ADR 0027's registered falsification condition
+  fired, and that the diagnosis it fired with does not survive measurement: of
+  the 15 operator lanes that hand-write a `review → apply` pair, **0 of the 30
+  halves are `use:` citations**, so nesting is not what keeps them from citing
+  `repair-round`. The measured blocker is the fragment's fixed tool grants —
+  14 of 15 lane reviews and 13 of 15 lane applies need a grant it cannot give,
+  and a multi-node `use:` may not override one. That is named as the follow-up
+  rather than folded in here.
+
 ### Fixed
 
 - **`resume` learns `--verify-cmd` / `--verify-timeout`, so a run that paused on
