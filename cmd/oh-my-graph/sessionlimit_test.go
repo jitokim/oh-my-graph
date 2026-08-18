@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -149,7 +151,7 @@ func TestMainExitCode_SessionLimitMapsToExitCode2(t *testing.T) {
 // an invented one — when it doesn't.
 func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	var buf bytes.Buffer
-	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, false)
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, coordinator.VerifyCommand{})
 	out := buf.String()
 	if !strings.Contains(out, "(resets 5:20pm)") || !strings.Contains(out, "Resume after 5:20pm") {
 		t.Fatalf("a parseable cause should put the reset time in the hint:\n%s", out)
@@ -159,7 +161,7 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	}
 
 	buf.Reset()
-	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, false)
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, coordinator.VerifyCommand{})
 	out = buf.String()
 	if strings.Contains(out, "resets") {
 		t.Fatalf("an unparseable cause must not invent a reset time:\n%s", out)
@@ -169,35 +171,91 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	}
 }
 
-// TestPrintPauseHint_UnresumableRunOffersNoResumeCommand is the hint's half of
-// ADR 0016 §4's residual: an auto run started with --verify-cmd is refused by
-// every resumed leg, so a pause hint that printed `oh-my-graph resume <id>
-// --retry-failed` would be the first of two wrong instructions in a row — the
-// refusal that command earns names --verify-cmd, which `resume` does not
-// register either. Both pause shapes are pinned, because both print a command.
-func TestPrintPauseHint_UnresumableRunOffersNoResumeCommand(t *testing.T) {
+// TestPrintPauseHint_VerifyRunIsOfferedTheFlagBack is the hint's half of ADR
+// 0016 §4, and the half #198 got wrong from the other side. A resumed leg takes
+// no verification from the run directory, so a bare `oh-my-graph resume <id>
+// --retry-failed` on an auto run started with --verify-cmd is refused — the
+// hint has to hand the command back, and the command it hands back has to be
+// the one the user typed, or the paste does not finish the run.
+//
+// Both pause shapes are pinned, because both print a command. Before this the
+// hint printed no command at all and said the run "cannot be resumed", which was
+// true only because `resume` had no flag; that sentence is now gone, and this
+// test is what stops it coming back.
+func TestPrintPauseHint_VerifyRunIsOfferedTheFlagBack(t *testing.T) {
+	gradlew := coordinator.VerifyCommand{Command: "./gradlew build"}
 	for _, tc := range []struct {
-		name   string
-		runErr error
-		want   string // what the hint must still say about WHY it paused
+		name    string
+		runErr  error
+		verify  coordinator.VerifyCommand
+		want    string // what the hint must still say about WHY it paused
+		command string // the full resume command it must offer
 	}{
-		{"limit with a reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, "resets 5:20pm"},
-		{"limit with no reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, "Session limit reached"},
-		{"gate", &schedule.PausedError{GateID: "review"}, `Paused at gate "review"`},
+		{"limit with a reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg}, gradlew,
+			"resets 5:20pm", "oh-my-graph resume run-9 --retry-failed --verify-cmd './gradlew build'"},
+		{"limit with no reset time", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: "You've hit your session limit"}, gradlew,
+			"Session limit reached", "oh-my-graph resume run-9 --retry-failed --verify-cmd './gradlew build'"},
+		{"gate", &schedule.PausedError{GateID: "review"}, gradlew,
+			`Paused at gate "review"`, "oh-my-graph resume run-9 --approve review --verify-cmd './gradlew build'"},
+		// A single quote is IN verifyShellMetachars — a --verify-cmd may carry
+		// one, it just stands the pre-flight down — so a bare '%s' wrap prints a
+		// line that a shell reads as `--verify-cmd "sh -c make"` FOLLOWED BY
+		// `&& ./x`: a different evidence command, plus a command executed on
+		// paste. The expected string below is the POSIX rule ('\'' closes,
+		// escapes and reopens), spelled out so a "simplification" back to the
+		// wrap fails here.
+		{"a command carrying a single quote", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg},
+			coordinator.VerifyCommand{Command: `sh -c 'make && ./x'`},
+			"resets 5:20pm", `oh-my-graph resume run-9 --retry-failed --verify-cmd 'sh -c '\''make && ./x'\'''`},
+		// The bound is part of what the next leg has to be given: resumed with
+		// --verify-cmd alone, a run started under a 2m bound would silently get
+		// the 10m default — the one place the next leg's check would differ from
+		// the leg it continues.
+		{"a bound the user chose", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg},
+			coordinator.VerifyCommand{Command: "./gradlew build", Timeout: 2 * time.Minute},
+			"resets 5:20pm", "oh-my-graph resume run-9 --retry-failed --verify-cmd './gradlew build' --verify-timeout 2m0s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			printPauseHint(&buf, "run-9", tc.runErr, true)
+			printPauseHint(&buf, "run-9", tc.runErr, tc.verify)
 			out := buf.String()
-			if strings.Contains(out, "oh-my-graph resume") {
-				t.Fatalf("an unresumable run must be offered no resume command:\n%s", out)
+			if !strings.Contains(out, tc.command) {
+				t.Fatalf("the hint must offer the whole command, flag included (%q):\n%s", tc.command, out)
 			}
-			if !strings.Contains(out, "cannot be resumed") || !strings.Contains(out, "--verify-cmd") {
-				t.Fatalf("the hint must name the refusal and its cause:\n%s", out)
+			if !strings.Contains(out, "has to come from you") {
+				t.Fatalf("the hint must say why the flag is repeated rather than remembered:\n%s", out)
 			}
 			if !strings.Contains(out, tc.want) {
 				t.Fatalf("the hint must still say why the run paused (%q):\n%s", tc.want, out)
 			}
 		})
+	}
+
+	// The other direction of the same rule: the DEFAULT bound is the ceiling
+	// every verification has, so printing it back would be noise on every hint
+	// the common path produces.
+	t.Run("the default bound is not printed back", func(t *testing.T) {
+		var buf bytes.Buffer
+		printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: limitCauseMsg},
+			coordinator.VerifyCommand{Command: "./gradlew build", Timeout: 10 * time.Minute})
+		if out := buf.String(); strings.Contains(out, "--verify-timeout") {
+			t.Errorf("the hint spells out a bound that is already the default:\n%s", out)
+		}
+	})
+}
+
+// TestPrintPauseHint_NoVerifyCommandLeavesTheHintAlone is the control: a run
+// carrying no injected evidence command must print exactly the hint it always
+// did, with no flag appended and no note about one.
+func TestPrintPauseHint_NoVerifyCommandLeavesTheHintAlone(t *testing.T) {
+	var buf bytes.Buffer
+	printPauseHint(&buf, "run-9", &schedule.PausedError{GateID: "review"}, coordinator.VerifyCommand{})
+	out := buf.String()
+	if strings.Contains(out, "--verify-cmd") {
+		t.Fatalf("a run with no evidence command was offered the flag anyway:\n%s", out)
+	}
+	if !strings.Contains(out, "oh-my-graph resume run-9 --approve review\n") ||
+		!strings.Contains(out, "oh-my-graph resume run-9 --reject review\n") {
+		t.Fatalf("the gate hint must carry both decisions verbatim:\n%s", out)
 	}
 }

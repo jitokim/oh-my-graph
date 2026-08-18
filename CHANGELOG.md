@@ -10,6 +10,50 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`resume` learns `--verify-cmd` / `--verify-timeout`, so a run that paused on
+  a session limit can actually be resumed** (#198, ADR 0016 §4 amended). A run
+  started with `auto "<goal>" --verify-cmd '…'` and paused on a session limit
+  could not be continued at all, and the tool said otherwise:
+
+  ```console
+  $ oh-my-graph resume <id> --retry-failed
+  … the saved graph carries success_check.verify on node(s) report, which auto
+  mode never accepts from a run directory; RE-SUPPLY IT WITH --verify-cmd …
+
+  $ oh-my-graph resume <id> --retry-failed --verify-cmd '…'
+  flag provided but not defined: -verify-cmd
+  ```
+
+  The refusal itself is the design — a resumed leg takes no engine-run shell
+  from a run directory, since a planned node holds bare `Write`/`Edit` and could
+  write one there — but its remedy named a flag only `auto` registered. ADR 0016
+  §4 recorded that gap as a debt ("the flag lane owes `resume` the same two
+  flags"), not as an exclusion, so this ships the half that was owed.
+
+  What that cost was worth naming: ADR 0009's claim is that a session limit is a
+  **pause**, with the work banked for a later leg. For any auto run following ADR
+  0016's own advice that promise was not kept, and the user learned it only after
+  following an instruction that could not work.
+
+  `resume` now takes the same pair `auto` does, and the ceiling is unchanged by
+  construction rather than by intention: the same `VerifyCommand` value object
+  (one blank-command refusal, one 10-minute ceiling, pinned by a test that parses
+  the same flags through both subcommands and requires identical refusals), the
+  same trusted-code attachment at the same sinks after the same command
+  validation and the same graph re-parse, the
+  same run-wide serialization, the same engine-judged exit code, and no node
+  granted anything. There is deliberately **no path only `resume` has**: `run`
+  has no `--verify-cmd`, so `resume --verify-cmd` against a hand-written
+  snapshot is an error rather than an attachment. A resume that supplies nothing
+  while the snapshot carried a verification is still refused — with a message
+  that now names a flag the command accepts, checked by a test against `resume`'s
+  own FlagSet. Pause hints for such a run print the pair back with the command in
+  it — POSIX-quoted, and carrying `--verify-timeout` whenever the bound is not
+  the default — so the copy-pasteable resume ADR 0009 promises stays
+  copy-pasteable, and pasting it runs what it says.
+
 ### Added
 
 - **The splice disclosure names a tool grant that was assembled across two

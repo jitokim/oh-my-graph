@@ -154,6 +154,15 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	}
 	warnIfGraphSourceChanged(snap)
 
+	// Before either mode, because both have exits that never reach continueRun:
+	// a --retry-failed with nothing to retry returns early and would otherwise
+	// accept a flag that is an error in every other state, answering as if it had
+	// applied. A flag whose whole subject is which graph this run holds can be
+	// answered the moment that graph is known.
+	if err := checkVerifyCommandApplies(runID, snap, flags.verifyCommand()); err != nil {
+		return err
+	}
+
 	if flags.retryFailed {
 		return resumeRetryLeg(flags, snap, nodeRunner, web)
 	}
@@ -293,6 +302,24 @@ func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[str
 	return retained, cleared
 }
 
+// checkVerifyCommandApplies refuses a --verify-cmd this run's graph has no use
+// for, and this is the check that keeps the fix from being a hole: `run` has no
+// --verify-cmd, so attaching one to a hand-written graph here would be a
+// capability only `resume` has. A hand-written graph says `verify:` on whichever
+// node it means, and that field round-trips untouched — there is nothing for a
+// flag to re-supply.
+//
+// The discriminator is the snapshot's ToolPolicies, non-empty exactly for a
+// planned graph, the same one continueRun uses to decide what to reattach.
+func checkVerifyCommandApplies(runID string, snap runstate.Snapshot, v coordinator.VerifyCommand) error {
+	if !v.Supplied() || len(snap.ToolPolicies) > 0 {
+		return nil
+	}
+	return fmt.Errorf("resume run %q: --verify-cmd applies to an auto run's planned graph, and this run's graph is hand-written; "+
+		"its own success_check.verify is your reviewed artifact and resumes exactly as written. "+
+		"(`run` has no --verify-cmd either: a resumed leg must not be able to attach a check a fresh run could not.)", runID)
+}
+
 // continueRun is the shared back half of both resume modes: rebuild the run's
 // collaborators from the snapshot (graph, handoff, ledger, recorder, event
 // stream, worktrees), seed the scheduler so exactly the carried records never
@@ -316,16 +343,20 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// disk (ADR 0016 §4). graph.Parse re-parses whatever the run directory
 	// holds, and a verification is engine-run shell outside every ceiling
 	// layer — precisely what validatePlannedNodeVerify refuses at plan time —
-	// so a snapshot-borne one is refused here rather than replayed. The
+	// so a snapshot-borne one is dropped here rather than replayed. The
 	// discriminator is the snapshot's ToolPolicies, non-empty exactly for a
 	// planned graph: a hand-written graph's `verify:` is the user's own
 	// reviewed artifact and must keep round-tripping untouched.
 	//
-	// The zero VerifyCommand is not a placeholder for a flag: `resume` has no
-	// --verify-cmd yet, so re-supplying is not possible and the refusal is
-	// terminal. It also means no injected check can reach this leg at all,
-	// which is why the scheduler below is handed no SerializedVerifyNodes —
-	// the set would be empty by construction.
+	// What replaces it is the command on THIS command line (#198). The refusal
+	// was terminal until `resume` learned --verify-cmd, which meant a
+	// session-limit pause — ADR 0009's whole claim that a limit is a PAUSE, with
+	// the work banked for a later leg — was not kept for any auto run carrying
+	// build evidence. The flag closes that without widening anything: the
+	// command still comes from the human and never from disk, it is validated by
+	// the same value object under the same ceiling, it attaches through the same
+	// trusted-code path at the same sinks, and the engine still judges the exit
+	// code itself.
 	//
 	// A planned graph's `agent:` is dropped here for a neighbouring reason
 	// (ADR 0022 §5): a mapped node's ceiling now depends on a definition this
@@ -337,13 +368,32 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// matters as much: a HAND-WRITTEN graph's `agent:` is the user's own
 	// reviewed artifact, its node loads the user's settings by design, and it
 	// must keep round-tripping untouched.
+	verifyCmd := flags.verifyCommand()
+	// Re-asserted here rather than assumed from executeResume's earlier call:
+	// this is the function that would otherwise ATTACH the command, so the
+	// refusal belongs where the attachment is, and one implementation serving
+	// both call sites is what stops the two from drifting (#198's own shape).
+	if err := checkVerifyCommandApplies(runID, snap, verifyCmd); err != nil {
+		return err
+	}
 	var unmapped []string
+	// serializedVerify is what makes this leg's injected checks run one at a
+	// time, exactly as a fresh leg's do (executeGraph). It is derived from the
+	// REATTACHED graph — a resumed leg's checks are this invocation's, so the
+	// set is empty unless the flag supplied one.
+	var serializedVerify map[string]bool
 	if len(snap.ToolPolicies) > 0 {
-		reattached, _, err := coordinator.ReattachVerifyCommand(g, coordinator.VerifyCommand{})
+		reattached, attachments, err := coordinator.ReattachVerifyCommand(g, verifyCmd)
 		if err != nil {
 			return fmt.Errorf("resume run %q: %w", runID, err)
 		}
 		g = reattached
+		// Disclosed for the same reason a plan's attachments are: trusted code
+		// quietly adding an engine-run shell command to a graph is what the
+		// disclosure exists against, and a resumed leg is the case where the
+		// user is furthest from the screen that first showed it.
+		noteVerifyAttachments(os.Stdout, attachments)
+		serializedVerify = coordinator.InjectedVerifyNodes(g)
 
 		dropped, droppedIDs, err := coordinator.DropAgentMapping(g)
 		if err != nil {
@@ -542,8 +592,14 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Verifier:       verify.NewShellVerifier(),
 		Worktrees:      worktrees,
 		ToolPolicies:   policies,
-		Recorder:       recorder,
-		EventSink:      feed,
+		// An injected evidence command runs one at a time on a resumed leg for
+		// the same load-bearing reason it does on a fresh one (ADR 0016 §2): two
+		// concurrent builds of one directory can each fail on the other's
+		// half-written output, and neither result then describes the tree the
+		// user has. Nil unless this invocation supplied a command.
+		SerializedVerifyNodes: serializedVerify,
+		Recorder:              recorder,
+		EventSink:             feed,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).
@@ -579,10 +635,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	// Never the terminal refusal: a leg that reached the scheduler at all got
-	// past ReattachVerifyCommand above, which admits an auto graph only when it
-	// carries no verification, so whatever pauses this leg is resumable.
-	printPauseHint(os.Stdout, runID, runErr, false)
+	// The next leg needs the pair re-supplied exactly as this one did: the
+	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
+	// verification stays on disk and stays untrusted — so the hint repeats the
+	// flags rather than promising a bare resume that would be refused.
+	printPauseHint(os.Stdout, runID, runErr, verifyCmd)
 
 	return runErr
 }

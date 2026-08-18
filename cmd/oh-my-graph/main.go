@@ -14,7 +14,7 @@
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
-//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
+//	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
@@ -121,7 +121,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
-       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web] [--no-skill-activation]
+       oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
@@ -854,6 +854,13 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	if len(toolPolicies) > 0 {
 		serializedVerify = coordinator.InjectedVerifyNodes(g)
 	}
+	// The same pair, read for the pause hint: a resumed leg takes no
+	// verification from the run directory, so the hint has to hand the command
+	// back for the user to re-supply (ADR 0016 §4).
+	var resumeVerifyCmd coordinator.VerifyCommand
+	if serializedVerify != nil {
+		resumeVerifyCmd = injectedVerifyCommand(g)
+	}
 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:           flags.concurrency,
@@ -883,14 +890,14 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	// serializedVerify is also the discriminator for whether this run can be
-	// resumed at all, and not by coincidence: it is non-nil exactly when the
-	// tool ceiling is non-empty (what `resume` reads off snap.ToolPolicies to
-	// tell an auto graph from a hand-written one) AND some node carries an
-	// injected verification (what ReattachVerifyCommand refuses to take from a
-	// run directory). That pair is ADR 0016 §4's terminal refusal, so the hint
-	// must not print a resume command for it.
-	printPauseHint(os.Stdout, runID, runErr, serializedVerify != nil)
+	// serializedVerify is also the discriminator for what a resume of this run
+	// needs, and not by coincidence: it is non-nil exactly when the tool ceiling
+	// is non-empty (what `resume` reads off snap.ToolPolicies to tell an auto
+	// graph from a hand-written one) AND some node carries an injected
+	// verification (what ReattachVerifyCommand refuses to take from a run
+	// directory). That pair is ADR 0016 §4's refusal, so the hint prints the
+	// command WITH --verify-cmd rather than a bare one that would be refused.
+	printPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd)
 
 	return runErr
 }
@@ -1768,17 +1775,84 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 	return out
 }
 
-// verifyResumeRefusal is what printPauseHint says in place of a resume
-// command when the paused run cannot be resumed at all (ADR 0016 §4):
-// `resume` drops a snapshot-borne success_check.verify rather than replaying
-// it, and has no --verify-cmd of its own to re-supply one, so every resumed
-// leg of an auto run started with --verify-cmd is refused before its first
-// node runs. Naming the cause is the whole of what the hint can offer here —
-// what it must NOT do is print a command that exits 1 and hand the reader on
-// to a refusal whose own remediation names a flag `resume` does not register.
-const verifyResumeRefusal = "This run cannot be resumed: it was started with --verify-cmd, and `resume` " +
-	"takes no verification from a run directory and has no flag to re-supply one (ADR 0016 §4). " +
-	"Re-run the goal with --verify-cmd; this run's artifacts stay in its run directory."
+// injectedVerifyCommand reads back the evidence command a planned graph's sinks
+// carry, for the one purpose of printing it in a resume hint the user can
+// actually paste (ADR 0009's "one copy-pasteable command", kept for a
+// --verify-cmd run by #198).
+//
+// The BOUND comes back with it, not just the command: a run started with
+// --verify-timeout 2m whose hint offered only --verify-cmd would be resumed at
+// the 10m default, which is the one place the next leg's check would differ
+// from the leg it continues — the asymmetry ADR 0016 §4 refuses for the command
+// itself. verifyResumeSuffix decides which half needs printing.
+//
+// The first one found is the answer because attachVerification writes ONE
+// user-supplied string, under ONE resolved timeout, to every sink it attaches
+// to; there is no shape in which two sinks of one planned graph disagree.
+// Callers gate this on the graph actually being a planned one — a hand-written
+// graph's `verify:` round-trips through a resume untouched and needs no flag.
+func injectedVerifyCommand(g *graph.Graph) coordinator.VerifyCommand {
+	for _, n := range g.Nodes {
+		if n.SuccessCheck.Verify != nil {
+			return coordinator.VerifyCommand{
+				Command: n.SuccessCheck.Verify.Command,
+				Timeout: n.SuccessCheck.Verify.TimeoutDuration(),
+			}
+		}
+	}
+	return coordinator.VerifyCommand{}
+}
+
+// verifyResupplyNote is the sentence printed under a resume command that
+// carries --verify-cmd, saying why the flag is repeated rather than remembered.
+//
+// It used to say the opposite — that the run could not be resumed at all —
+// because `resume` had no flag to re-supply the command with, so ADR 0016 §4's
+// refusal was terminal and ADR 0009's promise (a session limit is a PAUSE, the
+// work is banked, a later leg finishes it) was not kept for any auto run
+// carrying build evidence (#198). The flag exists now; what stays true is the
+// reason it must be typed again: the run directory is not an admissible source.
+const verifyResupplyNote = "  (--verify-cmd is repeated because `resume` takes no verification from a run\n" +
+	"   directory — the command has to come from you, not from disk. ADR 0016 §4.)"
+
+// verifyResumeSuffix is the flag pair appended to a printed resume command when
+// this run's sinks carry an injected evidence command. Empty for every run that
+// carries none, so the common hint is byte-identical to what it always was.
+//
+// The timeout is printed only when it is not the resolved default, which is
+// also the ceiling: appending `--verify-timeout 10m0s` to every hint would be
+// noise on the common path, and omitting a 2m bound the user chose would hand
+// back a weaker check than the leg being continued.
+//
+// The command is quoted the way the usage synopsis spells it, and the quoting
+// is real (shellSingleQuoted) rather than a bare wrap. `'` is deliberately IN
+// verifyShellMetachars — a --verify-cmd may contain one, it just stands the
+// pre-flight down — so a naive '%s' turns `sh -c 'make && ./x'` into a printed
+// line that runs a DIFFERENT command and then executes `./x` on its own. This
+// function's promise is that what it prints runs, and #198 is exactly the cost
+// of a printed instruction the tool cannot honour.
+func verifyResumeSuffix(v coordinator.VerifyCommand) string {
+	if !v.Supplied() {
+		return ""
+	}
+	suffix := " --verify-cmd " + shellSingleQuoted(v.Command)
+	// The zero value's resolved timeout IS the default, so this compares against
+	// the coordinator's own constant without exporting it.
+	if v.ResolvedTimeout() != (coordinator.VerifyCommand{}).ResolvedTimeout() {
+		suffix += fmt.Sprintf(" --verify-timeout %s", v.ResolvedTimeout())
+	}
+	return suffix
+}
+
+// shellSingleQuoted wraps s so a POSIX shell passes it through as one word,
+// byte for byte. The rule is the standard one and not an invention: inside
+// single quotes nothing is special except `'` itself, which is closed,
+// backslash-escaped and reopened. It exists ONLY for printing a command back to
+// the user — nothing here builds argv, and the engine still runs the command through
+// `sh -c` at the verify seam.
+func shellSingleQuoted(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // printPauseHint prints the exact resume commands when runErr is one of the
 // two pause shapes — a *schedule.PausedError (the gate lifecycle's "print the
@@ -1789,25 +1863,30 @@ const verifyResumeRefusal = "This run cannot be resumed: it was started with --v
 // other outcome (success or failure), so it is safe to call unconditionally
 // after every run.
 //
-// verifyBlocksResume says this run's pause is terminal rather than resumable,
-// and it is the caller's to decide because only the caller knows whether this
-// graph carries an injected verification under a tool ceiling — the pair
-// `resume` refuses (verifyResumeRefusal). A session-limit pause is exactly
-// the shape a long auto run reaches, so the hint that fires most often for a
-// --verify-cmd run is the one that would otherwise be wrong.
-func printPauseHint(w io.Writer, runID string, runErr error, verifyBlocksResume bool) {
+// verifyCmd is the evidence command this run's sinks carry (with its resolved
+// bound), or the zero VerifyCommand for none, and it is the caller's to supply
+// because only the caller knows whether this graph
+// holds an injected verification under a tool ceiling. When it is set the
+// printed command carries the flag back: `resume` drops a snapshot-borne
+// verification rather than replaying it, so a bare resume of such a run is
+// refused. A session-limit pause is exactly the shape a long auto run reaches,
+// so this is the hint that fires most often for a --verify-cmd run — and the
+// one that, printed without the flag, sends the reader into a refusal.
+func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand) {
+	resupply := verifyResumeSuffix(verifyCmd)
+	note := ""
+	if resupply != "" {
+		note = verifyResupplyNote + "\n"
+	}
 	var paused *schedule.PausedError
 	if errors.As(runErr, &paused) {
-		// Unreachable together with verifyBlocksResume today — validatePlannedNodes
-		// refuses a planned gate node, so only an auto graph can carry an injected
-		// verification and only a hand-written one can pause at a gate. Handled
-		// anyway: this function's whole promise is that the command it prints runs.
-		if verifyBlocksResume {
-			fmt.Fprintf(w, "\nPaused at gate %q. %s\n", paused.GateID, verifyResumeRefusal)
-			return
-		}
-		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s\n  oh-my-graph resume %s --reject %s\n",
-			paused.GateID, runID, paused.GateID, runID, paused.GateID)
+		// The gate half is unreachable together with verifyCmd today —
+		// validatePlannedNodes refuses a planned gate node, so only an auto graph
+		// can carry an injected verification and only a hand-written one can pause
+		// at a gate. Composed anyway rather than special-cased: this function's
+		// whole promise is that the command it prints runs.
+		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s%s\n  oh-my-graph resume %s --reject %s%s\n%s",
+			paused.GateID, runID, paused.GateID, resupply, runID, paused.GateID, resupply, note)
 		return
 	}
 	var limited *schedule.LimitPausedError
@@ -1815,15 +1894,10 @@ func printPauseHint(w io.Writer, runID string, runErr error, verifyBlocksResume 
 		return
 	}
 	reset := runner.SessionLimitReset(limited.Cause)
-	switch {
-	case verifyBlocksResume && reset != "":
-		fmt.Fprintf(w, "\nSession limit reached (resets %s). %s\n", reset, verifyResumeRefusal)
-	case verifyBlocksResume:
-		fmt.Fprintf(w, "\nSession limit reached. %s\n", verifyResumeRefusal)
-	case reset != "":
-		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed\n",
-			reset, reset, runID)
-	default:
-		fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed\n", runID)
+	if reset != "" {
+		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed%s\n%s",
+			reset, reset, runID, resupply, note)
+		return
 	}
+	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
 }

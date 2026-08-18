@@ -741,10 +741,12 @@ nothing from this one.
   exits, instead of `PASS`/`FAIL`. Pre-existing (event writes are deliberately
   non-fatal), unchanged, and now reachable one phase earlier.
 - **A `PAUSED` row prints a resume command that is refused.** A run started with
-  `--verify-cmd` cannot be resumed at all (ADR 0016 §4), and the row cannot
-  cheaply know that. The refusal itself carries the explanation, so the cost is
-  one wasted command, not a wrong action; a row that printed nothing would be
-  worse for every other paused run.
+  `--verify-cmd` needs that flag re-supplied on the resumed leg (ADR 0016 §4,
+  amended 2026-08-18 — before that amendment such a run could not be resumed at
+  all), and the row cannot cheaply know it is such a run. The refusal itself
+  carries the explanation and names the flag to add, so the cost is one wasted
+  command, not a wrong action; a row that printed nothing would be worse for
+  every other paused run.
 - **The status and the exit code disagree.** They are computed from different
   facts, so a divergence is possible in principle (a leg that pauses but fails
   to write its `run_finished` exits 2 and reads `ABANDONED`). The implementation

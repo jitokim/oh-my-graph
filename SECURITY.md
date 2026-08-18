@@ -110,17 +110,23 @@ node, with its timeout); it is bounded by `--verify-timeout`, which defaults to
 `graph.json`. Every cycle of a `--max-cycles` goal loop plans a new graph and
 every one of them gets it.
 
-`resume` never takes a verification from a run directory on an auto graph: it
-refuses the resume and names the node. A `success_check.verify` is
-engine-run shell outside every ceiling layer, so a snapshot that carries one —
-whether from your own `--verify-cmd` run or from an edit to `graph.json` — is
-not something a resumed leg replays on trust, and a resume cannot tell the two
-apart. **The practical consequence: an `auto` run started with `--verify-cmd`
-cannot be resumed.** `resume` registers no `--verify-cmd` of its own to
-re-supply the command with, and continuing such a run with the check silently
-dropped is precisely the failure this mechanism exists to prevent — so it stops
-instead. Hand-written graphs are unaffected: their `verify:` is your own
-reviewed artifact and round-trips unchanged.
+`resume` never takes a verification from a run directory on an auto graph. A
+`success_check.verify` is engine-run shell outside every ceiling layer, so a
+snapshot that carries one — whether from your own `--verify-cmd` run or from an
+edit to `graph.json` — is not something a resumed leg replays on trust, and a
+resume cannot tell the two apart. **The practical consequence: an `auto` run
+started with `--verify-cmd` must be given the command again on every resumed
+leg** — `resume` registers the same `--verify-cmd` / `--verify-timeout` pair, so
+the command comes from you on the resumed leg exactly as it did on the first,
+and it attaches to the same sinks under the same ceiling with the same
+engine-judged exit code. A resume that supplies nothing while the snapshot
+carried a verification is refused, naming the node: continuing such a run with
+the check silently dropped is precisely the failure this mechanism exists to
+prevent. The flag pair is `auto`'s and `resume`'s only — `run` has none, so a
+resumed leg cannot attach a check a fresh run could not, and `resume
+--verify-cmd` on a hand-written snapshot is an error. Hand-written graphs are
+otherwise unaffected: their `verify:` is your own reviewed artifact and
+round-trips unchanged.
 
 A planned node is granted nothing by `--verify-cmd` — no ceiling layer changes, and
 the allowlist deliberately does **not** grow an entry per ecosystem, because

@@ -35,6 +35,25 @@ import (
 // parse shell.
 const verifyShellMetachars = "|&;<>()$`\\\"'\n*?[]{}~="
 
+// checkVerifyFlags is the whole parse-time gate on the --verify-cmd /
+// --verify-timeout pair, applied identically by every subcommand that registers
+// it — `auto` at plan time and `resume` at leg time (ADR 0016 §4).
+//
+// It exists so the two cannot diverge. The ceiling and the value object are the
+// coordinator's already, but "which of the two checks a subcommand remembered to
+// run" is exactly the kind of per-subcommand detail #198 was: a flag lane that
+// wired one command and not the other. subcommand names the caller so the
+// refusal reads as that command's, matching every other parse error here.
+func checkVerifyFlags(subcommand string, v coordinator.VerifyCommand) error {
+	if err := v.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", subcommand, err)
+	}
+	if err := checkVerifyExecutable(v.Command); err != nil {
+		return fmt.Errorf("%s: %w", subcommand, err)
+	}
+	return nil
+}
+
 // checkVerifyExecutable refuses a --verify-cmd whose program cannot be found or
 // cannot be executed, naming what was tried.
 //
@@ -157,7 +176,9 @@ func isExecutableFile(path string) bool {
 // code at all. It matters most under --plan-only, whose entire bargain is that
 // a user can see what a run would do before paying for the run — a preview
 // that showed the topology but not the command the engine would execute at its
-// sinks would be showing the cheap half.
+// sinks would be showing the cheap half. A resumed leg prints it too
+// (continueRun): that leg's command is re-supplied on its own command line, so
+// what it attached is exactly as worth stating as a plan's.
 //
 // Silence means the zero-config path, which noteVerifyAdvice then describes.
 func noteVerifyAttachments(w io.Writer, attachments []coordinator.VerifyAttachment) {

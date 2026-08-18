@@ -1,16 +1,18 @@
 # ADR 0016 — Build evidence for a planned node is a user-supplied engine command, not a wider tool grant
 
 - Status: Proposed — decision taken, **engine implemented and now reachable:
-  `auto` parses `--verify-cmd` / `--verify-timeout`.** As of 2026-08-06 the
+  `auto` and `resume` parse `--verify-cmd` / `--verify-timeout`.** As of
+  2026-08-06 the
   tree holds the injection (§2), the serialization, the `retry.max` cap, the
   detector and its advice line (§3), the planner-prompt split (§5), the verdict
   qualifier (§6), and the flags themselves — validated before the planner call,
   disclosed with the plan (so `--plan-only` shows what the sinks will run), and
   carried by the coordinator across every cycle of a `--max-cycles` goal loop.
-  Two things named in the Decision are still unshipped: `resume` has no
-  `--verify-cmd`, so §4's refusal stays terminal and an auto run carrying build
-  evidence cannot be resumed; and `chat`, which §2 names alongside `auto`, has
-  no flag either. It needs no measurement
+  **Amended 2026-08-18 (#198): `resume` now registers the same pair**, closing
+  §4's re-supply half — see the Disposition, which records that the absence was
+  an omission and not an exclusion. One thing named in the Decision is still
+  unshipped: `chat`, which §2 names alongside `auto`, has
+  no flag. It needs no measurement
   gate: unlike ADR 0004 and ADR 0012, nothing here changes a node's argv, its
   tool set or any ceiling layer, so there is no CLI-behaviour premise to
   probe. (§2's `retry.max` cap tightens what a plan may declare; it grants
@@ -216,8 +218,9 @@ decision:
   skill text, so `run` on a saved `graph.json` replays the check the user
   approved, and `--plan-only` prints it. **"The check the user approved" is an
   assumption about that artifact, not a property the tree provides** — §4 names
-  the assumption and resolves it for `resume`, which refuses a snapshot-borne
-  command rather than replaying one. (`run` on a hand-edited `graph.json` is
+  the assumption and resolves it for `resume`, which never replays a
+  snapshot-borne command — it takes one from its own command line or refuses.
+  (`run` on a hand-edited `graph.json` is
   outside that: at that point it is a hand-written graph the user is choosing
   to run, which has always been allowed to carry a `verify:`.) What such a
   replay does *not* get is the run-wide serialization above: the discriminator
@@ -334,8 +337,9 @@ policy.
 **§2 nevertheless admits a source the wording does not name: the persisted
 snapshot.** Today *"an auto snapshot contains no `success_check.verify`"* is a
 true, cheap, checkable assertion. `resume` did not make it — it reconstructs
-with `graph.Parse(snap.Graph)` (`resume.go:131`, `:239`), never re-runs
-`validatePlannedNodes`, and hands the result a real `ShellVerifier` (`:375`).
+with `graph.Parse(snap.Graph)` (`resume.go:209` in `resumeRetryLeg`, `:338` in
+`continueRun`), never re-runs `validatePlannedNodes`, and hands the result a
+real `ShellVerifier` (`:592`).
 §2 makes a verify legitimate in a planned snapshot and so **would foreclose
 that assertion**, which is why the Disposition below makes `resume` assert it
 explicitly instead of inheriting it. The
@@ -352,30 +356,91 @@ guard. And the writer need not be an outsider: a planned node may hold bare
 (`:429-437`), and `validatePlannedNodeCwd`'s own comment already concedes it
 "does NOT make a write-capable node safe" (`:589-596`).
 
-**Disposition — the refusal half of (i) shipped; the rest is recorded, not
-closed.** Two mechanisms were available, in preference order: (i) `resume`
+**Disposition — mechanism (i), both halves, shipped.** Two mechanisms were
+available, in preference order: (i) `resume`
 re-supplies `--verify-cmd` and **refuses** a snapshot-borne one on an auto
 graph, which restores the checkable assertion exactly; (ii) the command lives
 in a separately-keyed snapshot field `resume` validates against the plan it
 accompanies.
 
-The implementation took (i)'s refusal, because it costs nothing and the
+The implementation took (i)'s refusal first, because it costs nothing and the
 assertion it restores is the whole of what §2 foreclosed:
 `ReattachVerifyCommand` strips every snapshot-borne verification from an auto
 graph and returns a `*SnapshotVerifyError` when one was there, and `continueRun`
-calls it on every planned snapshot (`resume.go:244-264`; the discriminator is
+calls it on every planned snapshot (`resume.go:386`; the discriminator is
 the snapshot's non-empty `ToolPolicies`, since a hand-written graph's `verify:`
 is the user's own reviewed artifact and must round-trip untouched). So a
 `graph.json` or `state.json` edit can no longer put engine-run shell into a
 resumed leg — it stops the resume instead.
 
-What did **not** ship is the re-supply half: `resume` has no `--verify-cmd`, so
-the refusal is terminal and an auto run carrying build evidence cannot be
-resumed at all once the flag exists. That is deliberate — resuming with weaker
-checking than the leg being continued is the failure this ADR is about — but it
-means the flag lane owes `resume` the same two flags, not just `auto`. Until
-then the invariant above needs no new admissible source: the persisted artifact
-is refused rather than trusted.
+**Amendment, 2026-08-18 (#198): the re-supply half, and why its absence was an
+omission rather than an exclusion.** The question a reader of this section has
+to be able to answer is whether `resume` took no verification *flag* on purpose.
+It did not, and this ADR is the evidence on both sides:
+
+- what was decided deliberately is that the command must come from the human and
+  not from disk — the restatement above admits exactly two sources, "trusted code
+  and the user". A `--verify-cmd` on `resume` satisfies that wording exactly: the
+  string is typed at the resumed invocation, by the same person, into the same
+  value object, under the same ceiling. There is no reading of §4 under which the
+  flag is the hazard; the run directory is;
+- what was deliberate about the terminal refusal was only its *direction*.
+  Resuming with strictly weaker checking than the leg being continued is the
+  failure this ADR is about, so given a choice between dropping the command
+  silently and stopping, stopping is right. That is an argument for refusing a
+  resume that supplies nothing — not for refusing one that supplies something;
+- this section already said so, in the sentence "it means the flag lane owes
+  `resume` the same two flags, not just `auto`", and the Status header carried
+  it as unshipped. An exclusion does not get written down as a debt.
+
+The cost of leaving the debt open was larger than "a flag is missing", and it is
+what #198 reported. ADR 0009's whole claim is that a subscription session limit
+is a PAUSE, not a failure: the work is banked and a later leg picks it up. For
+any `auto` run carrying build evidence — which is to say, any run following this
+ADR's own advice — that promise was not kept. Worse, the user learned it by
+following an instruction the tool printed: `SnapshotVerifyError` said "re-supply
+it with `--verify-cmd`", and `resume` answered `flag provided but not defined`.
+A message that sends someone down a dead end costs more than silence, because
+the next message is not believed either.
+
+So `resume` registers `--verify-cmd` and `--verify-timeout`, and the ceiling is
+untouched by construction rather than by intention:
+
+- the same value object (`coordinator.VerifyCommand`), so the blank-command
+  refusal, the 10-minute ceiling and the resolved default are one implementation
+  — pinned by a test that parses the same pair through both subcommands and
+  requires the two refusals to be identical;
+- the same trusted-code attachment at the same sinks, through the same
+  `ReattachVerifyCommand`, after the same `VerifyCommand` validation and the
+  same `graph.Parse` re-validation, disclosed the same way. Not the same *plan*
+  validation: as this section says thirty lines up, `resume` never re-runs
+  `validatePlannedNodes`, and the flag does not change that — what is identical
+  is the command, the value object, the ceiling and the re-parse the rebuilt
+  graph goes through, not the provenance of the graph it lands on;
+- the same serialization (`SerializedVerifyNodes`), so a resumed leg's checks do
+  not interfere with each other any more than a fresh leg's do;
+- **no path only `resume` has.** `run` takes no `--verify-cmd` — a hand-written
+  graph writes `verify:` on the node it means — so `resume --verify-cmd` against
+  a hand-written snapshot is an error, not an attachment. Were it accepted, a
+  resumed leg could attach a check no fresh run could, which would be a hole and
+  not a fix. The refusal is one function (`checkVerifyCommandApplies`,
+  `resume.go:314`) called at the subcommand's entry as well as at the
+  attachment, so it also covers the exits that never reach `continueRun` — a
+  `--retry-failed` with nothing to retry would otherwise exit 0 having quietly
+  accepted a flag that is an error in every other state.
+
+And the hint the paused leg prints is held to the same standard as the refusal
+that sends the user to it: it carries `--verify-timeout` whenever the bound is
+not the default (else the next leg's check would be the one thing that differs
+from the leg it continues), and the command is POSIX-quoted rather than wrapped
+in bare `'…'`. A `'` is legal in a `--verify-cmd` — it only stands the
+executable pre-flight down — so `sh -c 'make && ./x'` wrapped naively prints a
+line that a shell reads as a *different* evidence command followed by an extra
+command to execute. Printing an instruction the tool cannot honour is what #198
+was; a hint that does it is the same defect wearing the fix's clothes.
+
+Mechanism (ii) stays unbuilt and stays unnecessary: the persisted artifact is
+still refused rather than trusted, on both legs.
 
 **A residual §2 creates that this does not touch**, and it is the sharpest one
 here: a planned node holds bare `Write`/`Edit` and runs in the invocation
