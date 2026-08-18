@@ -48,6 +48,20 @@ type FragmentError struct {
 	Fragment string // the use: name; "" when the error is not tied to one
 	Source   string // the fragment file's path; "" before lookup resolved one
 	Reason   string
+	// Chain is the citation path this error was reached down: the fragment
+	// names from the entry graph to the file the error is about, so its last
+	// element is Fragment and its second-to-last is the file whose `use:` line
+	// named it. Length 1 at depth 1 — the ordinary case, where NodeID already
+	// locates the citing site in the reader's own file — and rendered only
+	// BELOW depth 1, where the id names the outermost node and the file may be
+	// two hops away, so the id alone stops locating anything (ADR 0029 §6).
+	//
+	// It is ONE witness, not the reader's own: a fragment file's judgment is
+	// cached per resolution pass and charged to the first using node document
+	// order reached, so a second node arriving at the same file down a
+	// different chain sees this one. That is why the wording below says
+	// "reached via" and never "you reached it via" (ADR 0029 §1).
+	Chain []string
 }
 
 func (e *FragmentError) Error() string {
@@ -58,7 +72,12 @@ func (e *FragmentError) Error() string {
 	if e.Fragment != "" {
 		msg += fmt.Sprintf(": fragment %q", e.Fragment)
 	}
-	return msg + ": " + e.Reason
+	msg += ": " + e.Reason
+	if len(e.Chain) > 1 {
+		msg += fmt.Sprintf(" — reached via %s, so the use: naming %q is written in the fragment file %q, not in this graph",
+			strings.Join(e.Chain, " → "), e.Chain[len(e.Chain)-1], e.Chain[len(e.Chain)-2])
+	}
+	return msg
 }
 
 // FragmentResolution records one resolved `use:` for the run-time disclosure
@@ -453,6 +472,92 @@ type boundReference struct {
 	ref    string
 }
 
+// resolveExit is what a loop's id means from OUTSIDE, followed through every
+// level of nesting: `top` exits at `core`, and if `top/core` is itself a loop
+// exiting at `make`, the value the outside sees is `top/core/make`. That is ADR
+// 0029 §6's "exit: is transitive" — a loop still exposes exactly one value at
+// any depth, its transitive exit's artifact.
+//
+// It needs no visited set: every hop appends a segment, so an id can never
+// recur, and out.loops is finite. An id that is not a loop is returned as-is,
+// which is what makes this safe to call on any reference.
+func (out *fragmentOutcome) resolveExit(id string) string {
+	for {
+		exit, isLoop := out.loops[id]
+		if !isLoop {
+			return id
+		}
+		id = splicedID(id, exit)
+	}
+}
+
+// maxFragmentChain is how many CITATION HOPS a `use:` may stand at the end of:
+// depth 0 is the entry graph, depth 1 a fragment it cites, depth 3 a fragment
+// cited by a fragment cited by a fragment. Exceeding it is a load error naming
+// the chain and stating the bound (ADR 0029 §3).
+//
+// It counts fragment FILES on the chain and nothing else. It is not an id
+// segment count: three multi-node hops mint a four-segment id, three
+// single-node hops mint none at all, and an alias hop spends the budget anyway
+// because the bound guards RESOLUTION — descent, file reads, message length —
+// which an alias costs exactly as much as a namespacing hop.
+//
+// The number is 3 because the projected need is 2 (backlog-batch's lane A:
+// entry graph → lane fragment → e2e-verify/review-style/pr-publish) and the
+// headroom is 1. It is deliberately small so it can be shown to be wrong: a
+// bound of 16 or 32 is a constant no graph ever reaches, so nothing can ever
+// falsify it. If a real shape needs 4, the load error below is the evidence,
+// and raising this is a one-character change with a measurement attached.
+//
+// It bounds how far the loader WALKS, never how much it emits: three legal
+// hops of five-node fragments is 125 nodes from one `use:` line, and a diamond
+// multiplies that again. That is accepted — Validate judges the resolved graph
+// identically either way — and the cost lands on the reader of --dry-run and
+// of the checked-in goldens.
+const maxFragmentChain = 3
+
+// nesting is the level a `use:` is being resolved at: everything about the
+// path taken to get here that the resolution of one citation needs.
+//
+// It is deliberately SEPARATE from the fragment cache. The cache is
+// memoisation keyed by name — a file's structural judgment is a fact about the
+// file, identical for every user — while a chain is a property of the path,
+// and conflating the two is exactly what makes a cycle invisible (ADR 0029 §1).
+type nesting struct {
+	// chain is the ordered fragment names from the entry graph to the file
+	// currently being spliced. Empty at depth 0. Its length IS the depth, and
+	// membership in it is the cycle test.
+	chain []string
+	// prefix is the namespace this level already minted — the id of the node a
+	// multi-node splice is happening under. "" at depth 0 and through a
+	// single-node hop, which mints nothing and passes its citer's prefix on.
+	prefix string
+	// declares is the CITING fragment's own declared ids, or nil when the citer
+	// is the entry graph. A single-node fragment's tokens name "the using
+	// graph's nodes"; when the using graph is itself a fragment, that sentence
+	// read literally means the citing fragment's declared ids, namespaced with
+	// prefix (ADR 0029 §7).
+	declares map[string]bool
+	// source is the citing fragment file's path, "" at depth 0 — the file whose
+	// `use:` line a cycle or depth error is charged to.
+	source string
+	// citerIsSingleNode marks the one direction that cannot work: a single-node
+	// fragment's body is spliced ONTO the citing node and declares no id, so
+	// there is no namespace to mint `<id>/<internal>` in and it may not cite a
+	// multi-node fragment.
+	citerIsSingleNode bool
+}
+
+// depth is the number of citation hops already taken to reach this level.
+func (n nesting) depth() int { return len(n.chain) }
+
+// extendedBy is the chain a citation of name would stand at the end of,
+// computed BEFORE the cited file is read — which is what lets the cycle check,
+// the depth bound and the error messages all be decided without opening it.
+func (n nesting) extendedBy(name string) []string {
+	return append(append(make([]string, 0, len(n.chain)+1), n.chain...), name)
+}
+
 // resolveFragments walks the entry document's nodes and splices every `use:`
 // in place, collecting every error rather than stopping at the first — the
 // collect-all form LintFile needs; LoadFile fail-fasts by taking errs[0], so
@@ -478,19 +583,7 @@ func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
 	// exactly what a correct resolution produces.
 	refuseAuthoredNamespaces(nodes, &out)
 
-	spliced := make([]*yaml.Node, 0, len(nodes.Content))
-	for _, nodeMap := range nodes.Content {
-		if nodeMap.Kind != yaml.MappingNode {
-			spliced = append(spliced, nodeMap) // decode will report the malformed node itself
-			continue
-		}
-		if loop := resolveNode(nodeMap, entryPath, cache, &out); loop != nil {
-			spliced = append(spliced, loop...)
-			continue
-		}
-		spliced = append(spliced, nodeMap)
-	}
-	nodes.Content = spliced
+	nodes.Content = spliceSequence(nodes.Content, entryPath, cache, &out, nesting{})
 
 	// The second pass is over the RESOLVED sequence, so it sees the host
 	// graph's own references and the ones a binding carried into a fragment
@@ -499,6 +592,28 @@ func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
 	resolveLoopReferences(nodes, &out)
 	checkBoundReferences(declaredIDs(nodes), &out)
 	return out
+}
+
+// spliceSequence resolves every node of one sequence in document order and
+// returns the sequence that replaces it — the entry graph's `nodes:` at depth
+// 0, and a multi-node fragment's already-namespaced, already-substituted
+// bodies at every depth below. One function for both is the whole of ADR 0029
+// §1's "resolved by the same code path that resolves a top-level one": a
+// nested `use:` is judged by exactly the rules a top-level one is.
+func spliceSequence(entries []*yaml.Node, entryPath string, cache map[string]*loadedFragment, out *fragmentOutcome, nest nesting) []*yaml.Node {
+	spliced := make([]*yaml.Node, 0, len(entries))
+	for _, nodeMap := range entries {
+		if nodeMap.Kind != yaml.MappingNode {
+			spliced = append(spliced, nodeMap) // decode will report the malformed node itself
+			continue
+		}
+		if loop := resolveNode(nodeMap, entryPath, cache, out, nest); loop != nil {
+			spliced = append(spliced, loop...)
+			continue
+		}
+		spliced = append(spliced, nodeMap)
+	}
+	return spliced
 }
 
 // declaredIDs is the id of every node in a resolved sequence.
@@ -646,8 +761,8 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 				// a quoted `depends_on: [" qa"]` must not mint " qa/review",
 				// an id whose shape its author never wrote.
 				name := strings.TrimSpace(scalarValue(parent))
-				if exit, isLoop := out.loops[name]; isLoop {
-					parent.Value = splicedID(name, exit)
+				if _, isLoop := out.loops[name]; isLoop {
+					parent.Value = out.resolveExit(name)
 				}
 			}
 		}
@@ -680,11 +795,11 @@ func resolveLoopReferences(nodes *yaml.Node, out *fragmentOutcome) {
 			}
 		})
 		rewriteIDTokens(nodeMap, func(kind, ref string) (string, bool) {
-			exit, isLoop := out.loops[ref]
+			_, isLoop := out.loops[ref]
 			if kind != "artifacts" || !isLoop {
 				return "", false
 			}
-			return splicedID(ref, exit), true
+			return out.resolveExit(ref), true
 		})
 	}
 }
@@ -715,11 +830,7 @@ func checkBoundReferences(exists map[string]bool, out *fragmentOutcome) {
 			})
 			continue
 		}
-		id := ref.ref
-		if exit, isLoop := out.loops[id]; isLoop {
-			id = splicedID(id, exit)
-		}
-		if exists[id] {
+		if exists[out.resolveExit(ref.ref)] {
 			continue
 		}
 		out.errs = append(out.errs, &GraphValidationError{
@@ -735,24 +846,48 @@ func checkBoundReferences(exists map[string]bool, out *fragmentOutcome) {
 // A plain node is a no-op (except the dead-`with:` refusal), and a node that
 // fails to resolve has its fragment keys stripped so the structural pass that
 // follows reports each defect once.
-func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedFragment, out *fragmentOutcome) []*yaml.Node {
+//
+// Since ADR 0029 the same function resolves a `use:` written inside a FRAGMENT,
+// with nest carrying the path taken to get here. The ORDER at each level is
+// fixed and is the one thing this may not get backwards: (a) namespace against
+// this level's declared ids, (b) substitute this level's bindings, (c) only
+// then descend into whatever `use:` the result still carries. Steps (a) and (b)
+// happen in spliceLoop for a multi-node splice and just above the substitution
+// for a single-node one; (c) is at the bottom of each branch. Descending first
+// would leave a level's own {{ artifacts.<sibling> }} tokens pointing at a key
+// nobody registered — a graph that loads clean, is paid for, and dies at run
+// time.
+//
+// Parameter pass-through falls out of that order rather than being added to it:
+// an inner `use:`'s `with:` values are ordinary text in the outer fragment's
+// file, so (b) has already substituted the outer bindings into them before (c)
+// reads them — and the level below rewrites only its OWN file's text in its own
+// step (a). A bound value is never id-rewritten by any level, at any depth.
+func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedFragment, out *fragmentOutcome, nest nesting) []*yaml.Node {
 	keys := mappingValues(nodeMap)
 	id := scalarValue(keys["id"])
 	useNode, withNode := keys["use"], keys["with"]
 
 	if useNode == nil {
 		if withNode != nil {
-			out.errs = append(out.errs, &FragmentError{NodeID: id,
+			out.errs = append(out.errs, &FragmentError{NodeID: id, Chain: nest.chain,
 				Reason: "with: without use: — a binding with no fragment to bind is a dead key, which is a wiring bug, not a style choice"})
 			removeKeys(nodeMap, "with")
 		}
 		return nil
 	}
 
+	// chain is the citation this node stands at the end of. It is nest.chain
+	// until the name is known and nest.chain+name afterwards, so every error
+	// below carries the deepest chain that was actually established.
+	chain := nest.chain
 	// fail records the node's resolution errors and strips the fragment keys
 	// so the structural pass cannot cascade a second report onto them.
 	fail := func(errs ...*FragmentError) {
 		for _, e := range errs {
+			if len(e.Chain) == 0 {
+				e.Chain = chain
+			}
 			out.errs = append(out.errs, e)
 		}
 		removeKeys(nodeMap, "use", "with")
@@ -768,9 +903,24 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 			Reason: "use: must be a bare fragment name (letters, digits, then any of . _ -), not a path — a use: resolves against the graph file's own fragments/ sibling and nowhere else, so a separator, a leading dot or a .. has no location to mean"})
 		return nil
 	}
+	chain = nest.extendedBy(name)
 	if keys["prompt"] != nil {
 		fail(&FragmentError{NodeID: id, Fragment: name,
 			Reason: "prompt: alongside use: — a wholesale prompt override recreates the copy-variation drift fragments exist to kill, while still claiming the fragment's name; customize through the fragment's declared substitution points, or write an inline node honestly"})
+		return nil
+	}
+
+	// Both guards are decided from the chain alone, BEFORE the cited file is
+	// read — which is what makes a cycle and a runaway load errors with a
+	// message rather than a hang or a stack overflow.
+	if slices.Contains(nest.chain, name) {
+		fail(&FragmentError{NodeID: id, Fragment: name, Source: nest.source,
+			Reason: fmt.Sprintf("use: names %q, which is already on this citation chain (%s) — a fragment citation cycle has no fixed point: every resolution of it splices a further copy. It is charged to the file whose use: line CLOSES the cycle, because that is the one a reader can delete. A fragment cited twice down DIFFERENT paths is a diamond, which stays legal: only a repeat on the current path is a cycle", name, strings.Join(chain, " → "))})
+		return nil
+	}
+	if nest.depth() >= maxFragmentChain {
+		fail(&FragmentError{NodeID: id, Fragment: name, Source: nest.source,
+			Reason: fmt.Sprintf("use: names %q at citation hop %d (%s), and a chain may be at most %d fragment files deep — depth 0 is the entry graph, so a node spliced in from the %dth fragment may not carry a use: of its own. The bound counts FILES on the chain, not id segments: an alias hop that mints no namespace spends it too, because what it bounds is how far the loader walks. It is deliberately small enough to be reachable, so a real need for a fourth layer arrives as this message and raising it is a recorded decision", name, len(chain), strings.Join(chain, " → "), maxFragmentChain, maxFragmentChain)})
 		return nil
 	}
 
@@ -781,12 +931,26 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		fail(chargeTo(id, lf.errs)...)
 		return nil
 	}
+	// The one direction that cannot work, derived rather than chosen: a
+	// single-node fragment's body is spliced ONTO the citing node and declares
+	// no id of its own, so there is no namespace to mint <id>/<internal> in.
+	if nest.citerIsSingleNode && lf.frag.isMulti() {
+		fail(&FragmentError{NodeID: id, Fragment: name, Source: lf.frag.source,
+			Reason: fmt.Sprintf("a single-node fragment may not cite the multi-node fragment %q — a single-node fragment's body is spliced onto the citing node and declares no id of its own, so there is no namespace to mint <id>/<internal> in. Citing another SINGLE-node fragment is fine: that is an alias, and it mints nothing", name)})
+		return nil
+	}
 
 	bindings, bindErrs := bindingsFor(withNode, lf.frag, id)
 	if len(bindErrs) > 0 {
 		fail(bindErrs...)
 		return nil
 	}
+
+	// The level below this one. The cited file is now the citing file, and the
+	// chain has grown by its name; what the two forms do with the rest differs
+	// and is set in each branch.
+	child := nesting{chain: chain, prefix: nest.prefix, declares: nest.declares, source: lf.frag.source}
+
 	if lf.frag.isMulti() {
 		loop, grants, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
 		if len(errs) > 0 {
@@ -795,14 +959,33 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		}
 		recordBoundReferences(id, bindings, out)
 		out.loops[id] = lf.frag.exit
+		// The parent's line is appended BEFORE the descent, so a run log reads
+		// top-down: a nested resolution's line follows the line that explains
+		// it, and the ids alone then say the shape of the tree.
+		at := len(out.resolutions)
 		out.resolutions = append(out.resolutions, FragmentResolution{
 			NodeID: id, Fragment: name, Description: lf.frag.description,
-			Source: lf.frag.source, Spliced: splicedIDs(id, lf.frag), Grants: grants,
+			Source: lf.frag.source, Grants: grants,
 		})
+		// A multi-node splice mints the namespace every level below it hangs
+		// off, and its own declared ids are what a single-node body cited from
+		// inside it is judged against.
+		child.prefix, child.declares, child.citerIsSingleNode = id, lf.frag.declares, false
+		loop = spliceSequence(loop, entryPath, cache, out, child)
+		out.resolutions[at].Spliced = splicedNodeIDs(id, lf.frag, out.loops)
 		return loop
 	}
 
 	body := deepCopyNode(lf.frag.node)
+	// A single-node fragment's tokens name "the using graph's nodes". When the
+	// using graph is itself a fragment, those nodes are namespaced, so a token
+	// naming one must be namespaced with it or it names nothing (ADR 0029 §7).
+	if nest.declares != nil {
+		if errs := namespaceSingleNodeBody(body, nest, id, name); len(errs) > 0 {
+			fail(errs...)
+			return nil
+		}
+	}
 	grant, errs := substituteBody(body, bindings, id, name)
 	if len(errs) > 0 {
 		fail(errs...)
@@ -821,17 +1004,82 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		resolution.Grants = []ResolvedGrant{{NodeID: id, Tools: grant}}
 	}
 	out.resolutions = append(out.resolutions, resolution)
-	return nil
+
+	// An ALIAS hop: the spliced body may itself carry a use:, and the merged
+	// node is now the using node for it. The hop mints nothing, so the enclosing
+	// namespace and declared set pass straight through to the next body — but it
+	// still spends the depth budget, and a multi-node fragment on the far side
+	// is the direction refused above.
+	merged := mappingValues(nodeMap)
+	if merged["use"] == nil && merged["with"] == nil {
+		return nil
+	}
+	child.citerIsSingleNode = true
+	return resolveNode(nodeMap, entryPath, cache, out, child)
 }
 
-// splicedIDs is the ids one multi-node resolution mints, in fragment order —
-// the disclosure line's answer to "this use: became how many nodes, and which".
-func splicedIDs(usingID string, frag *fragmentFile) []string {
+// splicedNodeIDs is the ids one multi-node resolution minted that EXIST in the
+// resolved graph, in fragment order — the disclosure line's answer to "this
+// use: became how many nodes, and which".
+//
+// An internal node that turned out to be a loop of its own is not in the final
+// graph, so it is dropped here and its own resolution line lists its expansion
+// instead. The cost is deliberate: the parent's line then UNDERCOUNTS its
+// subtree (a use: that became 2 nodes plus a nested loop of 5 reports 2, not 7).
+// Spliced answers "which ids exist because of this line", which is the question
+// a consumer can act on; naming an id the graph does not contain is the latent
+// crash ADR 0027 found as its third finding.
+func splicedNodeIDs(usingID string, frag *fragmentFile, loops map[string]string) []string {
 	ids := make([]string, 0, len(frag.ids))
 	for _, internal := range frag.ids {
-		ids = append(ids, splicedID(usingID, internal))
+		spliced := splicedID(usingID, internal)
+		if _, isLoop := loops[spliced]; isLoop {
+			continue
+		}
+		ids = append(ids, spliced)
 	}
 	return ids
+}
+
+// namespaceSingleNodeBody applies ADR 0029 §7 to a single-node fragment body
+// spliced inside ANOTHER fragment. The rule is unchanged — "its tokens name the
+// using graph's nodes" — but the using graph's nodes are now namespaced, so a
+// token naming one must be namespaced with it or it names nothing.
+//
+// This is not the fixpoint sweep §1 refuses. That sweep cannot tell a
+// fragment's own file text from a value bound at a using site; here the
+// distinction is trivially available, because the body is pure inner-file text
+// at this moment — its own substitution has not run yet. A bound value still
+// never gets rewritten, at any level, by anyone.
+//
+// A token naming a ref the citing fragment does NOT declare is a load error
+// rather than a silence. At depth 1 such a token legitimately names a node of
+// the citing GRAPH and stays advisory; inside a fragment there is no citing
+// graph to name, so it would resolve against whichever graph happened to cite
+// the outer fragment. It is charged to the citing SITE — this internal node's
+// use:, with the chain — never to the inner file, which is legal in isolation
+// and cites perfectly well from a plain graph.
+func namespaceSingleNodeBody(body *yaml.Node, nest nesting, nodeID, fragment string) []*FragmentError {
+	var errs []*FragmentError
+	walkScalars(body, func(value string) {
+		for _, token := range idTokensIn(value) {
+			if nest.declares[token.ref] {
+				continue
+			}
+			errs = append(errs, &FragmentError{NodeID: nodeID, Fragment: fragment,
+				Reason: fmt.Sprintf("the fragment body contains %s, and the fragment citing it declares no node %q — a single-node fragment's tokens name the using graph's own nodes, and inside a fragment there is no using graph to name: the token would resolve against whichever graph happened to cite the outer one. Charged to this use:, not to %q, which is legal in isolation and cites perfectly well from a plain graph", token.token, token.ref, fragment)})
+		}
+	})
+	if len(errs) > 0 {
+		return errs
+	}
+	rewriteIDTokens(body, func(_, ref string) (string, bool) {
+		if !nest.declares[ref] {
+			return "", false
+		}
+		return splicedID(nest.prefix, ref), true
+	})
+	return nil
 }
 
 // recordBoundReferences notes every artifact id this using node bound, for the
@@ -1106,7 +1354,7 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		if rootKeys["exit"] != nil {
 			badFile("fragment declares exit: alongside node: — an exit names which of the fragment's OWN nodes a downstream depends_on resolves to, and a single-node fragment has exactly one node, which is the using node itself")
 		}
-		refuseNestedUse(single, "", badFile)
+		judgeFragmentUse(single, "", badFile)
 	} else {
 		ids, declares = judgeMultiNodeIDs(multi, badFile)
 		judgeMultiNodeWiring(multi, declares, badFile)
@@ -1247,7 +1495,14 @@ func judgeMultiNodeIDs(nodes *yaml.Node, badFile func(string)) ([]string, map[st
 // judgeMultiNodeWiring holds every internal node to the invariant: it may name
 // ids this fragment declares, and no others. `cwd`/`worktree` stay refused for
 // their own reason — they are the using node's location, propagated by value to
-// every spliced node — and a nested `use:` stays refused as ADR 0013 made it.
+// every spliced node — and a nested `use:` is now judged, not refused
+// (judgeFragmentUse; ADR 0029).
+//
+// One thing this pass deliberately does NOT decide is whether a `feedback.rerun`
+// names an internal node that is itself a loop, which ADR 0029 §6 makes a load
+// error: loop-ness is not known until the cited file is read, so that judgment
+// lands post-splice, in resolveLoopReferences, where it is the same rule the
+// entry graph is already held to and reads the same message.
 func judgeMultiNodeWiring(nodes *yaml.Node, declares map[string]bool, badFile func(string)) {
 	for i, internal := range nodes.Content {
 		if internal.Kind != yaml.MappingNode {
@@ -1263,7 +1518,7 @@ func judgeMultiNodeWiring(nodes *yaml.Node, declares map[string]bool, badFile fu
 				badFile(fmt.Sprintf("%s declares %q — a fragment says what its nodes DO, never where they run: cwd and worktree stay on the using node, which propagates them to every spliced node", label, located))
 			}
 		}
-		refuseNestedUse(internal, label, badFile)
+		judgeFragmentUse(internal, label, badFile)
 
 		if dependsOn := keys["depends_on"]; dependsOn != nil {
 			switch {
@@ -1434,21 +1689,34 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 	return bodies
 }
 
-// refuseNestedUse rejects a `use:`/`with:` inside a fragment's own node — the
-// nesting ADR 0013 deferred and ADR 0027 keeps deferred. Multi-node fragments
-// make the temptation sharper and the cost higher: closure needs cycle
-// detection over fragment RESOLUTION, on files read before any validation runs,
-// plus a policy for namespacing an already-namespaced id.
-func refuseNestedUse(node *yaml.Node, label string, badFile func(string)) {
-	keys := mappingValues(node)
-	if keys["use"] == nil && keys["with"] == nil {
+// judgeFragmentUse holds a `use:` written INSIDE a fragment file to the one
+// rule that must be settled before any file is read: the name is a LITERAL.
+// ADR 0013 refused nesting outright and ADR 0027 kept the refusal deferred;
+// ADR 0029 lifts it and pays the two prices the refusal named — cycle detection
+// over resolution, and a namespacing policy — in resolveNode, which judges a
+// nested `use:` by exactly the rules a top-level one is judged by.
+//
+// `use: "{{ with.which }}"` stays a load error. The citation chain, the cycle
+// check and the depth bound are all decided from the citation BEFORE the first
+// byte of the cited file is read, so a name arriving from a binding would make
+// the citation graph — which files a graph can pull behavior from — depend on
+// data. `with:` values pass through to every level; the `use:` name never comes
+// from one. This is the same boundary fragmentNamePattern already draws when it
+// refuses a path.
+func judgeFragmentUse(node *yaml.Node, label string, badFile func(string)) {
+	use := mappingValues(node)["use"]
+	if use == nil {
+		return
+	}
+	value := scalarValue(use)
+	if !looseTokenPattern.MatchString(value) {
 		return
 	}
 	where := "a fragment's node"
 	if label != "" {
 		where = "a fragment's " + label
 	}
-	badFile(where + " may not itself carry use:/with: — fragments do not reference fragments (single-pass resolution, no cycle detection needed)")
+	badFile(fmt.Sprintf("%s declares use: %q, whose name is a substitution token — a fragment name must be a literal. The citation chain, the cycle check and the depth bound are all decided before the cited file is read, and a name that arrived from a binding would make which files this graph pulls behavior from depend on data. Bind the fragment's substitution points, never its identity", where, value))
 }
 
 // withTokenName classifies one {{ ... }} token found in a fragment body.

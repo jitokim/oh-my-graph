@@ -195,14 +195,21 @@ node:
 			wantErr:   "substitutions: must be a sequence",
 		},
 		{
-			name:  "fragment nesting another fragment",
+			// ADR 0029 lifted the blanket refusal of a nested `use:`, and this
+			// case is what survives of it: the cited NAME must be a literal, so
+			// the citation chain, the cycle check and the depth bound can all be
+			// decided before the cited file is read. `prompt2`, not `prompt`:
+			// the subject is judgeFragmentUse, and the key only has to keep
+			// `{{ with.checks }}` referenced so the substitution checks stay
+			// quiet and the literal-name refusal is what fires.
+			name:  "fragment citing a fragment named by a binding",
 			entry: usingGraph(usingE2E),
 			fragments: map[string]string{"e2e-verify": `fragment: e2e-verify
 description: a gate
 substitutions: [checks]
-node: { use: other, prompt2: "{{ with.checks }}" }
+node: { use: "{{ with.checks }}", prompt2: "{{ with.checks }}" }
 `},
-			wantErr: "fragments do not reference fragments",
+			wantErr: "whose name is a substitution token",
 		},
 		{
 			// The filename is the authoritative name — it is what a use:
