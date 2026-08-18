@@ -11,9 +11,9 @@
   "on_fail": "continue",
   "nodes": [
     {
-      "id": "dev-a",
+      "id": "lane-a/dev",
       "type": "claude-run",
-      "prompt": "You are in an isolated git worktree of the repo {{ inputs.repo }}, on\nthis lane's own branch — fresh on the first pass, and already carrying\nthe previous round's commits on a feedback round (rule 6). Implement\nthis task, keeping the diff focused and touching ONLY the files this\ntask owns (another lane edits other files in parallel — do not stray\ninto its territory):\n  {{ inputs.task_a }}\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go, staging only the files you changed, by\nexplicit path (`git add \u003cpath\u003e ...`) — never `git add -A`, `git add .`,\nor `git add -u`. End every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this lane's node ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state, so this lane stops instead of shipping half a task.\n\nReview findings from the previous round follow — they are empty on the\nfirst pass (rule 6: this lane gates, so a review that found something\ncomes back here). If present, fix every one before anything else, and\nnote that this lane's branch already carries the previous round's\ncommits: amend the work, do not restart it.\n{{ feedback.review-a }}\n",
+      "prompt": "You are in an isolated git worktree of the repo {{ inputs.repo }}, on\nthis lane's own branch — fresh on the first pass, and already carrying\nthe previous round's commits on a feedback round. Implement this task,\nkeeping the diff focused and touching ONLY the files this task owns\n(another lane may edit other files in parallel — do not stray into its\nterritory):\n  {{ inputs.task_a }}\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go, staging only the files you changed, by\nexplicit path (`git add \u003cpath\u003e ...`) — never `git add -A`, `git add .`,\nor `git add -u`. End every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this lane's node ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state, so this lane stops instead of shipping half a task.\n\nReview findings from the previous round follow — they are empty on the\nfirst pass. If present, fix every one before anything else, and note\nthat this lane's branch already carries the previous round's commits:\namend the work, do not restart it.\n{{ feedback.lane-a/review }}\n",
       "allowed_tools": [
         "Read",
         "Edit",
@@ -32,10 +32,10 @@
       "worktree": "lane-a"
     },
     {
-      "id": "e2e-a",
+      "id": "lane-a/e2e",
       "type": "claude-run",
       "depends_on": [
-        "dev-a"
+        "lane-a/dev"
       ],
       "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and run the project's full checks (build + test + lint). If the diff\ntouches concurrency-sensitive code, ALSO stress the affected tests\n(`go test \u003cpkgs\u003e -race -count=300`, or your stack's equivalent) —\nrule 4 in this graph's header.\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground. Your FINAL reply is the verdict: never end the turn on an\ninterim report. If everything succeeds, your reply is exactly the four\nbare characters PASS and nothing else — no markdown emphasis (`**PASS**`\nis WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,\nequally bare, as the very first characters, followed by the failing step.\n",
       "allowed_tools": [
@@ -69,12 +69,12 @@
       "worktree": "lane-a"
     },
     {
-      "id": "review-a",
+      "id": "lane-a/review",
       "type": "claude-run",
       "depends_on": [
-        "e2e-a"
+        "lane-a/e2e"
       ],
-      "prompt": "Review this worktree's diff vs its base for style, naming, and simplicity.\nJudge correctness as well, and scope: the diff must serve only this\nlane's task — flag anything that strays into files another lane\ncould own. The e2e verdict was: {{ artifacts.e2e-a | inline }}\nIf the diff adds or edits test doubles or concurrency tests, also verify:\nevery synchronization field is actually wired (no dead channels, no\nwall-clock fallback arms) and no assertion is satisfiable by a record or\nnode simply being absent.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict: this\nnode's turn ends the moment you reply, so a part of the diff you promise\nto look at afterwards is never looked at. Never end on \"I'll continue\" —\nreport what you have actually judged. START the reply with exactly one of\nthese two bare tokens, as the very FIRST characters, with no markdown\nemphasis (`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — you reviewed the whole diff and found nothing worth changing.\n  - FINDINGS: — followed by a short bulleted list, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "prompt": "Review this worktree's diff vs its base for style, naming, and simplicity.\nJudge correctness as well, and scope: the diff must serve only this\nlane's task — flag anything that strays into files another lane\ncould own.\nThe e2e verdict was: {{ artifacts.lane-a/e2e | inline }}\nIf the diff adds or edits test doubles or concurrency tests, also verify:\nevery synchronization field is actually wired (no dead channels, no\nwall-clock fallback arms) and no assertion is satisfiable by a record or\nnode simply being absent.\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict: this\nnode's turn ends the moment you reply, so a part of the diff you promise\nto look at afterwards is never looked at. Never end on \"I'll continue\" —\nreport what you have actually judged. START the reply with exactly one of\nthese two bare tokens, as the very FIRST characters, with no markdown\nemphasis (`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — you reviewed the whole diff and found nothing worth changing.\n  - FINDINGS: — followed by a short bulleted list, worst first.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
       "allowed_tools": [
         "Read",
         "Bash(git diff*)",
@@ -88,17 +88,17 @@
       },
       "worktree": "lane-a",
       "feedback": {
-        "rerun": "dev-a",
+        "rerun": "lane-a/dev",
         "max": 1
       }
     },
     {
-      "id": "pr-a",
+      "id": "lane-a/pr",
       "type": "claude-run",
       "depends_on": [
-        "review-a"
+        "lane-a/review"
       ],
-      "prompt": "Push this worktree's branch and open a DRAFT pull request with\n`gh pr create --draft`. Put the review in the PR body:\n  {{ artifacts.review-a | inline }}\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
+      "prompt": "Push this worktree's branch and open a DRAFT pull request with\n`gh pr create --draft`. Put the review in the PR body:\n  {{ artifacts.lane-a/review | inline }}\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
       "allowed_tools": [
         "Read",
         "Bash(git *)",

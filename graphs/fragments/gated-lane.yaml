@@ -1,0 +1,148 @@
+# gated-lane — one GATING lane, end to end: implement → verify → review →
+# publish, where a review finding re-runs the implementation instead of riding
+# into the PR body.
+#
+# This is the first fragment that cites fragments (ADR 0029). Three of its four
+# nodes are `use:` of shapes that already ship — `e2e-verify`, `review-style`,
+# `pr-publish` — and only the implementer is inline, because the four shipped
+# implementer prompts share no common suffix at all (measured word-for-word in
+# ADR 0013's corpus pass) and there is no shape to cite. That inversion is why
+# this file could not exist before nesting: the lane it folds was already
+# citing fragments well, which made it the HARDEST lane to convert.
+#
+# What it carries, and what it does not:
+#
+#   - It carries the WIRING (dev → e2e → review → pr) and the GATE PAIR.
+#     "Gating" is not a mood: it is a narrowed `success_check` on the review
+#     AND a `feedback:` arc back to the implementer, shipped together. A
+#     narrowed check with no arc turns a reviewer that did its job into a
+#     failed run; an arc with no narrowing never fires. Both live on `review`
+#     below, which is the only place they can be a pair.
+#   - It carries the implementer's discipline: phased commits, explicit-path
+#     staging, the anchored verdict token, and the previous round's findings
+#     quoted into the prompt (ADR 0028 — an arc and its quote are one
+#     mechanism).
+#   - It does NOT carry where it runs. `worktree:`/`cwd:` stay on the citing
+#     node, which propagates them to every node this splices — including the
+#     ones a level further down.
+#   - It does NOT carry an ADVISORY lane. A substitution point can bind a
+#     value; it can never make a `feedback:` key present or absent, so one
+#     fragment cannot serve a lane that gates and a lane that advises. A lane
+#     that advises writes its review node out, as `backlog-batch`'s lane B
+#     does, and says why there.
+#
+# `tools` is a substitution point rather than a fixed grant, and that is a
+# decision. The measured reason fragments go uncited is that the one knob lanes
+# vary most — the implementer's tool grant — was the one knob fixed, and a
+# multi-node `use:` may declare wiring only, so there is no override to fall
+# back on. PR #197 made a grant that arrives through a binding visible in the
+# run's disclosure line, which is what makes parameterizing it honest rather
+# than hidden: the run log names the resolved grant and the node that runs with
+# it.
+fragment: gated-lane
+description: one gating lane — implement, verify, review, publish — where a finding re-runs the work instead of riding into the PR body
+substitutions: [repo, task, tools, checks, verify_command, focus, publish]
+exit: pr
+nodes:
+  - id: dev
+    type: claude-run
+    prompt: |
+      You are in an isolated git worktree of the repo {{ with.repo }}, on
+      this lane's own branch — fresh on the first pass, and already carrying
+      the previous round's commits on a feedback round. Implement this task,
+      keeping the diff focused and touching ONLY the files this task owns
+      (another lane may edit other files in parallel — do not stray into its
+      territory):
+        {{ with.task }}
+      Add or update tests. Choose a commit granularity that fits the work —
+      one commit per refactoring unit for refactors, per file for sweeps, per
+      feature slice for new code — and state your choice in the first commit
+      message. Commit as you go, staging only the files you changed, by
+      explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
+      or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
+      Your FINAL reply IS the verdict: this lane's node ends the moment you
+      reply, so work you promise to do afterwards never happens. Never end on
+      a plan to continue — report the state that is TRUE AS YOU REPLY. When
+      the change is committed, START your reply with the bare word DONE —
+      those four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),
+      no heading, no preamble — then a one-line summary of what you changed.
+      Anything you need to qualify goes AFTER the verdict, never before it:
+      a line of context ahead of the token fails this node even when the
+      work is done.
+      If it is not finished, do NOT write DONE: start with a bare BLOCKED and
+      the current state, so this lane stops instead of shipping half a task.
+
+      Review findings from the previous round follow — they are empty on the
+      first pass. If present, fix every one before anything else, and note
+      that this lane's branch already carries the previous round's commits:
+      amend the work, do not restart it.
+      {{ feedback.review }}
+    # Bound by the citing graph, because the verbs an implementer needs are
+    # the thing lanes vary most: a Go lane wants `Bash(go *)`, a docs lane
+    # wants none of it. The resolved list is announced in the run's disclosure
+    # line at the id this splices to.
+    allowed_tools: "{{ with.tools }}"
+    permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
+    handoff: artifact
+    # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"). The lane must
+    # be able to FAIL: an unfinished dev node that passes takes its whole lane
+    # to a PR.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
+
+  # The gate. `checks` is the prose this lane asks for and `verify_command` is
+  # the command the ENGINE runs as evidence — bind it from an input or a
+  # literal, never from an artifact (the engine runs it through `sh -c`).
+  - id: e2e
+    use: e2e-verify
+    depends_on: [dev]
+    with:
+      checks: "{{ with.checks }}"
+      verify_command: "{{ with.verify_command }}"
+
+  # The gating half of the pair. The narrowing states which verdict this lane
+  # ACCEPTS rather than restating which verdicts the reviewer may emit — the
+  # two do not drift together — and it is announced in the run's disclosure
+  # line, so a lane that gates says so at every run. The reviewer's PROMPT is
+  # deliberately left alone: a reviewer told that findings will fail it is a
+  # reviewer biased toward CLEAN.
+  #
+  # No `retry:` here, and that is a decision rather than an omission: the same
+  # bias has a second door. A retried attempt is handed its own reply under
+  # "that attempt did NOT pass … the check did not accept it"
+  # (internal/schedule/retryfeedback.go) — precisely the sentence the prompt is
+  # protected from, delivered to the reviewer instead. A rejected review belongs
+  # to `dev` via the arc below, never to a second opinion from the same reviewer.
+  - id: review
+    use: review-style
+    depends_on: [e2e]
+    with:
+      diff: this worktree's diff vs its base
+      focus: |-
+        {{ with.focus }}
+        The e2e verdict was: {{ artifacts.e2e | inline }}
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }
+    # The other half, without which the narrowing would be a lie about what
+    # happened: findings fail this node, the failure re-runs dev → e2e → review
+    # with the findings in {{ feedback.review }}, and a second round that comes
+    # back CLEAN ends the lane green with the defect FIXED instead of merely
+    # quoted in the PR body. Only an exhausted loop FAILs, and that report is
+    # honest — a finding nobody repaired.
+    #
+    # `max: 1`, not 2: an unattended batch buys one repair round; a second
+    # belongs to a human who has read the first. Price of the arc: the body is
+    # (1 + max) × 3 nodes — 6 here — and the ledger prices every round
+    # ("feedback round k/N" in DETAIL). That formula counts ROUNDS, not
+    # attempts: `e2e` brings `retry: { max: 1 }` from its own fragment, and a
+    # retry is charged on top of its round, so the honest worst case is 8.
+    feedback: { rerun: dev, max: 1 }
+
+  - id: pr
+    use: pr-publish
+    depends_on: [review]
+    with:
+      publish: |-
+        {{ with.publish }}
+          {{ artifacts.review | inline }}

@@ -45,15 +45,24 @@
 #      PAIR: narrow the review's `success_check` to the clean verdict, and
 #      give that same node a `feedback:` arc saying what to do about the
 #      failure. Ship both or neither — a narrowed check with no arc turns a
-#      reviewer that did its job into a failed run. Lane A gates, lane B
-#      advises, and each says why at its own review node. Price of the arc:
-#      the body is (1 + max) × 3 lane nodes — 6 for lane A's `max: 1` — and
-#      the ledger prices every round ("feedback round k/N" in DETAIL). That
-#      formula counts ROUNDS, not attempts: `e2e-a` brings `retry: {max: 1}`
-#      from its fragment, and a retry is charged on top of its round, so the
-#      honest worst case here is 8. Lane A is the first shipped feedback body
-#      to contain a node that retries, which is why the formula needed the
-#      qualifier it never did in `review-loop`.
+#      reviewer that did its job into a failed run.
+#      Lane A gates and lane B advises, and the two are now spelled
+#      DIFFERENTLY, which is the point of rule 7. Lane A's whole shape — the
+#      pair included — is the `gated-lane` fragment; lane B stays written out,
+#      because a substitution point can bind a value and can never make a
+#      `feedback:` key present or absent, so one fragment cannot serve both
+#      dispositions. Read the pair's reasoning in graphs/fragments/gated-lane.yaml,
+#      beside the two keys it is made of. The arc's price is stated there too:
+#      the body is (1 + max) × 3 lane nodes — 6 for `max: 1` — and the honest
+#      worst case is 8, because the gate brings a `retry:` of its own.
+#   7. A lane whose SHAPE repeats is a fragment; a lane that differs in a KEY
+#      is not. Lane A is four nodes of which three were already `use:`
+#      citations, so folding it needed a fragment that cites fragments
+#      (ADR 0029) — and having one, lane A is now a single node. Lane B is the
+#      same four nodes and does NOT fold, for a reason worth keeping in front
+#      of the next author: it advises where lane A gates, and that difference
+#      is the presence of two keys rather than the value of one. When a lane
+#      resists conversion, check which of the two it is before forcing it.
 #
 # `checks_command` is the command the ENGINE runs as each gate's evidence
 # (success_check.verify) — your stack's full-check target, e.g. `make local`,
@@ -75,126 +84,52 @@ concurrency: 4
 on_fail: continue  # rule 5: independent lanes — one lane's failure must not halt the rest
 nodes:
   # ---- lane A: feature lane (worktree lane-a) -------------------------------
-  - id: dev-a
-    type: claude-run
-    worktree: lane-a
-    prompt: |
-      You are in an isolated git worktree of the repo {{ inputs.repo }}, on
-      this lane's own branch — fresh on the first pass, and already carrying
-      the previous round's commits on a feedback round (rule 6). Implement
-      this task, keeping the diff focused and touching ONLY the files this
-      task owns (another lane edits other files in parallel — do not stray
-      into its territory):
-        {{ inputs.task_a }}
-      Add or update tests. Choose a commit granularity that fits the work —
-      one commit per refactoring unit for refactors, per file for sweeps, per
-      feature slice for new code — and state your choice in the first commit
-      message. Commit as you go, staging only the files you changed, by
-      explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
-      or `git add -u`. End every commit message with the trailer
-      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
-      convention in CONTRIBUTING.md).
-      Your FINAL reply IS the verdict: this lane's node ends the moment you
-      reply, so work you promise to do afterwards never happens. Never end on
-      a plan to continue — report the state that is TRUE AS YOU REPLY. When
-      the change is committed, START your reply with the bare word DONE —
-      those four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),
-      no heading, no preamble — then a one-line summary of what you changed.
-      Anything you need to qualify goes AFTER the verdict, never before it:
-      a line of context ahead of the token fails this node even when the
-      work is done.
-      If it is not finished, do NOT write DONE: start with a bare BLOCKED and
-      the current state, so this lane stops instead of shipping half a task.
-
-      Review findings from the previous round follow — they are empty on the
-      first pass (rule 6: this lane gates, so a review that found something
-      comes back here). If present, fix every one before anything else, and
-      note that this lane's branch already carries the previous round's
-      commits: amend the work, do not restart it.
-      {{ feedback.review-a }}
-    allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
-    permission_mode: dontAsk
-    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
-    handoff: artifact
-    # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"). Rule 5 makes
-    # a lane's failure local, which is exactly why the lane must be able to
-    # fail: an unfinished dev node that passes takes its whole lane to a PR.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
-
-  # The gate and review shapes are fragments (ADR 0013): the prompt, the tool
-  # grant and the evidence-grounded success_check live once in
-  # graphs/fragments/, and each lane binds only its own spans. `lint` still
-  # warns here (handoff: session + retry) — advisory and expected: a retried
-  # attempt starts cold, and the fragment's prompt is written to survive
-  # exactly that case (rule 3 above).
   #
-  # The gate's tool grant is narrow on purpose (make + read-only go/git — a
-  # gate reports, it does not fix). Copying this skeleton into a non-Go repo
-  # means adding an `allowed_tools:` line to each gate node with that stack's
-  # check verbs; the override is announced in the run's disclosure line.
-  - id: e2e-a
-    use: e2e-verify
-    depends_on: [dev-a]
+  # One node, four spliced: `lane-a/dev`, `lane-a/e2e`, `lane-a/review`,
+  # `lane-a/pr`. The whole gating shape — the wiring, the narrowed review check
+  # and its `feedback:` arc, and the three fragments the middle nodes themselves
+  # cite — is `graphs/fragments/gated-lane.yaml`, which is the first fragment
+  # that cites fragments (ADR 0029). What is left here is what only this graph
+  # can know: which repo, which task, which verbs the implementer needs, which
+  # checks are this lane's, and what its PR should say.
+  #
+  # `worktree:` stays here, on the citing node, and propagates to every node the
+  # splice emits — including the ones a level further down. `lint` still warns
+  # about the gate (handoff: session + retry) — advisory and expected: a retried
+  # attempt starts cold, and `e2e-verify`'s prompt survives exactly that case
+  # (rule 3 above).
+  - id: lane-a
+    use: gated-lane
     worktree: lane-a
     with:
+      repo: "{{ inputs.repo }}"
+      task: "{{ inputs.task_a }}"
+      # A Go lane's verbs. A lane in another stack binds its own, and the
+      # resolved grant is announced in the run's disclosure line at the id that
+      # runs with it (#196).
+      tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
       checks: |-
         run the project's full checks (build + test + lint). If the diff
         touches concurrency-sensitive code, ALSO stress the affected tests
         (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
         rule 4 in this graph's header.
       verify_command: "{{ inputs.checks_command }}"
-
-  - id: review-a
-    use: review-style
-    depends_on: [e2e-a]
-    worktree: lane-a
-    with:
-      diff: this worktree's diff vs its base
       focus: |-
         Judge correctness as well, and scope: the diff must serve only this
         lane's task — flag anything that strays into files another lane
-        could own. The e2e verdict was: {{ artifacts.e2e-a | inline }}
-    # Rule 6, lane A's half: this lane GATES. The narrowing lives here, on the
-    # using node, because this is the only file that knows whether findings
-    # should stop this lane — the fragment ships the reviewer's contract, not
-    # the caller's policy. `CLEAN` is the fragment's own clean token and the
-    # decoration class is DESIGN.md's ("Verdict patterns"), so this states
-    # which verdict the lane ACCEPTS rather than restating which verdicts the
-    # reviewer may emit — the two do not drift together. The override is
-    # announced in the run's disclosure line, so a lane that gates says so at
-    # every run. The reviewer's PROMPT is deliberately left alone: a reviewer
-    # told that findings will fail it is a reviewer biased toward CLEAN.
-    # No `retry:` here, and that is a decision rather than an omission: the
-    # same bias has a second door. A retried attempt is handed its own reply
-    # under "that attempt did NOT pass … the check did not accept it"
-    # (internal/schedule/retryfeedback.go) — which is precisely the sentence
-    # the prompt is protected from, delivered to the reviewer instead. A
-    # rejected review belongs to dev-a via the arc below, never to a second
-    # opinion from the same reviewer.
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }
-    # ...and the arc is the other half, without which the narrowing would be a
-    # lie about what happened: findings fail this node, the failure re-runs
-    # dev-a → e2e-a → review-a with the findings in {{ feedback.review-a }},
-    # and a second round that comes back CLEAN ends the lane green with the
-    # defect FIXED instead of merely quoted in the PR body. Only an exhausted
-    # loop FAILs, and that report is honest — a finding nobody repaired, with
-    # rule 5 keeping the other lanes running. `max: 1`, not 2: an unattended
-    # batch buys one repair round; a second belongs to a human who has read
-    # the first. `feedback` can only be declared HERE — ADR 0013 counts it as
-    # graph-local wiring, so no fragment can gate on a caller's behalf.
-    feedback: { rerun: dev-a, max: 1 }
-
-  - id: pr-a
-    use: pr-publish
-    depends_on: [review-a]
-    worktree: lane-a
-    with:
+        could own.
       publish: |-
         Push this worktree's branch and open a DRAFT pull request with
         `gh pr create --draft`. Put the review in the PR body:
-          {{ artifacts.review-a | inline }}
 
   # ---- lane B: docs lane (worktree lane-b) ----------------------------------
+  #
+  # Written out, and that is rule 7 rather than an oversight: this lane ADVISES
+  # where lane A gates, and the difference is two keys' PRESENCE — a narrowed
+  # `success_check` and a `feedback:` arc — which no substitution point can bind
+  # into or out of existence. It still cites the same single-node fragments lane
+  # A's fragment does, so the gate and review shapes cannot drift between the
+  # two lanes; only the disposition differs.
   - id: dev-b
     type: claude-run
     worktree: lane-b
