@@ -1551,8 +1551,12 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   with `--verify-cmd` needs it supplied again on every resumed leg — without it
   the resume is refused, with it the command attaches to the same sinks under the
   same ceiling and the engine judges its exit code, exactly as on the first leg.
-  A pause hint for such a run prints the flag back with the command in it, so
-  the promised copy-pasteable resume stays copy-pasteable (ADR 0009).
+  A pause hint for such a run prints the flags back with the command in it, so
+  the promised copy-pasteable resume stays copy-pasteable (ADR 0009) — and
+  quoted, since a hint that pastes as a different command is the defect #198
+  reported, one step downstream. Supplied where the flag has nothing to attach
+  to — a hand-written graph — it is an error even when the leg would have been a
+  no-op, rather than being accepted and ignored.
 - Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
   pauses again. The decision map makes batch approval a later, additive change.
 - `--retry-failed` salvages a failed run instead of deciding a gate; combining
@@ -1589,8 +1593,9 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   event), and returns `*LimitPausedError` → exit code 2 with a
   best-effort-parsed "resume after <reset time> with: `resume <run-id>
   --retry-failed`" hint — carrying `--verify-cmd '<the command>'` when this
-  run's sinks hold one, since a resumed leg re-supplies it rather than reading
-  it back off disk. A gate pause outranks a limit; a limit outranks
+  run's sinks hold one (POSIX-quoted, so a command containing a quote pastes as
+  itself, plus `--verify-timeout D` when the bound is not the default), since a
+  resumed leg re-supplies it rather than reading it back off disk. A gate pause outranks a limit; a limit outranks
   continue-on-fail pruned failures. The leg closes on the stream as outcome
   `"paused"` with a distinguishing `detail`. A retry leg's worktree
   provisioning is disk-aware: a retried node re-declaring a name reuses the

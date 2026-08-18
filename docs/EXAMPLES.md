@@ -1043,7 +1043,9 @@ and exits with code 2 and a hint like `Resume after 5:20pm with: oh-my-graph
 resume <run-id> --retry-failed` — which later finishes exactly the work that
 never ran. If the run carries build evidence the hint appends `--verify-cmd
 '<your command>'`, because a resumed leg re-supplies it instead of reading it
-back off disk; the printed command is still the whole command. Detection is
+back off disk; the printed command is still the whole command — quoted so that
+pasting it runs what it says, and followed by `--verify-timeout D` if you bound
+the check with one. Detection is
 honest string-matching on the CLI's message (it offers no structured signal), so
 an unrecognized wording safely degrades to an ordinary failure that the same
 command still salvages.

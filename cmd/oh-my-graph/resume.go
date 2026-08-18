@@ -154,6 +154,15 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	}
 	warnIfGraphSourceChanged(snap)
 
+	// Before either mode, because both have exits that never reach continueRun:
+	// a --retry-failed with nothing to retry returns early and would otherwise
+	// accept a flag that is an error in every other state, answering as if it had
+	// applied. A flag whose whole subject is which graph this run holds can be
+	// answered the moment that graph is known.
+	if err := checkVerifyCommandApplies(runID, snap, flags.verifyCommand()); err != nil {
+		return err
+	}
+
 	if flags.retryFailed {
 		return resumeRetryLeg(flags, snap, nodeRunner, web)
 	}
@@ -293,6 +302,24 @@ func partitionForRetry(g *graph.Graph, snap runstate.Snapshot) (retained map[str
 	return retained, cleared
 }
 
+// checkVerifyCommandApplies refuses a --verify-cmd this run's graph has no use
+// for, and this is the check that keeps the fix from being a hole: `run` has no
+// --verify-cmd, so attaching one to a hand-written graph here would be a
+// capability only `resume` has. A hand-written graph says `verify:` on whichever
+// node it means, and that field round-trips untouched — there is nothing for a
+// flag to re-supply.
+//
+// The discriminator is the snapshot's ToolPolicies, non-empty exactly for a
+// planned graph, the same one continueRun uses to decide what to reattach.
+func checkVerifyCommandApplies(runID string, snap runstate.Snapshot, v coordinator.VerifyCommand) error {
+	if !v.Supplied() || len(snap.ToolPolicies) > 0 {
+		return nil
+	}
+	return fmt.Errorf("resume run %q: --verify-cmd applies to an auto run's planned graph, and this run's graph is hand-written; "+
+		"its own success_check.verify is your reviewed artifact and resumes exactly as written. "+
+		"(`run` has no --verify-cmd either: a resumed leg must not be able to attach a check a fresh run could not.)", runID)
+}
+
 // continueRun is the shared back half of both resume modes: rebuild the run's
 // collaborators from the snapshot (graph, handoff, ledger, recorder, event
 // stream, worktrees), seed the scheduler so exactly the carried records never
@@ -342,6 +369,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// reviewed artifact, its node loads the user's settings by design, and it
 	// must keep round-tripping untouched.
 	verifyCmd := flags.verifyCommand()
+	// Re-asserted here rather than assumed from executeResume's earlier call:
+	// this is the function that would otherwise ATTACH the command, so the
+	// refusal belongs where the attachment is, and one implementation serving
+	// both call sites is what stops the two from drifting (#198's own shape).
+	if err := checkVerifyCommandApplies(runID, snap, verifyCmd); err != nil {
+		return err
+	}
 	var unmapped []string
 	// serializedVerify is what makes this leg's injected checks run one at a
 	// time, exactly as a fresh leg's do (executeGraph). It is derived from the
@@ -366,15 +400,6 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 			return fmt.Errorf("resume run %q: %w", runID, err)
 		}
 		g, unmapped = dropped, droppedIDs
-	} else if verifyCmd.Supplied() {
-		// Refused rather than attached, and this is the line that keeps the fix
-		// from being a hole: `run` has no --verify-cmd, so attaching one to a
-		// hand-written graph here would be a capability only `resume` has. A
-		// hand-written graph says `verify:` on whichever node it means, and that
-		// field round-trips untouched — there is nothing for a flag to re-supply.
-		return fmt.Errorf("resume run %q: --verify-cmd applies to an auto run's planned graph, and this run's graph is hand-written; "+
-			"its own success_check.verify is your reviewed artifact and resumes exactly as written. "+
-			"(`run` has no --verify-cmd either: a resumed leg must not be able to attach a check a fresh run could not.)", runID)
 	}
 	runtime, err := runner.ParseRuntime(snap.Runtime)
 	if err != nil {
@@ -610,11 +635,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
-	// The next leg needs the command re-supplied exactly as this one did: the
+	// The next leg needs the pair re-supplied exactly as this one did: the
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
-	// flag rather than promising a bare resume that would be refused.
-	printPauseHint(os.Stdout, runID, runErr, verifyCmd.Command)
+	// flags rather than promising a bare resume that would be refused.
+	printPauseHint(os.Stdout, runID, runErr, verifyCmd)
 
 	return runErr
 }

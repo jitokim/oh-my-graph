@@ -16,6 +16,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
 // writeVerifyScript writes an executable script that exits with code and
@@ -562,6 +563,67 @@ func TestResume_RunsTheCommandTheFlagCarriedNotTheOneOnDisk(t *testing.T) {
 	}
 }
 
+// TestResume_ASessionLimitedAutoRunIsFinishedByThePrintedCommand is #198 in its
+// literal reported shape, which the tests above reach only by their converging
+// path: the run does not fail its evidence command, it PAUSES on a session limit
+// (*schedule.LimitPausedError) with the sink never launched — ADR 0009's "the
+// work is banked, a later leg finishes it" — and what the user has to work from
+// is the line the first leg printed.
+//
+// So the assertion is deliberately end to end AND literal: take the command out
+// of the hint, hand it back to `resume`, and require the run to finish. Before
+// #198 there was no such command to take.
+func TestResume_ASessionLimitedAutoRunIsFinishedByThePrintedCommand(t *testing.T) {
+	isolateRunHome(t)
+	onDisk := writeMarkingVerifyScript(t, "on-disk", 1)
+	supplied := writeMarkingVerifyScript(t, "supplied", 0)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1": {ExitCode: 1, FailureCause: limitCauseMsg, SessionLimited: true},
+		"work-2": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runAutoWith([]string{"add a README section", "--verify-cmd", onDisk.script,
+			"--no-agent-mapping", "--no-skill-mapping"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	var limited *schedule.LimitPausedError
+	if !errors.As(runErr, &limited) {
+		t.Fatalf("first leg err = %v (%T), want the *LimitPausedError this test is about", runErr, runErr)
+	}
+	if onDisk.ran() {
+		t.Fatal("the sink never launched, so nothing should have run its evidence command")
+	}
+
+	runID := soleRunID(t)
+	printed := "oh-my-graph resume " + runID + " --retry-failed --verify-cmd '" + onDisk.script + "'"
+	if !strings.Contains(out, printed) {
+		t.Fatalf("the pause hint must offer the whole resume command (%q):\n%s", printed, out)
+	}
+
+	// The same command, with only the evidence swapped for one that passes —
+	// the run directory's is refused whatever it says, so a resume of this run
+	// is a re-supply either way.
+	var resumeErr error
+	out = captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t,
+			[]string{runID, "--retry-failed", "--verify-cmd", supplied.script}), fake, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("the printed command did not finish the session-limit-paused run: %v", resumeErr)
+	}
+	if !supplied.ran() {
+		t.Error("the resumed leg verified nothing the user asked for")
+	}
+	if onDisk.ran() {
+		t.Error("the leg ran the command from the run directory — the one source ADR 0016 §4 rules out")
+	}
+	if !strings.Contains(out, "PASS (verified)") {
+		t.Errorf("the resumed sink's row must say the engine gathered the evidence:\n%s", out)
+	}
+}
+
 // TestResume_VerifyTimeoutBoundsTheResumedLegsCheck pins --verify-timeout on the
 // resume path in both directions: a bound under the ceiling reaches the leg
 // resolved (the disclosure is where a user reads it back), and one over the
@@ -642,6 +704,28 @@ func TestResume_RefusesAVerifyCommandForAHandWrittenGraph(t *testing.T) {
 	}
 	if supplied.ran() {
 		t.Error("the refused leg ran the command anyway")
+	}
+
+	// And once the run has nothing left to retry, which is the state that
+	// returns before anything would attach: the flag is still an error, not a
+	// silently accepted no-op. A CLI that answers 0 to a flag it cannot honour is
+	// the same shape as a refusal naming a flag that does not exist.
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("the plain retry leg should finish the run: %v", resumeErr)
+	}
+	var finishedErr error
+	out := captureStdout(t, func() {
+		finishedErr = executeResume(parseResumeFlags(t,
+			[]string{runID, "--retry-failed", "--verify-cmd", supplied.script}), rec, nil)
+	})
+	if finishedErr == nil {
+		t.Fatalf("a finished hand-written run accepted --verify-cmd and exited 0:\n%s", out)
+	}
+	if !strings.Contains(finishedErr.Error(), "hand-written") {
+		t.Errorf("the refusal %q does not say which graph it is about", finishedErr)
 	}
 }
 

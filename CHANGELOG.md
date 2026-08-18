@@ -41,15 +41,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   construction rather than by intention: the same `VerifyCommand` value object
   (one blank-command refusal, one 10-minute ceiling, pinned by a test that parses
   the same flags through both subcommands and requires identical refusals), the
-  same trusted-code attachment at the same sinks after the same validation, the
+  same trusted-code attachment at the same sinks after the same command
+  validation and the same graph re-parse, the
   same run-wide serialization, the same engine-judged exit code, and no node
   granted anything. There is deliberately **no path only `resume` has**: `run`
   has no `--verify-cmd`, so `resume --verify-cmd` against a hand-written
   snapshot is an error rather than an attachment. A resume that supplies nothing
   while the snapshot carried a verification is still refused — with a message
   that now names a flag the command accepts, checked by a test against `resume`'s
-  own FlagSet. Pause hints for such a run print the flag back with the command in
-  it, so the copy-pasteable resume ADR 0009 promises stays copy-pasteable.
+  own FlagSet. Pause hints for such a run print the pair back with the command in
+  it — POSIX-quoted, and carrying `--verify-timeout` whenever the bound is not
+  the default — so the copy-pasteable resume ADR 0009 promises stays
+  copy-pasteable, and pasting it runs what it says.
 
 ### Added
 

@@ -337,8 +337,9 @@ policy.
 **§2 nevertheless admits a source the wording does not name: the persisted
 snapshot.** Today *"an auto snapshot contains no `success_check.verify`"* is a
 true, cheap, checkable assertion. `resume` did not make it — it reconstructs
-with `graph.Parse(snap.Graph)` (`resume.go:131`, `:239`), never re-runs
-`validatePlannedNodes`, and hands the result a real `ShellVerifier` (`:375`).
+with `graph.Parse(snap.Graph)` (`resume.go:209` in `resumeRetryLeg`, `:338` in
+`continueRun`), never re-runs `validatePlannedNodes`, and hands the result a
+real `ShellVerifier` (`:592`).
 §2 makes a verify legitimate in a planned snapshot and so **would foreclose
 that assertion**, which is why the Disposition below makes `resume` assert it
 explicitly instead of inheriting it. The
@@ -366,7 +367,7 @@ The implementation took (i)'s refusal first, because it costs nothing and the
 assertion it restores is the whole of what §2 foreclosed:
 `ReattachVerifyCommand` strips every snapshot-borne verification from an auto
 graph and returns a `*SnapshotVerifyError` when one was there, and `continueRun`
-calls it on every planned snapshot (`resume.go:244-264`; the discriminator is
+calls it on every planned snapshot (`resume.go:386`; the discriminator is
 the snapshot's non-empty `ToolPolicies`, since a hand-written graph's `verify:`
 is the user's own reviewed artifact and must round-trip untouched). So a
 `graph.json` or `state.json` edit can no longer put engine-run shell into a
@@ -410,14 +411,33 @@ untouched by construction rather than by intention:
   — pinned by a test that parses the same pair through both subcommands and
   requires the two refusals to be identical;
 - the same trusted-code attachment at the same sinks, through the same
-  `ReattachVerifyCommand`, after the same validation, disclosed the same way;
+  `ReattachVerifyCommand`, after the same `VerifyCommand` validation and the
+  same `graph.Parse` re-validation, disclosed the same way. Not the same *plan*
+  validation: as this section says thirty lines up, `resume` never re-runs
+  `validatePlannedNodes`, and the flag does not change that — what is identical
+  is the command, the value object, the ceiling and the re-parse the rebuilt
+  graph goes through, not the provenance of the graph it lands on;
 - the same serialization (`SerializedVerifyNodes`), so a resumed leg's checks do
   not interfere with each other any more than a fresh leg's do;
 - **no path only `resume` has.** `run` takes no `--verify-cmd` — a hand-written
   graph writes `verify:` on the node it means — so `resume --verify-cmd` against
   a hand-written snapshot is an error, not an attachment. Were it accepted, a
   resumed leg could attach a check no fresh run could, which would be a hole and
-  not a fix.
+  not a fix. The refusal is one function (`checkVerifyCommandApplies`,
+  `resume.go:314`) called at the subcommand's entry as well as at the
+  attachment, so it also covers the exits that never reach `continueRun` — a
+  `--retry-failed` with nothing to retry would otherwise exit 0 having quietly
+  accepted a flag that is an error in every other state.
+
+And the hint the paused leg prints is held to the same standard as the refusal
+that sends the user to it: it carries `--verify-timeout` whenever the bound is
+not the default (else the next leg's check would be the one thing that differs
+from the leg it continues), and the command is POSIX-quoted rather than wrapped
+in bare `'…'`. A `'` is legal in a `--verify-cmd` — it only stands the
+executable pre-flight down — so `sh -c 'make && ./x'` wrapped naively prints a
+line that a shell reads as a *different* evidence command followed by an extra
+command to execute. Printing an instruction the tool cannot honour is what #198
+was; a hint that does it is the same defect wearing the fix's clothes.
 
 Mechanism (ii) stays unbuilt and stays unnecessary: the persisted artifact is
 still refused rather than trusted, on both legs.

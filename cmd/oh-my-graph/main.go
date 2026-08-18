@@ -857,7 +857,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// The same pair, read for the pause hint: a resumed leg takes no
 	// verification from the run directory, so the hint has to hand the command
 	// back for the user to re-supply (ADR 0016 §4).
-	resumeVerifyCmd := ""
+	var resumeVerifyCmd coordinator.VerifyCommand
 	if serializedVerify != nil {
 		resumeVerifyCmd = injectedVerifyCommand(g)
 	}
@@ -1780,18 +1780,27 @@ func toNodeToolPolicies(policies map[string]runner.ToolPolicy) map[string]runsta
 // actually paste (ADR 0009's "one copy-pasteable command", kept for a
 // --verify-cmd run by #198).
 //
+// The BOUND comes back with it, not just the command: a run started with
+// --verify-timeout 2m whose hint offered only --verify-cmd would be resumed at
+// the 10m default, which is the one place the next leg's check would differ
+// from the leg it continues — the asymmetry ADR 0016 §4 refuses for the command
+// itself. verifyResumeSuffix decides which half needs printing.
+//
 // The first one found is the answer because attachVerification writes ONE
-// user-supplied string to every sink it attaches to; there is no shape in which
-// two sinks of one planned graph disagree. Callers gate this on the graph
-// actually being a planned one — a hand-written graph's `verify:` round-trips
-// through a resume untouched and needs no flag.
-func injectedVerifyCommand(g *graph.Graph) string {
+// user-supplied string, under ONE resolved timeout, to every sink it attaches
+// to; there is no shape in which two sinks of one planned graph disagree.
+// Callers gate this on the graph actually being a planned one — a hand-written
+// graph's `verify:` round-trips through a resume untouched and needs no flag.
+func injectedVerifyCommand(g *graph.Graph) coordinator.VerifyCommand {
 	for _, n := range g.Nodes {
 		if n.SuccessCheck.Verify != nil {
-			return n.SuccessCheck.Verify.Command
+			return coordinator.VerifyCommand{
+				Command: n.SuccessCheck.Verify.Command,
+				Timeout: n.SuccessCheck.Verify.TimeoutDuration(),
+			}
 		}
 	}
-	return ""
+	return coordinator.VerifyCommand{}
 }
 
 // verifyResupplyNote is the sentence printed under a resume command that
@@ -1810,15 +1819,39 @@ const verifyResupplyNote = "  (--verify-cmd is repeated because `resume` takes n
 // this run's sinks carry an injected evidence command. Empty for every run that
 // carries none, so the common hint is byte-identical to what it always was.
 //
-// The command is quoted the way the usage synopsis spells it. A command
-// containing a single quote is spelled back in a form the user has to fix by
-// hand; that is the same string they typed at `auto`, and inventing an escaping
-// scheme here would be a second, worse shell (see verifyShellMetachars).
-func verifyResumeSuffix(verifyCmd string) string {
-	if verifyCmd == "" {
+// The timeout is printed only when it is not the resolved default, which is
+// also the ceiling: appending `--verify-timeout 10m0s` to every hint would be
+// noise on the common path, and omitting a 2m bound the user chose would hand
+// back a weaker check than the leg being continued.
+//
+// The command is quoted the way the usage synopsis spells it, and the quoting
+// is real (shellSingleQuoted) rather than a bare wrap. `'` is deliberately IN
+// verifyShellMetachars — a --verify-cmd may contain one, it just stands the
+// pre-flight down — so a naive '%s' turns `sh -c 'make && ./x'` into a printed
+// line that runs a DIFFERENT command and then executes `./x` on its own. This
+// function's promise is that what it prints runs, and #198 is exactly the cost
+// of a printed instruction the tool cannot honour.
+func verifyResumeSuffix(v coordinator.VerifyCommand) string {
+	if !v.Supplied() {
 		return ""
 	}
-	return fmt.Sprintf(" --verify-cmd '%s'", verifyCmd)
+	suffix := " --verify-cmd " + shellSingleQuoted(v.Command)
+	// The zero value's resolved timeout IS the default, so this compares against
+	// the coordinator's own constant without exporting it.
+	if v.ResolvedTimeout() != (coordinator.VerifyCommand{}).ResolvedTimeout() {
+		suffix += fmt.Sprintf(" --verify-timeout %s", v.ResolvedTimeout())
+	}
+	return suffix
+}
+
+// shellSingleQuoted wraps s so a POSIX shell passes it through as one word,
+// byte for byte. The rule is the standard one and not an invention: inside
+// single quotes nothing is special except `'` itself, which is closed,
+// backslash-escaped and reopened. It exists ONLY for printing a command back to
+// the user — nothing here builds argv, and the engine still runs the command through
+// `sh -c` at the verify seam.
+func shellSingleQuoted(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // printPauseHint prints the exact resume commands when runErr is one of the
@@ -1830,15 +1863,16 @@ func verifyResumeSuffix(verifyCmd string) string {
 // other outcome (success or failure), so it is safe to call unconditionally
 // after every run.
 //
-// verifyCmd is the evidence command this run's sinks carry, or "" for none, and
-// it is the caller's to supply because only the caller knows whether this graph
+// verifyCmd is the evidence command this run's sinks carry (with its resolved
+// bound), or the zero VerifyCommand for none, and it is the caller's to supply
+// because only the caller knows whether this graph
 // holds an injected verification under a tool ceiling. When it is set the
 // printed command carries the flag back: `resume` drops a snapshot-borne
 // verification rather than replaying it, so a bare resume of such a run is
 // refused. A session-limit pause is exactly the shape a long auto run reaches,
 // so this is the hint that fires most often for a --verify-cmd run — and the
 // one that, printed without the flag, sends the reader into a refusal.
-func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd string) {
+func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand) {
 	resupply := verifyResumeSuffix(verifyCmd)
 	note := ""
 	if resupply != "" {
