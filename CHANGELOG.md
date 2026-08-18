@@ -16,20 +16,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   Opens the nesting non-goal ADR 0027 deferred, and settles what the deferral
   named as its price: cycle detection over *resolution* (a repeat on the
   current chain, not a global visit, so a diamond stays legal), a depth bound
-  of 3 with the argument for the number (measured need 2, one level of
-  headroom, deliberately falsifiable), and the composition rule for namespacing
-  an already-namespaced id. Decision record only — no behavior change yet;
-  `use:` inside a fragment is still a load error until the implementation
-  lands.
+  of 3 **citation hops** with the argument for the number (projected need 2,
+  one level of headroom, deliberately falsifiable), and the composition rule
+  for namespacing an already-namespaced id. It also settles what the first
+  draft left open: the top-down resolution order and parameter pass-through,
+  the lookup rule at depth (entry-file-relative, and the file dependency a
+  citing fragment cannot declare), what the run's disclosure says about
+  `Grants` and in what order, and what a single-node fragment's tokens mean
+  when a multi-node fragment cites it. Decision record only — no behavior
+  change yet; `use:` inside a fragment is still a load error until the
+  implementation lands.
 
-  The ADR also records that ADR 0027's registered falsification condition
-  fired, and that the diagnosis it fired with does not survive measurement: of
-  the 15 operator lanes that hand-write a `review → apply` pair, **0 of the 30
-  halves are `use:` citations**, so nesting is not what keeps them from citing
-  `repair-round`. The measured blocker is the fragment's fixed tool grants —
-  14 of 15 lane reviews and 13 of 15 lane applies need a grant it cannot give,
-  and a multi-node `use:` may not override one. That is named as the follow-up
-  rather than folded in here.
+  The ADR records that ADR 0027's registered falsification condition fired, and
+  — after review — **retracts its own first explanation of why**. The 28
+  operator lanes cite no `repair-round` because `repair-round.yaml` is not in
+  the `fragments/` directory they resolve against, so `use: repair-round` is a
+  load error for every one of them; those same lanes carry **28 `use:`
+  citations across 17 files**, naming every fragment that *is* there. Neither
+  "nesting is the blocker" nor "the tool grants are the blocker" is measured;
+  the grant mismatch is real but untested, and the experiment that would settle
+  it is one file copy. Numbers, definitions and an asserting script:
+  `docs/measurements/0029-repair-round-was-never-in-reach-of-the-lanes.md`.
 
 ### Fixed
 
