@@ -18,9 +18,19 @@ import (
 // The three ids below are exactly that collision under '_': they all sanitize
 // to a_b_c. Under '~' they stay three files, because '~' is outside
 // nodeIDPattern's character class and so cannot appear in any authored segment.
+//
+// The DEPTH cases are ADR 0029's load-bearing claim, checked rather than
+// assumed: a fragment may now cite a fragment, so an id composes to `a/b/c` and
+// beyond. The argument does not change with the number of joins — '/' and '~'
+// are both outside the atom charset, so `a/b/c → a~b~c` and nothing else in the
+// admitted domain lands there — which is why this needs no snapshot, feed or
+// ledger change, only these rows.
 func TestSanitizeNodeID_IsInjectiveOverTheIDsTheLoaderAdmits(t *testing.T) {
 	seen := make(map[string]string)
-	for _, id := range []string{"a/b_c", "a_b/c", "a_b_c", "a/b.c", "a.b/c", "qa-a/impl", "qa-a_impl"} {
+	for _, id := range []string{
+		"a/b_c", "a_b/c", "a_b_c", "a/b.c", "a.b/c", "qa-a/impl", "qa-a_impl",
+		"a/b/c", "a/b/c_d", "a/b_c/d", "a_b/c/d", "a_b_c_d", "lane-a/gate/e2e", "lane-a/gate_e2e",
+	} {
 		name := SanitizeNodeID(id)
 		if other, clash := seen[name]; clash {
 			t.Errorf("node ids %q and %q both sanitize to %q — two nodes, one artifact file", other, id, name)

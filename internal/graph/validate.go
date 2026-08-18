@@ -333,15 +333,24 @@ const nodeIDSegment = `[A-Za-z0-9][A-Za-z0-9._-]*`
 var nodeIDSegmentPattern = regexp.MustCompile(`^` + nodeIDSegment + `$`)
 
 // nodeIDPattern is the shape a VALIDATED node id must take: one segment, or
-// two joined by a single '/' — the `<using-id>/<internal-id>` a multi-node
-// fragment splice mints (ADR 0027). Validate accepts the joined form as the
+// several joined by single '/'s — the `<using-id>/<internal-id>` a multi-node
+// fragment splice mints (ADR 0027), composed once per citation hop when a
+// fragment cites a fragment (ADR 0029: `top` + `core` → `top/core`, then
+// `+ make` → `top/core/make`). Validate accepts the joined form as the
 // backstop it is: it cannot tell a spliced graph from a hand-written one and
 // must not learn, and a resumed leg re-parses a snapshot that already holds
 // joined ids. The refusal of an AUTHORED '/' lives where authorship happens —
 // graph.refuseAuthoredNamespaces for a file, coordinator.validatePlannedNodeID
 // for a planner reply — because those two are the only places an id is written
-// rather than read.
-var nodeIDPattern = regexp.MustCompile(`^` + nodeIDSegment + `(?:/` + nodeIDSegment + `)?$`)
+// rather than read; each tests for the PRESENCE of a '/', never for how many,
+// so depth needs no new refusal.
+//
+// Depth is bounded by the citation chain (ADR 0029 §3), not here: an id's
+// segment count is a consequence of how many multi-node hops a chain took, and
+// a chain of single-node hops adds none at all. There is still no bound on an
+// id's LENGTH — see nodeIDSegment above; injectivity of the on-disk spelling is
+// proven (handoff.SanitizeNodeID), writability is not.
+var nodeIDPattern = regexp.MustCompile(`^` + nodeIDSegment + `(?:/` + nodeIDSegment + `)*$`)
 
 // validateNodeIDs enforces that every node id is a single safe path element.
 // An empty id is skipped here — validateNodesUnique already reports it, and

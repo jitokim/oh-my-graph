@@ -10,6 +10,177 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A node inside a fragment file may carry `use:`/`with:` — a fragment may
+  cite a fragment** (ADR 0029). A loop can now hold a loop, and the shape a
+  graph reuses no longer has to be the shape whose halves happen to be inline.
+  Resolution became recursive descent through one code path used at every
+  depth, so a nested `use:` is judged by exactly the rules a top-level one is:
+
+  ```yaml
+  # graphs/fragments/gated-lane.yaml — the shipped instance
+  fragment: gated-lane
+  exit: pr
+  nodes:
+    - { id: dev, prompt: "{{ with.task }}", … }     # inline: no shape to cite
+    - { id: e2e,    use: e2e-verify,  depends_on: [dev] }
+    - { id: review, use: review-style, depends_on: [e2e], feedback: { rerun: dev, max: 1 } }
+    - { id: pr,     use: pr-publish,  depends_on: [review] }
+  ```
+
+  ```console
+  $ oh-my-graph lint graphs/backlog-batch.yaml
+  fragment: node "lane-a" spliced from "gated-lane" (…) — nodes: lane-a/dev, lane-a/e2e, lane-a/review, lane-a/pr — allowed_tools resolved from with: lane-a/dev: Read, Edit, Write, Bash(git *), Bash(go *), Bash(make *)
+  fragment: node "lane-a/e2e" spliced from "e2e-verify" (…)
+  fragment: node "lane-a/review" spliced from "review-style" (…) — node overrides: success_check
+  fragment: node "lane-a/pr" spliced from "pr-publish" (…)
+  ```
+
+  The rules, each a decision the ADR argues rather than an implementation
+  detail:
+
+  - **A cycle is a repeat on the CURRENT citation chain** — a load error naming
+    the cycle in order (`top → mid → back → top`), charged to the file whose
+    `use:` line closes it, because that is the one a reader can delete. Chain
+    membership, not a global visited set: a *diamond* — two loops citing one
+    leaf, or one loop citing a leaf twice — is exactly what fragments are for
+    and stays legal.
+  - **The chain is bounded at 3 citation hops**, checked before the cited file
+    is read, so a runaway arrives as a message rather than as a hang or a stack
+    overflow. Hops are fragment FILES, not id segments: three multi-node hops
+    mint a four-segment id, three single-node hops mint none, and an alias hop
+    spends the budget anyway because what is bounded is how far the loader
+    walks. The number is projected need (2) plus one level of headroom, and it
+    is deliberately small enough to be *reachable* — a bound of 16 could never
+    be shown to be wrong.
+  - **Namespacing composes left-to-right by the same join** — `top` + `core` →
+    `top/core`, then `+ make` → `top/core/make` — and decomposition stays
+    unique because an atom cannot contain the delimiter. `nodeIDPattern`'s
+    `(?:/segment)?` became `*`; it is a widening of the *backstop* only, and it
+    needs no new authorship refusal, because each of the three existing ones
+    tests for the PRESENCE of a `/` and never for how many.
+  - **`exit:` is transitive**, so a loop whose exit is itself a loop still
+    exposes exactly one value from outside: its transitive exit's artifact.
+    `depends_on` inheritance chains the same way, one level at a time, and
+    `cwd`/`worktree` propagate by value through every level.
+  - **Parameter pass-through works, and falls out of the resolution order
+    rather than being added to it.** Each level namespaces its own file's text,
+    *then* substitutes its own bindings, *then* descends — so a value bound at
+    any using site is never id-rewritten by any level, at any depth. That is
+    ADR 0027's guarantee extended, not a hole in it.
+  - **A nested `use:` name must be a literal.** `use: "{{ with.which }}"` is a
+    load error: the chain, the cycle check and the bound are all decided before
+    the cited file is read, so a citation whose target came from a binding would
+    make which files a graph pulls behavior from depend on data.
+  - **A single-node fragment may not cite a multi-node one** — its body splices
+    *onto* the citing node and declares no id, so there is no namespace to mint
+    `<id>/<internal>` in. Citing another single-node fragment is an alias and is
+    fine — except that an alias may not write its own `prompt:`: it relays the
+    cited fragment's behavior, and one that rewrites the prompt is claiming that
+    fragment's name while replacing what it does. A single-node body cited from
+    *inside* a fragment has its tokens namespaced against the citing fragment's
+    declared ids, and a token naming an id that fragment does not declare is a
+    load error charged to the citing site.
+  - **A fragment file's own `use:` is judged against the file.** The literal-name
+    rule, the `prompt:`-alongside-`use:` refusal above, and a dead `with:` (a
+    binding with no `use:` to bind) are facts about the file, so all three are
+    reported once, against it, naming the file the text is written in — never at
+    splice time charged to whichever node happened to cite it.
+  - **Lookup stays a pure function of the ENTRY file's path at every depth**, so
+    a fragment that cites a fragment depends on a file its own author cannot
+    ship with it. No manifest, no pre-flight check — what is owed instead is in
+    the message: an error below depth 1 names **the chain**, so a reader who
+    never wrote `e2e-verify` is told which fragment did, and that the citing
+    `use:` is in a fragment file rather than in their graph.
+  - **One disclosure line per resolution, parent line first.** A nested line's
+    node id is the already-namespaced id of the node that cited the fragment, so
+    the ids alone say the shape of the tree without opening a file. `Spliced`
+    names only ids that exist in the resolved graph, so a parent line
+    deliberately *undercounts* a subtree containing a nested loop — the lines
+    below it are what answer "how big did this get". A resolution also carries
+    its `Depth` (the chain length), because the id's slash count is a different
+    quantity: a single-node hop mints no segment, so an alias chain two files
+    deep is a nested resolution with no slash in its id at all.
+
+  **No snapshot, feed or ledger change**, which was the ADR's load-bearing
+  claim and its own falsification condition. `internal/runstate`,
+  `internal/runfeed` and `internal/ledger` hold a node id as an opaque string,
+  and `handoff.SanitizeNodeID` is injective at any depth for exactly the reason
+  it was at one: `/` and `~` are both outside the atom charset, so `a/b/c →
+  a~b~c.out` collides with nothing. The only edit outside the loader's own
+  resolution path is one regex character. What moves outside is *output*: ids
+  grow segments and one `use:` now yields several disclosure lines.
+
+  What it does **not** claim: adoption. Nesting is a precondition for the
+  conversion below, and nothing measured says it is what unblocks the operator
+  lanes — see the retraction in the ADR entry further down. The falsification
+  condition is now a test rather than a paragraph
+  (`TestNestingHasAShippedAdopter`): if no shipped graph carries a chain of
+  length 2, the build fails and the ADR says to reopen. It asks the resolution's
+  `Depth` rather than counting slashes in its node id, so it measures the
+  quantity it names.
+
+- **ADR 0029 — a fragment may cite a fragment, bounded by a chain and a depth.**
+  Opens the nesting non-goal ADR 0027 deferred, and settles what the deferral
+  named as its price: cycle detection over *resolution* (a repeat on the
+  current chain, not a global visit, so a diamond stays legal), a depth bound
+  of 3 **citation hops** with the argument for the number (projected need 2,
+  one level of headroom, deliberately falsifiable), and the composition rule
+  for namespacing an already-namespaced id. It also settles what the first
+  draft left open: the top-down resolution order and parameter pass-through,
+  the lookup rule at depth (entry-file-relative, and the file dependency a
+  citing fragment cannot declare), what the run's disclosure says about
+  `Grants` and in what order, and what a single-node fragment's tokens mean
+  when a multi-node fragment cites it. **Implemented in the same release** —
+  see the two entries above.
+
+  The ADR records that ADR 0027's registered falsification condition fired, and
+  — after review — **retracts its own first explanation of why**. The 28
+  operator lanes cite no `repair-round` because `repair-round.yaml` is not in
+  the `fragments/` directory they resolve against, so `use: repair-round` is a
+  load error for every one of them; those same lanes carry **28 `use:`
+  citations across 17 files**, naming every fragment that *is* there. Neither
+  "nesting is the blocker" nor "the tool grants are the blocker" is measured;
+  the grant mismatch is real but untested, and the experiment that would settle
+  it is one file copy. Numbers, definitions and an asserting script:
+  `docs/measurements/0029-repair-round-was-never-in-reach-of-the-lanes.md`.
+
+### Changed
+
+- **`backlog-batch`'s lane A is one node citing a nested loop.** Four nodes
+  (`dev-a`, `e2e-a`, `review-a`, `pr-a`) became one `use: gated-lane`, which
+  splices `lane-a/dev`, `lane-a/e2e`, `lane-a/review`, `lane-a/pr` — the middle
+  three by citing `e2e-verify`, `review-style` and `pr-publish` in turn. This is
+  the adopter ADR 0029 requires rather than offers, and lane A was the *hardest*
+  lane to convert precisely because three of its four nodes were already
+  citations.
+
+  The gate PAIR moved into the fragment together — a narrowed review
+  `success_check` and a `feedback:` arc back to the implementer are one
+  mechanism, and both now ride on an internal node citing a single-node
+  fragment, where ADR 0027 already allows both keys. The two paragraphs
+  explaining why each key is there moved with them. The implementer's tool grant
+  became a substitution point, because a grant is the knob lanes vary most and a
+  multi-node `use:` may declare wiring only; PR #197 made a grant arriving
+  through a binding visible in the run log, which is what makes parameterizing
+  it honest rather than hidden.
+
+  **Lane B did not convert, and that is a finding rather than an omission.** It
+  ADVISES where lane A gates, and the difference is the *presence* of two keys,
+  which no substitution point can bind into or out of existence — so one
+  fragment cannot serve both dispositions. The graph's header says so as rule 7.
+  The shipped pair (`self-dev`, `dev-review-pr`) is not converted either: ADR
+  0013's equivalence freeze is keyed on node id, the splice renames all four
+  masked nodes, and no mask entry can express a break whose cause *is* the key.
+  That evidence is one-time and impossible to reproduce, and a demonstration is
+  not worth spending it.
+
+  Blast radius grows a hop: an edit to `e2e-verify` now moves a node in
+  `backlog-batch`, which never names it. The goldens under
+  `internal/graph/testdata/golden/` still put that in a reviewer's diff — two
+  files away from the file that changed.
+
 ### Fixed
 
 - **`resume` learns `--verify-cmd` / `--verify-timeout`, so a run that paused on

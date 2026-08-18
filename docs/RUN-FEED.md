@@ -33,7 +33,10 @@ separator) replaced by `~`** — one file per node, flat, in one directory. That
 rule is a no-op for every id an author or a planner can write: both are held to
 one path element, and `~` is outside the id character set. It exists for the
 ids a MULTI-NODE fragment splice mints, `<using-id>/<internal-id>` (ADR 0027),
-which cannot be a filename as written. The replacement is `~` rather than `_`
+which cannot be a filename as written. Since ADR 0029 a fragment may cite a
+fragment, so an id may carry SEVERAL slashes (`lane-a/gate/e2e`); the rule is
+stated per character and is unchanged by the count — replace every one. The
+replacement is `~` rather than `_`
 precisely so the map is injective: with `_`, the distinct nodes `a` + `b_c`,
 `a_b` + `c` and a hand-written `a_b_c` would share one file, and a consumer
 reading it would be handed another node's result with nothing failing. A

@@ -453,15 +453,17 @@ nodes:
 			wantErr:   `node "impl" declares "cwd"`,
 		},
 		{
-			// `prompt2`, not `prompt`: this case's subject is refuseNestedUse,
-			// and the key only has to keep `{{ with.task }}` referenced so the
-			// substitution checks stay quiet and the nesting refusal is what
-			// fires. "Correcting" it to `prompt` changes which rule the case
-			// proves, and it would still pass — for the wrong reason.
-			name:      "internal node citing another fragment",
+			// An internal node MAY cite a fragment since ADR 0029; what it may
+			// not do is name it from a binding. `prompt2`, not `prompt`: this
+			// case's subject is judgeFragmentUse, and the key only has to keep
+			// `{{ with.task }}` referenced so the substitution checks stay quiet
+			// and the literal-name refusal is what fires. "Correcting" it to
+			// `prompt` changes which rule the case proves, and it would still
+			// pass — for the wrong reason.
+			name:      "internal node citing a fragment named by a binding",
 			entry:     using(citeLoop),
-			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, use: other, prompt2: \"{{ with.task }}\" }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\" }\n")},
-			wantErr:   "fragments do not reference fragments",
+			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, use: \"{{ with.task }}\", prompt2: \"{{ with.task }}\" }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\" }\n")},
+			wantErr:   "whose name carries a {{ … }} token",
 		},
 		{
 			name: "behavior key on a multi-node use",

@@ -527,6 +527,66 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 	}
 }
 
+// TestNestingHasAShippedAdopter is ADR 0029's own falsification condition,
+// turned into a test rather than left as a paragraph. ADR 0027 shipped the
+// multi-node fragment with no adopter, and the number that was supposed to
+// judge it went unmeasured for three weeks; this one fails the build instead.
+//
+// It asserts the two claims a reader of a run log depends on, and nothing more:
+//
+//   - SOME shipped graph carries a citation chain of length 2 — a `use:`
+//     resolved from inside a fragment file. Today that is `backlog-batch`'s
+//     lane A, whose four nodes are one node citing `gated-lane`, which cites
+//     `e2e-verify`, `review-style` and `pr-publish` in turn. If it goes to
+//     zero, the mechanism is unexercised by anything the repo ships and the ADR
+//     says to reopen rather than keep it.
+//   - Every nested resolution is disclosed AFTER the line that minted its id
+//     (ADR 0029 §5). That ordering is the whole legibility argument: a nested
+//     line's NodeID is an id no author wrote, so it locates nothing unless the
+//     line above explains where it came from.
+//
+// The nesting count reads FragmentResolution.Depth, which is the chain length
+// itself. A slash in the NodeID is not the same quantity and must not be used
+// as a stand-in for it: a single-node hop mints no segment, so an alias chain
+// two files deep is a genuine nested resolution whose id has no slash at all.
+// Counting slashes would let this falsification condition fire on a repo that
+// does nest — the counter announcing a retreat that never happened.
+func TestNestingHasAShippedAdopter(t *testing.T) {
+	nested := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		announced := make(map[string]bool, len(loaded.Resolutions))
+		for _, res := range loaded.Resolutions {
+			if res.Depth >= 2 {
+				nested++
+			}
+			// The ordering claim is about a MINTED id, so it is the slash that
+			// asks it: a nested line whose id has one names a node the line
+			// above created, and that line must already have gone by.
+			if prefix, _, isNamespaced := cutLast(res.NodeID, "/"); isNamespaced && !announced[prefix] {
+				t.Errorf("%s: resolution at %q is disclosed before the line that minted that id — a nested resolution's NodeID is an id no author wrote, so a reader can only place it from the line above", name, res.NodeID)
+			}
+			announced[res.NodeID] = true
+		}
+	}
+	if nested == 0 {
+		t.Error("no shipped graph cites a fragment from inside a fragment any more — ADR 0029's mechanism now has no adopter in graphs/, which is the condition the ADR registered as its own falsification: reopen it rather than keeping an unexercised primitive")
+	}
+}
+
+// cutLast splits s at its LAST occurrence of sep. strings.Cut takes the first,
+// which for a namespaced id would name the wrong parent at depth 3.
+func cutLast(s, sep string) (before, after string, found bool) {
+	i := strings.LastIndex(s, sep)
+	if i < 0 {
+		return s, "", false
+	}
+	return s[:i], s[i+len(sep):], true
+}
+
 // qualifierClause is the one unbroken line every shipped prefix verdict carries
 // (DESIGN.md, "Verdict patterns"), written on one line precisely so that
 // grepping for it is a sweep that cannot silently miss a node.

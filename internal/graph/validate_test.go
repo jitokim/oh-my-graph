@@ -688,7 +688,7 @@ nodes:
 // surface mid-run as a filesystem escape — after other nodes have already run
 // and been paid for. Same rule as the worktree name, for the same reason.
 func TestParse_NodeIDUnsafeRejected(t *testing.T) {
-	for _, id := range []string{`a\b`, "../escape", ".hidden", "-flag", "has space", "a/b/c", "a//b", "a/", "/b", "a/.hidden"} {
+	for _, id := range []string{`a\b`, "../escape", ".hidden", "-flag", "has space", "a//b", "a/", "/b", "a/.hidden", "a/b/", "a/b//c", "a/b/.hidden"} {
 		t.Run(id, func(t *testing.T) {
 			_, err := Parse([]byte(`
 name: bad-node-id
@@ -729,21 +729,33 @@ nodes:
 // The refusal of an AUTHORED '/' is not weakened by this; it moves to the two
 // places an id is WRITTEN rather than read: the file loader
 // (TestLoadFile_MultiNodeLoadErrors, "authored node id carrying the namespace
-// separator") and the coordinator (nodeFieldDispositions["ID"]). Exactly one
-// slash, each side an otherwise
-// valid segment — every other shape stays refused above.
+// separator") and the coordinator (nodeFieldDispositions["ID"]). Each side of
+// each slash an otherwise valid segment — every other shape stays refused above.
+//
+// ADR 0029 widens the count from one slash to any number, because a fragment
+// may now cite a fragment and `top` + `core` + `make` composes to
+// `top/core/make`. It is a widening of the BACKSTOP only, and it needs no new
+// authorship refusal: each of the three refusals tests for the PRESENCE of a
+// '/', never for how many. Depth is bounded by the citation chain
+// (maxFragmentChain), not by this grammar — a chain of single-node fragments
+// mints no segments at all, so the two counts are not the same quantity.
 func TestParse_NamespacedNodeIDAcceptedAsBackstop(t *testing.T) {
 	g, err := Parse([]byte(`
 name: spliced
 nodes:
   - { id: qa-a/impl, prompt: a }
   - { id: qa-a/review, prompt: b, depends_on: [qa-a/impl] }
+  - { id: qa-a/gate/e2e, prompt: c, depends_on: [qa-a/review] }
+  - { id: qa-a/gate/pr, prompt: d, depends_on: [qa-a/gate/e2e] }
 `))
 	if err != nil {
 		t.Fatalf("a spliced id must validate — a resumed snapshot is full of them: %v", err)
 	}
 	if _, ok := g.NodeByID("qa-a/review"); !ok {
 		t.Errorf("namespaced node id did not survive parsing")
+	}
+	if _, ok := g.NodeByID("qa-a/gate/pr"); !ok {
+		t.Errorf("a nested-splice node id did not survive parsing")
 	}
 }
 
