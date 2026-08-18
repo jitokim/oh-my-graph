@@ -6,6 +6,17 @@ and Failure modes make mandatory. The central claim held under implementation:
 no snapshot, feed or ledger file changed, and the only edit outside the loader's
 own resolution path is one regex character in `validate.go`.
 
+**Where the addresses point.** This ADR was written before its code, so its
+addresses were pinned to the tree it measured: `00d0bd7`, the `main` this branch
+left. Every one of them resolves exactly there, and the Context and Failure-mode
+sections are ABOUT that tree — what the loader refused, what `backlog-batch`
+looked like before lane A was converted — so they are left pinned to it and must
+be read against it. The Decision sections describe the code this change shipped,
+where a line number would have gone stale the moment the diff landed, so those
+addresses are **symbolic**: a file and a function name, which survive the next
+refactor and are what a reader greps for anyway. The shipped adopter is
+`graphs/fragments/gated-lane.yaml`, cited from `backlog-batch`'s lane A.
+
 **Date:** 2026-08-19
 
 **Revised:** 2026-08-19, before any code existed, after design review. The
@@ -48,10 +59,10 @@ The first version of this ADR read that zero as a *choice* — "they can cite
 reading is retracted, by an `ls`.** `repair-round.yaml` is not in the directory
 those 28 lanes resolve a `use:` against. Resolution is a pure function of the
 entry file's path — `filepath.Join(filepath.Dir(entryPath), "fragments",
-name+".yaml")` (`internal/graph/fragment.go:1017`), the rule stated at
-`fragment.go:24-26` — and that directory holds four files, none of them
+name+".yaml")` (`internal/graph/fragment.go`, `loadFragmentCached`), the
+rule stated in that file's package comment — and that directory holds four files, none of them
 `repair-round.yaml`. So `use: repair-round` in any of those lanes is a load
-error today (`fragment.go:1035`). **The zero is a missing file.**
+error today (`loadFragmentFile`'s missing-file branch). **The zero is a missing file.**
 
 Nor are those lanes shy of fragments. The same parse counts **28 `use:`
 citations across 17 of the 28 files**, naming all four fragments that *are* in
@@ -175,20 +186,21 @@ depth-3 graph. All three of its findings were re-checked against the code on
    stretched.**
 
 2. **The grammar survives depth.** `nodeIDPattern`
-   (`internal/graph/validate.go:344`) is `seg(?:/seg)?`; the change is `?` →
-   `*`, and `nodeIDSegmentPattern` (`:333`) already exists for the checks that
+   (`internal/graph/validate.go`) was `seg(?:/seg)?`; the change is `?` →
+   `*`, and `nodeIDSegmentPattern` already exists for the checks that
    need a whole segment. ADR 0027 predicted this exact edit and said not to
    re-litigate the delimiter when the scope opened. It is not re-litigated.
 
 3. **The real work is that resolution is single-pass.** `resolveFragments`
-   (`internal/graph/fragment.go:468`) walks the entry document's `nodes:`
-   sequence **once**, and `spliceLoop` (`:879`) deep-copies each internal node
+   (`internal/graph/fragment.go`) walks the entry document's `nodes:`
+   sequence **once**, and `spliceLoop` deep-copies each internal node
    and appends it without ever re-entering `resolveNode`. Lift the refusal
    alone and a nested `use:` survives the splice into the resolved graph, where
-   `Validate` reports "unresolved fragment reference" (`validate.go:620`) — a
+   `Validate` reports "unresolved fragment reference"
+   (`validate.go`, `validateFragmentsResolved`) — a
    correct error about a graph nobody wrote. `refuseNestedUse`'s own comment had
    this right from the beginning: *"single-pass resolution, no cycle detection
-   needed"* (`fragment.go:1451`). The earlier operator claim that this was "two
+   needed"* (`fragment.go`, `refuseNestedUse`, since replaced). The earlier operator claim that this was "two
    lines" was wrong.
 
 ## Decision
@@ -203,17 +215,17 @@ names from the entry graph to the file currently being spliced.
 **The order is top-down, and this is the one thing the implementation may not
 get backwards.** For each internal node of a fragment being spliced at using id
 `U`: (a) namespace that node against *this* level's declared ids, minting
-`U/<internal>` — `namespaceNode` (`fragment.go:957`); (b) substitute *this*
-level's bindings into it — `substituteBody` (`fragment.go:910`); (c) only then,
+`U/<internal>` — `namespaceNode`; (b) substitute *this*
+level's bindings into it — `substituteBody`; (c) only then,
 if the resulting node still carries a `use:`, descend with `U/<internal>` as the
 next level's using id. The first draft of this ADR said "before that node is
 namespaced", which is bottom-up and contradicts §4 ("the prefix at each level is
 the id the level above already minted") and §6 ("a nested loop registered
 `top/core` in the same map"). The code says which one is right twice over:
-`namespaceNode`'s token rewrite is gated on `frag.declares` (`fragment.go:959`),
+`namespaceNode`'s token rewrite is gated on `frag.declares`,
 which holds only *this* level's un-namespaced atoms, so a level's rewrite has to
 run while its ids are still atoms; and `out.loops` is keyed by the using id
-(`fragment.go:797`), which §6 requires to be the fully minted `top/core`.
+(`resolveNode`'s multi-node branch), which §6 requires to be the fully minted `top/core`.
 Descending first would leave a level's own `{{ artifacts.<sibling> }}` tokens
 pointing at a key nobody registered — a graph that loads clean, is paid for, and
 dies at run time, which is the failure class this ADR exists to keep closed.
@@ -238,7 +250,7 @@ any depth.** That is why the composition is an extension of the rule and not a
 hole in it.
 
 **A nested `use:` name must be a literal.** `use: "{{ with.which }}"` is a load
-error, for the same reason `fragmentNamePattern` (`fragment.go:766`) already
+error, for the same reason `fragmentNamePattern` already
 refuses a path: the chain, the cycle check and the depth bound are all decided
 before the first byte of the cited file is read, and a citation whose target is
 a bound value would make the citation graph depend on data. `with:` values pass
@@ -247,7 +259,7 @@ through; the `use:` name does not come from one.
 **Lookup stays a pure function of the ENTRY file's path, at every depth — and
 that creates a file dependency a fragment cannot declare.** `use: X` inside a
 fragment resolves to `<dir of the entry graph>/fragments/X.yaml`, the same join
-as at depth 1 (`fragment.go:1017`). The alternative — resolve relative to the
+as at depth 1 (`loadFragmentCached`). The alternative — resolve relative to the
 *citing fragment's* directory — is refused because a fragment already lives in
 `fragments/`, so it would mean `fragments/fragments/`, inventing a second
 location for the one thing ADR 0013 gave exactly one. The consequence is real
@@ -295,7 +307,7 @@ cache is memoisation keyed by name, the chain is a property of the path taken
 to get here, and conflating them is what makes a cycle invisible.
 
 Keeping the cache has one consequence at depth that the first draft left
-unstated. `chargeTo` (`fragment.go:1000-1009`) hands a file's errors to the
+unstated. `chargeTo` hands a file's errors to the
 **first** using node and an empty slice to every later one, so a broken or
 missing fragment file is reported once per pass, on whichever citation path
 document order reached first. At depth, that means the chain printed in the
@@ -429,7 +441,7 @@ both properties in a form that never mentioned a count of joins; this ADR
 consumes them at N joins rather than restating them.
 
 **There is still no bound on an id's LENGTH, and this ADR does not add one.**
-`nodeIDSegment` (`validate.go:320`) is `[A-Za-z0-9][A-Za-z0-9._-]*` — unbounded
+`nodeIDSegment` (`validate.go`) is `[A-Za-z0-9][A-Za-z0-9._-]*` — unbounded
 — so an id whose sanitized form exceeds a filesystem's 255-byte name limit is
 expressible, and `<id>.out` would fail to write. That is a property of the
 grammar, not of nesting: one 300-character segment does it at depth 0 today.
@@ -464,7 +476,17 @@ top/review-security: spliced review-security (…)
 
 A reader learns from three lines that one `use:` became a tree, and learns the
 shape of the tree from the ids alone, without opening a file. **No new field is
-added** to `FragmentResolution`.
+added** to `FragmentResolution` for the printed line's sake.
+
+*Amended after review.* One field was added, and not for the printed line:
+`Depth`, the chain length this resolution stands at the end of. The draft
+assumed "did anything nest" could be read back off the ids, and the repo's own
+falsification test was written that way — counting a `/` in `NodeID`. That is a
+different quantity. A single-node hop mints no segment, so an alias chain two
+files deep is a genuine nested resolution with no slash in its id at all, and
+the slash count would have read a nesting repo as a flat one — the ADR's own
+counter announcing a retreat that never happened. A consumer asking about
+nesting must be able to ask for it, so the resolution states it.
 
 The line count is bounded, and the bound is the answer to "do not let it grow
 unboundedly": one line per `use:` site actually resolved, which can never
@@ -474,7 +496,7 @@ at. Depth cannot inflate it — depth only lengthens the ids.
 Four consistency rules the implementation owes:
 
 - **A parent's line is appended BEFORE the descent, not after.** `resolveNode`
-  appends its resolution *after* `spliceLoop` returns (`fragment.go:791-801`).
+  appends its resolution *after* `spliceLoop` returns.
   Left as is, a nested resolution performed inside the splice would append its
   line first and the output above would print bottom-up — children before the
   parent that explains them. The line order is the whole legibility argument, so
@@ -500,7 +522,7 @@ Four consistency rules the implementation owes:
   precisely to make a tool grant assembled *across files* visible in the run
   log, and depth is where a grant is assembled across three. The rule is the
   existing one, unmoved: `spliceLoop` fingerprints the grant after namespacing
-  and before/after substitution (`fragment.go:907-917`), so each level announces
+  and before/after substitution, so each level announces
   the grants **its own** bindings changed, tagged with the id of the node that
   will actually run with them. Pass-through (§1) means a value the entry graph
   bound can surface on a line two levels down; what connects them is the id
@@ -567,8 +589,7 @@ Four consistency rules the implementation owes:
 
 - **An internal node that cites a multi-node fragment cannot carry the level
   above's `feedback:` arc — and that, not the depth bound, is the real ceiling
-  on what nesting folds.** `multiNodeUsingKeys` (`fragment.go:387-389`, checked
-  at `:892`) admits `id`, `use`, `with`, `depends_on`, `cwd`, `worktree` and
+  on what nesting folds.** `multiNodeUsingKeys` (checked in `spliceLoop`) admits `id`, `use`, `with`, `depends_on`, `cwd`, `worktree` and
   nothing else, at every level. So a fragment may hold a nested loop, or it may
   wrap that node in a feedback arc of its own, never both. This is the same
   constraint that kills the `backlog-batch` shared-fragment fallback in Failure
@@ -610,8 +631,8 @@ A multi-node fragment whose internal node cites a **single-node** fragment is
 the shape lane A converts into, so it is the first shape this ADR will actually
 build — and it makes one existing sentence ambiguous. The rule today is
 explicit: *"a single-node fragment declares no ids, so its tokens deliberately
-name the USING graph's nodes"* (`fragment.go:1150-1153`), bounded by exactly one
-thing — the token's id may not contain a `/` (`:1163`). When the using graph is
+name the USING graph's nodes"* (`loadFragmentFile`'s single-node branch), bounded by exactly one
+thing — the token's id may not contain a `/`. When the using graph is
 itself a fragment, that sentence has two readings and the first draft chose
 neither:
 
@@ -640,7 +661,7 @@ does not declare.** At depth 1 such a token legitimately names a node of the
 citing *graph* and stays advisory (`handoff.LintPlaceholders`). Inside a
 fragment there is no citing graph to name — it would resolve against whichever
 graph happened to cite the outer fragment, which is precisely the leak the
-multi-node invariant refuses at `fragment.go:1140-1148`. It is charged to the
+multi-node invariant refuses in `loadFragmentFile`. It is charged to the
 **citing site** — the internal node's `use:`, with the chain — not to the inner
 file, which is legal in isolation and may be cited perfectly well from a plain
 graph. The three fragments this will first apply to make no such reference:
@@ -652,6 +673,35 @@ error exists for the shape that comes after it.
 An alias hop mints nothing and therefore rewrites nothing: it passes the
 enclosing namespace straight through to the next single-node body, which is
 judged against the same `declares` as its citer.
+
+**An alias may not write its own `prompt:` — decided here, not derived.** This
+draft said an alias "is fine" and left it there, which left one shape undecided:
+a fragment file whose `node:` declares both a `prompt:` and a `use:`. Nothing in
+the mechanism forces an answer — the body would splice perfectly well, the
+prompt simply winning over the cited fragment's. The answer is **refused**, for
+the reason the citing-site rule already gives one file over: a wholesale prompt
+override recreates the copy-variation drift fragments exist to kill while still
+claiming the cited fragment's name. An alias RELAYS behavior; one that rewrites
+the prompt is not relaying it. Customize through the cited fragment's declared
+substitution points, or drop the `use:` and write the node out.
+
+It is judged **against the file**, in `judgeFragmentUse`, not at the citing site.
+That placement is the whole point of recording this: the first implementation
+caught the same shape at splice time, where an alias's re-entry saw the fragment
+body's keys already overlaid onto the reader's node and reported a `prompt:` two
+files away as if the reader had written it. A fragment file's judgment is a fact
+about the file (ADR 0013), and this is one.
+
+The same sentence settles the shape the ADR-0029 split dropped by accident: a
+fragment file whose node declares a `with:` with no `use:`. The pre-0029
+`refuseNestedUse` fired on **either** key, so it was a file error; the successor
+returned early on a nil `use:` and it became a splice-time error charged to the
+citing node — and, for a single-node fragment, only *after* the body had been
+overlaid. `judgeFragmentUse` refuses it at file level again, at both the
+single-node and the internal-node site. What is left in `resolveNode` is the
+entry graph's own dead `with:`, at depth 0, which is what keeps
+`FragmentError.Chain`'s "its last element is `Fragment`" true rather than
+aspirational.
 
 ## Explicit non-goals
 

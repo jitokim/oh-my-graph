@@ -450,9 +450,19 @@ the file being spliced.
 - **A single-node fragment may not cite a multi-node one**: its body is spliced
   *onto* the citing node and declares no id, so there is no namespace to mint
   `<id>/<internal>` in. Citing another single-node fragment is an alias and is
-  fine. A single-node body cited from *inside* a fragment has its tokens
-  namespaced against the citing fragment's declared ids, and a token naming an id
-  that fragment does not declare is a load error charged to the citing site.
+  fine — except that an alias may not write its own `prompt:`: it RELAYS the
+  cited fragment's behavior, and one that rewrites the prompt is claiming that
+  fragment's name while replacing what it does, which is the same drift the
+  citing-site rule refuses one file over. A single-node body cited from *inside*
+  a fragment has its tokens namespaced against the citing fragment's declared
+  ids, and a token naming an id that fragment does not declare is a load error
+  charged to the citing site.
+- **A fragment file's own `use:` is judged against the FILE.** The literal-name
+  rule, the `prompt:`-alongside-`use:` refusal above and a dead `with:` (a
+  binding with no `use:` to bind) are all facts about the file, decidable with no
+  citing site in hand, so all three are reported once, against it. Left to splice
+  time the same defect arrives charged to the citing node — about text in a file
+  that node's author may never have opened.
 - **A node that cites a multi-node fragment still cannot carry a `feedback:`
   arc** — wiring only, at every level — and that, not the depth bound, is the
   real ceiling on what nesting folds. An author who needs a gated nested loop
@@ -464,7 +474,10 @@ the file being spliced.
   parent's line is printed **before** the descent's. `Spliced` names only ids
   that exist in the resolved graph, so a parent line deliberately undercounts a
   subtree containing a nested loop — the lines below it answer "how big did this
-  get".
+  get". `Depth` carries the chain length, stated rather than inferred: a
+  resolution's slash count is a *different* quantity, because a single-node hop
+  mints no segment, so an alias chain two files deep is a nested resolution whose
+  id has no slash at all.
 
 Non-goals, refused rather than deferred quietly: `rerun:` over a whole loop,
 loop-until-dry convergence (`max: N` stays the only one), dynamic fan-out over a

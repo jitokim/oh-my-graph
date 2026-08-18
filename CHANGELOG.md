@@ -76,9 +76,17 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   - **A single-node fragment may not cite a multi-node one** — its body splices
     *onto* the citing node and declares no id, so there is no namespace to mint
     `<id>/<internal>` in. Citing another single-node fragment is an alias and is
-    fine. A single-node body cited from *inside* a fragment has its tokens
-    namespaced against the citing fragment's declared ids, and a token naming an
-    id that fragment does not declare is a load error charged to the citing site.
+    fine — except that an alias may not write its own `prompt:`: it relays the
+    cited fragment's behavior, and one that rewrites the prompt is claiming that
+    fragment's name while replacing what it does. A single-node body cited from
+    *inside* a fragment has its tokens namespaced against the citing fragment's
+    declared ids, and a token naming an id that fragment does not declare is a
+    load error charged to the citing site.
+  - **A fragment file's own `use:` is judged against the file.** The literal-name
+    rule, the `prompt:`-alongside-`use:` refusal above, and a dead `with:` (a
+    binding with no `use:` to bind) are facts about the file, so all three are
+    reported once, against it, naming the file the text is written in — never at
+    splice time charged to whichever node happened to cite it.
   - **Lookup stays a pure function of the ENTRY file's path at every depth**, so
     a fragment that cites a fragment depends on a file its own author cannot
     ship with it. No manifest, no pre-flight check — what is owed instead is in
@@ -90,7 +98,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
     the ids alone say the shape of the tree without opening a file. `Spliced`
     names only ids that exist in the resolved graph, so a parent line
     deliberately *undercounts* a subtree containing a nested loop — the lines
-    below it are what answer "how big did this get".
+    below it are what answer "how big did this get". A resolution also carries
+    its `Depth` (the chain length), because the id's slash count is a different
+    quantity: a single-node hop mints no segment, so an alias chain two files
+    deep is a nested resolution with no slash in its id at all.
 
   **No snapshot, feed or ledger change**, which was the ADR's load-bearing
   claim and its own falsification condition. `internal/runstate`,
@@ -106,7 +117,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   lanes — see the retraction in the ADR entry further down. The falsification
   condition is now a test rather than a paragraph
   (`TestNestingHasAShippedAdopter`): if no shipped graph carries a chain of
-  length 2, the build fails and the ADR says to reopen.
+  length 2, the build fails and the ADR says to reopen. It asks the resolution's
+  `Depth` rather than counting slashes in its node id, so it measures the
+  quantity it names.
 
 - **ADR 0029 — a fragment may cite a fragment, bounded by a chain and a depth.**
   Opens the nesting non-goal ADR 0027 deferred, and settles what the deferral
