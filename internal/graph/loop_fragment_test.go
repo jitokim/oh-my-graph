@@ -463,7 +463,7 @@ nodes:
 			name:      "internal node citing a fragment named by a binding",
 			entry:     using(citeLoop),
 			fragments: map[string]string{"qa-loop": loop("exit: review\nnodes:\n  - { id: impl, use: \"{{ with.task }}\", prompt2: \"{{ with.task }}\" }\n  - { id: review, depends_on: [impl], prompt: \"{{ with.checks_command }}\" }\n")},
-			wantErr:   "whose name is a substitution token",
+			wantErr:   "whose name carries a {{ … }} token",
 		},
 		{
 			name: "behavior key on a multi-node use",

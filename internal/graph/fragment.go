@@ -946,11 +946,6 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		return nil
 	}
 
-	// The level below this one. The cited file is now the citing file, and the
-	// chain has grown by its name; what the two forms do with the rest differs
-	// and is set in each branch.
-	child := nesting{chain: chain, prefix: nest.prefix, declares: nest.declares, source: lf.frag.source}
-
 	if lf.frag.isMulti() {
 		loop, grants, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
 		if len(errs) > 0 {
@@ -967,11 +962,12 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 			NodeID: id, Fragment: name, Description: lf.frag.description,
 			Source: lf.frag.source, Grants: grants,
 		})
-		// A multi-node splice mints the namespace every level below it hangs
+		// A multi-node splice MINTS the namespace every level below it hangs
 		// off, and its own declared ids are what a single-node body cited from
 		// inside it is judged against.
-		child.prefix, child.declares, child.citerIsSingleNode = id, lf.frag.declares, false
-		loop = spliceSequence(loop, entryPath, cache, out, child)
+		loop = spliceSequence(loop, entryPath, cache, out, nesting{
+			chain: chain, source: lf.frag.source, prefix: id, declares: lf.frag.declares,
+		})
 		out.resolutions[at].Spliced = splicedNodeIDs(id, lf.frag, out.loops)
 		return loop
 	}
@@ -1014,8 +1010,10 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 	if merged["use"] == nil && merged["with"] == nil {
 		return nil
 	}
-	child.citerIsSingleNode = true
-	return resolveNode(nodeMap, entryPath, cache, out, child)
+	return resolveNode(nodeMap, entryPath, cache, out, nesting{
+		chain: chain, source: lf.frag.source,
+		prefix: nest.prefix, declares: nest.declares, citerIsSingleNode: true,
+	})
 }
 
 // splicedNodeIDs is the ids one multi-node resolution minted that EXIST in the
@@ -1066,7 +1064,7 @@ func namespaceSingleNodeBody(body *yaml.Node, nest nesting, nodeID, fragment str
 			if nest.declares[token.ref] {
 				continue
 			}
-			errs = append(errs, &FragmentError{NodeID: nodeID, Fragment: fragment,
+			errs = append(errs, &FragmentError{NodeID: nodeID, Fragment: fragment, Source: nest.source,
 				Reason: fmt.Sprintf("the fragment body contains %s, and the fragment citing it declares no node %q — a single-node fragment's tokens name the using graph's own nodes, and inside a fragment there is no using graph to name: the token would resolve against whichever graph happened to cite the outer one. Charged to this use:, not to %q, which is legal in isolation and cites perfectly well from a plain graph", token.token, token.ref, fragment)})
 		}
 	})
@@ -1703,6 +1701,15 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 // data. `with:` values pass through to every level; the `use:` name never comes
 // from one. This is the same boundary fragmentNamePattern already draws when it
 // refuses a path.
+//
+// The test is for ANY `{{ … }}` token, not only a well-formed `with` one, and
+// the two reasons differ: a `with` token would substitute into a name, and a
+// runtime token (`{{ inputs.x }}`) or a malformed one would not substitute at
+// all and would reach fragmentNamePattern as literal text. Both are the same
+// authoring mistake, and one message that names the shape rather than the
+// namespace covers it without guessing which was meant. An entry graph needs no
+// such check: fragmentNamePattern already refuses every character a token is
+// made of.
 func judgeFragmentUse(node *yaml.Node, label string, badFile func(string)) {
 	use := mappingValues(node)["use"]
 	if use == nil {
@@ -1716,7 +1723,7 @@ func judgeFragmentUse(node *yaml.Node, label string, badFile func(string)) {
 	if label != "" {
 		where = "a fragment's " + label
 	}
-	badFile(fmt.Sprintf("%s declares use: %q, whose name is a substitution token — a fragment name must be a literal. The citation chain, the cycle check and the depth bound are all decided before the cited file is read, and a name that arrived from a binding would make which files this graph pulls behavior from depend on data. Bind the fragment's substitution points, never its identity", where, value))
+	badFile(fmt.Sprintf("%s declares use: %q, whose name carries a {{ … }} token — a fragment name must be a literal. The citation chain, the cycle check and the depth bound are all decided before the cited file is read, so a name that arrived from a binding would make which files this graph pulls behavior from depend on data; a runtime token would not substitute here at all. Bind the fragment's substitution points, never its identity", where, value))
 }
 
 // withTokenName classifies one {{ ... }} token found in a fragment body.

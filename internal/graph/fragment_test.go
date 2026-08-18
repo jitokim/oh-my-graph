@@ -209,7 +209,7 @@ description: a gate
 substitutions: [checks]
 node: { use: "{{ with.checks }}", prompt2: "{{ with.checks }}" }
 `},
-			wantErr: "whose name is a substitution token",
+			wantErr: "whose name carries a {{ … }} token",
 		},
 		{
 			// The filename is the authoritative name — it is what a use:
