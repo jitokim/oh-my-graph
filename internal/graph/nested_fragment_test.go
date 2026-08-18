@@ -578,6 +578,12 @@ nodes:
 			// §3 — the bound counts citation HOPS, and an alias hop spends it
 			// even though it mints nothing, because what is bounded is how far
 			// the loader walks.
+			//
+			// The expectation runs to the END of the clause on purpose. This
+			// message names the bound twice, and the second mention once
+			// rendered "the 3th fragment" behind a prefix-only assertion —
+			// prose is the product here, so the sentence a reader gets is
+			// pinned, not just the part that carries the number.
 			name:  "a citation chain one hop past the bound",
 			entry: cite,
 			fragments: map[string]string{
@@ -586,7 +592,7 @@ nodes:
 				"h3":  alias("h3", "h4"),
 				"h4":  "fragment: h4\ndescription: the fourth\nnode: { prompt: too deep }\n",
 			},
-			wantErr: "at citation hop 4 (top → h2 → h3 → h4), and a chain may be at most 3 fragment files deep",
+			wantErr: "at citation hop 4 (top → h2 → h3 → h4), and a chain may be at most 3 fragment files deep — depth 0 is the entry graph, so a node spliced in from the deepest permitted fragment may not carry a use: of its own.",
 		},
 		{
 			// §7 — the one direction that is derivable rather than chosen.

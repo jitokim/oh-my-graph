@@ -1591,6 +1591,16 @@ func inputKeys(inputs inputFlag) []string {
 // of a run log learns that one `use:` became five nodes, and which five,
 // without opening the fragment file.
 //
+// Since ADR 0029 a fragment may cite a fragment, and that sentence holds per
+// LINE rather than per subtree. A nested `use:` gets a resolution of its own,
+// printed after the line that explains it (the loader appends parents before
+// descending), so the tree arrives as several lines whose ids say its shape. A
+// parent whose internal node was itself a loop does NOT list that node: the
+// resolved graph holds its expansion, not it, so the parent's `nodes:` clause
+// undercounts its subtree and the nested line below carries the remainder
+// (ADR 0029 §5). Depth is deliberately not printed — the ids already carry the
+// nesting a reader is chasing, and §5 declines to spend a column on it.
+//
 // And a grant substitution ASSEMBLED — a fragment's own `{{ with.x }}` inside
 // its `allowed_tools`, bound by the citing node — is neither an override nor a
 // count of ids, so it gets its own clause naming the resolved list (#196).

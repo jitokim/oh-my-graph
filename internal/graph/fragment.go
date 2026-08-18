@@ -113,12 +113,23 @@ type FragmentResolution struct {
 	// two files deep produces a resolution with no slash in its NodeID at all
 	// (ADR 0029 §3). A consumer asking "did anything nest" must ask this.
 	Depth int
-	// Spliced is the ids a MULTI-NODE resolution minted, in fragment order —
-	// empty for the single-node form, whose one spliced id is NodeID itself.
-	// A multi-node use overrides nothing (the using node may declare only
-	// wiring), so this is what its disclosure line has to say instead: the
-	// reader of a run log learns that one `use:` became five nodes, and which
-	// five, without opening the fragment file.
+	// Spliced is the ids a MULTI-NODE resolution minted that EXIST in the
+	// resolved graph, in fragment order — empty for the single-node form, whose
+	// one spliced id is NodeID itself. A multi-node use overrides nothing (the
+	// using node may declare only wiring), so this is what its disclosure line
+	// has to say instead: the reader of a run log learns that one `use:` became
+	// five nodes, and which five, without opening the fragment file.
+	//
+	// "that exist" is the whole qualification. An internal node carrying a
+	// `use:` of its own is replaced by its expansion, so its own id is NOT in
+	// the resolved graph and is dropped here (ADR 0029 §5); the nested `use:`
+	// has a resolution of its own, one Depth deeper, listing what IT minted. A
+	// nested parent's line therefore UNDERCOUNTS its subtree — two ordinary
+	// nodes plus a nested loop of five reports the two. That is deliberate:
+	// this field answers "which ids exist because of this line", the question a
+	// consumer can act on, and naming an id the graph does not contain is the
+	// latent crash ADR 0027 found as its third finding. A consumer wanting the
+	// tree reads every resolution and their Depths, not this field alone.
 	Spliced []string
 	// Grants is the RESOLVED allowed_tools of every spliced node whose grant
 	// substitution contributed to — the third shape, which neither field above
@@ -514,9 +525,11 @@ func (out *fragmentOutcome) resolveExit(id string) string {
 }
 
 // maxFragmentChain is how many CITATION HOPS a `use:` may stand at the end of:
-// depth 0 is the entry graph, depth 1 a fragment it cites, depth 3 a fragment
-// cited by a fragment cited by a fragment. Exceeding it is a load error naming
-// the chain and stating the bound (ADR 0029 §3).
+// depth 0 is the entry graph, depth 1 a fragment it cites, depth 2 a fragment
+// that one cites, depth 3 a fragment cited in turn by THAT — the deepest
+// permitted, and a node spliced in from it may carry no `use:` at all.
+// Exceeding it is a load error naming the chain and stating the bound
+// (ADR 0029 §3).
 //
 // It counts fragment FILES on the chain and nothing else. It is not an id
 // segment count: three multi-node hops mint a four-segment id, three
@@ -957,7 +970,7 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 	}
 	if nest.depth() >= maxFragmentChain {
 		fail(&FragmentError{NodeID: id, Fragment: name, Source: nest.source,
-			Reason: fmt.Sprintf("use: names %q at citation hop %d (%s), and a chain may be at most %d fragment files deep — depth 0 is the entry graph, so a node spliced in from the %dth fragment may not carry a use: of its own. The bound counts FILES on the chain, not id segments: an alias hop that mints no namespace spends it too, because what it bounds is how far the loader walks. It is deliberately small enough to be reachable, so a real need for a fourth layer arrives as this message and raising it is a recorded decision", name, len(chain), strings.Join(chain, " → "), maxFragmentChain, maxFragmentChain)})
+			Reason: fmt.Sprintf("use: names %q at citation hop %d (%s), and a chain may be at most %d fragment files deep — depth 0 is the entry graph, so a node spliced in from the deepest permitted fragment may not carry a use: of its own. The bound counts FILES on the chain, not id segments: an alias hop that mints no namespace spends it too, because what it bounds is how far the loader walks. It is deliberately small enough to be reachable, so a real need for a fourth layer arrives as this message and raising it is a recorded decision", name, len(chain), strings.Join(chain, " → "), maxFragmentChain)})
 		return nil
 	}
 
@@ -982,7 +995,6 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		fail(bindErrs...)
 		return nil
 	}
-
 	if lf.frag.isMulti() {
 		loop, grants, errs := spliceLoop(nodeMap, id, lf.frag, bindings)
 		if len(errs) > 0 {
@@ -1507,8 +1519,17 @@ func loadFragmentFile(name, source string) *loadedFragment {
 
 // judgeMultiNodeIDs reads the ids a multi-node fragment declares — the set
 // every edge in it is then held to. An id here is a SEGMENT: the splicer joins
-// it to the using node's id with a '/', so an internal id carrying one of its
-// own would mint a two-slash id no validator admits.
+// it to the using node's id with a '/', and this file is a place an id is
+// WRITTEN, so a '/' written into one is refused for the reason every authorship
+// site refuses one — an author does not get to mint a namespace by hand.
+//
+// The refusal is NOT derived from what the validator admits. Since ADR 0029 a
+// two-slash id validates fine (nodeIDPattern's `(?:/segment)?` became `*`),
+// because nesting composes exactly such ids and a resumed leg re-parses them.
+// What that widening did not do is make an authored separator legal, here or at
+// the other two authorship sites (refuseAuthoredNamespaces,
+// coordinator.validatePlannedNodeID), each of which tests for the PRESENCE of a
+// '/' and never for how many.
 func judgeMultiNodeIDs(nodes *yaml.Node, badFile func(string)) ([]string, map[string]bool) {
 	ids := make([]string, 0, len(nodes.Content))
 	declares := make(map[string]bool, len(nodes.Content))
