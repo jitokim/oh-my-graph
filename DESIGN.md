@@ -1477,13 +1477,21 @@ incompatible snapshot is refused rather than misread:
 `success_check.verify`. A verification is a command the ENGINE runs, outside
 every layer of the auto ceiling — which is why `validatePlannedNodeVerify`
 refuses a planner-authored one at plan time — so a resumed leg reconstructing a
-planned graph strips any it finds and **refuses the resume**, naming the nodes
-(`coordinator.ReattachVerifyCommand`, ADR 0016 §4). The discriminator is the
-snapshot's tool policies, non-empty exactly for a planned graph: a hand-written
-graph's `verify:` is the user's own reviewed artifact and round-trips
-untouched. Today the refusal is terminal, since only `auto` will parse
-`--verify-cmd`; a `resume` that re-supplies the command is what makes such a
-run resumable.
+planned graph strips any it finds (`coordinator.ReattachVerifyCommand`, ADR
+0016 §4). The discriminator is the snapshot's tool policies, non-empty exactly
+for a planned graph: a hand-written graph's `verify:` is the user's own reviewed
+artifact and round-trips untouched. What replaces the stripped command is
+`resume --verify-cmd` — the same flag pair `auto` takes, the same value object,
+the same 10-minute ceiling, attached to the same sinks by the same trusted code
+— so the command comes from the human on the resumed leg exactly as it did on
+the first, and the run directory is an admissible source on neither. A resume
+that supplies nothing while the snapshot carried one is **refused**, naming the
+nodes: resuming with strictly weaker checking than the leg being continued is
+the failure ADR 0016 is about. The flag pair is registered on `resume` and on
+`auto` only — a hand-written graph writes `verify:` on whichever node it means,
+`run` has no such flag, and a resumed leg must not be able to attach a check a
+fresh run could not, so `resume --verify-cmd` against a hand-written snapshot is
+an error rather than an attachment.
 
 **What the snapshot deliberately does NOT hold:** in-degree counts and the
 ready set. Both are *derived* from `graph × completed`, so persisting them would
@@ -1520,7 +1528,7 @@ browser one.
 
 **CLI contract:**
 ```
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web]
 ```
 - Exactly one of `--approve`/`--reject` is **required** when the run is paused at
   a gate. A bare `resume <run-id>` on a paused run is an error naming the pending
@@ -1537,6 +1545,14 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   semantic. `--no-web` is accepted with `run`/`auto`'s exact meaning: a
   resumed leg embeds the same live view under the same TTY gate (see "Web
   live view"), and this opts out.
+- `--verify-cmd`/`--verify-timeout` are accepted for the opposite reason `--input`
+  is refused: build evidence is the one thing a resumed leg must take from the
+  human rather than from the run directory (ADR 0016 §4). An auto run started
+  with `--verify-cmd` needs it supplied again on every resumed leg — without it
+  the resume is refused, with it the command attaches to the same sinks under the
+  same ceiling and the engine judges its exit code, exactly as on the first leg.
+  A pause hint for such a run prints the flag back with the command in it, so
+  the promised copy-pasteable resume stays copy-pasteable (ADR 0009).
 - Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
   pauses again. The decision map makes batch approval a later, additive change.
 - `--retry-failed` salvages a failed run instead of deciding a gate; combining
@@ -1572,7 +1588,9 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
   event), and returns `*LimitPausedError` → exit code 2 with a
   best-effort-parsed "resume after <reset time> with: `resume <run-id>
-  --retry-failed`" hint. A gate pause outranks a limit; a limit outranks
+  --retry-failed`" hint — carrying `--verify-cmd '<the command>'` when this
+  run's sinks hold one, since a resumed leg re-supplies it rather than reading
+  it back off disk. A gate pause outranks a limit; a limit outranks
   continue-on-fail pruned failures. The leg closes on the stream as outcome
   `"paused"` with a distinguishing `detail`. A retry leg's worktree
   provisioning is disk-aware: a retried node re-declaring a name reuses the
@@ -2601,7 +2619,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight and its two disclosures (verifycmd.go — ADR 0016), print ledger
+cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, and its two disclosures (verifycmd.go — ADR 0016), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped by decision, not by omission) + FakeRunner

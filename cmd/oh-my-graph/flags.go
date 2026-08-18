@@ -107,14 +107,14 @@ type autoFlags struct {
 // and keeping the cycle count off commonRunFlags is what keeps chat
 // structurally single-cycle.
 //
-// --verify-cmd and --verify-timeout are `auto`'s own for the same reason and a
-// second one (ADR 0016 §2). The reason: they describe what trusted code
-// attaches to a PLAN's sink nodes, and only `auto` produces a plan. The second
-// one: `run` needs no such flag at all, because a hand-written graph writes
-// `verify:` on whichever node it means — a flag would be a worse spelling of a
-// field the user already has. They are NOT registered on `resume`, which is
-// what makes an auto run carrying build evidence unresumable today; see
-// continueRun and ADR 0016 §4's Disposition.
+// --verify-cmd and --verify-timeout are NOT commonRunFlags members, for the
+// same reason and a second one (ADR 0016 §2). The reason: they describe what
+// trusted code attaches to a PLAN's sink nodes, and only `auto` produces a
+// plan. The second one: `run` needs no such flag at all, because a hand-written
+// graph writes `verify:` on whichever node it means — a flag would be a worse
+// spelling of a field the user already has. `resume` registers the pair too
+// (newResumeFlags), which is the re-supply half ADR 0016 §4 named and #198 hit:
+// the command still comes from the human, never from the run directory.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
@@ -184,13 +184,7 @@ func (f *autoFlags) parse(args []string) error {
 	// refused BEFORE anything is bought (ADR 0016 §2). The coordinator makes the
 	// same check again at plan time — it is a library and cannot assume a CLI
 	// ran first — but by then the money is at the next line.
-	if err := f.verifyCommand().Validate(); err != nil {
-		return fmt.Errorf("auto: %w", err)
-	}
-	if err := checkVerifyExecutable(f.verifyCmd); err != nil {
-		return fmt.Errorf("auto: %w", err)
-	}
-	return nil
+	return checkVerifyFlags("auto", f.verifyCommand())
 }
 
 // resumeFlags holds the parsed `resume` subcommand options. Deliberately does
@@ -211,6 +205,14 @@ type resumeFlags struct {
 	// activation off, and nothing on `resume` can turn it on, so no resumed
 	// leg can ever run wider than the leg that started it.
 	noSkillActivation bool
+	// verifyCmd/verifyTimeout are ADR 0016 §4's re-supply half: the build
+	// evidence a resumed leg runs comes from THIS invocation, exactly as a
+	// fresh leg's comes from `auto`'s. They are not a widening — the ceiling,
+	// the value object and the validation are `auto`'s, the engine still runs
+	// the command and judges its exit code, and no node is granted anything.
+	// What they replace is a refusal that was terminal (#198).
+	verifyCmd     string
+	verifyTimeout time.Duration
 
 	set *flag.FlagSet
 }
@@ -222,6 +224,14 @@ type resumeFlags struct {
 // the type's doc comment); their usage strings are kept verbatim identical to
 // run/auto's, since a resumed leg's live view and concurrency ceiling behave
 // exactly as a first leg's.
+//
+// --verify-cmd/--verify-timeout are declared here for the opposite reason: a
+// resumed leg's build evidence does NOT behave exactly as a first leg's, and
+// the difference is the whole point. On `auto` the pair describes what trusted
+// code attaches to a plan it is about to buy; here it describes what this
+// invocation attaches to a graph that already exists, replacing whatever the
+// run directory holds — which is why the usage strings say so rather than being
+// copied across (ADR 0016 §4, #198).
 func newResumeFlags() *resumeFlags {
 	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
 	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
@@ -230,7 +240,19 @@ func newResumeFlags() *resumeFlags {
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	f.set.BoolVar(&f.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
 	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "accepted and redundant since 2026-08-07: NO resumed leg activates skills, because the only manifest it could re-stage from lives in the run directory the previous leg's nodes could write (ADR 0017 §6). Passing it changes nothing but the line resume prints. De-escalation only — there is no flag that turns activation on for a resumed leg")
+	f.set.StringVar(&f.verifyCmd, "verify-cmd", "", "shell command the ENGINE runs at every sink node of a resumed AUTO run, as build evidence (ADR 0016 §4) — e.g. './gradlew build'. A resumed leg takes no verification from the run directory, so an auto run started with --verify-cmd needs the command supplied again HERE, by you; without it the resume is refused rather than run with weaker checking than the leg it continues. It attaches exactly as a fresh leg's does — after the same validation, under the same ceiling, with no node granted anything — and it is refused on a hand-written graph, whose own success_check.verify is your reviewed artifact and round-trips untouched")
+	f.set.DurationVar(&f.verifyTimeout, "verify-timeout", 0, "bound on ONE --verify-cmd execution (0 = 10m, which is also the ceiling every verification has) — the same bound and the same ceiling auto applies, since a resumed leg must not be able to attach a check a fresh run could not")
 	return f
+}
+
+// verifyCommand is `resume`'s half of the --verify-cmd/--verify-timeout pair,
+// built as the SAME value object `auto` builds (autoFlags.verifyCommand), so
+// the ceiling, the blank-command refusal and the resolved default are one
+// implementation and cannot drift between the two subcommands. The zero pair
+// means "no command supplied", which for a planned snapshot carrying one is the
+// refusal ADR 0016 §4 keeps.
+func (f *resumeFlags) verifyCommand() coordinator.VerifyCommand {
+	return coordinator.VerifyCommand{Command: f.verifyCmd, Timeout: f.verifyTimeout}
 }
 
 // parse reads args in the order `<run-id> [flags...]`. The run id is
@@ -244,7 +266,15 @@ func (f *resumeFlags) parse(args []string) error {
 		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> ((--approve|--reject) <gate-id> | --retry-failed))")
 	}
 	f.runID = args[0]
-	return f.set.Parse(args[1:])
+	if err := f.set.Parse(args[1:]); err != nil {
+		return err
+	}
+	// The same parse-time gate `auto` applies, through the same helper. A
+	// resumed leg buys no planner call, so the sharper half of auto's reason is
+	// absent — but the flat one is not: a --verify-timeout past the ceiling or a
+	// build command that cannot run would otherwise be discovered at the sink,
+	// after the leg has re-spawned every unfinished node and paid for them.
+	return checkVerifyFlags("resume", f.verifyCommand())
 }
 
 // deprecatedSkillFlagSpellings are the ways `--no-skill-mapping` can be typed.

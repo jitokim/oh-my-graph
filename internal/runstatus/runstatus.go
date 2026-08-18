@@ -375,10 +375,11 @@ func Hint(runID string, hasSnapshot bool) string {
 // re-entry ADR 0023 §9 forbids. Naming the wrong one costs a command that
 // refuses itself; naming neither costs the reader the whole row.
 //
-// It does not promise the command will be accepted: a run started with
-// --verify-cmd cannot be resumed at all (ADR 0016 §4), and the row cannot
-// cheaply know that. The refusal carries its own explanation, so the cost is
-// one wasted command rather than a wrong action (ADR 0023 §5).
+// It does not promise the command will be accepted as printed: a run started
+// with --verify-cmd needs that flag re-supplied on the resumed leg (ADR 0016
+// §4), and the row cannot cheaply know whether this is such a run. The refusal
+// carries its own explanation and names the flag, so the cost is one wasted
+// command rather than a wrong action (ADR 0023 §5).
 func PausedHint(runID string) string {
 	return fmt.Sprintf("run %s is PAUSED — it stopped as designed and is resumable: after a session limit, "+
 		"`oh-my-graph resume %s --retry-failed`; at a gate, `oh-my-graph resume %s --approve <gate-id>` "+

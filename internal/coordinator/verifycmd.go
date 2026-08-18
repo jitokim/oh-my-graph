@@ -183,12 +183,12 @@ func sinkNodeIDs(g *graph.Graph) []string {
 // plan.Spec and `auto --verify-cmd` wrote a graph.json promising a corpus its
 // `run` reader does not have (skillstage.go's rebuildWithNotices).
 //
-// What that snapshot is worth on resume is the residual ADR 0016 §4 records.
-// Half of it is closed today: `resume` calls ReattachVerifyCommand, so a
-// snapshot-borne command on an auto graph is REFUSED rather than replayed. The
-// other half — the user re-supplying the command on the resumed leg, which is
-// what would let an auto run with build evidence be resumed at all — waits on
-// `resume` learning --verify-cmd, and is not yet in the tree.
+// What that snapshot is worth on resume is what ADR 0016 §4 settles, and both
+// halves are in the tree: `resume` calls ReattachVerifyCommand, so a
+// snapshot-borne command on an auto graph is never replayed — and `resume`
+// registers --verify-cmd, so the user re-supplies it on the resumed leg and an
+// auto run carrying build evidence is resumable (#198). The command comes from
+// the human on both legs; the run directory is an admissible source on neither.
 func (c *Coordinator) attachVerifyCommand(plan *Plan) error {
 	if !c.verifyCommand.Supplied() {
 		return nil
@@ -329,17 +329,24 @@ func InjectedVerifyNodes(g *graph.Graph) map[string]bool {
 // already concedes it "does NOT make a write-capable node safe".
 //
 // ReattachVerifyCommand restores the assertion, and `resume` calls it: a
-// snapshot-borne command is refused with this error. The other half of ADR
-// 0016 §4's mechanism (i) — the user RE-SUPPLYING the command on the resumed
-// leg — needs a --verify-cmd flag on `resume`, which does not exist yet, so
-// today the refusal is the whole of it and this error is terminal.
+// snapshot-borne command is dropped, and one that was there while this
+// invocation supplies nothing raises this error.
+//
+// The error is a REMEDY, not a dead end, and that distinction is #198: it names
+// --verify-cmd, and `resume` registers --verify-cmd, so the sentence below
+// describes a command the tool accepts. It did not until 2026-08-18 — the flag
+// lane shipped the pair on `auto` only — and a message that sends someone down
+// a dead end costs more than silence, because the next message is not believed
+// either. Anything added here must stay checkable against
+// cmd/oh-my-graph's resume FlagSet, which
+// TestSnapshotVerifyRefusal_NamesOnlyFlagsResumeRegisters does automatically.
 type SnapshotVerifyError struct {
 	NodeIDs []string
 }
 
 func (e *SnapshotVerifyError) Error() string {
 	return fmt.Sprintf(
-		"the saved graph carries success_check.verify on node(s) %s, which auto mode never accepts from a run directory; re-supply it with --verify-cmd so the command comes from you rather than from disk",
+		"the saved graph carries success_check.verify on node(s) %s, which auto mode never accepts from a run directory; re-supply it on this resume with --verify-cmd so the command comes from you rather than from disk",
 		strings.Join(e.NodeIDs, ", "),
 	)
 }
@@ -352,6 +359,11 @@ func (e *SnapshotVerifyError) Error() string {
 // while v supplies nothing is refused outright with a *SnapshotVerifyError —
 // silently dropping it would resume a run with strictly weaker checking than
 // the leg it continues, which is the failure this whole ADR is about.
+//
+// When v DOES supply a command the leg gets it at the same sinks a fresh leg's
+// would land on, under the same ceiling, through this same trusted code. That
+// is the whole of what `resume --verify-cmd` buys, and deliberately not one
+// path more: there is no attachment here a fresh `auto` could not have made.
 //
 // It is deliberately auto-mode-only, and the caller decides that: a
 // hand-written graph's `verify:` is the user's own reviewed artifact and must

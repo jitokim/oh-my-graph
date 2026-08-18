@@ -43,10 +43,10 @@ read that persisted runtime; passing a different explicit value is an error.
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file as `wrote` or `kept`. Never overwrites — see [docs/INSTALL.md](INSTALL.md#what-oh-my-graph-init-unpacks). |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` cannot be resumed. |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
-| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
 | `runs list` | List runs, newest first: graph name, node count, cost, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. Read-only. |
 | `show <run-id>` | Print one run's status and its per-node ledger (session, cost, verdict, duration) with the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
@@ -244,10 +244,12 @@ the pre-flight re-implement the shell. `--plan-only` prints the command and the
 sink nodes it will run at, and every cycle of a `--max-cycles` goal loop plans a
 new graph that carries it. With no `--verify-cmd`, `auto` prints what it is
 *not* checking — and, if it recognizes the project, the flag that would change
-that. One cost worth knowing up front: a run started with `--verify-cmd` cannot
-be `resume`d, which refuses every verification it finds in a run directory
-rather than replay one on trust. [SECURITY.md](../SECURITY.md) has the standing
-such a command has.
+that. One thing worth knowing up front: `resume` takes no verification from a
+run directory, so a run started with `--verify-cmd` needs the command **supplied
+again on every resumed leg** — `oh-my-graph resume <run-id> --retry-failed
+--verify-cmd './gradlew build'`, which is what the pause hint prints for you. A
+resume without it is refused rather than run with weaker checking than the leg
+it continues. [SECURITY.md](../SECURITY.md) has the standing such a command has.
 
 ## Zero-config: auto mode (the headline)
 
@@ -1039,8 +1041,11 @@ When your Claude subscription hits its session limit mid-run, the limited node i
 marked failed: the run stops launching new work, lets in-flight nodes finish,
 and exits with code 2 and a hint like `Resume after 5:20pm with: oh-my-graph
 resume <run-id> --retry-failed` — which later finishes exactly the work that
-never ran. Detection is honest string-matching on the CLI's message (it offers
-no structured signal), so an unrecognized wording safely degrades to an ordinary
-failure that the same command still salvages.
+never ran. If the run carries build evidence the hint appends `--verify-cmd
+'<your command>'`, because a resumed leg re-supplies it instead of reading it
+back off disk; the printed command is still the whole command. Detection is
+honest string-matching on the CLI's message (it offers no structured signal), so
+an unrecognized wording safely degrades to an ordinary failure that the same
+command still salvages.
 
 Spec: [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md).

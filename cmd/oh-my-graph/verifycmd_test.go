@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -386,38 +387,93 @@ func TestPlanAndExecute_EveryGoalCycleSinkCarriesTheCommand(t *testing.T) {
 	}
 }
 
-// TestResume_RefusesAnAutoRunThatCarriedItsOwnVerifyCommand is the residual ADR
-// 0016 §4 records, now reachable from a command line rather than only from a
-// hand-edited snapshot.
-//
-// The attached command IS legitimately in this run's graph.json — trusted code
-// put it there from a string the user typed. But `resume` cannot tell that
-// snapshot from a tampered one: it never re-runs plan validation, and a
-// verification is engine-run shell outside every ceiling layer. So it refuses
-// every snapshot-borne command on an auto graph, and since `resume` registers
-// no --verify-cmd of its own (mechanism (i)'s re-supply half, unshipped), the
-// refusal is terminal: an auto run carrying build evidence cannot be resumed.
-//
-// That is a real cost of this flag and it is pinned here rather than left to be
-// discovered, so the day `resume` learns the flag this test is what changes.
-func TestResume_RefusesAnAutoRunThatCarriedItsOwnVerifyCommand(t *testing.T) {
+// --- resume: the command comes from this invocation, never from the directory -
+
+// verifyRunPaths is one leg's evidence command: a script that records having
+// run, and the marker file that records it. Two of them are what distinguish
+// "the engine ran the command on disk" from "the engine ran the command on the
+// command line" — an exit code alone cannot, since either could produce either.
+type verifyRunPaths struct{ script, marker string }
+
+// writeMarkingVerifyScript writes an executable script that touches a marker
+// file and then exits with code. Same bargain as writeVerifyScript, plus the
+// evidence that this particular script is the one that ran.
+func writeMarkingVerifyScript(t *testing.T, name string, exit int) verifyRunPaths {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the evidence command here is a shebang script; this pins the unix path")
+	}
+	dir := t.TempDir()
+	paths := verifyRunPaths{script: filepath.Join(dir, name+".sh"), marker: filepath.Join(dir, name+".ran")}
+	body := "#!/bin/sh\n: > " + paths.marker + "\nexit " + strconv.Itoa(exit) + "\n"
+	if err := os.WriteFile(paths.script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write verify script: %v", err)
+	}
+	return paths
+}
+
+// ran reports whether this script's marker is on disk.
+func (p verifyRunPaths) ran() bool {
+	_, err := os.Stat(p.marker)
+	return err == nil
+}
+
+// forget removes the marker, so a later assertion is about THIS leg rather than
+// about any leg.
+func (p verifyRunPaths) forget(t *testing.T) {
+	t.Helper()
+	if err := os.Remove(p.marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("clear verify marker: %v", err)
+	}
+}
+
+// autoRunWithFailingEvidence runs one `auto` whose evidence command fails, so
+// there is a paused-or-failed auto run carrying build evidence to resume — the
+// shape of #198. It returns the run id, the command that is now in the run
+// directory, and the FakeRunner, scripted to serve the sink twice (the first
+// leg's launch and the resumed leg's).
+func autoRunWithFailingEvidence(t *testing.T) (string, verifyRunPaths, *runner.FakeRunner) {
+	t.Helper()
 	isolateRunHome(t)
-	script := writeVerifyScript(t, 1)
+	onDisk := writeMarkingVerifyScript(t, "on-disk", 1)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
 		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
 		"work-1": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"work-2": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
 	})
 
 	var runErr error
 	captureStdout(t, func() {
-		runErr = runAutoWith([]string{"add a README section", "--verify-cmd", script,
+		runErr = runAutoWith([]string{"add a README section", "--verify-cmd", onDisk.script,
 			"--no-agent-mapping", "--no-skill-mapping"}, fake, browser.NewFakeOpener(), os.Stdout)
 	})
 	if runErr == nil {
 		t.Fatal("the failing evidence command must have failed the run, or there is nothing to resume")
 	}
+	if !onDisk.ran() {
+		t.Fatal("the first leg never ran its evidence command, so the snapshot under test is not the one #198 describes")
+	}
+	return soleRunID(t), onDisk, fake
+}
 
-	runID := soleRunID(t)
+// TestResume_RefusesAnAutoRunThatCarriedItsOwnVerifyCommand is ADR 0016 §4's
+// refusal, reachable from a command line rather than only from a hand-edited
+// snapshot.
+//
+// The attached command IS legitimately in this run's graph.json — trusted code
+// put it there from a string the user typed. But `resume` cannot tell that
+// snapshot from a tampered one: it never re-runs plan validation, and a
+// verification is engine-run shell outside every ceiling layer. So a resumed
+// leg takes none of it from disk, and a resume that supplies nothing in its
+// place is refused rather than run with weaker checking than the leg it
+// continues.
+//
+// What the refusal must NOT do is cost the user a second command: it is the
+// remedy the next test checks the tool actually accepts.
+func TestResume_RefusesAnAutoRunThatCarriedItsOwnVerifyCommand(t *testing.T) {
+	runID, onDisk, fake := autoRunWithFailingEvidence(t)
+	onDisk.forget(t)
+
 	var resumeErr error
 	captureStdout(t, func() {
 		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil)
@@ -428,6 +484,164 @@ func TestResume_RefusesAnAutoRunThatCarriedItsOwnVerifyCommand(t *testing.T) {
 	}
 	if len(snapErr.NodeIDs) != 1 || snapErr.NodeIDs[0] != "work" {
 		t.Errorf("refusal names %v, want exactly [work] — the sink the command was attached to", snapErr.NodeIDs)
+	}
+	if onDisk.ran() {
+		t.Error("the refused leg ran the run directory's command anyway — the refusal must land before anything executes")
+	}
+	if n := len(fake.Invocations()); n != 2 {
+		t.Errorf("the refused leg made %d call(s) in total, want the first leg's 2 — a refusal must spend nothing", n)
+	}
+}
+
+// TestSnapshotVerifyRefusal_NamesOnlyFlagsResumeRegisters is #198 itself, and it
+// is deliberately a test about a STRING rather than about behaviour.
+//
+// The reported defect was not that the resume was refused — that is the design.
+// It was that the refusal's remediation named `--verify-cmd`, `resume` had never
+// registered it, and the user who followed the instruction got `flag provided
+// but not defined`. A message that sends someone down a dead end costs more than
+// silence, because the next message is not believed either.
+//
+// So every --flag the refusal names is checked against the FlagSet the refusal
+// is telling the reader to type it into — the same derivation usage_test.go
+// makes for the synopsis, applied to the other text a user reads by accident.
+func TestSnapshotVerifyRefusal_NamesOnlyFlagsResumeRegisters(t *testing.T) {
+	registered := registeredFlags(newResumeFlags().set)
+	message := (&coordinator.SnapshotVerifyError{NodeIDs: []string{"work"}}).Error()
+
+	named := usageFlagPattern.FindAllStringSubmatch(message, -1)
+	if len(named) == 0 {
+		t.Fatalf("the refusal names no flag at all, so it tells the user nothing they can do:\n%s", message)
+	}
+	for _, match := range named {
+		if !registered[match[1]] {
+			t.Errorf("the refusal tells the user to re-supply with `--%s`, which `resume` does not register — "+
+				"following it gets `flag provided but not defined` (#198):\n%s", match[1], message)
+		}
+	}
+}
+
+// TestResume_RunsTheCommandTheFlagCarriedNotTheOneOnDisk is the re-supply half
+// of ADR 0016 §4 (i), and the fix for #198's real cost: ADR 0009's claim that a
+// session limit is a PAUSE — the work banked, a later leg finishing it — was
+// not kept for any auto run carrying build evidence, because no later leg could
+// start.
+//
+// Two scripts, so the assertion cannot be satisfied by the wrong one. The
+// command in the run directory would FAIL and marks that it ran; the command on
+// this command line PASSES and marks that it ran. A resumed leg that took the
+// snapshot's would fail the run and leave the wrong marker.
+func TestResume_RunsTheCommandTheFlagCarriedNotTheOneOnDisk(t *testing.T) {
+	runID, onDisk, fake := autoRunWithFailingEvidence(t)
+	onDisk.forget(t)
+	supplied := writeMarkingVerifyScript(t, "supplied", 0)
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t,
+			[]string{runID, "--retry-failed", "--verify-cmd", supplied.script}), fake, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("a resume re-supplying a passing evidence command must finish the run: %v", resumeErr)
+	}
+	if !supplied.ran() {
+		t.Error("the command this invocation supplied never ran, so the leg verified nothing the user asked for")
+	}
+	if onDisk.ran() {
+		t.Error("the leg ran the command from the run directory — the one source ADR 0016 §4 rules out")
+	}
+	if !strings.Contains(out, "PASS (verified)") {
+		t.Errorf("the resumed sink's row must say the engine gathered the evidence:\n%s", out)
+	}
+	// Disclosed on the resumed leg for the reason it is disclosed with a plan:
+	// trusted code attaching an engine-run shell command must not do it quietly.
+	for _, want := range []string{"build evidence", supplied.script, "work"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the resumed leg did not disclose what it attached (%q):\n%s", want, out)
+		}
+	}
+}
+
+// TestResume_VerifyTimeoutBoundsTheResumedLegsCheck pins --verify-timeout on the
+// resume path in both directions: a bound under the ceiling reaches the leg
+// resolved (the disclosure is where a user reads it back), and one over the
+// ceiling is refused at parse — the SAME ceiling `auto` applies, since a resumed
+// leg must not be able to attach a check a fresh run could not.
+func TestResume_VerifyTimeoutBoundsTheResumedLegsCheck(t *testing.T) {
+	runID, onDisk, fake := autoRunWithFailingEvidence(t)
+	onDisk.forget(t)
+	supplied := writeMarkingVerifyScript(t, "supplied", 0)
+
+	over := newResumeFlags().parse([]string{runID, "--retry-failed", "--verify-cmd", supplied.script, "--verify-timeout", "11m"})
+	if over == nil {
+		t.Fatal("resume accepted a --verify-timeout past the 10m ceiling")
+	}
+	if !strings.Contains(over.Error(), "ceiling") {
+		t.Errorf("the refusal %q does not say it is a ceiling", over)
+	}
+
+	var resumeErr error
+	out := captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t,
+			[]string{runID, "--retry-failed", "--verify-cmd", supplied.script, "--verify-timeout", "90s"}), fake, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("a resume under the ceiling must run: %v", resumeErr)
+	}
+	if !strings.Contains(out, "1m30s") {
+		t.Errorf("the resumed leg does not disclose the bound the user asked for:\n%s", out)
+	}
+}
+
+// TestResumeFlags_TheVerifyPairIsAutosCeilingVerbatim is the anti-drift half of
+// "same ceiling, same value object". Rather than asserting the same rules twice,
+// it parses the same flag pair through both subcommands and requires the two
+// refusals to be identical once the subcommand's own prefix is removed — so a
+// rule loosened on one and not the other fails here, whichever one moved.
+func TestResumeFlags_TheVerifyPairIsAutosCeilingVerbatim(t *testing.T) {
+	for _, args := range [][]string{
+		{"--verify-timeout", "30s"},
+		{"--verify-cmd", "make", "--verify-timeout", "11m"},
+		{"--verify-cmd", "   "},
+		{"--verify-cmd", "definitely-not-a-real-build-tool"},
+	} {
+		autoErr := newAutoFlags().parse(append([]string{"a goal"}, args...))
+		resumeErr := newResumeFlags().parse(append([]string{"run-1"}, args...))
+		if autoErr == nil || resumeErr == nil {
+			t.Fatalf("%v: auto err = %v, resume err = %v — both must refuse it", args, autoErr, resumeErr)
+		}
+		autoWhy := strings.TrimPrefix(autoErr.Error(), "auto: ")
+		resumeWhy := strings.TrimPrefix(resumeErr.Error(), "resume: ")
+		if autoWhy != resumeWhy {
+			t.Errorf("%v is refused differently by the two subcommands, so the ceiling has drifted:\n  auto:   %s\n  resume: %s",
+				args, autoWhy, resumeWhy)
+		}
+	}
+}
+
+// TestResume_RefusesAVerifyCommandForAHandWrittenGraph is the ceiling's edge,
+// stated from the side that would be a hole rather than a fix. `run` has no
+// --verify-cmd — a hand-written graph writes `verify:` on whichever node it
+// means — so attaching one HERE would be a capability only `resume` has, which
+// is exactly the shape the fix was told to stop at.
+func TestResume_RefusesAVerifyCommandForAHandWrittenGraph(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec := haltedRetryFlowRun(t)
+	supplied := writeMarkingVerifyScript(t, "supplied", 0)
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t,
+			[]string{runID, "--retry-failed", "--verify-cmd", supplied.script}), rec, nil)
+	})
+	if resumeErr == nil {
+		t.Fatal("resume attached an evidence command to a hand-written graph, which no fresh `run` could do")
+	}
+	if !strings.Contains(resumeErr.Error(), "hand-written") {
+		t.Errorf("the refusal %q does not say which graph it is about", resumeErr)
+	}
+	if supplied.ran() {
+		t.Error("the refused leg ran the command anyway")
 	}
 }
 
