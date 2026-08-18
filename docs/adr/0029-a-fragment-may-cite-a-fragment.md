@@ -1,6 +1,10 @@
 # ADR 0029 — A fragment may cite a fragment, bounded by a chain and a depth
 
-**Status:** Accepted — not yet implemented (this ADR precedes its code)
+**Status:** Accepted and implemented. The ADR preceded its code; the code
+landed in the same change, with `backlog-batch`'s lane A as the one adopter §3
+and Failure modes make mandatory. The central claim held under implementation:
+no snapshot, feed or ledger file changed, and the only edit outside the loader's
+own resolution path is one regex character in `validate.go`.
 
 **Date:** 2026-08-19
 

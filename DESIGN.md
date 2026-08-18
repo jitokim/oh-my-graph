@@ -224,7 +224,9 @@ The cited fragment may declare **several** nodes and the edges among them — a
 review/repair round, a QA loop — and the citing site is unchanged. It splices
 as `<this id>/<the fragment's own id>`, so the node above would become
 `e2e/review`, `e2e/apply`, and `depends_on: [e2e]` downstream still means
-"after it" (ADR 0027, "Fragments" below).
+"after it" (ADR 0027, "Fragments" below). Those internal nodes may themselves
+carry `use:`, composing the namespace one hop further (`e2e/review/gate`),
+bounded by a citation chain of 3 (ADR 0029).
 
 Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
@@ -239,7 +241,7 @@ other bodies, and `max` required ≥ 1 — an unbounded loop on a paid runtime i
 unrepresentable). Iteration is a *runtime* phenomenon; full semantics in
 ADR 0010 and under "Execution engine" below.
 
-### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013, 0027)
+### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013, 0027, 0029)
 
 A fragment is a **definition file** with declared substitution points — a
 proven shape written once, upstream, instead of copy-varied across graphs. It
@@ -401,10 +403,73 @@ Resolution, in the order it happens:
   five. A loop needing different behavior needs a substitution point or a
   different fragment.
 
-Non-goals, refused rather than deferred quietly: `use:` inside a fragment
-(nesting needs cycle detection over fragment *resolution*), `rerun:` over a
-whole loop, loop-until-dry convergence (`max: N` stays the only one), and
-dynamic fan-out.
+**A fragment may cite a fragment (ADR 0029).** A node *inside* a fragment file
+may carry `use:`/`with:`, judged by exactly the rules a top-level one is —
+`graphs/fragments/gated-lane.yaml` is the shipped instance, and
+`backlog-batch`'s lane A is one node citing it. Resolution is recursive descent
+carrying a **chain**: the ordered fragment names from the entry graph down to
+the file being spliced.
+
+- **The order at each level is namespace → substitute → descend**, and it is
+  what makes **parameter pass-through** work rather than something added to it:
+  an inner `use:`'s `with:` values are ordinary text in the outer fragment's
+  file, so the outer bindings are already substituted into them before the inner
+  `use:` is read, and the level below rewrites only its *own* file's text. A
+  bound value is never id-rewritten by any level, at any depth.
+- **A cycle is a repeat on the CURRENT chain** — a load error naming the cycle
+  in order, charged to the file whose `use:` line closes it. Chain membership,
+  not a global visited set: a *diamond* (two loops citing one leaf, or one loop
+  citing a leaf twice) is the normal case and stays legal.
+- **The chain is bounded at 3 citation HOPS** (`maxFragmentChain`), checked
+  before the cited file is read, so a runaway is a message and never a hang or a
+  stack overflow. Hops are not id segments: three multi-node hops mint a
+  four-segment id, three single-node hops mint none, and an alias hop spends the
+  budget anyway because what is bounded is how far the loader *walks*. It does
+  **not** bound the resolved graph's size — three hops of five-node fragments is
+  125 nodes from one `use:` line, and that cost lands on the reader of
+  `--dry-run` and of the goldens.
+- **Namespacing composes left-to-right by the same join**: `top` + `core` →
+  `top/core`, then `+ make` → `top/core/make`. Decomposition stays unique
+  because an atom cannot contain the delimiter, which is ADR 0027's property
+  consumed at N joins rather than re-decided; the on-disk spelling is injective
+  for the same reason (`handoff.SanitizeNodeID`, `a/b/c → a~b~c.out`). There is
+  still no bound on an id's *length*.
+- **`exit:` is transitive.** If a fragment's exit names an internal node that is
+  itself a loop, the effective exit is *that* loop's exit, resolved recursively —
+  so a loop still exposes exactly one value from outside at any depth.
+  `depends_on` inheritance chains the same way, one level at a time.
+- **A nested `use:` name must be a literal.** `use: "{{ with.which }}"` is a
+  load error: the chain, the cycle check and the bound are all decided before the
+  cited file is read, so a citation whose target came from a binding would make
+  the citation graph depend on data.
+- **Lookup stays a pure function of the ENTRY file's path at every depth**, so a
+  fragment that cites a fragment depends on a file its own author cannot ship
+  with it. There is no manifest and no pre-flight completeness check; what is
+  owed instead is in the message — an error below depth 1 names **the chain**, so
+  a reader who never wrote `e2e-verify` is told which fragment did.
+- **A single-node fragment may not cite a multi-node one**: its body is spliced
+  *onto* the citing node and declares no id, so there is no namespace to mint
+  `<id>/<internal>` in. Citing another single-node fragment is an alias and is
+  fine. A single-node body cited from *inside* a fragment has its tokens
+  namespaced against the citing fragment's declared ids, and a token naming an id
+  that fragment does not declare is a load error charged to the citing site.
+- **A node that cites a multi-node fragment still cannot carry a `feedback:`
+  arc** — wiring only, at every level — and that, not the depth bound, is the
+  real ceiling on what nesting folds. An author who needs a gated nested loop
+  moves the gate inside the nested fragment, where it is a key on an ordinary
+  internal node.
+- **One disclosure line per resolution, and a nested resolution is a
+  resolution.** A nested line's `NodeID` is the already-namespaced id of the node
+  that cited the fragment, so the ids alone say the shape of the tree; the
+  parent's line is printed **before** the descent's. `Spliced` names only ids
+  that exist in the resolved graph, so a parent line deliberately undercounts a
+  subtree containing a nested loop — the lines below it answer "how big did this
+  get".
+
+Non-goals, refused rather than deferred quietly: `rerun:` over a whole loop,
+loop-until-dry convergence (`max: N` stays the only one), dynamic fan-out over a
+runtime-sized collection, a planner emitting `use:`, and per-node overrides on a
+multi-node `use:` at any depth.
 
 Downstream of the loader **no fragment concept exists**: `run`, `lint` and
 `run --dry-run` all print one disclosure line per resolved fragment (source
@@ -430,7 +495,11 @@ fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`,
 `adr-driven-dev`) — that turn any fragment edit into a reviewed multi-template
 diff. A multi-node fragment multiplies that blast radius by its node count, on
 purpose: one edit to `repair-round` moves four nodes in `adr-driven-dev`'s
-golden, and the reviewer sees all four.
+golden, and the reviewer sees all four. Nesting adds a hop to that radius: an
+edit to `e2e-verify` now moves a node in `backlog-batch`, which never names it —
+it cites `gated-lane`, which does. The mitigation is the same goldens, and it
+gets harder rather than easier, because the reviewer's diff is two files away
+from the file that changed.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
