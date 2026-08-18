@@ -534,6 +534,17 @@ Four consistency rules the implementation owes:
   and the disclosure is legible only because the lines above it are present and
   ordered. That is the price of nesting on the disclosure, and it is paid here
   rather than discovered later.
+- **`Overridden` is weakened at depth in exactly the same way, and by the same
+  sentence.** The field means "top-level keys declared by BOTH files, the using
+  node's value winning", and at depth the using node is itself written in a
+  fragment file — so `node "lane-a/review" … node overrides: success_check`
+  names a key `gated-lane.yaml` wrote, not one the entry graph's author did. The
+  printed phrase still reads correctly of the node that will RUN, which is what
+  the disclosure is about, and the line above it names the file the key came
+  from. Stated here rather than left to be discovered because it is the same
+  concession `Grants` gets one bullet up, and a reader who is told about one and
+  not the other will reasonably assume the other still holds at depth 1's
+  strength.
 
 ### 6. The seven semantics at depth ≥ 2 — each a decision, not a detail
 
@@ -827,9 +838,12 @@ nested `use:`, no existing id gains a second `/`, and `SanitizeNodeID` is
 untouched. Every single-node and every depth-1 multi-node path keeps its tests
 as the regression proof.
 
-**DESIGN.md, README's graph-authoring section and `docs/RUN-FEED.md` land in
-the same change as the code**, per the standing rule that code and DESIGN.md
-never drift apart. `docs/RUN-FEED.md`'s `<sanitized-node-id>.out` sentence needs
+**DESIGN.md and `docs/RUN-FEED.md` land in the same change as the code**, per
+the standing rule that code and DESIGN.md never drift apart. The README is
+deliberately NOT among them: it carries no fragment section at all — authoring
+detail lives in `docs/EXAMPLES.md` and the spec in DESIGN.md — and inventing one
+here to satisfy a checklist would put the feature's only prose in the file
+least able to keep it current. `docs/RUN-FEED.md`'s `<sanitized-node-id>.out` sentence needs
 no edit — the rule it states is already depth-blind — but the fragment section
 of DESIGN.md gains the chain, the bound counted in hops, the two refusals, the
 lookup rule at depth (entry-file-relative, and the file dependency it creates)

@@ -694,6 +694,38 @@ nodes:
 			},
 			wantErr: "which cites a multi-node fragment — a loop is not a rerun target",
 		},
+		{
+			// §6 — the token form of the same rule, and the one the file-level
+			// checks cannot catch: `{{ feedback.gate }}` names an id the
+			// fragment DOES declare, so it is legal in the file and becomes a
+			// refusal only after `gate` has been namespaced and turned out to
+			// be a loop. A loop's feedback payload is legal only inside the
+			// body the fragment declares it over, so no node here can read it.
+			name:  "a fragment file's token naming a nested loop's feedback",
+			entry: cite,
+			fragments: map[string]string{
+				"top": "fragment: top\ndescription: a loop\nexit: after\nnodes:\n" +
+					"  - { id: gate, use: inner }\n" +
+					"  - { id: after, depends_on: [gate], prompt: \"after {{ feedback.gate }}\" }\n",
+				"inner": "fragment: inner\ndescription: the inner loop\nexit: y\nnodes:\n  - { id: x, prompt: x }\n  - { id: y, depends_on: [x], prompt: y }\n",
+			},
+			wantErr: "a loop's feedback arc is declared inside the fragment",
+		},
+		{
+			// checkBoundReferences' self-reference arm, reached at depth 2: the
+			// binding is written in the fragment file naming its own sibling
+			// `gate`, which is the very node being spliced, so from outside
+			// {{ artifacts.gate }} is that loop's EXIT and the binding would
+			// hand a node its own descendant's output.
+			name:  "a nested with: binding naming the node it is bound into",
+			entry: cite,
+			fragments: map[string]string{
+				"top": "fragment: top\ndescription: a loop\nexit: gate\nnodes:\n" +
+					"  - { id: gate, use: inner, with: { evidence: \"{{ artifacts.gate | inline }}\" } }\n",
+				"inner": "fragment: inner\ndescription: the inner loop\nsubstitutions: [evidence]\nexit: y\nnodes:\n  - { id: x, prompt: \"x reads {{ with.evidence }}\" }\n  - { id: y, depends_on: [x], prompt: y }\n",
+			},
+			wantErr: "which is this node itself",
+		},
 	}
 
 	for _, tc := range cases {
@@ -760,6 +792,116 @@ func TestSplicedNodeIDs_DropsInternalNodesThatAreThemselvesLoops(t *testing.T) {
 	got := splicedNodeIDs("top", frag, map[string]string{"top/gate": "sign"})
 	if want := []string{"top/build", "top/tail"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("splicedNodeIDs = %v, want %v", got, want)
+	}
+}
+
+// siblingOuter is the shape the second pass is claimed to be depth-blind for: a
+// fragment file whose OWN text names a sibling that is itself a nested loop,
+// both as an edge and as an artifact token. Neither reference is written by the
+// entry graph, so nothing outside this file knows the sibling became a subtree.
+const siblingOuter = `fragment: sibling-outer
+description: a loop whose tail reads the nested loop beside it
+exit: after
+nodes:
+  - { id: gate, use: sibling-inner }
+  - { id: after, depends_on: [gate], prompt: "after {{ artifacts.gate | inline }}" }
+`
+
+const siblingInner = `fragment: sibling-inner
+description: the nested loop the sibling names
+exit: y
+nodes:
+  - { id: x, prompt: x }
+  - { id: y, depends_on: [x], prompt: y }
+`
+
+// TestLoadFile_SiblingReferenceToANestedLoopResolvesToItsTransitiveExit is the
+// POSITIVE arm ADR 0029 §6 spends no new code on, because resolveFragments
+// flattens every level into one sequence before resolveLoopReferences runs and
+// out.loops is keyed by the fully minted id. That argument is what this test
+// exists to hold to: the rewrite a depth-1 sibling gets must be the rewrite a
+// depth-2 sibling gets, in both the depends_on and the {{ artifacts.<id> }}
+// form, with the filter intact.
+func TestLoadFile_SiblingReferenceToANestedLoopResolvesToItsTransitiveExit(t *testing.T) {
+	const entry = `name: siblings
+nodes:
+  - { id: n, use: sibling-outer }
+`
+	path := writeGraphDir(t, entry, map[string]string{"sibling-outer": siblingOuter, "sibling-inner": siblingInner})
+	res, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("a fragment naming its own nested sibling must resolve: %v", err)
+	}
+
+	var ids []string
+	for _, n := range res.Graph.Nodes {
+		ids = append(ids, n.ID)
+	}
+	if want := []string{"n/gate/x", "n/gate/y", "n/after"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("resolved node ids = %v, want %v", ids, want)
+	}
+
+	after, ok := res.Graph.NodeByID("n/after")
+	if !ok {
+		t.Fatal("no node n/after in the resolved graph")
+	}
+	if got := after.DependsOn; !reflect.DeepEqual(got, []string{"n/gate/y"}) {
+		t.Errorf("sibling edge = %v, want the nested loop's TRANSITIVE exit [n/gate/y] — n/gate is not a node", got)
+	}
+	if got := after.Prompt; !strings.Contains(got, "after {{ artifacts.n/gate/y | inline }}") {
+		t.Errorf("sibling artifact token = %q, want the transitive exit, filter intact", got)
+	}
+}
+
+// TestLoadFile_BoundReferenceIsCheckedAtEveryDepth drives checkBoundReferences'
+// non-existence arm at depth 2. The bad id is written ONCE, in the entry graph,
+// and passed down a level as ordinary text (§1's pass-through), so the deep
+// witness is the one that proves the check is not a depth-1 check: the same
+// binding is recorded again under the id the second level minted, and both are
+// refused at load rather than after the run has been paid for.
+func TestLoadFile_BoundReferenceIsCheckedAtEveryDepth(t *testing.T) {
+	const entry = `name: bound-at-depth
+nodes:
+  - id: n
+    use: outer-bind
+    with: { evidence: "{{ artifacts.ghost | inline }}" }
+`
+	const outerBind = `fragment: outer-bind
+description: passes a bound value one level down
+substitutions: [evidence]
+exit: gate
+nodes:
+  - { id: plan, prompt: plan the work }
+  - id: gate
+    use: inner-bind
+    depends_on: [plan]
+    with: { evidence: "{{ with.evidence }}" }
+`
+	const innerBind = `fragment: inner-bind
+description: the nested loop that receives it
+substitutions: [evidence]
+exit: y
+nodes:
+  - { id: x, prompt: "x reads {{ with.evidence }}" }
+  - { id: y, depends_on: [x], prompt: y }
+`
+	path := writeGraphDir(t, entry, map[string]string{"outer-bind": outerBind, "inner-bind": innerBind})
+	issues, _, err := LintFile(path)
+	if err != nil {
+		t.Fatalf("LintFile I/O error: %v", err)
+	}
+
+	var deep bool
+	for _, issue := range issues {
+		if strings.Contains(issue.Error(), `node "n/gate"`) && strings.Contains(issue.Error(), "which is not a node in this graph") {
+			deep = true
+		}
+	}
+	if !deep {
+		t.Fatalf("no witness charged to the minted id n/gate — the bound-reference check would then be a depth-1 check: %v", issues)
+	}
+	if _, loadErr := LoadFile(path); loadErr == nil {
+		t.Fatal("LoadFile accepted a binding naming a node no level declares")
 	}
 }
 
