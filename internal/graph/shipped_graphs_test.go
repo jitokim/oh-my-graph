@@ -544,6 +544,13 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 //     (ADR 0029 §5). That ordering is the whole legibility argument: a nested
 //     line's NodeID is an id no author wrote, so it locates nothing unless the
 //     line above explains where it came from.
+//
+// The nesting count reads FragmentResolution.Depth, which is the chain length
+// itself. A slash in the NodeID is not the same quantity and must not be used
+// as a stand-in for it: a single-node hop mints no segment, so an alias chain
+// two files deep is a genuine nested resolution whose id has no slash at all.
+// Counting slashes would let this falsification condition fire on a repo that
+// does nest — the counter announcing a retreat that never happened.
 func TestNestingHasAShippedAdopter(t *testing.T) {
 	nested := 0
 	for _, name := range shippedTemplateNames(t) {
@@ -553,12 +560,14 @@ func TestNestingHasAShippedAdopter(t *testing.T) {
 		}
 		announced := make(map[string]bool, len(loaded.Resolutions))
 		for _, res := range loaded.Resolutions {
-			prefix, _, isNested := cutLast(res.NodeID, "/")
-			if isNested {
+			if res.Depth >= 2 {
 				nested++
-				if !announced[prefix] {
-					t.Errorf("%s: resolution at %q is disclosed before the line that minted that id — a nested resolution's NodeID is an id no author wrote, so a reader can only place it from the line above", name, res.NodeID)
-				}
+			}
+			// The ordering claim is about a MINTED id, so it is the slash that
+			// asks it: a nested line whose id has one names a node the line
+			// above created, and that line must already have gone by.
+			if prefix, _, isNamespaced := cutLast(res.NodeID, "/"); isNamespaced && !announced[prefix] {
+				t.Errorf("%s: resolution at %q is disclosed before the line that minted that id — a nested resolution's NodeID is an id no author wrote, so a reader can only place it from the line above", name, res.NodeID)
 			}
 			announced[res.NodeID] = true
 		}

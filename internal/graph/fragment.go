@@ -56,6 +56,12 @@ type FragmentError struct {
 	// BELOW depth 1, where the id names the outermost node and the file may be
 	// two hops away, so the id alone stops locating anything (ADR 0029 §6).
 	//
+	// The one error class where the last element is NOT Fragment is a `use:`
+	// whose name could not be read at all (a sequence, an empty scalar): there
+	// is no name to append, so the chain ends at the file that wrote the
+	// unreadable line, and Error() says so in those words instead of naming a
+	// fragment. Every error that names a fragment carries the chain THROUGH it.
+	//
 	// It is ONE witness, not the reader's own: a fragment file's judgment is
 	// cached per resolution pass and charged to the first using node document
 	// order reached, so a second node arriving at the same file down a
@@ -74,8 +80,16 @@ func (e *FragmentError) Error() string {
 	}
 	msg += ": " + e.Reason
 	if len(e.Chain) > 1 {
-		msg += fmt.Sprintf(" — reached via %s, so the use: naming %q is written in the fragment file %q, not in this graph",
-			strings.Join(e.Chain, " → "), e.Chain[len(e.Chain)-1], e.Chain[len(e.Chain)-2])
+		last := e.Chain[len(e.Chain)-1]
+		if last == e.Fragment {
+			msg += fmt.Sprintf(" — reached via %s, so the use: naming %q is written in the fragment file %q, not in this graph",
+				strings.Join(e.Chain, " → "), last, e.Chain[len(e.Chain)-2])
+		} else {
+			// The citation's own name was unreadable, so there is none to
+			// quote; the chain still says which file wrote the line.
+			msg += fmt.Sprintf(" — reached via %s, so the use: this is about is written in the fragment file %q, not in this graph",
+				strings.Join(e.Chain, " → "), last)
+		}
 	}
 	return msg
 }
@@ -91,6 +105,14 @@ type FragmentResolution struct {
 	Description string   // the fragment file's description:, printed with the disclosure
 	Source      string   // the fragment file's path
 	Overridden  []string // top-level keys declared by BOTH files, using node's value winning; fragment-file key order
+	// Depth is how many citation hops this resolution stands at the end of: 1
+	// for a `use:` written in the entry graph, 2 for one written in a fragment
+	// that graph cited, and so on to maxFragmentChain. It is the chain length,
+	// stated rather than inferred — an id's slash count is NOT the same
+	// quantity, because a single-node hop mints no segment, so an alias chain
+	// two files deep produces a resolution with no slash in its NodeID at all
+	// (ADR 0029 §3). A consumer asking "did anything nest" must ask this.
+	Depth int
 	// Spliced is the ids a MULTI-NODE resolution minted, in fragment order —
 	// empty for the single-node form, whose one spliced id is NodeID itself.
 	// A multi-node use overrides nothing (the using node may declare only
@@ -870,6 +892,12 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 
 	if useNode == nil {
 		if withNode != nil {
+			// nest.chain is empty in practice: a dead `with:` written in a
+			// FRAGMENT file is judged there, by judgeFragmentUse, so a body
+			// carrying one never reaches a splice. What is left here is a node
+			// of the entry graph, at depth 0 — which is what keeps
+			// FragmentError.Chain's "last element is Fragment" invariant true,
+			// since this is the one error that names no fragment.
 			out.errs = append(out.errs, &FragmentError{NodeID: id, Chain: nest.chain,
 				Reason: "with: without use: — a binding with no fragment to bind is a dead key, which is a wiring bug, not a style choice"})
 			removeKeys(nodeMap, "with")
@@ -898,12 +926,21 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		fail(&FragmentError{NodeID: id, Reason: "use: must be a single non-empty fragment name"})
 		return nil
 	}
+	// The chain runs THROUGH the named fragment from here on, including for the
+	// refusals below: a name is readable, so the error that rejects its shape is
+	// still an error about a citation of that name, and its chain has to end
+	// there or the rendered clause names the wrong file's use: line.
+	chain = nest.extendedBy(name)
 	if !fragmentNamePattern.MatchString(name) {
 		fail(&FragmentError{NodeID: id, Fragment: name,
 			Reason: "use: must be a bare fragment name (letters, digits, then any of . _ -), not a path — a use: resolves against the graph file's own fragments/ sibling and nowhere else, so a separator, a leading dot or a .. has no location to mean"})
 		return nil
 	}
-	chain = nest.extendedBy(name)
+	// The CITING-SITE half of the prompt rule: this node's own `prompt:`, in
+	// the reader's own file. The other half — a `prompt:` written beside a
+	// `use:` inside a fragment — is judged in judgeFragmentUse, against that
+	// file, so the message names the file it is about instead of charging text
+	// two hops away to whichever node happened to reach it.
 	if keys["prompt"] != nil {
 		fail(&FragmentError{NodeID: id, Fragment: name,
 			Reason: "prompt: alongside use: — a wholesale prompt override recreates the copy-variation drift fragments exist to kill, while still claiming the fragment's name; customize through the fragment's declared substitution points, or write an inline node honestly"})
@@ -960,7 +997,7 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		at := len(out.resolutions)
 		out.resolutions = append(out.resolutions, FragmentResolution{
 			NodeID: id, Fragment: name, Description: lf.frag.description,
-			Source: lf.frag.source, Grants: grants,
+			Source: lf.frag.source, Grants: grants, Depth: len(chain),
 		})
 		// A multi-node splice MINTS the namespace every level below it hangs
 		// off, and its own declared ids are what a single-node body cited from
@@ -968,6 +1005,13 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 		loop = spliceSequence(loop, entryPath, cache, out, nesting{
 			chain: chain, source: lf.frag.source, prefix: id, declares: lf.frag.declares,
 		})
+		// Spliced is filled in AFTER the descent, by index, because it must drop
+		// the internal ids that turned out to be loops of their own and that is
+		// not known until they have been resolved. The consequence is that this
+		// entry is briefly incomplete while the subtree below it resolves —
+		// harmless today, since nothing reads out.resolutions mid-pass and
+		// LoadFile hands over only the finished slice, but it is the seam that
+		// would have to move first if Resolutions ever became a stream.
 		out.resolutions[at].Spliced = splicedNodeIDs(id, lf.frag, out.loops)
 		return loop
 	}
@@ -991,7 +1035,7 @@ func resolveNode(nodeMap *yaml.Node, entryPath string, cache map[string]*loadedF
 	overridden := overlayUsingNode(nodeMap, body)
 	resolution := FragmentResolution{
 		NodeID: id, Fragment: name, Description: lf.frag.description,
-		Source: lf.frag.source, Overridden: overridden,
+		Source: lf.frag.source, Overridden: overridden, Depth: len(chain),
 	}
 	// A grant the USING node overrode is one file's text, already named in
 	// Overridden — and the substituted one overlayUsingNode just discarded is
@@ -1687,8 +1731,27 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 	return bodies
 }
 
-// judgeFragmentUse holds a `use:` written INSIDE a fragment file to the one
-// rule that must be settled before any file is read: the name is a LITERAL.
+// judgeFragmentUse holds a `use:` written INSIDE a fragment file to the rules
+// that are facts about the FILE rather than about any citation of it. All three
+// are decidable with no citing site in hand, so all three are reported HERE,
+// once, against the file — ADR 0013's "a fragment file's judgment is a fact
+// about the file", kept at depth (ADR 0029 §7). The alternative is to let
+// resolveNode catch them at splice time, where the same defect arrives charged
+// to the citing node's id, about text in a file that node's author may never
+// have opened, and for a single-node fragment only AFTER the body has been
+// overlaid onto that node.
+//
+//   - the cited NAME is a literal (below);
+//   - `prompt:` alongside `use:` is refused, exactly as it is at a citing node.
+//     An alias RELAYS a fragment's behavior; one that rewrites the prompt is
+//     claiming a fragment's name while replacing what it does, which is the
+//     copy-variation drift the citing-site rule exists to kill, one file over.
+//     ADR 0029 §7 records this as a decision rather than a consequence: nothing
+//     forces it, and the loader must not settle it by accident;
+//   - `with:` without `use:` is a dead binding — the same wiring bug the
+//     citing-site check in resolveNode reports, and refuseNestedUse reported
+//     for fragment files before ADR 0029 split that refusal up.
+//
 // ADR 0013 refused nesting outright and ADR 0027 kept the refusal deferred;
 // ADR 0029 lifts it and pays the two prices the refusal named — cycle detection
 // over resolution, and a namespacing policy — in resolveNode, which judges a
@@ -1711,17 +1774,24 @@ func fragmentFeedbackBodies(nodes *yaml.Node, ids []string, declares map[string]
 // such check: fragmentNamePattern already refuses every character a token is
 // made of.
 func judgeFragmentUse(node *yaml.Node, label string, badFile func(string)) {
-	use := mappingValues(node)["use"]
+	keys := mappingValues(node)
+	use, with := keys["use"], keys["with"]
+	where := "a fragment's node"
+	if label != "" {
+		where = "a fragment's " + label
+	}
 	if use == nil {
+		if with != nil {
+			badFile(fmt.Sprintf("%s declares with: without use: — a binding with no fragment to bind is a dead key, which is a wiring bug, not a style choice", where))
+		}
 		return
+	}
+	if keys["prompt"] != nil {
+		badFile(fmt.Sprintf("%s declares prompt: alongside use: — a wholesale prompt override recreates the copy-variation drift fragments exist to kill, while still claiming the cited fragment's name, and that is as true one file over as it is in a graph: a fragment citing a fragment RELAYS its behavior, and one that rewrites the prompt is not relaying it. Customize through the cited fragment's declared substitution points, or drop the use: and write this node out honestly", where))
 	}
 	value := scalarValue(use)
 	if !looseTokenPattern.MatchString(value) {
 		return
-	}
-	where := "a fragment's node"
-	if label != "" {
-		where = "a fragment's " + label
 	}
 	badFile(fmt.Sprintf("%s declares use: %q, whose name carries a {{ … }} token — a fragment name must be a literal. The citation chain, the cycle check and the depth bound are all decided before the cited file is read, so a name that arrived from a binding would make which files this graph pulls behavior from depend on data; a runtime token would not substitute here at all. Bind the fragment's substitution points, never its identity", where, value))
 }

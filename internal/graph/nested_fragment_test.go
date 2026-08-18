@@ -291,6 +291,15 @@ nodes:
 			t.Errorf("alias resolution NodeID = %q, want the citing node's own id", r.NodeID)
 		}
 	}
+	// This is the shape that makes Depth necessary rather than derivable: the
+	// second hop IS a nested resolution and its NodeID carries no slash, so
+	// anything counting slashes reads a nesting repo as a flat one.
+	if got := []int{res.Resolutions[0].Depth, res.Resolutions[1].Depth}; !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Errorf("alias chain depths = %v, want [1 2] — the hop is a hop whether or not it mints a segment", got)
+	}
+	if strings.Contains(res.Resolutions[1].NodeID, "/") {
+		t.Fatalf("an alias mints no segment, so the premise above is wrong: %q", res.Resolutions[1].NodeID)
+	}
 }
 
 // TestLoadFile_ChainAtTheBoundResolves is the positive edge of §3: THREE
@@ -319,6 +328,172 @@ nodes:
 	}
 	if len(res.Resolutions) != maxFragmentChain {
 		t.Errorf("want one disclosure line per hop, got %+v", res.Resolutions)
+	}
+}
+
+// TestLoadFile_ThreeMultiNodeHopsMintAFourSegmentID drives the deepest LEGAL
+// namespacing chain end to end, which is the composition §3 and §4 actually
+// claim: `top` + `core` + `make` → `top/core/make`, one more hop than any other
+// fixture reaches. TestLoadFile_ChainAtTheBoundResolves stands at the same
+// bound with single-node relays, which mint zero segments, so between them the
+// bound is exercised in both directions — the cheapest chain and the most
+// expensive one.
+//
+// It is also the only end-to-end exercise of resolveExit chaining more than
+// once: `top` exits at a loop that exits at a loop, so the value `after` sees
+// is three resolutions deep. The unit at TestResolveExit_FollowsEveryLevel...
+// pins the same walk on a hand-built map; this pins that a real LoadFile builds
+// that map.
+func TestLoadFile_ThreeMultiNodeHopsMintAFourSegmentID(t *testing.T) {
+	entry := `name: deep
+nodes:
+  - { id: top, use: l1, with: { task: the work } }
+  - { id: after, depends_on: [top], prompt: "done: {{ artifacts.top | inline }}" }
+`
+	fragments := map[string]string{
+		"l1": `fragment: l1
+description: the first level
+substitutions: [task]
+exit: core
+nodes:
+  - { id: seed, prompt: "seed {{ with.task }}" }
+  - id: core
+    depends_on: [seed]
+    use: l2
+    with: { task: "{{ with.task }} after {{ artifacts.seed | inline }}" }
+`,
+		"l2": `fragment: l2
+description: the second level
+substitutions: [task]
+exit: make
+nodes:
+  - { id: prep, prompt: "prep {{ with.task }}" }
+  - id: make
+    depends_on: [prep]
+    use: l3
+    with: { task: "{{ artifacts.prep | inline }}" }
+`,
+		"l3": `fragment: l3
+description: the third level, which may cite nothing further
+substitutions: [task]
+exit: leaf
+nodes:
+  - { id: work, prompt: "work on {{ with.task }}" }
+  - { id: leaf, depends_on: [work], prompt: "wrap {{ artifacts.work | inline }}" }
+`,
+	}
+	res, err := LoadFile(writeGraphDir(t, entry, fragments))
+	if err != nil {
+		t.Fatalf("three multi-node hops is the bound and must resolve: %v", err)
+	}
+
+	var ids []string
+	for _, n := range res.Graph.Nodes {
+		ids = append(ids, n.ID)
+	}
+	want := []string{"top/seed", "top/core/prep", "top/core/make/work", "top/core/make/leaf", "after"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("resolved node ids = %v, want %v — each hop prefixes the id the hop above minted", ids, want)
+	}
+
+	byID := func(id string) Node {
+		t.Helper()
+		n, ok := res.Graph.NodeByID(id)
+		if !ok {
+			t.Fatalf("no node %q in the resolved graph", id)
+		}
+		return n
+	}
+	// §6 — the transitive exit followed TWICE: top → top/core → top/core/make →
+	// top/core/make/leaf. A loop still exposes exactly one value from outside,
+	// however many loops deep the tail happens to be.
+	if got := byID("after").DependsOn; !reflect.DeepEqual(got, []string{"top/core/make/leaf"}) {
+		t.Errorf("downstream depends_on = %v, want the twice-chained exit [top/core/make/leaf]", got)
+	}
+	if got := byID("after").Prompt; !strings.Contains(got, "{{ artifacts.top/core/make/leaf | inline }}") {
+		t.Errorf("downstream artifact token = %q, want the twice-chained exit with its filter intact", got)
+	}
+	// §1 — each level namespaces its OWN file's text and never a bound value,
+	// so a binding threaded through three files carries the namespace of the
+	// level that wrote each token, and no level rewrites another's.
+	if got := byID("top/core/prep").Prompt; got != "prep the work after {{ artifacts.top/seed | inline }}" {
+		t.Errorf("depth-2 prompt = %q, want the level-1 binding namespaced at level 1 and inserted unrewritten", got)
+	}
+	if got := byID("top/core/make/work").Prompt; got != "work on {{ artifacts.top/core/prep | inline }}" {
+		t.Errorf("depth-3 prompt = %q, want the level-2 token namespaced at level 2", got)
+	}
+	if got := byID("top/core/make/leaf").Prompt; got != "wrap {{ artifacts.top/core/make/work | inline }}" {
+		t.Errorf("deepest internal edge = %q, want it namespaced with the full four-segment prefix", got)
+	}
+
+	// §5 — one line per hop, parent first, each stating the depth it stands at.
+	if len(res.Resolutions) != 3 {
+		t.Fatalf("want one disclosure line per hop, got %+v", res.Resolutions)
+	}
+	for i, want := range []struct {
+		nodeID, fragment string
+		depth            int
+	}{{"top", "l1", 1}, {"top/core", "l2", 2}, {"top/core/make", "l3", 3}} {
+		if got := res.Resolutions[i]; got.NodeID != want.nodeID || got.Fragment != want.fragment || got.Depth != want.depth {
+			t.Errorf("disclosure line %d = (%q, %q, depth %d), want (%q, %q, depth %d)",
+				i, got.NodeID, got.Fragment, got.Depth, want.nodeID, want.fragment, want.depth)
+		}
+	}
+}
+
+// TestLoadFile_OneWitnessPerBrokenFragmentAcrossChains drives the consequence
+// §1 accepted when it kept the fragment cache: a broken file reached down two
+// DIFFERENT chains is judged once, and the chain the reader is shown is the
+// first one document order reached — not their own.
+//
+// It matters because the mechanism mutates shared state. chargeTo writes NodeID
+// onto the cached *FragmentError and fail writes Chain onto the same object, so
+// the first reacher's identity is baked in for the rest of the pass. That is
+// correct per the ADR and was pinned only by a hand-built struct literal, which
+// cannot tell whether anything ever puts two chains at one file.
+func TestLoadFile_OneWitnessPerBrokenFragmentAcrossChains(t *testing.T) {
+	entry := `name: two-witnesses
+nodes:
+  - { id: first, use: via-a }
+  - { id: second, use: via-b }
+`
+	fragments := map[string]string{
+		"via-a": "fragment: via-a\ndescription: one way in\nnode: { use: ghost }\n",
+		"via-b": "fragment: via-b\ndescription: another way in\nnode: { use: ghost }\n",
+	}
+	path := writeGraphDir(t, entry, fragments)
+	issues, _, lintErr := LintFile(path)
+	if lintErr != nil {
+		t.Fatalf("LintFile I/O error: %v", lintErr)
+	}
+
+	var missing []error
+	for _, issue := range issues {
+		if strings.Contains(issue.Error(), "no fragment file at the fragment location") {
+			missing = append(missing, issue)
+		}
+	}
+	if len(missing) != 1 {
+		t.Fatalf("a fragment file is judged ONCE per pass — got %d reports of the missing file: %v", len(missing), missing)
+	}
+	// The witness is document order's first, and it is stated as a witness:
+	// `second` reached the same file down `via-b` and is shown `via-a`.
+	msg := missing[0].Error()
+	if !strings.Contains(msg, `node "first"`) || !strings.Contains(msg, "reached via via-a → ghost") {
+		t.Errorf("the one report must carry the FIRST citation document order reached: %q", msg)
+	}
+	if strings.Contains(msg, "via-b") {
+		t.Errorf("the report names one witness, not every path to the file: %q", msg)
+	}
+
+	// And the second node still had its fragment keys stripped, even though it
+	// was told nothing: validateFragmentsResolved is the backstop that fires on
+	// a node reaching Validate with `use:` still set, so its silence here is
+	// what proves the strip happened for the node that got no error of its own.
+	for _, issue := range issues {
+		if strings.Contains(issue.Error(), "unresolved fragment reference") {
+			t.Errorf("a node that failed to resolve must have its use:/with: stripped, reported or not: %v", issue)
+		}
 	}
 }
 
@@ -435,6 +610,46 @@ nodes:
 				"leaf": "fragment: leaf\ndescription: the leaf\nnode: { prompt: \"reads {{ artifacts.somewhere }}\" }\n",
 			},
 			wantErr: `declares no node "somewhere"`,
+		},
+		{
+			// §7 — an alias RELAYS a fragment's behavior; one that also writes
+			// its own prompt is claiming the cited fragment's name while
+			// replacing what it does, which is the citing-site rule's own
+			// reason, one file over. Charged to the FILE, because that is where
+			// the `prompt:` is written: the citing graph's author may never
+			// have opened it, and a message about their node id would send them
+			// looking in the wrong file.
+			name:  "an alias fragment that also writes its own prompt",
+			entry: cite,
+			fragments: map[string]string{
+				"top":  "fragment: top\ndescription: an alias with opinions of its own\nnode: { prompt: my own prompt, use: leaf }\n",
+				"leaf": "fragment: leaf\ndescription: the leaf\nnode: { prompt: the real behavior }\n",
+			},
+			wantErr: `fragment "top": a fragment's node declares prompt: alongside use:`,
+		},
+		{
+			// ADR 0013's "a fragment file's judgment is a fact about the file",
+			// kept at depth: a dead `with:` in a fragment file is the file's
+			// bug and is reported against the file, exactly as it was before
+			// ADR 0029 split the old blanket refusal up. Left to splice time it
+			// would arrive charged to the citing node — and for a single-node
+			// fragment only after the body had been overlaid onto it.
+			name:      "a fragment file whose node binds with: and cites nothing",
+			entry:     cite,
+			fragments: map[string]string{"top": "fragment: top\ndescription: a dead binding\nnode: { prompt: p, with: { x: y } }\n"},
+			wantErr:   `fragment "top": a fragment's node declares with: without use:`,
+		},
+		{
+			// The same file-level rule reaching a multi-node fragment's
+			// internal node, which is where the label says WHICH node.
+			name:  "a multi-node fragment's internal node binding with: and citing nothing",
+			entry: cite,
+			fragments: map[string]string{
+				"top": "fragment: top\ndescription: a loop\nexit: b\nnodes:\n" +
+					"  - { id: a, prompt: a }\n" +
+					"  - { id: b, depends_on: [a], prompt: b, with: { x: y } }\n",
+			},
+			wantErr: `a fragment's node "b" declares with: without use:`,
 		},
 		{
 			// §1 — the missing-file error below depth 1 must name the CHAIN, or
