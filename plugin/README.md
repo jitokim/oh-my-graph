@@ -87,6 +87,14 @@ Claude then reports the run ledger (session id, cost, verdict, detail per
 node, plus total cost) back to you in the session. For `auto`, it also shows
 the planned graph before the ledger.
 
+In a directory with a build system, that `auto` line refuses to start (exit 3,
+before any spend) unless it is given `--verify-cmd 'CMD'` — the engine then runs
+your build at each sink of the plan and judges its exit code itself — or
+`--accept-no-build-evidence`, which runs anyway and records the choice in the
+run's `state.json`. Claude is instructed to hand that refusal to **you** and ask
+which exit rather than picking the opt-out itself: the flag says a human accepts
+the absence, and only you are one.
+
 ## Prerequisite: `oh-my-graph` on `$PATH`
 
 The plugin does not bundle the graph engine. Install it once:

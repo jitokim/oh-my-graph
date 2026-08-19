@@ -1,10 +1,16 @@
 # ADR 0030 — An unverified `auto` run is a choice, not a default
 
-- Status: **Proposed — decision taken, nothing implemented.** This record is the
-  design; no code in this commit. The implementation lane owes the refusal, the
-  flag, the snapshot field, the two disclosure sites, the new exit code, the
-  pinned tests of §4, the documentation and plugin surfaces listed in §7, and
-  the `## [Unreleased]` CHANGELOG entry named under Compatibility.
+- Status: **Proposed — implemented 2026-08-20; §8's measurements are still owed
+  before Accepted.** The implementation lane delivered everything this record
+  called for: the refusal (`coordinator.RequireBuildEvidence` /
+  `*MissingBuildEvidenceError`), the flag (`--accept-no-build-evidence`), the
+  snapshot field (`runstate.BuildEvidence`), the two disclosure sites
+  (`VerifyAdvice`'s declared variant and `noteMissingBuildEvidence` on the plan
+  screen), exit 3, the pinned tests of §4
+  (`cmd/oh-my-graph/buildevidence_test.go`), the documentation and plugin
+  surfaces of §7, and the `## [Unreleased]` CHANGELOG entry. What is NOT done is
+  §8: (a) the firing rate and the exits taken, and (b) the table's
+  false-positive rate. Until those exist this stays Proposed.
 - Date: 2026-08-20
 - **Revised 2026-08-20 after design review, before any code existed.** Six
   changes, each argued where it lands: the recording was **inverted** relative to

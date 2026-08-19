@@ -10,6 +10,64 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **`auto` now REFUSES TO START in a directory where a build system is
+  detected, unless you pass `--verify-cmd 'CMD'` or the new
+  `--accept-no-build-evidence`** (ADR 0030). An invocation that ran yesterday can
+  exit **3** today. Say plainly what changed: previously such a run printed a
+  notice — *"No build verification configured … Nothing in this run will compile
+  or test your code"* — and then ran anyway. Now it stops, on stdout, before the
+  planner call, naming the marker it found (`gradlew`, `package.json`, …), a
+  suggested command, and both exits. Nothing is spent by a refusal.
+
+  Why a gate rather than a louder notice: a planned node cannot carry
+  `success_check.verify` (the planner's reply is untrusted input) and cannot
+  declare a build tool, so **without `--verify-cmd` an auto run has, by
+  construction, no engine-run evidence at all** — the only terminal predicate
+  left is `result_matches` on a node's own reply, and that node wrote the reply.
+  #119 is what that costs: a verify node holding `Bash(git *)` checked that a
+  branch existed, replied `PASS` in 17 seconds after the node before it spent
+  $11, and the real build then failed on a compile error. Of this machine's 8
+  `auto` runs, 1 carried engine-run verification
+  (`docs/measurements/0030-auto-runs-carry-no-build-evidence.md`).
+
+  **Exit code 3 is new** and is deliberately not 1: a script must be able to tell
+  "add a flag" from "the build failed". 1 (failed run) and 2 (paused run) keep
+  their meanings exactly.
+
+  **A directory with no build signal is not gated** and prints exactly the notice
+  it always did — there is nothing there for an evidence command to be evidence
+  about.
+
+  **`run`, `resume`, `lint`, `serve`, `watch`, `show` and every shipped graph are
+  untouched**, including every already-paused run: the gate is launch-time and
+  `auto`-only. `chat` asks the question and never refuses (it registers no
+  verification flag a refusal could name), stating the absence on the plan screen
+  its `[y/N]` gates.
+
+  The shipped quickstart in `README.md`/`README.ko.md`/`docs/EXAMPLES.md` now
+  passes `--accept-no-build-evidence`, because "lint this repo and summarize the
+  findings" genuinely has nothing to build — and the implementation-shaped
+  examples now pass `--verify-cmd`, because they do.
+
+### Added
+
+- **`--accept-no-build-evidence` on `auto`**, the one exit from the refusal
+  above. It is not a verification switch — nothing is skipped, because nothing
+  was going to run — and its name is what the operator states: *this run carries
+  no build evidence*. Passing it together with `--verify-cmd` is a contradiction
+  and is refused at parse. Where no build signal is detected it is accepted and
+  inert, so a script that always passes it keeps working.
+- **`build_evidence` in `state.json`** — an additive optional block, schema
+  stays 3, written on every auto-mode launch: `answer` (`attached`, `declared`,
+  `disclosed` or `none-detected`), `declared_by` (the exact spelling the human
+  typed), and `signals` (the marker filenames detected — never a command). So a
+  reader of a finished run learns whether an absence was a *choice* or an
+  accident, and the firing rate is countable rather than remembered. The plan
+  screen states the same thing beside the topology: it now says either what the
+  engine will run at each sink, or that it will run nothing, and never neither.
+
 ## [v0.10.0] - 2026-08-19
 
 **Minor because two things you may now type were errors before.** Compared by

@@ -50,11 +50,20 @@ go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 # Unpack the example graphs that ship inside the binary into ./graphs/:
 oh-my-graph init
 
-# Zero config — describe the goal and let auto plan the graph:
-oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+# Zero config — describe the goal and let auto plan the graph.
+# This goal reads the repo and writes a summary: there is nothing to build,
+# and --accept-no-build-evidence states that. In a directory where a build
+# system IS detected, `auto` refuses to start without it or --verify-cmd,
+# because a planned node cannot run a build and its PASS would be its own
+# word for it:
+oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
+
+# An implementation goal takes the other exit — the ENGINE runs your build
+# command at each sink of the plan and judges its exit code itself:
+oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
 # Codex is a run-wide opt-in; the global flag must precede the subcommand:
-oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD
+oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 
 # Or run a shipped graph — the cheapest real end-to-end check (a few cents):
 mkdir -p /tmp/omg-smoke

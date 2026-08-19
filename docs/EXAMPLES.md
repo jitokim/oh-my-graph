@@ -43,7 +43,7 @@ read that persisted runtime; passing a different explicit value is an error.
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file as `wrote` or `kept`. Never overwrites — see [docs/INSTALL.md](INSTALL.md#what-oh-my-graph-init-unpacks). |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
@@ -242,9 +242,16 @@ refused **before** the planner call, so a typo costs nothing; a command carrying
 shell syntax (a pipe, an `&&`, a substitution) skips that check rather than have
 the pre-flight re-implement the shell. `--plan-only` prints the command and the
 sink nodes it will run at, and every cycle of a `--max-cycles` goal loop plans a
-new graph that carries it. With no `--verify-cmd`, `auto` prints what it is
-*not* checking — and, if it recognizes the project, the flag that would change
-that. One thing worth knowing up front: `resume` takes no verification from a
+new graph that carries it. With no `--verify-cmd` in a directory where a build
+system **is** detected, `auto` no longer merely prints what it is not checking —
+since [ADR 0030](adr/0030-an-unverified-auto-run-is-a-choice-not-a-default.md)
+it **refuses to start** (exit 3, before the planner call, so nothing is spent),
+naming the marker it found and a suggested command. The other exit is
+`--accept-no-build-evidence`, which states that this run carries no build
+evidence and is recorded in the run's `state.json` and printed with the plan, so
+a later reader learns the absence was a choice. A directory with no build signal
+is not gated at all and prints exactly the notice it always did. One thing worth
+knowing up front: `resume` takes no verification from a
 run directory, so a run started with `--verify-cmd` needs the command **supplied
 again on every resumed leg** — `oh-my-graph resume <run-id> --retry-failed
 --verify-cmd './gradlew build'`, which is what the pause hint prints for you. A
@@ -260,8 +267,13 @@ graph spec, which is validated and executed by the same engine as a
 hand-written graph:
 
 ```sh
-oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 ```
+
+This goal reads the repo and writes a summary — there is nothing to build, and
+the flag says so. Drop it and `auto` refuses to start in any directory where it
+detects a build system (ADR 0030); an implementation goal takes the other exit,
+`--verify-cmd 'CMD'`, and has the engine check the result itself.
 
 What you'll see — a plan, then the same live feed and ledger as any other run
 (the planner is non-deterministic, so expect this shape rather than these
@@ -590,7 +602,7 @@ this one graph is not proof that anything landed — read `merge`'s artifact
 The `auto` equivalent — no hand-written graph, just the goal:
 
 ```sh
-oh-my-graph auto "implement 'add a --dry-run flag to the run subcommand' in this repo, run make local to check it, review the diff for security and style, then open a draft PR" --input repo=$PWD
+oh-my-graph auto "implement 'add a --dry-run flag to the run subcommand' in this repo, run make local to check it, review the diff for security and style, then open a draft PR" --input repo=$PWD --verify-cmd 'make local'
 ```
 
 This isn't a hypothetical case study — oh-my-graph is built this way. Auto

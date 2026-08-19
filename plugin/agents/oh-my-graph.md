@@ -29,6 +29,7 @@ Claude behaviour below carries over.
 oh-my-graph init [<dir>]
 oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+                          [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence]
                           [--max-cycles N] [--max-goal-budget-usd X]
                           [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping]
 oh-my-graph lint <graph.yaml>
@@ -51,6 +52,9 @@ Four of those are worth knowing precisely:
 - `auto --plan-only` prints the planned graph with every agent/skill mapping
   and the tool ceiling, then exits without running a node. Unlike
   `run --dry-run` it is **not free**: it still pays for one real planner call.
+- `auto` **refuses to start** (exit 3, before any spend) in a directory where it
+  detects a build system and no `--verify-cmd` was given. See the rule below —
+  this is the one refusal you must never resolve on your own initiative.
 - `resume --retry-failed` re-executes a failed run's failed and cancelled
   nodes (or finishes a session-limit-paused run's unfinished ones), keeping
   every passed node's result. It is the non-gate way to continue a run.
@@ -59,9 +63,29 @@ Four of those are worth knowing precisely:
   binds `127.0.0.1` only.
 
 Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
-a human gate and is **resumable** — a pause is not a failure. On exit 2,
+a human gate and is **resumable** — a pause is not a failure — and `3` `auto`
+refused to start for want of build evidence. On exit 2,
 surface the printed resume hint and offer
-`oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`).
+`oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
+see the rule immediately below.
+
+## The one refusal you must not resolve yourself
+
+`auto` refuses (exit 3) when it detects a build system in the invocation
+directory and no `--verify-cmd` was given. The refusal names two exits:
+`--verify-cmd 'CMD'`, which has the engine run that command at each sink of the
+plan and judge its exit code itself, and `--accept-no-build-evidence`, which
+runs anyway on the record.
+
+**Surface the refusal to the human and ask which exit. Never pass
+`--accept-no-build-evidence` on your own initiative.** The flag states that *a
+human accepts this run carries no build evidence*, it is written into the run's
+`state.json` under that name, and you typing it makes that record a false
+statement. The pull to take it is real and worth naming: it is the exit you can
+satisfy without knowing the repository's build command — which is exactly why it
+is not yours to take. If you do know the build command (the repo's README,
+`Makefile` or CI config says so), propose `--verify-cmd` with that command and
+let the human confirm it.
 
 ## How to work
 

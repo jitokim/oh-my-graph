@@ -54,11 +54,20 @@ go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 # 바이너리에 임베드된 예제 그래프를 ./graphs/에 풀어 놓습니다:
 oh-my-graph init
 
-# Zero config — 목표를 말하면 auto가 그래프를 설계합니다:
-oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD
+# Zero config — 목표를 말하면 auto가 그래프를 설계합니다.
+# 이 목표는 레포를 읽고 요약을 쓸 뿐이라 빌드할 것이 없고,
+# --accept-no-build-evidence가 바로 그 사실을 선언합니다. 빌드 시스템이
+# 감지되는 디렉터리에서는 이 플래그나 --verify-cmd 없이 `auto`가 시작을
+# 거부합니다. 계획된 노드는 빌드를 실행할 수 없고, 그 PASS는 노드 자신의
+# 말일 뿐이기 때문입니다:
+oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
+
+# 구현 목표라면 반대쪽 출구를 씁니다 — 엔진이 플랜의 각 sink에서 당신의 빌드
+# 명령을 직접 실행하고 exit code를 스스로 판정합니다:
+oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
 # Codex는 run 전체에 적용되는 opt-in입니다. global flag는 subcommand 앞에 둡니다:
-oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD
+oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 
 # 또는 기본 제공 그래프 실행 — 가장 저렴한 실제 end-to-end 체크(몇 센트):
 mkdir -p /tmp/omg-smoke
