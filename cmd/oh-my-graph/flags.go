@@ -23,6 +23,13 @@ type commonRunFlags struct {
 	noWeb               bool
 	planningCostUnknown bool
 	planningUsage       runner.TokenUsage
+	// buildEvidence is the launch-time build-evidence question and its answer
+	// (ADR 0030 §2.5a), for the snapshot to record and the plan screen to state.
+	// Not a flag: it is what the gate concluded from the flags plus the
+	// invocation directory. nil for `run`, which executes a hand-written graph
+	// carrying its author's own success_check.verify and never asks the
+	// question — so its snapshot records no answer.
+	buildEvidence *coordinator.BuildEvidenceOutcome
 	// runtimeWarnW receives the runtime-preflight warnings executeGraph's own
 	// runner.ValidateGraphForRuntime call produces (ADR 0026). Not a flag: the
 	// caller's answer to "have these already been shown?". `run` sets it to
@@ -96,6 +103,11 @@ type autoFlags struct {
 	maxGoalBudgetUSD float64
 	verifyCmd        string
 	verifyTimeout    time.Duration
+	// acceptNoBuildEvidence is ADR 0030's one opt-out. It is not a verification
+	// switch and its name says so: what the operator states by typing it is that
+	// THIS RUN CARRIES NO BUILD EVIDENCE, which is a true thing about the run,
+	// not a feature being turned off — there was never a check to skip.
+	acceptNoBuildEvidence bool
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -135,7 +147,20 @@ func newAutoFlags() *autoFlags {
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
 	f.set.StringVar(&f.verifyCmd, "verify-cmd", "", "shell command the ENGINE runs at every sink node of the plan, as build evidence (ADR 0016) — e.g. './gradlew build'. No node is granted anything: the command is yours, it is attached by trusted code after the plan validates, and the engine judges its exit code itself, so a check node can no longer certify a branch that does not build. Every cycle of --max-cycles plans afresh and every cycle's sinks get it")
 	f.set.DurationVar(&f.verifyTimeout, "verify-timeout", 0, "bound on ONE --verify-cmd execution (0 = 10m, which is also the ceiling every verification has). Not the 2-minute default a hand-written verification gets: a cold Gradle, Cargo or Maven build is exactly what that default was not sized for")
+	f.set.BoolVar(&f.acceptNoBuildEvidence, "accept-no-build-evidence", false, "state that this run carries no build evidence, and run anyway (ADR 0030). Without it, `auto` REFUSES to start in a directory where a build system is detected and no --verify-cmd was given — a planned node cannot carry a build command, so such a run's every judgement is the model's about its own work. This is not a verification switch: nothing is being skipped, because nothing was going to run. The choice is written to the run's state.json and printed with the plan, so a reader of that run later learns the absence was chosen. Accepted and inert where no build signal is detected")
 	return f
+}
+
+// buildDeclaration is what `auto` says about running without build evidence —
+// the --accept-no-build-evidence flag as the value object the gate takes
+// (coordinator.RequireBuildEvidence). Not a field on VerifyCommand: that value
+// object is shared with `resume`, which registers no opt-out and must have no
+// field for one.
+func (f *autoFlags) buildDeclaration() coordinator.BuildDeclaration {
+	if f.acceptNoBuildEvidence {
+		return coordinator.DeclaredByFlag
+	}
+	return coordinator.NoDeclaration
 }
 
 // verifyCommand is the --verify-cmd/--verify-timeout pair as the value object
@@ -191,6 +216,16 @@ func (f *autoFlags) parse(args []string) error {
 	// says is worse than no bound.
 	if f.planOnly && f.maxCycles > 1 {
 		return fmt.Errorf("auto: --plan-only cannot be combined with --max-cycles %d; each cycle after the first is planned from the previous cycle's run, so there is nothing to show ahead of time beyond cycle 1", f.maxCycles)
+	}
+	// Declaring an absence and supplying the thing whose absence you declared is
+	// a contradiction, and refusing beats picking a winner: either winner
+	// silently discards something the operator typed. It belongs here — this is
+	// flag-vs-flag consistency over the one FlagSet that registers both, exactly
+	// like the --plan-only/--max-cycles refusal above — and NOT in
+	// checkVerifyFlags, which `resume` also calls: the gate is auto-only, and
+	// sharing the helper would gate a resume by accident (ADR 0030 §2.3).
+	if f.acceptNoBuildEvidence && f.verifyCommand().Supplied() {
+		return fmt.Errorf("auto: --accept-no-build-evidence says this run carries no build evidence, but --verify-cmd %q supplies some; pass one or the other", f.verifyCmd)
 	}
 	// Build evidence is validated at parse for the same reason the two bounds
 	// above are, and for a sharper one: a planner call is billed whether or not

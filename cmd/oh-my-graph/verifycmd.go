@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // verifyShellMetachars are the characters whose presence anywhere in a
@@ -192,20 +193,89 @@ func noteVerifyAttachments(w io.Writer, attachments []coordinator.VerifyAttachme
 	}
 }
 
+// noteMissingBuildEvidence is the other half of the plan screen's build-evidence
+// slot: noteVerifyAttachments states what the engine WILL run at each sink, and
+// this states that it will run nothing. The slot says one or the other and never
+// neither (ADR 0030 §2.5b) — an absence stated beside the topology is what makes
+// chat's [y/N] a disclosure at all, and it is the screen `--plan-only` prints.
+//
+// evidence is nil for every surface that never asks the question — a
+// hand-written `run`, a resumed leg — and those screens are unchanged.
+func noteMissingBuildEvidence(w io.Writer, attachments []coordinator.VerifyAttachment, evidence *coordinator.BuildEvidenceOutcome) {
+	if len(attachments) > 0 || evidence == nil || evidence.Answer == coordinator.BuildEvidenceAttached {
+		return
+	}
+	fmt.Fprint(w, "  build evidence: NONE — nothing in this run compiles or tests your code, so every\n"+
+		"  verdict below is the model's, about its own work.\n")
+	if files := evidence.SignalFiles(); len(files) > 0 {
+		fmt.Fprintf(w, "    detected in this directory: %s\n", strings.Join(files, ", "))
+	} else {
+		fmt.Fprint(w, "    no build signal was detected in this directory\n")
+	}
+	switch evidence.Answer {
+	case coordinator.BuildEvidenceDeclared:
+		fmt.Fprintf(w, "    you said so with %s; this run's state.json records it\n", evidence.DeclaredBy)
+	case coordinator.BuildEvidenceDisclosed:
+		// chat's one keystroke covers two questions — run this plan, and accept
+		// that it proves nothing — so the second one is put in front of it here,
+		// which is the only place chat can meet it (ADR 0030 §2.6).
+		fmt.Fprint(w, "    approving this plan accepts that; this run's state.json records it\n")
+	}
+}
+
 // noteVerifyAdvice prints ADR 0016 §3's line when no --verify-cmd was given:
 // what this run will not check, and the one flag that would change it.
 //
-// dir is the invocation directory, scanned for build markers. Detection informs
-// and never grants: what a found marker buys is one line of printed prose with
-// a suggested command in it, which the human then chooses to accept or not. A
-// per-node detector that DERIVED a grant would let node 1 of the same run
-// create a package.json and widen node 2's tool set — a plan bootstrapping its
-// own grant, with no attacker anywhere.
+// declaration is what the operator said about the absence, which is the one
+// thing that turns this from a warning into a receipt (ADR 0030 §2.5b).
 //
-// Printed by `auto` only. `chat` shares planAndExecute but has no flag to point
-// at, and advice a reader cannot act on is noise.
-func noteVerifyAdvice(w io.Writer, v coordinator.VerifyCommand, dir string) {
-	if advice := coordinator.VerifyAdvice(v, coordinator.DetectBuildSignals(dir)); advice != "" {
+// Printed by `auto` only. `chat` shares the sweep below but passes io.Discard:
+// it registers no verification flags, so advice naming one is advice a reader
+// cannot act on, and its disclosure is the plan screen instead.
+func noteVerifyAdvice(w io.Writer, v coordinator.VerifyCommand, declaration coordinator.BuildDeclaration, signals []coordinator.BuildSignal) {
+	if advice := coordinator.VerifyAdvice(v, declaration, signals); advice != "" {
 		fmt.Fprint(w, advice)
+	}
+}
+
+// answerBuildEvidence is ADR 0030's gate at the CLI: ONE scan of the invocation
+// directory feeding all three consumers — the refusal, the advice line, and the
+// record the run keeps of what was detected and how it answered.
+//
+// One scan is the point of this helper existing at all. Two call sites asking
+// the same question of two `dir` arguments would let the gate refuse over one
+// directory while the advice line described another, and every assertion about
+// what the refusal SAYS would still pass; there is nothing in the text that pins
+// where it looked.
+//
+// dir is the invocation directory: the same tree the planned nodes and the
+// evidence command would both run in. Detection still never grants — what a
+// found marker buys is a printed suggestion and, since ADR 0030, a STOP. A
+// per-node detector that derived a grant would let node 1 of the same run create
+// a package.json and widen node 2's tool set; this runs once per invocation,
+// before the planner call, so nothing a node writes is ever detected.
+func answerBuildEvidence(w io.Writer, v coordinator.VerifyCommand, declaration coordinator.BuildDeclaration, dir string) (*coordinator.BuildEvidenceOutcome, error) {
+	signals := coordinator.DetectBuildSignals(dir)
+	outcome, err := coordinator.RequireBuildEvidence(v, declaration, signals)
+	if err != nil {
+		return nil, err
+	}
+	noteVerifyAdvice(w, v, declaration, signals)
+	return &outcome, nil
+}
+
+// buildEvidenceRecord is the outcome as the snapshot stores it: the answer, what
+// the human typed, and the marker FILENAMES — never the detection table's
+// suggested commands, so nothing executable can reach a run directory this way
+// (ADR 0016 §4, ADR 0030 §2.5a). nil in, nil out: a surface that never asked the
+// question records no answer.
+func buildEvidenceRecord(outcome *coordinator.BuildEvidenceOutcome) *runstate.BuildEvidence {
+	if outcome == nil {
+		return nil
+	}
+	return &runstate.BuildEvidence{
+		Answer:     outcome.Answer,
+		DeclaredBy: string(outcome.DeclaredBy),
+		Signals:    outcome.SignalFiles(),
 	}
 }

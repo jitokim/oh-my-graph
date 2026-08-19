@@ -83,8 +83,21 @@ func runChatRuntime(runtime runner.Runtime, args []string) error {
 	} else {
 		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
 	}
+	// `chat` asks the build-evidence question and never refuses on it (ADR 0030
+	// §2.6): it registers no verification flags, so a refusal here could only
+	// name a flag `chat` rejects — the dead end #198 was. What it gets instead is
+	// the absence stated on the plan screen its [y/N] gates, and the run recorded
+	// as `disclosed`, filed apart from `auto`'s declarations because one
+	// keystroke covering two questions is weaker than a flag typed at one.
+	// io.Discard: the pre-planner advice line names --verify-cmd, which is advice
+	// this surface's reader cannot act on.
+	evidence, err := answerBuildEvidence(io.Discard, coordinator.VerifyCommand{}, coordinator.DeclaredByChatConfirm, ".")
+	if err != nil {
+		return err
+	}
 	coord := coordinator.New(nodeRunner, options...)
-	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{runtime: runtime, inputs: inputFlag{}})
+	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner,
+		commonRunFlags{runtime: runtime, inputs: inputFlag{}, buildEvidence: evidence})
 }
 
 // errConfirmEOF marks stdin closing at the plan-confirmation prompt. chatLoop
