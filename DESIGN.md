@@ -1831,12 +1831,12 @@ The tool therefore renders its own runs: `serve` is the live view, `runs
 list` / `show` / `watch` the terminal ones.
 
 Both pages state, in the footer, **which build is serving them** —
-`v0.5.2 (cef30c6, built 2026-08-09 14:02)`, from `serve.BuildLabel`, rendered
-into the page once per process alongside the gate token. A `serve` process
-outlives the tree it was built from: it holds its port for as long as it runs
-and keeps serving the code it was compiled from while `bin/oh-my-graph` is
-rebuilt underneath it, which from a browser is indistinguishable from the new
-build misbehaving. The version cannot settle that on its own (every build
+`v0.5.2 (cef30c6, built 2026-08-09 14:02)`, the `Label` field of the one
+`serve.Build` both pages are rendered with, put into the page once per process
+alongside the gate token. A `serve` process outlives the tree it was built
+from: it holds its port for as long as it runs and keeps serving the code it
+was compiled from while `bin/oh-my-graph` is rebuilt underneath it, which from
+a browser is indistinguishable from the new build misbehaving. The version cannot settle that on its own (every build
 between two tags carries the same one), so the label also carries the VCS
 revision the toolchain stamped *and* the running executable's own mtime — the
 second because the first is absent from a `-buildvcs=false` build, a proxy
