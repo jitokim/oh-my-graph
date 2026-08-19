@@ -63,13 +63,22 @@ func newRunFlags() *runFlags {
 }
 
 // parse reads args in the order `<graph.yaml> [flags...]`. The graph path is
-// required and must come first; flags follow it.
+// required and must come first; flags follow it. A dash-prefixed first element
+// is a flag rather than a graph path (positionalArg, argslot.go), so it reaches
+// the FlagSet instead of being opened as a file.
 func (f *runFlags) parse(args []string) error {
-	if len(args) == 0 {
+	if req := helpRequest(args, "run", f.set); req != nil {
+		return req
+	}
+	graphPath, rest, ok := positionalArg(args)
+	if err := f.set.Parse(rest); err != nil {
+		return err
+	}
+	if !ok {
 		return fmt.Errorf("run: missing graph file (usage: oh-my-graph run <graph.yaml> [--input k=v ...])")
 	}
-	f.graphPath = args[0]
-	return f.set.Parse(args[1:])
+	f.graphPath = graphPath
+	return nil
 }
 
 // autoFlags holds the parsed `auto` subcommand options. The goal is a
@@ -142,6 +151,11 @@ func (f *autoFlags) verifyCommand() coordinator.VerifyCommand {
 // real planner call, so a flag-shaped goal and trailing non-flag arguments
 // (an unquoted multi-word goal) are rejected before anything runs.
 func (f *autoFlags) parse(args []string) error {
+	// A flag-shaped goal is refused below; a flag-shaped goal that is a request
+	// for help is ANSWERED, since that refusal never named the flags (#200).
+	if req := helpRequest(args, "auto", f.set); req != nil {
+		return req
+	}
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" || strings.HasPrefix(args[0], "-") {
 		return fmt.Errorf(`auto: missing goal (usage: oh-my-graph auto "<goal>" [--input k=v ...] — the quoted goal comes first)`)
 	}
@@ -261,14 +275,21 @@ func (f *resumeFlags) verifyCommand() coordinator.VerifyCommand {
 // only an error once the snapshot is loaded and the pending gate is known, so
 // that the error can name it (see resumeDecision) — DESIGN.md, "A bare
 // `resume <run-id>` on a paused run is an error naming the pending gate."
+// A dash-prefixed first element is a flag, not a run id (positionalArg,
+// argslot.go): #198's reporter, stranded mid-run, typed `resume --help` to
+// learn which flags existed and was told there was no run called "--help".
 func (f *resumeFlags) parse(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> ((--approve|--reject) <gate-id> | --retry-failed))")
+	if req := helpRequest(args, "resume", f.set); req != nil {
+		return req
 	}
-	f.runID = args[0]
-	if err := f.set.Parse(args[1:]); err != nil {
+	runID, rest, ok := positionalArg(args)
+	if err := f.set.Parse(rest); err != nil {
 		return err
 	}
+	if !ok {
+		return fmt.Errorf("resume: missing run id (usage: oh-my-graph resume <run-id> ((--approve|--reject) <gate-id> | --retry-failed))")
+	}
+	f.runID = runID
 	// The same parse-time gate `auto` applies, through the same helper. A
 	// resumed leg buys no planner call, so the sharper half of auto's reason is
 	// absent — but the flat one is not: a --verify-timeout past the ceiling or a

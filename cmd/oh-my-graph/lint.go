@@ -17,6 +17,10 @@ func runLint(args []string) error {
 }
 
 func runLintRuntime(runtime runner.Runtime, args []string) error {
+	// A dash-prefixed argument is a flag, not a graph file (argslot.go).
+	if err := flagInPositionalSlot(args, "lint"); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("lint: missing graph file (usage: oh-my-graph lint <graph.yaml>)")
 	}

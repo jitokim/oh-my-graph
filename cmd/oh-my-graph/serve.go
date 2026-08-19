@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -55,11 +54,16 @@ func (f *serveFlags) autoOpener(stdout *os.File, opener browser.Opener) browser.
 
 // parse reads args in the order `[<run-id>] [flags...]`, mirroring the other
 // subcommands' positional-first convention — except the positional is
-// optional here, so a leading flag is flags-only argv, not an error.
+// optional here, so a leading flag is flags-only argv, not an error. The
+// leading-flag check that used to be written out here is now positionalArg
+// (argslot.go), shared with every sibling that owns a positional slot.
 func (f *serveFlags) parse(args []string) error {
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		f.runID = args[0]
-		args = args[1:]
+	if req := helpRequest(args, "serve", f.set); req != nil {
+		return req
+	}
+	runID, args, ok := positionalArg(args)
+	if ok {
+		f.runID = runID
 	}
 	if err := f.set.Parse(args); err != nil {
 		return err

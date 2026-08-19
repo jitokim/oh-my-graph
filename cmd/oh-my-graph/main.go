@@ -74,6 +74,15 @@ func main() {
 // place and the mapping itself is testable without calling os.Exit.
 func mainExitCode(args []string) int {
 	err := run(args)
+	// A help request is not one of the three outcomes above: it answers on
+	// stdout, like every other report this CLI prints, and exits 0. It reaches
+	// here as an error only because that is the return path subcommands have
+	// (usageRequest, argslot.go).
+	var usage *usageRequest
+	if errors.As(err, &usage) {
+		usage.print(os.Stdout)
+		return 0
+	}
 	code := exitCodeForError(err)
 	if code == 1 {
 		fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
@@ -95,6 +104,12 @@ func mainExitCode(args []string) int {
 // one code.
 func exitCodeForError(err error) int {
 	if err == nil {
+		return 0
+	}
+	// Asked for and answered: `resume --help` is a successful invocation, not a
+	// failed one (#200).
+	var usage *usageRequest
+	if errors.As(err, &usage) {
 		return 0
 	}
 	var paused *schedule.PausedError
