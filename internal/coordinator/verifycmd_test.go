@@ -798,8 +798,14 @@ func TestVerifyAdvice_DeclaredCaseSaysTheChoiceIsRecorded(t *testing.T) {
 	if !strings.Contains(declared, "You said so with --accept-no-build-evidence") {
 		t.Errorf("the declared case does not say the absence was chosen: %q", declared)
 	}
-	if !strings.Contains(declared, "state.json records it") {
+	if !strings.Contains(declared, "records it in state.json") {
 		t.Errorf("the declared case does not say where the choice is recorded: %q", declared)
+	}
+	// The line is printed before anything knows whether a run follows it, so it
+	// must not claim one. `auto --plan-only` reaches this same advice and then
+	// mints no run id at all (ADR 0030 §2.5b).
+	if strings.Contains(declared, "this run's state.json") {
+		t.Errorf("the declared case promises a receipt --plan-only never writes: %q", declared)
 	}
 	inert := VerifyAdvice(VerifyCommand{}, DeclaredByFlag, signalDir(t))
 	if strings.Contains(inert, "You said so") {

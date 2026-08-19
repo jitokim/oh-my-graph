@@ -236,7 +236,7 @@ func TestRunAutoWith_DeclaredAbsenceProceedsAndIsRecorded(t *testing.T) {
 		"You said so with --accept-no-build-evidence",
 		"build evidence: NONE",
 		"detected in this directory: package.json",
-		"this run's state.json records it",
+		"a run started from this plan records it in state.json",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the declared run does not print %q:\n%s", want, out)
@@ -337,6 +337,52 @@ func TestRunAutoWith_PlanOnlyRefusesIdenticallyToTheRunItPreviews(t *testing.T) 
 	}
 	if n := len(fake.Invocations()); n != 0 {
 		t.Errorf("the two refusals bought %d planner call(s) between them, want 0", n)
+	}
+}
+
+// TestRunAutoWith_PlanOnlyDeclaredPromisesNoRecordItDoesNotWrite is the other
+// cell of the --plan-only row: the test above covers the preview met by SILENCE,
+// this one the preview met by the OPT-OUT. It is the one combination where the
+// two disclosures could lie, because both of them are written for the run that
+// normally follows and a preview mints no run id at any point
+// (notePlanOnlyPreview) — so a sentence saying "this run's state.json records
+// it" would promise a receipt the screen's own last paragraph goes on to deny.
+//
+// It asserts the absence of that promise and then the fact behind it: no run
+// directory exists afterwards. Asserting the text alone would keep passing if
+// the preview started writing snapshots, and asserting the directory alone would
+// keep passing while the screen lied about it.
+func TestRunAutoWith_PlanOnlyDeclaredPromisesNoRecordItDoesNotWrite(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "Cargo.toml")
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
+	})
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runAutoWith([]string{"add a README section", "--plan-only", "--accept-no-build-evidence",
+			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("a declared preview must proceed exactly as the run it previews does: %v", err)
+	}
+	for _, want := range []string{
+		"build evidence: NONE",
+		"detected in this directory: Cargo.toml",
+		"plan only: no node was executed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the declared preview does not print %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "this run's state.json") {
+		t.Errorf("the preview promises a state.json it never writes:\n%s", out)
+	}
+
+	entries, readErr := os.ReadDir(runsRoot())
+	if readErr == nil && len(entries) != 0 {
+		t.Fatalf("the preview left %d run director(ies); a preview is not a run (ADR 0023 §3)", len(entries))
 	}
 }
 

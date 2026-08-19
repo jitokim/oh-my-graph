@@ -451,7 +451,12 @@ var buildSignals = []BuildSignal{
 	{File: "flake.nix", Ecosystem: "a Nix flake", SuggestedCommand: "nix flake check"},
 }
 
-// csprojGlob is the one signal that is a pattern rather than a name.
+// csprojGlob is the one signal that is a pattern rather than a name. Being a
+// pattern costs it one false negative the os.Stat markers cannot have: the
+// invocation directory is interpolated INTO it, so a path holding `[`, `?` or
+// `*` yields a well-formed pattern that matches nothing, and Glob reports no
+// error for that. Recorded in ADR 0030 §6 as a false negative rather than fixed
+// — it fails open, like every other gap in the table.
 const csprojGlob = "*.csproj"
 
 // DetectBuildSignals reports which build markers dir holds, in the table's
@@ -524,7 +529,12 @@ func VerifyAdvice(v VerifyCommand, declaration BuildDeclaration, signals []Build
 	fmt.Fprintf(&b, "  --verify-cmd %s\n", suggestion)
 	b.WriteString("to have the engine verify the result itself.\n")
 	if declaration == DeclaredByFlag && len(signals) > 0 {
-		b.WriteString("You said so with --accept-no-build-evidence; this run's state.json records it.\n")
+		// "a run launched this way", not "this run": this line is printed before
+		// anything knows whether a run follows. `auto --plan-only` reaches the same
+		// gate (§2.6) and then mints no run id at all, so "this run's state.json"
+		// would promise a receipt that screen's own last paragraph goes on to say
+		// does not exist.
+		b.WriteString("You said so with --accept-no-build-evidence; a run launched this way records it in state.json.\n")
 	}
 	return b.String()
 }

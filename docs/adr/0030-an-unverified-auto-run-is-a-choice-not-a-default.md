@@ -22,6 +22,18 @@
   being inherited rather than chosen are written down — chat's session-long
   staleness window and the quickstart's opt-out-first order (§6), and the fact
   that no finished-run surface reads the record back yet (§2.5b).
+- **Reviewed again 2026-08-20, on the final state of the lane.** All gates green
+  and nothing blocking; four findings, all in this record's prose or its
+  honesty about its own numbers rather than in the mechanism. One was a real
+  user-visible defect: both receipt sentences said *"this run's `state.json`
+  records it"*, which `--plan-only` contradicts twice on one screen because it
+  writes no `state.json` at all — the wording is now conditional at both sites
+  and the missing `--plan-only` + opt-out cell of §4's matrix is pinned (§2.5b).
+  The other three are limits this record was overstating past: §8(a)'s N counts
+  launches that got a run directory, not launches, so the firing rate it yields
+  is a **floor** and an abandoned refusal is invisible (§8a, §9); and the one
+  glob-matched marker has a false negative the `os.Stat` markers cannot have
+  (§6).
 - Date: 2026-08-20
 - **Revised 2026-08-20 after design review, before any code existed.** Six
   changes, each argued where it lands: the recording was **inverted** relative to
@@ -430,14 +442,30 @@ directory remains an inadmissible source of engine-run shell, on both legs.
 
 - **before the planner call**, `VerifyAdvice` gains a variant for the declared
   case — the same paragraph it prints today plus the sentence *"You said so with
-  `--accept-no-build-evidence`; this run's `state.json` records it."* It takes
-  the declaration as a new argument (§2.3), not as a field on `VerifyCommand`.
-  The un-signalled case's text is unchanged;
+  `--accept-no-build-evidence`; a run launched this way records it in
+  `state.json`."* It takes the declaration as a new argument (§2.3), not as a
+  field on `VerifyCommand`. The un-signalled case's text is unchanged;
 - **with the plan**, in the slot `noteVerifyAttachments` occupies
   (`printPlan`, `cmd/oh-my-graph/main.go`). That slot states either what the
   engine will run at each sink, or that nothing will — never neither. This is
   the screen `--plan-only` prints and the screen chat's `[y/N]` gates, which is
-  what makes §2.6's chat answer work at all.
+  what makes §2.6's chat answer work at all. Its declared line reads *"you said
+  so with `--accept-no-build-evidence`; a run started from this plan records it
+  in `state.json`."*
+
+**Neither receipt sentence says "this run", and that is load-bearing.** Both
+are printed before anything knows a run follows: `--plan-only` reaches the same
+gate and the same plan screen (§2.6) and then mints no run id at any point, so
+it writes no `state.json` for the sentence to be about — and the preview's own
+last paragraph goes on to say exactly that ("it gets no run directory"). The
+first implementation of both sentences said *"this run's `state.json` records
+it"*, which made `auto --plan-only --accept-no-build-evidence` contradict itself
+twice on one screen. The disclosed line was already phrased conditionally
+("approving this plan accepts that"); the declared ones now match it. Pinned by
+`TestRunAutoWith_PlanOnlyDeclaredPromisesNoRecordItDoesNotWrite`, which asserts
+the promise's absence *and* that no run directory follows — the text alone would
+keep passing if the preview started writing snapshots, and the directory alone
+would keep passing while the screen lied about it.
 
 **Both printed sites are before the run, and that is the whole of what this ADR
 ships.** Nothing reads the field back afterwards: `show`, `runs`, the dashboard
@@ -631,6 +659,23 @@ rather than a coverage wish. All five are in
     `cmd/oh-my-graph/` fails dozens of unrelated tests with an unrelated
     message; this converts that cascade into one failure that says what to do.
 
+### 4.2 One more, owed after the final review (2026-08-20)
+
+The `--plan-only` row of the matrix above had two cells and one test. Test 5
+covers the preview met by **silence** — the refusal — and nothing covered the
+preview met by the **opt-out**, which is the only combination where the two
+disclosures can lie, because both are written for the run that normally follows
+and a preview mints no run id at all. They did lie, in exactly that cell.
+
+14. **A declared preview promises no record it does not write**
+    (`TestRunAutoWith_PlanOnlyDeclaredPromisesNoRecordItDoesNotWrite`). Asserts
+    that `auto --plan-only --accept-no-build-evidence` in a build-bearing
+    directory proceeds, states the absence with its signal, does **not** print
+    "this run's state.json", and leaves no run directory behind. Both halves are
+    needed: the text alone would keep passing if the preview started writing
+    snapshots, and the directory alone would keep passing while the screen lied
+    about it (§2.5b).
+
 ## 5. Alternatives considered
 
 - **Keep the notice and make it louder** (colour, a blank line, an
@@ -791,9 +836,16 @@ rather than a coverage wish. All five are in
   subdirectories — `DetectBuildSignals` reads the invocation directory only, not
   recursively. No gate fires; the run proceeds unverified exactly as today. The
   gate is exactly as complete as the table, and the table is allowed to be
-  incomplete because incompleteness fails **open** (§3). The
+  incomplete because incompleteness fails **open** (§3). One more member of this
+  class comes from the table's shape rather than its contents: `*.csproj` is the
+  single marker matched as a **pattern** (`filepath.Glob`) rather than by
+  `os.Stat`, so an invocation directory whose own path contains `[`, `?` or `*`
+  produces a valid-but-wrong pattern that matches nothing, silently — `Glob`
+  errors only on a malformed pattern, never on a well-formed one that finds
+  nothing. A .NET repository under such a path loses its only signal. Same
+  direction as the rest of the bullet, so it is recorded rather than fixed. The
   created-during-the-run case above is a different and larger class than these
-  three and is listed separately for that reason: those are gaps in the *table*,
+  and is listed separately for that reason: those are gaps in the *table*,
   and it is a gap in the *timing*, which no table entry closes.
 - **A build too slow for the ceiling.** `--verify-cmd` is bounded by 10 minutes,
   and a build that exceeds it fails as an Infrastructure fault ("could not
@@ -905,8 +957,9 @@ Neither gates correctness of the mechanism; both gate the claims made for it.
 Record each with cost and CLI version, as every prior E-number is.
 
 - **(a) The firing rate and the exits taken.** Over the first N `auto`
-  invocations after this ships, counted from the snapshots themselves — one row
-  per launch, four mutually exclusive strata, summing to N:
+  invocations **that produced a run directory** after this ships, counted from
+  the snapshots themselves — one row per such launch, four mutually exclusive
+  strata, summing to N:
 
   | stratum | `build_evidence.answer` | what it answers |
   | --- | --- | --- |
@@ -929,6 +982,17 @@ Record each with cost and CLI version, as every prior E-number is.
   never summed (§2.6), and read the `declared` count as an **upper bound on
   human declarations** — an agent's argv is indistinguishable from a human's
   keystroke in that column (§6, §9).
+
+  **N is not "launches"; it is launches that got a run directory**, and the two
+  classes it excludes both matter to this section's own headline. A **refused**
+  invocation writes nothing anywhere — no run directory, no feed event, no
+  snapshot, by design (§2.2, `TestRunAutoWith_RefusesABuildBearingDirectoryWithNoEvidenceCommand`)
+  — and a **`--plan-only`** one writes no `state.json` at all (§2.5b). So an
+  operator who was refused and then *overrode* leaves a `declared` row, while one
+  who was refused and *walked away* leaves nothing: the firing rate readable from
+  snapshots is a **floor**, not the rate. Getting the true rate needs a surface
+  this ADR does not add (§9). Do not report the four strata as the denominator of
+  refusals.
 - **(b) The false-positive rate of the table.** Over this machine's repositories,
   how many directories that raise a signal have no build command worth running
   for a typical goal. If it is high, the friction estimate in §6 is wrong and the
@@ -939,6 +1003,16 @@ Record each with cost and CLI version, as every prior E-number is.
 - **Whether the gate changes outcomes or only paperwork.** An operator refused
   once may type the real build command, or may type the opt-out forever. Nothing
   in the corpus predicts which, and (a) is the only thing that will tell us.
+- **How often the gate fires, as opposed to how often it fires and is then
+  answered.** A refusal leaves no artifact — that is the point of refusing before
+  a run directory exists (§2.2) — so an abandoned refusal is invisible to §8(a),
+  which counts only launches that got a run directory. The `declared` and
+  `disclosed` strata therefore measure the **answered** firings and put a floor
+  under the real rate; nothing here measures the numerator. Closing it means
+  writing something on the refusal path, which would undo the property ADR 0023
+  §2.6 depends on (a refused invocation is not a run and gets no status), so it
+  is not a small follow-up. Named here rather than left for a future reader to
+  find by dividing by the wrong N.
 - **How many of the 7 unverified runs would have been gated.** Unknowable: no
   snapshot and no feed event records the invocation directory. Stated in the
   measurement file, not inferred around.

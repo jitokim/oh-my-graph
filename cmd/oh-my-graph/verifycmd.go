@@ -219,7 +219,12 @@ func noteMissingBuildEvidence(w io.Writer, evidence *coordinator.BuildEvidenceOu
 	}
 	switch evidence.Answer {
 	case coordinator.BuildEvidenceDeclared:
-		fmt.Fprintf(w, "    you said so with %s; this run's state.json records it\n", evidence.DeclaredBy)
+		// "a run started from this plan", not "this run": the same screen is what
+		// `--plan-only` prints, and that path saves the spec under plans/ and mints
+		// no run id (notePlanOnlyPreview), so there is no state.json to record
+		// anything in. The disclosed case below is already phrased this way —
+		// conditioned on the approval that has not happened yet.
+		fmt.Fprintf(w, "    you said so with %s; a run started from this plan records it in state.json\n", evidence.DeclaredBy)
 	case coordinator.BuildEvidenceDisclosed:
 		// chat's one keystroke covers two questions — run this plan, and accept
 		// that it proves nothing — so the second one is put in front of it here,
