@@ -10,6 +10,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-08-19
+
+**Minor because two things you may now type were errors before.** Compared by
+name: the eleven subcommands are unchanged, `flags.go`'s seventeen long flags
+are unchanged, and the fragment file's five keys are unchanged — so nothing new
+was *invented*. What changed is where existing spellings are accepted:
+`resume` now takes `--verify-cmd` and `--verify-timeout`, which it previously
+rejected with `flag provided but not defined`; and a `use:` inside a fragment
+file, previously a load error, now resolves.
+
+The headline is **closure**: a fragment may cite a fragment, so a loop can
+contain a loop, bounded by a citation chain and a depth of three files. ADR 0027
+opened the unit; this closes it — a graph of loops is a loop.
+
+Two of this release's entries exist because someone was stranded by them. #198
+was found by the maintainer's own `auto --verify-cmd` run hitting a session
+limit, and #200 by the same person reaching for `resume --help` at the moment it
+mattered. Both are in the release that also changed how this project dogfoods:
+**291 runs, 284 of them `run` and 7 `auto`** — the path the README leads with was
+the path we exercised least, and that is where both bugs lived.
+
 ### Added
 
 - **A node inside a fragment file may carry `use:`/`with:` — a fragment may
@@ -3583,7 +3604,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.10.0...HEAD
+[v0.10.0]: https://github.com/jitokim/oh-my-graph/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/jitokim/oh-my-graph/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/jitokim/oh-my-graph/compare/v0.6.1...v0.7.0
