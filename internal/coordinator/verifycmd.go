@@ -551,6 +551,14 @@ const (
 	DeclaredByChatConfirm BuildDeclaration = "chat-confirm"
 )
 
+// BuildAnswer is how one auto-mode launch answered the build-evidence question.
+// It is a named type for the same reason BuildDeclaration is: the set is closed,
+// its values are the exact spellings a snapshot records, and the two fields are
+// written side by side by one function — an untyped answer beside a typed
+// declaration would make `Answer = "attaced"` compile where `DeclaredBy = "flag"`
+// does not.
+type BuildAnswer string
+
 // The four values BuildEvidenceOutcome.Answer can take. The set is closed and
 // every auto-mode launch lands in exactly one of them, which is what makes the
 // firing rate a measurement rather than a count of one stratum (ADR 0030 §8a).
@@ -558,15 +566,15 @@ const (
 	// BuildEvidenceAttached — --verify-cmd was supplied and the engine runs it
 	// at each sink. Signals may be empty or not; the attachment itself is in the
 	// graph.
-	BuildEvidenceAttached = "attached"
+	BuildEvidenceAttached BuildAnswer = "attached"
 	// BuildEvidenceDeclared — signals were detected and a human typed the flag.
-	BuildEvidenceDeclared = "declared"
+	BuildEvidenceDeclared BuildAnswer = "declared"
 	// BuildEvidenceDisclosed — signals were detected and a chat [y/N] approved a
 	// plan screen that stated the absence.
-	BuildEvidenceDisclosed = "disclosed"
+	BuildEvidenceDisclosed BuildAnswer = "disclosed"
 	// BuildEvidenceNoneDetected — the directory raised no signal, so no gate
 	// applied and nothing was declared. Every greenfield run lands here.
-	BuildEvidenceNoneDetected = "none-detected"
+	BuildEvidenceNoneDetected BuildAnswer = "none-detected"
 )
 
 // BuildEvidenceOutcome is the launch-time build-evidence question and its
@@ -582,7 +590,7 @@ const (
 // in a persisted copy of it that a later leg could execute.
 type BuildEvidenceOutcome struct {
 	// Answer is one of the four constants above.
-	Answer string
+	Answer BuildAnswer
 	// DeclaredBy is the exact spelling of what the human did, for the two
 	// answers a human gives. Empty for attached and none-detected.
 	DeclaredBy BuildDeclaration

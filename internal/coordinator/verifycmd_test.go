@@ -655,7 +655,7 @@ func TestRequireBuildEvidence_AnswersEveryLaunchAndRefusesOnlySilence(t *testing
 		command     VerifyCommand
 		declaration BuildDeclaration
 		markers     []string
-		wantAnswer  string
+		wantAnswer  BuildAnswer
 		wantBy      BuildDeclaration
 		wantSignals []string
 		wantRefusal bool
