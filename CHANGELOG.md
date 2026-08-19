@@ -101,6 +101,68 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   and `/run/<id>/` cannot disagree about which process is answering. Disclosure
   only: no new route, no new handler, nothing the page can act on.
 
+### Fixed
+
+- **A `serve` that cannot take its port now names who is holding it** (#204). The
+  bind error said the port was taken and stopped there, leaving the one question
+  the reader actually has unanswered — taken BY WHAT — and this repo has already
+  paid for that once: a long-lived `serve` holding 8642 while the binary is
+  rebuilt underneath it reads, from the browser, exactly like the new build
+  misbehaving. On the bind-failure path **only**, the port that just refused the
+  bind is now asked over loopback HTTP who holds it, and the answer is read off
+  the same `omg-version` / `omg-revision` / `omg-built-at` tags the entry above
+  added — the machine-readable half of the identity the page already states,
+  deliberately the same channel rather than a second one that could disagree with
+  the page it is diagnosing. **A successful bind makes no request at all**, so the
+  serving path is exactly what it was.
+
+  Three answers, and the third is the sentence the error has always carried,
+  byte for byte:
+
+  ```console
+  # (a) another oh-my-graph, a DIFFERENT build — both builds named
+  $ oh-my-graph serve --port 8654
+  … bind: address already in use — 127.0.0.1:8654 is held by another
+  `oh-my-graph serve`, and it is an older build than the binary you just ran: the
+  server answering there is v0.9.1 (c40cb5c-dirty, built 2026-08-01 14:02), this
+  binary is v0.10.0 (9590682, built 2026-08-20 09:12). What you see at
+  http://127.0.0.1:8654/ is that older build, not the code you just built;
+  nothing here stops it. To serve this build beside it, run `oh-my-graph serve
+  --port 8655`.
+
+  # (b) another oh-my-graph, the SAME build
+  … bind: address already in use — 127.0.0.1:8654 is already held by another
+  `oh-my-graph serve` running this same build, v0.10.0 (9590682, built 2026-08-20
+  09:12): you already have one running, and it is answering at
+  http://127.0.0.1:8654/. To serve a second one beside it, run `oh-my-graph serve
+  --port 8655`.
+
+  # (c) a foreign server, a serve older than the tags, or no answer at all
+  … bind: address already in use (if the port is taken, pick another with --port)
+  ```
+
+  `an older` becomes `a newer` or `a different` — and the second mention agrees
+  with it — whenever the two `omg-built-at` atoms order the other way or cannot be
+  ordered at all: printing "older" at a holder that is in fact newer would be a
+  confident wrong answer about the exact thing the reader came here to learn.
+
+  What it deliberately is **not** is `lsof -i :8642` and a pid. Exactly four
+  objects in this repo may spawn a process (ADR 0002/0005/0006, asserted by
+  import in `internal/invariants`) and a diagnostic is not worth a fifth; an HTTP
+  GET to loopback spawns nothing and answers the better question anyway — not
+  which process, but which BUILD. So every message reports, names a command you
+  can run, and stops there: nothing kills, replaces, or offers to.
+
+  The probe is bounded and narrow. It addresses `127.0.0.1:<port>` and nothing
+  else, follows no redirect at all (whatever answers the port must not get to
+  choose the next host this process talks to), reads at most 64 KiB, and gives up
+  after **2 seconds** — a bound on the whole probe, connect through body read, so
+  a holder that accepts the connection and never answers costs a bind error two
+  seconds rather than hanging the command that was already failing. Port 0 is
+  never probed (there is no fixed port a holder could be holding), and a caller
+  that states no build of its own — the embedded live view — degrades to the
+  `--port` sentence rather than guessing "older" or "the same".
+
 ## [v0.10.0] - 2026-08-19
 
 **Minor because two things you may now type were errors before.** Compared by
