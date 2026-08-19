@@ -1126,7 +1126,7 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 		noteCeiling(w, anyAgentMapped(g))
 	}
 	noteVerifyAttachments(w, plan.VerifyAttachments)
-	noteMissingBuildEvidence(w, plan.VerifyAttachments, evidence)
+	noteMissingBuildEvidence(w, evidence)
 	noteReplan(w, plan.Repaired)
 	// Last, and deliberately after the ceiling: that paragraph says planned
 	// nodes "run isolated", meaning settings and tools. This one narrows it —

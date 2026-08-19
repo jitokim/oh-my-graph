@@ -201,8 +201,13 @@ func noteVerifyAttachments(w io.Writer, attachments []coordinator.VerifyAttachme
 //
 // evidence is nil for every surface that never asks the question — a
 // hand-written `run`, a resumed leg — and those screens are unchanged.
-func noteMissingBuildEvidence(w io.Writer, attachments []coordinator.VerifyAttachment, evidence *coordinator.BuildEvidenceOutcome) {
-	if len(attachments) > 0 || evidence == nil || evidence.Answer == coordinator.BuildEvidenceAttached {
+//
+// The outcome alone decides, and the attachments are deliberately not consulted:
+// a non-empty VerifyAttachments means --verify-cmd was supplied, which is
+// RequireBuildEvidence's first case, so the answer is already `attached`. Taking
+// the slice too would add the one way the two halves of the slot could disagree.
+func noteMissingBuildEvidence(w io.Writer, evidence *coordinator.BuildEvidenceOutcome) {
+	if evidence == nil || evidence.Answer == coordinator.BuildEvidenceAttached {
 		return
 	}
 	fmt.Fprint(w, "  build evidence: NONE — nothing in this run compiles or tests your code, so every\n"+
@@ -274,7 +279,7 @@ func buildEvidenceRecord(outcome *coordinator.BuildEvidenceOutcome) *runstate.Bu
 		return nil
 	}
 	return &runstate.BuildEvidence{
-		Answer:     outcome.Answer,
+		Answer:     string(outcome.Answer),
 		DeclaredBy: string(outcome.DeclaredBy),
 		Signals:    outcome.SignalFiles(),
 	}
