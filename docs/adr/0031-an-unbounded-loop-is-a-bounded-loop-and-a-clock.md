@@ -1,7 +1,14 @@
 # ADR 0031 — An unbounded loop is a bounded loop and a clock
 
-- Status: **Proposed.** Nothing in §4 is implemented. This record exists to be
+- Status: **Proposed.** Nothing in §3 is implemented. This record exists to be
   argued with before any of it is built.
+- **Amended 2026-08-20, same day, by running the thing §3.1 rejected.** Three
+  revolutions of a shell supervisor, killed mid-revolution on purpose: one claim
+  refuted (a dead run IS observable — ADR 0015 works), one requirement added
+  that this draft did not have (a supervisor must own its revolution's
+  lifetime), and one measurement taken (the supervision surface is 84% noise).
+  Marked inline at §3.1 and §3.6. Full record:
+  `notes/measurements/2026-08-20-being-the-supervisor-by-hand.md` (hq).
 - Date: 2026-08-20
 
 ## 1. Context
@@ -61,7 +68,7 @@ should pick up exactly where it stopped."* The later `resume` is a human. The
 reset hint the CLI prints is carried as **prose** and deliberately never parsed
 (`internal/runner/sessionlimit.go`, `SessionLimitReset`: *"never parsed into a
 real clock time, because the CLI's wording, timezone and format are its
-own"*). That caution is right and this ADR keeps it — see §4.3.
+own"*). That caution is right and this ADR keeps it — see §3.3.
 
 **(c) A budget cap cannot see into a nested run.** `budget_usd` is compared
 against the node's own session cost (`internal/schedule/scheduler.go:1658`,
@@ -91,7 +98,7 @@ Three devices: **supervision** of a loop that conceptually never ends, a
 **A supervisor is a leg that runs revolutions of a graph, bounded up front, and
 whose only autonomous recovery is waiting.**
 
-Five decisions, each of which can be argued with separately.
+Six decisions, each of which can be argued with separately.
 
 ### 3.1 The supervisor is a leg, not a node type and not a shell loop
 
@@ -103,12 +110,33 @@ inside the thing being bounded, which is how a loop becomes unbounded by
 editing one prompt.
 
 Rejected — **`while :; do oh-my-graph run …; done` in the operator's shell.**
-It is free and it works, and it is what should be used until this is built. But
-it cannot do the two things this ADR exists for: it cannot tell a gate pause
-from a limit pause (§1.2a), and it produces **no observable state** — a
-sleeping shell loop and a dead one look identical, which is the failure this
-repository already paid for once when a stale `serve` made a healthy run look
-idle (#204). A supervisor that cannot be watched is not supervision.
+It is free and it works, and it is what should be used until this is built.
+
+**This paragraph was first written without running one. It has since been run**
+— three revolutions of `graphs/haiku-smoke.yaml`, killed mid-revolution on
+purpose (2026-08-20, ~$1.35, runs `20260819-232946.333873000-1`,
+`…-233033.152708000-1`, `…-233146.047367000-1`) — and one of its claims was
+wrong:
+
+- ✅ It cannot tell a gate pause from a limit pause (§1.2a). Unchanged.
+- ✅ **The supervisor leaves no trace.** Three consecutive revolutions produced
+  three `state.json` files with no field linking them — no revolution number,
+  no parent, nothing recording that a supervisor existed or why it stopped.
+- ❌ **"No observable state" was too broad, and the error matters.** The *runs*
+  are observed correctly: killing the run process flipped `runs list` from
+  `RUNNING` to `ABANDONED` immediately — the flock releases with the process and
+  `runstatus` reads it, which is ADR 0015 working exactly as designed — and
+  `resume --retry-failed` then salvaged the run **without re-running the node
+  that had already passed**. What is unobservable is the *supervisor*, not the
+  run. §3.6 is narrowed accordingly.
+- ➕ **A requirement this ADR did not have.** `kill -9` on the supervisor left
+  its current revolution **alive, reparented to PID 1**. The operator who
+  believes they stopped the loop has not stopped it, and it keeps spending the
+  subscription until that revolution ends on its own.
+
+So a fourth requirement, found only by running it: **a supervisor must own the
+lifetime of the revolution it launched** — process group, or context
+cancellation carried into the child. A stop that is not atomic is not a stop.
 
 ### 3.2 Every bound is declared, and there is no unbounded default
 
@@ -174,16 +202,25 @@ as FAILED or as completed, because it never ran and must re-launch on resume.
 That stays exactly as it is. What is added is a record of the **pause**, beside
 the gate pause that is already recorded — a different object, at the run level.
 
-### 3.6 Waiting must be visible, because idle and dead look the same
+### 3.6 A sleeping supervisor must be visible — a dead RUN already is
 
-A supervisor asleep between revolutions, a supervisor sitting out a limit
-window, and a supervisor that died are three states that all present as
-"nothing is happening." This repository has already lost a debugging session to
-exactly that ambiguity (#204: a stale `serve` made a running lane look idle, and
-the maintainer asked "why is in-flight 0"). `runstatus` is the one place the
-settled/in-flight/abandoned rule lives (ADR 0015); the waiting state belongs
-there and on the dashboard card, named — not inferred from a card that stopped
-updating.
+The first draft of this section claimed idle and dead look the same. Measured,
+that is **only half true, and the true half is narrower**: a dead *run* is named
+correctly and immediately (`ABANDONED`, §3.1's measurement). ADR 0015 already
+won that argument.
+
+What has no name is the **supervisor**: asleep between revolutions, sitting out
+a limit window, or dead — all three present as "no run is in flight", which is
+also what a finished loop looks like. #204 is the precedent for how that costs a
+debugging session (a stale `serve` made a running lane look idle, and the
+maintainer asked "why is in-flight 0"). So the state to add is the supervisor's
+own, beside the run's — not a rework of `runstatus`, which is right.
+
+**Corollary, measured:** the supervision surface is currently 84% noise.
+`oh-my-graph runs list` emits 310 lines here, **261 of them `WARNING … cannot be
+resumed`** for schema-v2 runs — re-printed in full on every invocation, about
+runs that are unresumable by definition. Anything meant to be watched by a human
+at 3am, or parsed by a supervisor, has to get past that first.
 
 ## 4. What this does not decide
 
