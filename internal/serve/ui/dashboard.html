@@ -19,6 +19,18 @@
        it carries the token only so this page and /run/<id>/ agree on which
        process served them (see serve.Dashboard.handleIndex). -->
   <meta name="omg-token" content="{{.Token}}">
+  <!-- Which build is answering, for a script rather than a reader: a `serve`
+       process outlives the binary it was built from, and the footer's label
+       cannot settle staleness because a stale server renders a stale label —
+       comparing it against the build you expect is what settles it. Three
+       fields because the version alone cannot tell two builds of one tag
+       apart. All three are ALWAYS emitted: empty content means unknown (no
+       VCS stamp, or an executable that could not be stat'd), while the tag
+       missing entirely means a server older than this change. The run views
+       mounted under this dashboard carry the same three (serve.Build). -->
+  <meta name="omg-version" content="{{.Build.Version}}">
+  <meta name="omg-revision" content="{{.Build.Revision}}">
+  <meta name="omg-built-at" content="{{.Build.BuiltAt}}">
   <title>oh-my-graph — runs</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="dashboard.css">
@@ -52,8 +64,9 @@
     <span id="banner" class="banner"></span>
     <span class="spacer"></span>
     <!-- The build this dashboard is running — the same label every run view
-         mounted under it carries, for the same reason (serve.BuildLabel). -->
-    <span class="build" title="the build this server is running">{{.Build}}</span>
+         mounted under it carries, for the same reason (serve.Build). The
+         same facts are in the head as <meta> tags, for a script. -->
+    <span class="build" title="the build this server is running">{{.Build.Label}}</span>
   </footer>
   <script src="dashboard.js"></script>
 </body>

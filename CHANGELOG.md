@@ -10,6 +10,37 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **Both `serve` surfaces state their build in the page head, as `<meta>` tags a
+  script can read** (#204). The footer has named the build since v0.5.2, but
+  only for a reader: a stale server renders a stale label, so settling "is this
+  the build I just made" meant scraping prose out of a page's body. The head now
+  carries the same three facts, beside the gate token already rendered there:
+
+  ```console
+  $ curl -s http://127.0.0.1:8642/ | grep omg-
+  <meta name="omg-token" content="…">
+  <meta name="omg-version" content="0.10.0">
+  <meta name="omg-revision" content="56e64fb-dirty">
+  <meta name="omg-built-at" content="2026-08-20T00:53:55&#43;09:00">
+  ```
+
+  Three fields because the version alone cannot tell two builds of one tag
+  apart, which is why the footer's label carries a revision and a build time at
+  all. `omg-version` is the exact token `oh-my-graph version` prints after the
+  program name, so the comparison is a string equality; `omg-built-at` is the
+  running executable's mtime in RFC3339, stat'd once per process like the label
+  it shares that stat with (the `+` reads escaped in raw HTML, as `&#43;`, and
+  un-escaped through any HTML parser or the DOM). All three tags are always
+  emitted: empty content means unknown — no VCS stamp, or an executable that
+  could not be stat'd — while the tag missing entirely means a server older
+  than this change.
+
+  The dashboard hands its build whole to every run view mounted under it, so `/`
+  and `/run/<id>/` cannot disagree about which process is answering. Disclosure
+  only: no new route, no new handler, nothing the page can act on.
+
 ## [v0.10.0] - 2026-08-19
 
 **Minor because two things you may now type were errors before.** Compared by
