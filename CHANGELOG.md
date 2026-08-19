@@ -103,8 +103,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
-- **Documentation drift, swept across the six user-facing documents against
-  HEAD** — README.md, DESIGN.md, SECURITY.md, CONTRIBUTING.md,
+- **Documentation drift, swept across the seven user-facing documents against
+  HEAD** — README.md, README.ko.md, DESIGN.md, SECURITY.md, CONTRIBUTING.md,
   docs/LIMITATIONS.md and docs/EXAMPLES.md. No behaviour changes; every edit
   removes or corrects a sentence the code contradicts, and where a claim had
   simply become false it was deleted rather than qualified.
