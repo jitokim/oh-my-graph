@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,6 +310,66 @@ func TestMainExitCode_WatchUnknownRunIsNonZero(t *testing.T) {
 	isolateRunHome(t)
 	if code := mainExitCode([]string{"watch", "nope"}); code != 1 {
 		t.Errorf("watch of an unknown run must exit 1, got %d", code)
+	}
+}
+
+// TestRunWatch_Help pins #200: before the fix, `watch --help` read "--help"
+// as the run id and reported `unknown run "--help"`. Both spelled forms must
+// now answer with the synopsis and must never reach watchRun.
+func TestRunWatch_Help(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		err := runWatch([]string{arg})
+		var usage *usageRequest
+		if !errors.As(err, &usage) {
+			t.Fatalf("runWatch([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+		}
+		if !strings.Contains(usage.Error(), "oh-my-graph watch") {
+			t.Errorf("usage.Error() = %q, want it to name `watch`'s synopsis", usage.Error())
+		}
+		if strings.Contains(usage.Error(), "unknown run") {
+			t.Errorf("usage.Error() = %q, must not read like an unknown-run error", usage.Error())
+		}
+	}
+}
+
+// TestRunWatch_DashPrefixedPositionalIsNotARunID is the guard the other
+// direction: an unrecognised flag in the run-id slot is reported as an
+// unknown flag, never looked up as a run.
+func TestRunWatch_DashPrefixedPositionalIsNotARunID(t *testing.T) {
+	err := runWatch([]string{"--bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag in the run-id slot")
+	}
+	if !strings.Contains(err.Error(), `unknown flag "--bogus"`) {
+		t.Errorf("err = %v, want it to name the unrecognised flag", err)
+	}
+	if strings.Contains(err.Error(), "unknown run") {
+		t.Errorf("err = %v, an unrecognised flag must not read as an unknown run", err)
+	}
+}
+
+// TestRunWatch_ValidDashFreeRunIDStillReachesTheLookup is the regression
+// guard: a run id that does not begin with "-" still resolves through
+// runDirFor and tails exactly the stream there, unaffected by the new guard.
+func TestRunWatch_ValidDashFreeRunIDStillReachesTheLookup(t *testing.T) {
+	home := isolateRunHome(t)
+	runID := "20260806-081500.000000000-1"
+	dir := filepath.Join(home, "runs", runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	writeWatchEvents(t, dir, runID,
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runWatch([]string{runID}) })
+	if runErr != nil {
+		t.Fatalf("a valid, dash-free run id must still resolve: %v", runErr)
+	}
+	if !strings.Contains(out, "run started") {
+		t.Errorf("watch of a real run must still tail its events, got:\n%s", out)
 	}
 }
 
