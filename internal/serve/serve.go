@@ -134,7 +134,16 @@ func (b Build) page(token string) pageData {
 	return pageData{Token: token, Build: b}
 }
 
-// Listen binds the live-view listener to 127.0.0.1 on the given port.
+// Listen binds the live-view listener to 127.0.0.1 on the given port, without
+// stating which build is doing the binding — ListenAs with the zero Build. It
+// is what every caller that has no build to state uses, and what a bind failure
+// falls back to describing: the port is taken, pick another.
+func Listen(port int) (net.Listener, error) {
+	return ListenAs(port, Build{})
+}
+
+// ListenAs binds the live-view listener to 127.0.0.1 on the given port, as the
+// given build.
 //
 // SECURITY: the loopback bind is a requirement, not a default — run
 // directories contain prompts, artifacts and session ids, so the server must
@@ -142,11 +151,23 @@ func (b Build) page(token string) pageData {
 // address is chosen, precisely so no caller can widen it to 0.0.0.0 by
 // passing a different host; TestListen_BindsLoopbackOnly pins the behavior.
 // Port 0 asks the OS for a free port (tests use this).
-func Listen(port int) (net.Listener, error) {
+//
+// self is who to say WE are when the bind fails and something else is holding
+// the port. On failure — and only then — the port is asked over loopback HTTP
+// who holds it (probePortHolder), and the answer is folded into the error this
+// has always returned: another oh-my-graph is named, with both builds when they
+// differ, and anything else keeps the --port sentence unchanged. A successful
+// bind makes no request at all, so the serving path is exactly what it was.
+//
+// The build is a parameter and not a call because the release version lives in
+// package main, stamped at link time — the same reason Server.WithBuild takes
+// one. The zero Build is honest silence: it can still say the port is taken,
+// just not whose build is on it.
+func ListenAs(port int, self Build) (net.Listener, error) {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w (if the port is taken, pick another with --port)", addr, err)
+		return nil, fmt.Errorf("listen on %s: %w %s", addr, err, probePortHolder(nil, port, self).message())
 	}
 	return listener, nil
 }
