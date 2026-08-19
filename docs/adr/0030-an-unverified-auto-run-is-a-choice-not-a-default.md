@@ -2,9 +2,21 @@
 
 - Status: **Proposed — decision taken, nothing implemented.** This record is the
   design; no code in this commit. The implementation lane owes the refusal, the
-  flag, the snapshot field, the two disclosure sites, the five pinned tests and
+  flag, the snapshot field, the two disclosure sites, the new exit code, the
+  pinned tests of §4, the documentation and plugin surfaces listed in §7, and
   the `## [Unreleased]` CHANGELOG entry named under Compatibility.
 - Date: 2026-08-20
+- **Revised 2026-08-20 after design review, before any code existed.** Six
+  changes, each argued where it lands: the recording was **inverted** relative to
+  the measurement it exists to enable and is now written on every `auto` launch,
+  not only the declared one (§2.5, §8a); the gate **moved out of
+  `autoFlags.parse`** to the site that already detects (§2.1); the contradiction
+  refusal moved out of `VerifyCommand` to the FlagSet that registers both flags
+  (§2.3); the chat answer is filed as a **disclosure, not a declaration** (§2.5,
+  §2.6); the refusal's **channel and exit code** are specified (§2.4); and the
+  greenfield exemption, the agent aliaser, the documented invocations that break
+  and the authorize-the-suggestion alternative are written down rather than left
+  to be discovered (§5, §6, §7).
 - Measurement: [`docs/measurements/0030-auto-runs-carry-no-build-evidence.md`](../measurements/0030-auto-runs-carry-no-build-evidence.md),
   re-derivable with
   `python3 docs/measurements/probes/0030-auto-build-evidence/count.py`.
@@ -99,24 +111,60 @@ and buys a feeling of having been warned.
 
 When `auto` is invoked, `DetectBuildSignals(".")` finds at least one marker,
 and no `--verify-cmd` was supplied, **`auto` refuses**: it prints the message
-in §2.4 and exits non-zero.
+in §2.4 to stdout and exits 3 (§2.4).
 
-The refusal happens **at flag parse** — in `autoFlags.parse`
-(`cmd/oh-my-graph/flags.go`), on the line after the existing
-`checkVerifyFlags("auto", …)` call, where `--max-cycles`, `--max-goal-budget-usd`
-and `--plan-only` are already validated for the same reason. That places it
-before the planner call and therefore before any spend, which is load-bearing
-twice over: a refusal that cost a planner call would be a worse version of the
-notice, and this placement is what makes `--plan-only` refuse identically
-(§2.6) without special-casing.
+The refusal happens **where the detection already happens**: in
+`runAutoWithRuntime` (`cmd/oh-my-graph/main.go`), at the
+`noteVerifyAdvice(os.Stdout, verifyCommand, ".")` line — the one place in this
+CLI that scans the invocation directory for build markers today. One
+`DetectBuildSignals(".")` call in that scope now feeds three consumers: the
+advice line it already fed, the gate, and the recording (§2.5).
 
-Deliberately **not** inside `checkVerifyFlags`, which `resumeFlags.parse` also
-calls: that helper exists so the two subcommands cannot diverge on the flag
+That placement is before the planner call and therefore before any spend, which
+is load-bearing twice over: a refusal that cost a planner call would be a worse
+version of the notice, and it is what makes `--plan-only` refuse identically
+(§2.6) without special-casing — `planOnly` is passed *into* `planAndExecute`
+(`main.go`), which is downstream of this line.
+
+**Deliberately not in `autoFlags.parse`, and the first draft of this ADR was
+wrong to put it there.** The parse placement satisfies every property claimed
+above — before the planner call, before any spend, `--plan-only` gated for free,
+`resume`/`chat`/`run` untouched, `auto --help` still answered first — so the
+argument has to be made against *this* site, not, as the first draft did,
+against `checkVerifyFlags`. It loses on three counts:
+
+- **`parse` is a pure function of `args`** (`cmd/oh-my-graph/flags.go`), and
+  every other check in it is flag-vs-flag consistency. Adding an environment
+  probe makes every existing and future `parse` test's result depend on the
+  directory the test binary runs in — passing today only by the accident that
+  `cmd/oh-my-graph/` holds no marker while the repo root holds `go.mod`. Testing
+  the gate would then need `t.Chdir`, which forecloses `t.Parallel` for that
+  test.
+- **It would be two `DetectBuildSignals` sweeps per invocation**, at two call
+  sites that must agree on the directory, with nothing pinning the two `dir`
+  arguments together — the refusal-message tests pin what is *said*, not where it
+  was looked for, so a gate scanning one directory while the advice line scanned
+  another would pass all of them. Here there is one sweep and the question does
+  not arise; §4's test 8 pins that it stays one.
+- **The detected signals are needed downstream.** §2.5 records them, which means
+  they must reach `newRunRecorder` (`main.go`) — already 9 parameters, reached
+  through `commonRunFlags`, which `run` also uses. Detected at `parse`, they
+  arrive there through a struct `run` shares; detected here, they are already in
+  the scope that builds the coordinator options and calls `planAndExecute`.
+
+`noteVerifyAdvice`'s helper takes `dir string` precisely so this is testable
+without process-global state (`cmd/oh-my-graph/verifycmd.go`), and the gate
+inherits that.
+
+Deliberately **not** inside `checkVerifyFlags` either, which `resumeFlags.parse`
+also calls: that helper exists so the two subcommands cannot diverge on the flag
 pair, and the gate is `auto`-only (§2.6). Sharing it would gate `resume` by
 accident — the one change here that would strand a paused run.
 
 The predicate itself is a pure function in `internal/coordinator/verifycmd.go`,
-beside `VerifyAdvice` and `DetectBuildSignals`, returning a typed
+beside `VerifyAdvice` and `DetectBuildSignals`, taking the supplied command, the
+human's declaration (§2.3) and the detected signals, and returning both the
+recorded outcome (§2.5) and — when the answer is a refusal — a typed
 `*MissingBuildEvidenceError` carrying the detected signals. **It is not called
 from `Coordinator.Plan`.** Putting it in the library would gate `chat` too, and
 `chat` has no flag to name — see §2.6 and #198's lesson about instructions the
@@ -157,21 +205,44 @@ made to say, not on brevity:
 | `--accept-no-build-evidence` | "I accept that this run carries no build evidence" | **chosen.** Subject, verb, object. It is a sentence the operator says, not a knob they turn, and it names the exact thing that is absent. It reads correctly in the three places it will be read: on the command line, in the snapshot, and in a CHANGELOG line someone skims a year from now. |
 
 The name is deliberately long. A flag that is annoying to type once per run is
-working as designed; a flag that is easy to alias into a shell function is the
-failure mode (§6), and no name prevents that — only the recording in §2.5 makes
-it visible.
+working as designed; a flag that gets aliased into a shell function — or, more
+realistically, reached for by an agent that cannot satisfy the other exit (§6) —
+is the failure mode, and no name prevents either. Only the recording in §2.5
+makes it visible.
 
 **With `--verify-cmd` it is a contradiction and is refused** — in
-`VerifyCommand.Validate`, beside the blank-command and timeout-ceiling
-refusals, so the value object stays the one place the pair's rules live. The
-operator would be declaring an absence and supplying the thing whose absence
-they declared; refusing beats picking a winner, because either winner silently
-discards something they typed. (`resume` registers no opt-out flag, so the new
-branch is unreachable from there and its refusals are unchanged.)
+`autoFlags.parse` (`cmd/oh-my-graph/flags.go`), beside the `--plan-only` /
+`--max-cycles` refusal, because that is exactly what it is: a flag-vs-flag
+consistency check over the one FlagSet that registers both flags
+(`newAutoFlags`). The operator would be declaring an absence and supplying the
+thing whose absence they declared; refusing beats picking a winner, because
+either winner silently discards something they typed.
+
+**Not in `VerifyCommand.Validate`, and the first draft of this ADR was wrong to
+put it there.** That value object is shared with `resume`, through both
+`checkVerifyFlags` and `ReattachVerifyCommand`
+(`internal/coordinator/verifycmd.go`), so storing the opt-out there would create
+a field `resume` can never set and a branch `resume` can never reach. Worse, it
+contradicts this ADR's own reasoning twice over: §2.1 refuses to share
+`checkVerifyFlags` *because* `resume` shares it, and §2.3's table spends its
+whole length arguing that the opt-out is **not** a verification switch — then
+the first draft stored it inside the type whose doc comment says it is "the
+whole of `--verify-cmd` / `--verify-timeout`".
+
+The stated driver was §7's "no existing exported signature changes." That was a
+self-imposed constraint bought at the price of a cohesion violation:
+`internal/coordinator` has no consumers outside this module, so a signature
+there is free to change. `VerifyCommand` therefore gains **no field**; the
+declaration is passed as an argument to the predicate of §2.1 and to
+`VerifyAdvice`'s declared variant (§2.5b), which is where a run-launch fact
+belongs. (`resume` registers no opt-out flag, and now has no field for one
+either; its refusals are unchanged in both spelling and reachability.)
 
 **With no build signal it is accepted and inert.** A script that always passes
-it must not break when run in a directory with no build system. It records
-nothing in that case (§2.5) — there was nothing to decide.
+it must not break when run in a directory with no build system. The run is then
+recorded as `none-detected` rather than `declared` (§2.5) — the flag answered a
+question that was never put, and filing it as a declaration would inflate
+exactly the stratum §8(a) exists to count.
 
 ### 2.4 What the refusal says, verbatim
 
@@ -225,50 +296,116 @@ Four properties of this text are part of the decision, not of its prose:
    from a tool that bills is "I have been charged for this"; saying otherwise is
    one line.
 
-### 2.5 The run records the choice, in two places a reader meets
+**Verbatim means a channel and a prefix, and "returns an `error`" gives it
+neither.** An error out of a subcommand reaches `mainExitCode`
+(`cmd/oh-my-graph/main.go`), which prints
+`fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)` — so the first line above
+would arrive as `oh-my-graph: auto: this directory has a build system…`, double
+prefixed, with the other 19 lines and their indentation on stderr, where the
+notice this replaces goes to **stdout**. The precedent for the fix is three
+lines up in the same function: `usageRequest` is matched with `errors.As`,
+**prints itself** to stdout, and the `oh-my-graph:` prefix is suppressed.
+`*MissingBuildEvidenceError` takes exactly that shape — matched by `errors.As`
+in `mainExitCode`, printing its own text to **stdout**, unprefixed, so §2.4 is
+achievable as written. Its `Error()` string stays the first line alone, which is
+what a wrapping caller and a test assertion want.
 
-An absence that was chosen and an absence that was an accident look identical
-in a finished run today. After this they do not.
+**The exit code is 3**, and it is new. 1 is a failed run and 2 is a paused one
+(`exitCodeForError`), and a refusal is neither: nothing ran, nothing is
+resumable, nothing was billed. §7 says CI calling `auto` will "break loudly" —
+that is only true if the break is *distinguishable*, and exit 1 would make a
+refusal indistinguishable from the failing build the operator is trying to
+catch. A script can then branch on 3 to add a flag rather than to page someone.
+Note what 3 does not disturb: ADR 0023 §2.6 asserts that an exit code agrees
+with the run's derived status, and a refused invocation **creates no run
+directory**, so it is outside that assertion rather than a new case within it.
 
-**(a) The snapshot** — `internal/runstate`, an additive optional field:
+### 2.5 The run records the question and its answer, in two places a reader meets
+
+An absence that was chosen and an absence that was an accident look identical in
+a finished run today. After this they do not — and, equally, a run that was
+never *asked* is distinguishable from both, which is what makes §8(a) a
+measurement rather than a count of one stratum.
+
+**(a) The snapshot** — `internal/runstate`, an additive optional field, written
+on **every** auto-mode launch:
 
 ```go
-// NoBuildEvidence records that this run was launched with no engine-run build
-// evidence in a directory where a build system was detected, and that a human
-// said so. Absent means either that nothing was detected (nothing was decided)
-// or that the run carries evidence — never that the question went unasked.
-NoBuildEvidence *BuildEvidenceAbsence `json:"no_build_evidence,omitempty"`
+// BuildEvidence records the launch-time build-evidence question and its answer:
+// what was detected in the invocation directory, and how the run answered.
+// Written on every auto-mode launch (auto and chat's graph turns), including
+// the ones that answered by attaching a command and the ones where there was
+// nothing to answer. Absent means a run that predates this field, or a `run` of
+// a hand-written graph, which never asks the question (§2.6).
+BuildEvidence *BuildEvidence `json:"build_evidence,omitempty"`
 
-type BuildEvidenceAbsence struct {
-	// DeclaredBy is how the absence was stated: the flag spelling
-	// ("--accept-no-build-evidence") for auto, or "chat-confirm" for a chat
-	// graph turn whose [y/N] answered a plan screen that stated it (§2.6).
-	DeclaredBy string `json:"declared_by"`
+type BuildEvidence struct {
+	// Answer is one of four values, and the set is closed:
+	//   "attached"       — --verify-cmd was supplied; the engine runs it at
+	//                      each sink. Signals may be empty or not; the
+	//                      attachment itself is in the graph.
+	//   "declared"       — signals were detected and a human typed
+	//                      --accept-no-build-evidence, answering this
+	//                      question and no other.
+	//   "disclosed"      — signals were detected and a chat [y/N] approved a
+	//                      plan screen that stated the absence. ONE keystroke
+	//                      covered two questions; this is weaker than
+	//                      "declared" and is filed apart from it (§2.6).
+	//   "none-detected"  — the directory raised no signal, so no gate applied
+	//                      and nothing was declared. The greenfield run lands
+	//                      here (§6).
+	Answer string `json:"answer"`
+	// DeclaredBy is the exact spelling of what the human typed, for the two
+	// answers a human gives: "--accept-no-build-evidence" or "chat-confirm".
+	// Empty for "attached" and "none-detected".
+	DeclaredBy string `json:"declared_by,omitempty"`
 	// Signals are the marker files detected at launch, in the detection
-	// table's order — what the human was told when they decided.
+	// table's order — what the human was told when they answered. Empty is
+	// meaningful and is the whole point of writing this on every run.
 	Signals []string `json:"signals,omitempty"`
 }
 ```
 
-Written exactly when: no verification was attached, at least one signal was
-detected, and the run proceeded by declaration. **Schema stays 3** — an absent
-field is a run that predates this or a run with nothing to decide, and no
-reader of either version can misread it (the same reasoning ADR 0025 used for
-`runtime`, reaching the opposite conclusion on `omitempty` because here absence
-is legitimately meaningful).
+**Why the wider version, and why the narrow one was a bug in this ADR.** The
+first draft wrote the field only when *"no verification was attached, at least
+one signal was detected, and the run proceeded by declaration"* — the single
+path that was **already** visible, because the operator had typed a declaration.
+Every silent path stayed silent: a run that passed with `--verify-cmd` recorded
+no `signals` (the attachment is in `graph.json`; the *detection* was nowhere), a
+run in a signal-free directory recorded nothing at all. So §8(a) — "how many
+directories raised a signal, how many answered with `--verify-cmd`, how many
+with the opt-out" — had only its third number, and its **denominator was exactly
+as unrecoverable after shipping as it is today.** The measurement file names
+that same blind spot as the reason the current corpus cannot say which of its 7
+unverified runs would have been gated: *"A snapshot records no invocation
+directory"* (`docs/measurements/0030-auto-runs-carry-no-build-evidence.md`).
+Shipping a field that reproduces the blind spot it was written to close would
+make §8(a) a wish. Recording the detection outcome on every launch is one
+field's worth of extra writing and is the difference.
+
+Nothing in ADR 0016 §4 blocks the wider version: the argument below — that the
+field is inert and carries no command — holds verbatim for `attached` and
+`none-detected` rows too.
+
+**Schema stays 3.** An absent field is a run that predates this, or a `run` of a
+hand-written graph; no reader of either version can misread it (the same
+reasoning ADR 0025 used for `runtime`, reaching the opposite conclusion on
+`omitempty` because here absence is legitimately meaningful).
 
 **What this field is NOT:** an input to anything. Nothing reads it to decide
 behaviour, on this leg or on a resumed one. In particular it is not ADR 0016
-§4's rejected mechanism (ii) wearing a new hat: it carries **no command**, only
-the fact of an absence, so there is nothing in it a later leg could execute. The
-run directory remains an inadmissible source of engine-run shell, on both legs.
+§4's rejected mechanism (ii) wearing a new hat: it carries **no command** — the
+`Signals` are marker filenames, not the suggested commands the detection table
+holds beside them — so there is nothing in it a later leg could execute. The run
+directory remains an inadmissible source of engine-run shell, on both legs.
 
 **(b) The printed disclosure**, at both sites where a human meets the run:
 
 - **before the planner call**, `VerifyAdvice` gains a variant for the declared
   case — the same paragraph it prints today plus the sentence *"You said so with
-  `--accept-no-build-evidence`; this run's `state.json` records it."* The
-  un-signalled case's text is unchanged;
+  `--accept-no-build-evidence`; this run's `state.json` records it."* It takes
+  the declaration as a new argument (§2.3), not as a field on `VerifyCommand`.
+  The un-signalled case's text is unchanged;
 - **with the plan**, in the slot `noteVerifyAttachments` occupies
   (`printPlan`, `cmd/oh-my-graph/main.go`). That slot states either what the
   engine will run at each sink, or that nothing will — never neither. This is
@@ -280,20 +417,31 @@ run directory remains an inadmissible source of engine-run shell, on both legs.
 | surface | gated? | why |
 | --- | --- | --- |
 | `auto` | **yes** | The defect's home. |
-| `auto --plan-only` | **yes**, identically | A preview that refuses differently from the run it previews is its own defect. It falls out for free: the gate is at flag validation, which `--plan-only` passes through before it buys its planner call. It also *saves* the user money in the refused case, where today they would pay for a plan they then have to re-request with a flag. |
-| `chat` | **no refusal**; disclosure and recording only | `chat` registers no verification flags at all, so a refusal there could only name a flag `chat` rejects — the exact dead end #198 was. What `chat` gets instead is the absence stated on the plan screen its `[y/N]` gates (§2.5b), and the run recorded with `declared_by: "chat-confirm"`. A human answering `y` to a screen that says the run carries no build evidence is the strongest declaration that surface has. |
-| `run` | **no** | A hand-written graph carries its author's own `success_check.verify` and is a reviewed artifact. Out of scope by construction, as ADR 0016 §2 has it. |
+| `auto --plan-only` | **yes**, identically | A preview that refuses differently from the run it previews is its own defect. It falls out for free: the gate is upstream of `planAndExecute`, which `--plan-only` is passed *into*, so it is reached before the preview buys its planner call. It also *saves* the user money in the refused case, where today they would pay for a plan they then have to re-request with a flag. |
+| `chat` | **no refusal**; disclosure and recording only | `chat` registers no verification flags at all, so a refusal there could only name a flag `chat` rejects — the exact dead end #198 was. What `chat` gets instead is the absence stated on the plan screen its `[y/N]` gates (§2.5b), and the run recorded with `answer: "disclosed"`, `declared_by: "chat-confirm"` — filed **apart from** `auto`'s declarations, never merged into them. |
+| `run` | **no**, and no recording | A hand-written graph carries its author's own `success_check.verify` and is a reviewed artifact. Out of scope by construction, as ADR 0016 §2 has it — it never asks the question, so it writes no `build_evidence` field either (§2.5a). |
 | `resume` | **no** | The gate is a **launch-time** gate. The choice was made once, and the snapshot the resume loads records it. Re-asking would make a paused run un-resumable without re-typing a declaration already on file, which is ADR 0009's promise broken and #198's defect repeated. A run launched before this ADR resumes untouched. |
+| `--runtime codex` (ADR 0025) | **yes**, identically to Claude | Not derived, stated: a Codex `auto` reaches the same `runAutoWithRuntime`, so it meets the gate at the same line, by construction rather than by intention. It is worth stating because the *reason* for the gate reads differently there — a Codex node's ceiling is a filesystem sandbox, not a tool allowlist, so §1.2's "`plannedToolAllowlist` refuses `Bash(./gradlew *)`" is not the argument on that runtime. The argument that does carry over is the one that matters: `validatePlannedNodeVerify` refuses `success_check.verify` from a plan on **either** runtime, so a Codex `auto` has no engine-run evidence without `--verify-cmd` either, and a sandbox that permits a build command still leaves the verdict to the node that ran it. The refusal text, flag and recording are runtime-independent. |
 
-**Chat's answer is the weakest thing in this record, and it is named rather than
-enjoyed.** One `y` covers two questions — *run this plan* and *accept that it
-proves nothing* — where `auto`'s operator answers the second one separately.
-The alternatives were a dead-end refusal (worse: it strands the user), a second
-confirm prompt (a second `[y/N]` for one action, bought before anyone has
-complained), or giving `chat` the full flag pair (a larger change than this ADR,
-and ADR 0016 §2 already carries `chat --verify-cmd` as unshipped work). If the
-recorded field later shows chat turns dominating the declared-absence rows,
-that is the evidence for revisiting.
+**Chat's answer is the weakest thing in this record, and it is filed as what it
+is.** One `y` covers two questions — *run this plan* and *accept that it proves
+nothing* — where `auto`'s operator answers the second one separately. The first
+draft of this ADR put both into one `declared_by` column under a field whose own
+doc said it recorded *"that a human said so"*, which files a non-declaration
+under the name of a declaration: every future reader of §8(a) and §9 would have
+had to *remember* to segregate them, with no structural help, while the chat
+rows dominated by volume on any interactive machine — exactly the confound the
+column exists to resolve. So the **`Answer` values are split at the source**:
+`declared` for a flag typed at the question, `disclosed` for a plan screen that
+stated it and was not challenged. The plan-screen disclosure stands on its own
+and does not need to borrow the word.
+
+The alternatives to disclosure were a dead-end refusal (worse: it strands the
+user), a second confirm prompt (a second `[y/N]` for one action, bought before
+anyone has complained), or giving `chat` the full flag pair (a larger change
+than this ADR, and ADR 0016 §2 already carries `chat --verify-cmd` as unshipped
+work). If the `disclosed` rows come to dominate, that is the evidence for
+revisiting — and now it is a row count, not a recollection.
 
 ### 2.7 What does not change
 
@@ -331,14 +479,20 @@ the attack ADR 0016 §3 and §4 were written against:
   protection; it cannot use the mechanism to obtain anything.
 - **A plan bootstraps its own signal.** ADR 0016 §3's sharpest case: node 1
   legitimately writes a `package.json`, and a per-node detector would then widen
-  node 2. It does not apply here, because detection happens **once, at flag
-  validation, before the planner call** — nothing a node writes is ever
+  node 2. It does not apply here, because detection happens **once per
+  invocation, before the planner call** — nothing a node writes is ever
   detected, and there is no per-node evaluation to widen.
 - **Under `--max-cycles`**, each cycle re-plans against a tree the previous
   cycle wrote, which §3 names as the reason plan-time restriction is not
   sufficient for a *grant*. It is sufficient for this: the gate is evaluated
-  once per invocation, at flag validation, outside the cycle loop. A cycle that
-  creates a `go.mod` does not retroactively gate its own run.
+  once per invocation, before the first planner call, outside the cycle loop. A
+  cycle that creates a `go.mod` does not retroactively gate its own run.
+
+**Once-per-invocation is a safety property in this direction and a coverage hole
+in the other, and the two must be counted separately.** The three bullets above
+are the safety half. The cost is stated in §6 as a named false-negative class:
+a goal that *creates* the build system is never gated, because the marker did
+not exist when the question was asked.
 
 The monotone property is what makes the incomplete table acceptable in its new
 job as well as its old one. A missing ecosystem means a run that is **not**
@@ -347,28 +501,49 @@ into something.
 
 ## 4. Tests the implementation lane owes
 
-Five, and the third is the one that would otherwise be forgotten:
+Eight, and the third is the one that would otherwise be forgotten. Each names a
+temp directory explicitly — the gate's helper takes a `dir` (§2.1), so none of
+these needs `t.Chdir` and none of them forecloses `t.Parallel`.
 
 1. **build signal + no flag → refused**, and the message names *both* the
    detected signal (by ecosystem and file) and the opt-out flag. Asserting only
    "it refused" would pass on a bare `exit 1`.
 2. **build signal + `--verify-cmd` → proceeds unchanged**, with the same
-   attachments and the same disclosure as before this ADR.
-3. **no build signal + no flag → proceeds.** The negative control. Without it
-   the gate could widen to "always refuse" and every other test here still
-   passes.
+   attachments and the same disclosure as before this ADR, **and records
+   `answer: "attached"` with the detected signals.** The recording half is what
+   makes §8(a)'s denominator exist; without it this test passes on the first
+   draft's inverted field.
+3. **no build signal + no flag → proceeds**, and records
+   `answer: "none-detected"`. The negative control, in both halves: without the
+   first the gate could widen to "always refuse" and every other test here still
+   passes; without the second the greenfield run stays invisible (§6) and §8(a)
+   loses its third stratum.
 4. **build signal + `--accept-no-build-evidence` → proceeds AND the run records
-   it** — `state.json` carries `no_build_evidence` with the declaring flag and
-   the detected signals, and the plan screen states the absence.
+   it** — `state.json` carries `build_evidence` with `answer: "declared"`, the
+   declaring flag and the detected signals, and the plan screen states the
+   absence.
 5. **`--plan-only` refuses identically to the run it previews** (same message,
-   same exit, no planner call bought), and **`chat` does not refuse** but its
-   plan screen states the absence and its run records
-   `declared_by: "chat-confirm"`.
+   same exit code, no planner call bought), and **`chat` does not refuse** but
+   its plan screen states the absence and its run records `answer: "disclosed"`
+   with `declared_by: "chat-confirm"` — asserted as `disclosed`, distinct from
+   test 4's `declared`, so the two kinds cannot be merged later without a test
+   going red (§2.6).
+6. **The refusal reaches stdout, unprefixed, all 20 lines** (§2.4) — asserted
+   through `mainExitCode` rather than through the subcommand, since the channel
+   and the prefix are that function's behaviour, not the error's.
+7. **The refusal exits 3**, distinct from a failed run's 1 and a paused run's 2,
+   asserted in `exitCodeForError`'s own table beside them.
+8. **The gate and the advice line scan the same directory.** One
+   `DetectBuildSignals` call feeds both (§2.1); this pins that they cannot
+   diverge, which is the failure the parse placement would have made possible
+   and untested.
 
 Plus two that fall out of §2.3 and §2.4: `--verify-cmd` together with
-`--accept-no-build-evidence` is refused as a contradiction; and the refusal text
-names only flags `auto` registers, checked against the real `FlagSet` the way
-`TestSnapshotVerifyRefusal_NamesOnlyFlagsResumeRegisters` does for `resume`.
+`--accept-no-build-evidence` is refused as a contradiction **in
+`autoFlags.parse`**, with no directory involved (it is a pure flag-pair test);
+and the refusal text names only flags `auto` registers, checked against the real
+`FlagSet` the way `TestSnapshotVerifyRefusal_NamesOnlyFlagsResumeRegisters` does
+for `resume`.
 
 All of it runs against `FakeRunner`. No test here needs a real spawn: the gate
 fires before the planner call, which is the whole point.
@@ -392,6 +567,37 @@ fires before the planner call, which is the whole point.
   the untrusted-producer invariant, with the added twist that the *first* thing
   the tool would do in a fresh checkout is execute its build. The suggestion
   stays a suggestion.
+- **Authorize the printed suggestion in one token** —
+  `--accept-suggested-verify-cmd`, or a `[y/N]` on the refusal for the
+  interactive case. The operator does not retype `./gradlew build`; they accept
+  the string the refusal just showed them. This is the middle option between the
+  two the bullets above and below cover, and it is the one that most directly
+  moves §9's odds ratio: the whole worry there is that a refused operator types
+  the opt-out forever, and this makes the *verified* exit the cheapest thing on
+  the screen.
+
+  It is also worth naming the tension it exposes. §2.4's refusal already hands
+  the operator a repo-derived command to paste, so "detection may never derive a
+  grant" (§3.5) is preserved right now by a **clipboard round-trip** — the human
+  reads the string, can edit it, and retypes it as their own. That round-trip is
+  thin, and this alternative is the honest test of whether it is load-bearing.
+
+  **Rejected, and not comfortably.** It is load-bearing, for two reasons. First,
+  what the round-trip buys is not ceremony but *reading*: the detection table is
+  a guess by construction — §2.4 says so out loud in the multi-signal case, and
+  §9 records that its priority order is unmeasured in a monorepo — and a one-key
+  accept is an authorization given without knowledge of what was authorized.
+  When the guess is wrong, the result is worse than no evidence: it is a run
+  carrying "evidence" that measured the wrong module, with the tool's own
+  fingerprints on the choice, which is §6's `--verify-cmd 'true'` failure
+  arriving by the tool's suggestion rather than the user's. Second, §6's
+  strongest failure mode is now an **unattended agent** picking the cheapest
+  exit; adding an exit cheaper than the opt-out does not fix that, it just
+  changes which repo-derived command an unattended process runs without a human
+  ever seeing the string — which is precisely the shape ADR 0016 §4 refused.
+  Revisit if §8(a) shows the opt-out dominating and §8(b) shows the table's
+  suggestions are accurate; the second condition is what this alternative needs
+  and does not have.
 - **Gate every run, signalled or not.** Rejected — §2.2. Friction with no defect
   behind it, and it discards a distinction the existing notice already makes
   correctly.
@@ -429,14 +635,57 @@ fires before the planner call, which is the whole point.
 
 ## 6. Failure modes
 
-- **The opt-out becomes muscle memory.** The realistic failure: an operator
-  aliases `auto` to always pass `--accept-no-build-evidence`, and this ADR has
-  bought one screen of prose and a longer command line. Nothing prevents it, and
-  no flag name prevents it. What §2.5 buys is that the habit is **visible and
-  countable** — every such run carries `no_build_evidence` in its snapshot with
-  the signals it ignored, which is a measurement the notice never permitted.
-  That is the honest claim: this converts an invisible default into a visible
-  habit.
+- **The opt-out becomes muscle memory — and the realistic aliaser is an agent,
+  not a shell alias.** The human version is familiar: an operator aliases `auto`
+  to always pass `--accept-no-build-evidence`, and this ADR has bought one screen
+  of prose and a longer command line. But this repository ships
+  `Bash(oh-my-graph auto *)` to a Claude Code agent
+  (`plugin/agents/oh-my-graph.md`, `plugin/commands/graph.md`,
+  `plugin/README.md`), and an LLM that meets a refusal naming two exits will take
+  the one it can satisfy **without knowing the repository's build command** —
+  the opt-out — very close to every time. That driver is stronger than any human
+  habit, it is unattended by construction, and it is the shipped invocation, not
+  a hypothetical one.
+
+  So the plugin's invocation gets a **considered answer rather than a discovered
+  one**, and it is documentation, because the tool has no way to tell an agent's
+  argv from a human's: `plugin/agents/oh-my-graph.md` gains an explicit rule that
+  on a build-evidence refusal the agent **surfaces the refusal to the human and
+  asks which exit**, and never passes `--accept-no-build-evidence` on its own
+  initiative — the flag says *a human accepts this*, and an agent typing it is a
+  false statement in the snapshot. `plugin/commands/graph.md` gains the same
+  sentence where it documents `auto`. See §7 for the full list of surfaces.
+
+  What that rule cannot do is enforce itself, and §9 records the consequence:
+  `declared_by: "--accept-no-build-evidence"` does not distinguish a human's
+  keystroke from an agent's argv, so §8(a)'s declared rows are an upper bound on
+  human declarations, not a count of them.
+
+  What §2.5 buys against all three versions is that the habit is **visible and
+  countable** — every such run carries `build_evidence` in its snapshot with the
+  signals it ignored, which is a measurement the notice never permitted. That is
+  the honest claim: this converts an invisible default into a visible habit.
+- **The greenfield run is exempt, and it is the highest-risk unverified run
+  there is.** `auto "scaffold a new Go service"` in an empty directory raises no
+  signal, so it is not gated. Nothing about that is an oversight of the safety
+  argument in §3 — it is the same once-per-invocation evaluation, read from the
+  other side — but it is a coverage hole and this ADR states it rather than
+  leaving it as a side effect: **a goal whose whole purpose is to create the
+  build system is never gated, and the build it creates is never run.** Under
+  `--max-cycles N` it compounds: cycle 1 writes the build system, and cycles
+  2..N run against a build that now exists and is still never executed, because
+  the question was asked once, before cycle 1.
+
+  Accepted, with two things carrying it. First, re-detecting per cycle is not a
+  free fix: it would make a file a *node wrote* decide policy, which is the
+  bootstrapping shape §3 spends four bullets keeping out, and the amendment's
+  refusal-only direction makes it survivable but not obviously worth the
+  complication before anyone has hit it. Second — and this is new since the
+  first draft — the greenfield run is no longer *invisible*: §2.5's widened
+  recording files it as `answer: "none-detected"`, so §8(a) can count how large
+  this class actually is instead of arguing about it. If it turns out to be the
+  common shape of an `auto` run, that is the evidence for re-detecting at cycle
+  boundaries, and it will be a number rather than this paragraph.
 - **A false positive.** A `Makefile` that only builds documentation, a
   `package.json` with no test script, a `go.mod` in a repo whose goal is a
   README edit. The gate refuses a run that genuinely had nothing to verify. Cost:
@@ -447,16 +696,34 @@ fires before the planner call, which is the whole point.
   subdirectories — `DetectBuildSignals` reads the invocation directory only, not
   recursively. No gate fires; the run proceeds unverified exactly as today. The
   gate is exactly as complete as the table, and the table is allowed to be
-  incomplete because incompleteness fails **open** (§3).
+  incomplete because incompleteness fails **open** (§3). The
+  created-during-the-run case above is a different and larger class than these
+  three and is listed separately for that reason: those are gaps in the *table*,
+  and it is a gap in the *timing*, which no table entry closes.
 - **A build too slow for the ceiling.** `--verify-cmd` is bounded by 10 minutes,
   and a build that exceeds it fails as an Infrastructure fault ("could not
   verify"). The operator's route is the opt-out, and the refusal offers it. The
   ceiling itself is ADR 0016's and is not revisited here.
-- **The refusal is the first thing a new user meets.** `auto "…"` in their own
-  repository, and the tool declines. The text in §2.4 is written for exactly
-  that reader — it explains why, offers both exits, and says nothing was
-  charged — but it is still a worse first impression than a run that starts.
-  Accepted deliberately: the run that starts is the one that produced #119.
+- **The refusal is the first thing a new user meets — and the shipped quickstart
+  is itself an instance of the false positive above.** `README.md` and
+  `README.ko.md` tell a new user to run
+  `auto "lint this repo and summarize the findings" --input repo=$PWD` in their
+  own repository: a **read-only analysis goal in a build-bearing directory**,
+  which is the exact class the bullet above accepts friction for. So the first
+  thing a new user meets is not merely "a refusal" in the abstract; it is a
+  refusal of the command the README just gave them, for a goal that genuinely
+  had nothing to build. That is worse than the first draft of this ADR noticed.
+
+  The fix is in the documentation, not the gate, and §7 lists every file: the
+  read-only quickstart gains `--accept-no-build-evidence` **with one sentence
+  saying why** ("this goal reads the repo and writes a summary; there is nothing
+  to build, and the flag states that"), while the implementation-shaped examples
+  gain `--verify-cmd`. Both halves matter — a quickstart that only ever shows
+  the opt-out teaches the escape as the normal answer, which is the failure mode
+  two bullets up, and one that shows neither is a command that no longer works.
+  The residual cost stays accepted for the same reason as before: the run that
+  starts unverified is the one that produced #119. §8(a) is what will say
+  whether the teaching order took.
 - **A run gated by a hostile checkout.** A repository can plant a marker to make
   `auto` refuse in it. Cost: one flag. See §3 — the direction is what makes this
   a nuisance rather than a hole.
@@ -472,20 +739,47 @@ fires before the planner call, which is the whole point.
   under `## [Unreleased]` must say so plainly:** `auto` now **refuses to start**
   in a directory where a build system is detected unless `--verify-cmd` or
   `--accept-no-build-evidence` is passed. An invocation that ran yesterday can
-  exit non-zero today. No release and no tag in this lane.
-- **Scripts and CI calling `auto` break loudly** — non-zero exit, before any
-  spend, with the two flags named — rather than silently continuing to produce
-  unverified runs. That is the intended direction of the break.
+  exit 3 today. No release and no tag in this lane.
+- **Scripts and CI calling `auto` break loudly** — **exit 3** (§2.4), before any
+  spend, with the two flags named on stdout — rather than silently continuing to
+  produce unverified runs. That is the intended direction of the break, and the
+  distinct code is what lets a script tell "add a flag" from "the build failed".
+  1 and 2 keep their current meanings exactly.
 - **`run`, `lint`, `serve`, `watch`, `show` and every shipped graph are
   untouched.** So is `resume`, including every already-paused run (§2.6).
 - **Snapshot: one additive optional field, schema stays 3.** Every existing
   `state.json` stays readable and unchanged in meaning; every consumer that does
-  not know the field ignores it.
+  not know the field ignores it. It is now written on every auto-mode launch
+  (§2.5a), which is more rows than the first draft, but not a different shape.
 - **Run feed: no change, no schema bump** (§5, deferred).
 - **`internal/coordinator` gains an exported predicate and error type**
-  (`MissingBuildEvidenceError`). No existing exported signature changes;
-  `VerifyCommand` gains one field for the opt-out, and `Validate` gains the
-  contradiction refusal, so its blank/ceiling refusals are untouched.
+  (`MissingBuildEvidenceError`), and **`VerifyAdvice` gains a parameter** for the
+  declaration (§2.3). That is an exported signature change, deliberately: the
+  first draft avoided one by putting the opt-out field on `VerifyCommand`, which
+  bought signature stability in a package with **no consumers outside this
+  module** at the price of a field `resume` can never set. `VerifyCommand` is
+  therefore unchanged — no new field, and `Validate` keeps exactly its blank,
+  timeout and ceiling refusals.
+- **The documented invocations that now refuse.** Every place this repository
+  tells a user to type `auto` in a build-bearing directory must be updated in the
+  same lane as the gate, or the repo ships instructions the tool rejects — #198's
+  defect, from the documentation side:
+  - `README.md` (quickstart) and `README.ko.md` (quickstart) — the read-only
+    goal; gains `--accept-no-build-evidence` plus the one-sentence why (§6).
+  - `docs/EXAMPLES.md`: the `auto` row of the subcommand table, which today
+    describes `--verify-cmd` as purely optional; the read-only quickstart repeat;
+    and the implementation-shaped example, which gains `--verify-cmd`. The one
+    example that already passes `--verify-cmd` is correct as it stands and is the
+    model for the others.
+  - `plugin/README.md` (both the `/graph auto` and bare-`auto` forms),
+    `plugin/agents/oh-my-graph.md` (its synopsis lists no `--verify-cmd` at all,
+    and it is the file that gains §6's rule against an agent declaring on a
+    human's behalf), and `plugin/commands/graph.md`.
+  - `usageLines` in `cmd/oh-my-graph/main.go` must gain the flag on the `auto`
+    line — and this one fails loudly rather than silently, because
+    `usage_test.go` pins each synopsis line's flags against that subcommand's
+    real `FlagSet`. Named here anyway so the lane does not learn it from a red
+    test.
 - **DESIGN.md is the spec and drift in it is a bug** (CLAUDE.md). The auto-mode
   section must gain the gate: today it describes `--verify-cmd` as purely
   optional, which stops being true for a build-bearing directory.
@@ -501,13 +795,30 @@ Neither gates correctness of the mechanism; both gate the claims made for it.
 Record each with cost and CLI version, as every prior E-number is.
 
 - **(a) The firing rate and the exits taken.** Over the first N `auto`
-  invocations after this ships, from the snapshots themselves: how many
-  directories raised a signal, how many runs answered with `--verify-cmd`, and
-  how many with `--accept-no-build-evidence`. The baseline is 1 of 8, with its
-  address in `docs/measurements/0030-…`. This is the measurement the recorded
-  field exists to make possible, and it cannot be taken before the field exists
-  — the current corpus cannot even say which of its 7 unverified runs would have
-  been gated (no snapshot records an invocation directory).
+  invocations after this ships, counted from the snapshots themselves — one row
+  per launch, four mutually exclusive strata, summing to N:
+
+  | stratum | `build_evidence.answer` | what it answers |
+  | --- | --- | --- |
+  | attached | `attached` | the run carries engine-run evidence |
+  | declared | `declared` | a signal was met and a flag was typed at it |
+  | disclosed | `disclosed` | a signal was met and a chat `[y/N]` passed over it |
+  | none detected | `none-detected` | no signal — including every greenfield run (§6) |
+
+  The **denominator is the point**: "how many directories raised a signal" is
+  simply the rows whose `signals` list is non-empty, counted across all four
+  strata — including the `attached` ones, which is why `signals` is recorded even
+  when a command was supplied. It is recoverable only because §2.5 writes the
+  field on every launch. The first
+  draft recorded stratum 2 alone, which would have left the firing rate exactly
+  as unknowable after shipping as it is today — the same blind spot the
+  measurement file names when it says the current corpus cannot say which of its
+  7 unverified runs would have been gated (no snapshot records an invocation
+  directory). The baseline is 1 of 8, with its address in
+  `docs/measurements/0030-…`. Report `declared` and `disclosed` separately and
+  never summed (§2.6), and read the `declared` count as an **upper bound on
+  human declarations** — an agent's argv is indistinguishable from a human's
+  keystroke in that column (§6, §9).
 - **(b) The false-positive rate of the table.** Over this machine's repositories,
   how many directories that raise a signal have no build command worth running
   for a typical goal. If it is high, the friction estimate in §6 is wrong and the
@@ -525,9 +836,24 @@ Record each with cost and CLI version, as every prior E-number is.
   this repository (§1.1) and is carried as reported. The argument here does not
   need it: the reason to prefer a gate is that a notice cannot stop a run, which
   is a property of the mechanism, not a finding about a corpus.
-- **Whether `chat`'s single `y` is an adequate declaration** (§2.6). It is the
-  strongest one that surface has today; whether it is enough is exactly what the
-  `declared_by` column will show.
+- **Whether `chat`'s single `y` is an adequate disclosure** (§2.6). It is the
+  strongest thing that surface has today; whether it is enough is what the
+  `disclosed` stratum will show — kept apart from `declared` at the source
+  precisely so the question stays askable.
+- **Whether a declaration was a human's.** `declared_by:
+  "--accept-no-build-evidence"` records the flag, and the flag records that
+  *something* typed it. This repository ships `auto` to an agent (§6), and the
+  tool cannot tell that agent's argv from a keystroke — nothing in argv, the
+  environment or the snapshot distinguishes them, and inventing a
+  `--declared-by` value the caller supplies would just move the honesty problem
+  one flag along. So the `declared` stratum is an upper bound on human
+  declarations. The plugin rule in §6 is documentation, and this is the price of
+  its being documentation.
+- **How large the greenfield class is** (§6). Not knowable from the current
+  corpus for the same reason as the row above it — no snapshot records the
+  invocation directory — and knowable after this ships, from the
+  `none-detected` stratum. It is the input to whether per-cycle re-detection is
+  worth its complication.
 - **Whether the detection table's priority order suggests the right command in a
   monorepo.** Unchanged from ADR 0016, unmeasured then and now. The refusal says
   "so the command below is a guess" rather than pretending otherwise.
