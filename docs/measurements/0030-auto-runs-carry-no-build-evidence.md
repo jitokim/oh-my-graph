@@ -14,12 +14,22 @@ reads it as if it were.
 - **Corpus:** every `~/.oh-my-graph/runs/*/state.json` — 294 runs, of which 8
   are `auto` runs and 286 are hand-written `run`s.
 - **Method:** [`probes/0030-auto-build-evidence/count.py`](probes/0030-auto-build-evidence/count.py),
-  which parses each snapshot with the `json` module and asserts every number
-  quoted here. It exits 1 rather than reporting if the corpus has moved. Never
-  `grep`: `verify:` appears inside prompt strings, and a line count would count
-  those.
+  which parses each snapshot with the `json` module. Never `grep`: `verify:`
+  appears inside prompt strings, and a line count would count those.
 - **Cost:** zero spawns. 294 file reads.
 - **Re-derive:** `python3 docs/measurements/probes/0030-auto-build-evidence/count.py`
+  — reports whatever the reader's own corpus says, which is the useful thing on
+  any machine but this one.
+- **Re-check these frozen numbers:** `… count.py --check`, which exits 1 with
+  `CORPUS MOVED` unless the corpus is the one measured above. **It is expected
+  to say so on this machine too, from the next `auto` run onward** — the figures
+  below are a reading taken on 2026-08-20, not an invariant. `--check` is for
+  verifying that this file was transcribed from that reading, and for nothing
+  else.
+- **What this probe cannot answer:** ADR 0030 §8(a). Its four strata are read
+  from the `build_evidence` block the ADR added, which no run in this corpus
+  has, and which is not derivable from a graph. A second probe is owed before
+  that ADR leaves Proposed.
 
 ## The rows
 

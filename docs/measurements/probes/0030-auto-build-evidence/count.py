@@ -17,11 +17,24 @@ Definitions, both taken from the snapshot and from nothing else:
                     refuses a planner-authored one, and trusted code attaches
                     the user's (ADR 0016 §2).
 
-Zero spawns, zero cost. Asserts the numbers quoted in
-docs/measurements/0030-auto-runs-carry-no-build-evidence.md, so it FAILS rather
-than reports if the corpus has moved. Pass --report to print without asserting.
+Zero spawns, zero cost.
 
-Usage:  python3 count.py [--report] [--runs-dir DIR]
+It REPORTS by default and asserts only under --check. That order is deliberate
+and was the other way round until 2026-08-20: the assertion is against one
+machine's corpus at one hour, so a default that asserted made the command ADR
+0030 cites as "re-derivable" exit 1 for every reader but this tree, and after
+literally the next `auto` run even here. --check is what the frozen numbers in
+docs/measurements/0030-auto-runs-carry-no-build-evidence.md are pinned by; it is
+for whoever re-runs this on THAT corpus, not for a reader wanting the figure.
+
+What this probe measures is ADR 0016's definition of build evidence — a
+`success_check.verify` in the snapshot's graph — which is the question §1 of ADR
+0030 asked. It CANNOT answer §8(a), whose four strata are read from the
+`build_evidence` block ADR 0030 added: no run in this corpus has one, and the
+strata are not derivable from a graph. That measurement needs its own probe, and
+it is owed before ADR 0030 leaves Proposed.
+
+Usage:  python3 count.py [--check] [--runs-dir DIR]
 """
 
 import argparse
@@ -36,7 +49,9 @@ import sys
 # folded into a denominator it cannot answer for.
 FLAG_EXISTS_FROM = "20260806"
 
-# What the measurement doc quotes. Update both together or not at all.
+# What the measurement doc quotes, frozen on 2026-08-20 against this machine's
+# 294-run corpus. Checked only under --check (see the docstring). Update both
+# together or not at all.
 EXPECTED = {"auto": 8, "with_evidence": 1, "post_flag": 2, "post_flag_with_evidence": 1}
 
 
@@ -76,7 +91,11 @@ def scan(runs_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-dir", default=os.path.expanduser("~/.oh-my-graph/runs"))
-    ap.add_argument("--report", action="store_true", help="print only; do not assert")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="assert the frozen numbers in the measurement doc; exit 1 if the corpus has moved",
+    )
     args = ap.parse_args()
 
     rows = scan(args.runs_dir)
@@ -97,7 +116,7 @@ def main():
         mark = ",".join(r["verified_nodes"]) if r["verified_nodes"] else "-"
         print(f"  {r['run_id']}  nodes={r['nodes']:<2} verify={mark}")
 
-    if args.report:
+    if not args.check:
         return 0
     actual = {
         "auto": len(auto),

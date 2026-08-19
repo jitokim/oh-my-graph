@@ -11,6 +11,17 @@
   surfaces of §7, and the `## [Unreleased]` CHANGELOG entry. What is NOT done is
   §8: (a) the firing rate and the exits taken, and (b) the table's
   false-positive rate. Until those exist this stays Proposed.
+- **Reviewed 2026-08-20, after implementation.** One defect and four coverage
+  gaps, all at the seams between legs and surfaces rather than in the fresh
+  `auto` leg: the resumed leg's recorder **erased** `build_evidence`, which is
+  the one thing §2.6's `resume` row relies on (fixed; §2.6, §4.1(9)); `chat`'s
+  launch, the goal loop's later cycles, Codex and the inherited `"."` hazard are
+  now pinned (§4.1); §4's claim about `t.Chdir` was wrong about its own lane's
+  output and is corrected in place; the probe now reports by default so the
+  command this header cites works off this machine; and three trades that were
+  being inherited rather than chosen are written down — chat's session-long
+  staleness window and the quickstart's opt-out-first order (§6), and the fact
+  that no finished-run surface reads the record back yet (§2.5b).
 - Date: 2026-08-20
 - **Revised 2026-08-20 after design review, before any code existed.** Six
   changes, each argued where it lands: the recording was **inverted** relative to
@@ -25,7 +36,13 @@
   to be discovered (§5, §6, §7).
 - Measurement: [`docs/measurements/0030-auto-runs-carry-no-build-evidence.md`](../measurements/0030-auto-runs-carry-no-build-evidence.md),
   re-derivable with
-  `python3 docs/measurements/probes/0030-auto-build-evidence/count.py`.
+  `python3 docs/measurements/probes/0030-auto-build-evidence/count.py`, which
+  reports the reader's own corpus. Its `--check` mode pins the frozen numbers in
+  that file and is expected to report `CORPUS MOVED` on any other machine, and
+  on this one from the next `auto` run onward. That probe measures ADR 0016's
+  definition (a `success_check.verify` in the snapshot's graph) and **cannot
+  answer §8(a)**, whose strata are read from the `build_evidence` block this ADR
+  adds; a second probe is part of what §8 owes.
 - Issues: [#119](https://github.com/jitokim/oh-my-graph/issues/119) is the
   precedent this acts on; this record opens no new one.
 - **Amends `0016-build-evidence-is-a-user-supplied-engine-command.md` §3** in
@@ -418,6 +435,15 @@ directory remains an inadmissible source of engine-run shell, on both legs.
   the screen `--plan-only` prints and the screen chat's `[y/N]` gates, which is
   what makes §2.6's chat answer work at all.
 
+**Both printed sites are before the run, and that is the whole of what this ADR
+ships.** Nothing reads the field back afterwards: `show`, `runs`, the dashboard
+and the run feed are all untouched (§2.7, §7), so a reader of a **finished** run
+gets the record by opening `~/.oh-my-graph/runs/<id>/state.json`. Recorded here
+as a deliberate limit rather than left to be discovered: the field exists for
+§8(a) first and for a human reader second, `show` is the natural home for the
+second, and adding a surface is a change to a command this ADR otherwise does
+not touch. It is follow-up work, not part of this decision.
+
 ### 2.6 Which surfaces the gate applies to, pinned
 
 | surface | gated? | why |
@@ -426,7 +452,7 @@ directory remains an inadmissible source of engine-run shell, on both legs.
 | `auto --plan-only` | **yes**, identically | A preview that refuses differently from the run it previews is its own defect. It falls out for free: the gate is upstream of `planAndExecute`, which `--plan-only` is passed *into*, so it is reached before the preview buys its planner call. It also *saves* the user money in the refused case, where today they would pay for a plan they then have to re-request with a flag. |
 | `chat` | **no refusal**; disclosure and recording only | `chat` registers no verification flags at all, so a refusal there could only name a flag `chat` rejects — the exact dead end #198 was. What `chat` gets instead is the absence stated on the plan screen its `[y/N]` gates (§2.5b), and the run recorded with `answer: "disclosed"`, `declared_by: "chat-confirm"` — filed **apart from** `auto`'s declarations, never merged into them. |
 | `run` | **no**, and no recording | A hand-written graph carries its author's own `success_check.verify` and is a reviewed artifact. Out of scope by construction, as ADR 0016 §2 has it — it never asks the question, so it writes no `build_evidence` field either (§2.5a). |
-| `resume` | **no** | The gate is a **launch-time** gate. The choice was made once, and the snapshot the resume loads records it. Re-asking would make a paused run un-resumable without re-typing a declaration already on file, which is ADR 0009's promise broken and #198's defect repeated. A run launched before this ADR resumes untouched. |
+| `resume` | **no** | The gate is a **launch-time** gate. The choice was made once, and the snapshot the resume loads records it — **and the resumed leg's recorder base carries `build_evidence` forward**, which is what makes the previous clause true after the leg as well as before it. `SnapshotRecorder` rewrites the whole snapshot on every settled node, so omitting the field there does not fail to add one, it *erases* the first leg's (`cmd/oh-my-graph/resume.go`, `TestResume_CarriesTheDeclarationIntoTheSecondLeg`). Re-asking, meanwhile, would make a paused run un-resumable without re-typing a declaration already on file, which is ADR 0009's promise broken and #198's defect repeated. A run launched before this ADR resumes untouched. |
 | `--runtime codex` (ADR 0025) | **yes**, identically to Claude | Not derived, stated: a Codex `auto` reaches the same `runAutoWithRuntime`, so it meets the gate at the same line, by construction rather than by intention. It is worth stating because the *reason* for the gate reads differently there — a Codex node's ceiling is a filesystem sandbox, not a tool allowlist, so §1.2's "`plannedToolAllowlist` refuses `Bash(./gradlew *)`" is not the argument on that runtime. The argument that does carry over is the one that matters: `validatePlannedNodeVerify` refuses `success_check.verify` from a plan on **either** runtime, so a Codex `auto` has no engine-run evidence without `--verify-cmd` either, and a sandbox that permits a build command still leaves the verdict to the node that ran it. The refusal text, flag and recording are runtime-independent. |
 
 **Chat's answer is the weakest thing in this record, and it is filed as what it
@@ -507,9 +533,21 @@ into something.
 
 ## 4. Tests the implementation lane owes
 
-Eight, and the third is the one that would otherwise be forgotten. Each names a
-temp directory explicitly — the gate's helper takes a `dir` (§2.1), so none of
-these needs `t.Chdir` and none of them forecloses `t.Parallel`.
+Eight, and the third is the one that would otherwise be forgotten.
+
+**Corrected 2026-08-20, after implementation, because the sentence that stood
+here was wrong about its own lane's output.** It claimed that each of these
+names a temp directory explicitly — the gate's helper takes a `dir` (§2.1) — so
+*"none of these needs `t.Chdir` and none of them forecloses `t.Parallel`"*. The
+helper does take a `dir`; the **production call site passes `"."`**
+(`runAutoWithRuntime`), so every test that goes through `auto`, `--plan-only`,
+`chat` or `run` has to *be* in the directory under test, and the shipped ones do
+that with `inBuildDir`, which is `t.Chdir`. Only test 8 — which calls
+`answerBuildEvidence` directly, and is the one that pins the seam rather than a
+message — reaches the `dir` parameter. Harmless as it stands (package `main` has
+no `t.Parallel` and already used `t.Chdir` before this lane), and recorded
+because a design record that is wrong about what shipped is a bug in one of the
+two.
 
 1. **build signal + no flag → refused**, and the message names *both* the
    detected signal (by ecosystem and file) and the opt-out flag. Asserting only
@@ -553,6 +591,41 @@ for `resume`.
 
 All of it runs against `FakeRunner`. No test here needs a real spawn: the gate
 fires before the planner call, which is the whole point.
+
+### 4.1 Five more, owed after review (2026-08-20)
+
+The eight above cover the **fresh `auto` leg** thoroughly and cover nothing
+else, and the first item below is a real defect that shipped through the gap
+rather than a coverage wish. All five are in
+`cmd/oh-my-graph/buildevidence_test.go`.
+
+9. **`resume` carries the record into the second leg**
+   (`TestResume_CarriesTheDeclarationIntoTheSecondLeg`). §2.6's `resume` row
+   relies on the snapshot recording the choice; `SnapshotRecorder` rewrites the
+   whole snapshot from a base the resumed leg builds field by field, so the
+   omitted field was *erased* by the first node that settled. Declared runs that
+   paused — the interactive class — silently left all four strata of §8(a).
+10. **`chat`'s launch declares its own kind**
+    (`TestRunChatWith_TheLaunchItselfDeclaresAChatConfirmDisclosure`). Test 5
+    constructs the outcome and hands it to `chatLoop`; the launch line between
+    them was unpinned, so `DeclaredByFlag` there would have filed every chat run
+    under `declared` — the merge §2.6 and §8(a) forbid — with every test green.
+    `runChatWith` is the seam `runAutoWith` already is for `auto`.
+11. **Every cycle of a goal loop records the one answer**
+    (`TestRunAutoWith_EveryCycleOfAGoalLoopRecordsTheOneAnswer`). Each cycle
+    mints its own run id and recorder; a cycle that recorded nothing would drop
+    out of §8(a) exactly as a resumed leg did.
+12. **Codex meets the same gate**
+    (`TestRunAutoWithRuntime_CodexMeetsTheSameGate`). §2.6 *states* this rather
+    than deriving it, and a stated property with no case is one a
+    runtime-specific early return breaks silently.
+13. **The package directory raises no build signal**
+    (`TestDetectBuildSignals_ThisPackageDirectoryRaisesNone`). The hazard §2.1
+    held against `autoFlags.parse` — a result that depends on the directory the
+    test binary runs in — is **inherited** by the chosen site, because its
+    production call passes `"."`. A `Makefile` or a stray `go.mod` in
+    `cmd/oh-my-graph/` fails dozens of unrelated tests with an unrelated
+    message; this converts that cascade into one failure that says what to do.
 
 ## 5. Alternatives considered
 
@@ -692,6 +765,18 @@ fires before the planner call, which is the whole point.
   this class actually is instead of arguing about it. If it turns out to be the
   common shape of an `auto` run, that is the evidence for re-detecting at cycle
   boundaries, and it will be a number rather than this paragraph.
+- **`chat` asks once per SESSION, and a session outlives a launch.** The
+  question is put at REPL startup (`runChatWith`) and its answer serves every
+  graph turn until the process ends, which is the same once-per-invocation rule
+  `auto` follows and is required by the same argument (§3.5: re-asking would let
+  a file a *turn wrote* gate a later turn — the bootstrapping shape, one scope
+  up). The cost is that chat's staleness window is materially larger than the
+  greenfield case above it: a session whose turn 1 scaffolds a `package.json`
+  still records `none-detected` on turn 9, and an `auto` launch at least ends.
+  The direction is the safe one — a stale answer never widens anything, it only
+  fails to gate — so this is accepted, stated in `chat.go` at the call site, and
+  countable: those rows are `none-detected` with an empty `signals` list, so if
+  the class matters it will show up in §8(a) rather than in an argument.
 - **A false positive.** A `Makefile` that only builds documentation, a
   `package.json` with no test script, a `go.mod` in a repo whose goal is a
   README edit. The gate refuses a run that genuinely had nothing to verify. Cost:
@@ -730,6 +815,21 @@ fires before the planner call, which is the whole point.
   The residual cost stays accepted for the same reason as before: the run that
   starts unverified is the one that produced #119. §8(a) is what will say
   whether the teaching order took.
+
+  **What that leaves, named rather than inherited:** the very first `auto` a new
+  user copies now carries `--accept-no-build-evidence`, so the paste-the-flag
+  habit lands on the human this whole ADR is written to protect. Three things
+  carry the trade, and it is a trade rather than a fix. The goal genuinely has
+  nothing to build and the sentence beside it says so, which is the difference
+  between teaching an exit and teaching a lie. The implementation-shaped
+  `--verify-cmd` example follows immediately, so the flag is never the last word
+  a reader sees (`README.md`, `README.ko.md`, `docs/EXAMPLES.md`). And the
+  agent-facing surfaces forbid taking that exit unilaterally
+  (`plugin/agents/oh-my-graph.md`), which is where the aliaser bullet says the
+  realistic version of this failure actually lives. If §8(a)'s `declared` rows
+  arrive dominated by first runs, the answer is to reorder the quickstart so
+  `--verify-cmd` is the first thing shown, not to remove the flag from a command
+  that would otherwise be refused.
 - **A run gated by a hostile checkout.** A repository can plant a marker to make
   `auto` refuse in it. Cost: one flag. See §3 — the direction is what makes this
   a nuisance rather than a hole.

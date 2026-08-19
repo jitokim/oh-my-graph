@@ -67,6 +67,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   accident, and the firing rate is countable rather than remembered. The plan
   screen states the same thing beside the topology: it now says either what the
   engine will run at each sink, or that it will run nothing, and never neither.
+  The block **survives a `resume`**: a paused run that is finished by a later leg
+  keeps the answer its launch gave, so pausing does not turn a declared absence
+  back into an indistinguishable one. Reading it back is `cat state.json` for
+  now — `show`, `runs` and the dashboard do not surface it yet.
 
 ## [v0.10.0] - 2026-08-19
 
