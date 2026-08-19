@@ -13,6 +13,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
 // ADR 0030 — an unverified `auto` run is a choice, not a default.
@@ -370,6 +371,48 @@ func TestRunChatRuntime_DoesNotRefuseInABuildBearingDirectory(t *testing.T) {
 	}
 }
 
+// TestRunChatWith_TheLaunchItselfDeclaresAChatConfirmDisclosure closes the half
+// of chat's wiring the two tests around it leave open. The one above asserts
+// only that no refusal came back; the one below constructs the outcome itself
+// and hands it to chatLoop. Between them sits the single line of policy that
+// decides WHICH declaration this surface makes — and if it passed
+// DeclaredByFlag, both of them would still pass while every chat run on the
+// machine filed itself under `declared`, merging the two strata ADR 0030 §2.6
+// and §8(a) spend two paragraphs keeping apart.
+//
+// So this drives the production launch path, through a real graph turn, to the
+// snapshot it leaves behind.
+func TestRunChatWith_TheLaunchItselfDeclaresAChatConfirmDisclosure(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "gradlew")
+	fake := newChatFake(map[string]runner.NodeOutcome{
+		routerKey:   {Result: `{"mode":"graph","goal":"add a README section"}`},
+		autoPlanKey: {Result: cycleSpec, TotalCostUSD: 0.0417},
+		"work":      {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+
+	var out strings.Builder
+	var chatErr error
+	captureStdout(t, func() {
+		chatErr = runChatWith(runner.RuntimeClaude, []string{"--no-agent-mapping", "--no-skill-activation"},
+			strings.NewReader("add a README section\ny\n"), &out, fake)
+	})
+	if chatErr != nil {
+		t.Fatalf("chat returned %v", chatErr)
+	}
+
+	recorded := recordedBuildEvidence(t, soleRunID(t))
+	if recorded == nil {
+		t.Fatal("a chat graph turn launched by runChatWith recorded no build_evidence block")
+	}
+	if recorded.Answer != "disclosed" {
+		t.Errorf("answer = %q, want %q — chat's launch declared something other than its own keystroke", recorded.Answer, "disclosed")
+	}
+	if recorded.DeclaredBy != "chat-confirm" {
+		t.Errorf("declared_by = %q, want %q — chat filed its run under a flag it does not register", recorded.DeclaredBy, "chat-confirm")
+	}
+}
+
 // TestChatLoop_StatesTheAbsenceOnTheScreenItsConfirmGates is chat's whole
 // answer, and it is filed as what it is. One `y` covers two questions — run this
 // plan, and accept that it proves nothing — where `auto`'s operator answers the
@@ -579,5 +622,166 @@ func TestMissingBuildEvidenceRefusal_NamesOnlyFlagsAutoRegisters(t *testing.T) {
 			t.Errorf("the refusal tells the user to re-run with `--%s`, which `auto` does not register — "+
 				"following it gets `flag provided but not defined` (#198):\n%s", match[1], text.String())
 		}
+	}
+}
+
+// --- the seams between legs, surfaces and cycles ------------------------------
+
+// TestResume_CarriesTheDeclarationIntoTheSecondLeg is ADR 0030 §2.6's `resume`
+// row, asserted rather than assumed. That row declines to re-ask the question,
+// and its whole justification is one sentence — "the choice was made once, and
+// the snapshot the resume loads records it" — which is a claim about the
+// snapshot AFTER the resume, not before it.
+//
+// The failure it guards is silent and total, not partial. SnapshotRecorder
+// writes the WHOLE snapshot from its base on every RecordNode, so a resumed leg
+// whose base names the fields one by one and omits build_evidence does not fail
+// to add one: the first node that settles ERASES the block the first leg wrote.
+// What is left is a finished run in which a chosen absence and an accidental one
+// look identical again — and, worse for §8(a), a run that has silently left all
+// four strata, biasing the denominator by "did this run pause", which is exactly
+// the interactive class a human declares over.
+func TestResume_CarriesTheDeclarationIntoTheSecondLeg(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "package.json")
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
+		"work-1": {ExitCode: 1, FailureCause: limitCauseMsg, SessionLimited: true},
+		// The retry leg relaunches the same node; this is the leg that rewrites
+		// state.json from the resumed base.
+		"work-2": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+
+	var err error
+	captureStdout(t, func() {
+		err = runAutoWith([]string{"add a README section", "--accept-no-build-evidence",
+			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	var limited *schedule.LimitPausedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("the first leg should pause on the session limit, got %T: %v", err, err)
+	}
+	runID := soleRunID(t)
+	before := recordedBuildEvidence(t, runID)
+	if before == nil || before.Answer != "declared" {
+		t.Fatalf("the paused leg recorded %+v, want the declaration this test then resumes over", before)
+	}
+
+	var resumeErr error
+	captureStdout(t, func() {
+		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil)
+	})
+	if resumeErr != nil {
+		t.Fatalf("the retry leg should finish the run cleanly, got: %v", resumeErr)
+	}
+
+	after := recordedBuildEvidence(t, runID)
+	if after == nil {
+		t.Fatal("the resumed leg erased build_evidence; ADR 0030 §2.6 does not re-gate a resume BECAUSE the snapshot records it")
+	}
+	if after.Answer != before.Answer || after.DeclaredBy != before.DeclaredBy {
+		t.Errorf("after resume = %+v, want the first leg's %+v — a declaration is a fact about the run, not about one leg", after, before)
+	}
+	if len(after.Signals) != 1 || after.Signals[0] != "package.json" {
+		t.Errorf("signals after resume = %v, want [package.json] — what the human was told when they answered", after.Signals)
+	}
+}
+
+// TestRunAutoWith_EveryCycleOfAGoalLoopRecordsTheOneAnswer — a --max-cycles loop
+// mints a fresh run id and a fresh recorder per cycle, so "the question is asked
+// once per invocation" (§3.5) is only true of the RECORD if every cycle's
+// snapshot carries the answer the invocation gave. A cycle that recorded nothing
+// would drop out of §8(a) exactly as a resumed leg would, and a cycle that
+// re-asked would let a build system a previous cycle WROTE gate the run — the
+// bootstrapping shape §3.5 keeps out.
+func TestRunAutoWith_EveryCycleOfAGoalLoopRecordsTheOneAnswer(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "Cargo.toml")
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1":   {SessionID: "s-work-1", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"assess-1": {Result: cycleAssessNotMet, TotalCostUSD: 0.02},
+		"plan-2":   {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-2":   {SessionID: "s-work-2", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		"assess-2": {Result: cycleAssessMet, TotalCostUSD: 0.02},
+	})
+
+	var err error
+	captureStdout(t, func() {
+		err = runAutoWith([]string{"add a README section", "--accept-no-build-evidence", "--max-cycles", "2",
+			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("a declared goal loop must run to its met verdict: %v", err)
+	}
+
+	snaps := goalSnapshots(t)
+	if len(snaps) != 2 {
+		t.Fatalf("%d run directories, want one per cycle (2)", len(snaps))
+	}
+	for i, snap := range snaps {
+		cycle := i + 1
+		if snap.BuildEvidence == nil {
+			t.Fatalf("cycle %d recorded no build_evidence, so it is invisible to §8(a)", cycle)
+		}
+		if snap.BuildEvidence.Answer != "declared" || snap.BuildEvidence.DeclaredBy != "--accept-no-build-evidence" {
+			t.Errorf("cycle %d recorded %+v, want the invocation's own declaration", cycle, snap.BuildEvidence)
+		}
+		if len(snap.BuildEvidence.Signals) != 1 || snap.BuildEvidence.Signals[0] != "Cargo.toml" {
+			t.Errorf("cycle %d signals = %v, want [Cargo.toml]", cycle, snap.BuildEvidence.Signals)
+		}
+	}
+}
+
+// TestRunAutoWithRuntime_CodexMeetsTheSameGate is the §2.6 row the ADR chose to
+// STATE ("by construction, not by intention") rather than derive. A stated
+// property with no case is one a runtime-specific early return can break
+// silently — and the reason for the gate reads differently on Codex (a
+// filesystem sandbox, not a tool allowlist), which is precisely the argument
+// someone would use when adding that return.
+func TestRunAutoWithRuntime_CodexMeetsTheSameGate(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "mix.exs")
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
+	})
+
+	var err error
+	captureStdout(t, func() {
+		err = runAutoWithRuntime(runner.RuntimeCodex, []string{"add a README section",
+			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+
+	var refusal *coordinator.MissingBuildEvidenceError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("codex err = %v (%T), want the same refusal Claude gets", err, err)
+	}
+	if len(refusal.Signals) != 1 || refusal.Signals[0].File != "mix.exs" {
+		t.Errorf("the codex refusal names %+v, want the detected mix.exs", refusal.Signals)
+	}
+	if n := len(fake.Invocations()); n != 0 {
+		t.Errorf("the refused codex invocation made %d call(s); a refusal must spend nothing", n)
+	}
+}
+
+// TestDetectBuildSignals_ThisPackageDirectoryRaisesNone pins the one hazard the
+// gate's placement INHERITED from the placement §2.1 rejected. The production
+// call site passes "." (main.go, runAutoWithRuntime), so every `auto` test in
+// this package that does NOT call inBuildDir passes only because
+// cmd/oh-my-graph/ happens to hold no build marker — the same "passing today by
+// accident" §2.1 held against putting the gate in autoFlags.parse.
+//
+// Drop a Makefile, a stray go.mod or a *.csproj fixture in here and dozens of
+// unrelated tests fail with a message about build evidence. This converts that
+// cascade into one honest failure that says what to do about it.
+func TestDetectBuildSignals_ThisPackageDirectoryRaisesNone(t *testing.T) {
+	if signals := coordinator.DetectBuildSignals("."); len(signals) != 0 {
+		files := make([]string, 0, len(signals))
+		for _, s := range signals {
+			files = append(files, s.File)
+		}
+		t.Fatalf("cmd/oh-my-graph/ now holds build marker(s) %v. The gate scans \".\", so every auto test "+
+			"here that does not call inBuildDir is now refused for want of build evidence. Either move the "+
+			"file out of the package directory, or give those tests a temp directory of their own.", files)
 	}
 }
