@@ -96,7 +96,7 @@ func TestBuildTime_IsStattedOncePerProcessNotPerCall(t *testing.T) {
 // page, never a precondition for serving it.
 func TestIndex_StatesTheBuildItIsServing(t *testing.T) {
 	dir := t.TempDir()
-	labelled := newTestServer(dir, "run-1").WithBuild("v9.9.9 (deadbee, 2026-01-02)")
+	labelled := newTestServer(dir, "run-1").WithBuild(Build{Label: "v9.9.9 (deadbee, 2026-01-02)"})
 	page := servedPage(t, labelled.Handler(), "http://127.0.0.1:8642/")
 	if !strings.Contains(page, "v9.9.9 (deadbee, 2026-01-02)") {
 		t.Errorf("the live view does not state its build:\n%s", page)
@@ -114,7 +114,7 @@ func TestIndex_StatesTheBuildItIsServing(t *testing.T) {
 // the reader back where the missing label left them.
 func TestDashboard_AndItsMountedRunsStateTheSameBuild(t *testing.T) {
 	root := runsRootWith(t, "run-live")
-	d := newTestDashboard(root).WithBuild("v9.9.9 (deadbee, 2026-01-02)")
+	d := newTestDashboard(root).WithBuild(Build{Label: "v9.9.9 (deadbee, 2026-01-02)"})
 	handler := d.Handler()
 
 	if page := servedPage(t, handler, "http://127.0.0.1:8642/"); !strings.Contains(page, "v9.9.9 (deadbee, 2026-01-02)") {

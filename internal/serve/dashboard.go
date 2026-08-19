@@ -59,10 +59,12 @@ type Dashboard struct {
 	// 409. The interface already takes the run id per call, so one resumer
 	// serves every run on the dashboard.
 	resumer GateResumer
-	// build names the binary serving these pages, handed down to every mounted
-	// run's Server so the dashboard and the run view it links to can never
-	// disagree about which process is answering. Empty renders nothing.
-	build string
+	// build names the binary serving these pages, handed down WHOLE to every
+	// mounted run's Server so the dashboard and the run view it links to can
+	// never disagree about which process is answering — one field, so nothing a
+	// build learns about itself later can be forgotten in serverFor's copy. The
+	// zero value renders an empty label and empty tags.
+	build Build
 	// lister names the runs a sweep considers. It is listRunIDs for every real
 	// dashboard, and exists as a field for exactly one reason: a run deleted
 	// BETWEEN the listing and its stamp is a race a test cannot win by racing,
@@ -144,21 +146,22 @@ func (d *Dashboard) Handler() http.Handler {
 	return securityHeaders(requireLoopbackHost(mux))
 }
 
-// WithBuild sets the build label this dashboard and every run mounted under it
-// state in their footers — the mirror of Server.WithBuild, injected by the CLI
-// for the same reason.
-func (d *Dashboard) WithBuild(label string) *Dashboard {
-	d.build = label
+// WithBuild sets the build this dashboard and every run mounted under it state
+// — in their footers and in their heads' <meta> tags — the mirror of
+// Server.WithBuild, injected by the CLI for the same reason.
+func (d *Dashboard) WithBuild(b Build) *Dashboard {
+	d.build = b
 	return d
 }
 
 // handleIndex serves the dashboard page with this process's gate token, which
 // the run views opened from it inherit through their own handleIndex — the
-// token is the process's, so the two pages carry the same one. The build label
-// is the process's too, and travels the same way.
+// token is the process's, so the two pages carry the same one. The build is the
+// process's too, and travels the same way, through the same pageData both
+// templates are rendered with.
 func (d *Dashboard) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var page bytes.Buffer
-	if err := dashboardTemplate.Execute(&page, struct{ Token, Build string }{d.token, d.build}); err != nil {
+	if err := dashboardTemplate.Execute(&page, d.build.page(d.token)); err != nil {
 		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -192,8 +195,10 @@ func (d *Dashboard) handleRun(w http.ResponseWriter, r *http.Request) {
 // serverFor builds the single-run view for one run of this dashboard. It is
 // the ordinary Server every other caller gets, with the three things that
 // belong to the serving PROCESS rather than to the run handed down: the poll
-// cadence, the transcript root, the gate token and the build label — plus the
-// injected resumer, whose interface already names the run per call.
+// cadence, the transcript root, the gate token and the build — the last as one
+// value, so every fact a page states about the binary rides the single
+// assignment below — plus the injected resumer, whose interface already names
+// the run per call.
 //
 // Built per request rather than cached: a Server holds no state about its run
 // (every request re-reads the contract files), so a fresh one and a kept one

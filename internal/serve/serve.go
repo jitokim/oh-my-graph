@@ -114,6 +114,26 @@ var uiFS embed.FS
 // is embedded at compile time, so a parse error is a build-time bug.
 var indexTemplate = template.Must(template.ParseFS(uiFS, "ui/index.html"))
 
+// pageData is what a page template is rendered with — the single-run view's and
+// the dashboard's alike, because the two facts either page carries are the
+// serving PROCESS's, not the run's.
+//
+// One named type rather than the two identical anonymous structs it replaces:
+// those were the same shape by discipline only, and a field added to one and not
+// the other is a "can't evaluate field" at REQUEST time — a 500 on the page —
+// whereas a field added here either reaches both templates or does not compile.
+type pageData struct {
+	Token string
+	Build Build
+}
+
+// page pairs this process's build with the gate token it minted, for either
+// template. Both surfaces render through here, which is what keeps them from
+// disagreeing about which binary is answering.
+func (b Build) page(token string) pageData {
+	return pageData{Token: token, Build: b}
+}
+
 // Listen binds the live-view listener to 127.0.0.1 on the given port.
 //
 // SECURITY: the loopback bind is a requirement, not a default — run
@@ -258,11 +278,12 @@ type Server struct {
 	// resumer continues a run paused at a gate; nil (the default) means this
 	// view answers 409 to every gate decision. See WithGateResumer.
 	resumer GateResumer
-	// build names the binary serving this page, rendered into its footer so a
-	// long-lived `serve` cannot be mistaken for the build that replaced it
-	// (BuildLabel). Empty — the default — renders nothing at all, which is what
-	// every test and any caller that does not care gets.
-	build string
+	// build names the binary serving this page, rendered into its footer for a
+	// reader and into its head's <meta> tags for a script, so a long-lived
+	// `serve` cannot be mistaken for the build that replaced it (Build). The
+	// zero value — the default — renders an empty label and empty tags, which is
+	// what every test and any caller that does not care gets.
+	build Build
 }
 
 // New builds a Server for one run directory. runID is the directory's name —
@@ -356,12 +377,13 @@ func (s *Server) routes() *http.ServeMux {
 	return mux
 }
 
-// WithBuild sets the build label this view's footer states, and returns the
-// Server so it chains onto New the way WithGateResumer does. The CLI is the
-// only caller: the release version lives in package main, and the answer to
-// "which binary is this" belongs to the process, not to the run it is showing.
-func (s *Server) WithBuild(label string) *Server {
-	s.build = label
+// WithBuild sets the build this view states — in its footer for a reader, in
+// its head's <meta> tags for a script — and returns the Server so it chains onto
+// New the way WithGateResumer does. The CLI is the only caller: the release
+// version lives in package main, and the answer to "which binary is this"
+// belongs to the process, not to the run it is showing.
+func (s *Server) WithBuild(b Build) *Server {
+	s.build = b
 	return s
 }
 
@@ -371,12 +393,13 @@ func (s *Server) WithBuild(label string) *Server {
 // written to disk, so it dies with the process that minted it — a page left
 // open from a previous `serve` cannot decide this run's gate.
 //
-// It carries the build label out on the same render, for the same reason and
-// with the opposite audience: the token identifies this process to the server,
-// the label identifies it to the reader (BuildLabel).
+// It carries the build out on the same render, for the same reason and with the
+// other two audiences: the token identifies this process to the server, the
+// footer's label identifies it to the reader, and the head's <meta> tags
+// identify it to whatever is scripting against the page (Build).
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var page bytes.Buffer
-	if err := indexTemplate.Execute(&page, struct{ Token, Build string }{s.token, s.build}); err != nil {
+	if err := indexTemplate.Execute(&page, s.build.page(s.token)); err != nil {
 		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
 		return
 	}

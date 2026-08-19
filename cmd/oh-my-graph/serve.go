@@ -154,7 +154,7 @@ func runServeRuntime(requested runner.Runtime, requestedSet bool, args []string)
 // which is the honest answer there: that run holds the resume.lock a leg would
 // need, and it is not paused as long as it is running.
 func runView(listener net.Listener, runDir, runID string, resumer serve.GateResumer) (http.Handler, string) {
-	return serve.New(runDir, runID).WithGateResumer(resumer).WithBuild(serve.BuildLabel(Version)).Handler(),
+	return serve.New(runDir, runID).WithGateResumer(resumer).WithBuild(serve.CurrentBuild(Version)).Handler(),
 		fmt.Sprintf("Serving live view of run %s at http://%s/\nOpen it in your browser; Ctrl-C stops the server.\n",
 			runID, listener.Addr())
 }
@@ -164,7 +164,7 @@ func runView(listener net.Listener, runDir, runID string, resumer serve.GateResu
 // dashboard renders empty and fills in the moment something runs, which is the
 // point of subscribing to the root rather than to a run.
 func dashboardView(listener net.Listener, runsRoot string, resumer serve.GateResumer) (http.Handler, string) {
-	return serve.NewDashboard(runsRoot).WithGateResumer(resumer).WithBuild(serve.BuildLabel(Version)).Handler(),
+	return serve.NewDashboard(runsRoot).WithGateResumer(resumer).WithBuild(serve.CurrentBuild(Version)).Handler(),
 		fmt.Sprintf("Serving the run dashboard at http://%s/\nEvery run under %s is a card; click one for its live view. Ctrl-C stops the server.\n",
 			listener.Addr(), runsRoot)
 }
