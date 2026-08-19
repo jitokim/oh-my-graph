@@ -221,6 +221,15 @@ var testBuildInstant = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 
 const testBuildVersion = "9.9.9-meta-test"
 
+// testBuildRevision is buildRevision() at its fullest: the 7-character
+// revision with the -dirty marker appended. It is a fixture rather than a call
+// because buildRevision() is empty in every environment without a VCS stamp —
+// a -buildvcs=false build, a proxy module build, and a build from a linked git
+// worktree, which is how this project's own graph lanes build. An assertion
+// driven by the call would therefore compare "" against "" exactly where it
+// runs, which a template line hardcoded as content="" would pass.
+const testBuildRevision = "56e64fb-dirty"
+
 // TestPageMeta_VersionRevisionBuiltAtMatchBuildGo pins the three atoms named
 // in the CHANGELOG entry — omg-version, omg-revision, omg-built-at — each
 // checked against the SAME Build value handed to WithBuild, on all three
@@ -232,8 +241,17 @@ const testBuildVersion = "9.9.9-meta-test"
 // reverse) rather than passing on either half alone.
 func TestPageMeta_VersionRevisionBuiltAtMatchBuildGo(t *testing.T) {
 	want := newBuild(testBuildVersion, testBuildInstant)
-	if want.Revision == "" && want.BuiltAt == "" {
-		t.Fatal("test fixture produced a Build with nothing but the version; sharpen the fixture rather than the assertions below")
+	// The revision this suite proves the tag against is the fixture's, not
+	// buildRevision()'s: where the build carries no VCS stamp the latter is
+	// empty and the omg-revision check below would compare "" against "" —
+	// indistinguishable from TestPageMeta_UnknownAtomIsAnEmptyTagNotAnAbsentOne
+	// and passed by a template line hardcoded as content="". Overriding the
+	// field keeps the assertion pointed at want.Revision rather than at a
+	// literal, so it still tracks build.go's own value while proving a
+	// non-empty, -dirty-suffixed revision reaches all three surfaces.
+	want.Revision = testBuildRevision
+	if want.BuiltAt == "" {
+		t.Fatal("test fixture instant produced a Build with no BuiltAt; sharpen the fixture rather than the assertions below")
 	}
 
 	tags := []struct {
