@@ -1843,6 +1843,19 @@ second because the first is absent from a `-buildvcs=false` build, a proxy
 module build, and a build from a linked git worktree, which is how this
 project's own graph lanes build.
 
+The same three atoms are in each page's **head**, machine-readable, beside the
+gate token: `<meta name="omg-version">`, `<meta name="omg-revision">` and
+`<meta name="omg-built-at">` (the executable's mtime in RFC3339, from the same
+single stat the footer's label reads). The label settles the question for a
+reader and no one else — a stale server renders a stale label, so anything
+comparing a server against the build it expects had to parse prose out of the
+body. All three tags are always emitted, empty content meaning "unknown"; a tag
+that is *absent* means a server older than this change, which is itself an
+answer. They are disclosure only — no route, no state, nothing the page acts on
+— and both surfaces are rendered from one `serve.Build` value, so a run view
+mounted on the dashboard cannot name a different binary than the dashboard that
+linked to it.
+
 The structural rule is that rendering gets no privileged access to the
 engine: `serve` is a **consumer of the run-feed contract**
 (docs/RUN-FEED.md) in everything but its two gate routes, living in-repo
