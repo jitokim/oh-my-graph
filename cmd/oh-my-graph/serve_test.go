@@ -13,6 +13,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
 
@@ -55,6 +56,29 @@ func TestServeFlags_ParsesOptionalRunIDAndPort(t *testing.T) {
 	}
 }
 
+// TestServeFlags_Help pins #200 for `serve`, which is the one subcommand the
+// survey marked NO for swallowing — its leading-dash guard already existed —
+// but YES for the wrong exit code and stream: help worked, but printed flag
+// defaults to stderr and then exited 1 with `flag: help requested`. Both
+// spellings must now come back as a *usageRequest instead, leaving runID and
+// port at their zero values.
+func TestServeFlags_Help(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		f := newServeFlags()
+		err := f.parse([]string{arg})
+		var usage *usageRequest
+		if !errors.As(err, &usage) {
+			t.Fatalf("parse([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+		}
+		if !strings.Contains(usage.Error(), "oh-my-graph serve") {
+			t.Errorf("usage.Error() = %q, want it to name `serve`'s synopsis", usage.Error())
+		}
+		if f.runID != "" {
+			t.Errorf("runID = %q after a help request, want it left unset", f.runID)
+		}
+	}
+}
+
 // --- wiring: an unresolvable run fails before anything listens ---------------
 
 func TestRunServe_UnknownRunIDErrors(t *testing.T) {
@@ -62,6 +86,21 @@ func TestRunServe_UnknownRunIDErrors(t *testing.T) {
 	err := runServe([]string{"no-such-run"})
 	if err == nil || !strings.Contains(err.Error(), "unknown run") {
 		t.Fatalf("err = %v, want the unknown-run error", err)
+	}
+}
+
+// TestRunServeRuntime_HelpNeverResolvesARunOrBindsAListener is the wiring-
+// level guard: a help request must return before serve.ResolveRun or
+// serve.Listen are ever reached — reaching either would mean this test either
+// hangs (a bound dashboard serves until cancelled) or leaks a listening
+// socket, so returning promptly with a *usageRequest and no port bound is
+// itself the assertion that neither ran.
+func TestRunServeRuntime_HelpNeverResolvesARunOrBindsAListener(t *testing.T) {
+	isolateRunHome(t)
+	err := runServeRuntime(runner.RuntimeClaude, false, []string{"--help"})
+	var usage *usageRequest
+	if !errors.As(err, &usage) {
+		t.Fatalf("runServeRuntime([--help]) = %v (%T), want a *usageRequest", err, err)
 	}
 }
 
