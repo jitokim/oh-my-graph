@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -111,6 +112,41 @@ func TestRunLint_ArgvErrors(t *testing.T) {
 	}
 	if err := runLint([]string{"a.yaml", "extra"}); err == nil || !strings.Contains(err.Error(), "extra") {
 		t.Errorf("an extra argument should be named, got: %v", err)
+	}
+}
+
+// TestRunLint_Help pins #200 for `lint`: before the fix, `lint --help` was
+// read as the graph file and failed the same way a missing file would —
+// `read graph file "--help": open --help: no such file or directory`.
+func TestRunLint_Help(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		err := runLint([]string{arg})
+		var usage *usageRequest
+		if !errors.As(err, &usage) {
+			t.Fatalf("runLint([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+		}
+		if !strings.Contains(usage.Error(), "oh-my-graph lint") {
+			t.Errorf("usage.Error() = %q, want it to name `lint`'s synopsis", usage.Error())
+		}
+		if strings.Contains(usage.Error(), "no such file") {
+			t.Errorf("usage.Error() = %q, must not read like a file-not-found error", usage.Error())
+		}
+	}
+}
+
+// TestRunLint_DashPrefixedPositionalIsNotAGraphPath is the guard the other
+// direction: an unrecognised flag in the graph-path slot is reported as an
+// unknown flag, never opened as a file.
+func TestRunLint_DashPrefixedPositionalIsNotAGraphPath(t *testing.T) {
+	err := runLint([]string{"--bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag in the graph-path slot")
+	}
+	if !strings.Contains(err.Error(), `unknown flag "--bogus"`) {
+		t.Errorf("err = %v, want it to name the unrecognised flag", err)
+	}
+	if strings.Contains(err.Error(), "no such file") {
+		t.Errorf("err = %v, an unrecognised flag must not read as a file-not-found error", err)
 	}
 }
 
