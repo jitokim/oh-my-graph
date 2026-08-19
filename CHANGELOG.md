@@ -163,6 +163,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   that states no build of its own — the embedded live view — degrades to the
   `--port` sentence rather than guessing "older" or "the same".
 
+  **The holder's answer is treated as untrusted input**, because it is: whatever
+  holds that port need not be ours, and its three atoms are rendered into an
+  error a terminal interprets. An atom carrying a control byte, or longer than
+  128 bytes, is not an identity this acts on — it classifies as "not an
+  oh-my-graph" and falls back to the `--port` sentence. That rule is not
+  hypothetical hardening: a holder answering
+  `content="9.9.9\x1b[2J\rno other serve is running"` produced a message
+  carrying the screen-clearing escape verbatim, which would have let it replace
+  the diagnostic with the exact wrong impression this feature exists to prevent.
+  Our own atoms are a semver, a short revision and an RFC3339 instant, so a real
+  page loses nothing.
+
 ## [v0.10.0] - 2026-08-19
 
 **Minor because two things you may now type were errors before.** Compared by
