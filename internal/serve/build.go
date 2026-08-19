@@ -28,8 +28,8 @@ import (
 // rendered FROM the fields below rather than beside them.
 type Build struct {
 	// Version is the release version with any leading "v" trimmed — the exact
-	// form `oh-my-graph --version` prints, so comparing two servers is a string
-	// equality rather than a parse.
+	// token `oh-my-graph version` prints after the program name, so comparing
+	// two servers is a string equality rather than a parse.
 	Version string
 	// Revision is the short, -dirty-suffixed VCS revision, "" when the
 	// toolchain stamped none (buildRevision).

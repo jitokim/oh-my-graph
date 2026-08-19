@@ -28,13 +28,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
   Three fields because the version alone cannot tell two builds of one tag
   apart, which is why the footer's label carries a revision and a build time at
-  all. `omg-version` is the exact string `oh-my-graph --version` prints, so the
-  comparison is a string equality; `omg-built-at` is the running executable's
-  mtime in RFC3339, stat'd once per process like the label it shares that stat
-  with (the `+` reads escaped in raw HTML, as `&#43;`, and un-escaped through any
-  HTML parser or the DOM). All three tags are always emitted: empty content
-  means unknown — no VCS stamp, or an executable that could not be stat'd —
-  while the tag missing entirely means a server older than this change.
+  all. `omg-version` is the exact token `oh-my-graph version` prints after the
+  program name, so the comparison is a string equality; `omg-built-at` is the
+  running executable's mtime in RFC3339, stat'd once per process like the label
+  it shares that stat with (the `+` reads escaped in raw HTML, as `&#43;`, and
+  un-escaped through any HTML parser or the DOM). All three tags are always
+  emitted: empty content means unknown — no VCS stamp, or an executable that
+  could not be stat'd — while the tag missing entirely means a server older
+  than this change.
 
   The dashboard hands its build whole to every run view mounted under it, so `/`
   and `/run/<id>/` cannot disagree about which process is answering. Disclosure
