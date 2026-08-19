@@ -23,6 +23,13 @@ import (
 // run-directory queries (`runs show`, `runs clean`) without another top-level
 // name.
 func runRuns(args []string) error {
+	// This slot holds a subcommand name rather than a value, so an unknown
+	// dash-prefixed token keeps its existing `unknown subcommand` answer, which
+	// already names the alternative. Only the help request is intercepted
+	// (argslot.go), because that one had no answer at all (#200).
+	if req := helpRequest(args, "runs", nil); req != nil {
+		return req
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("runs: missing subcommand (usage: oh-my-graph runs list)")
 	}
