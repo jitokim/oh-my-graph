@@ -50,14 +50,15 @@ func TestBuildLabel_SaysMoreThanTheVersion(t *testing.T) {
 }
 
 // The published promise is "read once at startup, never per request", and until
-// buildTime memoized it that was a convention two call sites kept — invisible to
-// this suite, since a per-request caller would leave every other test green.
+// buildInstant memoized it that was a convention two call sites kept — invisible
+// to this suite, since a per-request caller would leave every other test green.
 // Pinned by moving the executable's mtime underneath a live process, which is
-// exactly what `go build -o` does to a running `serve`: the label must not
-// follow it, because the file at that path is no longer the build answering.
+// exactly what `go build -o` does to a running `serve`: neither the label nor
+// the machine-readable atom may follow it, because the file at that path is no
+// longer the build answering.
 func TestBuildTime_IsStattedOncePerProcessNotPerCall(t *testing.T) {
-	first := buildTime()
-	if first == "" {
+	first := CurrentBuild("0.5.2")
+	if first.BuiltAt == "" {
 		t.Skip("the executable cannot be stat'd here, so there is no mtime to pin")
 	}
 	path, err := os.Executable()
@@ -79,11 +80,14 @@ func TestBuildTime_IsStattedOncePerProcessNotPerCall(t *testing.T) {
 		}
 	})
 
-	if again := buildTime(); again != first {
-		t.Errorf("buildTime() = %q after the first call returned %q: the mtime is being re-read, so a rebuild renames the running build", again, first)
+	if again := CurrentBuild("0.5.2"); again.BuiltAt != first.BuiltAt {
+		t.Errorf("CurrentBuild().BuiltAt = %q after the first call returned %q: the mtime is being re-read, so a rebuild renames the running build", again.BuiltAt, first.BuiltAt)
 	}
-	if label := BuildLabel("0.5.2"); !strings.Contains(label, first) {
-		t.Errorf("BuildLabel = %q, want it to carry the startup build time %q", label, first)
+	if label := BuildLabel("0.5.2"); label != first.Label {
+		t.Errorf("BuildLabel = %q, want the startup label %q — the label and the tag read one stat", label, first.Label)
+	}
+	if !strings.Contains(first.Label, "built ") {
+		t.Errorf("label = %q, want it to carry the startup build time alongside the atom %q", first.Label, first.BuiltAt)
 	}
 }
 
