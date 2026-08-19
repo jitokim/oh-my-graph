@@ -257,6 +257,39 @@ func TestRunAutoWith_DeclaredAbsenceProceedsAndIsRecorded(t *testing.T) {
 	}
 }
 
+// TestRunGraphWith_HandWrittenGraphIsNeitherGatedNorRecorded is the `run` row of
+// ADR 0030 §2.6, and it needs a test because the plumbing runs through
+// commonRunFlags, which `run` shares with `auto`: a field set on the wrong side
+// of that struct would gate a hand-written graph or file it under an answer
+// nobody was asked for. Both are wrong — a hand-written graph carries its
+// author's own success_check.verify and is a reviewed artifact — and the four
+// strata are meant to sum to the auto-mode launches and nothing else.
+func TestRunGraphWith_HandWrittenGraphIsNeitherGatedNorRecorded(t *testing.T) {
+	isolateRunHome(t)
+	dir := inBuildDir(t, "gradlew", "Makefile")
+	path := filepath.Join(dir, "graph.yaml")
+	if err := os.WriteFile(path, []byte("name: hand-written\nnodes:\n  - { id: dev, prompt: do the work }\n"), 0o644); err != nil {
+		t.Fatalf("write graph: %v", err)
+	}
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"do the work": {SessionID: "s-dev", Result: "PASS", ExitCode: 0},
+	})
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runGraphWith([]string{path}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("a hand-written graph must not be gated on build evidence: %v", err)
+	}
+	if strings.Contains(out, "build evidence") {
+		t.Errorf("`run` was told about a question it never asks:\n%s", out)
+	}
+	if evidence := recordedBuildEvidence(t, soleRunID(t)); evidence != nil {
+		t.Errorf("a hand-written run recorded %+v; it never asks the question, so it records no answer", evidence)
+	}
+}
+
 // --- 5. the preview and the interactive surface ------------------------------
 
 // TestRunAutoWith_PlanOnlyRefusesIdenticallyToTheRunItPreviews — a preview that
