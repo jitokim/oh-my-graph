@@ -22,6 +22,17 @@
        serve.requireGateToken). It is a CSRF guard — a page some other origin
        serves cannot read it — not a login. -->
   <meta name="omg-token" content="{{.Token}}">
+  <!-- Which build is answering, for a script rather than a reader: a `serve`
+       process outlives the binary it was built from, and the footer's label
+       cannot settle staleness because a stale server renders a stale label —
+       comparing it against the build you expect is what settles it. Three
+       fields because the version alone cannot tell two builds of one tag
+       apart. All three are ALWAYS emitted: empty content means unknown (no
+       VCS stamp, or an executable that could not be stat'd), while the tag
+       missing entirely means a server older than this change. -->
+  <meta name="omg-version" content="{{.Build.Version}}">
+  <meta name="omg-revision" content="{{.Build.Revision}}">
+  <meta name="omg-built-at" content="{{.Build.BuiltAt}}">
   <title>oh-my-graph — live run</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -93,9 +104,10 @@
     <span class="spacer"></span>
     <!-- Which build is answering. A `serve` process outlives the tree it was
          built from, so without this a week-old server reads as the current
-         binary misbehaving (serve.BuildLabel). Rendered per process like the
-         token above, and static text: nothing fetches or updates it. -->
-    <span class="build" title="the build this server is running">{{.Build}}</span>
+         binary misbehaving (serve.Build). Rendered per process like the
+         token above, and static text: nothing fetches or updates it. The same
+         facts are in the head as <meta> tags, for a script. -->
+    <span class="build" title="the build this server is running">{{.Build.Label}}</span>
   </footer>
   <script src="vendor/cytoscape.min.js"></script>
   <script src="vendor/dagre.min.js"></script>
