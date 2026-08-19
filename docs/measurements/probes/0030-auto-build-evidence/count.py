@@ -26,6 +26,8 @@ machine's corpus at one hour, so a default that asserted made the command ADR
 literally the next `auto` run even here. --check is what the frozen numbers in
 docs/measurements/0030-auto-runs-carry-no-build-evidence.md are pinned by; it is
 for whoever re-runs this on THAT corpus, not for a reader wanting the figure.
+For the same reason a missing runs directory reports `runs scanned: 0` and an
+unparseable snapshot costs its own row: see scan().
 
 What this probe measures is ADR 0016's definition of build evidence — a
 `success_check.verify` in the snapshot's graph — which is the question §1 of ADR
@@ -63,14 +65,30 @@ def load_graph(raw):
 
 
 def scan(runs_dir):
-    rows = []
+    """Rows for every readable run, plus the ids of the ones that would not parse.
+
+    A machine that has never run oh-my-graph has no runs directory at all, and
+    that is the reader this probe reports by default FOR: an empty corpus is
+    `runs scanned: 0`, not a traceback. One truncated snapshot — a run killed
+    mid-write — is the same kind of thing, so it costs that row and not the
+    sweep. The skipped ids are returned rather than swallowed: an omission
+    nobody is told about would move the numbers silently, which is the failure
+    this whole measurement exists to avoid.
+    """
+    rows, unreadable = [], []
+    if not os.path.isdir(runs_dir):
+        return rows, unreadable
     for run_id in sorted(os.listdir(runs_dir)):
         path = os.path.join(runs_dir, run_id, "state.json")
         if not os.path.exists(path):
             continue
-        with open(path) as fh:
-            snap = json.load(fh)
-        graph = load_graph(snap.get("graph"))
+        try:
+            with open(path) as fh:
+                snap = json.load(fh)
+            graph = load_graph(snap.get("graph"))
+        except (OSError, ValueError, AttributeError):
+            unreadable.append(run_id)
+            continue
         verified = [
             node.get("id")
             for node in (graph.get("nodes") or [])
@@ -85,7 +103,7 @@ def scan(runs_dir):
                 "post_flag": run_id[:8] >= FLAG_EXISTS_FROM,
             }
         )
-    return rows
+    return rows, unreadable
 
 
 def main():
@@ -98,13 +116,15 @@ def main():
     )
     args = ap.parse_args()
 
-    rows = scan(args.runs_dir)
+    rows, unreadable = scan(args.runs_dir)
     auto = [r for r in rows if r["auto"]]
     with_evidence = [r for r in auto if r["verified_nodes"]]
     post = [r for r in auto if r["post_flag"]]
     post_with = [r for r in post if r["verified_nodes"]]
 
     print(f"runs scanned:            {len(rows)}")
+    if unreadable:
+        print(f"  snapshots skipped (unreadable): {len(unreadable)} — {', '.join(unreadable)}")
     print(f"auto runs:               {len(auto)}")
     print(f"  with build evidence:   {len(with_evidence)}")
     print(f"  started on/after {FLAG_EXISTS_FROM} (the flag existed): {len(post)}")
