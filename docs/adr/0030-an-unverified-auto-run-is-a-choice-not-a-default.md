@@ -137,9 +137,13 @@ and no `--verify-cmd` was supplied, **`auto` refuses**: it prints the message
 in §2.4 to stdout and exits 3 (§2.4).
 
 The refusal happens **where the detection already happens**: in
-`runAutoWithRuntime` (`cmd/oh-my-graph/main.go`), at the
-`noteVerifyAdvice(os.Stdout, verifyCommand, ".")` line — the one place in this
-CLI that scans the invocation directory for build markers today. One
+`runAutoWithRuntime` (`cmd/oh-my-graph/main.go`), at the line that printed the
+advice — the one place in this CLI that scans the invocation directory for build
+markers today. As shipped that line is
+`answerBuildEvidence(os.Stdout, verifyCommand, flags.buildDeclaration(), ".")`,
+the helper §4 names, which does the scan and calls `noteVerifyAdvice` with its
+result.
+One
 `DetectBuildSignals(".")` call in that scope now feeds three consumers: the
 advice line it already fed, the gate, and the recording (§2.5).
 
@@ -175,9 +179,9 @@ against `checkVerifyFlags`. It loses on three counts:
   arrive there through a struct `run` shares; detected here, they are already in
   the scope that builds the coordinator options and calls `planAndExecute`.
 
-`noteVerifyAdvice`'s helper takes `dir string` precisely so this is testable
-without process-global state (`cmd/oh-my-graph/verifycmd.go`), and the gate
-inherits that.
+`answerBuildEvidence` takes `dir string` precisely so this is testable without
+process-global state (`cmd/oh-my-graph/verifycmd.go`), and the gate inherits
+that.
 
 Deliberately **not** inside `checkVerifyFlags` either, which `resumeFlags.parse`
 also calls: that helper exists so the two subcommands cannot diverge on the flag

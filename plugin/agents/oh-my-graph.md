@@ -42,7 +42,7 @@ oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mappin
 oh-my-graph version
 ```
 
-Four of those are worth knowing precisely:
+Five of those are worth knowing precisely:
 
 - `init` unpacks the example graphs embedded in the binary into `./graphs/`
   (including `./graphs/fragments/`). It never overwrites — a file that is
