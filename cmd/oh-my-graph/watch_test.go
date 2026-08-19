@@ -313,6 +313,16 @@ func TestMainExitCode_WatchUnknownRunIsNonZero(t *testing.T) {
 	}
 }
 
+// TestMainExitCode_WatchMissingRunIDMapsToExitCode1 is the regression guard
+// for the OTHER pre-existing error #200 must leave alone: a bare `watch`
+// must still exit 1 on its unchanged "missing run id" message.
+func TestMainExitCode_WatchMissingRunIDMapsToExitCode1(t *testing.T) {
+	isolateRunHome(t)
+	if code := mainExitCode([]string{"watch"}); code != 1 {
+		t.Errorf("bare `watch` must exit 1, got %d", code)
+	}
+}
+
 // TestRunWatch_Help pins #200: before the fix, `watch --help` read "--help"
 // as the run id and reported `unknown run "--help"`. Both spelled forms must
 // now answer with the synopsis and must never reach watchRun.
