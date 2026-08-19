@@ -295,6 +295,18 @@ func TestMainExitCode_ShowUnknownRunIsNonZero(t *testing.T) {
 	}
 }
 
+// TestMainExitCode_ShowMissingRunIDMapsToExitCode1 is the regression guard
+// for the OTHER pre-existing error #200 must leave alone: a bare `show`, with
+// no positional at all, must still exit 1 on its unchanged "missing run id"
+// message — the guard ahead of it only ever answers a help token or an
+// unknown flag, never an empty argv.
+func TestMainExitCode_ShowMissingRunIDMapsToExitCode1(t *testing.T) {
+	isolateRunHome(t)
+	if code := mainExitCode([]string{"show"}); code != 1 {
+		t.Errorf("bare `show` must exit 1, got %d", code)
+	}
+}
+
 // TestRunShow_Help pins #200: before the fix, `show --help` read "--help" as
 // the run id and reported `unknown run "--help"` — the answer a mistyped id
 // gets, at the one moment the user wanted the flag list instead. Both spelled
