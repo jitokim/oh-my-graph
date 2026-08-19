@@ -101,6 +101,39 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   and `/run/<id>/` cannot disagree about which process is answering. Disclosure
   only: no new route, no new handler, nothing the page can act on.
 
+### Fixed
+
+- **Documentation drift, swept across the six user-facing documents against
+  HEAD** — README.md, DESIGN.md, SECURITY.md, CONTRIBUTING.md,
+  docs/LIMITATIONS.md and docs/EXAMPLES.md. No behaviour changes; every edit
+  removes or corrects a sentence the code contradicts, and where a claim had
+  simply become false it was deleted rather than qualified.
+
+  The ones a reader could have acted on: README's replay paragraph promised
+  "the same tool ceiling" for a hand-written graph, which `run` does not build —
+  its nodes run under the user's own settings, hooks and permissions, exactly as
+  SECURITY.md's "`allowed_tools` is a declaration, not a sandbox" says — so a
+  reader taking "ceiling" at this repo's own reserved value would skip the
+  defence. SECURITY.md attributed the prompt-in-argv exposure to
+  `internal/runner/claude.go`, a file that does not exist, and stated it for
+  claude alone; `codex exec` carries the prompt positionally, so the process
+  table exposes it under both runtimes. docs/EXAMPLES.md's `feedback:` recipe
+  put `{{ feedback.review }}` in the declarer's own prompt — the one placement
+  the quote lint skips — so copying it produced a loop that warns, and would be
+  refused outright in a planned graph (ADR 0028); it also declared
+  `result_matches` with no `exit_zero`, the warning that same file documents
+  850 lines earlier. CONTRIBUTING.md's merge table omitted the `changelog` job
+  that fails a PR adding no entry, and presented `stress` as an unconditional
+  repeat when a paths filter can let it report green having repeated nothing.
+
+  The rest are counts and listings the last two releases moved past: a fragment
+  is no longer one node (ADR 0027) and may cite another (ADR 0029), so it may
+  carry `use:` and — when it declares its own ids — a `feedback:` arc of its
+  own; six shipped fragments declare a verdict rule, not four; `resume`
+  registers `--no-skill-activation`; docs/LIMITATIONS.md's three "as of v0.8.0"
+  stamps; and DESIGN.md's repo layout, whose ADR range stopped at 0020 and whose
+  file lists were a directory listing behind.
+
 ## [v0.10.0] - 2026-08-19
 
 **Minor because two things you may now type were errors before.** Compared by
