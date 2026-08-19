@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // A bind failure says the port is taken and stops there, which leaves the one
@@ -218,6 +219,19 @@ func holderBuild(page string) (Build, bool) {
 	if !hasVersion || !hasRevision || !hasBuiltAt || version == "" {
 		return Build{}, false
 	}
+	// Whatever is holding that port is not necessarily ours, and its answer is
+	// the only untrusted input on this path — it goes straight into a message a
+	// terminal renders. An atom carrying control bytes is therefore not an
+	// identity this can act on: `\r` and `\x1b[2J` let a holder erase the
+	// diagnostic and print its own, and "no other serve is running" is the
+	// sentence it would choose. Our own templates emit a version string, a VCS
+	// revision and an RFC3339 instant, none of which can contain one, so
+	// refusing is exact rather than defensive — a real oh-my-graph page loses
+	// nothing, and an answer that is trying to be a terminal escape is treated
+	// as what it is: not an oh-my-graph.
+	if !plainAtom(version) || !plainAtom(revision) || !plainAtom(builtAt) {
+		return Build{}, false
+	}
 	return Build{
 		Version:  version,
 		Revision: revision,
@@ -227,6 +241,32 @@ func holderBuild(page string) (Build, bool) {
 		// one voice, and a change to how a build reads changes both.
 		Label: labelFor(version, revision, builtAt),
 	}, true
+}
+
+// atomLimit caps how long a single build atom may be before this stops calling
+// it an identity. Our own three are a semver, a short revision and an RFC3339
+// instant — none near this — so the cap costs a real page nothing and denies a
+// holder the ability to answer with a kilobyte that scrolls the actual error off
+// the reader's screen. The body limit above bounds the transfer; this bounds
+// what reaches the terminal.
+const atomLimit = 128
+
+// plainAtom reports whether a probed build atom is safe to render into an error
+// a terminal will interpret: printable, single-line, and bounded. It is the
+// whole trust boundary for the probe's answer — everything downstream of
+// holderBuild treats a Build as this process's own.
+func plainAtom(atom string) bool {
+	if len(atom) > atomLimit {
+		return false
+	}
+	for _, r := range atom {
+		// Unicode's C0/C1 control ranges, which is where every terminal escape
+		// and every line break lives. unicode.IsControl covers both, and DEL.
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // message renders the classified answer as the tail of Listen's bind error —

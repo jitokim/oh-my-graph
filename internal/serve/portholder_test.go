@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // This file drives probePortHolder and (portHolder).message() directly
@@ -280,5 +281,55 @@ func TestProbePortHolder_HolderNeverRespondsGivesUpWithinBound(t *testing.T) {
 		}
 	case <-time.After(hangGuardCeiling):
 		t.Fatalf("probePortHolder did not return within %v against a holder that accepts the connection and never responds — it appears to hang instead of giving up", hangGuardCeiling)
+	}
+}
+
+// TestHolderBuild_RejectsAtomsATerminalWouldInterpret pins the probe's trust
+// boundary. Whatever holds the port is the only untrusted input on this path,
+// and its answer is rendered into a message a terminal prints — so a holder
+// that answers with control bytes is not an identity to act on.
+//
+// The `\x1b[2J\r` case is the one that motivated the rule: it clears the screen
+// and returns the cursor, so the holder gets to replace oh-my-graph's
+// diagnostic with a sentence of its own choosing — and the sentence it would
+// choose is "no other serve is running", which is the exact wrong impression
+// this whole feature exists to prevent.
+func TestHolderBuild_RejectsAtomsATerminalWouldInterpret(t *testing.T) {
+	page := func(version, revision, builtAt string) string {
+		return `<meta name="omg-version" content="` + version + `">` +
+			`<meta name="omg-revision" content="` + revision + `">` +
+			`<meta name="omg-built-at" content="` + builtAt + `">`
+	}
+	const goodRevision = "deadbee"
+	const goodBuiltAt = "2020-01-01T00:00:00Z"
+
+	for _, tc := range []struct {
+		name string
+		page string
+		want bool
+	}{
+		{"a real page is still read", page("0.10.0", goodRevision, goodBuiltAt), true},
+		{"screen-clearing escape in the version", page("9.9.9\x1b[2J\rno other serve is running", goodRevision, goodBuiltAt), false},
+		{"carriage return in the revision", page("0.10.0", "dead\rbee", goodBuiltAt), false},
+		{"newline in the built-at", page("0.10.0", goodRevision, "2020-01-01T00:00:00Z\nfake"), false},
+		{"an atom long enough to scroll the error away", page(strings.Repeat("9", atomLimit+1), goodRevision, goodBuiltAt), false},
+		{"exactly at the cap is still fine", page(strings.Repeat("9", atomLimit), goodRevision, goodBuiltAt), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := holderBuild(tc.page)
+			if ok != tc.want {
+				t.Fatalf("holderBuild ok = %v, want %v", ok, tc.want)
+			}
+			if !ok {
+				return
+			}
+			for _, atom := range []string{got.Version, got.Revision, got.BuiltAt, got.Label} {
+				for _, r := range atom {
+					if unicode.IsControl(r) {
+						t.Fatalf("accepted build carries a control byte %q in %q", r, atom)
+					}
+				}
+			}
+		})
 	}
 }
