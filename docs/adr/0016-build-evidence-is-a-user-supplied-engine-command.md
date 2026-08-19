@@ -253,6 +253,17 @@ list is the payload's whole point.
 
 ### 3. Repo detection is a suggestion to the human, never a grant
 
+> **Amended 2026-08-20 by [ADR 0030](0030-an-unverified-auto-run-is-a-choice-not-a-default.md) §3.5.**
+> This section said detection produces *prose, never policy*. It now decides one
+> policy: with a signal detected and no `--verify-cmd`, `auto` **refuses to
+> start**. The rule that survives, and that everything below still argues for, is
+> the DIRECTION — **"never policy" is now "never a grant"**: a repository file
+> may cause oh-my-graph to *stop*; it may never cause it to run something, widen
+> a tool set, or attach a command. The table below stays allowed to be
+> incomplete for the same reason, because incompleteness now fails **open** —
+> a missing ecosystem means a run that is not gated, which is this ADR's own
+> behaviour, never a run gated wrongly into something.
+
 The engine may inspect the invocation directory for build signals (`gradlew`,
 `package.json`, `Cargo.toml`, `pom.xml`, `build.gradle{,.kts}`,
 `pyproject.toml`, `Gemfile`, `Makefile`, `go.mod`, `mix.exs`, `*.csproj`,

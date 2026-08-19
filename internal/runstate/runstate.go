@@ -273,6 +273,51 @@ type GoalRef struct {
 	FirstRunID string `json:"first_run_id"`
 }
 
+// BuildEvidence is how one auto-mode launch answered the build-evidence
+// question (ADR 0030 §2.5a). An absence that was chosen and an absence that was
+// an accident look identical in a finished run without it — and, equally, a run
+// that was never ASKED is distinguishable from both, which is what makes the
+// firing rate a measurement rather than a count of one stratum.
+//
+// It is an additive optional block and the schema stays 3: an absent field is a
+// run that predates this, or a `run` of a hand-written graph, and no reader of
+// either version can misread it.
+//
+// What it is NOT is an input to anything. Nothing reads it to decide behaviour,
+// on this leg or on a resumed one, and it carries no command — Signals are
+// marker FILENAMES, not the suggested commands the detection table holds beside
+// them — so there is nothing in it a later leg could execute. The run directory
+// remains an inadmissible source of engine-run shell, on both legs (ADR 0016 §4).
+type BuildEvidence struct {
+	// Answer is one of four values, and the set is closed:
+	//   "attached"      — --verify-cmd was supplied; the engine runs it at each
+	//                     sink. Signals may be empty or not; the attachment
+	//                     itself is in the graph.
+	//   "declared"      — signals were detected and a human typed
+	//                     --accept-no-build-evidence, answering this question
+	//                     and no other.
+	//   "disclosed"     — signals were detected and a chat [y/N] approved a plan
+	//                     screen that stated the absence. ONE keystroke covered
+	//                     two questions; this is weaker than "declared" and is
+	//                     filed apart from it, never summed with it.
+	//   "none-detected" — the directory raised no signal, so no gate applied and
+	//                     nothing was declared. Every greenfield run lands here.
+	Answer string `json:"answer"`
+	// DeclaredBy is the exact spelling of what the human did, for the two
+	// answers a human gives: "--accept-no-build-evidence" or "chat-confirm".
+	// Empty for "attached" and "none-detected". It records that SOMETHING typed
+	// the flag, not that a human did — this repository ships `auto` to an agent,
+	// and nothing in argv distinguishes the two — so the declared stratum is an
+	// upper bound on human declarations (ADR 0030 §9).
+	DeclaredBy string `json:"declared_by,omitempty"`
+	// Signals are the marker files detected at launch, in the detection table's
+	// order — what the human was told when they answered. Empty is meaningful
+	// and is the whole point of writing this block on every launch: "how many
+	// directories raised a signal" is the rows whose list is non-empty, counted
+	// across all four strata, including the attached ones.
+	Signals []string `json:"signals,omitempty"`
+}
+
 // GateState records the run's progress through its gates: what has been decided
 // and where, if anywhere, the run is currently parked.
 type GateState struct {
@@ -371,6 +416,14 @@ type Snapshot struct {
 	// and absent from the JSON — on every single-cycle run, which keeps
 	// today's snapshots byte-identical; see GoalRef.
 	Goal *GoalRef `json:"goal,omitempty"`
+	// BuildEvidence records the launch-time build-evidence question and its
+	// answer: what was detected in the invocation directory, and how the run
+	// answered (ADR 0030 §2.5). Written on every auto-mode launch — `auto` and
+	// chat's graph turns — including the ones that answered by attaching a
+	// command and the ones where there was nothing to answer. Absent means a run
+	// that predates this field, or a `run` of a hand-written graph, which never
+	// asks the question. See BuildEvidence.
+	BuildEvidence *BuildEvidence `json:"build_evidence,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes

@@ -128,6 +128,21 @@ resumed leg cannot attach a check a fresh run could not, and `resume
 otherwise unaffected: their `verify:` is your own reviewed artifact and
 round-trips unchanged.
 
+Since [ADR 0030](docs/adr/0030-an-unverified-auto-run-is-a-choice-not-a-default.md),
+repository content can cause the tool to **refuse to start**: `auto` stops (exit
+3, before any spend) when it detects a build marker in the invocation directory
+and no `--verify-cmd` was supplied, unless `--accept-no-build-evidence` states
+that the run carries none. Note the direction, because it is the whole of the
+trust argument and a reader auditing the boundary should not have to derive it
+from an ADR: **a repository file may cause oh-my-graph to stop; it may never
+cause it to run, to widen a tool set, or to attach a command.** A hostile
+checkout that plants a `Makefile` gets a refusal, before any spend, naming the
+file it found; a checkout that hides its build system gets exactly today's
+behaviour, an unverified run. Detection happens once per invocation, before the
+planner call, so nothing a node writes is ever detected and no plan can
+bootstrap its own signal. The suggested command in the refusal is prose the
+human reads and retypes — it is never executed by the tool.
+
 A planned node is granted nothing by `--verify-cmd` — no ceiling layer changes, and
 the allowlist deliberately does **not** grow an entry per ecosystem, because
 that would put this repository's toolchain inside every user's ceiling.

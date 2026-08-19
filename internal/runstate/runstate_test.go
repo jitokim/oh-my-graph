@@ -75,6 +75,44 @@ func sampleSnapshot() Snapshot {
 			PausedAt:  "approve",
 			Decisions: map[string]GateDecision{"approve": GatePause},
 		},
+		BuildEvidence: &BuildEvidence{
+			Answer:     "declared",
+			DeclaredBy: "--accept-no-build-evidence",
+			Signals:    []string{"gradlew", "package.json"},
+		},
+	}
+}
+
+// TestBuildEvidence_AbsentStaysAbsentAndSchemaHolds is the compatibility half of
+// ADR 0030 §2.5a. A `run` of a hand-written graph never asks the build-evidence
+// question, so it must write no block at all — an "answer" nobody was asked is
+// worse than silence, because the four strata are meant to sum to the auto-mode
+// launches and nothing else. And the field is additive, so schema stays 3: every
+// existing state.json stays readable and unchanged in meaning.
+func TestBuildEvidence_AbsentStaysAbsentAndSchemaHolds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	snap := sampleSnapshot()
+	snap.BuildEvidence = nil
+
+	if err := Write(path, snap); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(raw), "build_evidence") {
+		t.Errorf("a run that never asked the question recorded an answer:\n%s", raw)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.BuildEvidence != nil {
+		t.Errorf("absent build_evidence loaded as %+v, want nil", got.BuildEvidence)
+	}
+	if got.Schema != 3 {
+		t.Errorf("schema = %d, want 3 — an additive optional field is not a format change", got.Schema)
 	}
 }
 

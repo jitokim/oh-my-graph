@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -553,7 +554,7 @@ func TestDetectBuildSignals_ReadsMarkersNotContent(t *testing.T) {
 // `Found: 0` reasoning), and it always names the flag that would change the
 // outcome.
 func TestVerifyAdvice_SpeaksWhetherOrNotSomethingWasDetected(t *testing.T) {
-	empty := VerifyAdvice(VerifyCommand{}, DetectBuildSignals(t.TempDir()))
+	empty := VerifyAdvice(VerifyCommand{}, NoDeclaration, DetectBuildSignals(t.TempDir()))
 	if !strings.Contains(empty, "Detected no build signal") {
 		t.Errorf("advice with no signal does not say so: %q", empty)
 	}
@@ -568,7 +569,7 @@ func TestVerifyAdvice_SpeaksWhetherOrNotSomethingWasDetected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), nil, 0o644); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
-	detected := VerifyAdvice(VerifyCommand{}, DetectBuildSignals(dir))
+	detected := VerifyAdvice(VerifyCommand{}, NoDeclaration, DetectBuildSignals(dir))
 	if !strings.Contains(detected, "cargo test") {
 		t.Errorf("advice does not offer the detected project's command: %q", detected)
 	}
@@ -581,7 +582,7 @@ func TestVerifyAdvice_SilentWhenACommandWasSupplied(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), nil, 0o644); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
-	if advice := VerifyAdvice(VerifyCommand{Command: buildCmd}, DetectBuildSignals(dir)); advice != "" {
+	if advice := VerifyAdvice(VerifyCommand{Command: buildCmd}, NoDeclaration, DetectBuildSignals(dir)); advice != "" {
 		t.Errorf("advice printed despite a supplied command: %q", advice)
 	}
 }
@@ -621,5 +622,193 @@ func TestDetectBuildSignals_NeverInfluencesTheCeiling(t *testing.T) {
 		if strings.Contains(tool, "npm") || strings.Contains(tool, "cargo") || strings.Contains(tool, "gradlew") {
 			t.Errorf("plannedToolAllowlist gained %q — layer 0 answers what is safe for unattended planner output, never what a repository needs to build", tool)
 		}
+	}
+}
+
+// --- ADR 0030: the gate, and the refusal it produces -------------------------
+
+// signalDir writes each named marker into a fresh temp dir and returns the
+// detected signals — the fixture every gate case below is built from, so a case
+// says which repository shape it is about rather than how a file is written.
+func signalDir(t *testing.T, markers ...string) []BuildSignal {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range markers {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+	}
+	return DetectBuildSignals(dir)
+}
+
+// TestRequireBuildEvidence_AnswersEveryLaunchAndRefusesOnlySilence is ADR 0030
+// §2.1–§2.3 as one table: four strata that sum to every auto-mode launch, and
+// exactly one combination that has no answer.
+//
+// The third case is the negative control the ADR asks for by name. Without it
+// the gate could widen to "refuse always" and every other case here would still
+// pass — a directory with no build system has nothing for an evidence command
+// to be evidence about, and demanding a flag there is friction with no defect
+// behind it.
+func TestRequireBuildEvidence_AnswersEveryLaunchAndRefusesOnlySilence(t *testing.T) {
+	cases := map[string]struct {
+		command     VerifyCommand
+		declaration BuildDeclaration
+		markers     []string
+		wantAnswer  BuildAnswer
+		wantBy      BuildDeclaration
+		wantSignals []string
+		wantRefusal bool
+	}{
+		"a signal met by silence is the refusal": {
+			markers:     []string{"gradlew"},
+			wantRefusal: true,
+		},
+		"a supplied command answers it": {
+			command:     VerifyCommand{Command: buildCmd},
+			markers:     []string{"gradlew"},
+			wantAnswer:  BuildEvidenceAttached,
+			wantSignals: []string{"gradlew"},
+		},
+		"a supplied command answers it in a signal-free directory too": {
+			command:    VerifyCommand{Command: buildCmd},
+			wantAnswer: BuildEvidenceAttached,
+		},
+		"no signal is not a gate": {
+			wantAnswer: BuildEvidenceNoneDetected,
+		},
+		"no signal makes the flag inert rather than a declaration": {
+			declaration: DeclaredByFlag,
+			wantAnswer:  BuildEvidenceNoneDetected,
+		},
+		"a signal met by the flag is a declaration": {
+			declaration: DeclaredByFlag,
+			markers:     []string{"package.json"},
+			wantAnswer:  BuildEvidenceDeclared,
+			wantBy:      DeclaredByFlag,
+			wantSignals: []string{"package.json"},
+		},
+		"a signal met by chat's confirm is a disclosure, not a declaration": {
+			declaration: DeclaredByChatConfirm,
+			markers:     []string{"package.json"},
+			wantAnswer:  BuildEvidenceDisclosed,
+			wantBy:      DeclaredByChatConfirm,
+			wantSignals: []string{"package.json"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			outcome, err := RequireBuildEvidence(tc.command, tc.declaration, signalDir(t, tc.markers...))
+			var refusal *MissingBuildEvidenceError
+			if tc.wantRefusal {
+				if !errors.As(err, &refusal) {
+					t.Fatalf("err = %v (%T), want the *MissingBuildEvidenceError", err, err)
+				}
+				if len(refusal.Signals) != len(tc.markers) {
+					t.Errorf("refusal carries %+v, want the detected markers %v", refusal.Signals, tc.markers)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
+			if outcome.Answer != tc.wantAnswer {
+				t.Errorf("answer = %q, want %q", outcome.Answer, tc.wantAnswer)
+			}
+			if outcome.DeclaredBy != tc.wantBy {
+				t.Errorf("declared_by = %q, want %q", outcome.DeclaredBy, tc.wantBy)
+			}
+			if got := outcome.SignalFiles(); !slices.Equal(got, tc.wantSignals) {
+				t.Errorf("signals = %v, want %v — the denominator of ADR 0030 §8(a) is the rows that recorded one", got, tc.wantSignals)
+			}
+		})
+	}
+}
+
+// TestMissingBuildEvidence_NamesTheDetectionAndBothExits is §2.4's four
+// properties, each asserted rather than trusted to the prose: what was
+// detected (by ecosystem AND file), both exits and what each buys, and that
+// nothing was spent. A refusal asserting only "it refused" would pass on a bare
+// exit 1.
+func TestMissingBuildEvidence_NamesTheDetectionAndBothExits(t *testing.T) {
+	_, err := RequireBuildEvidence(VerifyCommand{}, NoDeclaration, signalDir(t, "gradlew"))
+	var refusal *MissingBuildEvidenceError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("err = %v (%T), want the refusal", err, err)
+	}
+	var out strings.Builder
+	refusal.Print(&out)
+	text := out.String()
+	for _, want := range []string{
+		"a Gradle project (gradlew)",
+		"--verify-cmd './gradlew build'",
+		"--accept-no-build-evidence",
+		"Nothing has been spent",
+		"state.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not say %q, so it is not actionable in one read:\n%s", want, text)
+		}
+	}
+	// Error() is the first line ALONE: it is what a wrapping caller quotes and
+	// what a test assertion matches, and the twenty-line text belongs on stdout
+	// via Print, not behind a stderr prefix.
+	if strings.Contains(refusal.Error(), "\n") {
+		t.Errorf("Error() carries the whole text; it must be the first line alone:\n%s", refusal.Error())
+	}
+	if !strings.HasPrefix(text, refusal.Error()) {
+		t.Errorf("the printed refusal does not open with Error()'s line:\n%s", text)
+	}
+}
+
+// TestMissingBuildEvidence_SaysSoWhenTheSuggestionIsAGuess — a monorepo raising
+// several signals is undecidable, and picking one silently would be wrong rather
+// than merely unhelpful. The suggestion is still the table's priority order, so
+// the wrapper beats the build file it wraps.
+func TestMissingBuildEvidence_SaysSoWhenTheSuggestionIsAGuess(t *testing.T) {
+	_, err := RequireBuildEvidence(VerifyCommand{}, NoDeclaration, signalDir(t, "gradlew", "package.json"))
+	var refusal *MissingBuildEvidenceError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("err = %v (%T), want the refusal", err, err)
+	}
+	var out strings.Builder
+	refusal.Print(&out)
+	text := out.String()
+	if !strings.Contains(text, "Detected several build signals (gradlew, package.json)") {
+		t.Errorf("the refusal does not name every marker it found:\n%s", text)
+	}
+	if !strings.Contains(text, "is a guess") {
+		t.Errorf("the refusal presents a guess as a fact:\n%s", text)
+	}
+	if !strings.Contains(text, "--verify-cmd './gradlew build'") {
+		t.Errorf("the suggestion is not the table's first signal:\n%s", text)
+	}
+}
+
+// TestVerifyAdvice_DeclaredCaseSaysTheChoiceIsRecorded — the operator who typed
+// the opt-out still gets the paragraph saying what the run will not check, plus
+// the one sentence that distinguishes a chosen absence from an accidental one.
+// A declaration in a signal-free directory answered a question nobody put, so it
+// earns no sentence.
+func TestVerifyAdvice_DeclaredCaseSaysTheChoiceIsRecorded(t *testing.T) {
+	declared := VerifyAdvice(VerifyCommand{}, DeclaredByFlag, signalDir(t, "go.mod"))
+	if !strings.Contains(declared, "no node's PASS carries build evidence") {
+		t.Errorf("the declared case dropped the paragraph it is a declaration ABOUT: %q", declared)
+	}
+	if !strings.Contains(declared, "You said so with --accept-no-build-evidence") {
+		t.Errorf("the declared case does not say the absence was chosen: %q", declared)
+	}
+	if !strings.Contains(declared, "records it in state.json") {
+		t.Errorf("the declared case does not say where the choice is recorded: %q", declared)
+	}
+	// The line is printed before anything knows whether a run follows it, so it
+	// must not claim one. `auto --plan-only` reaches this same advice and then
+	// mints no run id at all (ADR 0030 §2.5b).
+	if strings.Contains(declared, "this run's state.json") {
+		t.Errorf("the declared case promises a receipt --plan-only never writes: %q", declared)
+	}
+	inert := VerifyAdvice(VerifyCommand{}, DeclaredByFlag, signalDir(t))
+	if strings.Contains(inert, "You said so") {
+		t.Errorf("a flag passed where nothing was detected was reported as a declaration: %q", inert)
 	}
 }

@@ -544,8 +544,21 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// Goal lineage carries across legs: a resumed cycle of a goal loop
 		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
 		// group membership just because a second process finished it.
-		Goal:  snap.Goal,
-		Nodes: records,
+		Goal: snap.Goal,
+		// So does the build-evidence answer, for a sharper reason: this
+		// recorder writes the WHOLE snapshot on every RecordNode, so a field
+		// omitted here is a field the first settling node ERASES. ADR 0030 §2.6
+		// declines to re-gate a resume precisely because "the snapshot the
+		// resume loads records it" — that sentence is only true while this line
+		// exists, and without it a gate-paused or limit-paused `auto`, which is
+		// exactly the interactive class a human declared over, finishes looking
+		// like an accident and drops out of all four strata of §8(a).
+		// Carrying it forward adds no trust surface: the block is inert by
+		// construction (marker filenames, nothing executable, nothing reads it
+		// to decide behaviour — ADR 0030 §2.5a), so this is transcription, not
+		// a run directory deciding anything.
+		BuildEvidence: snap.BuildEvidence,
+		Nodes:         records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},

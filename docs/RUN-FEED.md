@@ -165,13 +165,30 @@ Top-level fields: `schema`, `run_id`, `runtime` (`"claude"` or `"codex"`),
 `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
 `continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
-runs only — see "Goal cycles" below), `nodes` (map of node id →
+runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
+— see below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
 `reasoning_output_tokens`), `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
+
+`build_evidence` is the launch-time build-evidence question and its answer
+(ADR 0030), written on every auto-mode launch and absent on a `run` of a
+hand-written graph, which never asks it — and on every run that predates the
+field. It is an **additive optional block and the schema stays 3**; a consumer
+that does not know it ignores it. Three keys: `answer`, one of `"attached"` (a
+`--verify-cmd` the engine runs at each sink), `"declared"` (a signal was detected
+and `--accept-no-build-evidence` was typed at it), `"disclosed"` (a signal was
+detected and a `chat` `[y/N]` passed over a plan screen that stated the absence)
+or `"none-detected"` (no signal, so no gate applied); `declared_by`, the exact
+spelling of what was typed, for the two answers a human gives; and `signals`, the
+marker FILENAMES detected at launch — never a command, so nothing in this block
+is executable. Read `declared` and `disclosed` separately and never summed: one
+keystroke covering two questions is weaker evidence of choice than a flag typed
+at one. No event carries any of this; the stream is unchanged and there is no
+feed schema bump.
 
 `runtime` is the run-wide model CLI (ADR 0025). **Every snapshot written by this
 build carries it**, and that is now a property of the format rather than of one

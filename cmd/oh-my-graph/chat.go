@@ -68,6 +68,19 @@ func runChat(args []string) error {
 }
 
 func runChatRuntime(runtime runner.Runtime, args []string) error {
+	return runChatWith(runtime, args, os.Stdin, os.Stdout, runner.NewCLIRunner(runtime))
+}
+
+// runChatWith is runChatRuntime with the three things a test cannot have —
+// the terminal's stdin, the terminal's stdout and a real CLI subprocess —
+// taken as parameters, exactly as runAutoWith is for `auto`.
+//
+// It exists so the launch path itself is testable and not merely chatLoop
+// below it. What sits between the two is one line of policy — the
+// build-evidence declaration this surface makes (ADR 0030 §2.6) — and a test
+// that constructs its own outcome and hands it to chatLoop pins the screen
+// while leaving that line free to say anything.
+func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Writer, nodeRunner runner.NodeRunner) error {
 	flags := newChatFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -76,15 +89,37 @@ func runChatRuntime(runtime runner.Runtime, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nodeRunner := runner.NewCLIRunner(runtime)
 	var options []coordinator.Option
 	if runtime == runner.RuntimeClaude {
-		options = mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)
+		options = mappingOptions(out, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)
 	} else {
-		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
+		fmt.Fprintln(out, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
+	}
+	// `chat` asks the build-evidence question and never refuses on it (ADR 0030
+	// §2.6): it registers no verification flags, so a refusal here could only
+	// name a flag `chat` rejects — the dead end #198 was. What it gets instead is
+	// the absence stated on the plan screen its [y/N] gates, and the run recorded
+	// as `disclosed`, filed apart from `auto`'s declarations because one
+	// keystroke covering two questions is weaker than a flag typed at one.
+	// io.Discard: the pre-planner advice line names --verify-cmd, which is advice
+	// this surface's reader cannot act on.
+	//
+	// Asked ONCE, here, and reused by every graph turn of the session — the same
+	// once-per-invocation rule `auto` follows, and for the same reason (§3.5: a
+	// turn that CREATES a build system must not retroactively gate its own run).
+	// The staleness window is materially longer than `auto`'s, because a REPL
+	// session outlives one launch: a session whose turn 1 scaffolds a package.json
+	// still records none-detected on turn 9. The direction is the safe one — a
+	// stale answer never widens anything, it only fails to gate — and re-asking
+	// per turn is the per-node detector §3.5 keeps out, one scope up. Stated so it
+	// is a choice (ADR 0030 §6).
+	evidence, err := answerBuildEvidence(io.Discard, coordinator.VerifyCommand{}, coordinator.DeclaredByChatConfirm, ".")
+	if err != nil {
+		return err
 	}
 	coord := coordinator.New(nodeRunner, options...)
-	return chatLoop(ctx, os.Stdin, os.Stdout, coord, nodeRunner, commonRunFlags{runtime: runtime, inputs: inputFlag{}})
+	return chatLoop(ctx, in, out, coord, nodeRunner,
+		commonRunFlags{runtime: runtime, inputs: inputFlag{}, buildEvidence: evidence})
 }
 
 // errConfirmEOF marks stdin closing at the plan-confirmation prompt. chatLoop

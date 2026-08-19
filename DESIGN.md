@@ -1491,8 +1491,10 @@ by design, persists everything a second leg needs, and exits.
    `paused` outcome, not by a ledger row (the ledger has no `PAUSED` verdict) —
    print the exact `resume` command, and return a `*schedule.PausedError`.
 4. `cmd/oh-my-graph` maps that to **exit code 2**. `0` = every node passed,
-   `1` = the run failed, `2` = the run is paused and resumable. A pause is not a
-   failure and must not be reported as one.
+   `1` = the run failed, `2` = the run is paused and resumable, `3` = `auto`
+   refused to start for want of build evidence (ADR 0030 — nothing ran, nothing
+   is resumable, nothing was billed, and no run directory exists). A pause is not
+   a failure and must not be reported as one; nor is a refusal.
 
 `--continue-on-fail` does not apply to gates: a pause always stops the whole
 run, because approving "part of" a paused run later is not a coherent operation.
@@ -2080,9 +2082,30 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--input k=v ...]` is the
 zero-config path; custom
-YAML stays the precise-control path. Planning a graph is ONE
+YAML stays the precise-control path.
+
+**Zero-config is not zero-evidence in a repository that builds.** Because a
+planned node can carry neither `success_check.verify` (the planner's reply is
+untrusted input) nor a build tool (`plannedToolAllowlist` is exact-matched), an
+`auto` run without `--verify-cmd` has *by construction* no engine-run evidence:
+the only terminal predicate left is `result_matches` on a node's own reply, and
+that node wrote the reply. So since ADR 0030 the question is asked at launch,
+once, before the planner call: if `DetectBuildSignals(".")` finds a marker and no
+`--verify-cmd` was supplied, `auto` **refuses** — exit 3, on stdout, naming the
+marker and a suggested command — unless `--accept-no-build-evidence` states that
+this run carries no build evidence. A directory with **no** build signal is not
+gated: there is nothing for an evidence command to be evidence about, and
+requiring a flag there would be friction with no defect behind it. The answer —
+`attached`, `declared`, `disclosed` or `none-detected`, with the markers detected
+— is written to the run's `state.json` (`build_evidence`) and stated on the plan
+screen, so a reader of a finished run can tell a chosen absence from an
+accidental one. `run` (hand-written graphs) and `resume` are not gated; `chat`
+asks and never refuses, because it registers no verification flag a refusal could
+name (ADR 0030 §2.6). This amends ADR 0016 §3 in one direction only: a repository
+file may now cause the tool to *stop*; it may still never cause it to run, widen
+or attach anything. Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (CLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
 Coordinator makes exactly that one call per PLAN — per cycle, not per `auto`
@@ -2719,7 +2742,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, and its two disclosures (verifycmd.go — ADR 0016), print ledger
+cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped by decision, not by omission) + FakeRunner

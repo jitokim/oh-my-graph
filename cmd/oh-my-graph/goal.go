@@ -94,7 +94,11 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		if err != nil {
 			return coordinator.CycleEvidence{}, err
 		}
-		printPlanForRuntime(out, plan, specPath, flags.runtime)
+		// Every cycle of one goal loop was launched by one invocation, so they
+		// share its build-evidence answer: the question was asked once, before
+		// cycle 1, and a cycle that CREATES a build system does not retroactively
+		// gate its own run (ADR 0030 §3.5, §6).
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence)
 
 		// Unreachable in v1 production — `auto` passes a nil confirm and
 		// chat, the one confirm-bearing caller, is single-cycle (ADR 0011

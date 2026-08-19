@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list
@@ -24,7 +24,10 @@
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
 // resumable — at a gate awaiting a human decision (ADR 0003) or because the
-// subscription's session limit was hit (ADR 0009). A pause is not a failure.
+// subscription's session limit was hit (ADR 0009), 3 `auto` refused to start
+// because the directory has a build system and the run would have checked none
+// of it (ADR 0030). A pause is not a failure, and a refusal is neither: nothing
+// ran, nothing is resumable, nothing was billed.
 // An iterated auto run (--max-cycles ≥ 2, ADR 0011) makes the contract
 // goal-level: exit 0 additionally requires the assessor's goal-met verdict on
 // a passed final cycle, and stopping unmet (cycles exhausted, budget ceiling,
@@ -67,11 +70,13 @@ func main() {
 }
 
 // mainExitCode runs the CLI and returns the process exit code: 0 (every node
-// passed), 1 (the run failed — printed to stderr), or 2 (the run paused — at
+// passed), 1 (the run failed — printed to stderr), 2 (the run paused — at
 // a gate or on a session limit — and is resumable; the resume hint was
 // already printed to stdout by executeGraph/runResume, so this path prints
-// nothing further). Separated from main so the exit path lives in exactly one
-// place and the mapping itself is testable without calling os.Exit.
+// nothing further), or 3 (`auto` refused for want of build evidence — printed
+// here, to stdout, by the error itself). Separated from main so the exit path
+// lives in exactly one place and the mapping itself is testable without calling
+// os.Exit.
 func mainExitCode(args []string) int {
 	err := run(args)
 	// A help request is not one of the three outcomes above: it answers on
@@ -82,6 +87,16 @@ func mainExitCode(args []string) int {
 	if errors.As(err, &usage) {
 		usage.print(os.Stdout)
 		return 0
+	}
+	// The build-evidence refusal takes the same shape and for the same reason: it
+	// is twenty lines of indented prose that replace a notice printed to STDOUT,
+	// and routing it through the stderr `oh-my-graph: %v` line below would
+	// double-prefix its first sentence and put the rest on the wrong channel
+	// (ADR 0030 §2.4).
+	var missingEvidence *coordinator.MissingBuildEvidenceError
+	if errors.As(err, &missingEvidence) {
+		missingEvidence.Print(os.Stdout)
+		return exitCodeForError(err)
 	}
 	code := exitCodeForError(err)
 	if code == 1 {
@@ -120,6 +135,17 @@ func exitCodeForError(err error) int {
 	if errors.As(err, &limited) {
 		return 2
 	}
+	// A refusal is neither a failed run nor a paused one: nothing ran, nothing is
+	// resumable, nothing was billed. It gets its own code so a script can tell
+	// "add a flag" from "the build failed" — under exit 1 a refused invocation
+	// would be indistinguishable from the failing build the operator is trying to
+	// catch (ADR 0030 §2.4). It does not disturb ADR 0023 §2.6's exit-code /
+	// run-status agreement either: a refused invocation creates no run directory,
+	// so it is outside that assertion rather than a new case within it.
+	var missingEvidence *coordinator.MissingBuildEvidenceError
+	if errors.As(err, &missingEvidence) {
+		return 3
+	}
 	return 1
 }
 
@@ -134,7 +160,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list
@@ -393,13 +419,23 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// The zero-config path says out loud what it is not checking, before the
-	// planner call rather than after it, so the user can Ctrl-C and re-run with
-	// one flag instead of learning it beside a finished ledger (ADR 0016 §3).
-	// "." is the invocation directory: the same tree the planned nodes and the
-	// evidence command would both run in.
+	// The build-evidence question, asked once, here — before the planner call and
+	// therefore before any spend (ADR 0030 §2.1). A directory with a build system
+	// and no --verify-cmd is REFUSED unless the operator declared the absence;
+	// anything else proceeds and says out loud what it is not checking, so the
+	// user can Ctrl-C and re-run with one flag instead of learning it beside a
+	// finished ledger (ADR 0016 §3). "." is the invocation directory: the same
+	// tree the planned nodes and the evidence command would both run in.
+	//
+	// Deliberately upstream of planAndExecute, which --plan-only is passed INTO:
+	// that is what makes a preview refuse identically to the run it previews,
+	// with no special case and no planner call bought.
 	verifyCommand := flags.verifyCommand()
-	noteVerifyAdvice(os.Stdout, verifyCommand, ".")
+	evidence, err := answerBuildEvidence(os.Stdout, verifyCommand, flags.buildDeclaration(), ".")
+	if err != nil {
+		return err
+	}
+	flags.buildEvidence = evidence
 
 	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
@@ -587,11 +623,11 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	}
 
 	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime)
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence)
 	}
 
 	if !committed {
-		accepted, err := confirmPlan(out, plan, flags.runtime, confirm)
+		accepted, err := confirmPlan(out, plan, flags.runtime, flags.buildEvidence, confirm)
 		if err != nil || !accepted {
 			return err
 		}
@@ -605,7 +641,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlanForRuntime(out, plan, specPath, flags.runtime)
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence)
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -626,12 +662,12 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // finished), not RUNNING, not ABANDONED (its process left on purpose), and it
 // has no verdict about work, because there was no work. So it mints no run id
 // at any point, its planner call included.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime) error {
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome) error {
 	specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
 	if err != nil {
 		return err
 	}
-	printPlanForRuntime(out, plan, specPath, runtime)
+	printPlanForRuntime(out, plan, specPath, runtime, evidence)
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
@@ -655,8 +691,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 //
 // A failure to save the declined spec is reported and swallowed: losing the
 // artifact must not turn a decline into an error.
-func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, confirm func() (bool, error)) (bool, error) {
-	printPlanForRuntime(out, plan, "", runtime)
+func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, confirm func() (bool, error)) (bool, error) {
+	printPlanForRuntime(out, plan, "", runtime, evidence)
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -966,6 +1002,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		ContinueOnFail:  flags.continueOnFail,
 		ToolPolicies:    toNodeToolPolicies(toolPolicies),
 		Goal:            goal,
+		BuildEvidence:   buildEvidenceRecord(flags.buildEvidence),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
@@ -1040,16 +1077,23 @@ func formatUsage(usage runner.TokenUsage) string {
 // behaviour change and not something to be discovered later). noteCeiling
 // prints both halves. noteVerifyAttachments adds the one thing on this screen
 // the ceiling does NOT cover: the user's own --verify-cmd, which the engine
-// runs at each sink outside every layer of it (ADR 0016 §2).
+// runs at each sink outside every layer of it (ADR 0016 §2) — and since ADR
+// 0030 §2.5b that slot states the ABSENCE too when there is one, so a reader
+// meets one answer or the other and never neither. evidence is the launch's
+// build-evidence outcome, nil for the surfaces that never ask the question.
 // An EMPTY specPath means the plan has not been saved yet, which is the chat
 // path since ADR 0023 §2.4: where the spec lands depends on the answer to the
 // [y/N] this screen is being printed for, so the header cannot name a path it
 // does not know. The caller announces the location once the answer picks one.
+// printPlan is the Claude-runtime, no-build-evidence-record shape of the
+// printout — the one every test that is about the TOPOLOGY uses, so a plan
+// screen assertion does not have to name a runtime and an evidence record it is
+// not about.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
-	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude)
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil)
 }
 
-func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime) {
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome) {
 	g := plan.Graph
 	if specPath == "" {
 		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
@@ -1082,6 +1126,7 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 		noteCeiling(w, anyAgentMapped(g))
 	}
 	noteVerifyAttachments(w, plan.VerifyAttachments)
+	noteMissingBuildEvidence(w, evidence)
 	noteReplan(w, plan.Repaired)
 	// Last, and deliberately after the ceiling: that paragraph says planned
 	// nodes "run isolated", meaning settings and tools. This one narrows it —

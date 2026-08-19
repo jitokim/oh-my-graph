@@ -27,16 +27,22 @@
 //     granted anything, and every layer of the ADR 0004 ceiling stays
 //     byte-for-byte as it is.
 //
-// Detection (DetectBuildSignals, below) exists only to PRINT a suggestion when
-// no command was supplied. It never becomes a grant: `Write` and `Edit` are in
-// the allowlist, so node 1 of the same run can legitimately create a
-// package.json and a per-node detector would then widen node 2's set — a plan
-// bootstrapping its own grant, with no attacker anywhere (ADR 0016 §3).
+// Detection (DetectBuildSignals, below) prints a suggestion when no command was
+// supplied, and since ADR 0030 it also decides ONE refusal: `auto` stops rather
+// than starts when the invocation directory has a build system and nothing will
+// build it (RequireBuildEvidence, below). It still never becomes a grant:
+// `Write` and `Edit` are in the allowlist, so node 1 of the same run can
+// legitimately create a package.json and a per-node detector would then widen
+// node 2's set — a plan bootstrapping its own grant, with no attacker anywhere
+// (ADR 0016 §3, as amended by ADR 0030 §3.5). The direction is the whole safety
+// argument: a repository file may cause this tool to STOP; it may never cause it
+// to run, widen or attach anything.
 package coordinator
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -445,7 +451,12 @@ var buildSignals = []BuildSignal{
 	{File: "flake.nix", Ecosystem: "a Nix flake", SuggestedCommand: "nix flake check"},
 }
 
-// csprojGlob is the one signal that is a pattern rather than a name.
+// csprojGlob is the one signal that is a pattern rather than a name. Being a
+// pattern costs it one false negative the os.Stat markers cannot have: the
+// invocation directory is interpolated INTO it, so a path holding `[`, `?` or
+// `*` yields a well-formed pattern that matches nothing, and Glob reports no
+// error for that. Recorded in ADR 0030 §6 as a false negative rather than fixed
+// — it fails open, like every other gap in the table.
 const csprojGlob = "*.csproj"
 
 // DetectBuildSignals reports which build markers dir holds, in the table's
@@ -480,9 +491,17 @@ func DetectBuildSignals(dir string) []BuildSignal {
 // rather than imply it — and it returns "" only when a command WAS supplied,
 // so a caller can print unconditionally.
 //
+// declaration is what the operator said about the absence (ADR 0030 §2.5b). It
+// is a parameter rather than a field on VerifyCommand deliberately: a
+// declaration is a fact about ONE launch of `auto`, while VerifyCommand is
+// shared with `resume`, which registers no opt-out and must have no field for
+// one. Only a declaration made AT a detected signal earns the extra sentence —
+// a script that always passes the flag in a signal-free directory declared
+// nothing, because nothing was asked.
+//
 // Detection informs; the human authorizes. Nothing here reads a file to decide
 // a grant, and nothing here runs.
-func VerifyAdvice(v VerifyCommand, signals []BuildSignal) string {
+func VerifyAdvice(v VerifyCommand, declaration BuildDeclaration, signals []BuildSignal) string {
 	if v.Supplied() {
 		return ""
 	}
@@ -509,5 +528,209 @@ func VerifyAdvice(v VerifyCommand, signals []BuildSignal) string {
 	}
 	fmt.Fprintf(&b, "  --verify-cmd %s\n", suggestion)
 	b.WriteString("to have the engine verify the result itself.\n")
+	if declaration == DeclaredByFlag && len(signals) > 0 {
+		// "a run launched this way", not "this run": this line is printed before
+		// anything knows whether a run follows. `auto --plan-only` reaches the same
+		// gate (§2.6) and then mints no run id at all, so "this run's state.json"
+		// would promise a receipt that screen's own last paragraph goes on to say
+		// does not exist.
+		b.WriteString("You said so with --accept-no-build-evidence; a run launched this way records it in state.json.\n")
+	}
 	return b.String()
+}
+
+// BuildDeclaration is what a launch said about running without build evidence.
+// The set is closed and its values are the exact spellings a snapshot records,
+// because a reader of a finished run must be able to tell WHICH act the absence
+// was: a flag typed at the question, or a plan screen that stated it and was not
+// challenged (ADR 0030 §2.6).
+type BuildDeclaration string
+
+const (
+	// NoDeclaration is a launch that said nothing — `auto` with neither flag.
+	// With a detected signal it is the refusal.
+	NoDeclaration BuildDeclaration = ""
+	// DeclaredByFlag is `auto --accept-no-build-evidence`: a human answering
+	// this question, and no other.
+	DeclaredByFlag BuildDeclaration = "--accept-no-build-evidence"
+	// DeclaredByChatConfirm is chat's `[y/N]` over a plan screen that stated the
+	// absence. It is deliberately NOT the same value as the flag: one keystroke
+	// there covers two questions — run this plan, and accept that it proves
+	// nothing — so it is weaker, and it is filed apart rather than summed
+	// (ADR 0030 §2.6, §8a).
+	DeclaredByChatConfirm BuildDeclaration = "chat-confirm"
+)
+
+// BuildAnswer is how one auto-mode launch answered the build-evidence question.
+// It is a named type for the same reason BuildDeclaration is: the set is closed,
+// its values are the exact spellings a snapshot records, and the two fields are
+// written side by side by one function — an untyped answer beside a typed
+// declaration would make `Answer = "attaced"` compile where `DeclaredBy = "flag"`
+// does not.
+type BuildAnswer string
+
+// The four values BuildEvidenceOutcome.Answer can take. The set is closed and
+// every auto-mode launch lands in exactly one of them, which is what makes the
+// firing rate a measurement rather than a count of one stratum (ADR 0030 §8a).
+const (
+	// BuildEvidenceAttached — --verify-cmd was supplied and the engine runs it
+	// at each sink. Signals may be empty or not; the attachment itself is in the
+	// graph.
+	BuildEvidenceAttached BuildAnswer = "attached"
+	// BuildEvidenceDeclared — signals were detected and a human typed the flag.
+	BuildEvidenceDeclared BuildAnswer = "declared"
+	// BuildEvidenceDisclosed — signals were detected and a chat [y/N] approved a
+	// plan screen that stated the absence.
+	BuildEvidenceDisclosed BuildAnswer = "disclosed"
+	// BuildEvidenceNoneDetected — the directory raised no signal, so no gate
+	// applied and nothing was declared. Every greenfield run lands here.
+	BuildEvidenceNoneDetected BuildAnswer = "none-detected"
+)
+
+// BuildEvidenceOutcome is the launch-time build-evidence question and its
+// answer: what was detected in the invocation directory, and how the run
+// answered. It is produced on EVERY auto-mode launch, including the ones that
+// answered by attaching a command and the ones where there was nothing to
+// answer — a denominator that is only recorded for the interesting stratum is
+// not a denominator (ADR 0030 §2.5).
+//
+// It is inert. Nothing reads it to decide behaviour, on this leg or a resumed
+// one, and it carries no command: Signals are marker FILENAMES, not the
+// suggested commands the detection table holds beside them, so there is nothing
+// in a persisted copy of it that a later leg could execute.
+type BuildEvidenceOutcome struct {
+	// Answer is one of the four constants above.
+	Answer BuildAnswer
+	// DeclaredBy is the exact spelling of what the human did, for the two
+	// answers a human gives. Empty for attached and none-detected.
+	DeclaredBy BuildDeclaration
+	// Signals are the markers detected at launch, in the detection table's
+	// order — what the human was told when they answered.
+	Signals []BuildSignal
+}
+
+// SignalFiles is Signals reduced to the marker filenames, which is all a
+// snapshot records: a filename cannot be executed, and a suggested command
+// could be.
+func (o BuildEvidenceOutcome) SignalFiles() []string {
+	if len(o.Signals) == 0 {
+		return nil
+	}
+	files := make([]string, 0, len(o.Signals))
+	for _, s := range o.Signals {
+		files = append(files, s.File)
+	}
+	return files
+}
+
+// RequireBuildEvidence is ADR 0030's gate: it answers the build-evidence
+// question for one launch, and refuses the one combination that has no answer —
+// a directory with a build system, an `auto` that will not build it, and nobody
+// saying so.
+//
+// It is a pure function of its three arguments so the caller decides both WHERE
+// it looked (the caller passes the signals it detected, once) and WHICH surface
+// is being gated. It is deliberately NOT called from Coordinator.Plan: `chat`
+// registers no verification flags, so a refusal there could only name a flag
+// `chat` rejects, which is the dead end #198 was. `chat` passes
+// DeclaredByChatConfirm and gets an outcome, never a refusal.
+//
+// The four rules, in the order they are applied:
+//
+//   - a supplied command answers the question however the directory looks, and
+//     answers it best: the engine runs it and judges the exit code itself;
+//   - no signal is not a gate. A directory with no build system has nothing for
+//     an evidence command to be evidence about, and demanding a flag there is
+//     friction with no defect behind it. The flag is accepted and INERT here —
+//     a script that always passes it must not break — and the run is recorded
+//     as none-detected rather than declared, because a flag that answered a
+//     question nobody put is not a declaration (ADR 0030 §2.3);
+//   - a signal met by a declaration proceeds, on the record;
+//   - a signal met by silence is the refusal.
+func RequireBuildEvidence(v VerifyCommand, declaration BuildDeclaration, signals []BuildSignal) (BuildEvidenceOutcome, error) {
+	switch {
+	case v.Supplied():
+		return BuildEvidenceOutcome{Answer: BuildEvidenceAttached, Signals: signals}, nil
+	case len(signals) == 0:
+		return BuildEvidenceOutcome{Answer: BuildEvidenceNoneDetected}, nil
+	case declaration == DeclaredByFlag:
+		return BuildEvidenceOutcome{Answer: BuildEvidenceDeclared, DeclaredBy: declaration, Signals: signals}, nil
+	case declaration == DeclaredByChatConfirm:
+		return BuildEvidenceOutcome{Answer: BuildEvidenceDisclosed, DeclaredBy: declaration, Signals: signals}, nil
+	}
+	return BuildEvidenceOutcome{}, &MissingBuildEvidenceError{Signals: signals}
+}
+
+// MissingBuildEvidenceError is the refusal itself: this directory has a build
+// system, and this run would check none of it.
+//
+// It prints ITSELF, to stdout, unprefixed — the shape usageRequest already has
+// in cmd/oh-my-graph. Returning a plain error would send twenty indented lines
+// to stderr behind an `oh-my-graph: ` prefix, where the notice this replaces
+// goes to stdout; Error() therefore stays the first line alone, which is what a
+// wrapping caller and a test assertion want, and Print writes the whole text.
+//
+// Four properties of that text are part of ADR 0030's decision rather than of
+// its prose: it names what was detected (by ecosystem AND file, so an operator
+// who thinks the detection is wrong can see the marker), it names both exits and
+// what each buys (a refusal with one exit is a wall; with two it is a question),
+// it names ONLY flags `auto` registers (#198's rule), and it says nothing was
+// spent — the likeliest reading of a refusal from a tool that bills is "I have
+// been charged for this".
+type MissingBuildEvidenceError struct {
+	// Signals are the markers that were detected, in the detection table's
+	// priority order. The first one supplies the suggested command, which is why
+	// a wrapper script beats the build file it wraps.
+	Signals []BuildSignal
+}
+
+// Error is the refusal's first line alone.
+func (e *MissingBuildEvidenceError) Error() string {
+	return "auto: this directory has a build system, and this run would check none of it."
+}
+
+// Print writes the whole refusal — the text ADR 0030 §2.4 fixes verbatim.
+func (e *MissingBuildEvidenceError) Print(w io.Writer) {
+	fmt.Fprintf(w, "%s\n\n", e.Error())
+	switch len(e.Signals) {
+	case 0:
+		// Unreachable through RequireBuildEvidence, which refuses only when a
+		// signal was found. Loud rather than silent: a refusal that names no
+		// detection is one nobody can act on or dispute.
+		fmt.Fprint(w, "Detected a build signal, but the detection was not recorded — this is a bug.\n\n")
+	case 1:
+		fmt.Fprintf(w, "Detected %s (%s).\n\n", e.Signals[0].Ecosystem, e.Signals[0].File)
+	default:
+		names := make([]string, 0, len(e.Signals))
+		for _, s := range e.Signals {
+			names = append(names, s.File)
+		}
+		fmt.Fprintf(w, "Detected several build signals (%s), so the command below\nis a guess.\n\n", strings.Join(names, ", "))
+	}
+	fmt.Fprint(w,
+		"A planned node cannot carry a build command: the planner's reply is untrusted\n"+
+			"input, so success_check.verify is refused from a plan, and no allowed tool\n"+
+			"runs a build. A check node's PASS is words it emitted, not a build that ran.\n"+
+			"Without --verify-cmd, every judgement in this run is the model's, about its\n"+
+			"own work.\n\n"+
+			"Re-run with ONE of:\n\n")
+	fmt.Fprintf(w, "  --verify-cmd '%s'\n", e.suggestedCommand())
+	fmt.Fprint(w,
+		"      the ENGINE runs that command at each sink node of the plan and judges\n"+
+			"      its exit code itself. No node is granted anything.\n\n"+
+			"  --accept-no-build-evidence\n"+
+			"      run anyway, on the record: this run carries no build evidence. The\n"+
+			"      choice is written to the run's state.json and printed with the plan.\n\n"+
+			"Nothing has been spent — this is refused before the planner call.\n")
+}
+
+// suggestedCommand is the command the refusal offers: the first detected
+// signal's, in the detection table's priority order. A refusal with no signal
+// cannot suggest one and says so in the placeholder rather than inventing a
+// build command.
+func (e *MissingBuildEvidenceError) suggestedCommand() string {
+	if len(e.Signals) == 0 {
+		return "<your build command>"
+	}
+	return e.Signals[0].SuggestedCommand
 }
