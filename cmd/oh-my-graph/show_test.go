@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -291,6 +292,79 @@ func TestMainExitCode_ShowUnknownRunIsNonZero(t *testing.T) {
 	isolateRunHome(t)
 	if code := mainExitCode([]string{"show", "nope"}); code != 1 {
 		t.Errorf("show of an unknown run must exit 1, got %d", code)
+	}
+}
+
+// TestMainExitCode_ShowMissingRunIDMapsToExitCode1 is the regression guard
+// for the OTHER pre-existing error #200 must leave alone: a bare `show`, with
+// no positional at all, must still exit 1 on its unchanged "missing run id"
+// message — the guard ahead of it only ever answers a help token or an
+// unknown flag, never an empty argv.
+func TestMainExitCode_ShowMissingRunIDMapsToExitCode1(t *testing.T) {
+	isolateRunHome(t)
+	if code := mainExitCode([]string{"show"}); code != 1 {
+		t.Errorf("bare `show` must exit 1, got %d", code)
+	}
+}
+
+// TestRunShow_Help pins #200: before the fix, `show --help` read "--help" as
+// the run id and reported `unknown run "--help"` — the answer a mistyped id
+// gets, at the one moment the user wanted the flag list instead. Both spelled
+// forms must now answer with the synopsis and must never reach showRun.
+func TestRunShow_Help(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		err := runShow([]string{arg})
+		var usage *usageRequest
+		if !errors.As(err, &usage) {
+			t.Fatalf("runShow([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+		}
+		if !strings.Contains(usage.Error(), "oh-my-graph show") {
+			t.Errorf("usage.Error() = %q, want it to name `show`'s synopsis", usage.Error())
+		}
+		if strings.Contains(usage.Error(), "unknown run") {
+			t.Errorf("usage.Error() = %q, must not read like an unknown-run error", usage.Error())
+		}
+	}
+}
+
+// TestRunShow_DashPrefixedPositionalIsNotARunID is the guard the other
+// direction: an unrecognised flag in the run-id slot is reported as an
+// unknown flag, never looked up as a run.
+func TestRunShow_DashPrefixedPositionalIsNotARunID(t *testing.T) {
+	err := runShow([]string{"--bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag in the run-id slot")
+	}
+	if !strings.Contains(err.Error(), `unknown flag "--bogus"`) {
+		t.Errorf("err = %v, want it to name the unrecognised flag", err)
+	}
+	if strings.Contains(err.Error(), "unknown run") {
+		t.Errorf("err = %v, an unrecognised flag must not read as an unknown run", err)
+	}
+}
+
+// TestRunShow_ValidDashFreeRunIDStillReachesTheLookup is the regression guard
+// for the fix's own stated boundary: a run id that does not begin with "-"
+// must still resolve through runDirFor and show exactly the run there,
+// completely unaffected by the new guard ahead of it.
+func TestRunShow_ValidDashFreeRunIDStillReachesTheLookup(t *testing.T) {
+	home := isolateRunHome(t)
+	dir := filepath.Join(home, "runs", "20260806-081500.000000000-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID: "20260806-081500.000000000-1",
+		Graph: json.RawMessage(`{"name":"demo","nodes":[{"id":"apply","prompt":"a"}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			"apply": {Verdict: runstate.VerdictPass},
+		},
+	})
+
+	var runErr error
+	captureStdout(t, func() { runErr = runShow([]string{"20260806-081500.000000000-1"}) })
+	if runErr != nil {
+		t.Fatalf("a valid, dash-free run id must still resolve: %v", runErr)
 	}
 }
 

@@ -28,6 +28,10 @@ const watchPollInterval = 200 * time.Millisecond
 // read-only over the run directory — the deliberate plain-text stopgap before
 // any richer live view, not a TUI.
 func runWatch(args []string) error {
+	// A dash-prefixed argument is a flag, not a run id (argslot.go).
+	if err := flagInPositionalSlot(args, "watch"); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("watch: missing run id (usage: oh-my-graph watch <run-id>)")
 	}

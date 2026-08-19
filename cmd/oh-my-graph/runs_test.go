@@ -495,6 +495,43 @@ func TestRunRuns_ExtraArgumentErrors(t *testing.T) {
 	}
 }
 
+// TestRunRuns_Help pins #200 for `runs`: before the fix, `runs --help` fell
+// straight into the switch's default arm and answered `unknown subcommand
+// "--help" (want list)` — milder than its siblings (it at least named the
+// alternative) but still not the flag list the user asked for.
+func TestRunRuns_Help(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		err := runRuns([]string{arg})
+		var usage *usageRequest
+		if !errors.As(err, &usage) {
+			t.Fatalf("runRuns([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+		}
+		if !strings.Contains(usage.Error(), "oh-my-graph runs") {
+			t.Errorf("usage.Error() = %q, want it to name `runs`'s synopsis", usage.Error())
+		}
+		if strings.Contains(usage.Error(), "unknown subcommand") {
+			t.Errorf("usage.Error() = %q, must not read like an unknown-subcommand error", usage.Error())
+		}
+	}
+}
+
+// TestRunRuns_DashPrefixedUnknownSubcommandKeepsItsOwnAnswer is the guard
+// specific to `runs`: unlike show/watch/lint/init, its positional slot holds
+// a SUBCOMMAND NAME, not a value — so the general "dash-prefixed positional
+// is a flag" rule must NOT apply here beyond the help token. `runs --purge`
+// must keep exactly its pre-fix answer, `unknown subcommand "--purge" (want
+// list)`, rather than being reinterpreted as an unrecognised flag.
+func TestRunRuns_DashPrefixedUnknownSubcommandKeepsItsOwnAnswer(t *testing.T) {
+	err := runRuns([]string{"--purge"})
+	if err == nil || !strings.Contains(err.Error(), `unknown subcommand "--purge"`) || !strings.Contains(err.Error(), "want list") {
+		t.Fatalf(`runRuns([--purge]) = %v, want the unchanged "unknown subcommand \"--purge\" (want list)" answer`, err)
+	}
+	var usage *usageRequest
+	if errors.As(err, &usage) {
+		t.Errorf("a non-help dash-prefixed subcommand must not be answered as help: %v", err)
+	}
+}
+
 func TestMainExitCode_RunsListMapsToExitCode0(t *testing.T) {
 	isolateRunHome(t)
 	if code := mainExitCode([]string{"runs", "list"}); code != 0 {

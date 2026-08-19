@@ -644,6 +644,59 @@ func TestRunInit_ArgvErrors(t *testing.T) {
 	}
 }
 
+// TestRunInit_HelpDoesNotCreateADirectoryNamedHelp pins #200's worst case:
+// `init --help` used to read "--help" as the target directory, CREATE it and
+// unpack the whole example payload into it, then exit 0 — the one defective
+// subcommand with a filesystem side effect. This drives runInit from a
+// scratch, otherwise-empty working directory so a regression here is caught
+// as a stray directory, not just a wrong error string. Both spelled forms are
+// checked.
+func TestRunInit_HelpDoesNotCreateADirectoryNamedHelp(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			cwd := chdirTemp(t)
+
+			err := runInit([]string{arg})
+			var usage *usageRequest
+			if !errors.As(err, &usage) {
+				t.Fatalf("runInit([%q]) = %v (%T), want a *usageRequest", arg, err, err)
+			}
+			if !strings.Contains(usage.Error(), "oh-my-graph init") {
+				t.Errorf("usage.Error() = %q, want it to name `init`'s synopsis", usage.Error())
+			}
+
+			entries, err := os.ReadDir(cwd)
+			if err != nil {
+				t.Fatalf("read scratch dir: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("`init %s` left %d entries in a directory that started empty: %v", arg, len(entries), entries)
+			}
+			if _, err := os.Stat(filepath.Join(cwd, arg)); err == nil {
+				t.Errorf("`init %s` created a directory literally named %q", arg, arg)
+			}
+		})
+	}
+}
+
+// TestRunInit_DashPrefixedPositionalIsNotATargetDirectory is the guard the
+// other direction: an unrecognised flag standing in init's directory slot
+// must be reported as an unknown flag, never created as a directory.
+func TestRunInit_DashPrefixedPositionalIsNotATargetDirectory(t *testing.T) {
+	cwd := chdirTemp(t)
+
+	err := runInit([]string{"--bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag in the directory slot")
+	}
+	if !strings.Contains(err.Error(), `unknown flag "--bogus"`) {
+		t.Errorf("err = %v, want it to name the unrecognised flag", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(cwd, "--bogus")); statErr == nil {
+		t.Error(`runInit([--bogus]) created a directory literally named "--bogus"`)
+	}
+}
+
 // TestMainExitCode_InitMapsToZeroAndOne pins the shell contract end to end
 // through run()'s subcommand switch: exit 0 unpacking into a fresh directory,
 // exit 0 again over the same directory (a top-up that writes nothing is a

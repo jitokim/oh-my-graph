@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -229,4 +231,111 @@ func TestUsage_PackageDocCarriesTheSameSynopsis(t *testing.T) {
 			t.Errorf("synopsis line %d drifted:\n  doc:     %s\n  printed: %s", i+1, documented[i], printed[i])
 		}
 	}
+}
+
+// --- #200: a positional slot answers help instead of swallowing it -----------
+//
+// Before the fix, `<subcommand> --help` read the help token as the
+// positional's VALUE — a run id, a graph path, a target directory, a goal —
+// and reported whatever failure loading or creating THAT produced: `unknown
+// run "--help"`, `read graph file "--help": ... no such file or directory`,
+// or, worst of all, `init --help` actually CREATED a directory named
+// "--help" and exited 0. These cases drive the real dispatcher
+// (mainExitCode → run()) exactly as a user's shell would, for every
+// subcommand the fix touched, and check only what a user watching a
+// terminal could see: what came out on stdout, and the process exit code —
+// never which internal function got called in what order.
+func TestMainExitCode_HelpAnswersEverySubcommandsSynopsisAndExitsZero(t *testing.T) {
+	// A blacklist of substrings that only appear in the swallowed-as-a-value
+	// failures the fix removed, or in the pre-fix stderr-and-exit-1 shape
+	// `serve`/`chat` already had. None may appear in the stdout a help request
+	// now produces.
+	neverInHelpOutput := []string{
+		"unknown run", "unknown subcommand", "missing run id", "missing goal",
+		"missing subcommand", "missing graph file", "no such file",
+		"no run directory", "no event stream", "flag: help requested",
+	}
+
+	cases := []struct {
+		subcommand string
+		// helpArg varies the spelling across cases so both forms Go's flag
+		// package accepts are exercised somewhere in this table (a dedicated
+		// -h/--help pairing per subcommand lives in each subcommand's own test
+		// file; this table's job is breadth across subcommands, not depth on
+		// any one spelling).
+		helpArg string
+	}{
+		{subcommand: "init", helpArg: "--help"},
+		{subcommand: "run", helpArg: "--help"},
+		{subcommand: "auto", helpArg: "--help"},
+		{subcommand: "lint", helpArg: "-h"},
+		{subcommand: "resume", helpArg: "-h"},
+		{subcommand: "runs", helpArg: "--help"},
+		{subcommand: "show", helpArg: "--help"},
+		{subcommand: "watch", helpArg: "--help"},
+		{subcommand: "serve", helpArg: "--help"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.subcommand+" "+tc.helpArg, func(t *testing.T) {
+			isolateRunHome(t)
+			// `init` is the one subcommand whose positional slot doubles as a
+			// filesystem target; running from a scratch, otherwise-empty
+			// directory lets this test catch a regression of the exact #200
+			// defect (a directory literally named "--help" appearing) without
+			// touching this repository's own working tree.
+			cwd := chdirTemp(t)
+
+			line, ok := usageLineFor(tc.subcommand)
+			if !ok {
+				t.Fatalf("usageLineFor(%q) found no synopsis line — this test's premise is gone", tc.subcommand)
+			}
+
+			var code int
+			out := captureStdout(t, func() {
+				code = mainExitCode([]string{tc.subcommand, tc.helpArg})
+			})
+
+			if code != 0 {
+				t.Errorf("`%s %s` exited %d, want 0 — help is not a failure", tc.subcommand, tc.helpArg, code)
+			}
+			if !strings.Contains(out, line) {
+				t.Errorf("`%s %s` stdout = %q, want it to contain the synopsis line %q", tc.subcommand, tc.helpArg, out, line)
+			}
+			for _, forbidden := range neverInHelpOutput {
+				if strings.Contains(out, forbidden) {
+					t.Errorf("`%s %s` stdout = %q, must not contain %q — the help token was treated as a value", tc.subcommand, tc.helpArg, out, forbidden)
+				}
+			}
+			if tc.subcommand == "init" {
+				for _, bad := range []string{"--help", "-h"} {
+					if _, err := os.Stat(filepath.Join(cwd, bad)); err == nil {
+						t.Errorf("`init %s` created a directory literally named %q (the #200 filesystem defect)", tc.helpArg, bad)
+					}
+				}
+			}
+		})
+	}
+}
+
+// chdirTemp switches the process's working directory to a fresh empty temp
+// directory for the duration of the test and restores it afterward. It
+// mutates the process-global cwd, so — like captureStdout — a test using it
+// must never call t.Parallel.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("os.Chdir(%s): %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(orig); err != nil {
+			t.Fatalf("restore cwd to %s: %v", orig, err)
+		}
+	})
+	return dir
 }

@@ -24,6 +24,13 @@ const initGraphsDir = "graphs"
 // runInit is the `init` subcommand: parse argv (an optional target directory,
 // defaulting to the current one) and unpack the embedded example graphs.
 func runInit(args []string) error {
+	// A dash-prefixed argument is a flag, not a target directory (argslot.go).
+	// This is the slot where reading one as a value had a FILESYSTEM effect:
+	// `init --help` used to create a directory named "--help" and unpack the
+	// whole example payload into it, then exit 0 (#200).
+	if err := flagInPositionalSlot(args, "init"); err != nil {
+		return err
+	}
 	if len(args) > 1 {
 		return fmt.Errorf("init: unexpected argument %q (usage: oh-my-graph init [dir])", args[1])
 	}

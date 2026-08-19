@@ -22,6 +22,12 @@ import (
 // runstate.Load (the same versioned reader `resume` trusts, so an incompatible
 // schema is refused loudly) and never rewrites or deletes anything.
 func runShow(args []string) error {
+	// A dash-prefixed argument is a flag, not a run id (argslot.go), so
+	// `show --help` answers with the synopsis instead of reporting an unknown
+	// run called "--help" (#200).
+	if err := flagInPositionalSlot(args, "show"); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("show: missing run id (usage: oh-my-graph show <run-id>)")
 	}

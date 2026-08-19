@@ -488,6 +488,34 @@ func TestMainExitCode_UnknownCommandMapsToExitCode1(t *testing.T) {
 	}
 }
 
+// TestMainExitCode_ResumeMissingRunIDMapsToExitCode1 is the regression guard
+// for the OTHER pre-existing error #200 must leave alone: a bare `resume`,
+// with no positional at all, must still exit 1 on its unchanged "missing run
+// id" message — the new help/flag guard only ever answers a help token or an
+// unrecognised flag, never an empty argv.
+func TestMainExitCode_ResumeMissingRunIDMapsToExitCode1(t *testing.T) {
+	if code := mainExitCode([]string{"resume"}); code != 1 {
+		t.Fatalf("bare `resume` must exit 1, got %d", code)
+	}
+}
+
+// TestResumeFlags_ValidDashFreeRunIDStillReachesTheLoadPath is the
+// regression guard the other way: a run id that does not begin with "-"
+// still parses into f.runID exactly as before, so runResumeRuntime still
+// carries it all the way to persistedNodeRunner's runstate.Load — the same
+// "load run" failure a nonexistent run id produced before the fix.
+func TestResumeFlags_ValidDashFreeRunIDStillReachesTheLoadPath(t *testing.T) {
+	isolateRunHome(t)
+	err := runResumeRuntime(runner.RuntimeClaude, false, []string{"run-1"})
+	if err == nil || !strings.Contains(err.Error(), `load run "run-1"`) {
+		t.Fatalf("err = %v, want the unchanged load-run failure for a dash-free id", err)
+	}
+	var usage *usageRequest
+	if errors.As(err, &usage) {
+		t.Errorf("a valid run id must not be answered as help: %v", err)
+	}
+}
+
 func TestMainExitCode_VersionMapsToExitCode0(t *testing.T) {
 	if code := mainExitCode([]string{"version"}); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)

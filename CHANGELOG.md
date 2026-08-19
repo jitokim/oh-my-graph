@@ -183,6 +183,28 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
+- **A subcommand's positional run-id slot no longer swallows a flag** (#200).
+  `resume --help` read `--help` as the run id and reported a run that does not
+  exist, and every sibling that takes a positional before its flags did the
+  same: `run`, `auto`, `lint`, `init`, `runs`, `show`, `watch` and `serve`. The
+  worst of them had a filesystem effect — `init --help` created a directory
+  named `--help`. One shared rule now decides slot 0 for all nine, resting on a
+  fact the CLI already guaranteed and a test now pins: a minted run id never
+  begins with a dash, so a dash there can never be a value. `-h`/`-help`/
+  `--help` in the slot prints that subcommand's usage — the same `usageLines`
+  synopsis the existing usage guards pin, plus its flag descriptions where it
+  has a FlagSet — on stdout, exit 0, because help is not a failure; any other
+  flag there is a named flag error rather than a value. Nothing else moved: a
+  valid run id, graph path, goal or directory takes the identical path, no flag
+  was registered or removed, and the error and exit code for a missing or
+  unknown dash-free run id are unchanged. `runs` intercepts only the help token,
+  so `runs --purge` keeps its own `unknown subcommand "--purge" (want list)`.
+  Two neighbouring slots are untouched, each answering differently: help typed
+  AFTER the positional (`resume <id> --help`) still gets the flag package's own
+  defaults on stderr, exit 1, and top-level `oh-my-graph --help` — which never
+  reaches a FlagSet, there being none before the subcommand — still answers
+  `unknown command "--help"` on stderr, exit 1. Both need their own fix.
+
 - **`resume` learns `--verify-cmd` / `--verify-timeout`, so a run that paused on
   a session limit can actually be resumed** (#198, ADR 0016 §4 amended). A run
   started with `auto "<goal>" --verify-cmd '…'` and paused on a session limit
