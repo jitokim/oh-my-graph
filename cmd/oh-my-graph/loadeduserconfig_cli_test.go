@@ -387,8 +387,31 @@ func TestRunAutoWith_TheOptInReachesTheRealArgv(t *testing.T) {
 			}
 			// And under the opt-in, nothing was staged for it to be shadowed:
 			// agent mapping and skill activation go off with the widening.
+			//
+			// The propose node is never an agent-mapping CANDIDATE in this
+			// fixture (agentmap.go's token rule shares no token between
+			// "propose" and "code-reviewer"), so an --agent check on ITS argv
+			// is satisfied by absence whether or not agent mapping exists at
+			// all: it would pass unchanged against a build that deleted
+			// applyAgentMapping outright. The review node is the one the
+			// fixture's agent name-matches (skillargv_test.go's
+			// TestRunAuto_AgentMappedNodeArgvGetsItsAgentStagedAndKeepsTheCeiling
+			// pins --agent=code-reviewer there with no flag typed), so it is
+			// the only node whose --agent flag can witness the opt-in
+			// actually turning mapping off — both arms below assert their own
+			// exact expectation instead of one OR that only checks absence.
+			reviewArgv := nodeArgv(t, spawns, "judge the proposal")
+			if tc.wantIsolat {
+				if name, present := reviewArgv.value("--agent"); !present || name != "code-reviewer" {
+					t.Errorf("--agent = %q (present=%t), want code-reviewer with no flag typed\nargv: %q", name, present, reviewArgv)
+				}
+			} else {
+				if reviewArgv.has("--agent") {
+					t.Errorf("an opted-in node was spawned with --agent, which the widening should have turned off\nargv: %q", reviewArgv)
+				}
+			}
 			if !tc.wantIsolat {
-				if argv.has("--plugin-dir") || argv.has("--agent") {
+				if argv.has("--plugin-dir") {
 					t.Errorf("an opted-in node was spawned with a staged definition your own settings could shadow\nargv: %q", argv)
 				}
 				if tools := argv.tools(); slices.Contains(tools, coordinator.SkillToolName) {
