@@ -442,8 +442,17 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// re-enters the same coordinator and plans afresh, so every cycle's sinks
 	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
 	options := []coordinator.Option{coordinator.WithVerifyCommand(verifyCommand)}
+	// The one option here that widens, and given to the same COORDINATOR for
+	// the same reason: every cycle of a goal loop plans afresh, and the
+	// operator's statement is about the run, not about cycle 1 (ADR 0032).
+	// It carries its own de-escalations — agent mapping and skill activation
+	// both go off inside WithLoadedUserConfig — so the branch below prints the
+	// reason but does not have to enforce it.
+	if flags.acceptLoadedUserConfig {
+		options = append(options, coordinator.WithLoadedUserConfig())
+	}
 	if runtime == runner.RuntimeClaude {
-		options = append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation), options...)
+		options = append(mappingOptions(os.Stdout, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation, flags.acceptLoadedUserConfig), options...)
 	} else {
 		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; the generated plan will show the filesystem sandbox policy used for each node.")
 	}
@@ -474,7 +483,26 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 // home directory (no $HOME: containers, launchd, some CI), and that is a
 // misconfiguration nobody chose — the one silence this disclosure exists to
 // remove. Said here rather than by giving every library caller a non-nil scan.
-func mappingOptions(w io.Writer, noAgentMapping bool, noAgents []string, noSkillActivation bool) []coordinator.Option {
+//
+// loadedUserConfig short-circuits both, and prints why. The forcing itself is
+// coordinator.WithLoadedUserConfig's — asserted there, so no call site can
+// forget it — and what belongs here is the half that must not be silent: two
+// mechanisms the operator may have been relying on are off, and the screen
+// says so rather than letting them notice a missing [agent: ...] marker.
+// Returning no directories at all is deliberate: with activation and mapping
+// both off, scanning them would read the user's files to build a corpus
+// nothing can use.
+func mappingOptions(w io.Writer, noAgentMapping bool, noAgents []string, noSkillActivation bool, loadedUserConfig bool) []coordinator.Option {
+	if loadedUserConfig {
+		fmt.Fprint(w,
+			"agent mapping and skill activation are off for this run, because --accept-loaded-user-config\n"+
+				"loads your own settings: a staged agent or skill would be shadowed by a same-named one\n"+
+				"your settings discover, so the definition that ran would not be the one this run staged\n"+
+				"(measured: docs/measurements/0017-lifting-the-agent-mapped-exclusion.md). Your CLI\n"+
+				"discovers your agents and skills itself instead, exactly as it does for `run`.\n",
+		)
+		return nil
+	}
 	var opts []coordinator.Option
 	if noAgentMapping {
 		opts = append(opts, coordinator.WithoutAgentMapping())
