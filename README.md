@@ -199,7 +199,10 @@ the measured layered tool ceiling described below; Codex discards user config,
 project rules/AGENTS files and MCP servers for planned nodes, then applies its
 read-only or workspace sandbox. **These are reductions, not a security
 boundary around the repository you launched from.** Run `auto` only in a
-directory you are willing to have modified.
+directory you are willing to have modified. Both are scoped to planned nodes:
+a hand-written graph you launch with `run` keeps your user config, project
+rules/AGENTS files, hooks and MCP servers, and `--accept-loaded-user-config`
+states out loud that you want them under `auto` too.
 
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support
