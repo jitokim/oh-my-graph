@@ -441,16 +441,20 @@ What it costs the node is real and is the other half of the same sentence — yo
 standing grants are unavailable to it, your `CLAUDE.md` and your hooks arrive by
 the same source list and are implied rather than measured, and it holds no
 `Skill` tool, so it can invoke no skill at all. (Its argv also carries
-`--strict-mcp-config`, as every planned node's always has; whether that closes
-MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
+`--strict-mcp-config`, as every planned node's has unless the run typed
+`--accept-loaded-user-config`, which drops it along with the isolation; whether
+it closes MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
 a mapped node was the one exception to that isolation; from 2026-08-12 (KST) it is
 not.** The agent file is read once, at plan time, and pinned by hash, so editing
 it mid-run changes nothing; a resumed leg maps nothing at all and says so. If
 you want one node's `Skill` tool back, `--no-agent <name>` declines that one
 agent — the node then runs as an ordinary planned node, which is the whole of
 what declining buys: it does **not** hand the node your environment back,
-because no planned node gets that any more. `--no-agent-mapping` remains the
-all-or-nothing form
+because no planned node gets that any more — unless the run typed
+`--accept-loaded-user-config`, in which case every planned node has it and there
+is no agent mapping left to decline
+([ADR 0032](adr/0032-a-planned-node-may-carry-the-operators-configuration.md)).
+`--no-agent-mapping` remains the all-or-nothing form
 ([ADR 0022](adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
 
 **Skill activation.** Your Claude Code skills (`~/.claude/skills` only) reach
