@@ -121,7 +121,9 @@ subscription session limit, say) instead of only "exit code 1".
   ones on our argv — which is what finally makes a scoped `Bash(git *)` a real
   ceiling rather than a declaration. `--tools` narrows the built-in tool set
   itself (a separate axis from the rules), and `--strict-mcp-config` bounds MCP.
-  oh-my-graph applies these ONLY to coordinator-planned nodes — see "Auto mode".
+  oh-my-graph applies these ONLY to coordinator-planned nodes — see "Auto mode" —
+  and applies the first and the last of them only to a planned run that did not
+  type `--accept-loaded-user-config` (ADR 0032).
 - Hand-written graphs never carry `--setting-sources`, `--tools`,
   `--strict-mcp-config` or `--disallowedTools`: they are the user's own reviewed
   artifact and are *meant* to run under the user's own settings, hooks and MCP.
@@ -140,7 +142,10 @@ codex exec --json --color never --skip-git-repo-check --sandbox <mode> \
 `plan` maps to `read-only`, `bypassPermissions` to `danger-full-access`, and
 the remaining permission modes to `workspace-write`. Planned nodes and the
 assessor add `--ignore-user-config`, `--ignore-rules`,
-`project_doc_max_bytes=0`, and `mcp_servers={}`. Hand-written nodes and the
+`project_doc_max_bytes=0`, and `mcp_servers={}` — the assessor always, planned
+nodes unless the run typed `--accept-loaded-user-config`, which omits all four
+(ADR 0032; `--sandbox` and `approval_policy="never"` are appended outside that
+branch and are unaffected). Hand-written nodes and the
 planner keep normal Codex config. A `turn.completed` event supplies the final
 token usage; the last completed `agent_message` is the node result. A
 `turn.failed` event is a failed node even if the CLI process itself exits zero.
@@ -629,7 +634,9 @@ user's own agents by a deliberately conservative name-token rule: exact token
 or ≥4-rune prefix between node id and agent name, exactly one candidate or
 nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
 matching). Scan failures are silent so zero-config stays zero-config;
-`--no-agent-mapping` turns the whole thing off and `--no-agent <name>` declines
+`--no-agent-mapping` turns the whole thing off, `--accept-loaded-user-config`
+turns it off too (the staging guarantee rests on Layer 1 — "The operator's
+opt-in"), and `--no-agent <name>` declines
 one agent while the rest still map; every decision made — including a decline —
 is shown in the printed plan before execution, with what each mapped node gave
 up named on its own line. ADR 0004 §4 originally deferred this
@@ -2082,7 +2089,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path.
 
@@ -2177,7 +2184,11 @@ pinned by its plan-time SHA-256, and supplied with `--plugin-dir`, which reaches
 the node without reopening `--setting-sources`. Until then a mapped node dropped
 Layer 1 and was measured to lose its scope ceiling with it. Every decision is
 shown in the printed plan, and `--no-agent-mapping` turns it off run-wide while
-`--no-agent <name>` declines a single agent. The full rule and what it now costs
+`--no-agent <name>` declines a single agent. So does
+`--accept-loaded-user-config`, which sets `agentMappingOff` itself: the staging
+guarantee holds only while Layer 1 is `""`, so a run that carries the operator's
+settings maps no node at all and the CLI discovers their agents natively (ADR
+0032 §2.4, below). The full rule and what it now costs
 the node live in "Node-as-subagent"; the raw plan itself still may not carry
 `agent:`.
 
@@ -2191,7 +2202,10 @@ names them as out of scope on every run), copies **the whole corpus** into
 `--plugin-dir <staged>` plus `Skill` in its `--tools` list. Two layers and only
 two: `--plugin-dir` is not a ceiling layer at all (it supplies definitions and
 grants nothing), and `Skill` enters at **Layer 3**, through the one function
-that builds that list. **Layer 1 stays `--setting-sources ""`** — ADR 0017's
+that builds that list. Staging happens for a run that stayed isolated;
+`--accept-loaded-user-config` sets `skillActivationOff` for the same reason it
+sets `agentMappingOff` (below), so an opted-in run stages no corpus.
+**Layer 1 stays `--setting-sources ""`** — ADR 0017's
 measurement (g) showed that relaxing it lets a node that declared `Bash(git *)`
 run an out-of-scope command, because `--tools` bounds tool NAMES and not
 SCOPES. Layer 0 does not move either: `plannedToolAllowlist` never learns the
@@ -2385,11 +2399,15 @@ type ToolPolicy struct {
 | layer | mechanism | closes |
 |---|---|---|
 | 0 declaration | `plannedToolAllowlist`, plan-time rejection | a plan asking for `Bash(*)` |
-| 1 **isolation** | `--setting-sources ""` | the user's standing grants; settings hooks |
+| 1 **isolation** | `--setting-sources ""` (nil, flag omitted, under `--accept-loaded-user-config`) | the user's standing grants; settings hooks |
 | 2 grant | `--allowedTools "Read,Bash(git *)"` + `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<bare names declared>"` | tools the model can even attempt |
-| 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
+| 4 MCP | `--strict-mcp-config`, no `--mcp-config` (false, flag omitted, under the same opt-in) | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` (PR #5's list, retained) | anything the above missed |
+
+The table is the default — the run that types nothing. Layers 1 and 4 are the
+two an operator may decline together, at launch, and nothing else in it moves;
+"The operator's opt-in" below is the whole of that difference.
 
 `PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
 a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
@@ -2399,7 +2417,9 @@ names it, and a staged agent's frontmatter does not widen past `--tools`, E6).
 It exists because layer 1 stays `""`: `--setting-sources ""` withholds the
 DEFINITIONS along with the settings, and a plugin directory is the one source of
 definitions that does not reopen it. Empty omits the flag, which is every
-hand-written graph and every planned run that neither activated nor mapped; a
+hand-written graph, every opted-in planned run (which neither activates nor
+maps, since layer 1 is what makes staging worth anything) and every planned run
+that neither activated nor mapped; a
 resumed leg is emptied deliberately, since rehydrating the path would trust a
 directory the previous leg's nodes could write (ADR 0017 §6, below).
 
@@ -2407,7 +2427,9 @@ Layer 1 is the load-bearing change. Rules from `~/.claude/settings.json` are why
 `--allowedTools` could never bind: they are matched alongside ours and a standing
 `Bash(*)` wins. `--setting-sources ""` loads none of user/project/local settings,
 leaving our argv as the only allow-rule source; enterprise policy settings are
-still loaded and still cannot be escaped. Combined with `dontAsk` — under which
+still loaded and still cannot be escaped — nor can they be escaped by omitting
+the flag, which is why the opt-in below can widen everything it widens and still
+not reach a managed policy. Combined with `dontAsk` — under which
 an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** —
 `Bash(git *)` means *git and nothing else*. **Measured, not inferred** (E1): the
 identical node declaration ran an out-of-scope `touch` without Layer 1 and had
@@ -2436,7 +2458,9 @@ of 2 (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,
-because no node in this run (or any later `auto` run) loads local settings.
+because no node in this run (or any later `auto` run) loads local settings —
+unless that run typed `--accept-loaded-user-config`, where local settings are
+loaded on purpose and this gap is open again by the operator's own statement.
 
 Layer 3 is a genuine *replacement* of the built-in tool set, not an addition to
 it (E4): a tool omitted from `--tools` does not exist for the node, and naming
@@ -2462,7 +2486,8 @@ Layer 1 — lost it to the repository 3 of 3. **Layer 4 is unverified** (E5 —
 observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
 MCP servers for planned nodes — a behaviour change that makes planned nodes
 *more isolated and less capable* than they were, which is the intended direction
-but must be stated in the README rather than discovered. **Through v0.6.0
+but must be stated in the README rather than discovered, and which the operator
+may decline for one run with the opt-in below. **Through v0.6.0
 agent-mapped nodes inverted that last sentence for the SETTINGS half**: nothing
 was dropped for them, so the user's CLAUDE.md and hooks loaded — and so did the
 working repository's project scope, which is where the repository-supplied skill
@@ -2476,6 +2501,66 @@ beside it, before the change and after it (measurement (j),
 `argv/omg-probe-writer.argv.txt`). Whether that flag actually closes MCP is E5,
 and E5 is unmeasured — the sentence above about MCP servers is a statement about
 the argv, not an observed closure.
+
+#### The operator's opt-in — `--accept-loaded-user-config` (ADR 0032)
+The ceiling above is what a planned node gets by default. `auto` takes one flag
+by which the **operator** — never the plan — states that this run's planned
+nodes carry their own CLI configuration. It takes no value, defaults to OFF, and
+a run that does not type it is byte-for-byte the run that shipped in v0.10.0:
+same argv, same screens, same `state.json`.
+
+It is **runtime-neutral**, because the mechanism is one bit both protocols
+already branch on (`spec.Policy.SettingSources != nil` in
+`codex_protocol.go`, `policy.SettingSources != nil` in `claude_protocol.go`).
+`toolPolicyFor` builds:
+
+| layer | field | default | with the opt-in |
+|---|---|---|---|
+| 1 isolation | `SettingSources` | `&""` | **nil** (flag omitted) |
+| 2 grant | `AllowedTools` | node's declaration | unchanged |
+| 3 narrowing | `Tools` | `narrowedToolsFor(node, …)` | unchanged |
+| 4 MCP | `StrictMCPConfig` | `true` | **false** (flag omitted) |
+| 5 residual | `DisallowedTools` | `disallowedToolsFor(node)` | unchanged |
+
+So **an opted-in planned node's setting/config posture is exactly a hand-written
+`run` node's, and its tool posture is exactly a planned node's.** Layer 4 moves
+with layer 1 deliberately: E5 is unmeasured, so leaving `--strict-mcp-config` on
+would make the disclosure's *"your MCP servers load"* a sentence nobody had
+checked. That layers 3 and 5 still bind under restored settings is ADR 0032 §8's
+required measurement, which does not exist — the ADR is **Proposed** until it
+does, and this paragraph's last claim is a projection.
+
+`WithLoadedUserConfig()` sets `agentMappingOff` and `skillActivationOff` **in the
+Option**, not at the call site, so no later composition of options reopens them:
+both ADR 0017's and ADR 0022's guarantees are held by layer 1 being `""`, and
+measurement (j) arm `X` resolved a three-way name collision to the repository's
+own copy 3 of 3 under `nil`. The CLI discovers the operator's agents and skills
+natively instead; what is given up is the staged copy's attributable name and
+its shadow-proofness.
+
+The choice is disclosed on the plan screen through a `note*` sibling of
+`noteCeiling` and `noteMissingBuildEvidence` — **one slot that prints the
+isolated sentence or the loaded one, never both and never neither**, with a
+different literal per runtime because the bill differs (on Claude the operator's
+standing grants come back with their settings, so a declared `Bash(git *)` is a
+declaration again; on Codex `--sandbox` and `approval_policy="never"` are argv
+outside the branch and the flag widens neither). There is **no new snapshot
+field**: inside a non-empty `ToolPolicies` map an absent `setting_sources` is
+unambiguous, so the disclosure predicate reads the policies about to be spawned
+and cannot drift from the argv. `resume` therefore inherits the choice and
+reprints the line before the banner while registering **no** flag of its own — a
+resumed leg's flags may only de-escalate (ADR 0017 §6, one direction over).
+
+Out of scope in every direction: `run` is untouched (`Options.ToolPolicies` is
+nil there and `TestScheduler_HandWrittenGraphGetsNoCeiling` passes unmodified);
+`chat` parses no such flag, so every chat-planned node stays isolated; the
+planner already ran unisolated and the assessor keeps layer 1 unconditionally,
+because its input is untrusted model output; the graph schema gains nothing, so
+no planner can request this per node; enterprise and managed settings are
+unioned on top and cannot be dropped by an argument's absence; and
+`internal/childenv` is untouched — one list, no runtime branch, still scrubbing
+all four API-key variables from every child. A restored configuration is not a
+restored API key.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
