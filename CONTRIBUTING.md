@@ -28,15 +28,16 @@ fetches a released version from the module proxy, not your local checkout;
 the symlink is for contributors actively working on the source.
 
 `make test` runs the entire suite against a scripted `FakeRunner`
-(`internal/runner/fake.go`) — no test in the repo spawns a real `claude`
+(`internal/runner/fake.go`) — no test it runs spawns a real `claude`
 process. That is intentional: the ready-set scheduler, DAG validation,
 handoff, retry, and halt-on-fail logic are all exercised through
 `map[nodeID]NodeOutcome` fixtures, so CI never needs a `claude` login and
 never costs money.
 
-One file is a **sanctioned exception to "spawns nothing"**, and it is still an
-exception to nothing above: `cmd/oh-my-graph/skillargv_test.go` drives the real
-`CLIRunner` against a temporary `#!/bin/sh` stub it writes itself, so it
+One file outside the four exec-seam packages is a **sanctioned exception to
+"spawns nothing"**, and it is still an exception to nothing above:
+`cmd/oh-my-graph/skillargv_test.go` drives the real `CLIRunner` against a
+temporary `#!/bin/sh` stub it writes itself, so it
 can assert the bytes of a node's argv — the one layer a real node obeys, and
 the one a `FakeRunner` cannot reach. It never launches `claude`, never touches
 the network, and costs nothing; what it does depend on is a POSIX `/bin/sh` and
@@ -57,7 +58,7 @@ make smoke   # builds the binary, then runs graphs/haiku-smoke.yaml for real
 make smoke-codex  # the same graph through a saved Codex login
 ```
 
-These are the only commands that intentionally spawn a **real** model CLI.
+These are the only `make` targets that intentionally spawn a **real** model CLI.
 They spend plan allowance and require the selected CLI to be logged in. They
 are manual, local-only steps — **never** add either to CI, and don't submit a
 PR that wires one into a workflow.
@@ -81,7 +82,8 @@ PR that wires one into a workflow.
 
 | rule | |
 |---|---|
-| `test` and `stress` must pass | both required; `stress` is the `-count=N` repeat that catches a race a single run hides |
+| `test` and `stress` must pass | both required; `stress` is the `-race -count=200` repeat over the concurrency-sensitive packages, and it reports green without repeating when the diff touches none of them |
+| a CHANGELOG entry, or a stated reason | the `changelog` job fails a PR that changes files without touching `CHANGELOG.md`; put `no-changelog` in the PR body to skip it |
 | the branch must be up to date with `main` | so the checks that passed are the checks for the merged tree |
 | every conversation resolved | a review comment cannot be merged past by ignoring it |
 | **administrators included** | there is no bypass, for anyone |
@@ -118,8 +120,9 @@ maintainer in a hurry.
   practice; it is simply no longer a rule that can deadlock the repository when
   the only available reviewer is the author.
 
-Graph lanes open PRs as **drafts** — CodeRabbit skips drafts, so marking the PR
-ready is what invites it.
+Graph lanes open PRs as **drafts**, except `graphs/dev-review-pr.yaml`, whose
+`publish:` binding opens a ready one — CodeRabbit skips drafts, so marking the
+PR ready is what invites it.
 
 ### Attribution
 
@@ -160,7 +163,7 @@ its own injected interface:
 
 | object | runs | interface |
 |---|---|---|
-| `internal/runner.CLIRunner` | a node's `claude -p` subprocess | `runner.NodeRunner` |
+| `internal/runner.CLIRunner` | a node's model CLI subprocess (`claude -p` or `codex exec`) | `runner.NodeRunner` |
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 | `internal/worktree.GitManager` | the `git worktree` commands behind a node's `worktree:` | `worktree.Provider` |
 | `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
@@ -236,6 +239,9 @@ without an explicit, discussed design change should not be merged:
   `internal/verify/shell_test.go`, `internal/worktree/git_test.go`,
   `internal/browser/exec_test.go`) — if you touch env construction, make sure
   those tests still prove the scrub.
+- **Artifact handoff is the default.** `handoff: session` is opt-in and valid
+  only with exactly one session-parent; don't make session handoff a default or
+  an implicit path.
 - **Never a provider SDK.** A node runs as the provider's own CLI subprocess —
   `claude -p ... --output-format json` or `codex exec --json`, one runtime per
   run (ADR 0025) — on that provider's saved login. Don't introduce an
@@ -244,9 +250,9 @@ without an explicit, discussed design change should not be merged:
   a new way to reach a model.
 - **Never `--bare`.** That flag disables OAuth and would break subscription
   auth. Don't add it to the built argv.
-- **Never `--no-session-persistence`.** Nodes run with session persistence on
-  so every node shows up as an ordinary session in `~/.claude/projects`,
-  readable by anything that reads claude transcripts.
+- **Never `--no-session-persistence`.** Nodes run with session persistence on,
+  so every node stays observable as an ordinary session transcript of whichever
+  CLI ran it (`~/.claude/projects` for claude).
   Don't add a flag or option that turns it off by default.
 - **Every field on `graph.Node` has an explicit auto-mode disposition.** A
   planner reply is untrusted input, so `coordinator.validatePlannedNodes` must
@@ -294,9 +300,8 @@ Maintainer checklist for cutting a release:
   on. `TestChangelogSectionHasSubstance` catches an empty one in the PR, where
   it is still cheap; a tag is public the moment it lands. The Contributors line
   is computed from `git log`, so it needs nothing from you.
-- **`make smoke` before tagging.** Run the real-`claude` smoke locally as the
-  last gate — it is the only check that exercises an actual subprocess, and
-  it never runs in CI.
+- **`make smoke` and `make smoke-codex` before tagging.** Run both real-CLI
+  smokes locally as the last gate — neither runs in CI.
 - **One scoped deep meta-review per release, on a rotating subject** (tests →
   docs → security). Pick the release's subject and ask one targeted question
   about that area's blind spots, rather than adding another generic review
