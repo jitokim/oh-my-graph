@@ -189,9 +189,11 @@ func listRuns(w, warnW io.Writer, root string, verbose bool) error {
 // skipped — the silence is the promise that the table above is the whole truth,
 // so it must never be spent on an empty summary.
 func printSkipped(warnW io.Writer, skipped runstatus.SkipReport, shown int, verbose bool) {
-	lines := skipped.Summary(shown, "oh-my-graph runs list --verbose")
+	var lines []string
 	if verbose {
 		lines = skipped.Detail(shown)
+	} else {
+		lines = skipped.Summary(shown, "oh-my-graph runs list --verbose")
 	}
 	for _, line := range lines {
 		fmt.Fprintln(warnW, line)
