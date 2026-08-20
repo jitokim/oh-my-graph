@@ -88,6 +88,19 @@ func (s Skip) Line() string {
 	return fmt.Sprintf("WARNING: skipping run %q: %v", s.RunID, s.Err)
 }
 
+// StatusUnavailable is what a surface showing ONE run says when Gather refused
+// it: there is no status to render, and the reason is the error. It is a
+// separate sentence from Skip.Line because nothing is being skipped — the run
+// is still the run the user asked about, and only its status is missing.
+//
+// It lives here because it was already being spelled in one place and silently
+// omitted in another: `show` printed it, `watch` dropped the error with an
+// `err == nil &&` and simply left its status line out, which is the opposite
+// defect on the same fact.
+func StatusUnavailable(err error) string {
+	return fmt.Sprintf("WARNING: this run's status could not be derived: %v", err)
+}
+
 // SkipReport collects the refusals a single pass over the runs root produced,
 // and reports them once at the end instead of once per run. It holds no writer
 // and prints nothing itself: a caller takes the lines and puts them on whichever
@@ -141,7 +154,11 @@ func (r *SkipReport) Summary(shown int, detailCmd string) []string {
 	for _, skip := range r.skips {
 		var mismatch *runstate.SchemaMismatchError
 		if !errors.As(skip.Err, &mismatch) {
-			perRun = append(perRun, "  "+skip.Line())
+			// Unindented, exactly as this line has always been printed: the
+			// collapsed block is a breakdown and reads as one, but a line that
+			// was never collapsed must stay byte-identical, down to the anchor a
+			// `grep '^WARNING: skipping run'` is written against.
+			perRun = append(perRun, skip.Line())
 			continue
 		}
 		key := schemaPair{found: mismatch.Found, want: mismatch.Want}
@@ -157,10 +174,12 @@ func (r *SkipReport) Summary(shown int, detailCmd string) []string {
 				"but this build can neither list nor resume them",
 			counts[key], key.found, key.want))
 	}
-	lines = append(lines, perRun...)
+	// The offer belongs under the counts it explains, and before the per-run
+	// lines, which need no offer: they already name their run.
 	if len(order) > 0 && detailCmd != "" {
-		lines = append(lines, fmt.Sprintf("  `%s` names every skipped run", detailCmd))
+		lines = append(lines, fmt.Sprintf("  `%s` names them one by one", detailCmd))
 	}
+	lines = append(lines, perRun...)
 	return lines
 }
 
@@ -175,7 +194,7 @@ func (r *SkipReport) Detail(shown int) []string {
 	lines := []string{fmt.Sprintf("WARNING: %d of %d run directories could not be read and are not shown:",
 		len(r.skips), shown+len(r.skips))}
 	for _, skip := range r.skips {
-		lines = append(lines, "  "+skip.Line())
+		lines = append(lines, skip.Line())
 	}
 	return lines
 }

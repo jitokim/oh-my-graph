@@ -82,17 +82,30 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	}
 
 	// The shared derivation (runstatus.Of), so `watch` refuses exactly the runs
-	// `runs list` calls ABANDONED and the dashboard paints abandoned. An error
-	// here is not this command's to report — a missing stream is the mistyped-id
-	// error below, and a stream this binary refuses to read is Follow's — so an
-	// unanswerable probe simply falls through to the tail, which is the
+	// `runs list` calls ABANDONED and the dashboard paints abandoned. Most errors
+	// here are still not this command's to report — a missing stream is the
+	// mistyped-id error below, and a stream this binary refuses to read is
+	// Follow's — so an unanswerable probe falls through to the tail, which is the
 	// pre-ADR-0015 behaviour.
 	// Gather, not Of, for the reason `runs list` and `show` use it: a directory
 	// whose stream has said nothing has no status to announce (runstatus.Spoken,
 	// ADR 0023 §2.1.1), and here it is also about to be the unknown-run error
 	// below — an announced FAIL one line above "unknown run" would be two
 	// answers about one directory.
-	if facts, err := runstatus.Gather(runDir); err == nil && runstatus.Spoken(facts) {
+	//
+	// The ONE error that is this command's to report is an incompatible SNAPSHOT
+	// schema, and it is the exception because nothing downstream will ever
+	// mention it: the stream tails perfectly, Follow has nothing to complain
+	// about, and the status line just silently is not there. That silence was
+	// measured as the opposite defect on the same fact `runs list` was shouting
+	// 261 times (notes/measurements/runs-list-noise-2026-08-21.md §6), so it is
+	// said once, in the sentence `show` already used for it, and the tail then
+	// proceeds exactly as before. Every other refusal keeps falling through:
+	// they are the stream's, and two complaints about one directory is the thing
+	// the paragraph above exists to prevent.
+	facts, factsErr := runstatus.Gather(runDir)
+	switch {
+	case factsErr == nil && runstatus.Spoken(facts):
 		status := runstatus.Probe(runDir, facts)
 		if status == runstatus.Abandoned {
 			fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
@@ -104,6 +117,8 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 		// a planner call, a running node, or a stream that is already over —
 		// the three cases that look identical from a tail alone.
 		fmt.Fprintf(w, "run %s is %s\n", runID, status)
+	case factsErr != nil && runstatus.ReasonOf(factsErr) == runstatus.ReasonIncompatibleSnapshot:
+		fmt.Fprintln(warnW, runstatus.StatusUnavailable(factsErr))
 	}
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE

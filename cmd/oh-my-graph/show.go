@@ -110,7 +110,10 @@ func showRun(w io.Writer, runDir, runID string) error {
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
 	if statusErr != nil {
-		fmt.Fprintf(w, "WARNING: this run's status could not be derived: %v\n", statusErr)
+		// The sentence itself is runstatus.StatusUnavailable, shared with
+		// `watch`, which used to omit this line rather than print it: one fact,
+		// one wording, one place (skip.go).
+		fmt.Fprintln(w, runstatus.StatusUnavailable(statusErr))
 	}
 	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap),
 		snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
