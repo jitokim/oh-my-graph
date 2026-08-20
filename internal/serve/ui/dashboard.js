@@ -159,13 +159,36 @@ const LIVE_STATES = new Set(["running", "planning"]);
 // TestCardStateTokens_AreDefinedByEveryAsset holds it to the Go side's set.
 const COUNT_ORDER = ["planning", "running", "paused", "abandoned", "passed", "failed", "pending", "unknown"];
 
+// Why a run reads as `unknown`, ONE sentence per reason code, for the group
+// note above the unreadable cards. The codes are runstatus.SkipReason's, sent
+// on the card as `error_code`; the card's own `error` field stays the per-run
+// sentence and is still painted on each tile.
+//
+// The prose is here and not in the payload on purpose: /api/cards is a
+// machine-readable surface, so it carries the code and this page turns the code
+// into a sentence — the same split the CLI makes, where runstatus counts the
+// reasons and `runs list` prints them. A code this page does not know still
+// groups; it simply gets no note, and its cards still carry their own errors.
+const UNREADABLE_WHY = {
+  incompatible_snapshot:
+    "written by a snapshot schema this build does not read — not damaged, but this build can neither open nor resume them",
+  unreadable: "could not be read; each card below carries its own reason",
+};
+
 function render() {
   const all = [...cards.values()].sort((a, b) => (a.run_id < b.run_id ? 1 : -1));
   const live = all.filter((c) => LIVE_STATES.has(c.state));
-  const settled = all.filter((c) => !LIVE_STATES.has(c.state));
+  // A run this build cannot read is not settled history — it has no history to
+  // show — so it gets its own section instead of padding the settled list. The
+  // split is on `error_code`, which serve.brokenCard sets and nothing else does:
+  // that is the refusal itself, and it is also the key the group counts on, so
+  // this page does not hand-copy a state token to find them.
+  const unreadable = all.filter((c) => c.error_code);
+  const settled = all.filter((c) => !LIVE_STATES.has(c.state) && !c.error_code);
 
   paintGroup($("live-cards"), live);
   paintGroup($("settled-cards"), settled);
+  paintUnreadable(unreadable);
   $("live-count").textContent = String(live.length);
   $("settled-count").textContent = String(settled.length);
   $("live-empty").hidden = live.length > 0;
@@ -198,6 +221,30 @@ function paintCounts(all) {
 // them at most, and a rebuild cannot drift from the state it is given.
 function paintGroup(host, group) {
   host.replaceChildren(...group.map(cardEl));
+}
+
+// The unreadable section: its cards, and above them one line per reason code
+// carrying that reason's COUNT. That count is the whole point — a section that
+// said only "not readable by this build" would hide the difference between one
+// stray directory and four fifths of the corpus — so it is stated per reason
+// rather than as one anonymous total, and the section disappears entirely when
+// there is nothing to report.
+function paintUnreadable(group) {
+  $("unreadable-section").hidden = group.length === 0;
+  $("unreadable-count").textContent = String(group.length);
+
+  const by = new Map();
+  for (const card of group) {
+    by.set(card.error_code, (by.get(card.error_code) || 0) + 1);
+  }
+  const note = $("unreadable-why");
+  note.replaceChildren();
+  for (const [code, n] of by) {
+    const why = UNREADABLE_WHY[code];
+    note.append(withText(el("p", "section-why"), why ? `${n} ${why}` : `${n} ${code}`));
+  }
+
+  paintGroup($("unreadable-cards"), group);
 }
 
 function cardEl(card) {

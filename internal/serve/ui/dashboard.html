@@ -59,6 +59,18 @@
       <summary class="section-head">settled <span id="settled-count" class="section-count">0</span></summary>
       <div id="settled-cards" class="cards"></div>
     </details>
+    <!-- Runs this build cannot read at all, in their own collapsed section
+         rather than mixed into settled. 261 of 320 runs in the corpus that
+         motivated this were one schema mismatch, and burying 57 real runs under
+         them is what made the settled list unreadable. Hidden entirely when
+         there are none: an empty accusation is worse than no section.
+         `unreadable-why` states each reason ONCE, with its count; the cards are
+         all still here, one click away, each with its own error. -->
+    <details id="unreadable-section" hidden>
+      <summary class="section-head">not readable by this build <span id="unreadable-count" class="section-count">0</span></summary>
+      <div id="unreadable-why" class="section-note"></div>
+      <div id="unreadable-cards" class="cards"></div>
+    </details>
   </main>
   <footer>
     <span id="banner" class="banner"></span>

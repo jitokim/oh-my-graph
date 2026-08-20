@@ -36,6 +36,23 @@ main {
 #settled-section > summary { cursor: pointer; }
 #settled-section > summary::marker { color: var(--muted); }
 
+/* The runs this build cannot read, collapsed the same way settled is — they
+   are the least actionable thing on the page, and there can be hundreds. */
+#unreadable-section { margin-top: 1.6rem; }
+#unreadable-section > summary { cursor: pointer; }
+#unreadable-section > summary::marker { color: var(--muted); }
+
+/* One line per reason, with its count: the aggregation the payload declines to
+   carry (it is machine-readable and stays per-run), spent once here instead of
+   once per card. */
+.section-note { margin: 0 0 0.7rem; }
+.section-why {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
+}
+
 .empty { color: var(--muted); font-size: 13px; margin: 0.2rem 0 0; }
 .empty code {
   font-family: ui-monospace, Menlo, monospace;

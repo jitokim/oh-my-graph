@@ -90,8 +90,24 @@ type runCard struct {
 	// spends money, and the operator must be told what it is about to allow
 	// BEFORE pressing it (ADR 0015 §4, the residual-hazard paragraph).
 	Hint string `json:"hint,omitempty"`
-	// Error is why this run reads as stateUnknown, shown on the card.
+	// Error is why this run reads as stateUnknown, shown on the card. It stays a
+	// PER-RUN sentence and keeps its live consumer (ui/dashboard.js's
+	// `.card-error`): it is the card's only explanation channel, and the run it
+	// names is the run it is about.
 	Error string `json:"error,omitempty"`
+	// ErrorCode is that same refusal as a machine-readable code
+	// (runstatus.ReasonOf) — the ONE thing this payload gains, and deliberately
+	// a code rather than more prose.
+	//
+	// It exists because the aggregation belongs on the PAGE and the page needs a
+	// key to aggregate on. Measured on 2026-08-21, /api/cards answered 320 cards
+	// of which 261 carried the same sentence about the same schema mismatch, 191
+	// KiB of JSON, and the dashboard painted all 261 into the settled grid on top
+	// of the 57 runs actually worth reading
+	// (notes/measurements/runs-list-noise-2026-08-21.md §6). Grouping needs to
+	// know that those 261 are the same KIND of unreadable, which no consumer can
+	// tell from a prose sentence carrying a different path each time.
+	ErrorCode runstatus.SkipReason `json:"error_code,omitempty"`
 }
 
 // cardCounts is the card's node tally. Total comes from the graph, the rest
@@ -258,9 +274,12 @@ func buildCard(runsRoot, runID string) runCard {
 	return card
 }
 
-// brokenCard is the card for a run directory this binary refuses to read.
+// brokenCard is the card for a run directory this binary refuses to read. The
+// sentence and the code come from the same error, through the same classifier
+// the CLI's skip report uses (runstatus.ReasonOf), so the dashboard and
+// `runs list` can never disagree about which runs are the same kind of broken.
 func brokenCard(runID string, err error) runCard {
-	return runCard{RunID: runID, State: stateUnknown, Error: err.Error()}
+	return runCard{RunID: runID, State: stateUnknown, Error: err.Error(), ErrorCode: runstatus.ReasonOf(err)}
 }
 
 // runState is a MAPPING from the shared enumeration to this page's vocabulary,
