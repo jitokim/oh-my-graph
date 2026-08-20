@@ -77,9 +77,6 @@ type Skip struct {
 	Err   error
 }
 
-// Reason is this skip's machine-readable code.
-func (s Skip) Reason() SkipReason { return ReasonOf(s.Err) }
-
 // Line is the per-run warning, unchanged from the one `runs list` has always
 // printed: it is what --verbose prints, and what a reason that must not be
 // collapsed still prints by default, so nothing a reader learned to grep for
@@ -114,13 +111,6 @@ type SkipReport struct {
 func (r *SkipReport) Add(runID string, err error) {
 	r.skips = append(r.skips, Skip{RunID: runID, Err: err})
 }
-
-// Len is how many run directories were skipped.
-func (r *SkipReport) Len() int { return len(r.skips) }
-
-// Skips is every refusal in the order it was met, for a caller that wants the
-// codes rather than the prose.
-func (r *SkipReport) Skips() []Skip { return r.skips }
 
 // schemaPair is the grouping key for ReasonIncompatibleSnapshot: the schema the
 // snapshot was written by and the one this build reads. Two old formats in one
