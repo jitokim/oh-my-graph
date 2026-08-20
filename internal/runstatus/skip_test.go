@@ -108,9 +108,8 @@ func TestSkipReport_EmptyReportPrintsNothing(t *testing.T) {
 // default output.
 func TestSkipReport_Summary_CollapsesManyIdenticalSchemaMismatchesToOneCount(t *testing.T) {
 	var r SkipReport
-	for i, id := range []string{"run-a", "run-b", "run-c"} {
+	for _, id := range []string{"run-a", "run-b", "run-c"} {
 		r.Add(id, mismatch(fmt.Sprintf("/runs/%s/state.json", id), 2, 3))
-		_ = i
 	}
 
 	lines := r.Summary(59 /* shown */, "oh-my-graph runs list --verbose")
