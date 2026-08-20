@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,73 @@ func TestBuildCmd_PlannedNodeCeilingRendersEveryLayer(t *testing.T) {
 			t.Errorf("layer %s missing from planned argv (want %q): %q", layer, want, cmd.Args)
 		}
 	}
+}
+
+// TestBuildCmd_LayersOneAndFourMoveTogetherAndTheRestDoNot is ADR 0032 §3(4),
+// the Claude half of the same one-bit decision the Codex protocol renders as
+// four flags. §2.3's rule is what it checks, in the form a node sees it: an
+// opted-in planned node's config posture is exactly a hand-written `run`
+// node's, and its TOOL posture is still exactly a planned node's.
+//
+// Both arms assert layers 2, 3 and 5 present, which is the half that matters.
+// "--setting-sources is gone" is trivially true of an empty argv, and the
+// flag's entire justification is that the three residual layers keep binding
+// underneath it — so a build where the opt-in quietly dropped --tools or
+// --disallowedTools with the isolation would be a build where this door is no
+// narrower than hand-editing the plan and running it with `run`.
+func TestBuildCmd_LayersOneAndFourMoveTogetherAndTheRestDoNot(t *testing.T) {
+	planned := ToolPolicy{
+		AllowedTools:    []string{"Read", "Bash(git *)"},
+		Tools:           []string{"Read", "Bash"},
+		DisallowedTools: []string{"Edit", "Write", "WebFetch"},
+	}
+	isolated := planned
+	isolated.SettingSources, isolated.StrictMCPConfig = noSettings(), true
+
+	for _, tc := range []struct {
+		name       string
+		policy     ToolPolicy
+		wantIsolat bool
+	}{
+		{name: "default planned node: layers 1 and 4 on the argv", policy: isolated, wantIsolat: true},
+		{name: "--accept-loaded-user-config: neither on the argv", policy: planned, wantIsolat: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := NewCLIRunner(RuntimeClaude).buildCmd(context.Background(), NodeInvocation{
+				Prompt: testPrompt, PermissionMode: "dontAsk", Policy: tc.policy,
+			}).Args
+
+			// Layer 1 needs value+presence, not a substring: the whole value
+			// is the EMPTY string, so `--setting-sources ""` and no flag at
+			// all are indistinguishable to anything that joins the argv.
+			if _, present := flagValue(args, "--setting-sources"); present != tc.wantIsolat {
+				t.Errorf("layer 1 present = %t, want %t: %q", present, tc.wantIsolat, args)
+			}
+			if present := slices.Contains(args, "--strict-mcp-config"); present != tc.wantIsolat {
+				t.Errorf("layer 4 present = %t, want %t — it moves WITH layer 1 or the MCP sentence is unmeasured (E5): %q", present, tc.wantIsolat, args)
+			}
+			for layer, want := range map[string][2]string{
+				"2 grant":     {"--allowedTools", "Read,Bash(git *)"},
+				"3 narrowing": {"--tools", "Read,Bash"},
+				"5 residual":  {"--disallowedTools", "Edit,Write,WebFetch"},
+			} {
+				if !hasFlagValue(args, want[0], want[1]) {
+					t.Errorf("layer %s missing (want %s %s): %q", layer, want[0], want[1], args)
+				}
+			}
+		})
+	}
+}
+
+// flagValue is the value following flag, and whether the flag was there at
+// all. The two results are separate for layer 1's sake — see above.
+func flagValue(args []string, flag string) (string, bool) {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1], true
+		}
+	}
+	return "", false
 }
 
 // TestBuildCmd_AgentOnlyWhenNamed proves `agent:` reaches the argv as

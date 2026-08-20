@@ -79,6 +79,78 @@ func TestCodexBuildArgsIsolatesAutoOwnedInvocation(t *testing.T) {
 	}
 }
 
+// codexIsolationFlags are the four things buildArgs appends for an isolated
+// planned node, and the exact four ADR 0032's opt-in takes off the argv. They
+// are listed as sequences because two of them are `--config <expr>` pairs: a
+// bare search for "--config" would find approval_policy and call the isolation
+// present when it was gone.
+var codexIsolationFlags = [][]string{
+	{"--ignore-user-config"},
+	{"--ignore-rules"},
+	{"--config", "project_doc_max_bytes=0"},
+	{"--config", "mcp_servers={}"},
+}
+
+// TestCodexBuildArgs_SettingSourcesNilnessDecidesIsolationAndNotTheSandbox is
+// ADR 0032 §3(3), and it is one test rather than two because both halves have
+// to hold of the SAME argv.
+//
+// The absent arm is the widening: with SettingSources nil — what
+// --accept-loaded-user-config leaves behind, and what every hand-written `run`
+// node has always had — none of the four appear, so ~/.codex/config.toml, the
+// repository's rules, its AGENTS.md files and the operator's MCP servers all
+// load.
+//
+// The present arm is the regression pin, and the reason the negative arm means
+// anything: a build that stopped appending the four entirely would satisfy
+// every "want absent" line on its own.
+//
+// The sandbox and approval_policy assertions run on BOTH arms because they are
+// the Codex disclosure's load-bearing sentence — "the filesystem sandbox above
+// and approval_policy=\"never\" are argv on every node, so this flag widens
+// neither". They sit outside the nil-check in buildArgs; this is what says so.
+func TestCodexBuildArgs_SettingSourcesNilnessDecidesIsolationAndNotTheSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		policy     ToolPolicy
+		wantIsolat bool
+	}{
+		{
+			name:       "default planned node: layer 1 present, all four flags on the argv",
+			policy:     ToolPolicy{AllowedTools: []string{"Read"}, SettingSources: noSettings(), StrictMCPConfig: true},
+			wantIsolat: true,
+		},
+		{
+			name:       "--accept-loaded-user-config: layer 1 nil, none of the four",
+			policy:     ToolPolicy{AllowedTools: []string{"Read"}},
+			wantIsolat: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NewCLIRunner(RuntimeCodex).buildArgs(NodeInvocation{
+				Prompt:         "work",
+				PermissionMode: "dontAsk",
+				Policy:         tc.policy,
+			})
+			for _, sequence := range codexIsolationFlags {
+				switch present := containsSequence(got, sequence...); {
+				case tc.wantIsolat && !present:
+					t.Errorf("isolated argv is missing %#v — a planned node's default ceiling silently disappeared: %#v", sequence, got)
+				case !tc.wantIsolat && present:
+					t.Errorf("opted-in argv still carries %#v, so the operator's config does not load after all: %#v", sequence, got)
+				}
+			}
+			// The floor, on both arms.
+			if !containsSequence(got, "--sandbox", "workspace-write") {
+				t.Errorf("argv lost its filesystem sandbox: %#v", got)
+			}
+			if !containsSequence(got, "--config", `approval_policy="never"`) {
+				t.Errorf(`argv lost approval_policy="never": %#v`, got)
+			}
+		})
+	}
+}
+
 func TestParseCodexJSONLReturnsThreadReplyAndUsage(t *testing.T) {
 	raw := strings.Join([]string{
 		`{"type":"thread.started","thread_id":"019c5a2b-62d5-7d81-98a7-68c9f4d84f84"}`,
