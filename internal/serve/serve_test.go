@@ -1123,3 +1123,81 @@ func TestResolveRun_MissingRootIsANoRunsError(t *testing.T) {
 		t.Fatalf("err = %v, want the no-runs error", err)
 	}
 }
+
+// --- ResolveRun's deliberate swallow (resolve.go:77-81) ----------------------
+//
+// runstatus.Of can fail on a run directory this build cannot read (an
+// incompatible snapshot schema, or — as exercised here — an event stream
+// written by a newer schema than this binary understands). ResolveRun's loop
+// swallows that error on purpose: it is only asking "is this candidate
+// in-flight", and a candidate it cannot read is answered "no" rather than
+// aborting the whole resolution. These two tests pin the two ways that
+// swallow is observable from the return value alone (ResolveRun has no
+// writer to check for silence on): the loop must CONTINUE past the unreadable
+// candidate to a real in-flight one instead of erroring or stopping there,
+// and — when nothing else is left to prefer — the final fallback must still
+// hand back the newest directory rather than propagating the read failure.
+
+// writeFutureSchemaStream writes a run directory's events.jsonl with a single
+// line whose schema field this binary's runfeed.Schema is guaranteed to be
+// older than, so runfeed.Walk (and therefore runstatus.Of) refuses it — the
+// same "schema newer than this binary understands" shape
+// show_skip_report_test.go's stream fixture uses, reused here because it is
+// the one error runstatus.Of can return that has nothing to do with the
+// snapshot file ResolveRun never reads in this loop.
+func writeFutureSchemaStream(t *testing.T, dir, runID string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+	line := `{"schema":99,"run_id":"` + runID + `","event":"run_started"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, runfeed.FileName), []byte(line), 0o644); err != nil {
+		t.Fatalf("write future-schema stream: %v", err)
+	}
+}
+
+// TestResolveRun_UnreadableNewestCandidateIsSkippedInFavorOfTheActualInFlightRun
+// is the loop's continue-past-the-error half: the NEWEST directory is the one
+// this binary cannot read, an older one really is in flight, and the oldest
+// is cleanly settled. If the swallow were a `return "", err` instead of a
+// silent `false`, this would surface as an error; if it were treated as
+// "in-flight" instead of "unknown", ResolveRun would wrongly prefer the
+// unreadable run over the real one. Neither happens: ResolveRun returns no
+// error and resolves to the run that is actually running.
+func TestResolveRun_UnreadableNewestCandidateIsSkippedInFavorOfTheActualInFlightRun(t *testing.T) {
+	root := t.TempDir()
+	writeEvents(t, filepath.Join(root, "20250101-000000"), "20250101-000000", settledEvents...)
+	writeEvents(t, filepath.Join(root, "20250102-000000"), "20250102-000000", openEvents...)
+	writeFutureSchemaStream(t, filepath.Join(root, "20250103-000000"), "20250103-000000")
+
+	got, err := ResolveRun(root, "")
+	if err != nil {
+		t.Fatalf("ResolveRun returned error: %v, want the unreadable candidate's error swallowed", err)
+	}
+	if got != "20250102-000000" {
+		t.Errorf("ResolveRun = %q, want %q — the real in-flight run, skipping past the newer but unreadable directory",
+			got, "20250102-000000")
+	}
+}
+
+// TestResolveRun_AllCandidatesUnreadableStillFallsBackToTheNewestDirectory is
+// the loop's other half: when EVERY candidate's status read fails, the loop
+// swallows every one of them and falls through to branch 3 (the newest
+// directory, unconditionally) rather than returning the last read error —
+// exactly what resolve.go's own comment promises ("it can still be picked as
+// the newest fallback, where the server itself reports the problem honestly
+// on its endpoints").
+func TestResolveRun_AllCandidatesUnreadableStillFallsBackToTheNewestDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFutureSchemaStream(t, filepath.Join(root, "20250101-000000"), "20250101-000000")
+	writeFutureSchemaStream(t, filepath.Join(root, "20250102-000000"), "20250102-000000")
+
+	got, err := ResolveRun(root, "")
+	if err != nil {
+		t.Fatalf("ResolveRun returned error: %v, want every candidate's read failure swallowed", err)
+	}
+	if got != "20250102-000000" {
+		t.Errorf("ResolveRun = %q, want %q — the newest directory, chosen as the fallback despite being unreadable",
+			got, "20250102-000000")
+	}
+}
