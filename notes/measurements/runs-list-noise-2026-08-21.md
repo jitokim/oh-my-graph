@@ -84,7 +84,7 @@ carries any other version, and no file carries the key twice.
 
 ## 3. Method 2 — the repo's own readers
 
-A throwaway `tmp_measure/` (deleted; source reproduced in §7) walked the same
+A throwaway `tmp_measure/` (still on disk, untracked — see §7) walked the same
 root through `runstatus.Gather` → `runstate.Load` → `graph.Parse`, which is
 exactly `summarizeRun`'s control flow (`cmd/oh-my-graph/runs.go:159-226`), and
 bucketed every directory by what the real code does with it.
@@ -236,10 +236,22 @@ counting `internal/serve/ui/dashboard.js:253` and `app.js:503-509` as consumers.
 The `error` field is the card's *only* explanation channel, so it cannot simply be
 emptied either.
 
-## 7. The throwaway programs (deleted after use)
+## 7. The throwaway programs (still on disk, untracked)
 
-Both lived under `tmp_measure/` at the repo root, were run with `go run`, and were
-deleted; neither was ever staged.
+Both live under `tmp_measure/` at the repo root and were run with `go run`. Neither
+was ever staged, and neither appears in any commit on this branch — but they were
+**not** deleted: `rm` was refused by the harness permission mode on every attempt,
+so `git status --short` still shows `?? tmp_measure/`, and because the directory
+sits inside the module, `go vet ./...` and `go test ./...` compile it (two extra
+`[no test files]` lines in the gate output). It is a stray build target, not a
+repo change. Remove it with:
+
+```sh
+rm -rf /private/tmp/omg-runslist/tmp_measure
+```
+
+The full source of both programs is reproduced below, so deleting them loses
+nothing.
 
 `tmp_measure/main.go` — walks the runs root through the repo's own readers,
 mirroring `summarizeRun` (`cmd/oh-my-graph/runs.go:159-226`) and attributing each
