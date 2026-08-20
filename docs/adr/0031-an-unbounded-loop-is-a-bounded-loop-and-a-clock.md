@@ -9,6 +9,12 @@
   lifetime), and one measurement taken (the supervision surface is 84% noise).
   Marked inline at §3.1 and §3.6. Full record:
   `notes/measurements/2026-08-20-being-the-supervisor-by-hand.md` (hq).
+- **§6's first falsification condition has been RUN** (same day, $26.45): it
+  passes at 8/10, and the two dissenting revolutions exposed a contradiction
+  between two rules in the selector's own prompt — so it measured prompt
+  quality, not `select` quality. It also priced the deciding half at ~$2.65 a
+  revolution, which adds a requirement: do not re-survey unchanged state. See
+  §6.1.
 - Date: 2026-08-20
 
 ## 1. Context
@@ -254,11 +260,39 @@ That is what §6 measures before this moves past Proposed.
 
 ## 6. Falsification — what would make this wrong
 
-1. **`select` quality.** Run the survey/select half alone (no `work` node) for
-   ≥10 revolutions and compare its choice against what the operator would have
-   picked. If it disagrees materially more than ~2 in 10, the supervisor is
-   amplifying a bad chooser and §3 is premature. **This is cheap and gated on
-   nothing** — no engine change is needed to measure it.
+1. ~~**`select` quality.**~~ **RUN, 2026-08-20 — passes, and taught more by
+   nearly failing.** Ten revolutions of the survey/select half, the operator's
+   own answer sealed in a timestamped commit *before* the first one launched.
+   **8/10 agreed** with it, so the "more than ~2 in 10" bar holds — at exactly
+   the edge.
+
+   The two dissenters are the finding. They did not ignore the priority rule;
+   they **measured why it produced nothing** and said so: every open PR reduced
+   to "a human presses merge", which the same prompt's do-not-choose rule
+   excludes. So the prompt's *"green unmerged PRs first"* and its *"do not
+   choose what somebody else owes a decision on"* contradict each other in a
+   perfectly ordinary repository state, and the selector resolved that
+   contradiction one way eight times and the other way twice. **The instability
+   is a defect in the prompt, not noise in the chooser** — this experiment
+   measured prompt quality, not `select` quality, and the next iteration must
+   state the precedence before the number means anything.
+
+   Three things the selector found that the operator had not: that rebasing the
+   stacked PR onto `main` alone would conflict, because the line it edits is
+   *added by the PR underneath it*; that the stacked PR's diff **has never been
+   reviewed by anything**, since CodeRabbit skips a non-`main` base; and that
+   the spawn-vs-exit distinction this ADR wants already exists three lines from
+   a typed-error precedent (`internal/runner/cli.go:277-281`).
+
+   **And a cost that lands on §3:** $26.45 for ten revolutions — **~$2.65 each,
+   spent only on deciding**, re-reading a repository state that had not changed.
+   Overnight, that is pure leakage. A supervisor therefore owes one more
+   requirement: **do not re-survey unchanged state** (short-circuit on HEAD plus
+   a hash of the open issue/PR set).
+
+   Record: `notes/measurements/2026-08-20-select-quality-sealed-prediction.md`
+   (hq) — sealed prediction and result in one file, the seal being the commit
+   that precedes the runs.
 2. **Limit-pause frequency.** If, over a month of dogfooding, no run ever pauses
    on a limit, §3.3 is machinery for a situation that does not arise, and the
    simple shell loop of §3.1 is the right answer after all. Count them: the
