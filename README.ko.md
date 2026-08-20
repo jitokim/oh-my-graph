@@ -203,8 +203,12 @@ dogfooding run은
 런타임의 메커니즘으로 실행을 제한합니다. Claude는 아래 문서의 측정된 tool
 ceiling을 사용하고, Codex는 planned node에서 user config, project rules/AGENTS,
 MCP server를 제외한 뒤 read-only 또는 workspace sandbox를 적용합니다. **둘 다
-실행을 시작한 repository를 둘러싼 완전한 보안 경계는 아닙니다.** `auto`는
-수정되어도 괜찮은 디렉토리에서 실행하세요.
+축소이지, 실행을 시작한 repository를 둘러싼 보안 경계는 아닙니다.** `auto`는
+수정되어도 괜찮은 디렉토리에서 실행하세요. 그리고 둘 다 planned node에만
+적용됩니다. `run`으로 실행하는 손으로 쓴 그래프는 당신의 user config, project
+rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
+`--accept-loaded-user-config`는 `auto`에서도 그것들을 원한다고 소리 내어
+선언하는 플래그입니다.
 
 계층별 입장과 그 뒤의 모든 측정은 [SECURITY.md](SECURITY.md)에, 나머지 정직한
 빈틈들과 플랫폼 지원 매트릭스(macOS·Linux 지원, WSL first-class, 네이티브
