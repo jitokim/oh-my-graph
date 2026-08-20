@@ -548,6 +548,54 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_ScrubIsUnchangedByTheConfigOptIn is ADR 0032 §3(11): the guard
+// that turns "we did not mean to touch internal/childenv" into an assertion.
+//
+// --accept-loaded-user-config restores the operator's setting SOURCES, and a
+// restored config is not a restored API key: the scrub is one list with no
+// runtime branch and no policy branch, so an opted-in node is billed to the
+// same subscription an isolated one is. A diff under internal/childenv/ would
+// mean the implementation took a wrong turn; this is what would notice.
+//
+// Both runtimes, because the scrub's whole design claim is that there is no
+// branch to get wrong, and the benign variables are asserted to survive so
+// this cannot pass on a child env that was emptied rather than filtered.
+func TestBuildCmd_ScrubIsUnchangedByTheConfigOptIn(t *testing.T) {
+	parentEnv := []string{
+		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
+		"ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed",
+		"OPENAI_API_KEY=sk-openai-should-be-scrubbed",
+		"CODEX_API_KEY=sk-codex-should-be-scrubbed",
+		"PATH=/usr/bin",
+		"HOME=/home/dev",
+	}
+	// The opted-in ceiling: layers 1 and 4 off, 2, 3 and 5 intact.
+	optedIn := ToolPolicy{
+		AllowedTools:    []string{"Read"},
+		Tools:           []string{"Read"},
+		DisallowedTools: []string{"Edit", "Write"},
+	}
+
+	for _, rt := range []Runtime{RuntimeClaude, RuntimeCodex} {
+		t.Run(string(rt), func(t *testing.T) {
+			r := NewCLIRunner(rt, withEnviron(func() []string { return parentEnv }))
+			cmd := r.buildCmd(context.Background(), NodeInvocation{
+				Prompt: testPrompt, PermissionMode: "dontAsk", Policy: optedIn,
+			})
+
+			for _, kv := range cmd.Env {
+				switch key, _, _ := strings.Cut(kv, "="); key {
+				case "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY":
+					t.Errorf("a provider API variable leaked into a child spawned under the config opt-in: %q", kv)
+				}
+			}
+			if !containsEnv(cmd.Env, "PATH=/usr/bin") || !containsEnv(cmd.Env, "HOME=/home/dev") {
+				t.Errorf("the opted-in child env is not a scrub but a wipe: %q", cmd.Env)
+			}
+		})
+	}
+}
+
 // hasFlagValue reports whether args contains flag immediately followed by
 // value. Needed because the values under test include the EMPTY string, which
 // a naive strings.Contains over a space-joined argv cannot distinguish from
