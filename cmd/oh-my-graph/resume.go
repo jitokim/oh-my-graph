@@ -528,6 +528,17 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	policies := toRunnerToolPolicies(snap.ToolPolicies)
 	noteAgentDeescalation(os.Stdout, unmapped)
 	dropSkillActivation(os.Stdout, snap.ToolPolicies, policies, flags.noSkillActivation, unmapped)
+	// The one thing on this screen that is not a de-escalation, and the reason
+	// it has to be here at all (ADR 0032 §2.7): a leg continuing an opted-in
+	// run spawns nodes carrying the operator's own configuration, and the
+	// terminal that disclosed it the first time is long gone. `resume`
+	// registers no flag to make that choice — it reads the choice out of the
+	// policies it just rehydrated, which is the same value the argv is built
+	// from — so this is inheritance being SAID, not a second process widening
+	// anything. Before the banner, with the leg's other differences.
+	if plannedNodesLoadUserConfig(policies) {
+		noteLoadedUserConfig(os.Stdout, runtime)
+	}
 
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:               runID,

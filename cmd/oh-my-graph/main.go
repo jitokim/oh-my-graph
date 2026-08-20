@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list
@@ -160,7 +160,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list
@@ -349,7 +349,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	if err != nil {
 		return err
 	}
-	noteCodexRuntimePolicy(stdout, runtime, g, false)
+	noteCodexRuntimePolicy(stdout, runtime, g, handWrittenNodes)
 	flags.runtime = runtime
 	flags.runtimeWarnW = io.Discard
 	printFragmentResolutions(stdout, loaded.Resolutions)
@@ -1146,12 +1146,26 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 		}
 		fmt.Fprintln(w, line)
 	}
+	// One slot, two sentences, never both and never neither: either these
+	// planned nodes run isolated or they run with the operator's own
+	// configuration (ADR 0032 §2.6). The predicate reads the POLICIES about to
+	// be spawned rather than the flag that set them, so the screen cannot
+	// disagree with the argv — and so `resume`, which has no flag at all, asks
+	// the identical question of the identical value.
+	posture := isolatedPlannedNodes
+	if plannedNodesLoadUserConfig(plan.ToolPolicies) {
+		posture = loadedUserConfigPlannedNodes
+	}
 	if runtime == runner.RuntimeCodex {
-		noteCodexRuntimePolicy(w, runtime, g, true)
+		noteCodexRuntimePolicy(w, runtime, g, posture)
 	} else {
 		noteAgentMappings(w, plan.AgentMappings, plan.AgentStaging)
 		noteSkillActivation(w, plan.SkillScan, plan.SkillActivation)
-		noteCeiling(w, anyAgentMapped(g))
+		if posture == loadedUserConfigPlannedNodes {
+			noteLoadedUserConfig(w, runtime)
+		} else {
+			noteCeiling(w, anyAgentMapped(g))
+		}
 	}
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteMissingBuildEvidence(w, evidence)
@@ -1177,7 +1191,11 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 // Deliberately one line per difference and no more. A disclosure long enough
 // to scroll past is one nobody reads, so anything that is merely interesting
 // belongs in docs/LIMITATIONS.md, not here.
-func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph, isolated bool) {
+//
+// config is the last line, and it is a three-valued question rather than a
+// bool because three things are true in this project and only two of them are
+// about a planned node. See nodeConfigPosture.
+func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph, config nodeConfigPosture) {
 	if runtime != runner.RuntimeCodex {
 		return
 	}
@@ -1201,9 +1219,91 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 	fmt.Fprintln(w, "  A node's budget_usd therefore loads but cannot apply — there is no spend to compare it against, and that node's runaway guard is its timeout: (each such node is warned by name). `auto --max-goal-budget-usd` is refused instead, because it is checked only at a cycle boundary: an unmeasurable ceiling would buy a whole cycle before stopping to say it cannot be checked, where an inapplicable node cap costs nothing extra. The loop stays bounded either way — --max-cycles is what bounds iterations (ADR 0026).")
 	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
 	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (ADR 0009 scopes it to the Claude runtime).")
-	if isolated {
+	switch config {
+	case isolatedPlannedNodes:
 		fmt.Fprintln(w, "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.")
+	case loadedUserConfigPlannedNodes:
+		noteLoadedUserConfig(w, runtime)
 	}
+}
+
+// nodeConfigPosture is what the nodes of the graph being described load as
+// their own configuration — the single question noteCodexRuntimePolicy's last
+// line and noteCeiling's paragraph both answer.
+//
+// It replaced a bool when ADR 0032 added a third answer, and the third value
+// is the reason it had to: `run`, `--dry-run` and `lint` describe a graph the
+// USER wrote, whose nodes have carried the user's configuration since before
+// any of these flags existed. Saying "planned nodes run with YOUR
+// configuration (--accept-loaded-user-config)" there would name a flag nobody
+// typed for nodes nobody planned, so those three keep printing nothing at all,
+// exactly as they did.
+type nodeConfigPosture int
+
+const (
+	// handWrittenNodes: the graph came from the user, so there is no
+	// difference from their own configuration to disclose. Prints nothing.
+	handWrittenNodes nodeConfigPosture = iota
+	// isolatedPlannedNodes: the `auto` default — layer 1 is "" and the nodes
+	// load none of the user's settings.
+	isolatedPlannedNodes
+	// loadedUserConfigPlannedNodes: planned nodes under
+	// --accept-loaded-user-config, or a leg resuming a run that used it.
+	loadedUserConfigPlannedNodes
+)
+
+// plannedNodesLoadUserConfig answers the question the disclosure slot turns
+// on, from the policies that are about to be spawned rather than from the flag
+// that built them (ADR 0032 §2.7).
+//
+// Reading the policies is what lets `resume` — which registers no opt-in flag
+// and must not — ask this of a snapshot it merely rehydrated, and it is what
+// makes a screen that disagrees with the argv impossible: SettingSources is
+// the same pointer both this and runner.buildArgs read. An empty or nil map is
+// a hand-written graph, which records no policies at all
+// (runstate.Snapshot.ToolPolicies), and answers false.
+func plannedNodesLoadUserConfig(policies map[string]runner.ToolPolicy) bool {
+	for _, policy := range policies {
+		if policy.SettingSources == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// noteLoadedUserConfig is the opted-in half of the disclosure slot: the
+// sentence a run gets INSTEAD of noteCeiling's paragraph (Claude) or instead
+// of noteCodexRuntimePolicy's isolation line (Codex). ADR 0032 §2.6 fixes both
+// literals, and they differ because what the operator bought differs — on
+// Codex the sandbox floor is argv on every node and survives, on Claude the
+// operator's standing permission grants come back with their settings and turn
+// layer 2 into a declaration again.
+//
+// It is deliberately not a reassurance. The most likely way this feature fails
+// is an operator reading it as pure capability, so the Claude paragraph spends
+// a whole sentence on the grants and both name what still binds.
+//
+// Printed by `auto`, by `--plan-only`, by every later cycle of a goal loop and
+// by a resumed leg of an opted-in run. One writer, one literal per runtime: a
+// second copy of these words somewhere else is how one of them goes stale.
+func noteLoadedUserConfig(w io.Writer, runtime runner.Runtime) {
+	if runtime == runner.RuntimeCodex {
+		fmt.Fprint(w,
+			"  Planned nodes run with YOUR configuration (--accept-loaded-user-config): ~/.codex/config.toml,\n"+
+				"  your repository's rules and AGENTS.md files, and your MCP servers all load. The filesystem\n"+
+				"  sandbox above and approval_policy=\"never\" are argv on every node, so this flag widens neither.\n",
+		)
+		return
+	}
+	fmt.Fprint(w,
+		"  Planned nodes run with YOUR configuration (--accept-loaded-user-config): your user, project\n"+
+			"  and local settings load, and with them your CLAUDE.md, your hooks and your MCP servers.\n"+
+			"  Your standing permission grants load too, so a declared scope like Bash(git *) is a\n"+
+			"  declaration again and not a limit — a call your own settings allow will run. Each node's\n"+
+			"  --tools set and its deny list still bind. Enterprise and managed policy are unaffected by\n"+
+			"  this flag and cannot be widened by it. Agent mapping and skill activation are off for this\n"+
+			"  run: a staged definition would be shadowed by a same-named one your settings discover.\n",
+	)
 }
 
 // noteReplan discloses that this plan was bought twice: the first planner
@@ -1622,6 +1722,12 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // someone else's system prompt, which is a fact about the plan a reader should
 // carry into the per-node lines above, and the one thing about a mapped node
 // that is still different.
+//
+// Since ADR 0032 this is one of TWO paragraphs that can fill this slot, and it
+// is the one a run gets by DEFAULT. Its alternative is noteLoadedUserConfig,
+// printed instead of it — never beside it — for a run that typed
+// --accept-loaded-user-config. printPlanForRuntime chooses between them from
+// the policies, so every sentence below stays true of every run that reads it.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
 		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
