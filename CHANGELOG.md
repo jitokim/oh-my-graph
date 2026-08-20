@@ -56,7 +56,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `notes/measurements/runs-list-noise-2026-08-21.md`) the command printed 326
   lines, of which **261 were the same WARNING with a different path in it** —
   every run written by an older snapshot schema — for a table of 59 rows. It now
-  prints 68:
+  prints **68 lines, of which 3 are the WARNING** (the middle one wraps below);
+  the 65 lines of table on stdout are unchanged:
 
   ```
   WARNING: 261 of 320 run directories could not be read and are not shown:
@@ -65,13 +66,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
     `oh-my-graph runs list --verbose` names them one by one
   ```
 
-  Nothing is hidden and nothing is quieter about damage. The count is
-  unconditional, so silence still means "the table is the whole truth"; only a
-  reason whose sentence is identical for every run it covers is collapsed, and
-  every other refusal — a corrupt snapshot, a stream this build will not read,
-  graph bytes that will not parse — keeps its own full line, unindented, exactly
-  as before. **Which runs are listable did not change**, and the summary says in
-  as many words that this build can neither list nor resume the skipped ones.
+  **Nothing was dropped — the per-run detail moved behind `--verbose`**, which
+  prints the same 261 lines it always did (262 warning lines, for 327 in total)
+  under the same count. Nothing is hidden and nothing is quieter about damage:
+  the count is unconditional, so silence still means "the table is the whole
+  truth"; only a reason whose sentence is identical for every run it covers is
+  collapsed, and every other refusal — a corrupt snapshot, a stream this build
+  will not read, graph bytes that will not parse — keeps its own full line,
+  unindented, exactly as before. **Which runs are listable did not change**, and
+  the summary says in as many words that this build can neither list nor resume
+  the skipped ones.
   The report stays on **stderr**, where these warnings have always gone, so the
   table on stdout is byte-identical.
 
