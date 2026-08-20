@@ -74,6 +74,11 @@ func ResolveRun(root, explicit string) (string, error) {
 
 	for _, runID := range runIDs {
 		status, err := runstatus.Of(filepath.Join(root, runID))
+		// Deliberately silent, unlike every other surface the skip report
+		// reached: this loop is only asking "is this one in flight?", and a run
+		// this build cannot read cannot be in flight. Reporting the error here
+		// would not change the answer, and refusing to skip past it would
+		// change which run `serve` opens.
 		if err == nil && status.InFlight() {
 			return runID, nil
 		}
