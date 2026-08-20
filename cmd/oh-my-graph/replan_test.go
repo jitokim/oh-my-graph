@@ -163,7 +163,7 @@ func TestRunAutoWith_RejectedPlanKeepsTheSpecItPaidFor(t *testing.T) {
 	// regression ADR 0023 §9 names as the one that would otherwise ship this
 	// change as a net loss.
 	var listed, warned strings.Builder
-	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+	if listErr := listRuns(&listed, &warned, runsRoot(), false); listErr != nil {
 		t.Fatalf("listRuns: %v", listErr)
 	}
 	if warned.Len() != 0 {

@@ -92,7 +92,7 @@ func TestListRuns_AbandonedRunIsLabelledAndHinted(t *testing.T) {
 	deadLegLock(t, dir)
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, root); err != nil {
+	if err := listRuns(&out, &warn, root, false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -128,7 +128,7 @@ func TestListRuns_ASnapshotlessAbandonedRunIsStillListed(t *testing.T) {
 	deadLegLock(t, dir)
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, root); err != nil {
+	if err := listRuns(&out, &warn, root, false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -180,7 +180,7 @@ func TestListRuns_StatusAgreesWithTheSharedRule(t *testing.T) {
 				t.Fatalf("runstatus.Of returned error: %v", err)
 			}
 			var out, warn strings.Builder
-			if err := listRuns(&out, &warn, root); err != nil {
+			if err := listRuns(&out, &warn, root, false); err != nil {
 				t.Fatalf("listRuns returned error: %v", err)
 			}
 			row := lineContaining(t, out.String(), "run-1")

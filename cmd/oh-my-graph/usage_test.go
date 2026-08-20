@@ -55,6 +55,10 @@ func flagSetsBySubcommand() map[string]*flag.FlagSet {
 		"resume": newResumeFlags().set,
 		"serve":  newServeFlags().set,
 		"chat":   newChatFlags().set,
+		// `runs` parses its flags after the `list` subcommand name rather than
+		// straight off its own argv, but the synopsis line it must match is
+		// keyed on the group name, which is what usageSubcommandPattern reads.
+		"runs": newRunsListFlags().set,
 	}
 }
 

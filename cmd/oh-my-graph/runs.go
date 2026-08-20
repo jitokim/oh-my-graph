@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,6 +19,41 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
+// runsListFlags is `runs list`'s one flag. It is a FlagSet rather than a hand
+// rolled argv check so that `runs --help` and `runs list --help` answer with the
+// flag's own description (argslot.go's usageRequest prints it), and so that
+// usage_test.go can hold the synopsis to what the parser really accepts.
+type runsListFlags struct {
+	set *flag.FlagSet
+	// verbose names every skipped run instead of counting the collapsible ones.
+	// It is the escape hatch the collapse owes its reader: the default output
+	// says how many runs are missing and why, and this says which.
+	verbose bool
+}
+
+func newRunsListFlags() *runsListFlags {
+	f := &runsListFlags{set: flag.NewFlagSet("runs list", flag.ContinueOnError)}
+	f.set.BoolVar(&f.verbose, "verbose", false, "name every skipped run instead of counting them by reason")
+	return f
+}
+
+// parse reads `list`'s own argv — the tokens after the subcommand name. The help
+// token is intercepted before flag.Parse for the reason #200 records: Go's flag
+// package answers `--help` with flag.ErrHelp, which would travel as a failure
+// and exit 1 at the one moment the flag list is what the user asked for.
+func (f *runsListFlags) parse(args []string) error {
+	if req := helpRequest(args, "runs", f.set); req != nil {
+		return req
+	}
+	if err := f.set.Parse(args); err != nil {
+		return err
+	}
+	if f.set.NArg() > 0 {
+		return fmt.Errorf("runs list: unexpected argument %q (usage: oh-my-graph runs list [--verbose])", f.set.Arg(0))
+	}
+	return nil
+}
+
 // runRuns is the `runs` subcommand group. Its only action today is `list`;
 // a group (rather than a bare `list` top-level command) keeps room for later
 // run-directory queries (`runs show`, `runs clean`) without another top-level
@@ -27,7 +63,8 @@ func runRuns(args []string) error {
 	// dash-prefixed token keeps its existing `unknown subcommand` answer, which
 	// already names the alternative. Only the help request is intercepted
 	// (argslot.go), because that one had no answer at all (#200).
-	if req := helpRequest(args, "runs", nil); req != nil {
+	flags := newRunsListFlags()
+	if req := helpRequest(args, "runs", flags.set); req != nil {
 		return req
 	}
 	if len(args) == 0 {
@@ -35,10 +72,10 @@ func runRuns(args []string) error {
 	}
 	switch args[0] {
 	case "list":
-		if len(args) > 1 {
-			return fmt.Errorf("runs list: unexpected argument %q (usage: oh-my-graph runs list)", args[1])
+		if err := flags.parse(args[1:]); err != nil {
+			return err
 		}
-		return listRuns(os.Stdout, os.Stderr, runsRoot())
+		return listRuns(os.Stdout, os.Stderr, runsRoot(), flags.verbose)
 	default:
 		return fmt.Errorf("runs: unknown subcommand %q (want list)", args[0])
 	}
@@ -88,7 +125,22 @@ type runSummary struct {
 // deleted or rewritten; a file that is merely ABSENT is a fact about the run and
 // keeps its row. A missing root is not an error — it just means nothing has run
 // yet.
-func listRuns(w, warnW io.Writer, root string) error {
+//
+// The skips are COLLECTED and reported once, at the end, rather than printed as
+// they are met (runstatus.SkipReport). On the corpus that motivated this, that
+// was 261 copies of one sentence for 59 rows of table; the reason is one fact
+// about this build, so it is now stated once with a count. Nothing is hidden:
+// the report always says how many of how many directories are missing, verbose
+// still names every one of them, and a refusal the report must not collapse
+// still prints its own full line by default.
+//
+// It goes where the 261 lines went — BEFORE the table, on warnW. Before, so the
+// count is the first thing read rather than a footnote under sixty rows: the one
+// thing this report must never fail to deliver is that something is missing. On
+// warnW, because it is a warning and that is where this command's warnings have
+// always gone; the same `2>/dev/null` that silenced 261 lines yesterday silences
+// one today, and the table on stdout is byte-identical either way.
+func listRuns(w, warnW io.Writer, root string, verbose bool) error {
 	// A root that does not exist yet reads as no entries at all: "nothing has
 	// ever run here" and "nothing here is listable" are the same answer to the
 	// user, so both fall through to the one empty-table path below rather than
@@ -99,18 +151,27 @@ func listRuns(w, warnW io.Writer, root string) error {
 	}
 
 	var rows []runSummary
+	var skipped runstatus.SkipReport
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		row, err := summarizeRun(root, entry.Name())
 		if err != nil {
-			fmt.Fprintf(warnW, "WARNING: skipping run %q: %v\n", entry.Name(), err)
+			skipped.Add(entry.Name(), err)
 			continue
 		}
 		rows = append(rows, row)
 	}
+	// Both numbers are known before anything is printed, which is what lets the
+	// report open with "N of M" and still stand above the table.
+	printSkipped(warnW, skipped, len(rows), verbose)
+
 	if len(rows) == 0 {
+		// The report above is what keeps this honest, and this is the case that
+		// needs it most: "No runs found." with a silent stderr means an empty
+		// runs root, and with the report above it means every run there is was
+		// skipped. Those are very different answers to the same three words.
 		fmt.Fprintln(w, "No runs found.")
 		return nil
 	}
@@ -122,6 +183,19 @@ func listRuns(w, warnW io.Writer, root string) error {
 
 	printRuns(w, rows)
 	return nil
+}
+
+// printSkipped writes the skip report, or nothing at all when nothing was
+// skipped — the silence is the promise that the table above is the whole truth,
+// so it must never be spent on an empty summary.
+func printSkipped(warnW io.Writer, skipped runstatus.SkipReport, shown int, verbose bool) {
+	lines := skipped.Summary(shown, "oh-my-graph runs list --verbose")
+	if verbose {
+		lines = skipped.Detail(shown)
+	}
+	for _, line := range lines {
+		fmt.Fprintln(warnW, line)
+	}
 }
 
 // summarizeRun builds one run's row from its persisted files. It reuses the

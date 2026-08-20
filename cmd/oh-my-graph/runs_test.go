@@ -56,7 +56,7 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if warn.Len() != 0 {
@@ -100,7 +100,7 @@ func TestListRuns_UnknownCostUsesTokensInsteadOfZeroDollars(t *testing.T) {
 		})
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -131,7 +131,7 @@ func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -161,7 +161,7 @@ func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 func TestListRuns_MissingRunsDirIsNotAnError(t *testing.T) {
 	isolateRunHome(t)
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("a missing runs dir must not be an error: %v", err)
 	}
 	if !strings.Contains(out.String(), "No runs found.") {
@@ -175,7 +175,7 @@ func TestListRuns_EmptyRunsDirSaysNoRuns(t *testing.T) {
 		t.Fatalf("create empty runs dir: %v", err)
 	}
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "No runs found.") {
@@ -202,7 +202,7 @@ func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if !strings.Contains(warn.String(), "run-corrupt") {
@@ -422,7 +422,7 @@ func TestListRuns_StatusFollowsRunLifecycle(t *testing.T) {
 			}
 
 			var out, warn strings.Builder
-			if err := listRuns(&out, &warn, root); err != nil {
+			if err := listRuns(&out, &warn, root, false); err != nil {
 				t.Fatalf("listRuns returned error: %v", err)
 			}
 			got := out.String()
@@ -462,7 +462,7 @@ func TestListRuns_RefusedPlanShowsDurablePlannerAccounting(t *testing.T) {
 	})
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, root); err != nil {
+	if err := listRuns(&out, &warn, root, false); err != nil {
 		t.Fatalf("listRuns: %v", err)
 	}
 	got := out.String()
