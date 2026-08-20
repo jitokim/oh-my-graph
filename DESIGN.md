@@ -1948,7 +1948,14 @@ one, and it answers 409 like any other view that cannot resume.
   this binary cannot read renders as an `unknown` card carrying the reason
   rather than being dropped: `runs list` can skip a broken run with a
   warning because a table can, but a dashboard that silently omitted one
-  would be lying about what is on the machine. The token itself is a contract
+  would be lying about what is on the machine. It also carries that reason as
+  a CODE (`error_code`, from `runstatus.ReasonOf` — the same classifier the
+  CLI's skip report counts on), because a page holding hundreds of cards that
+  all say the same thing needs a key to group them by, and a prose sentence
+  naming a different path each time is not one. The grouping itself is on the
+  page — the unreadable runs get their own collapsed section stating each
+  reason once with its count — and never in the payload, which is
+  machine-readable and keeps `error` a per-run field. The token itself is a contract
   between four files with no compiler between them — `card.go` chooses the
   word, `dashboard.css` paints the tile's stripe, `style.css` owns the colour
   token and the chip's dot, `dashboard.js` decides whether a card carrying it

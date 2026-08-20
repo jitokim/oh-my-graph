@@ -51,7 +51,53 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   findings" genuinely has nothing to build — and the implementation-shaped
   examples now pass `--verify-cmd`, because they do.
 
+- **`runs list` reports the runs it skips ONCE, with a count, instead of once
+  per run.** On the corpus this was measured against (320 run directories,
+  `notes/measurements/runs-list-noise-2026-08-21.md`) the command printed 326
+  lines, of which **261 were the same WARNING with a different path in it** —
+  every run written by an older snapshot schema — for a table of 59 rows. It now
+  prints 68:
+
+  ```
+  WARNING: 261 of 320 run directories could not be read and are not shown:
+    261 written by snapshot schema 2, which this build (schema 3) does not read
+        — not damaged, but this build can neither list nor resume them
+    `oh-my-graph runs list --verbose` names them one by one
+  ```
+
+  Nothing is hidden and nothing is quieter about damage. The count is
+  unconditional, so silence still means "the table is the whole truth"; only a
+  reason whose sentence is identical for every run it covers is collapsed, and
+  every other refusal — a corrupt snapshot, a stream this build will not read,
+  graph bytes that will not parse — keeps its own full line, unindented, exactly
+  as before. **Which runs are listable did not change**, and the summary says in
+  as many words that this build can neither list nor resume the skipped ones.
+  The report stays on **stderr**, where these warnings have always gone, so the
+  table on stdout is byte-identical.
+
+- **The dashboard groups the runs it cannot read** into their own collapsed
+  section instead of mixing them into `settled`. The same 261 runs were 261
+  cards, each painting the same sentence, on top of the 57 runs actually worth
+  reading. The section states each reason once with its count; every card is
+  still built, still carries its own error, and the header's `unknown` chip
+  still counts them.
+
+  `/api/cards` and `/api/cards/events` gain one field, **`error_code`** — the
+  machine-readable reason (`incompatible_snapshot`, `unreadable`) beside the
+  `error` sentence they already carried. The `error` field is unchanged and
+  stays per-run; no English was added to a machine-readable surface.
+
+- **`watch` says why a run has no status line**, for the one case where nothing
+  downstream ever would: a snapshot written by an incompatible schema. It used
+  to drop that error and silently omit the line — the opposite defect on the
+  same fact `runs list` was shouting about. It now prints the sentence `show`
+  already used, and tails exactly as before.
+
 ### Added
+
+- **`oh-my-graph runs list --verbose`**, the escape hatch the summary above
+  owes its reader: it names every skipped run, reproducing the old output line
+  for line under the new count. `runs --help` and `runs list --help` list it.
 
 - **`--accept-no-build-evidence` on `auto`**, the one exit from the refusal
   above. It is not a verification switch — nothing is skipped, because nothing
