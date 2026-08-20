@@ -536,7 +536,17 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// policies it just rehydrated, which is the same value the argv is built
 	// from — so this is inheritance being SAID, not a second process widening
 	// anything. Before the banner, with the leg's other differences.
+	//
+	// On Codex the sandbox line comes first, because the sentence below POINTS
+	// at it ("the filesystem sandbox above") and this leg prints none of the
+	// rest of noteCodexRuntimePolicy. A disclosure whose load-bearing clause
+	// refers to text the screen never emitted reads as a missing paragraph, and
+	// the reader is left unable to check the one thing the sentence claims still
+	// binds. Nothing else on a resumed screen is deictic.
 	if plannedNodesLoadUserConfig(policies) {
+		if runtime == runner.RuntimeCodex {
+			fmt.Fprint(os.Stdout, codexSandboxLine)
+		}
 		noteLoadedUserConfig(os.Stdout, runtime)
 	}
 

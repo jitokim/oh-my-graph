@@ -1179,6 +1179,18 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	fmt.Fprintln(w)
 }
 
+// codexSandboxLine is the one line of the Codex disclosure that another
+// sentence REFERS to rather than repeats: noteLoadedUserConfig's Codex literal
+// ends "the filesystem sandbox above ... are argv on every node", and "above"
+// has to name text the same screen actually emitted.
+//
+// A resumed leg prints that sentence and nothing else of noteCodexRuntimePolicy
+// (continueRun), so it prints this line immediately before it. Extracting the
+// literal rather than rewording the sentence keeps the fresh-run screen
+// byte-identical and keeps one copy of the sandbox mapping: a second, reworded
+// copy is how the two would eventually disagree about what plan mode gets.
+const codexSandboxLine = "  Codex filesystem sandbox: permission_mode plan is read-only, bypassPermissions is danger-full-access, and every other mode is workspace-write.\n"
+
 // noteCodexRuntimePolicy prints, before any node spends, every way a Codex run
 // differs from the Claude run this project's defaults describe. (Before any
 // NODE, not before anything: in `auto` the planner call is already bought by
@@ -1195,11 +1207,16 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 // config is the last line, and it is a three-valued question rather than a
 // bool because three things are true in this project and only two of them are
 // about a planned node. See nodeConfigPosture.
+//
+// Its FIRST line is a named constant because a second screen points at it: the
+// Codex half of noteLoadedUserConfig says "the filesystem sandbox above", and a
+// resumed leg prints that sentence without the rest of this block. One literal,
+// two call sites — see codexSandboxLine.
 func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph, config nodeConfigPosture) {
 	if runtime != runner.RuntimeCodex {
 		return
 	}
-	fmt.Fprintln(w, "  Codex filesystem sandbox: permission_mode plan is read-only, bypassPermissions is danger-full-access, and every other mode is workspace-write.")
+	fmt.Fprint(w, codexSandboxLine)
 	for _, node := range g.Nodes {
 		if len(node.AllowedTools) == 0 {
 			continue

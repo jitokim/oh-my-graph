@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -577,6 +579,353 @@ func TestChatLoop_PlannedNodesStayIsolated(t *testing.T) {
 	}
 	if strings.Contains(out, loadedClaudeNote) {
 		t.Errorf("a chat plan screen claimed the operator's configuration loads:\n%s", out)
+	}
+}
+
+// --- 6. the Codex resumed leg -------------------------------------------------
+
+// The Codex arm of the resume, which is where all three of ADR 0032's resumed
+// claims meet: the choice is inherited from the snapshot (`resume` has no flag
+// and must not), the four isolation flags follow it onto the argv of a SECOND
+// process, and the sentence that discloses it has to stand on its own — a
+// resumed leg prints none of noteCodexRuntimePolicy, so "the filesystem sandbox
+// above" would otherwise name a line this leg never emitted.
+
+// codexResumeSpec is the stub planner's reply: two nodes, so the retry leg has
+// exactly one node to re-run and its argv cannot be satisfied by the first
+// leg's.
+const codexResumeSpec = `{"name":"codex-resume","version":"1","nodes":[` +
+	`{"id":"draft","prompt":"draft the codex proposal","allowed_tools":["Read"]},` +
+	`{"id":"render","prompt":"render the codex artifact","allowed_tools":["Read"],"depends_on":["draft"]}]}`
+
+// stubCodex is stubClaude's Codex twin: it records its own argv,
+// NUL-separated, under $OMG_TEST_ARGV_DIR and answers with canned
+// `codex exec --json` JSONL. No real `codex` is ever spawned; what IS real is
+// everything between the policy and the bytes — CLIRunner, codexProtocol's
+// buildArgs, and the process itself.
+const stubCodex = `#!/bin/sh
+out=$(mktemp "$OMG_TEST_ARGV_DIR/argv.XXXXXX")
+for a in "$@"; do printf '%s\0' "$a" >> "$out"; done
+for a in "$@"; do
+  case "$a" in
+    *"planning coordinator"*) cat "$OMG_TEST_REPLIES_DIR/plan.jsonl"; exit 0 ;;
+  esac
+done
+if [ -n "$OMG_TEST_FAIL_PROMPT" ]; then
+  for a in "$@"; do
+    case "$a" in
+      *"$OMG_TEST_FAIL_PROMPT"*) cat "$OMG_TEST_REPLIES_DIR/fail.jsonl"; exit 1 ;;
+    esac
+  done
+fi
+cat "$OMG_TEST_REPLIES_DIR/node.jsonl"
+`
+
+// codexFailJSONL is one node failing on request: a terminal turn.failed, which
+// is what manufactures the FAILED record `resume --retry-failed` exists for.
+const codexFailJSONL = `{"type":"thread.started","thread_id":"t-fail"}` + "\n" +
+	`{"type":"turn.failed","error":{"message":"stub codex: failing on request"}}` + "\n"
+
+// codexJSONL is the three-event stream parseCodexJSONL demands: the thread id,
+// one agent message carrying the reply, and the terminal turn.
+func codexJSONL(t *testing.T, threadID, message string) string {
+	t.Helper()
+	text, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return `{"type":"thread.started","thread_id":"` + threadID + `"}` + "\n" +
+		`{"type":"item.completed","item":{"type":"agent_message","text":` + string(text) + `}}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":2}}` + "\n"
+}
+
+// codexArgvProbe is argvProbe's Codex counterpart, and it is a value for the
+// same reason: a resumed leg is a SECOND process against the SAME run, so it
+// needs the same stub and the same home with a fresh argv directory.
+type codexArgvProbe struct {
+	stub    string
+	argvDir string
+}
+
+func newCodexArgvProbe(t *testing.T) *codexArgvProbe {
+	t.Helper()
+	isolateRunHome(t)
+	// An empty home, so nothing the developer running these tests happens to
+	// have configured can reach a node — including under the opt-in, whose
+	// whole subject is the configuration a real home would supply.
+	t.Setenv("HOME", t.TempDir())
+
+	replies := t.TempDir()
+	writeFileTree(t, filepath.Join(replies, "plan.jsonl"), codexJSONL(t, "t-plan", codexResumeSpec))
+	writeFileTree(t, filepath.Join(replies, "node.jsonl"), codexJSONL(t, "t-node", "done"))
+	writeFileTree(t, filepath.Join(replies, "fail.jsonl"), codexFailJSONL)
+	t.Setenv(repliesDirEnv, replies)
+
+	probe := &codexArgvProbe{stub: filepath.Join(t.TempDir(), "codex")}
+	writeFileTree(t, probe.stub, stubCodex)
+	if err := os.Chmod(probe.stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probe.freshArgvDir(t)
+	return probe
+}
+
+// runner is a REAL CLIRunner on the Codex protocol, pointed at the stub.
+func (p *codexArgvProbe) runner() runner.NodeRunner {
+	return runner.NewCLIRunner(runner.RuntimeCodex, runner.WithBinary(p.stub))
+}
+
+func (p *codexArgvProbe) freshArgvDir(t *testing.T) {
+	t.Helper()
+	p.argvDir = t.TempDir()
+	t.Setenv(argvDirEnv, p.argvDir)
+}
+
+// nodeArgv is one recorded spawn, found by the prompt codexProtocol.buildArgs
+// puts LAST. recordedArgv.prompt() cannot serve here: it reads `-p`, which is
+// Claude's spelling and appears nowhere in a `codex exec` argv, so every Codex
+// spawn would key as "" and collide. The planner's own spawn is dropped — its
+// ceiling is a different decision (coordinatorInvocation) — and a miss lists
+// what WAS recorded, a node that never ran being the failure worth naming.
+func (p *codexArgvProbe) nodeArgv(t *testing.T, prompt string) recordedArgv {
+	t.Helper()
+	entries, err := os.ReadDir(p.argvDir)
+	if err != nil {
+		t.Fatalf("read recorded argv: %v", err)
+	}
+	recorded := make([]string, 0, len(entries))
+	var matched []recordedArgv
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(p.argvDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		// Each element is NUL-TERMINATED, so the split leaves a trailing "".
+		fields := bytes.Split(raw, []byte{0})
+		argv := make(recordedArgv, 0, len(fields))
+		for _, field := range fields[:len(fields)-1] {
+			argv = append(argv, string(field))
+		}
+		if len(argv) == 0 {
+			continue
+		}
+		last := argv[len(argv)-1]
+		if strings.Contains(last, "planning coordinator") {
+			continue
+		}
+		recorded = append(recorded, last)
+		if strings.HasPrefix(last, prompt) {
+			matched = append(matched, argv)
+		}
+	}
+	sort.Strings(recorded)
+	switch len(matched) {
+	case 1:
+		return matched[0]
+	case 0:
+		t.Fatalf("no node spawned with prompt %q; recorded: %v", prompt, recorded)
+	default:
+		t.Fatalf("prompt %q is a prefix of %d recorded spawns (%v)", prompt, len(matched), recorded)
+	}
+	return recordedArgv{}
+}
+
+// hasSequence reports whether these arguments appear CONSECUTIVELY. It lives
+// with the Codex tests because that is where it is load-bearing: two of the
+// four isolation flags are `--config <expr>` pairs, and a bare search for
+// "--config" would find approval_policy="never" — the one line that must
+// survive the opt-in — and report the isolation present when it was gone.
+func (a recordedArgv) hasSequence(want ...string) bool {
+	for i := range a {
+		if i+len(want) > len(a) {
+			return false
+		}
+		if slices.Equal(a[i:i+len(want)], want) {
+			return true
+		}
+	}
+	return false
+}
+
+// codexIsolationArgv is what buildArgs appends for an isolated planned node,
+// and the exact four ADR 0032's opt-in takes off the argv. Spelled out again
+// here rather than shared with internal/runner's copy: these tests assert what
+// a second PROCESS was spawned with, and a list imported from the code under
+// test would go stale in both places at once.
+var codexIsolationArgv = [][]string{
+	{"--ignore-user-config"},
+	{"--ignore-rules"},
+	{"--config", "project_doc_max_bytes=0"},
+	{"--config", "mcp_servers={}"},
+}
+
+// TestResumeCodex_TheInheritedChoiceDecidesTheResumedArgv is the Codex half of
+// ADR 0032 §3(9), at the only layer a node actually obeys.
+//
+// `resume` registers no opt-in flag, so the resumed leg's argv is built from
+// the policies it rehydrated — and the absent arm is what makes the present
+// arm mean anything: a build that stopped appending the four entirely would
+// satisfy every "want gone" line on its own. Each arm therefore asserts
+// PRESENCE of its own expectation, on the first leg as a precondition and on
+// the second as the claim.
+//
+// The sandbox and approval_policy assertions run on BOTH arms, because they are
+// what the resumed disclosure says still binds: this is the argv that has to be
+// true for that sentence to be honest.
+func TestResumeCodex_TheInheritedChoiceDecidesTheResumedArgv(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		autoArgs     []string
+		wantIsolated bool
+	}{
+		{name: "no flag: the resumed argv is today's, all four flags on it", wantIsolated: true},
+		{name: optInFlag + ": the resumed argv carries none of the four", autoArgs: []string{optInFlag}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := newCodexArgvProbe(t)
+			t.Setenv(failPromptEnv, "render the codex artifact")
+
+			args := append([]string{"turn the issue into a codex proposal", "--accept-no-build-evidence"}, tc.autoArgs...)
+			var runErr error
+			captureStdout(t, func() {
+				runErr = runAutoWithRuntime(runner.RuntimeCodex, args, probe.runner(), browser.NewFakeOpener(), os.Stdout)
+			})
+			if runErr == nil {
+				t.Fatal("precondition failed: the first leg was supposed to fail at the render node")
+			}
+			runID := soleRunID(t)
+
+			// The first leg is in the arm this test claims to be continuing —
+			// otherwise the resumed argv below is not an inheritance of anything.
+			first := probe.nodeArgv(t, "draft the codex proposal")
+			for _, sequence := range codexIsolationArgv {
+				if present := first.hasSequence(sequence...); present != tc.wantIsolated {
+					t.Fatalf("precondition failed: the FIRST leg's argv has %#v present = %t, want %t\nargv: %q",
+						sequence, present, tc.wantIsolated, first)
+				}
+			}
+
+			// A second leg, recording into its own directory with the stub's
+			// failure switched off, so what it asserts is THIS leg's spawn.
+			probe.freshArgvDir(t)
+			t.Setenv(failPromptEnv, "")
+
+			var resumeErr error
+			captureStdout(t, func() {
+				resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), probe.runner(), nil)
+			})
+			if resumeErr != nil {
+				t.Fatalf("resume --retry-failed: %v", resumeErr)
+			}
+
+			argv := probe.nodeArgv(t, "render the codex artifact")
+			for _, sequence := range codexIsolationArgv {
+				switch present := argv.hasSequence(sequence...); {
+				case tc.wantIsolated && !present:
+					t.Errorf("the resumed argv is missing %#v — a second process silently widened a run that never opted in\nargv: %q", sequence, argv)
+				case !tc.wantIsolated && present:
+					t.Errorf("the resumed argv still carries %#v, so the inherited configuration does not load after all\nargv: %q", sequence, argv)
+				}
+			}
+			// The floor, on both arms, and the reason the disclosure may claim
+			// this flag widens neither.
+			if !argv.hasSequence("--sandbox", "workspace-write") {
+				t.Errorf("the resumed argv lost its filesystem sandbox: %q", argv)
+			}
+			if !argv.hasSequence("--config", `approval_policy="never"`) {
+				t.Errorf(`the resumed argv lost approval_policy="never": %q`, argv)
+			}
+			if !argv.hasSequence("exec", "--json") {
+				t.Errorf("the resumed argv is not a `codex exec --json` invocation at all: %q", argv)
+			}
+		})
+	}
+}
+
+// TestResumeCodex_TheResumedDisclosureStandsAlone is review defect #4: the
+// resumed screen's Codex sentence ends "the filesystem sandbox above ... are
+// argv on every node", and a resumed leg prints none of noteCodexRuntimePolicy,
+// so "above" used to name a line this leg never emitted. A reader met a
+// reference with nothing behind it, and could not check the one thing the
+// sentence claims still binds.
+//
+// The pin is the ORDER as much as the presence: the referenced line must be on
+// the screen, and it must be on it FIRST. The last assertion is the general
+// form of the defect and runs on both arms — any "sandbox above" on a resumed
+// screen must have the sandbox line above it.
+func TestResumeCodex_TheResumedDisclosureStandsAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		autoArgs []string
+		wantNote bool
+	}{
+		{name: "opted in: the sentence and the line it points at", autoArgs: []string{optInFlag}, wantNote: true},
+		{name: "not opted in: neither, and the screen is unchanged", wantNote: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{
+				"plan-1": {Result: cycleSpec, TotalCostUSD: 0.04},
+				"work-1": {ExitCode: 1, FailureCause: "stub codex: failing on request", CostUnknown: true},
+				"work-2": {SessionID: "t-work", Result: "PASS", ExitCode: 0, CostUnknown: true},
+			})
+
+			args := append([]string{"tidy the docs", "--accept-no-build-evidence"}, tc.autoArgs...)
+			captureStdout(t, func() {
+				if err := runAutoWithRuntime(runner.RuntimeCodex, args, fake, browser.NewFakeOpener(), os.Stdout); err == nil {
+					t.Error("precondition failed: the first leg was supposed to fail at its only node")
+				}
+			})
+			runID := soleRunID(t)
+
+			out := captureStdout(t, func() {
+				if err := executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil); err != nil {
+					t.Errorf("resume: %v", err)
+				}
+			})
+
+			// Both arms assert the resumed screen EXISTS before asking what is
+			// on it, so neither can pass on a leg that printed nothing at all.
+			banner := strings.Index(out, "Resuming run")
+			if banner < 0 {
+				t.Fatalf("the resumed leg printed no banner, so nothing below was checked:\n%s", out)
+			}
+
+			if tc.wantNote {
+				note := strings.Index(out, loadedCodexNote)
+				if note < 0 {
+					t.Fatalf("the resumed leg never disclosed the inherited configuration in full:\nwant:\n%s\ngot:\n%s", loadedCodexNote, out)
+				}
+				sandbox := strings.Index(out, codexSandboxLine)
+				if sandbox < 0 {
+					t.Fatalf("the resumed sentence points at a filesystem sandbox line this leg never printed:\nwant:\n%s\ngot:\n%s", codexSandboxLine, out)
+				}
+				if sandbox > note {
+					t.Errorf("the line the sentence calls \"above\" was printed BELOW it (sandbox at %d, note at %d):\n%s", sandbox, note, out)
+				}
+				if note > banner {
+					t.Errorf("the disclosure printed AFTER the banner (note at %d, banner at %d); it belongs with the leg's other differences:\n%s", note, banner, out)
+				}
+				if strings.Contains(out, isolatedCodexNote) {
+					t.Errorf("the resumed screen also claimed the nodes ignore your configuration:\n%s", out)
+				}
+			} else {
+				if strings.Contains(out, loadedCodexNote) {
+					t.Errorf("a resume of a run that never opted in claimed it loads the operator's configuration:\n%s", out)
+				}
+				if strings.Contains(out, codexSandboxLine) {
+					t.Errorf("a resumed leg printed the Codex plan-screen disclosure it has never printed:\n%s", out)
+				}
+			}
+
+			// The defect in its general form, on both arms: nothing on a
+			// resumed screen may point at text this leg did not emit.
+			if pointer := strings.Index(out, "sandbox above"); pointer >= 0 {
+				if target := strings.Index(out, codexSandboxLine); target < 0 || target > pointer {
+					t.Errorf("the resumed screen says \"sandbox above\" with no sandbox line above it:\n%s", out)
+				}
+			}
+		})
 	}
 }
 
