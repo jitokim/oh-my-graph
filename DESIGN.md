@@ -2878,7 +2878,9 @@ user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
 imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
-grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are
+grants cannot widen an unreviewed plan — unless that user says at launch that
+they should, which is `--accept-loaded-user-config` and drops the first and
+fourth of those five. All of it, and the gaps that remain, are
 in "Auto mode" above.
 
 ## Open questions (decided defaults; refine in impl)
