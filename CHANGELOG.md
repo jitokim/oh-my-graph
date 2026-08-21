@@ -32,7 +32,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   another link hangs below. And `--delete-branch` stops
   being unconditional — `merge` passes it only when no open child is still
   based on this PR's head branch, and names the child that held it back when
-  one is.
+  one is. The retarget ran two nodes earlier and should have left nothing
+  standing on that head, so the condition is normally satisfied and the check
+  normally costs nothing: it is a second lock on the door the retarget already
+  shut. The run it exists for is the one where the retarget failed QUIETLY,
+  because that is the run in which deleting the branch destroys a PR that can
+  then be neither reopened nor retargeted.
 
   What its absence cost: PR #207 merged with `--delete-branch` at
   2026-08-20T23:48:35Z. PR #211's base was #207's HEAD branch rather than
