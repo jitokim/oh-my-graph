@@ -97,12 +97,12 @@ Codex sandbox isolation을 사용합니다.
 나옵니다:
 
 ```text
-Run 20260729-101532 — PASS, 2 node(s)
-NODE             VERDICT              SESSION                   COST(USD)  DETAIL
----------------------------------------------------------------------------------
-critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
-write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
----------------------------------------------------------------------------------
+Run 20260729-101532 — 2 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+critique         PASS (exit-only)     a1b2c3d4-e5f6-4…     0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4…     0.0091
+-------------------------------------------------------------------------
 TOTAL COST: $0.0125
 ```
 

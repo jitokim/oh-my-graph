@@ -309,8 +309,8 @@ substitution points or it is a different shape. The behavior fields
 `success_check`, `retry`, `agent`, `type`) default from the fragment; a key
 written in the using node overrides the **whole** top-level subtree (never a
 deep merge). A **single-node** fragment may not declare wiring — `id`, `depends_on`, `cwd`,
-`worktree`, `feedback` (load error) — nor `use:` itself (no nesting) —
-nor a **YAML alias or `<<:` merge key inside the `node:` block** (load error):
+`worktree`, `feedback` (load error) — nor a **YAML alias or `<<:` merge key
+inside the `node:` block** (load error):
 a spliced body has to be walkable in full, or a `{{ with.x }}` hiding behind
 an alias would be neither declaration-checked nor substituted and would reach
 the model verbatim. Anchors stay sanctioned everywhere else in a graph file,
@@ -1089,8 +1089,9 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
   is a sweep that cannot silently miss a node. That sweep counts **24
   declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: five of the 24
-  live in `graphs/fragments/` and carry fourteen of the nodes between them.
+  once and every node citing it gets it, which is the point: six of the 24
+  live in `graphs/fragments/`, in five files, and carry fifteen of the nodes
+  between them.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
   `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
   places to correct the sentence in. The
@@ -1335,9 +1336,9 @@ other node pays a retry, and keeps the narrow class.
 
 **What reuse can and cannot deduplicate here.** A `use:`/`with:` fragment
 (ADR 0013) puts a verdict rule in one place exactly when the whole NODE is one
-shape. Four shipped fragments carry their own — `e2e-verify`, the two review
-shapes and `pr-publish` — and the three with a prefix verdict cover ten runtime
-nodes between them. It reaches no further, and ADR 0013's Migration update is
+shape. Six shipped fragments carry their own — `e2e-verify`, the two review
+shapes, `pr-publish`, `repair-round` and `gated-lane` — and the three prefix
+verdicts among the first four cover ten runtime nodes between them. It reaches no further, and ADR 0013's Migration update is
 the measurement: the patterns still repeated in the templates are shared by
 nodes that share nothing else. The six nodes declaring ``^[*_`\s]*DONE\b`` have
 **zero** words of prompt in common and four different tool grants. A fragment
@@ -1612,7 +1613,7 @@ browser one.
 
 **CLI contract:**
 ```
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 ```
 - Exactly one of `--approve`/`--reject` is **required** when the run is paused at
   a gate. A bare `resume <run-id>` on a paused run is an error naming the pending
@@ -2498,7 +2499,8 @@ turns that rule into a build failure. Current dispositions:
 
 | field | planned-node disposition |
 |---|---|
-| `id`, `prompt`, `depends_on`, `handoff` | allowed (prompt must be non-empty) |
+| `prompt`, `depends_on`, `handoff` | allowed (prompt must be non-empty) |
+| `id` | constrained — no `/`: the splice namespace is minted by the loader alone (`validatePlannedNodeID`, ADR 0027) |
 | `type` | constrained — `claude-run` only; `gate` rejected |
 | `allowed_tools` | constrained — non-empty, `plannedToolAllowlist` only |
 | `permission_mode` | constrained — `bypassPermissions` rejected |
@@ -2604,7 +2606,7 @@ ledger — so the summary never under-counts silently.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
-- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, handoff, depends_on).
+- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, retry, handoff, depends_on, agent, worktree, feedback, and the load-time-only use/with).
 - Edge = implicit `Node.DependsOn []string` (no struct).
 - **Scheduler** — drive DAG: ready/running sets, cap, context cancel, halt/continue;
   calls NodeRunner.Run, consults Graph, writes RunLedger, asks Handoff to resolve/persist.
@@ -2742,7 +2744,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
+cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped by decision, not by omission) + FakeRunner
@@ -2752,17 +2754,17 @@ internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
-internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run --dry-run` print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
-internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
+internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), a kept file whose bytes differ from the payload is marked `DIFFERS` and counted (a top-up can pair a freshly written template with a kept older fragment, which fails at load, not at `init`), and a failure partway through removes the files AND directories it created — `graphs/` itself included when that run made it
-graphs/fragments/{e2e-verify,review-security,review-style,pr-publish}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..20}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
+graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml and adr-driven-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
+docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
