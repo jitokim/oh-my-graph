@@ -344,6 +344,26 @@ the path we exercised least, and that is where both bugs lived.
 
 ### Fixed
 
+- **A goal loop no longer throws away a finished cycle because the model CLI
+  blinked** (#214). The assessor's subprocess failing to *start* was treated
+  like any other assessor error: `auto` exited 1 and the cycle's verdict was
+  discarded. The case that found it cost a run whose five nodes had already
+  completed — an npm update replaced `claude` on `PATH` mid-run, and the spawn
+  failed on a binary that had existed twenty minutes earlier and existed again
+  a second later.
+
+  A spawn failure is now retried, up to three attempts, 300ms apart — and
+  **only** a spawn failure. `internal/runner.NodeSpawnError` gives that branch a
+  type a caller can match on instead of a sentence it would have to parse; the
+  distinction itself already existed there, it just had no name.
+
+  Everything else is untouched on purpose: an unparseable reply, a non-zero
+  exit, a timeout and a cancelled context all still stop the loop on the first
+  answer. Retrying those would be re-rolling a verdict until the loop liked
+  one, which is the quiet-spend behaviour ADR 0011 exists to forbid. The test
+  that pins it scripts a second, succeeding reply and asserts the assessor was
+  launched **exactly once** anyway.
+
 - **A subcommand's positional run-id slot no longer swallows a flag** (#200).
   `resume --help` read `--help` as the run id and reported a run that does not
   exist, and every sibling that takes a positional before its flags did the
