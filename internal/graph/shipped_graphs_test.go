@@ -223,7 +223,12 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	// gate, and an assertion naming the gate's immediate parent reads that
 	// splice as the defect it was written to catch — so it is the ANCESTRY
 	// that is pinned here. A gate the re-wait cannot reach is still the
-	// defect; a gate it reaches through two more nodes is not.
+	// defect; a gate it reaches through two more nodes is not. The topology
+	// as shipped: approve-merge → stack-retarget → stack-scan → recheck →
+	// triage. The walk is not a weakening of the old adjacency check — cut
+	// recheck out of that chain (point stack-scan at triage) with the recheck
+	// node still in the file, and the assertion below fails, naming the
+	// ancestry it did find.
 	if len(recheck.DependsOn) != 1 || recheck.DependsOn[0] != "triage" {
 		t.Errorf("recheck depends on %v, want [triage] — it re-waits for the checks triage's push restarted", recheck.DependsOn)
 	}
