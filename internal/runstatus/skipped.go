@@ -12,16 +12,19 @@ import (
 // A run directory this binary cannot READ is the one directory that gets no
 // status at all: Gather returns an error rather than Facts, and the surface
 // decides what that means. `runs list` drops the row; `show` keeps its row and
-// names the damage; the dashboard renders an `unknown` card. Those three
-// answers are deliberate and stay (each surface knows what it can still show),
-// but the CLASSIFICATION of the damage — what kind it is, and how a reader is
-// told how much of it there was — must not be composed three times, for the
-// reason this package exists at all.
+// names the damage; `watch` tails the stream anyway; the dashboard renders an
+// `unknown` card. Those answers are deliberate and stay (each surface knows
+// what it can still show), but the CLASSIFICATION of the damage — what kind it
+// is, and how a reader is told how much of it there was — must not be composed
+// four times, for the reason this package exists at all.
 //
-// So the composition lives here, beside the status rule, and it is ONE value a
-// caller accumulates as it walks a corpus of run directories: what was skipped,
-// why, and the one line that reports it. The wording lives here too, exactly as
-// Hint and PausedHint do.
+// So the composition lives here, beside the status rule, in two shapes and no
+// more. For a surface that WALKS a corpus there is Skipped: one value it
+// accumulates, holding what was skipped, why, and the one line that reports it.
+// For a surface that was handed a SINGLE run id — `show`, `watch` — there is
+// Unreadable: the one sentence about one directory, which Skipped's own detail
+// lines are built from, so the two can never word the same damage differently.
+// The wording lives here too, exactly as Hint and PausedHint do.
 //
 // WHY THE LINE IS ALWAYS PRINTED, even when nothing was skipped: a reader must
 // be able to tell "nothing was hidden from me" apart from "64 of 325 runs are
@@ -149,14 +152,38 @@ func (s *Skipped) byReason() string {
 	return strings.Join(parts, ", ")
 }
 
-// Details is one line per skipped directory, naming it and quoting the reader's
-// own error — the output that used to be unconditional, now what the flag Line
-// advertises turns back on. It is the same sentence it always was: a caller
-// that prints these prints exactly what it printed before this summary existed.
+// Unreadable is the ONE sentence any surface says about a SINGLE run directory
+// it could not read: which run, which of the two provable classes the damage is
+// in, and the reader's own error quoted whole rather than paraphrased. Every
+// human surface that says anything at all about such a directory says exactly
+// this — `runs list --show-skipped` once per skipped row (Details below is
+// literally this function in a loop), `show` above the table it can still
+// print, `watch` in place of the status line it cannot print — so one directory
+// reads the same wherever it is named, and no surface classifies for itself.
+//
+// It deliberately states no CONSEQUENCE, because the consequence is the one
+// thing the surfaces legitimately disagree about: the row is dropped, the table
+// is printed anyway, the tail runs on regardless. Each surface's own output
+// already shows which, and a sentence that claimed one of them would be a lie
+// on the other two — "skipping run …", which this replaces, was exactly that
+// lie the moment a second surface printed it.
+//
+// "in full" is load-bearing: on `show` the snapshot DID load (the table below
+// the warning is real) and only the status could not be derived, while on
+// `runs list` nothing of the directory survived. Both are cases of not reading
+// it in full; neither is misdescribed.
+func Unreadable(runID string, err error) string {
+	return fmt.Sprintf("WARNING: run %q could not be read in full (%s): %v", runID, ClassifySkip(err), err)
+}
+
+// Details is one line per skipped directory — the output that used to be
+// unconditional, now what the flag Line advertises turns back on. It is
+// Unreadable per run and nothing else, so the detail a corpus walk prints and
+// the sentence a single-run surface prints cannot drift apart.
 func (s *Skipped) Details() []string {
 	lines := make([]string, 0, len(s.runs))
 	for _, run := range s.runs {
-		lines = append(lines, fmt.Sprintf("WARNING: skipping run %q: %v", run.RunID, run.Err))
+		lines = append(lines, Unreadable(run.RunID, run.Err))
 	}
 	return lines
 }

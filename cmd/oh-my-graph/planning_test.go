@@ -255,8 +255,8 @@ func readStreamEvents(t *testing.T, runDir string) []runfeed.Event {
 // §2.4 found while confirming #163 and fixes on the way past: planAndExecute
 // saved graph.json into the run directory BEFORE calling confirm, so answering
 // `n` left behind a runs/<id>/ holding a graph.json and no state.json — which
-// `runs list` reported as "WARNING: skipping run …" and the dashboard painted
-// unknown. Saying no manufactured a corrupt run.
+// `runs list` skipped as a directory it could not read and the dashboard
+// painted unknown. Saying no manufactured a corrupt run.
 //
 // The commitment to execute is what creates a run, and for chat it does not
 // exist until a human answers. So: no run directory at all, and the paid-for

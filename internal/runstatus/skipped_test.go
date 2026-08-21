@@ -123,12 +123,59 @@ func TestSkipped_DetailsNameEveryRunAndQuoteItsReader(t *testing.T) {
 	if len(details) != 2 {
 		t.Fatalf("Details() returned %d lines, want one per skipped run", len(details))
 	}
-	if !strings.Contains(details[0], `skipping run "run-old"`) ||
+	if !strings.Contains(details[0], `run "run-old"`) ||
 		!strings.Contains(details[0], "has schema version 2, but this build understands version 3") {
 		t.Errorf("details[0] = %q, want it to name the run and quote runstate.Load's own sentence", details[0])
 	}
-	if !strings.Contains(details[1], `skipping run "run-broken"`) ||
+	if !strings.Contains(details[1], `run "run-broken"`) ||
 		!strings.Contains(details[1], "invalid character") {
 		t.Errorf("details[1] = %q, want it to name the run and quote the decode failure", details[1])
+	}
+}
+
+// TestUnreadable_NamesTheRunItsClassAndItsReader is the single-run half of the
+// same wording: `show` and `watch` are handed one run id and have no corpus to
+// count, so what they must render is this sentence — the run, the class the
+// shared classification put it in, and the reader's own error verbatim.
+func TestUnreadable_NamesTheRunItsClassAndItsReader(t *testing.T) {
+	got := Unreadable("run-old", &runstate.SchemaMismatchError{Path: "/runs/run-old/state.json", Found: 2, Want: 3})
+	for _, want := range []string{
+		`run "run-old"`,
+		"could not be read in full",
+		SkipIncompatible.String(),
+		"has schema version 2, but this build understands version 3",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Unreadable() = %q, missing %q", got, want)
+		}
+	}
+	if lines := strings.Count(got, "\n"); lines != 0 {
+		t.Errorf("Unreadable() = %q, want exactly one unterminated line — the caller decides the stream", got)
+	}
+
+	damaged := Unreadable("run-broken", errors.New(`decode snapshot "/runs/run-broken/state.json": invalid character 'n'`))
+	if !strings.Contains(damaged, SkipUnreadable.String()) {
+		t.Errorf("Unreadable() = %q, want the damage class named for an unprovable error", damaged)
+	}
+}
+
+// TestSkipped_DetailsAreExactlyUnreadable is the anti-fork assertion: the
+// corpus walk's per-run detail and the single-run surfaces' sentence must be
+// the SAME string for the same directory, not two wordings that merely look
+// alike today. Equality is the only assertion that keeps them one.
+func TestSkipped_DetailsAreExactlyUnreadable(t *testing.T) {
+	mismatch := &runstate.SchemaMismatchError{Path: "/runs/run-old/state.json", Found: 2, Want: 3}
+	decode := errors.New(`decode snapshot "/runs/run-broken/state.json": invalid character 'n'`)
+
+	var skipped Skipped
+	skipped.Add("run-old", mismatch)
+	skipped.Add("run-broken", decode)
+
+	details := skipped.Details()
+	want := []string{Unreadable("run-old", mismatch), Unreadable("run-broken", decode)}
+	for i, line := range details {
+		if line != want[i] {
+			t.Errorf("details[%d] = %q, want the shared sentence %q", i, line, want[i])
+		}
 	}
 }

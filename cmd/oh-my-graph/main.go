@@ -712,8 +712,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 // The spec is saved AFTER the answer, and that ordering is the fix ADR 0023
 // §2.4 makes on the way past #163. Saving into the run directory before the
 // prompt meant every declined plan left behind a runs/<id>/ holding a
-// graph.json and no state.json — reported by `runs list` as
-// "WARNING: skipping run …" and painted `unknown` by the dashboard. Saying no
+// graph.json and no state.json — skipped by `runs list` as a directory it
+// could not read and painted `unknown` by the dashboard. Saying no
 // manufactured a corrupt run. The topology therefore prints with no path,
 // because which directory the spec belongs in is exactly what is being decided.
 //

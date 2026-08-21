@@ -13,6 +13,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
@@ -337,8 +338,12 @@ func TestListRuns_ShowSkippedNamesEverySkippedRunAndItsReason(t *testing.T) {
 	detail := warn.String()
 	for _, runID := range []string{"run-stale-a", "run-stale-b"} {
 		line := lineContaining(t, detail, runID)
-		if !strings.Contains(line, "skipping run") {
-			t.Errorf("%s's detail line does not say it was skipped: %q", runID, line)
+		// The detail is runstatus.Unreadable — the same sentence `show` and
+		// `watch` print about the same directory — so it names the class the
+		// shared classification put the run in, not a wording of this command's.
+		if !strings.Contains(line, "could not be read in full") ||
+			!strings.Contains(line, runstatus.SkipIncompatible.String()) {
+			t.Errorf("%s's detail line is not the shared unreadable sentence: %q", runID, line)
 		}
 		if !strings.Contains(line, fmt.Sprintf("has schema version %d, but this build understands version %d",
 			runstate.Schema-1, runstate.Schema)) {
