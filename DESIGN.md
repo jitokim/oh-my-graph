@@ -1784,7 +1784,16 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
 
   `runs list` renders the six words under a `STATUS` header (renamed from
   `VERDICT`, which would have kept the very conflation the enumeration
-  removes), `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
+  removes) and, under its total, one line saying how much of the run home the
+  table covers: how many runs are shown out of how many directories were found,
+  how many were skipped and under which reason. It is printed whether or not
+  anything was skipped, because a reader must be able to tell "nothing was
+  hidden from me" apart from "64 of 325 runs are shown" — a summary that
+  appeared only when there was something to report renders those two cases
+  identically. `--show-skipped` names each skipped directory and quotes the
+  reader's own reason, one line each on stderr; that per-run detail used to be
+  unconditional and was four fifths of the command's output on a long-lived run
+  home. `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
   right now", `watch` refuses to tail a stream that will never get another
   line, the dashboard paints the card abandoned, and the single-run live view —
   the surface that carries the gate button — reads the same answer off
@@ -1954,9 +1963,10 @@ one, and it answers 409 like any other view that cannot resume.
   leg with one click. Cost is the snapshot's
   per-node total, the same accounting `runs list` prints. A run directory
   this binary cannot read renders as an `unknown` card carrying the reason
-  rather than being dropped: `runs list` can skip a broken run with a
-  warning because a table can, but a dashboard that silently omitted one
-  would be lying about what is on the machine. The token itself is a contract
+  rather than being dropped: `runs list` can skip a broken run because a table
+  can — it says how many it skipped and why, in the coverage line under its
+  total — but a dashboard that silently omitted one would be lying about what
+  is on the machine. The token itself is a contract
   between four files with no compiler between them — `card.go` chooses the
   word, `dashboard.css` paints the tile's stripe, `style.css` owns the colour
   token and the chip's dot, `dashboard.js` decides whether a card carrying it
@@ -2844,7 +2854,7 @@ internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
-internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
+internal/runstatus/{runstatus,skipped}.go + _test  the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print; `skipped.go` is the other half of the same argument — a run directory this build cannot READ has no status at all, and how that damage is CLASSIFIED (incompatible schema vs. unreadable bytes) and REPORTED (the counted coverage line, the per-run detail sentence) is one shared value here rather than composed per surface
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), a kept file whose bytes differ from the payload is marked `DIFFERS` and counted (a top-up can pair a freshly written template with a kept older fragment, which fails at load, not at `init`), and a failure partway through removes the files AND directories it created — `graphs/` itself included when that run made it
