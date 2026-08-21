@@ -82,17 +82,32 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	}
 
 	// The shared derivation (runstatus.Of), so `watch` refuses exactly the runs
-	// `runs list` calls ABANDONED and the dashboard paints abandoned. An error
-	// here is not this command's to report — a missing stream is the mistyped-id
-	// error below, and a stream this binary refuses to read is Follow's — so an
-	// unanswerable probe simply falls through to the tail, which is the
-	// pre-ADR-0015 behaviour.
+	// `runs list` calls ABANDONED and the dashboard paints abandoned.
 	// Gather, not Of, for the reason `runs list` and `show` use it: a directory
 	// whose stream has said nothing has no status to announce (runstatus.Spoken,
 	// ADR 0023 §2.1.1), and here it is also about to be the unknown-run error
 	// below — an announced FAIL one line above "unknown run" would be two
 	// answers about one directory.
-	if facts, err := runstatus.Gather(runDir); err == nil && runstatus.Spoken(facts) {
+	//
+	// A directory the derivation cannot READ used to fall through in silence,
+	// on the reasoning that the damage was somebody else's to report: a missing
+	// stream is the mistyped-id error below, and a stream this binary refuses is
+	// Follow's. That covered the wrong half. The damage this corpus actually
+	// holds is in the SNAPSHOT — 261 of 325 directories on the measuring
+	// machine, every one a version-2 snapshot — which Follow never opens and
+	// therefore never mentions, so the status line simply vanished with nothing
+	// on screen saying why. It is named here now, in runstatus.Unreadable's
+	// words: the same sentence `runs list --show-skipped` and `show` print about
+	// the same directory. On warnW, because stdout is the tail itself; and the
+	// tail still runs, because an unreadable snapshot says nothing about whether
+	// the stream can be followed. Where the damage IS in the stream, Follow's
+	// own line follows this one and says something different — this one is about
+	// the status, that one about rendering the events.
+	facts, err := runstatus.Gather(runDir)
+	switch {
+	case err != nil:
+		fmt.Fprintln(warnW, runstatus.Unreadable(runID, err))
+	case runstatus.Spoken(facts):
 		status := runstatus.Probe(runDir, facts)
 		if status == runstatus.Abandoned {
 			fmt.Fprintln(warnW, runstatus.Hint(runID, hasSnapshot(runDir)))
@@ -115,7 +130,7 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 	// keeps only its own interpretation: formatting, the malformed-line
 	// warning, and stopping at run_finished.
 	warnedSchema := false
-	err := runfeed.Follow(ctx, feedPath, poll, func(line []byte) (bool, error) {
+	err = runfeed.Follow(ctx, feedPath, poll, func(line []byte) (bool, error) {
 		var event runfeed.Event
 		if err := json.Unmarshal(line, &event); err != nil {
 			fmt.Fprintf(warnW, "WARNING: skipping malformed event line: %v\n", err)

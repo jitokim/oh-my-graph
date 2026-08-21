@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // testPoll keeps the tail loop's end-of-stream sleep short so follow tests
@@ -200,6 +203,52 @@ func TestWatchRun_SnapshotOnlyRunHasNothingToTail(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Errorf("no status may be announced for a run that cannot be tailed:\n%s", out.String())
+	}
+}
+
+// TestWatchRun_UnreadableSnapshotIsNamedInTheSharedSentence pins what used to
+// be silence. A snapshot this build refuses (the version-2 shape 261 of 325
+// directories on the measuring machine are in) makes the derivation
+// unanswerable, so no status line is printed — and Follow never opens the
+// snapshot, so nothing else was ever going to mention it. `watch` must say so
+// itself, in runstatus.Unreadable's words, and must still tail the stream:
+// an unreadable snapshot says nothing about whether the events can be followed.
+func TestWatchRun_UnreadableSnapshotIsNamedInTheSharedSentence(t *testing.T) {
+	dir := t.TempDir()
+	stale := fmt.Sprintf(`{"schema":%d,"run_id":"20260821-001010","graph":{"name":"old","nodes":[{"id":"alpha","prompt":"a"}]},"nodes":{}}`,
+		runstate.Schema-1)
+	if err := os.WriteFile(filepath.Join(dir, stateFileName), []byte(stale), 0o644); err != nil {
+		t.Fatalf("write stale snapshot: %v", err)
+	}
+	writeWatchEvents(t, dir, "20260821-001010",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "alpha", Verdict: runfeed.VerdictPass},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+
+	var out, warn strings.Builder
+	if err := watchRun(context.Background(), &out, &warn, dir, "20260821-001010", testPoll); err != nil {
+		t.Fatalf("an unreadable snapshot must not stop the tail: %v", err)
+	}
+
+	notice := lineContaining(t, warn.String(), "could not be read in full")
+	for _, want := range []string{
+		`run "20260821-001010"`,
+		runstatus.SkipIncompatible.String(),
+		fmt.Sprintf("has schema version %d, but this build understands version %d", runstate.Schema-1, runstate.Schema),
+	} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("the notice is missing %q: %q", want, notice)
+		}
+	}
+	// The tail is the whole point of the command and must survive the notice.
+	if !strings.Contains(out.String(), "✓ alpha  PASS") || !strings.Contains(out.String(), "■ run finished: passed") {
+		t.Errorf("the stream must still render under an unreadable snapshot:\n%s", out.String())
+	}
+	// The notice stands in for the status line, and does not join it: a status
+	// this build could not derive must not be announced anyway.
+	if strings.Contains(out.String(), "20260821-001010 is ") {
+		t.Errorf("no status may be announced for a directory the derivation refused:\n%s", out.String())
 	}
 }
 
