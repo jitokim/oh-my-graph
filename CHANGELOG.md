@@ -53,6 +53,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **ADR 0031 — "An unbounded loop is a bounded loop and a clock"**, Proposed.
+  No behaviour changes; nothing in it is implemented. It designs the supervisor
+  the operator currently *is*: a leg that runs revolutions of a graph, bounded
+  up front, whose only autonomous recovery is waiting out a subscription limit
+  window. Three things it records are measurable facts about today's engine
+  rather than proposals — a gate pause and a session-limit pause both exit 2
+  and are told apart only by a **missing** `gate.paused_at`, which is the
+  absence-satisfiable assertion CONTRIBUTING.md forbids; nothing resumes a
+  limited run, because the CLI's reset hint is prose and ADR 0009 rightly
+  refuses to parse it; and `budget_usd` cannot see into a run a node spawns.
+  The decisions worth arguing with are that the supervisor **may wait and may
+  retry, but may never approve a gate**, and that a limit window is waited out
+  by *polling rather than scheduling* — do not build a clock on top of prose.
+
 - **`--accept-no-build-evidence` on `auto`**, the one exit from the refusal
   above. It is not a verification switch — nothing is skipped, because nothing
   was going to run — and its name is what the operator states: *this run carries
