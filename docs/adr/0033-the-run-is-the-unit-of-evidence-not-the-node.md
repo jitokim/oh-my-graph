@@ -168,8 +168,9 @@ would not have needed anything new:
   result will be used for."* It is already node-agnostic; per-node use would
   have required no change to it.
 - `ShellVerifier` is the second exec seam (ADR 0002, restated at
-  `internal/verify/verify.go:5-15`). It spawns at
-  `internal/verify/shell.go:133` and scrubs the child environment at `:135`.
+  `internal/verify/verify.go:5-15`). It builds the child at
+  `internal/verify/shell.go:133`, scrubs the child environment at `:135`, and
+  spawns at `:171`.
 
 **So a fifth spawner was never in question, and this record states that once so
 nobody has to re-derive it.** Anything per-node would have gone through
@@ -290,12 +291,18 @@ threshold itself (`0218:467-472`, verbatim): *"**Evidence that per-node `verify`
 is impractical.** The case rests on being able to raise coverage above today's 8
 of 73. If an attempt to write a verify on non-terminal nodes shows that most
 node kinds have no cheap checkable postcondition — say, coverage stalls below a
-third of nodes — then the uncovered majority needs *some* signal."* Nobody has
-attempted it. The number is `<!-- 미측정 -->` (§8). Requiring something of every
-node while the premise that most nodes *can* satisfy it is unmeasured is the
-shape of mistake this repository has a standing rule against, so the honest
-disposition is **not now, and here is the measurement that would change it**
-(§7) — not *never*.
+third of nodes — then the uncovered majority needs *some* signal, and a prose
+match as an advisory becomes the primary deliverable rather than a garnish."*
+Nobody has attempted it. The number is `<!-- 미측정 -->` (§8). Requiring
+something of every node while the premise that most nodes *can* satisfy it is
+unmeasured is the shape of mistake this repository has a standing rule against,
+so the honest disposition is **not now, and here is the measurement that would
+change it** (§7) — not *never*.
+
+That last clause is quoted in full deliberately, because it is a condition on
+§2.5 and not only on this subsection: the measurement makes a low census result
+the trigger that *promotes* the denial advisory from garnish to primary
+deliverable. §6's F5 carries it.
 
 ### 2.3 The cost of the cheapest version, measured — and why it does not decide this
 
@@ -356,7 +363,7 @@ Arithmetic over those inputs — **arithmetic, not measurement**:
 | the increment over the 14 already covered: 67 × `make local` | 3,204 s (53.4 min) |
 | 78 records × `make local`, against their measured 17,244.1 s | **21.6%** added wall-clock — `read-evidence.out:336` |
 | 78 records × `go build ./...`, against the same | **0.73%** added wall-clock — `read-evidence.out:337` |
-| dollar cost of the added engine verifications | **$0 model spend.** `ShellVerifier` spawns a shell (`internal/verify/shell.go:133`) and never a model CLI, so there is no token-billing path. This is a fact about the code with an address, not a reading of a bill. |
+| dollar cost of the added engine verifications | **$0 model spend.** `ShellVerifier` spawns a shell (`internal/verify/shell.go:171`, over the command line built at `:133`) and never a model CLI, so there is no token-billing path. This is a fact about the code with an address, not a reading of a bill. |
 
 One honest note on the increment row: the brief's own version of it
 (`read-evidence.out:331`, `:333`) subtracts 8 from 81 and reports 73 × `make
@@ -557,9 +564,21 @@ no new instrumentation.
 This does not falsify §2.1, but it falsifies §2.5: the advisory becomes cheap
 and reliable and should be built at once, as a signal and never as a verdict.
 
+**F5 — the census comes back below F1's threshold.** F1 and F5 are the two
+sides of one measurement, and §7's census decides between them: if fewer than a
+third of the 81 admit a cheap command, §2.1 stands — a per-node requirement most
+nodes cannot satisfy is confirmed as friction — but §2.5 falls, because
+`0218:470-472` names exactly that outcome as the one that makes *"a prose match
+as an advisory … the primary deliverable rather than a garnish"*. So §2.5's
+refusal is conditional on a number nobody has yet taken, and a low census
+obliges building the advisory despite §2.5's objections to it — which would then
+have to be answered on their own terms (its discriminator's known misses,
+`0218:137-145`, `:369-374`) rather than used to decline again.
+
 ## 7. Required measurement before Accepted
 
-**The coverage census F1 describes.** It is the one number this decision is
+**The coverage census F1 and F5 describe** — one census, and whichever side of
+the threshold it lands on falsifies something here. It is the one number this decision is
 missing, and it is the number `0218:467-472` already nominated. Scope: all 81
 planned nodes across the 18 runs, one hand-written candidate command per node or
 an explicit "none cheap", published as `docs/measurements/0033-…md` with the
