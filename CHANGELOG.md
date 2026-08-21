@@ -10,6 +10,28 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The planner now shares the assessor's bounded spawn retry.** #214 gave the
+  assessor a retry for a CLI that never started, and scoped it deliberately:
+  *"do not generalise the bound across the three coordinator call classes."*
+  That scoping was right to demand evidence and wrong to assume there would be
+  none — the same npm-replaced-binary failure killed a **planning** call the next
+  day, taking a whole lane with it before any node ran:
+
+  ```
+  planner run: claude run: spawn failed: exec: "claude": executable file not found in $PATH
+  cycle 1: incomplete — its planning was refused after spending $0.0000
+  ```
+
+  Two occurrences in two call classes is evidence, so the planner shares it. The
+  **chat router still does not**, and that is also deliberate: a router call is
+  interactive, and a human watching it can simply ask again.
+
+  Nothing else changed. A refused plan, a non-zero exit, a timeout and a
+  cancelled context still stop on the first answer — retrying those is
+  re-rolling a verdict until the loop likes one.
+
 ## [v0.11.0] - 2026-08-21
 
 **Minor because two things you may now type were errors before**, and one thing
