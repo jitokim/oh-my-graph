@@ -883,14 +883,14 @@ func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
 	}
 
 	var on strings.Builder
-	mappingOptions(&on, false, nil, false)
+	mappingOptions(&on, false, nil, false, false)
 	if !strings.Contains(on.String(), "no skill directory") || !strings.Contains(on.String(), "--no-skill-activation") {
 		t.Errorf("activation is on and can never stage: say so, and name the way to mean it:\n%s", on.String())
 	}
 
 	// Turning it off is a choice, and a choice is not a warning.
 	var off strings.Builder
-	mappingOptions(&off, false, nil, true)
+	mappingOptions(&off, false, nil, true, false)
 	if off.Len() != 0 {
 		t.Errorf("--no-skill-activation must stay silent:\n%s", off.String())
 	}
@@ -898,7 +898,7 @@ func TestMappingOptions_UnresolvableHomeIsNotSilent(t *testing.T) {
 	// Neither is the normal case a warning.
 	t.Setenv("HOME", t.TempDir())
 	var quiet strings.Builder
-	mappingOptions(&quiet, false, nil, false)
+	mappingOptions(&quiet, false, nil, false, false)
 	if quiet.Len() != 0 {
 		t.Errorf("a resolvable home has nothing to report:\n%s", quiet.String())
 	}

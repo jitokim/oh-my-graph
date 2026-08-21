@@ -121,7 +121,9 @@ subscription session limit, say) instead of only "exit code 1".
   ones on our argv — which is what finally makes a scoped `Bash(git *)` a real
   ceiling rather than a declaration. `--tools` narrows the built-in tool set
   itself (a separate axis from the rules), and `--strict-mcp-config` bounds MCP.
-  oh-my-graph applies these ONLY to coordinator-planned nodes — see "Auto mode".
+  oh-my-graph applies these ONLY to coordinator-planned nodes — see "Auto mode" —
+  and applies the first and the last of them only to a planned run that did not
+  type `--accept-loaded-user-config` (ADR 0032).
 - Hand-written graphs never carry `--setting-sources`, `--tools`,
   `--strict-mcp-config` or `--disallowedTools`: they are the user's own reviewed
   artifact and are *meant* to run under the user's own settings, hooks and MCP.
@@ -140,7 +142,10 @@ codex exec --json --color never --skip-git-repo-check --sandbox <mode> \
 `plan` maps to `read-only`, `bypassPermissions` to `danger-full-access`, and
 the remaining permission modes to `workspace-write`. Planned nodes and the
 assessor add `--ignore-user-config`, `--ignore-rules`,
-`project_doc_max_bytes=0`, and `mcp_servers={}`. Hand-written nodes and the
+`project_doc_max_bytes=0`, and `mcp_servers={}` — the assessor always, planned
+nodes unless the run typed `--accept-loaded-user-config`, which omits all four
+(ADR 0032; `--sandbox` and `approval_policy="never"` are appended outside that
+branch and are unaffected). Hand-written nodes and the
 planner keep normal Codex config. A `turn.completed` event supplies the final
 token usage; the last completed `agent_message` is the node result. A
 `turn.failed` event is a failed node even if the CLI process itself exits zero.
@@ -309,8 +314,8 @@ substitution points or it is a different shape. The behavior fields
 `success_check`, `retry`, `agent`, `type`) default from the fragment; a key
 written in the using node overrides the **whole** top-level subtree (never a
 deep merge). A **single-node** fragment may not declare wiring — `id`, `depends_on`, `cwd`,
-`worktree`, `feedback` (load error) — nor `use:` itself (no nesting) —
-nor a **YAML alias or `<<:` merge key inside the `node:` block** (load error):
+`worktree`, `feedback` (load error) — nor a **YAML alias or `<<:` merge key
+inside the `node:` block** (load error):
 a spliced body has to be walkable in full, or a `{{ with.x }}` hiding behind
 an alias would be neither declaration-checked nor substituted and would reach
 the model verbatim. Anchors stay sanctioned everywhere else in a graph file,
@@ -629,7 +634,9 @@ user's own agents by a deliberately conservative name-token rule: exact token
 or ≥4-rune prefix between node id and agent name, exactly one candidate or
 nothing (ambiguity is silence, not a guess; no fuzzy scoring, no description
 matching). Scan failures are silent so zero-config stays zero-config;
-`--no-agent-mapping` turns the whole thing off and `--no-agent <name>` declines
+`--no-agent-mapping` turns the whole thing off, `--accept-loaded-user-config`
+turns it off too (the staging guarantee rests on Layer 1 — "The operator's
+opt-in"), and `--no-agent <name>` declines
 one agent while the rest still map; every decision made — including a decline —
 is shown in the printed plan before execution, with what each mapped node gave
 up named on its own line. ADR 0004 §4 originally deferred this
@@ -1089,8 +1096,9 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
   is a sweep that cannot silently miss a node. That sweep counts **24
   declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: five of the 24
-  live in `graphs/fragments/` and carry fourteen of the nodes between them.
+  once and every node citing it gets it, which is the point: six of the 24
+  live in `graphs/fragments/`, in five files, and carry fifteen of the nodes
+  between them.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
   `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
   places to correct the sentence in. The
@@ -1335,9 +1343,9 @@ other node pays a retry, and keeps the narrow class.
 
 **What reuse can and cannot deduplicate here.** A `use:`/`with:` fragment
 (ADR 0013) puts a verdict rule in one place exactly when the whole NODE is one
-shape. Four shipped fragments carry their own — `e2e-verify`, the two review
-shapes and `pr-publish` — and the three with a prefix verdict cover ten runtime
-nodes between them. It reaches no further, and ADR 0013's Migration update is
+shape. Six shipped fragments carry their own — `e2e-verify`, the two review
+shapes, `pr-publish`, `repair-round` and `gated-lane` — and the three prefix
+verdicts among the first four cover ten runtime nodes between them. It reaches no further, and ADR 0013's Migration update is
 the measurement: the patterns still repeated in the templates are shared by
 nodes that share nothing else. The six nodes declaring ``^[*_`\s]*DONE\b`` have
 **zero** words of prompt in common and four different tool grants. A fragment
@@ -1612,7 +1620,7 @@ browser one.
 
 **CLI contract:**
 ```
-oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web]
+oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 ```
 - Exactly one of `--approve`/`--reject` is **required** when the run is paused at
   a gate. A bare `resume <run-id>` on a paused run is an error naming the pending
@@ -2082,7 +2090,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path.
 
@@ -2177,7 +2185,11 @@ pinned by its plan-time SHA-256, and supplied with `--plugin-dir`, which reaches
 the node without reopening `--setting-sources`. Until then a mapped node dropped
 Layer 1 and was measured to lose its scope ceiling with it. Every decision is
 shown in the printed plan, and `--no-agent-mapping` turns it off run-wide while
-`--no-agent <name>` declines a single agent. The full rule and what it now costs
+`--no-agent <name>` declines a single agent. So does
+`--accept-loaded-user-config`, which sets `agentMappingOff` itself: the staging
+guarantee holds only while Layer 1 is `""`, so a run that carries the operator's
+settings maps no node at all and the CLI discovers their agents natively (ADR
+0032 §2.4, below). The full rule and what it now costs
 the node live in "Node-as-subagent"; the raw plan itself still may not carry
 `agent:`.
 
@@ -2191,7 +2203,10 @@ names them as out of scope on every run), copies **the whole corpus** into
 `--plugin-dir <staged>` plus `Skill` in its `--tools` list. Two layers and only
 two: `--plugin-dir` is not a ceiling layer at all (it supplies definitions and
 grants nothing), and `Skill` enters at **Layer 3**, through the one function
-that builds that list. **Layer 1 stays `--setting-sources ""`** — ADR 0017's
+that builds that list. Staging happens for a run that stayed isolated;
+`--accept-loaded-user-config` sets `skillActivationOff` for the same reason it
+sets `agentMappingOff` (below), so an opted-in run stages no corpus.
+**Layer 1 stays `--setting-sources ""`** — ADR 0017's
 measurement (g) showed that relaxing it lets a node that declared `Bash(git *)`
 run an out-of-scope command, because `--tools` bounds tool NAMES and not
 SCOPES. Layer 0 does not move either: `plannedToolAllowlist` never learns the
@@ -2385,11 +2400,15 @@ type ToolPolicy struct {
 | layer | mechanism | closes |
 |---|---|---|
 | 0 declaration | `plannedToolAllowlist`, plan-time rejection | a plan asking for `Bash(*)` |
-| 1 **isolation** | `--setting-sources ""` | the user's standing grants; settings hooks |
+| 1 **isolation** | `--setting-sources ""` (nil, flag omitted, under `--accept-loaded-user-config`) | the user's standing grants; settings hooks |
 | 2 grant | `--allowedTools "Read,Bash(git *)"` + `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<bare names declared>"` | tools the model can even attempt |
-| 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
+| 4 MCP | `--strict-mcp-config`, no `--mcp-config` (false, flag omitted, under the same opt-in) | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` (PR #5's list, retained) | anything the above missed |
+
+The table is the default — the run that types nothing. Layers 1 and 4 are the
+two an operator may decline together, at launch, and nothing else in it moves;
+"The operator's opt-in" below is the whole of that difference.
 
 `PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
 a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
@@ -2399,7 +2418,9 @@ names it, and a staged agent's frontmatter does not widen past `--tools`, E6).
 It exists because layer 1 stays `""`: `--setting-sources ""` withholds the
 DEFINITIONS along with the settings, and a plugin directory is the one source of
 definitions that does not reopen it. Empty omits the flag, which is every
-hand-written graph and every planned run that neither activated nor mapped; a
+hand-written graph, every opted-in planned run (which neither activates nor
+maps, since layer 1 is what makes staging worth anything) and every planned run
+that neither activated nor mapped; a
 resumed leg is emptied deliberately, since rehydrating the path would trust a
 directory the previous leg's nodes could write (ADR 0017 §6, below).
 
@@ -2407,7 +2428,9 @@ Layer 1 is the load-bearing change. Rules from `~/.claude/settings.json` are why
 `--allowedTools` could never bind: they are matched alongside ours and a standing
 `Bash(*)` wins. `--setting-sources ""` loads none of user/project/local settings,
 leaving our argv as the only allow-rule source; enterprise policy settings are
-still loaded and still cannot be escaped. Combined with `dontAsk` — under which
+still loaded and still cannot be escaped — nor can they be escaped by omitting
+the flag, which is why the opt-in below can widen everything it widens and still
+not reach a managed policy. Combined with `dontAsk` — under which
 an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** —
 `Bash(git *)` means *git and nothing else*. **Measured, not inferred** (E1): the
 identical node declaration ran an out-of-scope `touch` without Layer 1 and had
@@ -2436,7 +2459,9 @@ of 2 (`docs/measurements/0022-repo-planted-agent-and-the-agents-only-dir.md`).
 
 Layer 1 also closes the settings-hook gap: a node that writes
 `.claude/settings.local.json` into the invocation directory achieves nothing,
-because no node in this run (or any later `auto` run) loads local settings.
+because no node in this run (or any later `auto` run) loads local settings —
+unless that run typed `--accept-loaded-user-config`, where local settings are
+loaded on purpose and this gap is open again by the operator's own statement.
 
 Layer 3 is a genuine *replacement* of the built-in tool set, not an addition to
 it (E4): a tool omitted from `--tools` does not exist for the node, and naming
@@ -2462,7 +2487,8 @@ Layer 1 — lost it to the repository 3 of 3. **Layer 4 is unverified** (E5 —
 observed); and dropping user settings also drops the user's CLAUDE.md, hooks and
 MCP servers for planned nodes — a behaviour change that makes planned nodes
 *more isolated and less capable* than they were, which is the intended direction
-but must be stated in the README rather than discovered. **Through v0.6.0
+but must be stated in the README rather than discovered, and which the operator
+may decline for one run with the opt-in below. **Through v0.6.0
 agent-mapped nodes inverted that last sentence for the SETTINGS half**: nothing
 was dropped for them, so the user's CLAUDE.md and hooks loaded — and so did the
 working repository's project scope, which is where the repository-supplied skill
@@ -2476,6 +2502,66 @@ beside it, before the change and after it (measurement (j),
 `argv/omg-probe-writer.argv.txt`). Whether that flag actually closes MCP is E5,
 and E5 is unmeasured — the sentence above about MCP servers is a statement about
 the argv, not an observed closure.
+
+#### The operator's opt-in — `--accept-loaded-user-config` (ADR 0032)
+The ceiling above is what a planned node gets by default. `auto` takes one flag
+by which the **operator** — never the plan — states that this run's planned
+nodes carry their own CLI configuration. It takes no value, defaults to OFF, and
+a run that does not type it is byte-for-byte the run that shipped in v0.10.0:
+same argv, same screens, same `state.json`.
+
+It is **runtime-neutral**, because the mechanism is one bit both protocols
+already branch on (`spec.Policy.SettingSources != nil` in
+`codex_protocol.go`, `policy.SettingSources != nil` in `claude_protocol.go`).
+`toolPolicyFor` builds:
+
+| layer | field | default | with the opt-in |
+|---|---|---|---|
+| 1 isolation | `SettingSources` | `&""` | **nil** (flag omitted) |
+| 2 grant | `AllowedTools` | node's declaration | unchanged |
+| 3 narrowing | `Tools` | `narrowedToolsFor(node, …)` | unchanged |
+| 4 MCP | `StrictMCPConfig` | `true` | **false** (flag omitted) |
+| 5 residual | `DisallowedTools` | `disallowedToolsFor(node)` | unchanged |
+
+So **an opted-in planned node's setting/config posture is exactly a hand-written
+`run` node's, and its tool posture is exactly a planned node's.** Layer 4 moves
+with layer 1 deliberately: E5 is unmeasured, so leaving `--strict-mcp-config` on
+would make the disclosure's *"your MCP servers load"* a sentence nobody had
+checked. That layers 3 and 5 still bind under restored settings is ADR 0032 §8's
+required measurement, which does not exist — the ADR is **Proposed** until it
+does, and this paragraph's last claim is a projection.
+
+`WithLoadedUserConfig()` sets `agentMappingOff` and `skillActivationOff` **in the
+Option**, not at the call site, so no later composition of options reopens them:
+both ADR 0017's and ADR 0022's guarantees are held by layer 1 being `""`, and
+measurement (j) arm `X` resolved a three-way name collision to the repository's
+own copy 3 of 3 under `nil`. The CLI discovers the operator's agents and skills
+natively instead; what is given up is the staged copy's attributable name and
+its shadow-proofness.
+
+The choice is disclosed on the plan screen through a `note*` sibling of
+`noteCeiling` and `noteMissingBuildEvidence` — **one slot that prints the
+isolated sentence or the loaded one, never both and never neither**, with a
+different literal per runtime because the bill differs (on Claude the operator's
+standing grants come back with their settings, so a declared `Bash(git *)` is a
+declaration again; on Codex `--sandbox` and `approval_policy="never"` are argv
+outside the branch and the flag widens neither). There is **no new snapshot
+field**: inside a non-empty `ToolPolicies` map an absent `setting_sources` is
+unambiguous, so the disclosure predicate reads the policies about to be spawned
+and cannot drift from the argv. `resume` therefore inherits the choice and
+reprints the line before the banner while registering **no** flag of its own — a
+resumed leg's flags may only de-escalate (ADR 0017 §6, one direction over).
+
+Out of scope in every direction: `run` is untouched (`Options.ToolPolicies` is
+nil there and `TestScheduler_HandWrittenGraphGetsNoCeiling` passes unmodified);
+`chat` parses no such flag, so every chat-planned node stays isolated; the
+planner already ran unisolated and the assessor keeps layer 1 unconditionally,
+because its input is untrusted model output; the graph schema gains nothing, so
+no planner can request this per node; enterprise and managed settings are
+unioned on top and cannot be dropped by an argument's absence; and
+`internal/childenv` is untouched — one list, no runtime branch, still scrubbing
+all four API-key variables from every child. A restored configuration is not a
+restored API key.
 
 ### Planned-node fields are deny-by-default
 `agent:` on a planned node would let an unreviewed plan choose which of the
@@ -2498,7 +2584,8 @@ turns that rule into a build failure. Current dispositions:
 
 | field | planned-node disposition |
 |---|---|
-| `id`, `prompt`, `depends_on`, `handoff` | allowed (prompt must be non-empty) |
+| `prompt`, `depends_on`, `handoff` | allowed (prompt must be non-empty) |
+| `id` | constrained — no `/`: the splice namespace is minted by the loader alone (`validatePlannedNodeID`, ADR 0027) |
 | `type` | constrained — `claude-run` only; `gate` rejected |
 | `allowed_tools` | constrained — non-empty, `plannedToolAllowlist` only |
 | `permission_mode` | constrained — `bypassPermissions` rejected |
@@ -2604,7 +2691,7 @@ ledger — so the summary never under-counts silently.
 
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
-- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, handoff, depends_on).
+- **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, retry, handoff, depends_on, agent, worktree, feedback, and the load-time-only use/with).
 - Edge = implicit `Node.DependsOn []string` (no struct).
 - **Scheduler** — drive DAG: ready/running sets, cap, context cancel, halt/continue;
   calls NodeRunner.Run, consults Graph, writes RunLedger, asks Handoff to resolve/persist.
@@ -2742,7 +2829,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
+cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, Claude-shaped by decision, not by omission) + FakeRunner
@@ -2752,17 +2839,17 @@ internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
-internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run --dry-run` print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
-internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
+internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/runstatus/runstatus.go + _test        the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), a kept file whose bytes differ from the payload is marked `DIFFERS` and counted (a top-up can pair a freshly written template with a kept older fragment, which fails at load, not at `init`), and a failure partway through removes the files AND directories it created — `graphs/` itself included when that run made it
-graphs/fragments/{e2e-verify,review-security,review-style,pr-publish}.yaml  the shipped node shapes the templates cite with use: (ADR 0013); cited by self-dev.yaml, dev-review-pr.yaml and backlog-batch.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
-docs/adr/00{01..20}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
+graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml and adr-driven-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
+docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
@@ -2793,7 +2880,9 @@ user's `--verify-cmd` after validation, ADR 0016 §2); and `Plan.ToolPolicies`
 imposes a per-node
 execution ceiling (settings-source isolation + scoped allow under default-deny +
 tool narrowing + strict MCP + residual denies) so the user's own standing tool
-grants cannot widen an unreviewed plan. All of it, and the gaps that remain, are
+grants cannot widen an unreviewed plan — unless that user says at launch that
+they should, which is `--accept-loaded-user-config` and drops the first and
+fourth of those five. All of it, and the gaps that remain, are
 in "Auto mode" above.
 
 ## Open questions (decided defaults; refine in impl)

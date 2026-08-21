@@ -92,12 +92,12 @@ instead.
 You get a live line per node as the graph runs, then a cost ledger:
 
 ```text
-Run 20260729-101532 — PASS, 2 node(s)
-NODE             VERDICT              SESSION                   COST(USD)  DETAIL
----------------------------------------------------------------------------------
-critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
-write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
----------------------------------------------------------------------------------
+Run 20260729-101532 — 2 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+critique         PASS (exit-only)     a1b2c3d4-e5f6-4…     0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4…     0.0091
+-------------------------------------------------------------------------
 TOTAL COST: $0.0125
 ```
 
@@ -114,8 +114,8 @@ it refuses to overwrite? [docs/INSTALL.md](docs/INSTALL.md).
 ## The graph is a file, not a transcript
 
 The DAG lives in YAML you version, review in a pull request and replay — the
-same topology, the same tool ceiling, the same prompts every time. That is the
-opposite of an agent improvising a fresh plan on every invocation.
+same topology, the same prompts every time. That is the opposite of an agent
+improvising a fresh plan on every invocation.
 
 ```yaml
 name: dev-review-pr
@@ -199,7 +199,10 @@ the measured layered tool ceiling described below; Codex discards user config,
 project rules/AGENTS files and MCP servers for planned nodes, then applies its
 read-only or workspace sandbox. **These are reductions, not a security
 boundary around the repository you launched from.** Run `auto` only in a
-directory you are willing to have modified.
+directory you are willing to have modified. Both are scoped to planned nodes:
+a hand-written graph you launch with `run` keeps your user config, project
+rules/AGENTS files, hooks and MCP servers, and `--accept-loaded-user-config`
+states out loud that you want them under `auto` too.
 
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support

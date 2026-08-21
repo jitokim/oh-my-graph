@@ -77,9 +77,10 @@ func BuildLabel(version string) string {
 }
 
 // newBuild renders every form of the build from ONE instant: the RFC3339 atom a
-// script orders and the minute-precision phrase the label reads with come from
-// the same builtAt, so the head and the footer of a page cannot name different
-// minutes. A zero builtAt is "unknown" and renders as neither.
+// script orders and the minute-precision phrase the label reads with both come
+// from the same builtAt — the label through the atom, via labelFor — so the head
+// and the footer of a page cannot name different minutes. A zero builtAt is
+// "unknown" and renders as neither.
 //
 // The instant is a parameter rather than a call so that this rendering can be
 // exercised against a chosen time; the ONCE-ness lives at the single call site
@@ -89,20 +90,39 @@ func newBuild(version string, builtAt time.Time) Build {
 		Version:  strings.TrimPrefix(version, "v"),
 		Revision: buildRevision(),
 	}
-	// The label's minute-precision phrasing, in local time — the reader is
-	// looking at a page served by their own machine, and "is this today's
-	// build" is a local-clock question.
-	var built string
 	if !builtAt.IsZero() {
-		local := builtAt.Local()
-		b.BuiltAt = local.Format(time.RFC3339)
-		built = "built " + local.Format("2006-01-02 15:04")
+		b.BuiltAt = builtAt.Local().Format(time.RFC3339)
 	}
-	b.Label = "v" + b.Version
-	if detail := strings.Join(nonEmpty(b.Revision, built), ", "); detail != "" {
-		b.Label += " (" + detail + ")"
-	}
+	b.Label = labelFor(b.Version, b.Revision, b.BuiltAt)
 	return b
+}
+
+// labelFor is the ONE author of a build's human label, rendering it from the
+// three atoms and nothing else: `v0.5.2 (cef30c6, built 2026-08-09 14:02)`, with
+// a missing detail omitted whole rather than left as an empty "()" or a stray
+// ", ".
+//
+// It takes the atoms rather than a Build's fields directly because the label is
+// needed for two builds now, not one: this process's own (newBuild) and — since
+// a bind failure names both — the build answering on a port this one could not
+// take, read off that page's <meta> tags (portholder.go, holderBuild). Those
+// atoms arrive as strings from a foreign process, which is also why an
+// unparseable BuiltAt drops the phrase instead of failing: a label is a
+// courtesy to a reader, and half of one still names the version.
+//
+// The minute-precision phrasing is in local time — the reader is looking at a
+// page served by their own machine (or at an error from it), and "is this
+// today's build" is a local-clock question.
+func labelFor(version, revision, builtAt string) string {
+	var built string
+	if at, err := time.Parse(time.RFC3339, builtAt); err == nil {
+		built = "built " + at.Local().Format("2006-01-02 15:04")
+	}
+	label := "v" + version
+	if detail := strings.Join(nonEmpty(revision, built), ", "); detail != "" {
+		label += " (" + detail + ")"
+	}
+	return label
 }
 
 // buildRevision is the short VCS revision the toolchain stamped, marked when

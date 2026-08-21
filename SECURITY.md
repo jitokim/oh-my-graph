@@ -37,7 +37,7 @@ where the line is.
   alone. The scrub is asserted by a unit test at every call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) that sets
-  both variables in the parent process and proves neither survives into the
+  all four variables in the parent process and proves none survives into the
   built child command.
 - **Never `--bare`.** On Claude that flag disables OAuth; oh-my-graph never
   passes it.
@@ -71,7 +71,8 @@ envelope. Neither id is invented by the scheduler.
   regardless of what the graph declares. For hand-written graphs this is by
   design: the graph is your own reviewed artifact and your settings are the
   intended policy. Auto-planned graphs are the exception — see below, where
-  `--setting-sources ""` turns the same declaration into a real limit.
+  `--setting-sources ""` turns the same declaration into a real limit, unless
+  that run typed `--accept-loaded-user-config` and asked for your settings back.
 - `permission_mode: bypassPermissions` is **opt-in per node** and prints a loud
   warning at load time. It is never a graph default. Parallel nodes that share a
   working directory should stay read-only (`permission_mode: plan`) to avoid
@@ -154,7 +155,9 @@ grant is that you chose it.
 
 ### Codex planned-node isolation
 
-Codex cannot express Claude's per-tool rule grammar. For a planned invocation,
+Codex cannot express Claude's per-tool rule grammar. For a planned invocation —
+unless the operator typed `--accept-loaded-user-config`, which is the one thing
+that turns the four flags below off; see "The operator's opt-in" —
 oh-my-graph instead passes `--ignore-user-config`, `--ignore-rules`,
 `project_doc_max_bytes=0`, and an empty `mcp_servers` table, then maps the
 graph permission mode to Codex's sandbox:
@@ -166,10 +169,14 @@ graph permission mode to Codex's sandbox:
 | `bypassPermissions` | `danger-full-access` |
 
 Approval policy is always `never`; a node cannot pause an unattended graph for
-an interactive permission answer. The planner itself keeps the user's normal
-Codex context because its input is the user's own goal. Planned nodes and the
-assessor do not. A hand-written graph also keeps the user's normal config,
-matching the existing reviewed-artifact boundary.
+an interactive permission answer — and it stays `never`, with the sandbox
+mapping above, under the opt-in too: both are argv outside the branch that flag
+switches. The planner itself keeps the user's normal
+Codex context because its input is the user's own goal. Planned nodes do not,
+unless the operator opted in; the assessor never does, because its input is
+untrusted model output and its isolation is not the operator's to trade. A
+hand-written graph also keeps the user's normal config, matching the existing
+reviewed-artifact boundary.
 
 This is a filesystem sandbox stance, not granular enforcement of
 `allowed_tools`. `agent:` and the goal-level USD budget flag are rejected for
@@ -214,16 +221,22 @@ The layers:
 | layer | mechanism | closes |
 |---|---|---|
 | 0 declaration | `coordinator.plannedToolAllowlist` | what a plan may name at all — plan time, before any node runs |
-| 1 isolation | `--setting-sources ""` — on **every** planned node since 2026-08-12, agent-mapped included | your standing grants; settings hooks |
+| 1 isolation | `--setting-sources ""` — on **every** planned node since 2026-08-12, agent-mapped included, **unless the run typed `--accept-loaded-user-config`** | your standing grants; settings hooks |
 | 2 grant | `--allowedTools` under `dontAsk` default-deny | **scoped Bash** |
 | 3 narrowing | `--tools "<names declared>"` | tools the model can attempt at all |
-| 4 MCP | `--strict-mcp-config`, no `--mcp-config` | `mcp__<server>__<tool>` |
+| 4 MCP | `--strict-mcp-config`, no `--mcp-config` — **dropped together with layer 1 by that same opt-in** | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` | anything the layers above got wrong |
 
 Layer 0 is the only plan-time layer: it is the fixed allowlist above, enforced
 by `validatePlannedNodeTools` before anything runs, so a plan naming `Bash`,
 `Bash(*)` or an unrestricted `WebFetch` never becomes a graph. Layers 1–5 then
 bound what the surviving declaration is worth at run time.
+
+**Layers 1 and 4 are the two an operator may decline**, together, off by
+default and only by typing `--accept-loaded-user-config` at launch. Unless that
+is said, everything in this section describes what runs; where it is said, the
+differences are set out under "The operator's opt-in" below, and layers 0, 2, 3
+and 5 are unchanged either way.
 
 Layer 1 is what makes the rest bind. Permission rules are matched from every
 loaded source, so a standing `Bash(*)` in your own `~/.claude/settings.json` was
@@ -310,8 +323,12 @@ before the run, on the node's own line, with that cost named. `--no-agent-mappin
 turns mapping off run-wide and `--no-agent <name>` declines one agent; what
 either buys is an **ordinary planned node** — it gets its `Skill` tool back and
 nothing else. Neither restores the settings, `CLAUDE.md`, hooks or environment
-access a mapped node used to have: no planned node has those any more — measured
-for settings, skills and agent discovery, implied for `CLAUDE.md` and hooks.
+access a mapped node used to have: no planned node of an isolated run has those
+any more — measured
+for settings, skills and agent discovery, implied for `CLAUDE.md` and hooks. The
+one thing that does hand them back is the operator's own
+`--accept-loaded-user-config`, and it turns agent mapping off as it does so, so
+**no flag gives a MAPPED node its environment back** — the two never combine.
 An agent kept in the repository's own
 `.claude/agents` no longer maps at all — move it to `~/.claude/agents` if you
 want it — and how many people that costs is not measured; the decision was taken
@@ -327,7 +344,9 @@ Still a reduction, not a sandbox. What is **not** covered:
 - **MCP closure is unverified.** `--strict-mcp-config` is passed because
   oh-my-graph never passes `--mcp-config`, so the flag costs nothing — but this
   was not measured against a real MCP server (DESIGN.md, E5). Do not read Layer
-  4 as an observed guarantee.
+  4 as an observed guarantee. Under `--accept-loaded-user-config` the flag is
+  not passed at all: layer 4 drops with layer 1 precisely so that the disclosure
+  *"your MCP servers load"* does not rest on an unmeasured flag.
 - **Slash-command surface** is still not enumerable by any of these mechanisms,
   and neither is **skill surface** *by these flags* — but since v0.5.2 it is
   bounded by a different one: an activation-eligible node reaches only the
@@ -336,6 +355,10 @@ Still a reduction, not a sandbox. What is **not** covered:
   ([ADR 0017](docs/adr/0017-planned-nodes-get-skill-activation-not-inlined-skill-text.md)).
 - **Enterprise policy settings are never dropped** by `--setting-sources ""` —
   which is deliberate: this cannot be used to step around a corporate policy.
+  Nor by omitting that flag: enterprise and managed settings are unioned on top
+  of the source list, so `--accept-loaded-user-config` cannot subtract from a
+  union it never joined, and it is no more a route around a corporate policy
+  than the isolated default is.
   Conversely, on a machine with `allowManagedPermissionRulesOnly`,
   `--allowedTools` rules are ignored entirely and the ceiling is the managed
   policy, not ours.
@@ -346,7 +369,9 @@ Still a reduction, not a sandbox. What is **not** covered:
 **Planned nodes are more isolated and less capable than they used to be.**
 Dropping your settings also drops your CLAUDE.md, your hooks and your configured
 MCP servers for those nodes. That is the intended direction, but it is a real
-behaviour change: if your `auto` runs depended on an MCP server, they will stop.
+behaviour change: if your `auto` runs depended on an MCP server, they will stop
+— and `--accept-loaded-user-config` is the narrow door out of that, per run,
+typed at launch, at the price set out below.
 **Through v0.6.0 agent-mapped nodes were the exception in both directions** — no
 *settings* were dropped for them, so your CLAUDE.md and hooks, and the
 repository's, did load, and they were correspondingly less isolated, not more.
@@ -363,6 +388,53 @@ tested and remains unverified.
 Re-running a saved `graph.json` through `oh-my-graph run` drops the ceiling
 entirely — that path assumes you reviewed the file. Treat `auto` as you would
 any unattended agent: run it in a directory you are willing to have modified.
+
+### The operator's opt-in — `--accept-loaded-user-config`
+
+Everything above describes the run that types nothing, which is the default.
+Since [ADR 0032](docs/adr/0032-a-planned-node-may-carry-the-operators-configuration.md)
+an operator may state at launch that this run's planned nodes carry **their
+own** configuration. The flag is **off by default**; it is `auto`'s alone —
+`chat` parses no such flag, and `resume` registers none, because a resumed leg's
+own flags may only de-escalate (it inherits the first leg's choice from the
+snapshot's policy map and reprints the same disclosure). A run that does not
+type it is byte-for-byte the run that shipped in v0.10.0.
+
+**What it changes: layers 1 and 4, together, for the whole run.** Layer 1's
+`--setting-sources ""` is omitted, so your user/project/local settings load on
+Claude; on Codex none of `--ignore-user-config`, `--ignore-rules`,
+`project_doc_max_bytes=0` or `mcp_servers={}` is passed, so `~/.codex/config.toml`,
+your repository's rules and `AGENTS.md` files load. Layer 4's
+`--strict-mcp-config` goes with it, deliberately — see the MCP bullet above.
+With your settings come your `CLAUDE.md`, your hooks and, on Claude, **your
+standing permission grants**: a `Bash(*)` in `~/.claude/settings.json` matches
+before a node's narrower `Bash(git *)`, so that declared scope is a declaration
+again and not a limit. That is the bill, and it is printed with the plan rather
+than left to be discovered.
+
+**What it does not change.** Layers 0, 2, 3 and 5 are untouched: the plan-time
+allowlist still rejects `Bash(*)`, and each node's `--allowedTools`, `--tools`
+set and `--disallowedTools` are the isolated run's for the same graph. (That the
+last two still bind under restored settings is ADR 0032's own falsifier 1, and
+its §8 measurement has not been run — read it as a projection.) Agent mapping
+and skill activation turn **off** with the opt-in, in the coordinator option
+rather than at the call site, because both rest on layer 1 being `""`: with it
+gone, a same-named definition in the repository under work beat the staged copy
+3 of 3 (measurement (j), arm `X`). On Codex the sandbox mapping and
+`approval_policy="never"` are argv outside the branch this flag switches, so the
+filesystem sandbox and the network boundary are exactly as above.
+**Enterprise and managed settings are unioned on top and cannot be dropped by
+it** — this is not a route around a corporate policy. And **the environment
+scrub is untouched**: `internal/childenv.Scrub` is one list with no runtime
+branch, deleting `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`
+and `CODEX_API_KEY` from every child whether the run opted in or not. A restored
+configuration is not a restored API key.
+
+So the saved-login guarantee at the top of this document stays in exactly its
+narrow form, and the opt-in does not widen it: oh-my-graph never passes `--bare`
+and always scrubs, so nothing **it** does switches a CLI off its saved login. It
+still cannot guarantee that the login is subscription OAuth — that is your
+machine's authentication state, which this tool neither sets nor inspects.
 
 ### Isolation stops at the invocation repository
 
@@ -563,8 +635,9 @@ session persistence is on by design, in the CLI's own session transcript under
 
 ## What is exposed while a node runs
 
-A node's full prompt is passed to `claude` as an argv element (`-p <prompt>`, in
-`internal/runner/claude.go`), so for the lifetime of that subprocess it is
+A node's full prompt is passed to the selected CLI as an argv element (`-p
+<prompt>` for `claude`, a positional argument for `codex exec`, both built in
+`internal/runner/`), so for the lifetime of that subprocess it is
 readable from the process table — `ps auxww`, and on Linux
 `/proc/<pid>/cmdline`, which is world-readable unless the machine sets `hidepid`.
 Any process running as you can read it on any platform.

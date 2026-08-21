@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.8.0**, and what is deliberately deferred. Where a gap has
+gaps as of **v0.10.0**, and what is deliberately deferred. Where a gap has
 already been closed on `main` but not in a tagged release, this file says so
 in the paragraph that describes it rather than in the stamp.
 
@@ -51,7 +51,7 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.8.0. **This file is where they are tracked** — the issue
+Honest gaps as of v0.10.0. **This file is where they are tracked** — the issue
 numbers below name the *closed* issue each gap was carved out of, which is
 provenance, not a tracker: those issues asked for the feature that shipped,
 and were closed when it did. What survived the feature is the paragraph, here.
@@ -104,8 +104,7 @@ has no open issue behind it.
   findings to stop its pipeline narrows the review's `success_check` to the
   clean verdict and declares a `feedback:` arc on the same node, so the
   rejection re-runs the implementation with the findings instead of reading as
-  a broken run (`backlog-batch`'s lane A does this; lane B advises). Both keys
-  are the graph's — a fragment may not declare `feedback` at all (ADR 0013).
+  a broken run (`backlog-batch`'s lane A does this; lane B advises).
   The ledger still prints PASS for the advisory case, for the reason above —
   and note that "read the node's artifact" is the advisory remedy only: a
   gating review that found something FAILS, and a failed node writes no
@@ -220,6 +219,51 @@ has no open issue behind it.
   The whole
   ceiling is coupled to one CLI version's behaviour.
   ([#11](https://github.com/jitokim/oh-my-graph/issues/11))
+- **`--accept-loaded-user-config` narrows that ceiling for one run — it does
+  not remove it, and the part that survives is the part nobody has measured.**
+  Since ADR 0032 a planned node may carry the operator's configuration if the
+  operator says so at launch. The flag is runtime-neutral, off by default and
+  `auto`'s alone; it drops layer 1 (`--setting-sources ""`) and layer 4
+  (`--strict-mcp-config`) together, so your user/project/local settings on
+  Claude and your `~/.codex/config.toml`, repository rules and `AGENTS.md`
+  files on Codex load into every planned node, and with them your `CLAUDE.md`,
+  your hooks and your MCP servers. Layer 4 moves with layer 1 deliberately:
+  MCP closure is unmeasured (above), so leaving `--strict-mcp-config` on would
+  have made *"your MCP servers load"* a sentence nobody had checked. What an
+  opted-in planned node still cannot have:
+  <br>**Its own opinion about any of this.** The unit is the whole run, typed
+  on `auto`. A node cannot ask for it — the graph is the planner's untrusted
+  output, and a planner that could request your settings is a sharper form of
+  the hole `validatePlannedNodeAgent` exists to close. `chat` parses no such
+  flag, and `resume` registers none: a resumed leg inherits the first leg's
+  choice from the snapshot's policy map and reprints the same disclosure,
+  because a resumed leg's own flags may only de-escalate.
+  <br>**A staged agent, or the staged skill corpus.** Both rest on layer 1
+  being `""`, so the flag turns agent mapping and skill activation off for the
+  run instead of letting ADR 0017's and ADR 0022's guarantees go quietly
+  false. Measurement (j) is why: with `SettingSources = nil`, arm `X` resolved
+  a three-way name collision to **the repository's own copy, 3 of 3**
+  ([the record](measurements/0017-lifting-the-agent-mapped-exclusion.md)). The
+  selected CLI discovers your agents and skills natively instead, which is
+  what a hand-written `run` node has always done; what is given up is the
+  staged copy's attributable name and its shadow-proofness.
+  <br>**Its declared scope, enforced.** This is the bill, and it is stated on
+  the plan screen rather than left to be discovered: on Claude your standing
+  permission grants load with your settings, so a node's `allowed_tools` scope
+  like `Bash(git *)` is a declaration again and not a limit. Each node's
+  `--tools` set and its deny list are claimed to bind regardless — and **that
+  claim is a projection, not a measurement.** ADR 0032 §8 names the single arm
+  that would settle it, the arm does not exist, and the ADR stays **Proposed**
+  until it does. Two things are outside the trade in both directions:
+  enterprise and managed settings are unioned on top of the source list and
+  were never subtractable by the flag this one omits, and on Codex `--sandbox`
+  and `approval_policy="never"` are argv on every node, outside the branch the
+  flag switches, so the sandbox floor and the no-network limit above are
+  unchanged.
+  <br>Unreleased: no tagged build carries the flag, and a run that types
+  nothing is byte-for-byte the run that shipped in v0.10.0 — same argv, same
+  screens, same `state.json`.
+  ([ADR 0032](adr/0032-a-planned-node-may-carry-the-operators-configuration.md))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not
   reconcile that subagent's own `tools:` with the node's `allowed_tools` — the
@@ -238,13 +282,16 @@ has no open issue behind it.
   directory and supplied with `--plugin-dir`, so Layer 1 stays `""` and a
   mapped node is as isolated, and as limited, as every other planned node
   ([ADR 0022](adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
-  If your agents lean on your environment, **no flag gives that back.**
+  If your agents lean on your environment, **no flag gives a MAPPED node that
+  back**: `--accept-loaded-user-config` (above) loads your environment and
+  turns agent mapping off with it, so the two never combine.
   `--no-agent-mapping` (or `--no-agent <name>`) trades agent mapping for
   ordinary planned-node isolation: the node stops running under your agent's
   system prompt and gets its `Skill` tool back, and that is all it gets — an
   unmapped planned node has no more access to your settings, `CLAUDE.md`, hooks
-  or grants than a mapped one does — on the same evidence scope: measured for
-  settings, implied for `CLAUDE.md` and hooks.
+  or grants than a mapped one does, unless that run typed the opt-in above — on
+  the same evidence scope: measured for settings, implied for `CLAUDE.md` and
+  hooks.
   <br>What that fixes, measured on the same machine and CLI build minutes
   apart: the **shipped** mapped argv ran an out-of-scope `touch` with
   `permission_denials: []` **2 of 2**, the new one was **denied 3 of 3** with
@@ -301,7 +348,7 @@ See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.8.0:
+Called out honestly — these are **not** implemented as of v0.10.0:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause

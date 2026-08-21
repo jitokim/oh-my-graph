@@ -30,6 +30,7 @@ oh-my-graph init [<dir>]
 oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
                           [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence]
+                          [--accept-loaded-user-config]
                           [--max-cycles N] [--max-goal-budget-usd X]
                           [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping]
 oh-my-graph lint <graph.yaml>
@@ -86,6 +87,18 @@ satisfy without knowing the repository's build command — which is exactly why 
 is not yours to take. If you do know the build command (the repo's README,
 `Makefile` or CI config says so), propose `--verify-cmd` with that command and
 let the human confirm it.
+
+## The one flag that is not yours to type
+
+**Never pass `--accept-loaded-user-config` on your own initiative.** It is a
+human operator's stated acceptance, not a knob you may turn to get a run
+working: it drops two of `auto`'s five ceiling layers for the whole run, so the
+human's own settings, `CLAUDE.md`, hooks, MCP servers and standing permission
+grants load into nodes an LLM planned. Suggest it, name what it costs, and let
+the human type it — the pull is the same shape as the refusal above, and so is
+the answer: a flag whose name says *the operator accepts this* is a false
+statement when you are the one who typed it. A node hitting a denied tool is not
+a reason to reach for it.
 
 ## How to work
 

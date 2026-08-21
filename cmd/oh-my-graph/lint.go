@@ -91,7 +91,7 @@ func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime
 		printFragmentResolutions(w, loaded.Resolutions)
 		warnAdvisories(warnW, path, loaded.Graph)
 		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
-		noteCodexRuntimePolicy(w, runtime, loaded.Graph, false)
+		noteCodexRuntimePolicy(w, runtime, loaded.Graph, handWrittenNodes)
 		fmt.Fprintf(w, "%s: valid\n", path)
 		return nil
 	}

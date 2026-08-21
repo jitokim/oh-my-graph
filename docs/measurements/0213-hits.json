@@ -1,0 +1,1802 @@
+[
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "check",
+    "command": "main",
+    "span": "main",
+    "context": "HEAD`. Assert the output is exactly `auto/resume-noweb` AND is not the repository default branch (`main` or `master`). Reply with exactly PASS only when both hold; otherwise reply FAIL followed by the ac",
+    "grants": [
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "check",
+    "command": "master",
+    "span": "master",
+    "context": "sert the output is exactly `auto/resume-noweb` AND is not the repository default branch (`main` or `master`). Reply with exactly PASS only when both hold; otherwise reply FAIL followed by the actual branch",
+    "grants": [
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "command": "auto",
+    "span": "auto",
+    "context": "al: give the `resume` subcommand the same --no-web flag and web-live-view auto-open that `run` and `auto` already have, closing the gap ADR-0006 explicitly deferred ('a chat graph turn and a `resume` leg",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "command": "defer",
+    "span": "defer startLiveView(ctx, web, runID)()",
+    "context": "call sites — note how executeGraph takes a nil-for-none `web browser.Opener` parameter and does `defer startLiveView(ctx, web, runID)()`), cmd/oh-my-graph/liveview_test.go, cmd/oh-my-graph/resume_test.go, docs/adr/0006-browser-open-is-",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "command": "resume",
+    "span": "resume",
+    "context": "o repo checkout of oh-my-graph, a git worktree already on branch auto/resume-noweb. Goal: give the `resume` subcommand the same --no-web flag and web-live-view auto-open that `run` and `auto` already have,",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 3
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "command": "run",
+    "span": "run",
+    "context": "-noweb. Goal: give the `resume` subcommand the same --no-web flag and web-live-view auto-open that `run` and `auto` already have, closing the gap ADR-0006 explicitly deferred ('a chat graph turn and a `r",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "command": "web",
+    "span": "web browser.Opener",
+    "context": "(search for webOpener and startLiveView call sites — note how executeGraph takes a nil-for-none `web browser.Opener` parameter and does `defer startLiveView(ctx, web, runID)()`), cmd/oh-my-graph/liveview_test.go, cm",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "review",
+    "command": "resume",
+    "span": "resume",
+    "context": "You are in the oh-my-graph repo on branch auto/resume-noweb. A prior node wired the `resume` subcommand into the web live view (--no-web flag + TTY-gated auto-open via the browser.Opener seam",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(grep *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "config",
+    "command": "const",
+    "span": "const Version = \"0.3.1\"",
+    "context": "and author a .goreleaser.yaml. Steps: 1) Read cmd/oh-my-graph/version.go — it currently declares `const Version = \"0.3.1\"`. Go's -ldflags -X can only set a package-level string var, so change it to `var Version = \"0.3.1\"`",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(grep *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "config",
+    "command": "goreleaser",
+    "span": "goreleaser check",
+    "context": "mplate including OS/arch); checksum; a simple changelog section. Note honestly in your result that `goreleaser check` could not be run in this sandbox (no goreleaser command available to this node), so the config was",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(grep *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "config",
+    "command": "var",
+    "span": "var Version = \"0.3.1\"",
+    "context": "onst Version = \"0.3.1\"`. Go's -ldflags -X can only set a package-level string var, so change it to `var Version = \"0.3.1\"` while keeping the doc comment and printVersion untouched. 2) Find the version-consistency guard te",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(grep *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "docs",
+    "command": "go",
+    "span": "go install",
+    "context": "ask: document the prebuilt binaries. Steps: 1) Read README.md, find the install section (currently `go install`-based). Add a short subsection saying prebuilt binaries for darwin/linux (arm64/amd64) are publish",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "ship",
+    "command": "goreleaser",
+    "span": "goreleaser check",
+    "context": "with contents: write permission, README/README.ko.md install-section updates, an honest note that `goreleaser check` was not available in this environment so the config was validated by careful reading only, and a F",
+    "grants": [
+      "Read",
+      "Edit",
+      "Bash(make *)",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(ls *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "ship",
+    "command": "main",
+    "span": "main",
+    "context": ": run `git rev-parse --abbrev-ref HEAD`; assert the output is exactly `auto/goreleaser` and is not `main`. Reply with exactly PASS if the gate passed, the push and draft PR succeeded, and the branch asser",
+    "grants": [
+      "Read",
+      "Edit",
+      "Bash(make *)",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(ls *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "workflow",
+    "command": "release",
+    "span": "release --clean",
+    "context": "ml does, and runs goreleaser via `goreleaser/goreleaser-action` (use a current major version, args `release --clean`) with `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in env. Keep style consistent with test.yml. 4)",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "changelog",
+    "command": "resume",
+    "span": "resume --help",
+    "context": "y if it is absent), that says: a subcommand's positional run-id slot no longer swallows a flag — `resume --help`, and the same for the sibling subcommands that take a positional before their flags, now print the",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "check",
+    "command": "main",
+    "span": "main",
+    "context": "NOT land on the default branch: `git log --oneline main..fix/200-help-swallowed` (use `master` if `main` does not resolve) lists at least one commit, and `git log --oneline fix/200-help-swallowed..main`",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "check",
+    "command": "master",
+    "span": "master",
+    "context": "The work did NOT land on the default branch: `git log --oneline main..fix/200-help-swallowed` (use `master` if `main` does not resolve) lists at least one commit, and `git log --oneline fix/200-help-swallow",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "load",
+    "span": "load run \"--help\": ... no such file or directory",
+    "context": "repository (the directory you were invoked from). The defect: `oh-my-graph resume --help` answers `load run \"--help\": ... no such file or directory` because the positional \u003crun-id\u003e consumes the flag before the subcommand's flag set sees it. Siblin",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph resume --help",
+    "context": "ub issue #200 in the oh-my-graph Go repository (the directory you were invoked from). The defect: `oh-my-graph resume --help` answers `load run \"--help\": ... no such file or directory` because the positional \u003crun-id\u003e consume",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "resume",
+    "span": "resume --help",
+    "context": "can never be a valid run id. Why it matters: issue #198's reporter was stranded mid-run and typed `resume --help` to learn which flags existed — the one moment the answer mattered — and got a file-not-found a",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "serve",
+    "span": "serve \u003crun-id\u003e",
+    "context": "flag set sees it. Sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) are to be fixed together — a fix that lands on one and leaves two is the same bug with a smalle",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "show",
+    "span": "show",
+    "context": "the subcommand's flag set sees it. Sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) are to be fixed together — a fix that lands on one and leaves two is",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "command": "watch",
+    "span": "watch",
+    "context": "command's flag set sees it. Sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) are to be fixed together — a fix that lands on one and leaves two is the same",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "load",
+    "span": "load run \"--help\": ... no such file or directory",
+    "context": "ommits. The goal being judged: `oh-my-graph resume --help` must print the resume usage instead of `load run \"--help\": ... no such file or directory`, AND the sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003cr",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "main",
+    "span": "main",
+    "context": "in..fix/200-help-swallowed` and `git diff main...fix/200-help-swallowed` (fall back to `master` if `main` does not resolve). Read the changed files themselves — do not trust the upstream nodes' self-rep",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "master",
+    "span": "master",
+    "context": "--oneline main..fix/200-help-swallowed` and `git diff main...fix/200-help-swallowed` (fall back to `master` if `main` does not resolve). Read the changed files themselves — do not trust the upstream nodes",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph resume --help",
+    "context": "tory you were invoked from). Review only — make no edits and no commits. The goal being judged: `oh-my-graph resume --help` must print the resume usage instead of `load run \"--help\": ... no such file or directory`, AND the",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "serve",
+    "span": "serve \u003crun-id\u003e",
+    "context": "irectory`, AND the sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) must be fixed by the same mechanism, since a fix landing on one and leaving two is the same bug w",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "show",
+    "span": "show",
+    "context": "no such file or directory`, AND the sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) must be fixed by the same mechanism, since a fix landing on one and le",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "command": "watch",
+    "span": "watch",
+    "context": "file or directory`, AND the sibling subcommands that take a positional before their flags (`show`, `watch`, `serve \u003crun-id\u003e`) must be fixed by the same mechanism, since a fix landing on one and leaving two",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "command": "load",
+    "span": "load run \"--help\": ... no such file or directory",
+    "context": "this node — this is a read-only survey. GitHub issue #200: `oh-my-graph resume --help` answers `load run \"--help\": ... no such file or directory` instead of printing the resume flag usage. The positional \u003crun-id\u003e argument consumes `--help` befo",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph resume --help",
+    "context": "oked from. Do NOT modify any file in this node — this is a read-only survey. GitHub issue #200: `oh-my-graph resume --help` answers `load run \"--help\": ... no such file or directory` instead of printing the resume flag usa",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "command": "serve",
+    "span": "serve \u003crun-id\u003e",
+    "context": "commands that also take a positional argument before their flags — at least `show`, `watch`, and `serve \u003crun-id\u003e` — are suspected to share the exact same defect. Produce a precise map of the defect so a later",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "command": "show",
+    "span": "show",
+    "context": "gression. Sibling subcommands that also take a positional argument before their flags — at least `show`, `watch`, and `serve \u003crun-id\u003e` — are suspected to share the exact same defect. Produce a precis",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "command": "watch",
+    "span": "watch",
+    "context": ". Sibling subcommands that also take a positional argument before their flags — at least `show`, `watch`, and `serve \u003crun-id\u003e` — are suspected to share the exact same defect. Produce a precise map of",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "tests",
+    "command": "claude",
+    "span": "claude",
+    "context": "st style of this repo (table-driven where the neighbours are, `FakeRunner`-style fakes and no real `claude` spawn, no network, no real run directories unless the surrounding tests already use a temp dir hel",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "tests",
+    "command": "load",
+    "span": "load run",
+    "context": "er treated as a run id — e.g. an unknown flag in the positional slot reports a flag error, not a `load run` error. 4. A regression guard the other way: a valid, dash-free run id still reaches the run-loadin",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "impl",
+    "command": "serve",
+    "span": "serve",
+    "context": "Implement issue #204 option 1 in the oh-my-graph repository: expose the build a running `serve` process is executing as machine-readable `\u003cmeta\u003e` tags on BOTH served surfaces. The survey note",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 3
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "impl",
+    "command": "v",
+    "span": "v",
+    "context": "issing details omitted with no stray separator. - Version: the release version with any leading `v` trimmed. - Revision: the existing short, `-dirty`-suffixed VCS revision; \"\" when unstamped.",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "impl",
+    "command": "v0.10.0",
+    "span": "v0.10.0 (56e64fb-dirty, built 2026-08-20 00:34)",
+    "context": "so the label and the tags can never disagree. Keep BuildLabel's published behaviour byte-for-byte: `v0.10.0 (56e64fb-dirty, built 2026-08-20 00:34)`, missing details omitted with no stray separator. - Version: the release version with any leadi",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "review",
+    "command": "serve",
+    "span": "serve",
+    "context": "Review the change on branch `fix/204-build-meta` of the oh-my-graph repository: `serve` now exposes its build as `\u003cmeta\u003e` tags on both served surfaces (issue #204, option 1). The implem",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "4-build-meta` (`git rev-parse --abbrev-ref HEAD`; never commit on main). 1. CHANGELOG. The CI job `changelog` requires an entry under `## [Unreleased]`. Read CHANGELOG.md, match the existing subsection headin",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph version",
+    "context": "`omg-built-at` on both the dashboard and the single-run view, so a tool can compare a page against `oh-my-graph version` and tell a stale long-lived server from a current one — a stale server renders a stale body labe",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "command": "omg-built-at",
+    "span": "omg-built-at",
+    "context": "r gains: a running `serve` now states its build in `\u003cmeta name=\"omg-version\"\u003e`, `omg-revision` and `omg-built-at` on both the dashboard and the single-run view, so a tool can compare a page against `oh-my-graph v",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "command": "omg-revision",
+    "span": "omg-revision",
+    "context": "ribing what a reader gains: a running `serve` now states its build in `\u003cmeta name=\"omg-version\"\u003e`, `omg-revision` and `omg-built-at` on both the dashboard and the single-run view, so a tool can compare a page aga",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "command": "serve",
+    "span": "serve",
+    "context": "gs and voice exactly, and add one entry under Unreleased describing what a reader gains: a running `serve` now states its build in `\u003cmeta name=\"omg-version\"\u003e`, `omg-revision` and `omg-built-at` on both the",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "survey",
+    "command": "curl",
+    "span": "curl -s http://127.0.0.1:8642/ | grep omg-build",
+    "context": "anything but report the build; and a reader that wants to compare builds already has the page — `curl -s http://127.0.0.1:8642/ | grep omg-build` is as scriptable as an endpoint would be. An endpoint's only real advantage is avoiding an HTML fe",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "survey",
+    "command": "local",
+    "span": "local",
+    "context": "act `## [Unreleased]` heading and the subsection headings used under it. - Makefile — what the `local` target runs. End your note with a numbered touch-point list: the smallest set of edits that gets",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "survey",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph version",
+    "context": "a tool holding the page can tell a stale long-lived server from a current one by comparing against `oh-my-graph version`. A stale server renders a stale build label, so the label alone cannot settle it; and today the la",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "survey",
+    "command": "serve",
+    "span": "serve",
+    "context": "ation note the next node will build from. GOAL (GitHub issue #204, option 1 only): make a running `serve`'s build machine-readable, so a tool holding the page can tell a stale long-lived server from a cur",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "tests",
+    "command": "serve",
+    "span": "serve",
+    "context": "Write the tests for the change just made in the oh-my-graph repository: `serve` now renders its build as `\u003cmeta\u003e` tags on both served surfaces. The implementation report is at {",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "apply",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "naming the machine-readable build metadata on both serve surfaces and referencing #204. The CI job `changelog` requires this entry. MUST NOT change: `serve` binds 127.0.0.1 only and stays read-only apart from",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "apply",
+    "command": "serve",
+    "span": "serve",
+    "context": "nothing more): - The build that internal/serve/build.go computes, exposed machine-readably on BOTH `serve` surfaces: the dashboard (`GET /{$}` in internal/serve/dashboard.go) and the single-run view (inter",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "audit",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "approved, and two scoped deliverables are missing: a `## [Unreleased]` CHANGELOG entry (the CI job `changelog` requires one) and an opened pull request. Your job is to surface, precisely and with addresses, e",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "audit",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph version",
+    "context": "already computes (version + commit + build time), so a reader with the page can compare it against `oh-my-graph version` without parsing prose. A previous run implemented this but its own review gate never approved, and",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "audit",
+    "command": "serve",
+    "span": "serve",
+    "context": "e any file — this node is read-only. Background: GitHub issue #204 option 1 asks that a running `serve` expose the build it was compiled from in a machine-readable form, on BOTH surfaces `serve` has: th",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)"
+    ],
+    "occurrences": 3
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "pr",
+    "command": "serve",
+    "span": "serve",
+    "context": "d metadata on both serve surfaces (#204)`. The body must, in English, state: - Summary: a running `serve` keeps executing the code it started with, so a stale server renders a stale build label and a read",
+    "grants": [
+      "Read",
+      "Bash(git *)",
+      "Bash(gh pr *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "apply-fixes",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "under the existing `## [Unreleased]` heading describing this documentation correction (the CI job `changelog` requires an entry there). Create no release and no tag, and do not add a version heading. 5. Land",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-design",
+    "command": "auto",
+    "span": "auto",
+    "context": "gments (a fragment may now cite a fragment, bounded by chain and depth), and a launch-time gate on `auto` (build evidence required, with an opt-out flag). `resume` gained two flags; `auto` gained one flag",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-design",
+    "command": "codex",
+    "span": "codex exec",
+    "context": "8.0 -\u003e v0.10.0 and landed ADRs 0025 through 0030 — a second runtime (`--runtime codex`, spawning `codex exec`, one runtime for the whole run), loops as the reusable unit, nested fragments (a fragment may now",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-design",
+    "command": "resume",
+    "span": "resume",
+    "context": "hain and depth), and a launch-time gate on `auto` (build evidence required, with an opt-out flag). `resume` gained two flags; `auto` gained one flag and a refusal. Do this: 1. Read DESIGN.md in full, with",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-limits-examples",
+    "command": "auto",
+    "span": "auto",
+    "context": "ts (a fragment may now cite a fragment, bounded by a chain and a depth), and a launch-time gate on `auto` (build evidence required, plus an opt-out flag and a refusal). `resume` gained two flags. docs/LI",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-limits-examples",
+    "command": "resume",
+    "span": "resume",
+    "context": "), and a launch-time gate on `auto` (build evidence required, plus an opt-out flag and a refusal). `resume` gained two flags. docs/LIMITATIONS.md tells a user what they CANNOT do. A limitation that the cod",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-readme",
+    "command": "auto",
+    "span": "auto",
+    "context": "gments (a fragment may now cite a fragment, bounded by chain and depth), and a launch-time gate on `auto` (build evidence required, with an opt-out flag). `resume` gained two flags; `auto` gained one flag",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-readme",
+    "command": "codex",
+    "span": "codex exec",
+    "context": "8.0 -\u003e v0.10.0 and landed ADRs 0025 through 0030 — a second runtime (`--runtime codex`, spawning `codex exec`), loops as the reusable unit, nested fragments (a fragment may now cite a fragment, bounded by cha",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-readme",
+    "command": "resume",
+    "span": "resume",
+    "context": "hain and depth), and a launch-time gate on `auto` (build evidence required, with an opt-out flag). `resume` gained two flags; `auto` gained one flag and a refusal. Do this: 1. Read README.md in full, with",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-security-contrib",
+    "command": "auto",
+    "span": "auto",
+    "context": "e user's own Codex login), loops as the reusable unit, nested fragments, and a launch-time gate on `auto`. Branch protection on main changed this week. `resume` gained two flags; `auto` gained one flag an",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-security-contrib",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "e named above. - Compare its release checklist against Makefile, .github/workflows/ (including the `changelog` job and any required checks) and CHANGELOG.md. - Merge rules: branch protection on main changed th",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-security-contrib",
+    "command": "codex",
+    "span": "codex exec",
+    "context": "8.0 -\u003e v0.10.0 and landed ADRs 0025 through 0030 — a second runtime (`--runtime codex`, spawning `codex exec` on the user's own Codex login), loops as the reusable unit, nested fragments, and a launch-time ga",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-security-contrib",
+    "command": "resume",
+    "span": "resume",
+    "context": ", nested fragments, and a launch-time gate on `auto`. Branch protection on main changed this week. `resume` gained two flags; `auto` gained one flag and a refusal. SECURITY.md — check the ToS/billing sta",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "audit-contributing",
+    "command": "auto",
+    "span": "auto",
+    "context": "me `codex`, loops as the reusable unit, nested fragments, and a launch-time build-evidence gate on `auto`) and landed seven commits on this branch. Every document got a recorded verdict EXCEPT CONTRIBUTIN",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "audit-contributing",
+    "command": "clean",
+    "span": "clean",
+    "context": "he report: (1) CONTRIBUTING.md — the findings with quoted sentence + contradicting file:line, or `clean`; (2) what you changed and the commit sha; (3) a 'Found, not fixed' list of code defects (empty is",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "audit-contributing",
+    "command": "codex",
+    "span": "codex",
+    "context": "user-facing documents for drift after the v0.8.0 -\u003e v0.10.0 week (ADRs 0025-0030: a second runtime `codex`, loops as the reusable unit, nested fragments, and a launch-time build-evidence gate on `auto`) an",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "check-landed",
+    "command": "oh-my-graph",
+    "span": "oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e",
+    "context": "--format='%h trailer=%(trailers:key=Co-Authored-By,valueonly)' main..docs/drift-audit-v0.10` shows `oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` on every line. 4. CHANGELOG.md has an entry under the `## [Unreleased]` heading (Read CHANGELOG.md",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "final-report",
+    "command": "clean",
+    "span": "clean",
+    "context": "the findings (each with the quoted sentence and the contradicting file:line) or the single word `clean`. Every one of the six must appear; CONTRIBUTING.md must have an explicit verdict. Do not invent a",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "fix-readme-examples",
+    "command": "clean",
+    "span": "clean",
+    "context": "report: (1) README.md — the measured line count, the diffstat against main, and any findings or `clean`; (2) docs/EXAMPLES.md — findings with quoted sentence + contradicting file:line, or `clean`; (3)",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "fix-readme-examples",
+    "command": "runs",
+    "span": "runs list",
+    "context": "d around lines 180-210, and check BOTH against the code that actually produces that output — the `runs list` table and the session/handoff columns in internal/runstatus/, internal/handoff/ and cmd/oh-my-grap",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "verify-trailers-changelog",
+    "command": "changelog",
+    "span": "changelog",
+    "context": "unmet requirement instead and leave the commits alone. JOB 2 — the CHANGELOG entry. The CI job `changelog` requires an entry under `## [Unreleased]`. Commit b779651 ('docs(changelog): record the v0.10 docu",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "changelog",
+    "command": "serve",
+    "span": "serve",
+    "context": "only if the convention of the file calls for it and it is not already there). The entry says: when `serve` cannot take its port it now probes 127.0.0.1 over HTTP, on the bind-failure path only, and names w",
+    "grants": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "impl",
+    "command": "gofmt",
+    "span": "gofmt -l internal/serve",
+    "context": "(a later node does that). No release, no tag, no version bump. VERIFY LOCALLY before committing: `gofmt -l internal/serve`, `go build ./...`, `go vet ./internal/serve/...`. COMMIT GRANULARITY: feature-slice — one commi",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "impl",
+    "command": "serve",
+    "span": "serve",
+    "context": "ph Go repository (the directory oh-my-graph was invoked from). Implement issue #204 option 2: when `serve` cannot bind its port, say WHO holds it. FIRST, orient yourself by reading, at minimum: internal/s",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "review",
+    "command": "gofmt",
+    "span": "gofmt -l internal/serve",
+    "context": "1 --stat`. Run `go test ./internal/serve/... -race -count=1` and `go vet ./internal/serve/...` and `gofmt -l internal/serve` to see the current state for yourself. Judge ONLY these, each of which is load-bearing: 1. NO NEW",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "tests",
+    "command": "gofmt",
+    "span": "gofmt -l internal/serve",
+    "context": "ernal/serve/... -race -count=1` and then `make test` and paste the relevant result lines. Also run `gofmt -l internal/serve`. BRANCH: stay on `fix/serve-port-holder-identity` (check with `git rev-parse --abbrev-ref HEAD`;",
+    "grants": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "verify",
+    "command": "gofmt",
+    "span": "gofmt -l internal/serve",
+    "context": "version heading was added. 6. TESTS — `go test ./internal/serve/... -race -count=1` passes, and `gofmt -l internal/serve` prints nothing. Do not edit anything and do not commit. If every check above holds, your entire r",
+    "grants": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(grep *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "check",
+    "command": "go.mod",
+    "span": "go.mod",
+    "context": "each commit on the branch and confirm no file under `internal/`, `cmd/` or `graphs/`, and neither `go.mod` nor `go.sum`, appears in any of them. Only `docs/measurements/...` and at most `CHANGELOG.md` may",
+    "grants": [
+      "Read",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "check",
+    "command": "go.sum",
+    "span": "go.sum",
+    "context": "on the branch and confirm no file under `internal/`, `cmd/` or `graphs/`, and neither `go.mod` nor `go.sum`, appears in any of them. Only `docs/measurements/...` and at most `CHANGELOG.md` may appear. 7. On",
+    "grants": [
+      "Read",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "check",
+    "command": "main",
+    "span": "main",
+    "context": "measurement commit, i.e. the measurement commits are on `measure/tool-grant-predicate` and not on `main`. 4. Every commit added on that branch carries the trailer exactly `Co-Authored-By: oh-my-graph \u003cgr",
+    "grants": [
+      "Read",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "graph.json",
+    "span": "graph.json",
+    "context": "the base is `$OMG_HOME` if that variable is set, otherwise `$HOME/.oh-my-graph`). Each may contain `graph.json` and `state.json`. Definition of PLANNED — use exactly this test and do not invent another: a ru",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 3
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "graph_source_path",
+    "span": "graph_source_path",
+    "context": "— use exactly this test and do not invent another: a run is PLANNED when its `state.json` field `graph_source_path` resolves to that same run's own `graph.json` (compare after resolving symlinks/absolute paths; the",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "grep",
+    "span": "grep -c",
+    "context": "T planned and is out of corpus. HARD RULE — PARSE, DO NOT GREP. This repo has a written scar: a `grep -c` count went into three documents and was wrong because grep counted comments and counted per-file.",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "os",
+    "span": "os",
+    "context": "n docs/measurements/0213-tool-grant-predicate.go`. Use only the standard library (`encoding/json`, `os`, `path/filepath`, `regexp`, `strings`). Do not add it to any package, do not touch go.mod, do not",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "package",
+    "span": "package main",
+    "context": "grant-predicate.go`. Give it `//go:build ignore` as the first line (followed by a blank line, then `package main`) so it is excluded from `go build ./...`, `go vet ./...` and `go test ./...` and can never affect",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "regexp",
+    "span": "regexp",
+    "context": "3-tool-grant-predicate.go`. Use only the standard library (`encoding/json`, `os`, `path/filepath`, `regexp`, `strings`). Do not add it to any package, do not touch go.mod, do not edit any file under `intern",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "state.json",
+    "span": "state.json",
+    "context": "_HOME` if that variable is set, otherwise `$HOME/.oh-my-graph`). Each may contain `graph.json` and `state.json`. Definition of PLANNED — use exactly this test and do not invent another: a run is PLANNED when",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 3
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "command": "strings",
+    "span": "strings",
+    "context": "nt-predicate.go`. Use only the standard library (`encoding/json`, `os`, `path/filepath`, `regexp`, `strings`). Do not add it to any package, do not touch go.mod, do not edit any file under `internal/` or `cm",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "handcheck",
+    "command": "gofmt",
+    "span": "gofmt",
+    "context": "or: run `20260819-223604.575080000-1` is the known-real case — its `verify` node was told to run `gofmt`, held neither `Bash(gofmt *)` nor `Bash(make *)`, and the run failed after $8.35 of completed work",
+    "grants": [
+      "Read",
+      "Glob",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "handcheck",
+    "command": "make",
+    "span": "make",
+    "context": "run; - a command actually covered by a grant your matcher failed to associate (e.g. routed through `make`, or a grant pattern the matcher mis-parsed); - a prompt QUOTING output or a document that happens",
+    "grants": [
+      "Read",
+      "Glob",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "precedent",
+    "command": "tool_grant_lint_test.go",
+    "span": "tool_grant_lint_test.go",
+    "context": "node declares NOTHING at all. Then read its test file (look beside it in `internal/handoff/`, e.g. `tool_grant_lint_test.go`) in full, and skim the other advisory lint sweeps in `internal/handoff/` so you can say what is sh",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "predicate",
+    "command": "gofmt",
+    "span": "gofmt -l ...",
+    "context": "the node holds. Extraction: pull candidate commands out of the prompt text — backticked spans (`gofmt -l ...`, `make local`, `go test ./...`), fenced code blocks, and any other shape you judge to be a command",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "predicate",
+    "command": "make",
+    "span": "make local",
+    "context": "Extraction: pull candidate commands out of the prompt text — backticked spans (`gofmt -l ...`, `make local`, `go test ./...`), fenced code blocks, and any other shape you judge to be a command instruction.",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 2
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "predicate",
+    "command": "sudo",
+    "span": "sudo",
+    "context": "ction. Take the FIRST word as the command name (after stripping an env-var prefix or a leading `$`/`sudo`). Ignore obvious non-commands (prose in backticks like a field name, a file path, an identifier) b",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "predicate",
+    "command": "x",
+    "span": "x",
+    "context": "actly, in your report. Grant matching: a grant `Bash(x *)` permits a command whose first token is `x`. A bare `Bash` or `Bash(*)` permits everything, so such a node can never produce a hit. Non-Bash g",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "go.mod",
+    "span": "go.mod",
+    "context": "urement. Change NO product code — nothing under `internal/`, `cmd/`, `graphs/`, and no change to `go.mod`. This task adds a measurement, not behaviour. Do NOT build the lint. You have four inputs. Corpus",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "gofmt",
+    "span": "gofmt",
+    "context": "e concrete run that motivated it (run `20260819-223604.575080000-1`, its `verify` node told to run `gofmt`, holding neither `Bash(gofmt *)` nor `Bash(make *)`, failing after $8.35 of completed work); - the",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "graph.json",
+    "span": "graph.json",
+    "context": "h the PLANNED definition spelled out (`state.json` `graph_source_path` resolving to that run's own `graph.json`) and the exact command that recomputes them; - what `handoff.LintToolGrants` already does and its",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "graph_source_path",
+    "span": "graph_source_path",
+    "context": "allowed_tools`, grant-shape distribution — with the PLANNED definition spelled out (`state.json` `graph_source_path` resolving to that run's own `graph.json`) and the exact command that recomputes them; - what `hand",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "main",
+    "span": "main",
+    "context": "eate it from the current HEAD with `git checkout -b measure/tool-grant-predicate`. NEVER commit on `main`. Granularity is feature-slice: one commit for the measurement (document + script together), and a",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "command": "state.json",
+    "span": "state.json",
+    "context": "s declaring `allowed_tools`, grant-shape distribution — with the PLANNED definition spelled out (`state.json` `graph_source_path` resolving to that run's own `graph.json`) and the exact command that recompute",
+    "grants": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "measure",
+    "command": "graph_source_path",
+    "span": "graph_source_path",
+    "context": "else $HOME/.oh-my-graph/runs/\u003crun-id\u003e/. For each run directory, JSON-parse state.json and read its `graph_source_path`. A run is PLANNED (not hand-written) exactly when that path, after filepath.Clean and symlink reso",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "measure",
+    "command": "grep",
+    "span": "grep -c",
+    "context": "a lint. Change NO product code. HARD RULE — PARSE, DO NOT GREP. This repo has a written scar: a `grep -c` count went into three documents and was wrong because grep counted comments and counted per file.",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "measure",
+    "command": "package",
+    "span": "package main",
+    "context": "ate.go (create the directory if needed). - First line `//go:build ignore`, then a blank line, then `package main`. Standard library imports ONLY (encoding/json, os, path/filepath, regexp, sort, fmt, strings). Thi",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "writeup",
+    "command": "go",
+    "span": "go run docs/measurements/0213-tool-grant-predicate.go",
+    "context": "or `Bash(make *)`, dead after $8.35 of completed work). 2. HOW TO RECOMPUTE IT: the exact command (`go run docs/measurements/0213-tool-grant-predicate.go`), and the planned-run selection rule stated precisely (state.json `graph_source_path` resolving to",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "writeup",
+    "command": "graph_source_path",
+    "span": "graph_source_path",
+    "context": "ts/0213-tool-grant-predicate.go`), and the planned-run selection rule stated precisely (state.json `graph_source_path` resolving to that run's own graph.json). 3. The corpus numbers: planned graphs, total nodes, nodes",
+    "grants": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "occurrences": 1
+  }
+]

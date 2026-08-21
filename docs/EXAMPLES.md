@@ -46,8 +46,8 @@ read that persisted runtime; passing a different explicit value is an error.
 | `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
-| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N` and `--no-web`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
-| `runs list` | List runs, newest first: graph name, node count, cost, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. Read-only. |
+| `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N`, `--no-web` and `--no-skill-activation`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
+| `runs list` | List runs, newest first: graph name, node count, cost, token counts, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. Read-only. |
 | `show <run-id>` | Print one run's status and its per-node ledger (session, cost, verdict, duration) with the total. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. Read-only. |
 | `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
@@ -168,7 +168,7 @@ tools the node needs (`allowed_tools: []` if it needs none), or give it a
 `permission_mode: bypassPermissions` node are exempt: neither can be denied
 anything.)
 
-Last, it warns for a `success_check.verify.command` that splices a model's own
+Then, it warns for a `success_check.verify.command` that splices a model's own
 text into the shell command line the engine runs. A verify command interpolates
 exactly like a prompt, so `{{ artifacts.<id> | inline }}` there puts a node's
 free-form reply on that line — and `{{ feedback.<id> }}`, which always inlines
@@ -176,6 +176,12 @@ and takes no filter, does the same. Neither is malformed and nothing else says
 a word. The fix for the first is usually the default: with no filter the token
 is the artifact's *file path*, so write
 `grep -q '^PASS' "{{ artifacts.impl }}"` and let the command read the file.
+
+Last, two sweeps over a `feedback:` arc: a loop whose re-run path never quotes
+`{{ feedback.<declarer> }}`, so the re-run gets the prompt it already ran and
+fails again for the same reason at twice the cost (ADR 0028); and an arc whose
+`rerun` target cannot reach one of its declarer's producers, so a re-run leaves
+part of what the declarer read untouched.
 
 Warnings never change the exit code. At run time, malformed tokens pass
 through verbatim (a prompt may legitimately contain literal `{{ }}` text),
@@ -191,8 +197,8 @@ exited 0" and "the model said the word PASS" are not the same claim and must not
 print as the same word:
 
 ```text
-critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
-write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
+critique         PASS (exit-only)     a1b2c3d4-e5f6-4…     0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4…     0.0091
 ```
 
 `write` declares a `success_check.verify`, so its row is `verified`; `critique`
@@ -441,16 +447,20 @@ What it costs the node is real and is the other half of the same sentence — yo
 standing grants are unavailable to it, your `CLAUDE.md` and your hooks arrive by
 the same source list and are implied rather than measured, and it holds no
 `Skill` tool, so it can invoke no skill at all. (Its argv also carries
-`--strict-mcp-config`, as every planned node's always has; whether that closes
-MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
+`--strict-mcp-config`, as every planned node's has unless the run typed
+`--accept-loaded-user-config`, which drops it along with the isolation; whether
+it closes MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
 a mapped node was the one exception to that isolation; from 2026-08-12 (KST) it is
 not.** The agent file is read once, at plan time, and pinned by hash, so editing
 it mid-run changes nothing; a resumed leg maps nothing at all and says so. If
 you want one node's `Skill` tool back, `--no-agent <name>` declines that one
 agent — the node then runs as an ordinary planned node, which is the whole of
 what declining buys: it does **not** hand the node your environment back,
-because no planned node gets that any more. `--no-agent-mapping` remains the
-all-or-nothing form
+because no planned node gets that any more — unless the run typed
+`--accept-loaded-user-config`, in which case every planned node has it and there
+is no agent mapping left to decline
+([ADR 0032](adr/0032-a-planned-node-may-carry-the-operators-configuration.md)).
+`--no-agent-mapping` remains the all-or-nothing form
 ([ADR 0022](adr/0022-a-mapped-node-gets-its-agent-staged-not-its-settings-back.md)).
 
 **Skill activation.** Your Claude Code skills (`~/.claude/skills` only) reach
@@ -1002,14 +1012,28 @@ reviewer, handing the findings to the re-run as `{{ feedback.review }}` (empty
 on the first pass) — at most `max` times, every round priced in the ledger.
 
 ```yaml
+  - id: impl
+    prompt: |
+      Implement the change.
+
+      Reviewer feedback from the previous round follows — it is empty on the
+      first pass. If present, address every point before anything else:
+      {{ feedback.review }}
+
   - id: review
     depends_on: [impl]
     permission_mode: plan
     allowed_tools: [Read, "Bash(git diff*)"]
-    prompt: "Review the diff. Reply CLEAN, or FINDINGS: and what is wrong. {{ feedback.review }}"
-    success_check: { result_matches: '^CLEAN' }
+    prompt: "Review the diff. Reply CLEAN, or FINDINGS: and what is wrong."
+    success_check: { exit_zero: true, result_matches: '^CLEAN' }
     feedback: { rerun: impl, max: 2 }
 ```
+
+The token goes in the **re-run** node's prompt, not the declarer's: `lint`
+skips the declarer when it looks for the quote, because the node that has to
+read the findings is the one being re-run. `exit_zero: true` is spelled out for
+the same reason it is everywhere else — a `result_matches` written alone drops
+the exit-code guard the node had for free.
 
 Demo: `graphs/review-loop.yaml`. Spec:
 [DESIGN.md § Execution engine](../DESIGN.md#execution-engine) ·
@@ -1017,20 +1041,26 @@ Demo: `graphs/review-loop.yaml`. Spec:
 
 ## Reusable node shapes (`use:` fragments)
 
-A node says `use: e2e-verify` and is spliced, at load time, from a single-node
-fragment file in the graph's own `fragments/` sibling directory, binding the
+A node says `use: e2e-verify` and is spliced, at load time, from a fragment file
+in the graph's own `fragments/` sibling directory, binding the
 fragment's declared substitution points with `with:` — the proven prompt, tool
 grant and `success_check` live once, upstream, so the next fix to a shared shape
 is one edit instead of a hand-sweep across every copy. The resolved graph is
 indistinguishable from a hand-written one. Shipped shapes are in
 `graphs/fragments/`.
 
+A fragment declares either `node:` — one node — or `nodes:` plus `exit:`, a
+whole subgraph the citing node stands in for (ADR 0027); and a fragment's own
+node may itself carry `use:`, bounded at three citation hops (ADR 0029).
+
 That single location is the whole rule, so **where you keep a graph file decides
 whether it can cite anything** — spelled out in
 [docs/INSTALL.md](INSTALL.md#what-oh-my-graph-init-unpacks).
 
 Spec:
-[ADR 0013](adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md).
+[ADR 0013](adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md) ·
+[ADR 0027](adr/0027-the-reusable-unit-is-a-loop-not-a-node.md) ·
+[ADR 0029](adr/0029-a-fragment-may-cite-a-fragment.md).
 
 ## Human gates and failure salvage
 

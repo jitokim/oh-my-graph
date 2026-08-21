@@ -10,6 +10,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-08-21
+
+**Minor because two things you may now type were errors before**, and one thing
+the engine does on its own changed. `auto` gains `--accept-loaded-user-config`,
+and `serve` answers a question it used to shrug at. Compared by name against
+v0.10.0: the eleven subcommands are unchanged, so nothing new was *invented* —
+what changed is what the existing ones accept and what they tell you.
+
+The headline is **the operator's opt-in** (ADR 0032). A planned node has been
+isolated from your own configuration since the auto ceiling was built, and an
+external review put the cost plainly: Codex `auto` nodes drop user settings,
+AGENTS files and MCP servers, so they do not inherit what you configured. That
+reading was correct. The answer is not to weaken the ceiling but to notice that
+the workaround people already had — plan, then hand-run the saved plan — drops
+*all five layers*, so refusing to build a narrow door was routing everyone
+through a wider one.
+
+Two engine behaviours were repaired by measuring them first, and both
+measurements are committed so the numbers can be recomputed rather than
+re-argued: the `changelog` guard was checking something other than what it
+printed, and the goal loop was discarding a finished cycle when the model CLI
+was replaced mid-run.
+
 ### Changed
 
 - **`auto` now REFUSES TO START in a directory where a build system is
@@ -53,6 +76,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **ADR 0031 — "An unbounded loop is a bounded loop and a clock"**, Proposed.
+  No behaviour changes; nothing in it is implemented. It designs the supervisor
+  the operator currently *is*: a leg that runs revolutions of a graph, bounded
+  up front, whose only autonomous recovery is waiting out a subscription limit
+  window. Three things it records are measurable facts about today's engine
+  rather than proposals — a gate pause and a session-limit pause both exit 2
+  and are told apart only by a **missing** `gate.paused_at`, which is the
+  absence-satisfiable assertion CONTRIBUTING.md forbids; nothing resumes a
+  limited run, because the CLI's reset hint is prose and ADR 0009 rightly
+  refuses to parse it; and `budget_usd` cannot see into a run a node spawns.
+  The decisions worth arguing with are that the supervisor **may wait and may
+  retry, but may never approve a gate**, and that a limit window is waited out
+  by *polling rather than scheduling* — do not build a clock on top of prose.
+
 - **`--accept-no-build-evidence` on `auto`**, the one exit from the refusal
   above. It is not a verification switch — nothing is skipped, because nothing
   was going to run — and its name is what the operator states: *this run carries
@@ -71,6 +108,51 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   keeps the answer its launch gave, so pausing does not turn a declared absence
   back into an indistinguishable one. Reading it back is `cat state.json` for
   now — `show`, `runs` and the dashboard do not surface it yet.
+
+- **`--accept-loaded-user-config` on `auto`** — a planned node may carry YOUR
+  CLI configuration, if you say so at launch (ADR 0032). Off by default and
+  **runtime-neutral**: the ceiling isolates settings for Claude and Codex
+  alike, and a Codex-only escape hatch would have claimed, without arguing it,
+  that the Claude ceiling is worth more. It drops two of the five ceiling
+  layers for the whole run — layer 1 (`--setting-sources ""` on Claude;
+  `--ignore-user-config`, `--ignore-rules` and the two `--config` settings on
+  Codex) and layer 4 (`--strict-mcp-config`) — so your user/project/local
+  settings, your `~/.codex/config.toml`, your repository's rules and
+  `AGENTS.md` files, and with them your `CLAUDE.md`, your hooks and your MCP
+  servers all load into planned nodes. Layers 2, 3 and 5 do not move: each
+  node's `--allowedTools`, its `--tools` set and its `--disallowedTools` still
+  bind. Layer 4 moves with layer 1 on purpose — whether `--strict-mcp-config`
+  closes MCP has never been measured (E5), so leaving it on would have made
+  *"your MCP servers load"* a claim nobody had checked.
+
+  **It is a statement, not a switch**, which is what `accept` spells. The bill
+  is printed with the plan, in the slot that says either the isolated sentence
+  or this one and never both: on Claude your standing permission grants load
+  with your settings, so a node's declared `Bash(git *)` is a declaration
+  again and not a limit. Agent mapping and skill activation are forced off for
+  the run — inside the coordinator option rather than at the call site, so no
+  later composition can reopen it — because both rest on layer 1 being `""`:
+  with it gone, a same-named `SKILL.md` in the repository under work beat the
+  staged copy **3 of 3**. Your CLI discovers your own agents and skills
+  natively instead, which is what a hand-written `run` node always did.
+
+  Why a flag when a wider door already existed: `auto --plan-only` then
+  `oh-my-graph run plans/<id>/graph.json` has always carried your
+  configuration — and it drops **all five** layers and puts the goal loop out
+  of reach, since nobody can hand-carry cycle *k*'s assessment into cycle
+  *k+1*. That path is not deprecated. This is the narrower one, and it says
+  what it costs.
+
+  **A run that does not type it is byte-for-byte the run that shipped in
+  v0.10.0** — same argv, same screens, same `state.json`. `run` is untouched,
+  `chat` cannot reach it, and `resume` registers no such flag: a resumed leg
+  inherits the choice from the snapshot's policy map (inside a non-empty
+  `ToolPolicies`, an absent `setting_sources` is unambiguous) and reprints the
+  disclosure before the banner, because a resumed leg's own flags may only
+  de-escalate. Enterprise and managed settings are unioned on top of the
+  source list and cannot be widened by this flag. ADR 0032 stays **Proposed**:
+  the measurement that would confirm layers 3 and 5 still bind under restored
+  settings (§8) does not exist yet, so that half is a projection.
 
 - **Both `serve` surfaces state their build in the page head, as `<meta>` tags a
   script can read** (#204). The footer has named the build since v0.5.2, but
@@ -100,6 +182,126 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   The dashboard hands its build whole to every run view mounted under it, so `/`
   and `/run/<id>/` cannot disagree about which process is answering. Disclosure
   only: no new route, no new handler, nothing the page can act on.
+
+### Fixed
+
+- **A `serve` that cannot take its port now names who is holding it** (#204). The
+  bind error said the port was taken and stopped there, leaving the one question
+  the reader actually has unanswered — taken BY WHAT — and this repo has already
+  paid for that once: a long-lived `serve` holding 8642 while the binary is
+  rebuilt underneath it reads, from the browser, exactly like the new build
+  misbehaving. On the bind-failure path **only**, the port that just refused the
+  bind is now asked over loopback HTTP who holds it, and the answer is read off
+  the same `omg-version` / `omg-revision` / `omg-built-at` tags the entry above
+  added — the machine-readable half of the identity the page already states,
+  deliberately the same channel rather than a second one that could disagree with
+  the page it is diagnosing. **A successful bind makes no request at all**, so the
+  serving path is exactly what it was.
+
+  Three answers, and the third is the sentence the error has always carried,
+  byte for byte:
+
+  ```console
+  # (a) another oh-my-graph, a DIFFERENT build — both builds named
+  $ oh-my-graph serve --port 8654
+  … bind: address already in use — 127.0.0.1:8654 is held by another
+  `oh-my-graph serve`, and it is an older build than the binary you just ran: the
+  server answering there is v0.9.1 (c40cb5c-dirty, built 2026-08-01 14:02), this
+  binary is v0.10.0 (9590682, built 2026-08-20 09:12). What you see at
+  http://127.0.0.1:8654/ is that older build, not the code you just built;
+  nothing here stops it. To serve this build beside it, run `oh-my-graph serve
+  --port 8655`.
+
+  # (b) another oh-my-graph, the SAME build
+  … bind: address already in use — 127.0.0.1:8654 is already held by another
+  `oh-my-graph serve` running this same build, v0.10.0 (9590682, built 2026-08-20
+  09:12): you already have one running, and it is answering at
+  http://127.0.0.1:8654/. To serve a second one beside it, run `oh-my-graph serve
+  --port 8655`.
+
+  # (c) a foreign server, a serve older than the tags, or no answer at all
+  … bind: address already in use (if the port is taken, pick another with --port)
+  ```
+
+  `an older` becomes `a newer` or `a different` — and the second mention agrees
+  with it — whenever the two `omg-built-at` atoms order the other way or cannot be
+  ordered at all: printing "older" at a holder that is in fact newer would be a
+  confident wrong answer about the exact thing the reader came here to learn.
+
+  What it deliberately is **not** is `lsof -i :8642` and a pid. Exactly four
+  objects in this repo may spawn a process (ADR 0002/0005/0006, asserted by
+  import in `internal/invariants`) and a diagnostic is not worth a fifth; an HTTP
+  GET to loopback spawns nothing and answers the better question anyway — not
+  which process, but which BUILD. So every message reports, names a command you
+  can run, and stops there: nothing kills, replaces, or offers to.
+
+  The probe is bounded and narrow. It addresses `127.0.0.1:<port>` and nothing
+  else, follows no redirect at all (whatever answers the port must not get to
+  choose the next host this process talks to), reads at most 64 KiB, and gives up
+  after **2 seconds** — a bound on the whole probe, connect through body read, so
+  a holder that accepts the connection and never answers costs a bind error two
+  seconds rather than hanging the command that was already failing. Port 0 is
+  never probed (there is no fixed port a holder could be holding), and a caller
+  that states no build of its own — the embedded live view — degrades to the
+  `--port` sentence rather than guessing "older" or "the same".
+
+  **The holder's answer is treated as untrusted input**, because it is: whatever
+  holds that port need not be ours, and its three atoms are rendered into an
+  error a terminal interprets. An atom carrying a control byte, or longer than
+  128 bytes, is not an identity this acts on — it classifies as "not an
+  oh-my-graph" and falls back to the `--port` sentence. That rule is not
+  hypothetical hardening: a holder answering
+  `content="9.9.9\x1b[2J\rno other serve is running"` produced a message
+  carrying the screen-clearing escape verbatim, which would have let it replace
+  the diagnostic with the exact wrong impression this feature exists to prevent.
+  Our own atoms are a semver, a short revision and an RFC3339 instant, so a real
+  page loses nothing.
+- **The `changelog` guard now checks the heading it names.** It asked only
+  whether `CHANGELOG.md` appeared in the changed-file list, so a trailing space
+  passed it, and so did an entry filed under an already-released heading — the
+  two ways of touching the file that leave a reader with nothing. It named
+  `## [Unreleased]` in its error text and never looked at it. The question is
+  now answered by `scripts/changelog-entry-check.sh`, which requires a line the
+  diff genuinely adds inside the Unreleased section: an added line that only
+  restates a removed one is a reflow, not an entry. A release cut is exempt —
+  it moves entries into a new `## [vX.Y.Z]` heading and leaves Unreleased empty
+  by design, which the old shape of this check never had to think about.
+
+  The script is a file rather than an inline workflow block so a contributor can
+  run it before pushing. That is the actual repair: the previous guard was never
+  falsifiable outside CI, and it had been wrong since it was written. Seven
+  cases were run against it by hand, including the two it used to let through.
+
+- **Documentation drift, swept across the seven user-facing documents against
+  HEAD** — README.md, README.ko.md, DESIGN.md, SECURITY.md, CONTRIBUTING.md,
+  docs/LIMITATIONS.md and docs/EXAMPLES.md. No behaviour changes; every edit
+  removes or corrects a sentence the code contradicts, and where a claim had
+  simply become false it was deleted rather than qualified.
+
+  The ones a reader could have acted on: README's replay paragraph promised
+  "the same tool ceiling" for a hand-written graph, which `run` does not build —
+  its nodes run under the user's own settings, hooks and permissions, exactly as
+  SECURITY.md's "`allowed_tools` is a declaration, not a sandbox" says — so a
+  reader taking "ceiling" at this repo's own reserved value would skip the
+  defence. SECURITY.md attributed the prompt-in-argv exposure to
+  `internal/runner/claude.go`, a file that does not exist, and stated it for
+  claude alone; `codex exec` carries the prompt positionally, so the process
+  table exposes it under both runtimes. docs/EXAMPLES.md's `feedback:` recipe
+  put `{{ feedback.review }}` in the declarer's own prompt — the one placement
+  the quote lint skips — so copying it produced a loop that warns, and would be
+  refused outright in a planned graph (ADR 0028); it also declared
+  `result_matches` with no `exit_zero`, the warning that same file documents
+  850 lines earlier. CONTRIBUTING.md's merge table omitted the `changelog` job
+  that fails a PR adding no entry, and presented `stress` as an unconditional
+  repeat when a paths filter can let it report green having repeated nothing.
+
+  The rest are counts and listings the last two releases moved past: a fragment
+  is no longer one node (ADR 0027) and may cite another (ADR 0029), so it may
+  carry `use:` and — when it declares its own ids — a `feedback:` arc of its
+  own; six shipped fragments declare a verdict rule, not four; `resume`
+  registers `--no-skill-activation`; docs/LIMITATIONS.md's three "as of v0.8.0"
+  stamps; and DESIGN.md's repo layout, whose ADR range stopped at 0020 and whose
+  file lists were a directory listing behind.
 
 ## [v0.10.0] - 2026-08-19
 
@@ -294,6 +496,26 @@ the path we exercised least, and that is where both bugs lived.
   files away from the file that changed.
 
 ### Fixed
+
+- **A goal loop no longer throws away a finished cycle because the model CLI
+  blinked** (#214). The assessor's subprocess failing to *start* was treated
+  like any other assessor error: `auto` exited 1 and the cycle's verdict was
+  discarded. The case that found it cost a run whose five nodes had already
+  completed — an npm update replaced `claude` on `PATH` mid-run, and the spawn
+  failed on a binary that had existed twenty minutes earlier and existed again
+  a second later.
+
+  A spawn failure is now retried, up to three attempts, 300ms apart — and
+  **only** a spawn failure. `internal/runner.NodeSpawnError` gives that branch a
+  type a caller can match on instead of a sentence it would have to parse; the
+  distinction itself already existed there, it just had no name.
+
+  Everything else is untouched on purpose: an unparseable reply, a non-zero
+  exit, a timeout and a cancelled context all still stop the loop on the first
+  answer. Retrying those would be re-rolling a verdict until the loop liked
+  one, which is the quiet-spend behaviour ADR 0011 exists to forbid. The test
+  that pins it scripts a second, succeeding reply and asserts the assessor was
+  launched **exactly once** anyway.
 
 - **A subcommand's positional run-id slot no longer swallows a flag** (#200).
   `resume --help` read `--help` as the run id and reported a run that does not

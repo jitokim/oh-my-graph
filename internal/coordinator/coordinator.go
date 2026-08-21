@@ -263,6 +263,12 @@ type Coordinator struct {
 	// Empty — the production value — means the process's working directory,
 	// which is where auto runs every planned node; tests pass a temp dir.
 	invocationDir string
+	// loadedUserConfig is the operator's statement that this run's planned
+	// nodes load THEIR configuration — the `--accept-loaded-user-config` flag
+	// (ADR 0032), set via WithLoadedUserConfig. It is the one option here that
+	// WIDENS, and false — the ceiling — is the default it has to be asked out
+	// of. What it changes is toolPolicyFor's layers 1 and 4, and nothing else.
+	loadedUserConfig bool
 }
 
 // Option configures a Coordinator at construction.
@@ -322,6 +328,40 @@ func WithoutAgentsNamed(names ...string) Option {
 // run's ceiling.
 func WithoutSkillActivation() Option {
 	return func(c *Coordinator) { c.skillActivationOff = true }
+}
+
+// WithLoadedUserConfig states that this run's planned nodes load the
+// OPERATOR's CLI configuration — the `--accept-loaded-user-config` flag's
+// implementation (ADR 0032). It drops layers 1 and 4 of toolPolicyFor's
+// ceiling (settings isolation and --strict-mcp-config) and leaves layers 2, 3
+// and 5 exactly where they were, so an opted-in planned node's setting/config
+// posture is a hand-written `run` node's and its tool posture is still a
+// planned node's.
+//
+// It is the only Option that widens, which is why the two de-escalations below
+// are set HERE and not at the call site: both agent mapping and skill
+// activation rest on layer 1 being "", and no composition of options may
+// reopen the combination. Measurement (j) arm X is the reason and not a
+// worry — with SettingSources nil, a same-named skill in the working
+// repository beat the copy oh-my-graph staged 3 of 3
+// (docs/measurements/0017-lifting-the-agent-mapped-exclusion.md:119), so ADR
+// 0017's "the definition is the one we staged" and ADR 0022's "the system
+// prompt comes from a directory we staged" would both be written down and
+// false. It is a change of provider rather than a loss: with the operator's
+// settings loaded the CLI discovers the operator's own agents and skills
+// natively, exactly as a hand-written node always has. The CLI prints that
+// reason where it prints its other de-escalations (mappingOptions).
+//
+// Enterprise and managed policy are untouched in either direction. The
+// mechanism is the ABSENCE of --setting-sources (isolatedSettingSources), and
+// enterprise settings are unioned on top of whatever that flag selects, so an
+// absent argument cannot subtract from a union it never joined.
+func WithLoadedUserConfig() Option {
+	return func(c *Coordinator) {
+		c.loadedUserConfig = true
+		c.agentMappingOff = true
+		c.skillActivationOff = true
+	}
 }
 
 // WithSkillDirs sets the directories scanned for skill definitions, lowest
@@ -563,7 +603,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	plan := Plan{
 		Graph:        g,
 		Spec:         []byte(spec),
-		ToolPolicies: toolPoliciesByNode(g),
+		ToolPolicies: toolPoliciesByNode(g, c.loadedUserConfig),
 	}
 	// Computed HERE, on the planner's own prompts, and deliberately before the
 	// post-validation steps below, so what it reads is what the planner
@@ -651,10 +691,14 @@ func planIssueReasons(issues []*PlanError) []string {
 // toolPoliciesByNode derives the run's execution ceiling: one complete policy
 // per planned node. It runs after validation, so every node here already
 // declared a non-empty allowed_tools drawn from plannedToolAllowlist.
-func toolPoliciesByNode(g *graph.Graph) map[string]runner.ToolPolicy {
+//
+// loadedUserConfig is the whole run's answer, never one node's: a per-node
+// opt-in would have to come from the plan, and the plan is the planner's
+// untrusted output (ADR 0032 §2.1).
+func toolPoliciesByNode(g *graph.Graph, loadedUserConfig bool) map[string]runner.ToolPolicy {
 	byNode := make(map[string]runner.ToolPolicy, len(g.Nodes))
 	for _, node := range g.Nodes {
-		byNode[node.ID] = toolPolicyFor(node)
+		byNode[node.ID] = toolPolicyFor(node, loadedUserConfig)
 	}
 	return byNode
 }
@@ -687,15 +731,40 @@ func toolPoliciesByNode(g *graph.Graph) map[string]runner.ToolPolicy {
 // The cost, which belongs in the README and not in a surprise: a planned node
 // also loses the user's CLAUDE.md, hooks and MCP servers. Planned nodes are
 // more isolated and less capable than they were. That is the intended
-// direction.
-func toolPolicyFor(node graph.Node) runner.ToolPolicy {
-	return runner.ToolPolicy{
+// direction, and it is still the DEFAULT — but since ADR 0032 it is a
+// direction the operator may depart from for one run, out loud, by typing
+// --accept-loaded-user-config. loadedUserConfig is that statement, and it
+// drops layers 1 and 4 together:
+//
+//   - layer 1 goes to nil, which is exactly what the planner call (§1.4) and
+//     every hand-written `run` node already get — this repository asserts the
+//     flag's ABSENCE and not what set the CLI then picks, which is the CLI's
+//     to define.
+//   - layer 4 goes with it, and not as a tidy-up. Whether --strict-mcp-config
+//     closes MCP at all is unmeasured (DESIGN.md, E5), so leaving it on would
+//     make the plan screen's "your MCP servers load" a sentence nobody has
+//     checked — false if the flag does close MCP, unwarranted either way.
+//     Dropping it makes the disclosure true by construction.
+//
+// Layers 2, 3 and 5 do NOT move, and that is what keeps this door narrower
+// than hand-editing the saved plan and running it with `run`, which drops all
+// five: --tools replaces the built-in tool set outright and is independent of
+// settings (E4), and --disallowedTools is subtractive. What the operator does
+// buy back is their standing permission grants, so layer 2 is a declaration
+// again rather than a limit — the bill the plan screen spends a sentence on.
+func toolPolicyFor(node graph.Node, loadedUserConfig bool) runner.ToolPolicy {
+	policy := runner.ToolPolicy{
 		AllowedTools:    node.AllowedTools,
 		Tools:           narrowedToolsFor(node, false),
 		SettingSources:  isolatedSettingSources(),
 		StrictMCPConfig: true,
 		DisallowedTools: disallowedToolsFor(node),
 	}
+	if loadedUserConfig {
+		policy.SettingSources = nil
+		policy.StrictMCPConfig = false
+	}
+	return policy
 }
 
 // isolatedSettingSources is layer 1's value: load NONE of the user/project/
