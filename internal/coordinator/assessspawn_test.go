@@ -174,3 +174,28 @@ func shortenSpawnRetryDelay(t *testing.T) func() {
 	assessorSpawnRetryDelay = time.Millisecond
 	return func() { assessorSpawnRetryDelay = previous }
 }
+
+// The planner shares the assessor's spawn retry since 2026-08-21. #214's
+// scoping note said not to generalise across the three coordinator call classes
+// without evidence; the evidence is a second occurrence, in the planner, that
+// killed a whole lane before any node ran.
+//
+// The chat router deliberately does NOT share it: a router call is interactive,
+// and a human watching it can ask again.
+func TestPlan_RetriesASpawnFailureAndSucceeds(t *testing.T) {
+	restore := shortenSpawnRetryDelay(t)
+	defer restore()
+
+	r := scripted(t,
+		reply{err: spawnFailure()},
+		reply{outcome: runner.NodeOutcome{Result: validSpec, TotalCostUSD: 0.01}},
+	)
+
+	_, err := New(r).Plan(context.Background(), "ship it", []string{"repo"})
+	if err != nil {
+		t.Fatalf("Plan after one recoverable spawn failure: %v", err)
+	}
+	if r.calls != 2 {
+		t.Errorf("planner was launched %d time(s), want exactly 2 (one failure then the plan)", r.calls)
+	}
+}

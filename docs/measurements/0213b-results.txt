@@ -1,0 +1,384 @@
+==============================================================================
+0213b — DENIED BASH CALLS IN PLANNED NODES, AND WHY
+==============================================================================
+
+THE DENIAL TEXT CARRIES NO REASON CODE: it is byte-identical for a compound
+call, a simple out-of-scope call, and a sandbox refusal. Every class here is a
+CORRELATION between command shape and denial, never a causal reading of the
+denial.
+
+SNAPSHOT MARKER: 323 run directories, newest run id 20260820-202530.976203000-2
+  runs root      /Users/imac/.oh-my-graph/runs
+  transcripts    /Users/imac/.claude/projects
+  EXCLUDED RUN   20260820-195627.390122000-1 — this lane's own run (graph
+                 `compound-commands-defeat-grants`). It is IN FLIGHT while this
+                 program runs, so measuring it would measure this measurement.
+                 It is also the lexically newest run id, which is the trap.
+  MACHINE COPY   0213b-results.json carries every count below, one record per denied call, and
+                 the wall-clock snapshot timestamp. THIS file carries no
+                 timestamp on purpose: it is byte-deterministic, so re-running
+                 and diffing it is a real check on the corpus.
+
+------------------------------------------------------------------------------
+1. THE STATED ASSUMPTION
+------------------------------------------------------------------------------
+
+ASSUMED GRANT-MATCHING RULE (not authoritative — see grantMatches(), one function,
+change it in one place):
+
+  * A grant "Bash(P)" applies only to Bash calls. Non-Bash grants (Read, Grep,
+    Glob, Skill, ...) never match a sub-command.
+  * If P ends in " *", the part before it is a TOKEN PREFIX. "Bash(go *)" matches
+    a sub-command whose first token is "go". "Bash(gh pr *)" requires the first
+    TWO tokens to be "gh" then "pr". The "*" covers all remaining arguments and
+    is not matched character-wise.
+  * P == "*" matches every sub-command.
+  * P with no "*" is an EXACT whole-command match: "Bash(ls)" matches the
+    sub-command "ls" and nothing else.
+  * A bare grant "Bash" with no parentheses matches EVERY sub-command.
+  * Matching is on tokens, never on the raw string, so quoting and spacing in the
+    arguments cannot change the verdict.
+
+WHAT THIS RULE DELIBERATELY DOES NOT MODEL, because it is unknown:
+  * whether the real matcher splits a compound command at all, or matches the raw
+    shell string against the pattern as one unit;
+  * whether an unmatched later sub-command denies the whole call;
+  * whether a working-directory / sandbox constraint is applied to path arguments
+    IN ADDITION to the pattern (§9 gives evidence that something path-sensitive
+    is operating, but not what);
+  * whether a denial arises from failure-to-match, an explicit deny rule, or a
+    sandbox check. The denial text is identical in all three cases.
+
+WHAT THE REPOSITORY DOES PIN DOWN (measured, not from source — DESIGN.md):
+  * DESIGN.md:106-110 — "A tool call is matched against every loaded permission
+    rule; if nothing matches, the call resolves to *ask*, and the mode decides
+    what an unanswerable ask becomes — under dontAsk (our unattended default) it
+    becomes a deny." So a planned node is DEFAULT-DENY, and "denied" means "no
+    rule matched" — indistinguishable on disk from an explicit deny or a sandbox
+    refusal.
+  * DESIGN.md:113-116 — "--disallowedTools subtracts and beats a prior allow, but
+    only at bare-tool-name granularity (Bash); a scoped deny like Bash(*) matches
+    a command literally starting with * and enforces nothing. Measured on claude
+    2.1.220." A bare "Bash" in a node's disallowed_tools therefore beats every
+    allow it holds; §6 counts how many denied calls sat under one.
+  * DESIGN.md:2195-2199 — --tools bounds tool NAMES and not SCOPES, and a grant
+    can be invisible in graph.json while its durable record is state.json's
+    tool_policies. §6 cross-checks the two records against each other.
+
+THE claude VERSION THAT PRODUCED THIS CORPUS IS UNKNOWN. No run record carries
+it, and asking this machine would report today's version, not the corpus's. If
+grant matching changed across versions, the corpus is silently two populations.
+
+------------------------------------------------------------------------------
+2. THE SPLITTER
+------------------------------------------------------------------------------
+
+Splits on | || ; && newline, $( ) and backticks, with a hand-written scanner that
+respects single and double quotes and CONSUMES HEREDOC BODIES AS DATA. Without
+that last part a commit message or a Go file written via <<EOF is shredded into
+fake sub-commands that all land in bucket (A) — the bucket this measurement
+exists to size. The full statement of what it does and does NOT handle is in
+0213b-results.json under "sub_command_splitter".
+
+  heredoc bodies consumed as data (not as shell)     19
+  pieces dropped as pure shell grammar               16
+
+------------------------------------------------------------------------------
+3. PLANNED-RUN PREDICATE
+------------------------------------------------------------------------------
+
+A run is PLANNED when state.json's graph_source_path, after filepath.Clean and
+symlink resolution, is the same file as that run's own graph.json by os.SameFile
+(device+inode, so /var vs /private/var and any other spelling survive).
+
+PROVENANCE — sameFile() is COPIED UNCHANGED from two files where it is
+byte-identical, ON TWO DIFFERENT BRANCHES:
+  docs/measurements/0213-tool-grant-predicate.go     commit b1a55ba (#213)
+      branch measure/tool-grant-predicate
+  docs/measurements/0218-denied-nodes-that-passed.go commit 0736635 (#218)
+      branch measure/denied-nodes
+Neither commit is an ancestor of this branch's HEAD, which is why a Glob of the
+working tree reports both files absent; both were read out of the object store.
+(An earlier draft of this report placed BOTH on measure/denied-nodes. That was
+false and `git branch -a --contains b1a55ba` disproves it in one command.)
+
+------------------------------------------------------------------------------
+4. CORPUS COUNTS
+------------------------------------------------------------------------------
+
+  run directories (true directory count)           323
+  excluded (this lane's own run)                     1
+  no state.json at all                              1
+  state.json present but unparseable                0
+  NOT planned (hand-written `run`)                299
+  PLANNED runs (the measured population)           22
+
+  node records in those planned runs               95
+  ... with a transcript parsed                     90
+
+  transcript files parsed                          90
+  Bash tool_use blocks seen in them              1368
+  tool_result blocks seen                        2706
+
+------------------------------------------------------------------------------
+5. THE DENOMINATOR
+------------------------------------------------------------------------------
+
+  DENIED Bash calls in planned nodes              246   <- THE DENOMINATOR
+  (a denial is a tool_result with is_error true whose text OPENS WITH a known
+   denial template, joined to its tool_use by tool_use_id, whose tool is Bash)
+
+  ... policy denial, unattended                   246
+        "Permission to use ..."
+  ... refused by an INTERACTIVE HUMAN               0
+        "The user doesn't want to proceed with this tool use."
+        A planned node runs unattended under dontAsk with nobody to press
+        "no", so this should be 0. It is counted apart rather than assumed
+        away; each record carries its wording in 0213b-results.json.
+
+  denials of a NON-Bash tool (excluded)             0
+  denials inside a sub-agent sidechain (excl.)      0
+    a sidechain runs under its own policy, not the node's grant list, so it
+    cannot be judged against that list.
+
+------------------------------------------------------------------------------
+6. MISSING DATA AND DATA DEFECTS — reported, never dropped
+------------------------------------------------------------------------------
+
+  nodes with a session_id but NO TRANSCRIPT          2
+  nodes with NO session_id at all                    3
+  nodes sharing a session with an earlier node       0
+  node records absent from their own graph.json      0   -> bucket (E)
+  graph nodes with no state record (never ran)       6
+  runs with NO graph.json                          299   (no graph.json (a hand-written run writes none))
+  runs whose graph.json would not parse              0
+  transcripts that could not be read                 0
+  JSONL lines that were not valid JSON               0
+  tool_result with NO matching tool_use              0
+    ... of which were denial-shaped                  0
+    A join by adjacency would have attributed each of these to whatever
+    command happened to precede it.
+  errored results with an UNRECOGNISED WORDING      12
+    Neither <tool_use_error>-wrapped nor opening with a known denial template.
+    A third wording would silently shrink the denominator, so it is counted.
+
+  GRANT-RECORD CROSS-CHECK (classification uses graph.json, as briefed):
+  nodes with no state.tool_policies entry            0
+  nodes where tool_policies DISAGREES with graph     0
+    DESIGN.md:2198-2199 records tool_policies as the durable record — a grant
+    can be invisible in graph.json. A non-zero figure here means the class of
+    every affected call was decided on the weaker of the two records.
+  denied calls under a bare `Bash` in disallowed     0
+    DESIGN.md:113-116: a bare-name deny BEATS every allow the node holds. Any
+    such call is explained by the deny, whatever its command shape.
+
+  nodes with a session_id but no transcript file: 2
+    - 20260820-162555.890191000-1/corpus (session 21f5446f-6b30-4b45-bcd0-05a290d7c9a2) — session_id present but no ~/.claude/projects/*/<id>.jsonl matched
+    - 20260820-162555.890191000-1/precedent (session a889a07f-fd17-4dd7-9513-516f6be5a53d) — session_id present but no ~/.claude/projects/*/<id>.jsonl matched
+  nodes with no session_id: 3
+    - 20260820-162555.890191000-1/handcheck — record present but session_id is empty — no transcript addressable
+    - 20260820-162555.890191000-1/predicate — record present but session_id is empty — no transcript addressable
+    - 20260820-162555.890191000-1/writeup — record present but session_id is empty — no transcript addressable
+  nodes sharing a session with an earlier node (parsed once, attributed to the first): 0
+  node records absent from their own graph.json: 0
+  graph nodes that never ran: 6
+    - 20260819-154136.440217000-1/check — no record in state.nodes — the run halted before this node was reached
+    - 20260819-154136.440217000-1/ship — no record in state.nodes — the run halted before this node was reached
+    - 20260820-162555.890191000-1/check — no record in state.nodes — the run halted before this node was reached
+    - 20260820-202530.976203000-2/check — no record in state.nodes — the run halted before this node was reached
+    - 20260820-202530.976203000-2/report — no record in state.nodes — the run halted before this node was reached
+    - 20260820-202530.976203000-2/run — no record in state.nodes — the run halted before this node was reached
+  runs with no graph.json: 299
+    - 20260730-204118: no graph.json (a hand-written run writes none)
+    - 20260730-205024: no graph.json (a hand-written run writes none)
+    - 20260730-220656: no graph.json (a hand-written run writes none)
+    - 20260730-233613: no graph.json (a hand-written run writes none)
+    - 20260730-235952: no graph.json (a hand-written run writes none)
+    - 20260731-001931.932966000-1: no graph.json (a hand-written run writes none)
+    - 20260731-094520.116622000-1: no graph.json (a hand-written run writes none)
+    - 20260731-123710.022475000-1: no graph.json (a hand-written run writes none)
+    ... and 291 more (all of them in 0213b-results.json)
+  unreadable / unparseable files: 0
+  unrecognised error wordings (sample of at most 40; first 120 chars each — the COUNT above is complete, this list is not): 12
+    - Bash: Exit code 1
+    - Bash: Exit code 1\n      setTimeout(loadGraph, 2000);\n      return;\n    }\n    payload = await resp.json();\n  } catch (err)...
+    - Bash: Exit code 1\ncat: illegal option -- A\nusage: cat [-belnstuv] [file ...]
+    - Bash: Exit code 1\ncmd/oh-my-graph/main.go:222:\t\tprintVersion(os.Stdout)\n(eval):1: === not found
+    - Bash: Exit code 1\ngithub.com/jitokim/oh-my-graph/internal/invariants: no non-test Go files in /tmp/auto-b1/internal/invariant...
+    - Bash: Exit code 1\nls: tmp_measure: No such file or directory
+    - Bash: Exit code 1\nls: ui: No such file or directory\ncmd/oh-my-graph:\nchat.go\nchat_test.go\ndryrun.go\ndryrun_test.go\nfeed...
+    - Glob: EACCES: permission denied, posix_spawn 'rg'
+    ... and 4 more (all of them in 0213b-results.json)
+  tool_policies vs graph.json disagreements: 0
+  CROSS-CHECK, #218's in-flight test (reported only; changes NO count here, since this measurement excludes by run id instead): 1
+    - 20260820-202530.976203000-2 | 5 graph nodes, 2 recorded | no record: check report run
+
+------------------------------------------------------------------------------
+7. CLASSIFICATION
+------------------------------------------------------------------------------
+
+  denominator = 246 denied Bash calls in planned nodes
+
+  A         64   26.0%   (A) FIRST SUB-COMMAND GRANTED, A LATER ONE NOT — the #213 compound shape
+  B        162   65.9%   (B) THE COMMAND'S OWN FIRST WORD WAS NEVER GRANTED — out of scope from the start
+  C         20    8.1%   (C) EVERY SUB-COMMAND GRANTED, DENIED ANYWAY — unexplained by the grant list
+  D          0    0.0%   (D) COMMAND EMPTY OR UNSPLITTABLE — no sub-command to judge
+  E          0    0.0%   (E) NODE'S GRANT LIST NOT RECOVERABLE FROM graph.json — cannot classify
+  TOTAL    246  100.0%   (buckets sum to the denominator)
+
+  for reference, independent of bucket: 169 of 246 denied commands (68.7%) were
+  COMPOUND (more than one sub-command after splitting).
+
+  ON BUCKET (C), the one that would overturn the hypothesis: 20 call(s) held a
+  grant for EVERY sub-command and were denied anyway. The obvious suspect is
+  path scope — a simple, in-grant `ls -d ~/.oh-my-graph/runs` is denied while
+  the same `ls` inside the working directory is allowed, which this lane
+  observed first-hand — but it does not cover (C): 12 of the 20 had NO PATH
+  ARGUMENTS AT ALL. Those are unexplained by both the grant list and the path
+  heuristic, and the denial text will never say why. §9 has the cross-tab.
+
+------------------------------------------------------------------------------
+8. CLASS (A) OFFENDING SUB-COMMANDS, BY FREQUENCY
+------------------------------------------------------------------------------
+
+  25 distinct first word(s) turned an otherwise-granted command into (A):
+
+     62  echo
+     19  tail
+     18  wc
+     13  grep
+     12  head
+      3  n=
+      3  read
+      3  sort
+      2  /tmp/omg200
+      2  cat
+      2  printf
+      2  sed
+      2  stat
+      1  ./tmp_measure/omg
+      1  /tmp/omg-ldflags-check
+      1  awk
+      1  command
+      1  diff
+      1  gh
+      1  go
+      1  gofmt
+      1  ls
+      1  rm
+      1  sleep
+      1  uniq
+
+------------------------------------------------------------------------------
+9. SUPPLEMENTARY — THE CONFOUND
+------------------------------------------------------------------------------
+
+Compound-ness is not the only thing that varies across these denials. A simple,
+in-grant `ls` is denied when its path argument lies outside the node's working
+directory and allowed when it lies inside — observed again while this program
+was being written, where `git branch --contains X` was allowed and
+`git -C /tmp/... branch --contains X` was denied in the same session. If path
+scope moves with compound-ness in this corpus, an A-vs-B ratio cannot separate
+them. This cross-tab is printed so a reader can see whether it does.
+
+  path args                compound     simple
+  reaches-outside-cwd            85         29
+  all-paths-inside-cwd           24          6
+  no-path-args                   60         42
+
+  bucket (C) — every sub-command granted, denied anyway — by path scope:
+  reaches-outside-cwd             8
+  all-paths-inside-cwd            0
+  no-path-args                   12
+
+  (path scope is a heuristic on argument SHAPE — a token starting with / ~ ./ or
+   ../ — resolved against the node's cwd, compared by path segment. It is not
+   what the shell would really open.)
+
+------------------------------------------------------------------------------
+10. EXAMPLES (up to 3 per class; ALL 246 records are in 0213b-results.json)
+------------------------------------------------------------------------------
+
+  (A) FIRST SUB-COMMAND GRANTED, A LATER ONE NOT — the #213 compound shape
+    run 20260803-084651.244624000-1   node config
+      grants  : [Read, Glob, Grep, Edit, Write, Bash(go *), Bash(make *), Bash(git *), Bash(grep *), Bash(ls *)]
+      command : `go build -ldflags "-s -w -X main.Version=9.9.9-test" -o /tmp/omg-ldflags-check ./cmd/oh-my-graph && /tmp/omg-ldflags-check version; rm -f /tmp/omg-ldflags-check`
+      shape   : COMPOUND, 3 sub-command(s), reaches-outside-cwd
+        1. GRANTED      first-word=go           `go build -ldflags "-s -w -X main.Version=9.9.9-test" -o /tmp/omg-ldflags-check ./cmd/oh-my-graph`
+        2. NOT GRANTED  first-word=/tmp/omg-ldflags-check `/tmp/omg-ldflags-check version`
+        3. NOT GRANTED  first-word=rm           `rm -f /tmp/omg-ldflags-check`
+    run 20260803-084651.244624000-1   node config
+      grants  : [Read, Glob, Grep, Edit, Write, Bash(go *), Bash(make *), Bash(git *), Bash(grep *), Bash(ls *)]
+      command : `grep -n "^test:" -A5 Makefile; command -v goreleaser || echo "NO GORELEASER"`
+      shape   : COMPOUND, 3 sub-command(s), no-path-args
+        1. GRANTED      first-word=grep         `grep -n "^test:" -A5 Makefile`
+        2. NOT GRANTED  first-word=command      `command -v goreleaser`
+        3. NOT GRANTED  first-word=echo         `echo "NO GORELEASER"`
+    run 20260803-084704.248072000-1   node verify
+      grants  : [Read, Grep, Glob, Bash(make *), Bash(git *)]
+      command : `for c in $(git rev-list main..HEAD); do echo "=== $c"; git show --stat --format='%s' $c | tail -n +2; done; echo "=== STATUS ==="; git status --porcelain`
+      shape   : COMPOUND, 6 sub-command(s), no-path-args
+        1. GRANTED      first-word=git          `git rev-list main..HEAD` (inside substitution, depth 1)
+        2. NOT GRANTED  first-word=echo         `do echo "=== $c"`
+        3. GRANTED      first-word=git          `git show --stat --format='%s' $c`
+        4. NOT GRANTED  first-word=tail         `tail -n +2`
+        5. NOT GRANTED  first-word=echo         `echo "=== STATUS ==="`
+        6. GRANTED      first-word=git          `git status --porcelain`
+    ... and 61 more in 0213b-results.json
+
+  (B) THE COMMAND'S OWN FIRST WORD WAS NEVER GRANTED — out of scope from the start
+    run 20260803-081608.190042000-1   node impl
+      grants  : [Read, Glob, Grep, Edit, Write, Bash(go *), Bash(make *), Bash(git *)]
+      command : `cd /tmp/auto-gate && go build ./... && go test ./internal/serve/ 2>&1 | tail -5 && node --check internal/serve/ui/app.js 2>&1 | tail -3`
+      shape   : COMPOUND, 6 sub-command(s), reaches-outside-cwd
+        1. NOT GRANTED  first-word=cd           `cd /tmp/auto-gate`
+        2. GRANTED      first-word=go           `go build ./...`
+        3. GRANTED      first-word=go           `go test ./internal/serve/ 2>&1`
+        4. NOT GRANTED  first-word=tail         `tail -5`
+        5. NOT GRANTED  first-word=node         `node --check internal/serve/ui/app.js 2>&1`
+        6. NOT GRANTED  first-word=tail         `tail -3`
+    run 20260803-081608.190042000-1   node impl
+      grants  : [Read, Glob, Grep, Edit, Write, Bash(go *), Bash(make *), Bash(git *)]
+      command : `cd /tmp/auto-gate && grep -rn "read-only" README.md README.ko.md SECURITY.md CONTRIBUTING.md DESIGN.md docs/ internal/serve cmd/oh-my-graph | grep -iv "plan permission\|permission_mode\|read-only `plan`" | head -30`
+      shape   : COMPOUND, 5 sub-command(s), reaches-outside-cwd
+        1. NOT GRANTED  first-word=cd           `cd /tmp/auto-gate`
+        2. NOT GRANTED  first-word=grep         `grep -rn "read-only" README.md README.ko.md SECURITY.md CONTRIBUTING.md DESIGN.md docs/ internal/serve cmd/oh-my-graph`
+        3. NOT GRANTED  first-word=plan         `plan` (inside substitution, depth 1)
+        4. NOT GRANTED  first-word=grep         `grep -iv "plan permission\|permission_mode\|read-only "`
+        5. NOT GRANTED  first-word=head         `head -30`
+    run 20260803-081608.190042000-1   node impl
+      grants  : [Read, Glob, Grep, Edit, Write, Bash(go *), Bash(make *), Bash(git *)]
+      command : `cd /tmp/auto-gate && node --check internal/serve/ui/app.js && echo "js syntax ok"`
+      shape   : COMPOUND, 3 sub-command(s), reaches-outside-cwd
+        1. NOT GRANTED  first-word=cd           `cd /tmp/auto-gate`
+        2. NOT GRANTED  first-word=node         `node --check internal/serve/ui/app.js`
+        3. NOT GRANTED  first-word=echo         `echo "js syntax ok"`
+    ... and 159 more in 0213b-results.json
+
+  (C) EVERY SUB-COMMAND GRANTED, DENIED ANYWAY — unexplained by the grant list
+    run 20260803-084651.244624000-1   node workflow
+      grants  : [Read, Glob, Write, Bash(git *), Bash(ls *), Bash(cat *)]
+      command : `cat /Users/imac/.oh-my-graph/runs/20260803-084651.244624000-1/config.out`
+      shape   : simple, 1 sub-command(s), reaches-outside-cwd
+        1. GRANTED      first-word=cat          `cat /Users/imac/.oh-my-graph/runs/20260803-084651.244624000-1/config.out`
+    run 20260819-163447.441137000-2   node pr
+      grants  : [Read, Bash(git *), Bash(gh pr *)]
+      command : `gh pr create --base main --head fix/204-build-meta --title 'feat(serve): machine-readable build metadata on both serve surfaces (#204)' --body '## Summary\n\nA running `serve` keeps executing the code it started with. It holds its port for as long as it runs and keeps serving the tree it was compiled from while `bin/oh-my-graph` is rebuilt underneath it, so a stale server renders a stale build label and a reader cannot tell it from a current one. The footer has named the build since v0.5.2, but only for a human: settling "is this the build I just made" meant scraping prose out of the page body.\n\nThis PR exposes the build that `internal/serve/build.go` already computes in a form a machine can read.\n\n## The decision, and why\n\n**`<meta>` tags in the page head**, beside the gate token already rendered there. `internal/serve/build.go` grows a `Build` struct (`Version`, `Revision`, `BuiltAt`, `Label`) produced by one constructor, `serve.CurrentBuild(version)`. `BuildLabel` is now the `Label` field of that same value rather than a second rendering of the same facts, so the footer prose and the head tags have exactly one author and cannot disagree. `Server.WithBuild` and `Dashboard.WithBuild` now take a whole `Build` instead of a label string, and both templates render through a single `pageData` type, so a field added for one template either reaches both or fails to compile, rather than becoming a template evaluation error (a 500 on the page) at request time.\n\n```console\n$ curl -s http://127.0.0.1:8642/ | grep omg-\n<meta name="omg-token" content="…">\n<meta name="omg-version" content="0.10.0">\n<meta name="omg-revision" content="56e64fb-dirty">\n<meta name="omg-built-at" content="2026-08-20T00:53:55&#43;09:00">\n```\n\nThe alternative was a JSON endpoint. JSON is easier to script against: no HTML to parse, and no attribute escaping to undo. It was not chosen because a `<meta>` tag costs nothing and rides a page the browser already fetched, while an endpoint is one more route to keep — one more thing to version, to hold inside the loopback guard and the security headers, and to keep answering identically on both surfaces. For a fact already being rendered into every page, the extra route buys convenience and adds surface. A JSON endpoint can still be added later over the same `Build` value without changing anything here.\n\n## The fields, and why the version alone is not enough\n\n| tag | content |\n| --- | --- |\n| `omg-version` | the exact token `oh-my-graph version` prints after the program name, with any leading `v` trimmed, so comparing two servers is a string equality rather than a parse |\n| `omg-revision` | the short VCS revision the toolchain stamped, with the `-dirty` marker when set |\n| `omg-built-at` | the mtime of the running executable, RFC3339 in local time, so two of them order |\n\n**The version alone cannot settle which build is answering.** Every build between two tags carries the same version, so a week-old process and the one built this afternoon both say `v0.5.2`. Two builds of one version are told apart by the commit and by the build time. Both atoms are needed, not either one: the revision is absent more often than it looks (a `-buildvcs=false` build, a proxy module build, a build from a linked git worktree, which is how the graph lanes of this project build), while the mtime moves on every rebuild, stamp or no stamp.\n\n`omg-built-at` comes off the same single, once-per-process stat that the footer label reads (`sync.OnceValue`), so nothing reports two different build times for one process, and a rebuild underneath a live server does not rename the build that is answering.\n\nAll three tags are **always emitted**: empty content means unknown (no VCS stamp, or an executable that could not be stat-ed), while a tag missing entirely means a server older than this change, which is itself an answer.\n\n## Both surfaces are covered\n\nThe dashboard (`GET /{$}`, `ui/dashboard.html`) and the single-run view (`ui/index.html`) — the latter both standalone (`serve <run-id>`) and mounted under the dashboard at `/run/<id>/`. The dashboard hands its `Build` down **whole** to every run view it mounts, so `/` and the run view opened by a card click cannot name different binaries.\n\n## How the tests avoid passing against a wrong build\n\n- The expected values are **derived from `internal/serve/build.go` at test time**, never hardcoded: every assertion compares against `newBuild(testBuildVersion, testBuildInstant)`, the same constructor `CurrentBuild` calls. A test that hardcoded a version or a commit string would pass against a page naming the wrong build, which is exactly the failure this feature exists to catch.\n- The revision is pinned to a **non-empty fixture** (`56e64fb-dirty`) rather than to a live `buildRevision()` call, because in any environment with no VCS stamp that call is empty and the check would compare "" against "" — which a template line hardcoded as `content=""` would pass.\n- The three surfaces are one table driven by the **same** check functions, so "the dashboard carries the field and the run view does not" (or the reverse) turns the surfaces built from the regressed template red while the others stay green. No test passes on one surface alone.\n- A separate test pins that an unknown atom is an **empty tag, not an absent one**, which a fully populated `Build` would never catch; another parses `omg-built-at` back to the instant `build.go` was given, so the tag is usable for ordering and not only for display (`html/template` escapes the `+` of an RFC3339 offset as `&#43;` in attribute context, so the test unescapes, as any HTML parser or the DOM does).\n- The human footer label is asserted on that same table, so a regression that turned the label into a second, disagreeing rendering of the same facts fails there.\n\n## Scope\n\n**Disclosure only.** The 127.0.0.1-only binding is unchanged, the server stays read-only apart from the existing gate POSTs, and there is no new state and no route that does anything but report the build. Nothing on the page can act on it.\n\nDeliberately **not** included, so the remaining options can be judged on their own:\n\n- **Option 2** — the port-collision check.\n- **Option 3** — self-restart when the binary changes.\n\nRefs #204\n\n## Release\n\nA `## [Unreleased]` CHANGELOG entry is included. This PR ships **no release and no tag**.'`
+      shape   : simple, 1 sub-command(s), no-path-args
+        1. GRANTED      first-word=gh           `gh pr create --base main --head fix/204-build-meta --title 'feat(serve): machine-readable build metadata on both serve surfaces (#204)' --body '## Summary\n\nA running `serve` keeps executing the code it started with. It holds its port for as long as it runs and keeps serving the tree it was compiled from while `bin/oh-my-graph` is rebuilt underneath it, so a stale server renders a stale build label and a reader cannot tell it from a current one. The footer has named the build since v0.5.2, but only for a human: settling "is this the build I just made" meant scraping prose out of the page body.\n\nThis PR exposes the build that `internal/serve/build.go` already computes in a form a machine can read.\n\n## The decision, and why\n\n**`<meta>` tags in the page head**, beside the gate token already rendered there. `internal/serve/build.go` grows a `Build` struct (`Version`, `Revision`, `BuiltAt`, `Label`) produced by one constructor, `serve.CurrentBuild(version)`. `BuildLabel` is now the `Label` field of that same value rather than a second rendering of the same facts, so the footer prose and the head tags have exactly one author and cannot disagree. `Server.WithBuild` and `Dashboard.WithBuild` now take a whole `Build` instead of a label string, and both templates render through a single `pageData` type, so a field added for one template either reaches both or fails to compile, rather than becoming a template evaluation error (a 500 on the page) at request time.\n\n```console\n$ curl -s http://127.0.0.1:8642/ | grep omg-\n<meta name="omg-token" content="…">\n<meta name="omg-version" content="0.10.0">\n<meta name="omg-revision" content="56e64fb-dirty">\n<meta name="omg-built-at" content="2026-08-20T00:53:55&#43;09:00">\n```\n\nThe alternative was a JSON endpoint. JSON is easier to script against: no HTML to parse, and no attribute escaping to undo. It was not chosen because a `<meta>` tag costs nothing and rides a page the browser already fetched, while an endpoint is one more route to keep — one more thing to version, to hold inside the loopback guard and the security headers, and to keep answering identically on both surfaces. For a fact already being rendered into every page, the extra route buys convenience and adds surface. A JSON endpoint can still be added later over the same `Build` value without changing anything here.\n\n## The fields, and why the version alone is not enough\n\n| tag | content |\n| --- | --- |\n| `omg-version` | the exact token `oh-my-graph version` prints after the program name, with any leading `v` trimmed, so comparing two servers is a string equality rather than a parse |\n| `omg-revision` | the short VCS revision the toolchain stamped, with the `-dirty` marker when set |\n| `omg-built-at` | the mtime of the running executable, RFC3339 in local time, so two of them order |\n\n**The version alone cannot settle which build is answering.** Every build between two tags carries the same version, so a week-old process and the one built this afternoon both say `v0.5.2`. Two builds of one version are told apart by the commit and by the build time. Both atoms are needed, not either one: the revision is absent more often than it looks (a `-buildvcs=false` build, a proxy module build, a build from a linked git worktree, which is how the graph lanes of this project build), while the mtime moves on every rebuild, stamp or no stamp.\n\n`omg-built-at` comes off the same single, once-per-process stat that the footer label reads (`sync.OnceValue`), so nothing reports two different build times for one process, and a rebuild underneath a live server does not rename the build that is answering.\n\nAll three tags are **always emitted**: empty content means unknown (no VCS stamp, or an executable that could not be stat-ed), while a tag missing entirely means a server older than this change, which is itself an answer.\n\n## Both surfaces are covered\n\nThe dashboard (`GET /{$}`, `ui/dashboard.html`) and the single-run view (`ui/index.html`) — the latter both standalone (`serve <run-id>`) and mounted under the dashboard at `/run/<id>/`. The dashboard hands its `Build` down **whole** to every run view it mounts, so `/` and the run view opened by a card click cannot name different binaries.\n\n## How the tests avoid passing against a wrong build\n\n- The expected values are **derived from `internal/serve/build.go` at test time**, never hardcoded: every assertion compares against `newBuild(testBuildVersion, testBuildInstant)`, the same constructor `CurrentBuild` calls. A test that hardcoded a version or a commit string would pass against a page naming the wrong build, which is exactly the failure this feature exists to catch.\n- The revision is pinned to a **non-empty fixture** (`56e64fb-dirty`) rather than to a live `buildRevision()` call, because in any environment with no VCS stamp that call is empty and the check would compare "" against "" — which a template line hardcoded as `content=""` would pass.\n- The three surfaces are one table driven by the **same** check functions, so "the dashboard carries the field and the run view does not" (or the reverse) turns the surfaces built from the regressed template red while the others stay green. No test passes on one surface alone.\n- A separate test pins that an unknown atom is an **empty tag, not an absent one**, which a fully populated `Build` would never catch; another parses `omg-built-at` back to the instant `build.go` was given, so the tag is usable for ordering and not only for display (`html/template` escapes the `+` of an RFC3339 offset as `&#43;` in attribute context, so the test unescapes, as any HTML parser or the DOM does).\n- The human footer label is asserted on that same table, so a regression that turned the label into a second, disagreeing rendering of the same facts fails there.\n\n## Scope\n\n**Disclosure only.** The 127.0.0.1-only binding is unchanged, the server stays read-only apart from the existing gate POSTs, and there is no new state and no route that does anything but report the build. Nothing on the page can act on it.\n\nDeliberately **not** included, so the remaining options can be judged on their own:\n\n- **Option 2** — the port-collision check.\n- **Option 3** — self-restart when the binary changes.\n\nRefs #204\n\n## Release\n\nA `## [Unreleased]` CHANGELOG entry is included. This PR ships **no release and no tag**.'`
+    run 20260819-163447.441137000-2   node pr
+      grants  : [Read, Bash(git *), Bash(gh pr *)]
+      command : `gh pr create --dry-run --base main --head fix/204-build-meta --title 'feat(serve): machine-readable build metadata on both serve surfaces (#204)' --body $'## Summary\n\nA running `serve` keeps executing the code it started with. It holds its port for as long as it runs and keeps serving the tree it was compiled from while `bin/oh-my-graph` is rebuilt underneath it, so a stale server renders a stale build label and a reader cannot tell it from a current one. The footer has named the build since v0.5.2, but only for a human: settling "is this the build I just made" meant reading prose out of the page body.\n\nThis PR exposes the build that `internal/serve/build.go` already computes in a form a machine can read.\n\n## The decision, and why\n\n**`<meta>` tags in the page head**, beside the gate token already rendered there. `internal/serve/build.go` now produces one `Build` value (`Version`, `Revision`, `BuiltAt`, `Label`) from one constructor, `serve.CurrentBuild(version)`. `BuildLabel` is the `Label` field of that same value rather than a second rendering of the same facts, so the footer prose and the head tags have exactly one author and cannot disagree. `Server.WithBuild` and `Dashboard.WithBuild` now take a whole `Build` instead of a label string, and both templates render through a single `pageData` type, so a field added for one template either reaches both or fails to compile, rather than becoming a template evaluation error (a 500 on the page) at request time.\n\n```console\n$ curl -s http://127.0.0.1:8642/ | grep omg-\n<meta name="omg-token" content="...">\n<meta name="omg-version" content="0.10.0">\n<meta name="omg-revision" content="56e64fb-dirty">\n<meta name="omg-built-at" content="2026-08-20T00:53:55&#43;09:00">\n```\n\nThe alternative was a JSON endpoint. JSON is easier to script against: no HTML to parse, and no attribute escaping to undo. It was not chosen because a `<meta>` tag costs nothing and rides a page the browser already fetched, while an endpoint is one more route to keep - one more thing to version, to hold inside the loopback guard and the security headers, and to keep answering identically on both surfaces. For a fact already rendered into every page, the extra route buys convenience and adds surface. A JSON endpoint can still be added later over the same `Build` value without changing anything here.\n\n## The fields, and why the version alone is not enough\n\n- `omg-version` - the exact token `oh-my-graph version` prints after the program name, with any leading `v` trimmed, so comparing two servers is a string equality rather than a parse.\n- `omg-revision` - the short VCS revision the toolchain stamped, with the `-dirty` marker when set.\n- `omg-built-at` - the mtime of the running executable, RFC3339 in local time, so two of them order.\n\n**The version alone cannot settle which build is answering.** Every build between two tags carries the same version, so a week-old process and the one built this afternoon both say `v0.5.2`. Two builds of one version are told apart by the commit and by the build time. Both are needed, not either one: the revision is absent more often than it looks (a `-buildvcs=false` build, a proxy module build, a build from a linked git worktree, which is how the graph lanes of this project build), while the mtime moves on every rebuild, stamp or no stamp.\n\n`omg-built-at` comes off the same single, once-per-process stat that the footer label reads (`sync.OnceValue`), so nothing reports two different build times for one process, and a rebuild underneath a live server does not rename the build that is answering.\n\nAll three tags are **always emitted**: empty content means unknown (no VCS stamp, or an executable that could not be stat-ed), while a tag missing entirely means a server older than this change, which is itself an answer.\n\n## Both surfaces are covered\n\nThe dashboard (`GET /{$}`, `ui/dashboard.html`) and the single-run view (`ui/index.html`), the latter both standalone (`serve <run-id>`) and mounted under the dashboard at `/run/<id>/`. The dashboard hands its `Build` down **whole** to every run view it mounts, so `/` and the run view opened by a card click cannot name different binaries.\n\n## How the tests avoid passing against a wrong build\n\n- The expected values are **derived from `internal/serve/build.go` at test time**, never hardcoded: every assertion compares against `newBuild(testBuildVersion, testBuildInstant)`, the same constructor `CurrentBuild` calls. A test that hardcoded a version or a commit string would pass against a page naming the wrong build, which is exactly the failure this feature exists to catch.\n- The revision is pinned to a **non-empty fixture** (`56e64fb-dirty`) rather than to a live `buildRevision()` call, because in an environment with no VCS stamp that call is empty and the check would compare "" against "" - which a template line hardcoded as `content=""` would pass.\n- The three surfaces are one table driven by the **same** check functions, so "the dashboard carries the field and the run view does not" (or the reverse) turns the surfaces built from the regressed template red while the others stay green. No test passes on one surface alone.\n- A separate test pins that an unknown atom is an **empty tag, not an absent one**, which a fully populated `Build` would never catch; another parses `omg-built-at` back to the instant `build.go` was given, so the tag is usable for ordering and not only for display (`html/template` escapes the `+` of an RFC3339 offset as `&#43;` in attribute context, so the test unescapes, as any HTML parser or the DOM does).\n- The human footer label is asserted on that same table, so a regression that turned the label into a second, disagreeing rendering of the same facts fails there.\n\n## Scope\n\n**Disclosure only.** The 127.0.0.1-only binding is unchanged, the server stays read-only apart from the existing gate POSTs, and there is no new state and no route that does anything but report the build. Nothing on the page can act on it.\n\nDeliberately **not** included, so the remaining options can be judged on their own:\n\n- **Option 2** - the port-collision check.\n- **Option 3** - self-restart when the binary changes.\n\nRefs #204\n\n## Release\n\nA `## [Unreleased]` CHANGELOG entry is included. This PR ships **no release and no tag**.'`
+      shape   : simple, 1 sub-command(s), no-path-args
+        1. GRANTED      first-word=gh           `gh pr create --dry-run --base main --head fix/204-build-meta --title 'feat(serve): machine-readable build metadata on both serve surfaces (#204)' --body $'## Summary\n\nA running `serve` keeps executing the code it started with. It holds its port for as long as it runs and keeps serving the tree it was compiled from while `bin/oh-my-graph` is rebuilt underneath it, so a stale server renders a stale build label and a reader cannot tell it from a current one. The footer has named the build since v0.5.2, but only for a human: settling "is this the build I just made" meant reading prose out of the page body.\n\nThis PR exposes the build that `internal/serve/build.go` already computes in a form a machine can read.\n\n## The decision, and why\n\n**`<meta>` tags in the page head**, beside the gate token already rendered there. `internal/serve/build.go` now produces one `Build` value (`Version`, `Revision`, `BuiltAt`, `Label`) from one constructor, `serve.CurrentBuild(version)`. `BuildLabel` is the `Label` field of that same value rather than a second rendering of the same facts, so the footer prose and the head tags have exactly one author and cannot disagree. `Server.WithBuild` and `Dashboard.WithBuild` now take a whole `Build` instead of a label string, and both templates render through a single `pageData` type, so a field added for one template either reaches both or fails to compile, rather than becoming a template evaluation error (a 500 on the page) at request time.\n\n```console\n$ curl -s http://127.0.0.1:8642/ | grep omg-\n<meta name="omg-token" content="...">\n<meta name="omg-version" content="0.10.0">\n<meta name="omg-revision" content="56e64fb-dirty">\n<meta name="omg-built-at" content="2026-08-20T00:53:55&#43;09:00">\n```\n\nThe alternative was a JSON endpoint. JSON is easier to script against: no HTML to parse, and no attribute escaping to undo. It was not chosen because a `<meta>` tag costs nothing and rides a page the browser already fetched, while an endpoint is one more route to keep - one more thing to version, to hold inside the loopback guard and the security headers, and to keep answering identically on both surfaces. For a fact already rendered into every page, the extra route buys convenience and adds surface. A JSON endpoint can still be added later over the same `Build` value without changing anything here.\n\n## The fields, and why the version alone is not enough\n\n- `omg-version` - the exact token `oh-my-graph version` prints after the program name, with any leading `v` trimmed, so comparing two servers is a string equality rather than a parse.\n- `omg-revision` - the short VCS revision the toolchain stamped, with the `-dirty` marker when set.\n- `omg-built-at` - the mtime of the running executable, RFC3339 in local time, so two of them order.\n\n**The version alone cannot settle which build is answering.** Every build between two tags carries the same version, so a week-old process and the one built this afternoon both say `v0.5.2`. Two builds of one version are told apart by the commit and by the build time. Both are needed, not either one: the revision is absent more often than it looks (a `-buildvcs=false` build, a proxy module build, a build from a linked git worktree, which is how the graph lanes of this project build), while the mtime moves on every rebuild, stamp or no stamp.\n\n`omg-built-at` comes off the same single, once-per-process stat that the footer label reads (`sync.OnceValue`), so nothing reports two different build times for one process, and a rebuild underneath a live server does not rename the build that is answering.\n\nAll three tags are **always emitted**: empty content means unknown (no VCS stamp, or an executable that could not be stat-ed), while a tag missing entirely means a server older than this change, which is itself an answer.\n\n## Both surfaces are covered\n\nThe dashboard (`GET /{$}`, `ui/dashboard.html`) and the single-run view (`ui/index.html`), the latter both standalone (`serve <run-id>`) and mounted under the dashboard at `/run/<id>/`. The dashboard hands its `Build` down **whole** to every run view it mounts, so `/` and the run view opened by a card click cannot name different binaries.\n\n## How the tests avoid passing against a wrong build\n\n- The expected values are **derived from `internal/serve/build.go` at test time**, never hardcoded: every assertion compares against `newBuild(testBuildVersion, testBuildInstant)`, the same constructor `CurrentBuild` calls. A test that hardcoded a version or a commit string would pass against a page naming the wrong build, which is exactly the failure this feature exists to catch.\n- The revision is pinned to a **non-empty fixture** (`56e64fb-dirty`) rather than to a live `buildRevision()` call, because in an environment with no VCS stamp that call is empty and the check would compare "" against "" - which a template line hardcoded as `content=""` would pass.\n- The three surfaces are one table driven by the **same** check functions, so "the dashboard carries the field and the run view does not" (or the reverse) turns the surfaces built from the regressed template red while the others stay green. No test passes on one surface alone.\n- A separate test pins that an unknown atom is an **empty tag, not an absent one**, which a fully populated `Build` would never catch; another parses `omg-built-at` back to the instant `build.go` was given, so the tag is usable for ordering and not only for display (`html/template` escapes the `+` of an RFC3339 offset as `&#43;` in attribute context, so the test unescapes, as any HTML parser or the DOM does).\n- The human footer label is asserted on that same table, so a regression that turned the label into a second, disagreeing rendering of the same facts fails there.\n\n## Scope\n\n**Disclosure only.** The 127.0.0.1-only binding is unchanged, the server stays read-only apart from the existing gate POSTs, and there is no new state and no route that does anything but report the build. Nothing on the page can act on it.\n\nDeliberately **not** included, so the remaining options can be judged on their own:\n\n- **Option 2** - the port-collision check.\n- **Option 3** - self-restart when the binary changes.\n\nRefs #204\n\n## Release\n\nA `## [Unreleased]` CHANGELOG entry is included. This PR ships **no release and no tag**.'`
+    ... and 17 more in 0213b-results.json
+
+  (D) COMMAND EMPTY OR UNSPLITTABLE — no sub-command to judge
+    (empty)
+
+  (E) NODE'S GRANT LIST NOT RECOVERABLE FROM graph.json — cannot classify
+    (empty)
+
+==============================================================================
+END OF SUMMARY — per-call records in 0213b-results.json
+==============================================================================
