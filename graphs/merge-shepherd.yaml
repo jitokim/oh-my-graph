@@ -137,7 +137,18 @@
 # children while it still can and then TELLS the human what it moved. And
 # `--delete-branch` stops being unconditional: merge applies it only when
 # nothing open is based on this head any more, and names the child that held
-# it back when something is.
+# it back when something is. That condition is NORMALLY SATISFIED — the
+# retarget ran two nodes earlier and should have left nothing standing on
+# this head — so what the check costs, in the ordinary run, is nothing at
+# all. It is a second lock on the same door, and it is cheap because the
+# first lock is what usually holds. What it is FOR is the run where the
+# first one did not: a retarget that failed QUIETLY leaves a child still
+# based on this head, and deleting a branch that is still some open PR's
+# base is precisely what auto-closed #211 — a state neither call can undo,
+# because a closed PR whose base is gone can be neither reopened
+# ("Could not open the pull request") nor retargeted ("Cannot change the
+# base branch of a closed pull request"). Between a silent retarget failure
+# and a destroyed PR there is this flag and nothing else.
 #
 # Only DIRECT children move, and they move ONE LINK, to this PR's base. A
 # grandchild stays based on its parent, whose head branch still exists and
@@ -1083,8 +1094,13 @@ nodes:
            by GitHub CLOSING that PR, and a closed PR whose base branch is
            gone can be neither reopened nor retargeted — #207 did exactly that
            to #211 on 2026-08-20, and the work had to be re-opened by hand as
-           #223. The flag is the only part of this step the stack decides;
-           everything below it is unchanged by the stack.
+           #223. RETARGETED is the ordinary answer, so the ordinary run adds
+           the flag; the PARTIAL branch is a second lock on the same door the
+           retarget already shut, and it is the only thing standing between a
+           retarget that failed quietly and a PR nobody can get back. Never
+           reason from "the retarget node ran, so the head must be clear" —
+           read the verdict. The flag is the only part of this step the stack
+           decides; everything below it is unchanged by the stack.
            Try the plain merge FIRST, with no `--admin`. Add `--admin` only
            when ALL
            THREE hold: the plain merge failed on branch-protection or
