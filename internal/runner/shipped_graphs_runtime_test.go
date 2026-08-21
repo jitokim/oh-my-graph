@@ -128,9 +128,10 @@ func assertTableCoversShippedGraphs(t *testing.T, names []string) {
 }
 
 // shippedTemplateNames lists the graph templates the binary carries, skipping
-// graphs/fragments/*.yaml: a fragment is a single-node definition that only
-// loads through a template citing it (ADR 0013), so it has no runtime verdict
-// of its own — its budget_usd is judged inside every template that splices it.
+// graphs/fragments/*.yaml: a fragment is a definition — of one node, or since
+// ADR 0027 of a whole loop — that only loads through a template citing it
+// (ADR 0013), so it has no runtime verdict of its own; its budget_usd is judged
+// inside every template that splices it.
 func shippedTemplateNames(t *testing.T) []string {
 	t.Helper()
 	var names []string
