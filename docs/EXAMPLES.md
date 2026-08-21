@@ -614,9 +614,11 @@ auto-closes every child, and a closed PR whose base is gone can be neither
 reopened nor retargeted — which is how #207's merge closed #211 two seconds
 later, recovered by hand as #223. The gate is therefore told what has already
 happened: `stack-retarget`'s artifact opens with a `STACK:` block naming each
-child, where it was moved to, whether the move left it conflicting, and
-whether `--delete-branch` will be applied — `merge` passes that flag only when
-no open child is still standing on this head branch.
+child — where it was moved to and whether the move left it conflicting, or,
+for a child the re-read still finds on this head, that it was NOT retargeted,
+a row that carries no mergeability at all because nothing re-evaluated a child
+that never moved — and whether `--delete-branch` will be applied, which
+`merge` passes only when no open child is still standing on this head branch.
 Its merge verdict is deliberately two-valued: the node
 passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
 to merge past an unfinished review is the graph working. So a green run of
