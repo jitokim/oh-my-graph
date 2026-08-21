@@ -143,10 +143,10 @@
 # grandchild stays based on its parent, whose head branch still exists and
 # whose PR is still open, so a chain of three shifts up by one and stays
 # intact. Flattening a grandchild onto this PR's base would drag in commits it
-# does not have and manufacture conflicts nobody asked for. The chain depth is
-# reported at the gate instead, because "there is another link" is precisely
-# what tells the operator that the next run of this graph has the same job one
-# PR down.
+# does not have and manufacture conflicts nobody asked for. The NEXT LINK is
+# reported at the gate instead — reported, not counted, because the scan reads
+# one link down and "there is another link" is precisely what tells the
+# operator that the next run of this graph has the same job one PR down.
 #
 # The run pauses at the approve-merge gate (exit 2). Read triage's table and
 # recheck's verdict — which names the SHA it judged — then resume:
@@ -946,16 +946,27 @@ nodes:
 
       STACK: <n> open child PR(s) had this PR's head branch as their base.
         #<num> "<title>" — retargeted to <base>, now <MERGEABLE|CONFLICTING|UNKNOWN>
+        #<num> "<title>" — NOT retargeted, still based on <head>; the re-read still shows this PR's head branch
       Retargeting happened before this gate, not after your approval, because the window closes the moment this PR merges: GitHub deletes the head branch, auto-closes every child, and a closed PR whose base is gone can be neither reopened nor retargeted (see #211, 2026-08-21).
       A retarget can introduce a conflict that did not exist before; any child marked CONFLICTING above needs a human afterwards.
       --delete-branch will be <applied|withheld> on merge, because <no child remains based on this head|child #<num> is still based on it>.
-      Chain depth <d>: child #<num> has children of its own; they were left based on #<num> and will be handled when #<num> is shepherded.
+      Another link below: child #<num> has children of its own; they were left based on #<num> and will be handled when #<num> is shepherded.
 
-      One `#<num> …` row per child, in the scan's order. The last line only
-      when the scan found a child with children of its own — drop it when it
-      did not. When the scan found nothing at all, the whole block is this one
-      line, because a stated absence is what the gate needs and silence is
-      not:
+      One `#<num> …` row per child, in the scan's order, and step 2's re-read
+      decides WHICH of the two forms that row takes — not what you intended,
+      and not that step 1 exited quietly. The FIRST form only when the
+      `baseRefName` you read back equals this PR's base; the SECOND whenever
+      it still shows this PR's head, which is the same reading that makes the
+      verdict PARTIAL. A second-form row carries NO mergeability: the child
+      was never moved, so nothing re-evaluated it, and an `UNKNOWN` there
+      would read as a retarget whose result is merely unclear rather than one
+      that did not happen — the gate would then approve a merge believing a
+      rescue that never landed. The `Another link below:` line once per child
+      that has children of its own, so several lines when several do, and not
+      at all when none does; the scan looked ONE link down, so that line says
+      a next link exists and never how far the chain runs past it. When the
+      scan found nothing at all, the whole block is this one line, because a
+      stated absence is what the gate needs and silence is not:
 
       STACK: no open PR is based on this PR's head branch; --delete-branch will be applied.
 
@@ -1017,8 +1028,9 @@ nodes:
   #
   # One more thing is on the table now, and it has already HAPPENED:
   # stack-retarget's artifact opens with a `STACK:` block naming every open PR
-  # that had this PR's head branch as its base, where each was moved to, and
-  # whether the move left it CONFLICTING. Read it. The moves are done — they
+  # that had this PR's head branch as its base, where each was moved to and
+  # whether the move left it CONFLICTING — or, for a child whose row says NOT
+  # retargeted, that it was not moved at all. Read it. The moves are done — they
   # ran before this gate, because the window closes when this PR MERGES rather
   # than when you approve, and a closed PR whose base branch is gone can be
   # neither reopened nor retargeted (#207 merged at 2026-08-20T23:48:35Z, #211
@@ -1026,7 +1038,7 @@ nodes:
   # not the rescue but its consequences: a child marked CONFLICTING needs a
   # person afterwards, and a `--delete-branch will be withheld` line means the
   # merge below leaves this PR's head branch on the remote because a child is
-  # still standing on it. If the block reports a chain depth, the next link is
+  # still standing on it. If the block reports another link below, that link is
   # a separate run of this graph. Rejecting is the cheaper answer when the
   # stack is deep or the children are somebody else's: shepherd the stack from
   # the BOTTOM, one PR at a time, and every run then faces one link.
