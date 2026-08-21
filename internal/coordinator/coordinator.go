@@ -532,7 +532,7 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // is a product decision about plan quality, not a safety fix, so it is not
 // made silently as part of one.
 func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, callAccounting, *planRefusal) {
-	outcome, err := c.runner.Run(ctx, coordinatorInvocation(prompt))
+	outcome, err := runAssessorWithSpawnRetry(ctx, c.runner, coordinatorInvocation(prompt))
 	if err != nil {
 		// No reply, so nothing was produced and nothing is repairable: this
 		// is the spawn/transport fault, not the planner's judgment.

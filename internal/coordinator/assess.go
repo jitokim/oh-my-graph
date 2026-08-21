@@ -207,8 +207,16 @@ const assessorSpawnAttempts = 3
 // that three attempts do not all land inside one `mv`.
 var assessorSpawnRetryDelay = 300 * time.Millisecond
 
-// runAssessorWithSpawnRetry launches the assessor, retrying ONLY when the CLI
-// never started.
+// runAssessorWithSpawnRetry launches a coordinator call, retrying ONLY when the
+// CLI never started.
+//
+// Named for the assessor because that is where it was first needed (#214), and
+// kept for the PLANNER too since 2026-08-21, when the same npm-replaced-binary
+// failure killed a planning call and with it a whole lane. ADR 0214's scoping
+// note said not to generalise this across the three coordinator call classes
+// without evidence; that evidence is now two occurrences in two call classes,
+// so the planner shares it and the chat router still does not — a router call
+// is interactive, and a human watching it can simply ask again.
 //
 // The distinction is the whole point, and it is narrower than "retry the
 // assessor". A *runner.NodeSpawnError means no process ran, so there is no
