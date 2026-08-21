@@ -3,8 +3,10 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -136,7 +138,7 @@ func (c *Coordinator) Assess(ctx context.Context, goal string, evidence CycleEvi
 		return Assessment{}, err
 	}
 
-	outcome, err := c.runner.Run(ctx, assessorInvocation(assessPrompt(goal, evidence, nonce)))
+	outcome, err := runAssessorWithSpawnRetry(ctx, c.runner, assessorInvocation(assessPrompt(goal, evidence, nonce)))
 	if err != nil {
 		return Assessment{}, fmt.Errorf("assessor run: %w", err)
 	}
@@ -193,6 +195,50 @@ func assessmentFailure(reason string, outcome runner.NodeOutcome) *AssessError {
 // claim is measured, not assumed: E8 (assess_manual_test.go, `-tags manual`;
 // recorded in ADR 0011's Measurement outcome, 2026-08-02) fed this stance a
 // read-this-file lure and the file's content never reached the verdict.
+// assessorSpawnAttempts bounds how many times the assessor's subprocess may be
+// launched. Small on purpose: this covers a binary that is momentarily absent —
+// the case that named it was an npm update replacing `claude` on PATH mid-run
+// (#214) — not a machine that has no CLI installed, which fails all three just
+// as fast and reports the same thing.
+const assessorSpawnAttempts = 3
+
+// assessorSpawnRetryDelay separates the attempts. Short, because the failure it
+// covers is a file being replaced rather than a service being down; long enough
+// that three attempts do not all land inside one `mv`.
+var assessorSpawnRetryDelay = 300 * time.Millisecond
+
+// runAssessorWithSpawnRetry launches the assessor, retrying ONLY when the CLI
+// never started.
+//
+// The distinction is the whole point, and it is narrower than "retry the
+// assessor". A *runner.NodeSpawnError means no process ran, so there is no
+// judgement to preserve and nothing was billed — re-launching asks the question
+// for the first time. Every other outcome is left exactly as it was: a non-zero
+// exit, an unparseable reply, a timeout and a cancelled context all flow
+// straight out, because a goal loop that retried THOSE would be re-rolling a
+// verdict until it liked one, which is the quiet-spend behaviour ADR 0011
+// exists to make unrepresentable.
+//
+// Cancellation outranks the bound: a caller that gave up must not wait out the
+// remaining attempts.
+func runAssessorWithSpawnRetry(ctx context.Context, r runner.NodeRunner, invocation runner.NodeInvocation) (runner.NodeOutcome, error) {
+	var outcome runner.NodeOutcome
+	var err error
+	for attempt := 1; ; attempt++ {
+		outcome, err = r.Run(ctx, invocation)
+
+		var spawnErr *runner.NodeSpawnError
+		if !errors.As(err, &spawnErr) || attempt >= assessorSpawnAttempts {
+			return outcome, err
+		}
+		select {
+		case <-ctx.Done():
+			return outcome, err
+		case <-time.After(assessorSpawnRetryDelay):
+		}
+	}
+}
+
 func assessorInvocation(prompt string) runner.NodeInvocation {
 	return runner.NodeInvocation{
 		Prompt:         prompt,
