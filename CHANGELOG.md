@@ -10,6 +10,40 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`merge-shepherd` moves a stacked child before it deletes the branch under
+  it.** Two nodes now run between `recheck` and the approval gate.
+  `stack-scan` reads this PR's own `headRefName` and `baseRefName` — which no
+  node of this graph had ever read — then `gh pr list --base <head> --state
+  open` for the open PRs standing on that branch, and one more list per child
+  for the link below it. `stack-retarget` moves each DIRECT child onto this
+  PR's own base, one `gh pr edit --base` per child, and re-reads every one so
+  the claim is a `baseRefName` it read back rather than a quiet exit. Both run
+  BEFORE the gate rather than after the approval, because the window closes at
+  the instant of MERGE and a gate is asynchronous — a human may take hours.
+  The gate then **discloses** what was already done: `stack-retarget`'s
+  artifact opens with a `STACK:` block naming every child, where it was moved
+  to, whether the move left it `CONFLICTING`, whether `--delete-branch` will be
+  applied or withheld, and the chain depth below. And `--delete-branch` stops
+  being unconditional — `merge` passes it only when no open child is still
+  based on this PR's head branch, and names the child that held it back when
+  one is.
+
+  What its absence cost: PR #207 merged with `--delete-branch` at
+  2026-08-20T23:48:35Z. PR #211's base was #207's HEAD branch rather than
+  `main`, so GitHub deleted that base out from under it and closed it two
+  seconds later, at 23:48:37Z. A closed PR whose base branch is gone refuses
+  both calls that would undo it — "Cannot change the base branch of a closed
+  pull request", "Could not open the pull request" — so the work survived only
+  because the head branch outlived the base, and it was recovered by hand as
+  #223. The ASYMMETRY is what shapes the fix: not moving a child is
+  unrecoverable, while moving one that did not need it leaves a conflict a
+  person resolves inside the child. Grandchildren are deliberately left where
+  they are, so a chain shifts up one link and stays intact; the depth is
+  reported at the gate instead, because "there is another link" is what tells
+  the operator the next run of this graph has the same job one PR down.
+
 ## [v0.11.0] - 2026-08-21
 
 **Minor because two things you may now type were errors before**, and one thing
