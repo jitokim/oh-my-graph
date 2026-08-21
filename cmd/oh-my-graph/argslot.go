@@ -55,8 +55,8 @@ func positionalArg(args []string) (value string, rest []string, ok bool) {
 type usageRequest struct {
 	subcommand string
 	// set is the subcommand's FlagSet when it has one, so the answer can carry
-	// each flag's own description; nil for show/watch/lint/init/runs, which
-	// register no flags at all and are answered by their synopsis line alone.
+	// each flag's own description; nil for show/watch/lint/init, which register
+	// no flags at all and are answered by their synopsis line alone.
 	set *flag.FlagSet
 }
 

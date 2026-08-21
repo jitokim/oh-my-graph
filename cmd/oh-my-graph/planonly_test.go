@@ -149,7 +149,7 @@ func TestRunAutoWith_PlanOnlyRunsNoNode(t *testing.T) {
 	}
 
 	var listed, warned strings.Builder
-	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+	if listErr := listRuns(&listed, &warned, runsRoot(), true); listErr != nil {
 		t.Fatalf("runs list after a preview returned error: %v", listErr)
 	}
 	if warned.Len() != 0 {

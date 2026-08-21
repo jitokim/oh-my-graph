@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +57,7 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if warn.Len() != 0 {
@@ -100,7 +101,7 @@ func TestListRuns_UnknownCostUsesTokensInsteadOfZeroDollars(t *testing.T) {
 		})
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -131,7 +132,7 @@ func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	got := out.String()
@@ -161,7 +162,7 @@ func TestListRuns_APausedRunRendersAsPaused(t *testing.T) {
 func TestListRuns_MissingRunsDirIsNotAnError(t *testing.T) {
 	isolateRunHome(t)
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("a missing runs dir must not be an error: %v", err)
 	}
 	if !strings.Contains(out.String(), "No runs found.") {
@@ -175,7 +176,7 @@ func TestListRuns_EmptyRunsDirSaysNoRuns(t *testing.T) {
 		t.Fatalf("create empty runs dir: %v", err)
 	}
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "No runs found.") {
@@ -185,6 +186,12 @@ func TestListRuns_EmptyRunsDirSaysNoRuns(t *testing.T) {
 
 // --- a corrupt snapshot is skipped loudly, never hides the rest --------------
 
+// The showSkipped argument is true throughout this file (and in every other
+// listRuns caller in the package) so each existing assertion keeps the exact
+// meaning it had: warnW carries a line per skipped directory precisely when
+// something was skipped, so `warn.Len() != 0` still proves nothing was. The
+// DEFAULT path — the collapsed one-line summary — is asserted by the two tests
+// under "coverage" below.
 func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
 	isolateRunHome(t)
 	completedRun(t, "run-good",
@@ -202,7 +209,7 @@ func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
 	}
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, runsRoot()); err != nil {
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns returned error: %v", err)
 	}
 	if !strings.Contains(warn.String(), "run-corrupt") {
@@ -214,6 +221,192 @@ func TestListRuns_CorruptSnapshotIsWarnedAndSkipped(t *testing.T) {
 	}
 	if !strings.Contains(got, "run-good") || !strings.Contains(got, "1 run(s), TOTAL COST: $0.1000") {
 		t.Errorf("the good run must still be listed and totaled:\n%s", got)
+	}
+}
+
+// --- coverage: what the table did NOT show, in one line ----------------------
+//
+// The defect these two pin, measured 2026-08-21 at be154d3 over
+// /Users/imac/.oh-my-graph/runs (report:
+// /Users/imac/.oh-my-graph/runs/20260821-003226.036607000-1/measure.out): 325
+// run directories, 64 listed, 261 skipped, 331 lines of output of which 262 are
+// WARNINGs — and all 261 skips are the same sentence about the same thing, a
+// version-2 snapshot under a version-3 build.
+//
+// Both tests assert PRESENCE. "The warnings are gone" is satisfied by a
+// listRuns that prints nothing at all, so neither test is allowed to rest on
+// it: one names the counted summary the default must contain, the other names
+// the per-run detail the flag must restore.
+
+// staleSnapshotRun writes a run directory holding a snapshot from an older
+// schema — the shape 261 of 325 directories on the measuring machine are in.
+// It is written as raw bytes on purpose: runstate.Write stamps the CURRENT
+// schema, so the one fixture this file needs is the one the real writer cannot
+// produce.
+func staleSnapshotRun(t *testing.T, root, runID string) {
+	t.Helper()
+	dir := filepath.Join(root, runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create stale run dir %q: %v", runID, err)
+	}
+	stale := fmt.Sprintf(`{"schema":%d,"run_id":%q,"graph":{"name":"old","nodes":[{"id":"a","prompt":"a"}]},"nodes":{}}`,
+		runstate.Schema-1, runID)
+	if err := os.WriteFile(filepath.Join(dir, stateFileName), []byte(stale), 0o644); err != nil {
+		t.Fatalf("write stale snapshot for %q: %v", runID, err)
+	}
+}
+
+// TestListRuns_DefaultCollapsesSkippedRunsIntoOneCountedSummary is the
+// constraint that outranks taste, as an assertion: the default output must let
+// a reader tell "1 of 4 runs are shown" from "nothing was hidden from me". So
+// the summary line must be THERE, and must carry both numbers, the per-reason
+// counts, and the flag that reveals the rest — while naming no individual run,
+// because a line that grows with the corpus is the noise it replaces.
+func TestListRuns_DefaultCollapsesSkippedRunsIntoOneCountedSummary(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "run-good",
+		`{"name":"good","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{
+			"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.10},
+		})
+	staleSnapshotRun(t, runsRoot(), "run-stale-a")
+	staleSnapshotRun(t, runsRoot(), "run-stale-b")
+
+	corruptDir := filepath.Join(runsRoot(), "run-corrupt")
+	if err := os.MkdirAll(corruptDir, 0o755); err != nil {
+		t.Fatalf("create corrupt run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(corruptDir, stateFileName), []byte("not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt snapshot: %v", err)
+	}
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+	got := out.String()
+
+	summary := lineContaining(t, got, "run(s) shown")
+	for _, want := range []string{
+		"1 of 4 run(s) shown",
+		"3 skipped",
+		"1 unreadable run files",
+		"2 written by an incompatible snapshot schema",
+		"pass --show-skipped to name them",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the summary line is missing %q: %q", want, summary)
+		}
+	}
+	for _, runID := range []string{"run-stale-a", "run-stale-b", "run-corrupt"} {
+		if strings.Contains(got, runID) {
+			t.Errorf("the default listing must not name skipped run %q:\n%s", runID, got)
+		}
+	}
+	// The good run is still a row, and still totaled: collapsing the skips must
+	// not have cost the table anything it used to show.
+	if !strings.Contains(got, "run-good") || !strings.Contains(got, "1 run(s), TOTAL COST: $0.1000") {
+		t.Errorf("the listed run must survive the collapse:\n%s", got)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("the default must put nothing on the warning stream, got %q", warn.String())
+	}
+}
+
+// TestListRuns_ShowSkippedNamesEverySkippedRunAndItsReason is the other half:
+// --show-skipped must RESTORE the detail, one line per skipped directory,
+// carrying the reader's own sentence — the schema versions included, because
+// that is what an operator needs to decide whether an old run is worth
+// migrating. The summary stays on stdout alongside it, so the flag adds detail
+// rather than trading the counts away for it.
+func TestListRuns_ShowSkippedNamesEverySkippedRunAndItsReason(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "run-good",
+		`{"name":"good","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{
+			"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.10},
+		})
+	staleSnapshotRun(t, runsRoot(), "run-stale-a")
+	staleSnapshotRun(t, runsRoot(), "run-stale-b")
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+
+	detail := warn.String()
+	for _, runID := range []string{"run-stale-a", "run-stale-b"} {
+		line := lineContaining(t, detail, runID)
+		if !strings.Contains(line, "skipping run") {
+			t.Errorf("%s's detail line does not say it was skipped: %q", runID, line)
+		}
+		if !strings.Contains(line, fmt.Sprintf("has schema version %d, but this build understands version %d",
+			runstate.Schema-1, runstate.Schema)) {
+			t.Errorf("%s's detail line does not quote the loader's own reason: %q", runID, line)
+		}
+	}
+	if lines := strings.Count(strings.TrimSuffix(detail, "\n"), "\n") + 1; lines != 2 {
+		t.Errorf("--show-skipped must print exactly one line per skipped run, got %d:\n%s", lines, detail)
+	}
+
+	// The counts do not go away when the detail comes back.
+	summary := lineContaining(t, out.String(), "run(s) shown")
+	if !strings.Contains(summary, "1 of 3 run(s) shown") || !strings.Contains(summary, "2 skipped") {
+		t.Errorf("the summary must still state the counts under --show-skipped: %q", summary)
+	}
+}
+
+// TestListRuns_SummaryIsAffirmativeWhenNothingWasSkipped is the case the
+// constraint's other side names: a reader looking at a complete table must be
+// TOLD it is complete, not left to infer it from the absence of a warning.
+func TestListRuns_SummaryIsAffirmativeWhenNothingWasSkipped(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "run-good",
+		`{"name":"good","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{
+			"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.10},
+		})
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+	summary := lineContaining(t, out.String(), "run(s) shown")
+	if !strings.Contains(summary, "1 of 1 run(s) shown") || !strings.Contains(summary, "0 skipped") {
+		t.Errorf("a complete table must say so: %q", summary)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("nothing was skipped, so the warning stream must stay empty, got %q", warn.String())
+	}
+}
+
+// TestListRuns_AllRunsSkippedStillReportsTheCorpus is the case that makes
+// option (b) — "print the detail only when the list would otherwise be empty" —
+// insufficient AND the case where a bare "No runs found." is a lie: every
+// directory is unreadable, so there are no rows, and the reader must still be
+// told that four directories exist and why none of them is here.
+func TestListRuns_AllRunsSkippedStillReportsTheCorpus(t *testing.T) {
+	isolateRunHome(t)
+	if err := os.MkdirAll(runsRoot(), 0o755); err != nil {
+		t.Fatalf("create runs dir: %v", err)
+	}
+	for _, runID := range []string{"stale-1", "stale-2", "stale-3", "stale-4"} {
+		staleSnapshotRun(t, runsRoot(), runID)
+	}
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot(), false); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "No runs found.") {
+		t.Errorf("an unlistable corpus still has no rows to show:\n%s", got)
+	}
+	summary := lineContaining(t, got, "run(s) shown")
+	if !strings.Contains(summary, "0 of 4 run(s) shown") ||
+		!strings.Contains(summary, "4 written by an incompatible snapshot schema") ||
+		!strings.Contains(summary, "pass --show-skipped to name them") {
+		t.Errorf("`No runs found.` must not stand alone over four unread directories: %q", summary)
 	}
 }
 
@@ -422,7 +615,7 @@ func TestListRuns_StatusFollowsRunLifecycle(t *testing.T) {
 			}
 
 			var out, warn strings.Builder
-			if err := listRuns(&out, &warn, root); err != nil {
+			if err := listRuns(&out, &warn, root, true); err != nil {
 				t.Fatalf("listRuns returned error: %v", err)
 			}
 			got := out.String()
@@ -462,7 +655,7 @@ func TestListRuns_RefusedPlanShowsDurablePlannerAccounting(t *testing.T) {
 	})
 
 	var out, warn strings.Builder
-	if err := listRuns(&out, &warn, root); err != nil {
+	if err := listRuns(&out, &warn, root, true); err != nil {
 		t.Fatalf("listRuns: %v", err)
 	}
 	got := out.String()
@@ -529,6 +722,34 @@ func TestRunRuns_DashPrefixedUnknownSubcommandKeepsItsOwnAnswer(t *testing.T) {
 	var usage *usageRequest
 	if errors.As(err, &usage) {
 		t.Errorf("a non-help dash-prefixed subcommand must not be answered as help: %v", err)
+	}
+}
+
+// TestRunRuns_ShowSkippedIsAcceptedByTheDispatch closes the gap between the two
+// halves above: listRuns takes a bool, but a user types a flag, and nothing so
+// far proves the flag reaches the bool. `runs list` grew its first FlagSet for
+// it, so the trailing-argument refusal has to keep working through the parser
+// as well.
+func TestRunRuns_ShowSkippedIsAcceptedByTheDispatch(t *testing.T) {
+	isolateRunHome(t)
+
+	f := newRunsListFlags()
+	if err := f.parse([]string{"--show-skipped"}); err != nil {
+		t.Fatalf("`runs list --show-skipped` must parse: %v", err)
+	}
+	if !f.showSkipped {
+		t.Error("--show-skipped parsed but did not set the field it controls")
+	}
+
+	if def := newRunsListFlags(); def.showSkipped {
+		t.Error("--show-skipped must default to off — the collapsed summary is the default")
+	}
+	if err := runRuns([]string{"list", "--show-skipped"}); err != nil {
+		t.Fatalf("`runs list --show-skipped` must run: %v", err)
+	}
+	if err := runRuns([]string{"list", "--show-skipped", "extra"}); err == nil ||
+		!strings.Contains(err.Error(), "extra") {
+		t.Fatalf("a trailing argument must still be rejected and named, got %v", err)
 	}
 }
 
