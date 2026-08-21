@@ -68,7 +68,8 @@ func showRun(w io.Writer, runDir, runID string) error {
 	// the missing-snapshot path returns it. On the path where the snapshot
 	// loads there is no such reader — runstate.Load does not parse the graph
 	// and the per-node table does not need it — so the failure is named there
-	// instead. Silence would drop the status word with nothing on screen
+	// instead, in runstatus.Unreadable's words rather than this file's. Silence
+	// would drop the status word with nothing on screen
 	// saying why, while `runs list` reports that same directory's error: the
 	// cross-surface disagreement internal/runstatus exists to end. Gather rather than Of
 	// because this surface renders the WORD, and a directory whose stream has
@@ -110,7 +111,12 @@ func showRun(w io.Writer, runDir, runID string) error {
 		return fmt.Errorf("load run %q: %w", runID, err)
 	}
 	if statusErr != nil {
-		fmt.Fprintf(w, "WARNING: this run's status could not be derived: %v\n", statusErr)
+		// The shared sentence, not a wording of this command's: the same
+		// directory named the same way by `runs list --show-skipped` and by
+		// `watch`, carrying the same classification (runstatus.Unreadable). What
+		// `show` adds is the table below it — the snapshot loaded, so there is
+		// still a run to print; only its status is missing.
+		fmt.Fprintln(w, runstatus.Unreadable(runID, statusErr))
 	}
 	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap),
 		snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
