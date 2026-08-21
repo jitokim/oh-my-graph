@@ -128,6 +128,35 @@ func (e *NodeTimeoutError) Error() string {
 
 func (e *NodeTimeoutError) Unwrap() error { return e.Err }
 
+// NodeSpawnError reports that the provider's CLI never started: the executable
+// could not be found or executed, so no model was reached and no reply exists
+// to judge.
+//
+// It is typed for the same reason NodeTimeoutError above it is — a caller that
+// must tell "the CLI answered badly" from "the CLI never ran" cannot do it on a
+// message string. The distinction was already made here (the non-*exec.ExitError
+// branch), and was already load-bearing; it just had no name a caller could
+// match on, so the only way to act on it was to match prose.
+//
+// The case that named it: an npm update replaced `claude` on PATH mid-run, and
+// the goal loop's assessor spawn failed on a binary that had existed twenty
+// minutes earlier and existed again a second later (#214). Retrying a spawn is
+// safe in a way that retrying a reply is NOT — see coordinator.Assess.
+type NodeSpawnError struct {
+	Runtime string
+	Err     error
+}
+
+func (e *NodeSpawnError) Error() string {
+	runtime := e.Runtime
+	if runtime == "" {
+		runtime = string(RuntimeClaude)
+	}
+	return fmt.Sprintf("%s run: spawn failed: %v", runtime, e.Err)
+}
+
+func (e *NodeSpawnError) Unwrap() error { return e.Err }
+
 type cliProtocol interface {
 	runtime() Runtime
 	binary() string
@@ -276,7 +305,9 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 		}
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
-			return NodeOutcome{SessionID: sessionID}, fmt.Errorf("%s run: spawn failed: %w", r.protocol.runtime(), runErr)
+			// Same branch, same message — now carrying a type a caller can
+			// match on instead of a sentence it would have to parse.
+			return NodeOutcome{SessionID: sessionID}, &NodeSpawnError{Runtime: string(r.protocol.runtime()), Err: runErr}
 		}
 		exitCode = exitErr.ExitCode()
 	}
