@@ -163,7 +163,7 @@ the failure costs** — the shipped graphs cover all three shapes:
 |---|---|---|
 | last node | `adr-driven-dev` (`finalize`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
 | first node | `apply-flags` (`dev` applies, commits and pushes; `verify` is `permission_mode: plan` and reads only) | fails immediately, having done nothing |
-| several | `merge-shepherd` — `gh` in all five model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
+| several | `merge-shepherd` — `gh` in all seven model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
 
 So "does the work and then fails" is only the last-node case. A graph can also
 publish from a node that is not its last (`apply-flags`), which is why the
