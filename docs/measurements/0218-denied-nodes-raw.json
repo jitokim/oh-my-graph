@@ -1,0 +1,2204 @@
+[
+  {
+    "run_id": "20260802-125517.456024000-1",
+    "node_id": "create-one",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(ls *)",
+      "Read",
+      "Write"
+    ],
+    "session_id": "2fa9afbd-e73d-42cd-acdf-d22a2e65416c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-pe-demo/2fa9afbd-e73d-42cd-acdf-d22a2e65416c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 13,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260802-125517.456024000-1",
+    "node_id": "verify",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Read"
+    ],
+    "session_id": "74596bd0-208d-41d0-b11c-8df242c53bc4",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-pe-demo/74596bd0-208d-41d0-b11c-8df242c53bc4.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 13,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260802-125603.154344000-2",
+    "node_id": "create-beta",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Write",
+      "Bash(ls *)"
+    ],
+    "session_id": "d801df59-cc50-440c-9e46-34f23c3614e6",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-pe-demo/d801df59-cc50-440c-9e46-34f23c3614e6.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 13,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260802-125603.154344000-2",
+    "node_id": "verify",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "526a7c77-312c-4768-88f5-380d7d26ebf1",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-pe-demo/526a7c77-312c-4768-88f5-380d7d26ebf1.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 14,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081608.190042000-1",
+    "node_id": "spec",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "session_id": "77686e8f-b56e-4850-b843-2c29cbd16b46",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-gate/77686e8f-b56e-4850-b843-2c29cbd16b46.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 93,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081608.190042000-1",
+    "node_id": "impl",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "4ff4f876-59d9-4113-9652-3d34f93ee66c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-gate/4ff4f876-59d9-4113-9652-3d34f93ee66c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 327,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081608.190042000-1",
+    "node_id": "review",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "session_id": "01f5de44-3af0-41f5-ab85-5e76a24a4c5c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-gate/01f5de44-3af0-41f5-ab85-5e76a24a4c5c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 78,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081608.190042000-1",
+    "node_id": "ship",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Bash(git *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "01e8bd7b-7d4a-449a-ba22-94cc8c2c95fe",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-gate/01e8bd7b-7d4a-449a-ba22-94cc8c2c95fe.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 47,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081608.190042000-1",
+    "node_id": "check",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(git *)"
+    ],
+    "session_id": "677ec509-2b13-4b36-80dc-f8419be28c82",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-gate/677ec509-2b13-4b36-80dc-f8419be28c82.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 12,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "impl",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)"
+    ],
+    "session_id": "25b6a334-f0e9-498d-ac56-f48c6d8034df",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-resume/25b6a334-f0e9-498d-ac56-f48c6d8034df.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 228,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "review",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(grep *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "718ad283-76f6-4559-b208-d1c02bc6074c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-resume/718ad283-76f6-4559-b208-d1c02bc6074c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 69,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "ship",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Read"
+    ],
+    "session_id": "b6350626-0b5a-4cc8-be6d-65c002d731e4",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-resume/b6350626-0b5a-4cc8-be6d-65c002d731e4.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 51,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-081635.836216000-1",
+    "node_id": "check",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(git *)"
+    ],
+    "session_id": "d81801bc-6025-4965-a13e-d85a4398f2df",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-resume/d81801bc-6025-4965-a13e-d85a4398f2df.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 11,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "config",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)",
+      "Bash(grep *)",
+      "Bash(ls *)"
+    ],
+    "session_id": "1f108dec-b246-4447-94fd-ece9aac00747",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b2/1f108dec-b246-4447-94fd-ece9aac00747.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 52,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "workflow",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "afeacb91-24d7-476f-8712-c719c6192959",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b2/afeacb91-24d7-476f-8712-c719c6192959.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 25,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "docs",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "f96478ba-0594-4ba9-b69b-03940a75466e",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b2/f96478ba-0594-4ba9-b69b-03940a75466e.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 45,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084651.244624000-1",
+    "node_id": "ship",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Edit",
+      "Bash(make *)",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(ls *)",
+      "Bash(grep *)"
+    ],
+    "session_id": "94b0e69b-184d-4392-ac54-47ddebf4d1e7",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b2/94b0e69b-184d-4392-ac54-47ddebf4d1e7.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 41,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "survey",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(ls *)"
+    ],
+    "session_id": "81380c6a-3e52-4d36-a65b-bd7fba63b652",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/81380c6a-3e52-4d36-a65b-bd7fba63b652.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 96,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "impl",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "session_id": "d7f00ccf-077c-4075-ba9f-d3714f497b9c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/d7f00ccf-077c-4075-ba9f-d3714f497b9c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 5,
+    "denials_by_tool": {
+      "Bash": 5
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 68,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "docs",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "866123fa-9c30-4d6e-b14c-23aec242d6b6",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/866123fa-9c30-4d6e-b14c-23aec242d6b6.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 67,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "verify",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "c33ea7e2-221c-4fac-9f72-4e36b8d2dee8",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/c33ea7e2-221c-4fac-9f72-4e36b8d2dee8.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 66,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "ship",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Read"
+    ],
+    "session_id": "a1729b8c-d42c-40f6-83b1-36e855c00426",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/a1729b8c-d42c-40f6-83b1-36e855c00426.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 55,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260803-084704.248072000-1",
+    "node_id": "check",
+    "node_type": "",
+    "allowed_tools": [
+      "Bash(git *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "f17f7543-7f89-497e-b894-a868b45e7c3f",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-auto-b1/f17f7543-7f89-497e-b894-a868b45e7c3f.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 12,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260812-125543.322191000-1",
+    "node_id": "write-note",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Write"
+    ],
+    "session_id": "df878974-6a27-48e6-98a2-7787145e0292",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-acc-run/df878974-6a27-48e6-98a2-7787145e0292.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 16,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260812-125543.322191000-1",
+    "node_id": "check-note",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob"
+    ],
+    "session_id": "37f14485-6f46-419e-bf45-f1ef0dc14095",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-acc-run/37f14485-6f46-419e-bf45-f1ef0dc14095.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 17,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "survey",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "session_id": "4227615a-5060-4869-935b-690904faafe3",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/4227615a-5060-4869-935b-690904faafe3.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 137,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "fix",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "session_id": "f3e45271-63d1-49d0-bed0-bf122d79f680",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/f3e45271-63d1-49d0-bed0-bf122d79f680.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 59,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "tests",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "e0a4e2ad-f816-43ab-a3ad-37985bb655ac",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/e0a4e2ad-f816-43ab-a3ad-37985bb655ac.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 115,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "changelog",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "303a8735-2547-4e94-a199-bfd155f1788d",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/303a8735-2547-4e94-a199-bfd155f1788d.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 48,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "session_id": "f4dd17b5-2b21-4fe8-a743-77ba9d117126",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/f4dd17b5-2b21-4fe8-a743-77ba9d117126.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 107,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260818-234944.646288000-1",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "session_id": "30168ef9-6660-4917-875b-18c9a5fb325c",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/30168ef9-6660-4917-875b-18c9a5fb325c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 90,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "survey",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "session_id": "e4dc4d09-9e0f-4a76-8ef3-7bf766e4ba1e",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/e4dc4d09-9e0f-4a76-8ef3-7bf766e4ba1e.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 106,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "impl",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "5471970e-a637-437e-8963-764bc63258a7",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/5471970e-a637-437e-8963-764bc63258a7.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 89,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "tests",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "0b9d8167-ebb9-49ca-8fdc-62479cf7296c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/0b9d8167-ebb9-49ca-8fdc-62479cf7296c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 82,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "session_id": "ed4daea0-ecad-40f3-9386-58659762815a",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/ed4daea0-ecad-40f3-9386-58659762815a.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 5,
+    "denials_by_tool": {
+      "Bash": 5
+    },
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 189,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "ship",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": false,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "no record in state.nodes — the run halted before this node was reached"
+  },
+  {
+    "run_id": "20260819-154136.440217000-1",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(grep *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": false,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "no record in state.nodes — the run halted before this node was reached"
+  },
+  {
+    "run_id": "20260819-161543.550073000-1",
+    "node_id": "write-hello",
+    "node_type": "",
+    "allowed_tools": [
+      "Write",
+      "Read"
+    ],
+    "session_id": "1600a325-75b3-4cb1-ac9f-978f146c9446",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-e2e-node/1600a325-75b3-4cb1-ac9f-978f146c9446.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 11,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-161543.550073000-1",
+    "node_id": "check-hello",
+    "node_type": "",
+    "allowed_tools": [
+      "Read",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "session_id": "b87d4789-1862-4f67-8f33-72cbd757f277",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-e2e-node/b87d4789-1862-4f67-8f33-72cbd757f277.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 13,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "audit",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)"
+    ],
+    "session_id": "275024c7-96d7-4908-8128-47e11dbb40c7",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/275024c7-96d7-4908-8128-47e11dbb40c7.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 138,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "apply",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(make *)"
+    ],
+    "session_id": "ebb8abbd-0fcd-40bd-9990-cd9f94e748ab",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/ebb8abbd-0fcd-40bd-9990-cd9f94e748ab.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 107,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)"
+    ],
+    "session_id": "d1897a3a-d4ef-4f60-ac1b-36de50f0007c",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/d1897a3a-d4ef-4f60-ac1b-36de50f0007c.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 78,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "pr",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Bash(git *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "a8363d1a-83b8-42ef-a845-32b952da9bd1",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/a8363d1a-83b8-42ef-a845-32b952da9bd1.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 17,
+    "denials_by_tool": {
+      "Bash": 17
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 208,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-163447.441137000-2",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(gh pr *)"
+    ],
+    "session_id": "2ba63596-16b2-491d-aae5-06c09ce2f7fb",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-204/2ba63596-16b2-491d-aae5-06c09ce2f7fb.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 60,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-readme",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "session_id": "a184a570-0538-4dab-b2a2-6d267f5df874",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/a184a570-0538-4dab-b2a2-6d267f5df874.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 244,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-design",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "session_id": "1d1b1a4d-111e-4c76-853a-6a964625f190",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/1d1b1a4d-111e-4c76-853a-6a964625f190.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 328,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-security-contrib",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "session_id": "7f6884a3-056d-4fbf-847e-925356a8bb61",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/7f6884a3-056d-4fbf-847e-925356a8bb61.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 204,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "audit-limits-examples",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "session_id": "794b968a-fa15-4efe-879e-cf4267948166",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/794b968a-fa15-4efe-879e-cf4267948166.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 232,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "apply-fixes",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "ce7f27cf-0622-4a93-9f7a-bfbda1b254c7",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/ce7f27cf-0622-4a93-9f7a-bfbda1b254c7.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 359,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-175025.348460000-1",
+    "node_id": "check-landed",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Bash(git *)"
+    ],
+    "session_id": "8c6ac778-edd7-4c88-a2ea-9d643f3f1756",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/8c6ac778-edd7-4c88-a2ea-9d643f3f1756.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 54,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "audit-contributing",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "cb8924e8-b3f8-4ed2-a989-5e3f285edc2a",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/cb8924e8-b3f8-4ed2-a989-5e3f285edc2a.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 295,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "fix-readme-examples",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "4c29eafd-4ed7-470c-8056-bb021e973810",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/4c29eafd-4ed7-470c-8056-bb021e973810.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 180,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "verify-trailers-changelog",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "5df8d53e-0287-4c53-b92a-9c560e88f059",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/5df8d53e-0287-4c53-b92a-9c560e88f059.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 98,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "final-report",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)"
+    ],
+    "session_id": "fd1fa2eb-df35-46e7-a4bd-7c301f245200",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/fd1fa2eb-df35-46e7-a4bd-7c301f245200.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 98,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-181003.413336000-2",
+    "node_id": "check-landed",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)"
+    ],
+    "session_id": "7c7a6653-f830-4f9a-9a79-9bad3b31a0f1",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/7c7a6653-f830-4f9a-9a79-9bad3b31a0f1.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 45,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "impl",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "session_id": "f3985287-956e-4cce-94d9-fe1767408507",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/f3985287-956e-4cce-94d9-fe1767408507.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 10,
+    "denials_by_tool": {
+      "Bash": 10
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 206,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "tests",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "session_id": "57d0903c-712b-4275-8750-11b3923e01fd",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/57d0903c-712b-4275-8750-11b3923e01fd.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 10,
+    "denials_by_tool": {
+      "Bash": 10
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 175,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(go *)",
+      "Bash(git *)",
+      "Bash(grep *)"
+    ],
+    "session_id": "c166df35-57f7-47f5-ad2f-c554e3d6e609",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/c166df35-57f7-47f5-ad2f-c554e3d6e609.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 7,
+    "denials_by_tool": {
+      "Bash": 7
+    },
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 104,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "changelog",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(git *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "25925f60-6126-451c-bc84-0d7fb29876c6",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/25925f60-6126-451c-bc84-0d7fb29876c6.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 100,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260819-223604.575080000-1",
+    "node_id": "verify",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(grep *)"
+    ],
+    "session_id": "13f6c560-8204-4606-807e-183bb316a849",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/13f6c560-8204-4606-807e-183bb316a849.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 6,
+    "denials_by_tool": {
+      "Bash": 6
+    },
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 78,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "corpus",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "21f5446f-6b30-4b45-bcd0-05a290d7c9a2",
+    "transcript": "missing",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "session_id present but no ~/.claude/projects/*/\u003cid\u003e.jsonl matched"
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "precedent",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "session_id": "a889a07f-fd17-4dd7-9513-516f6be5a53d",
+    "transcript": "missing",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "session_id present but no ~/.claude/projects/*/\u003cid\u003e.jsonl matched"
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "predicate",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "record present but session_id is empty — no transcript addressable"
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "handcheck",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "record present but session_id is empty — no transcript addressable"
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "writeup",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "FAIL",
+    "provenance": "",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "record present but session_id is empty — no transcript addressable"
+  },
+  {
+    "run_id": "20260820-162555.890191000-1",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "",
+    "transcript": "missing",
+    "ran": false,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "",
+    "provenance": "",
+    "success_check_kind": "verify",
+    "transcript_lines": 0,
+    "undecodable_lines": 0,
+    "note": "no record in state.nodes — the run halted before this node was reached"
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "precedent",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "session_id": "b8a08a8f-97bb-4d90-a388-d3d115ba7f35",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/b8a08a8f-97bb-4d90-a388-d3d115ba7f35.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 99,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "measure",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(go *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "406d5284-feb9-45c9-9fe1-03f31d09a919",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/406d5284-feb9-45c9-9fe1-03f31d09a919.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 119,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "handcheck",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "7b313d5c-9d3b-40d4-a5c0-e59d8da51382",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/7b313d5c-9d3b-40d4-a5c0-e59d8da51382.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 91,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "writeup",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Write",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "78cd3ce9-14fc-4b03-af91-8ce132594e3e",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/78cd3ce9-14fc-4b03-af91-8ce132594e3e.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 5,
+    "denials_by_tool": {
+      "Bash": 5
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 175,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-162820.837039000-2",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Bash(git *)"
+    ],
+    "session_id": "728553ae-7485-4e7d-bbbf-8e3215af1f75",
+    "transcript": "/Users/imac/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/728553ae-7485-4e7d-bbbf-8e3215af1f75.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 28,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-163530.563884000-1",
+    "node_id": "adr",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Bash(git *)",
+      "Bash(cat *)"
+    ],
+    "session_id": "cdbdb8aa-0d49-4452-a910-cd2b4bf01dd0",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/cdbdb8aa-0d49-4452-a910-cd2b4bf01dd0.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 1,
+    "denials_by_tool": {
+      "Bash": 1
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 290,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-163530.563884000-1",
+    "node_id": "implement",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "372f5b6a-d945-4414-842b-7d397875daa4",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/372f5b6a-d945-4414-842b-7d397875daa4.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 5,
+    "denials_by_tool": {
+      "Bash": 5
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 526,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-163530.563884000-1",
+    "node_id": "review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "cd7ae1ba-fea2-46da-b5d7-79ebaede69b0",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/cd7ae1ba-fea2-46da-b5d7-79ebaede69b0.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 2,
+    "denials_by_tool": {
+      "Bash": 2
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 187,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-163530.563884000-1",
+    "node_id": "docs",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Bash(git *)"
+    ],
+    "session_id": "6c02d0c5-575d-4e66-9342-f8479bc939c1",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/6c02d0c5-575d-4e66-9342-f8479bc939c1.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 216,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-163530.563884000-1",
+    "node_id": "check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git *)",
+      "Bash(make *)"
+    ],
+    "session_id": "5cc1014b-cb08-4006-9201-346422c7864a",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/5cc1014b-cb08-4006-9201-346422c7864a.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 113,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-172509.298782000-2",
+    "node_id": "resume-fix",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "session_id": "cef03a06-1d85-42c6-9abf-642df157b5fc",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/cef03a06-1d85-42c6-9abf-642df157b5fc.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 189,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-172509.298782000-2",
+    "node_id": "test-fix",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Edit",
+      "Bash(go *)",
+      "Bash(git *)"
+    ],
+    "session_id": "4b222028-54d4-424f-8ad1-d4668034be60",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/4b222028-54d4-424f-8ad1-d4668034be60.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 16,
+    "denials_by_tool": {
+      "Bash": 16
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 336,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-172509.298782000-2",
+    "node_id": "docs-truth",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Bash(git *)",
+      "Bash(ls *)"
+    ],
+    "session_id": "4be7bab0-e948-4111-b9bb-67dca1a016ca",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/4be7bab0-e948-4111-b9bb-67dca1a016ca.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 3,
+    "denials_by_tool": {
+      "Bash": 3
+    },
+    "verdict": "PASS",
+    "provenance": "exit-only",
+    "success_check_kind": "exit-only",
+    "transcript_lines": 360,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-172509.298782000-2",
+    "node_id": "verify-review",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Bash(make *)",
+      "Bash(git *)"
+    ],
+    "session_id": "d4095234-26b0-4daf-8aaf-a402bc76c01f",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/d4095234-26b0-4daf-8aaf-a402bc76c01f.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": true,
+    "denied_tools": [
+      "Bash"
+    ],
+    "denial_count": 4,
+    "denials_by_tool": {
+      "Bash": 4
+    },
+    "verdict": "PASS",
+    "provenance": "self-reported",
+    "success_check_kind": "result_matches",
+    "transcript_lines": 245,
+    "undecodable_lines": 0
+  },
+  {
+    "run_id": "20260820-172509.298782000-2",
+    "node_id": "branch-check",
+    "node_type": "claude-run",
+    "allowed_tools": [
+      "Bash(git *)",
+      "Read"
+    ],
+    "session_id": "efba4918-8073-4463-a12d-edc4216f6c5b",
+    "transcript": "/Users/imac/.claude/projects/-private-tmp-omg-codex-optin/efba4918-8073-4463-a12d-edc4216f6c5b.jsonl",
+    "ran": true,
+    "unreadable": false,
+    "denied": false,
+    "denied_tools": [],
+    "denial_count": 0,
+    "verdict": "PASS",
+    "provenance": "verified",
+    "success_check_kind": "verify",
+    "transcript_lines": 24,
+    "undecodable_lines": 0
+  }
+]
