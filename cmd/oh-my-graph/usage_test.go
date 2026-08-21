@@ -53,8 +53,13 @@ func flagSetsBySubcommand() map[string]*flag.FlagSet {
 		"run":    newRunFlags().set,
 		"auto":   newAutoFlags().set,
 		"resume": newResumeFlags().set,
-		"serve":  newServeFlags().set,
-		"chat":   newChatFlags().set,
+		// `runs` is a subcommand GROUP, and the FlagSet belongs to its one
+		// member, `list` — which is also why the group's help hands out this
+		// same set (runs.go). Keyed on the group's name because that is what
+		// the synopsis line starts with.
+		"runs":  newRunsListFlags().set,
+		"serve": newServeFlags().set,
+		"chat":  newChatFlags().set,
 	}
 }
 

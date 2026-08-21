@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -26,22 +27,64 @@ func runRuns(args []string) error {
 	// This slot holds a subcommand name rather than a value, so an unknown
 	// dash-prefixed token keeps its existing `unknown subcommand` answer, which
 	// already names the alternative. Only the help request is intercepted
-	// (argslot.go), because that one had no answer at all (#200).
-	if req := helpRequest(args, "runs", nil); req != nil {
+	// (argslot.go), because that one had no answer at all (#200). The FlagSet
+	// goes with it so `runs --help` lists --show-skipped's description, the same
+	// answer `runs list --help` gives: `list` is the only subcommand, so the
+	// group's help and its own are the same help.
+	if req := helpRequest(args, "runs", newRunsListFlags().set); req != nil {
 		return req
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("runs: missing subcommand (usage: oh-my-graph runs list)")
+		line, _ := usageSynopsisFor("runs")
+		return fmt.Errorf("runs: missing subcommand (usage: %s)", line)
 	}
 	switch args[0] {
 	case "list":
-		if len(args) > 1 {
-			return fmt.Errorf("runs list: unexpected argument %q (usage: oh-my-graph runs list)", args[1])
+		f := newRunsListFlags()
+		if err := f.parse(args[1:]); err != nil {
+			return err
 		}
-		return listRuns(os.Stdout, os.Stderr, runsRoot())
+		return listRuns(os.Stdout, os.Stderr, runsRoot(), f.showSkipped)
 	default:
 		return fmt.Errorf("runs: unknown subcommand %q (want list)", args[0])
 	}
+}
+
+// showSkippedFlag is the flag the summary line advertises, spelled once so the
+// line the user reads and the flag they then type cannot drift apart.
+const showSkippedFlag = "--show-skipped"
+
+// runsListFlags holds `runs list`'s options. It is the first FlagSet under the
+// `runs` group; the group keeps its own dispatch, and the flags belong to
+// `list` because that is the command whose output they change.
+type runsListFlags struct {
+	showSkipped bool
+
+	set *flag.FlagSet
+}
+
+// newRunsListFlags builds a runsListFlags with its FlagSet configured.
+func newRunsListFlags() *runsListFlags {
+	f := &runsListFlags{set: flag.NewFlagSet("runs list", flag.ContinueOnError)}
+	f.set.BoolVar(&f.showSkipped, "show-skipped", false,
+		"name every run directory the table could not read, one line each on stderr")
+	return f
+}
+
+// parse reads `list`'s argv, which is flags only — the subcommand name was
+// already consumed by the group's dispatch, and `list` takes no positional.
+func (f *runsListFlags) parse(args []string) error {
+	if req := helpRequest(args, "runs", f.set); req != nil {
+		return req
+	}
+	if err := f.set.Parse(args); err != nil {
+		return err
+	}
+	if f.set.NArg() > 0 {
+		line, _ := usageSynopsisFor("runs")
+		return fmt.Errorf("runs list: unexpected argument %q (usage: %s)", f.set.Arg(0), line)
+	}
+	return nil
 }
 
 // runSummary is one run's row in the `runs list` table, derived entirely from
@@ -84,11 +127,27 @@ type runSummary struct {
 // PAUSED, PASS or FAIL — including before its first completed node has produced
 // a state.json. listRuns is read-only over the run directories: a directory
 // whose stream or snapshot cannot be READ (corrupt, or written by an
-// incompatible schema) is reported as a warning on warnW and skipped, never
-// deleted or rewritten; a file that is merely ABSENT is a fact about the run and
-// keeps its row. A missing root is not an error — it just means nothing has run
-// yet.
-func listRuns(w, warnW io.Writer, root string) error {
+// incompatible schema) is skipped, never deleted or rewritten; a file that is
+// merely ABSENT is a fact about the run and keeps its row. A missing root is not
+// an error — it just means nothing has run yet.
+//
+// WHAT A SKIPPED DIRECTORY COSTS THE READER is reported in one line under the
+// table, always, from the shared accumulator (runstatus.Skipped): how many runs
+// are shown out of how many were found, how many were skipped and per which
+// reason. It used to be one WARNING line per skipped directory on warnW, which
+// on a long-lived run home is the whole screen — 261 of 331 lines on the
+// machine this was measured on, every one of them the same sentence about the
+// same schema version. Those lines are not gone, they are behind showSkipped
+// (--show-skipped) and still on warnW, byte for byte what they were; what
+// changed is that the DEFAULT states the counts instead of enumerating them.
+//
+// The count line is printed whether or not anything was skipped, because a
+// reader must be able to tell "nothing was hidden from me" apart from "64 of
+// 325 runs are shown" — a summary that appeared only when there was something
+// to report would render those two cases identically. The one exception is a
+// corpus with nothing in it at all, where "No runs found." already is that
+// statement.
+func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
 	// A root that does not exist yet reads as no entries at all: "nothing has
 	// ever run here" and "nothing here is listable" are the same answer to the
 	// user, so both fall through to the one empty-table path below rather than
@@ -99,19 +158,36 @@ func listRuns(w, warnW io.Writer, root string) error {
 	}
 
 	var rows []runSummary
+	var skipped runstatus.Skipped
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		row, err := summarizeRun(root, entry.Name())
 		if err != nil {
-			fmt.Fprintf(warnW, "WARNING: skipping run %q: %v\n", entry.Name(), err)
+			skipped.Add(entry.Name(), err)
 			continue
 		}
 		rows = append(rows, row)
 	}
+
+	// The detail stays on warnW rather than moving to w with the summary: it is
+	// the same stream it has always been on, so a consumer redirecting the two
+	// separately sees no change in either, and the table stays the only thing on
+	// stdout besides its own footer.
+	if showSkipped {
+		for _, line := range skipped.Details() {
+			fmt.Fprintln(warnW, line)
+		}
+	}
+
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "No runs found.")
+		// The one place the count line matters most: with every directory
+		// unreadable, "No runs found." on its own says a full run home is empty.
+		if skipped.Len() > 0 {
+			fmt.Fprintln(w, skipped.Line(0, showSkippedFlag))
+		}
 		return nil
 	}
 
@@ -120,7 +196,7 @@ func listRuns(w, warnW io.Writer, root string) error {
 	// descending string sort is a descending time sort.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].runID > rows[j].runID })
 
-	printRuns(w, rows)
+	printRuns(w, rows, skipped.Line(len(rows), showSkippedFlag))
 	return nil
 }
 
@@ -239,9 +315,14 @@ func statusCell(row runSummary) string {
 	return row.status.String()
 }
 
-// printRuns writes the table: a header, one aligned row per run, and a footer
-// with the run count and the cost total across every listed run, and then one
-// recovery hint per abandoned run and one resume hint per paused run. The
+// printRuns writes the table: a header, one aligned row per run, a footer with
+// the run count and the cost total across every listed run, then coverage — the
+// one line saying how much of the run home this table actually covers, from the
+// shared accumulator (runstatus.Skipped.Line) — and then one recovery hint per
+// abandoned run and one resume hint per paused run. Coverage sits directly under
+// the footer and above the hints because it is about the table, and because the
+// hints are unbounded: a reader with forty abandoned runs would otherwise scroll
+// past forty sentences to learn how many rows they were owed. The
 // column style mirrors the end-of-run ledger table so the two read as one tool.
 // A snapshot-less row keeps the same column widths with "-" in place of the
 // values it cannot know yet, and counts toward the run count (its cost so far
@@ -254,7 +335,7 @@ func statusCell(row runSummary) string {
 // preserve the conflation in the one place a user reads it. ADR 0015 already
 // recorded this column as not a contract, so the rename costs nothing the
 // content change did not already cost.
-func printRuns(w io.Writer, rows []runSummary) {
+func printRuns(w io.Writer, rows []runSummary, coverage string) {
 	fmt.Fprintf(w, "%-17s %-24s %6s %10s %-19s  %s\n", "RUN", "GRAPH", "NODES", "COST(USD)", "TOKENS(I/C/O/R)", "STATUS")
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 90))
 
@@ -297,6 +378,7 @@ func printRuns(w io.Writer, rows []runSummary) {
 	} else {
 		fmt.Fprintf(w, "%d run(s), TOTAL COST: $%.4f\n", len(rows), total)
 	}
+	fmt.Fprintln(w, coverage)
 
 	// The per-row hints, under the table rather than interleaved between rows:
 	// ABANDONED and PAUSED are the two rows a reader cannot act on without

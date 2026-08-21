@@ -12,6 +12,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 )
 
 // writeShowSnapshot persists a snapshot into dir/state.json through the real
@@ -255,6 +256,48 @@ func TestShowRun_ADirectoryWithNoSnapshotStillGetsItsStatus(t *testing.T) {
 				t.Errorf("a derivable run directory must not be called unknown:\n%s", got)
 			}
 		})
+	}
+}
+
+// TestShowRun_UnderivableStatusIsNamedInTheSharedSentence pins the surface
+// half of the shared wording: when the snapshot loads but the status cannot be
+// derived, `show` must PRINT runstatus.Unreadable — the same sentence, with the
+// same classification, that `runs list --show-skipped` and `watch` print about
+// the same directory — and must still print the table, because the snapshot is
+// right there. The fixture is a snapshot whose graph bytes do not survive
+// graph.Parse (an edge to a node that is not there):
+// runstate.Load succeeds (it does not parse the graph), Gather fails on exactly
+// that, which is the one shape that reaches this branch.
+func TestShowRun_UnderivableStatusIsNamedInTheSharedSentence(t *testing.T) {
+	dir := t.TempDir()
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID: "20260821-000909",
+		Graph: json.RawMessage(`{"name":"unparseable","nodes":[{"id":"alpha","prompt":"a","depends_on":["ghost"]}]}`),
+		Nodes: map[string]runstate.NodeRecord{
+			"alpha": {Verdict: runstate.VerdictPass, SessionID: "s-alpha", CostUSD: 0.25},
+		},
+	})
+
+	var out strings.Builder
+	if err := showRun(&out, dir, "20260821-000909"); err != nil {
+		t.Fatalf("showRun must still render what the snapshot holds: %v", err)
+	}
+	got := out.String()
+
+	warning := lineContaining(t, got, "could not be read in full")
+	for _, want := range []string{`run "20260821-000909"`, runstatus.SkipUnreadable.String(), "reconstruct graph"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("the warning line is missing %q: %q", want, warning)
+		}
+	}
+	// The old wording said the status could not be derived and nothing else;
+	// this surface must not go back to composing its own.
+	if strings.Contains(got, "this run's status could not be derived") {
+		t.Errorf("`show` is still speaking its own prose about an unreadable run:\n%s", got)
+	}
+	// The table is the reason `show` keeps the row at all.
+	if !strings.Contains(got, "Run 20260821-000909") || !strings.Contains(got, "alpha") {
+		t.Errorf("the per-node table must survive an underivable status:\n%s", got)
 	}
 }
 

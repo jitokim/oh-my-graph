@@ -70,7 +70,7 @@ func TestPlanAndExecute_ThePlannerCallIsVisibleWhileItRuns(t *testing.T) {
 		}
 		planningSeen = true
 		var out, warn strings.Builder
-		if err := listRuns(&out, &warn, runsRoot()); err != nil {
+		if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
 			t.Errorf("listRuns during planning: %v", err)
 		}
 		listedDuringPlanning, warnedDuringPlanning = out.String(), warn.String()
@@ -255,8 +255,8 @@ func readStreamEvents(t *testing.T, runDir string) []runfeed.Event {
 // §2.4 found while confirming #163 and fixes on the way past: planAndExecute
 // saved graph.json into the run directory BEFORE calling confirm, so answering
 // `n` left behind a runs/<id>/ holding a graph.json and no state.json — which
-// `runs list` reported as "WARNING: skipping run …" and the dashboard painted
-// unknown. Saying no manufactured a corrupt run.
+// `runs list` skipped as a directory it could not read and the dashboard
+// painted unknown. Saying no manufactured a corrupt run.
 //
 // The commitment to execute is what creates a run, and for chat it does not
 // exist until a human answers. So: no run directory at all, and the paid-for
@@ -286,7 +286,7 @@ func TestPlanAndExecute_ADeclinedChatPlanManufacturesNoRun(t *testing.T) {
 	}
 	// Nothing to skip means nothing to warn about, which is the whole point.
 	var listed, warned strings.Builder
-	if err := listRuns(&listed, &warned, runsRoot()); err != nil {
+	if err := listRuns(&listed, &warned, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns: %v", err)
 	}
 	if warned.Len() != 0 {
@@ -517,7 +517,7 @@ func TestPlanAndExecuteCycles_ARefusedCycleLeavesNoOpenLeg(t *testing.T) {
 
 	// And no surface says a subprocess may still be spending, because none is.
 	var listed, warned strings.Builder
-	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+	if listErr := listRuns(&listed, &warned, runsRoot(), true); listErr != nil {
 		t.Fatalf("listRuns: %v", listErr)
 	}
 	for _, text := range []string{out, listed.String()} {
@@ -587,7 +587,7 @@ func TestPlanAndExecute_AFailedSnapshotWriteLeavesNoOpenLeg(t *testing.T) {
 	}
 
 	var listed, warned strings.Builder
-	if listErr := listRuns(&listed, &warned, runsRoot()); listErr != nil {
+	if listErr := listRuns(&listed, &warned, runsRoot(), true); listErr != nil {
 		t.Fatalf("listRuns: %v", listErr)
 	}
 	for _, text := range []string{out, listed.String()} {
@@ -662,7 +662,7 @@ func TestSurfaces_ADirectoryThatHasSaidNothingHasNoStatus(t *testing.T) {
 	}
 
 	var listed, warned strings.Builder
-	if err := listRuns(&listed, &warned, runsRoot()); err != nil {
+	if err := listRuns(&listed, &warned, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns: %v", err)
 	}
 	row := listed.String()
@@ -710,7 +710,7 @@ func TestListRuns_ASilentRowCarriesNoHintEither(t *testing.T) {
 		[]runfeed.Event{{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused}})
 
 	var listed, warned strings.Builder
-	if err := listRuns(&listed, &warned, runsRoot()); err != nil {
+	if err := listRuns(&listed, &warned, runsRoot(), true); err != nil {
 		t.Fatalf("listRuns: %v", err)
 	}
 	out := listed.String()

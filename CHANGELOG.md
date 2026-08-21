@@ -10,6 +10,65 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **`runs list` collapses the per-run skip warnings into one summary line, and
+  the detail moves behind `--show-skipped`.** Option chosen: *collapse by
+  default, restore on demand* — not silence, and not a filter. Every skipped
+  directory is still counted, still classified by reason, and still nameable;
+  what changed is that naming them is now something you ask for.
+
+  Measured on this machine's run corpus, 328 run directories under
+  `~/.oh-my-graph/runs`:
+
+  | | before (`be154d3`, 325 dirs) | after (this branch, 328 dirs) |
+  |---|---|---|
+  | `runs list` total lines | **331** | **74** |
+  | of those, `WARNING` lines | **262** | **1** |
+  | `runs list --show-skipped` total lines | n/a (flag did not exist) | **335** |
+
+  The commands, verbatim, are the address for those numbers:
+
+  ```sh
+  go run ./cmd/oh-my-graph runs list > /tmp/omg-runs-after.txt 2>&1
+  grep -c "" /tmp/omg-runs-after.txt                     # 74
+  grep -c WARNING /tmp/omg-runs-after.txt                # 1
+  go run ./cmd/oh-my-graph runs list --show-skipped \
+      > /tmp/omg-runs-after-detail.txt 2>&1
+  grep -c "" /tmp/omg-runs-after-detail.txt              # 335
+  ```
+
+  Both captures merge stdout and stderr, which is how the numbers on either
+  side of the change are comparable: the 261 skip lines were always on stderr,
+  so a consumer redirecting stdout alone never saw them. The one remaining
+  `WARNING` in the default form is not a skip — it is the ABANDONED hint that
+  quotes `runstatus.OrphanWarning` mid-sentence, and it was one of the 262
+  before as well.
+
+  The corpus grew by 3 directories between the two measurements (325 → 328),
+  because runs kept being written while this branch was being built. The skip
+  count did not move — 261 both times, all of them the same single cause, a
+  schema-v2 snapshot this build reads as v3 — so the three new directories
+  listed as ordinary rows.
+
+  In place of the 261 lines the default form now prints:
+
+  ```
+  67 of 328 run(s) shown; 261 skipped (261 written by an incompatible snapshot schema) — pass --show-skipped to name them.
+  ```
+
+  `--show-skipped` restores exactly one line per skipped directory, and the
+  summary line stays, so the detail form is a superset rather than a different
+  report.
+
+### Added
+
+- **`runs list --show-skipped`** — names every run directory the listing had to
+  skip, one line each, in the shared unreadable-run sentence that `runs show`
+  and `runs watch` also speak. The classification behind both the summary's
+  reason counts and this detail lives in `internal/runstatus`, so the four
+  surfaces answer for the same directory with the same words instead of four
+  different ones.
 ### Fixed
 
 - **The planner now shares the assessor's bounded spawn retry.** #214 gave the

@@ -15,7 +15,7 @@
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-//	oh-my-graph runs list
+//	oh-my-graph runs list [--show-skipped]
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
@@ -163,7 +163,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-       oh-my-graph runs list
+       oh-my-graph runs list [--show-skipped]
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
@@ -712,8 +712,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 // The spec is saved AFTER the answer, and that ordering is the fix ADR 0023
 // §2.4 makes on the way past #163. Saving into the run directory before the
 // prompt meant every declined plan left behind a runs/<id>/ holding a
-// graph.json and no state.json — reported by `runs list` as
-// "WARNING: skipping run …" and painted `unknown` by the dashboard. Saying no
+// graph.json and no state.json — skipped by `runs list` as a directory it
+// could not read and painted `unknown` by the dashboard. Saying no
 // manufactured a corrupt run. The topology therefore prints with no path,
 // because which directory the spec belongs in is exactly what is being decided.
 //
