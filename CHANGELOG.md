@@ -91,6 +91,22 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   cancelled context still stop on the first answer — retrying those is
   re-rolling a verdict until the loop likes one.
 
+### Documented
+
+- **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
+  ADR 0030 is deliberately not extended one level down**
+  ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
+  answering [#218](https://github.com/jitokim/oh-my-graph/issues/218)). A
+  planned node cannot carry its own `success_check.verify` and never will —
+  `validatePlannedNodeVerify` refuses a planner-authored one — and no supplier
+  for a per-node command keeps that reply untrusted: an operator cannot type a
+  mapping keyed on ids the planner has not invented yet, and the one command
+  they *can* type before the plan exists would measure the same thing at every
+  node instead of each node's own work. So `--verify-cmd` stays a per-run
+  command attached to a run's sinks, the deliverable is documentation, and §7
+  names the coverage census that would overturn it. **Proposed. No behaviour
+  changed, no flag, no schema field, no new exec seam.**
+
 ## [v0.11.0] - 2026-08-21
 
 **Minor because two things you may now type were errors before**, and one thing
