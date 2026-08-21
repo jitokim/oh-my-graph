@@ -1793,7 +1793,17 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   identically. `--show-skipped` names each skipped directory and quotes the
   reader's own reason, one line each on stderr; that per-run detail used to be
   unconditional and was four fifths of the command's output on a long-lived run
-  home. `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
+  home. That per-run sentence is `runstatus.Unreadable` and is the ONE wording
+  for a directory nothing could read — the run id, which of the two provable
+  classes the damage is in, and the reader's own error quoted whole — so
+  `runs list --show-skipped`, `show` (above the table it can still print, since
+  the snapshot loaded and only the status is missing) and `watch` (in place of
+  the status line, on stderr, with the tail running on) say the same sentence
+  about the same directory. It states no consequence, because the consequence
+  is the one thing the surfaces legitimately disagree about. The dashboard is
+  the surface that neither counts nor reprints: it drops no run, so it has
+  nothing to summarise, and its card carries the reader's error in a JSON field
+  a machine reads — human prose is not added there. `serve`'s `ResolveRun` stops preferring a corpse as "the run happening
   right now", `watch` refuses to tail a stream that will never get another
   line, the dashboard paints the card abandoned, and the single-run live view —
   the surface that carries the gate button — reads the same answer off
