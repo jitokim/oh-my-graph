@@ -1,7 +1,8 @@
 # merge-shepherd — the operator's PR-shipping loop as a graph.
 #
-#   verify ─▶ ready-and-wait ─▶ triage ─▶ recheck ─▶ approve-merge ─▶ merge
-#                                                       (gate)
+#   verify ─▶ ready-and-wait ─▶ triage ─▶ recheck ─▶ stack-scan ─▶
+#   stack-retarget ─▶ approve-merge ─▶ merge
+#                          (gate)
 #
 # What this replaces: the loop the human operator runs by hand on every PR —
 # fetch the head, `make local` in a scratch checkout, mark the PR ready, wait
@@ -115,6 +116,48 @@
 # already merged and report it, so correcting a false FAIL here is the same
 # free re-run it is at every other node. See the success_check comment below
 # and ADR 0019.
+#
+# What `--delete-branch` does to a PR stacked on THIS one, and why two nodes
+# now run before the gate. PR #207 merged with `--delete-branch` at
+# 2026-08-20T23:48:35Z. PR #211's base was `docs/drift-audit-v0.10` — #207's
+# HEAD branch, not `main` — so GitHub deleted the base out from under it and
+# closed it two seconds later, at 23:48:37Z. That state is UNRECOVERABLE by
+# API: a closed PR whose base branch is gone refuses both calls that would
+# undo it ("Cannot change the base branch of a closed pull request", "Could
+# not open the pull request"). The work survived only because the head branch
+# outlived the base and somebody noticed #211 had dropped out of `gh pr list`;
+# it was recovered by hand as #223. The ASYMMETRY is what decides the design,
+# because the other error is cheap: retargeting a child that did not need it
+# leaves a conflict in the child that a person resolves — exactly what #211
+# and #212 needed anyway. So `stack-scan` reads who is standing on this PR's
+# head branch, `stack-retarget` moves them onto this PR's own base, and both
+# run BEFORE the gate rather than after the approval, because the window
+# closes at the instant of MERGE and a gate is asynchronous — a human may take
+# hours. Approval governs the merge, not the rescue; the graph moves the
+# children while it still can and then TELLS the human what it moved. And
+# `--delete-branch` stops being unconditional: merge applies it only when
+# nothing open is based on this head any more, and names the child that held
+# it back when something is. That condition is NORMALLY SATISFIED — the
+# retarget ran two nodes earlier and should have left nothing standing on
+# this head — so what the check costs, in the ordinary run, is nothing at
+# all. It is a second lock on the same door, and it is cheap because the
+# first lock is what usually holds. What it is FOR is the run where the
+# first one did not: a retarget that failed QUIETLY leaves a child still
+# based on this head, and deleting a branch that is still some open PR's
+# base is precisely what auto-closed #211 — a state neither call can undo,
+# because a closed PR whose base is gone can be neither reopened
+# ("Could not open the pull request") nor retargeted ("Cannot change the
+# base branch of a closed pull request"). Between a silent retarget failure
+# and a destroyed PR there is this flag and nothing else.
+#
+# Only DIRECT children move, and they move ONE LINK, to this PR's base. A
+# grandchild stays based on its parent, whose head branch still exists and
+# whose PR is still open, so a chain of three shifts up by one and stays
+# intact. Flattening a grandchild onto this PR's base would drag in commits it
+# does not have and manufacture conflicts nobody asked for. The NEXT LINK is
+# reported at the gate instead — reported, not counted, because the scan reads
+# one link down and "there is another link" is precisely what tells the
+# operator that the next run of this graph has the same job one PR down.
 #
 # The run pauses at the approve-merge gate (exit 2). Read triage's table and
 # recheck's verdict — which names the SHA it judged — then resume:
@@ -736,6 +779,238 @@ nodes:
       exit_zero: true
       result_matches: '^[*_`\s]*(RECHECKED|UNSETTLED)[*_`\s:]+[0-9a-fA-F]{7,40}\b'
 
+  # Who is standing on this PR, read at the last moment it can still be acted
+  # on. This is a READ, not a wait: a stack is a fact about other PRs, not a
+  # condition a machine already at work will clear on its own, so there is
+  # nothing here for a poll to be honest about and this node holds no `sleep`
+  # (ADR 0021). It sits after recheck rather than beside verify because triage
+  # may run for forty-five minutes and a PR can be opened against this branch
+  # inside that window: the operator decides over the stack that exists at the
+  # GATE, not the one that existed an hour earlier. That is the same argument
+  # that made recheck a node instead of a longer wait at ready-and-wait.
+  #
+  # Direct children only, and the third read is what makes that honest: for
+  # each child, one more `gh pr list --base <that child's head>` says whether
+  # the child has children of its own. Those grandchildren are not moved — see
+  # the header — but their existence is reported, because the depth is the one
+  # fact that tells the operator the next run of this graph faces the same job
+  # one link down.
+  - id: stack-scan
+    type: claude-run
+    depends_on: [recheck]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Find out who is standing on PR #{{ inputs.pr }}. Nothing in this node
+      changes anything; it only reads.
+        1. `gh pr view {{ inputs.pr }} --json number,headRefName,baseRefName,title`
+           — this PR's OWN head branch and the branch it targets. No node of
+           this graph has ever read either one, which is how it stayed blind
+           to its own stack.
+        2. `gh pr list --base <the headRefName from step 1> --state open \
+           --json number,title,headRefName,baseRefName` — every OPEN PR whose
+           base is this PR's head branch. Those are the DIRECT children, and
+           they are the PRs GitHub auto-closes when this PR merges and that
+           branch goes away.
+        3. For EACH child from step 2, exactly one more read:
+           `gh pr list --base <that child's headRefName> --state open --json number`
+           — the child's own children. Neither you nor the node below touches
+           them; you report that they exist, because they are the next link of
+           the same chain.
+      One program per Bash call. No `|`, no `;`, no `&&`, no `$(...)`: a
+      prefix grant authorises the program it names and NOT whatever follows a
+      pipe, so a piped read is denied — and a denied read reported as an
+      answer is how this node would invent a zero. Where you would have piped
+      into `jq`, pass `--json` the fields you want and read the result
+      yourself; the three reads above are small and every field named is one
+      the verdict quotes.
+
+      Your reply must START with exactly one of these two verdicts — the token
+      as the very FIRST characters, with no markdown emphasis (`**STACKED**`
+      is WRONG), no heading, no backticks, no preamble — and that first line
+      holds the token and its number and nothing else:
+        - STACKED <n> — n is at least 1: that many OPEN PRs have this PR's
+          head branch as their base.
+        - UNSTACKED 0 — no open PR is based on this PR's head branch.
+      Then a NEWLINE, and from the SECOND line on, the facts the retarget and
+      the gate both read:
+        - this PR, on one line: `head: <headRefName>  base: <baseRefName>`.
+          The retarget moves every child onto that BASE, so a report missing
+          it stops the next node.
+        - one row per child: its number, its title, its own head branch, and
+          how many children of its OWN step 3 found.
+      A child count you have to qualify is not a verdict, it is a progress
+      report, and this node has none to give. If a read FAILED — `gh` is not
+      authenticated, the repo refuses the list, an error you cannot attribute
+      — do NOT write a zero you inferred: start with a bare BLOCKED and what
+      stopped you, so the run halts here. A guessed zero is read downstream as
+      a licence to delete this PR's head branch, which is the whole incident.
+      Anything you need to qualify — a child that turned out to target main
+      after all, a caveat, a note — goes AFTER the verdict, never before it: a
+      line of context ahead of the token fails this node even when the read is
+      done.
+    # Read-only, and narrower than `Bash(gh *)` for the same reason recheck's
+    # is: this node may not push, merge, close, comment or edit. Neither
+    # `gh pr view` nor `gh pr list` has a mutating form, and the two together
+    # are the whole of what reading a stack takes — this PR's own branches out
+    # of one, everything based on them out of the other. `--json` runs inside
+    # them, so the projection needs no second grant and no pipe.
+    allowed_tools: ["Bash(gh pr view *)", "Bash(gh pr list *)"]
+    permission_mode: dontAsk
+    timeout: 10m
+    handoff: artifact
+    # Triage's shape: the count is the payload and the FIRST LINE is pinned to
+    # token-and-number, so `STACKED 2 of maybe 3` has nowhere to live. Two
+    # tokens rather than one because they are two different next actions —
+    # children to move, or a stated absence the gate prints as a sentence —
+    # and the operator must tell them apart from the first word of the
+    # artifact. The pattern does NOT enforce that STACKED's number is at least
+    # 1; both verdicts pass, and which one is written is a prompt-side claim.
+    # BLOCKED is absent from the alternation, which is how a failed read halts
+    # the run instead of licensing a branch deletion — the same shape as
+    # triage's BLOCKED.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*(STACKED[*_`\s:]*[0-9]+|UNSTACKED[*_`\s:]*0)[*_` \t]*(\n|$)'
+
+  # Move the children while there is still something to move them off.
+  #
+  # It runs BEFORE the gate, and the argument is the asymmetry in the header
+  # rather than a preference. Not moving a child produces a state no API call
+  # undoes — closed, base gone, neither reopenable nor retargetable. Moving
+  # one that did not need it produces a conflict a person resolves inside the
+  # child. The window is not "until the operator approves", it is "until the
+  # PR merges", and at an asynchronous gate those are hours apart.
+  #
+  # It is deliberately NOT folded into merge's step 1. Merge's grant is the
+  # narrowest in this file because a false FAIL there sends a re-run back into
+  # `gh pr merge` on a PR that may already be merged; a child loop living
+  # inside it would make that same re-run replay the retargets too. Here a
+  # re-run replays `gh pr edit --base` against a child that already carries
+  # that base, which is a no-op, and it replays nothing irreversible: this
+  # node halting leaves every PR in the stack open and unmerged.
+  #
+  # A retarget that does NOT land is reported and PASSES rather than halting,
+  # which looks like the weaker choice and is not. `merge` is downstream, and
+  # the entire point of telling it is that it then withholds `--delete-branch`
+  # — so the child keeps standing on a branch that still exists, which is the
+  # RECOVERABLE side of the asymmetry. Halting here would hand the operator
+  # the merge to do by hand as well as the child.
+  - id: stack-retarget
+    type: claude-run
+    depends_on: [stack-scan]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      The stack scan reported:
+      {{ artifacts.stack-scan | inline }}
+
+      If its first line is `UNSTACKED 0`, no open PR is based on PR
+      #{{ inputs.pr }}'s head branch: change NOTHING, and answer with the
+      `RETARGETED 0` verdict and the one-line STACK block below. Do not go
+      looking for a child the scan did not find.
+
+      Otherwise move every child the scan named off this PR's head branch and
+      onto this PR's OWN base — the `base:` on the scan's second line. For
+      EACH child, in the scan's order, two Bash calls and no more:
+        1. `gh pr edit <child number> --base <this PR's base branch>`
+        2. `gh pr view <child number> --json number,baseRefName,mergeable,mergeStateStatus`
+           — the re-read IS the evidence. The retarget LANDED only if
+           `baseRefName` now equals this PR's base; that it landed is not
+           something you may conclude from step 1 exiting quietly. Record
+           `mergeable` too: a retarget can introduce a conflict that did not
+           exist before, and CONFLICTING is a fact a person needs afterwards,
+           not a reason to move the child back.
+      HARD limits, and they are what actually narrows this node — the grant is
+      a ceiling, not a description:
+        - Edit ONLY the PRs the scan named, and ONLY their `--base`. Not the
+          title, not the body, not a label, not a reviewer.
+        - Do NOT merge, close, reopen or comment on anything.
+        - Do NOT touch a GRANDCHILD. A child's own children stay based on
+          their parent, whose head branch still exists and whose PR is still
+          open, so the chain shifts up one link and stays intact. Flattening a
+          grandchild onto this PR's base would drag in commits it does not
+          have and manufacture a conflict nobody asked for.
+      One program per Bash call. No `|`, no `;`, no `&&`, no `$(...)`: a
+      prefix grant does not authorise what comes after a pipe, and a denied
+      call reported as an outcome is how this node would claim a retarget it
+      never made.
+
+      Your reply must START with exactly one of these two verdicts — the token
+      as the very FIRST characters, with no markdown emphasis
+      (`**RETARGETED**` is WRONG), no heading, no backticks, no preamble — and
+      that first line holds the token and its number and nothing else:
+        - RETARGETED <n> — every child the scan named is now based on this
+          PR's base, each one confirmed by step 2's re-read. `RETARGETED 0` is
+          the UNSTACKED case: there was nothing to move, which is NOT the same
+          claim as having failed to move something.
+        - PARTIAL <landed>/<total> — at least one child is STILL based on this
+          PR's head branch. This PASSES on purpose: `merge` reads it and drops
+          `--delete-branch`, so the branch that child stands on outlives the
+          merge and the child stays open and recoverable.
+      If you cannot honestly say either — the scan's report is unreadable,
+      `gh` refuses every call, you cannot tell what landed — do NOT write a
+      count you inferred: start with a bare BLOCKED and what stopped you. The
+      run halts there with nothing merged, which is the safe direction.
+
+      Then a NEWLINE, and then this block. It is what the operator reads at
+      the gate, so fill the angle brackets and leave the sentences as they
+      are, one per line:
+
+      STACK: <n> open child PR(s) had this PR's head branch as their base.
+        #<num> "<title>" — retargeted to <base>, now <MERGEABLE|CONFLICTING|UNKNOWN>
+        #<num> "<title>" — NOT retargeted, still based on <head>; the re-read still shows this PR's head branch
+      Retargeting happened before this gate, not after your approval, because the window closes the moment this PR merges: GitHub deletes the head branch, auto-closes every child, and a closed PR whose base is gone can be neither reopened nor retargeted (see #211, 2026-08-21).
+      A retarget can introduce a conflict that did not exist before; any child marked CONFLICTING above needs a human afterwards.
+      --delete-branch will be <applied|withheld> on merge, because <no child remains based on this head|child #<num> is still based on it>.
+      Another link below: child #<num> has children of its own; they were left based on #<num> and will be handled when #<num> is shepherded.
+
+      One `#<num> …` row per child, in the scan's order, and step 2's re-read
+      decides WHICH of the two forms that row takes — not what you intended,
+      and not that step 1 exited quietly. The FIRST form only when the
+      `baseRefName` you read back equals this PR's base; the SECOND whenever
+      it still shows this PR's head, which is the same reading that makes the
+      verdict PARTIAL. A second-form row carries NO mergeability: the child
+      was never moved, so nothing re-evaluated it, and an `UNKNOWN` there
+      would read as a retarget whose result is merely unclear rather than one
+      that did not happen — the gate would then approve a merge believing a
+      rescue that never landed. The `Another link below:` line once per child
+      that has children of its own, so several lines when several do, and not
+      at all when none does; the scan looked ONE link down, so that line says
+      a next link exists and never how far the chain runs past it. When the
+      scan found nothing at all, the whole block is this one line, because a
+      stated absence is what the gate needs and silence is not:
+
+      STACK: no open PR is based on this PR's head branch; --delete-branch will be applied.
+
+      Anything you need to qualify — a child that already carried the right
+      base, a caveat, a note — goes AFTER the verdict, never before it: a line
+      of context ahead of the token fails this node even when every child
+      moved.
+    # Two commands, and `gh pr edit` is the only mutating grant in this graph
+    # outside `merge`'s own. It is wider than the job — the same command sets
+    # titles, bodies, labels and reviewers — and the narrowing that actually
+    # holds is not in the grant string but in the prompt's HARD limits plus
+    # the evidence they leave behind: every claim this node makes about a
+    # child is a `baseRefName` it read back with `gh pr view`. `gh pr merge`
+    # and `gh pr close` are deliberately absent, so the worst this node can do
+    # to a PR it should not have touched is retarget it, which is the one
+    # thing a person can undo.
+    allowed_tools: ["Bash(gh pr edit *)", "Bash(gh pr view *)"]
+    permission_mode: dontAsk
+    timeout: 15m
+    handoff: artifact
+    # Triage's shape again — first line pinned to token-and-number, so
+    # `RETARGETED 2 of 3, the rest to follow` cannot pass as an outcome — and
+    # like recheck, the node has three tokens of which two pass. PARTIAL's
+    # payload is a FRACTION rather than a count because the number that
+    # matters downstream is the one that did not land: `PARTIAL 1/2` says a
+    # child is still based on this head, which is exactly what makes `merge`
+    # withhold `--delete-branch`. BLOCKED is absent from the alternation and
+    # halts the run, the same way triage's does, and it halts before anything
+    # merges.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*(RETARGETED[*_`\s:]*[0-9]+|PARTIAL[*_`\s:]*[0-9]+/[0-9]+)[*_` \t]*(\n|$)'
+
   # The human gate: the run stops here with exit 2 after triage's table and
   # recheck's verdict are in. Read them, then
   # `oh-my-graph resume <run-id> --approve approve-merge` (or
@@ -761,9 +1036,26 @@ nodes:
   # fresh run once CI has settled is the way back. A LATCHED recheck never
   # reaches this gate at all: it fails the node and halts the run, and the act
   # that unsticks the PR is on the first line of `<run-id>/failed/recheck.out`.
+  #
+  # One more thing is on the table now, and it has already HAPPENED:
+  # stack-retarget's artifact opens with a `STACK:` block naming every open PR
+  # that had this PR's head branch as its base, where each was moved to and
+  # whether the move left it CONFLICTING — or, for a child whose row says NOT
+  # retargeted, that it was not moved at all. Read it. The moves are done — they
+  # ran before this gate, because the window closes when this PR MERGES rather
+  # than when you approve, and a closed PR whose base branch is gone can be
+  # neither reopened nor retargeted (#207 merged at 2026-08-20T23:48:35Z, #211
+  # closed at 23:48:37Z, recovered by hand as #223). So what is yours here is
+  # not the rescue but its consequences: a child marked CONFLICTING needs a
+  # person afterwards, and a `--delete-branch will be withheld` line means the
+  # merge below leaves this PR's head branch on the remote because a child is
+  # still standing on it. If the block reports another link below, that link is
+  # a separate run of this graph. Rejecting is the cheaper answer when the
+  # stack is deep or the children are somebody else's: shepherd the stack from
+  # the BOTTOM, one PR at a time, and every run then faces one link.
   - id: approve-merge
     type: gate
-    depends_on: [recheck]
+    depends_on: [stack-retarget]
 
   - id: merge
     type: claude-run
@@ -773,6 +1065,8 @@ nodes:
       The operator has approved the merge of PR #{{ inputs.pr }}. Triage
       reported: {{ artifacts.triage | inline }}.
       Recheck reported: {{ artifacts.recheck | inline }}.
+      The stack retarget reported:
+      {{ artifacts.stack-retarget | inline }}
       Recheck is the node that waited out the whole check rollup and CodeRabbit
       on the FINAL SHA, so you do not wait for anything and you do not re-judge
       them. If recheck's verdict begins with UNSETTLED, its wait ran out with
@@ -790,8 +1084,25 @@ nodes:
            check against a stale or truncated `origin/main` can miss a merge
            that really landed and send this node into a second false FAIL.
            Then report MERGED <sha> for the merge that already landed.
-        1. `gh pr merge {{ inputs.pr }} --squash --delete-branch`. Try the
-           plain merge FIRST, with no `--admin`. Add `--admin` only when ALL
+        1. `gh pr merge {{ inputs.pr }} --squash`, and add `--delete-branch`
+           ONLY when the retarget verdict above is RETARGETED — nothing open
+           is based on this PR's head branch any more, either because the scan
+           found no child or because every child was moved off it and read
+           back. If that verdict is PARTIAL, a child is STILL based on this
+           head: merge WITHOUT `--delete-branch` and name that child in your
+           ledger line. Deleting a branch an open PR is based on is answered
+           by GitHub CLOSING that PR, and a closed PR whose base branch is
+           gone can be neither reopened nor retargeted — #207 did exactly that
+           to #211 on 2026-08-20, and the work had to be re-opened by hand as
+           #223. RETARGETED is the ordinary answer, so the ordinary run adds
+           the flag; the PARTIAL branch is a second lock on the same door the
+           retarget already shut, and it is the only thing standing between a
+           retarget that failed quietly and a PR nobody can get back. Never
+           reason from "the retarget node ran, so the head must be clear" —
+           read the verdict. The flag is the only part of this step the stack
+           decides; everything below it is unchanged by the stack.
+           Try the plain merge FIRST, with no `--admin`. Add `--admin` only
+           when ALL
            THREE hold: the plain merge failed on branch-protection or
            merge-queue mechanics; recheck's verdict is RECHECKED naming a
            mechanical state — its first line says `mergeable:` BEHIND, BLOCKED,
@@ -813,7 +1124,10 @@ nodes:
         3. `make build` — SYNCHRONOUSLY, waiting for the exit code, never
            in the background.
         4. Prune stale local state for this PR: `git remote prune origin`,
-           and `git branch -d` the PR's local branch if one exists.
+           and `git branch -d` the PR's local branch if one exists. When
+           `--delete-branch` was withheld in step 1, the remote branch is
+           still there ON PURPOSE and prune leaves it — that is the child
+           standing on it, not a step that failed.
       Run every step in the foreground and finish all of them before you
       answer. Your FINAL reply IS the verdict: this node's turn ends the
       moment you reply, so anything you promise to do afterwards never
@@ -826,7 +1140,9 @@ nodes:
       (`**MERGED**` is WRONG), no heading, no backticks, no preamble:
         - MERGED <sha> — the squash merge has landed. The merge commit SHA
           comes immediately after the token with nothing in between
-          (`MERGED 4f2a1c9`), then a one-line ledger of what shipped.
+          (`MERGED 4f2a1c9`), then a one-line ledger of what shipped, which
+          says whether `--delete-branch` was applied or withheld and which
+          child withheld it.
         - WITHHELD <reason> — you decided NOT to merge and the PR is still
           open. The blocking fact comes immediately after the token
           (`WITHHELD recheck left test pending on 4f2a1c9`). This is a

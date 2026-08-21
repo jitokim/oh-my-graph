@@ -163,7 +163,7 @@ the failure costs** — the shipped graphs cover all three shapes:
 |---|---|---|
 | last node | `adr-driven-dev` (`finalize`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
 | first node | `apply-flags` (`dev` applies, commits and pushes; `verify` is `permission_mode: plan` and reads only) | fails immediately, having done nothing |
-| several | `merge-shepherd` — `gh` in all five model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
+| several | `merge-shepherd` — `gh` in all seven model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
 
 So "does the work and then fails" is only the last-node case. A graph can also
 publish from a node that is not its last (`apply-flags`), which is why the
@@ -1094,14 +1094,14 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **24
-  declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: six of the 24
+  is a sweep that cannot silently miss a node. That sweep counts **26
+  declarations, covering 35 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: six of the 26
   live in `graphs/fragments/`, in five files, and carry fifteen of the nodes
   between them.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
-  `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
-  places to correct the sentence in. The
+  `use:` of one multi-node fragment (ADR 0027): the same nodes — 33 of them at
+  that time — and four fewer places to correct the sentence in. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —

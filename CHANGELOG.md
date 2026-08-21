@@ -10,6 +10,51 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`merge-shepherd` moves a stacked child before it deletes the branch under
+  it.** Two nodes now run between `recheck` and the approval gate.
+  `stack-scan` reads this PR's own `headRefName` and `baseRefName` — which no
+  node of this graph had ever read — then `gh pr list --base <head> --state
+  open` for the open PRs standing on that branch, and one more list per child
+  for the link below it. `stack-retarget` moves each DIRECT child onto this
+  PR's own base, one `gh pr edit --base` per child, and re-reads every one so
+  the claim is a `baseRefName` it read back rather than a quiet exit. Both run
+  BEFORE the gate rather than after the approval, because the window closes at
+  the instant of MERGE and a gate is asynchronous — a human may take hours.
+  The gate then **discloses** what was already done: `stack-retarget`'s
+  artifact opens with a `STACK:` block with one row per child, and the re-read
+  decides which of two forms that row takes — where the child was moved to and
+  whether the move left it `CONFLICTING`, or that it was NOT retargeted and is
+  still based on this head. A not-retargeted row carries no mergeability at
+  all, because nothing re-evaluated a child that never moved. The block then
+  says whether `--delete-branch` will be applied or withheld, and whether
+  another link hangs below. And `--delete-branch` stops
+  being unconditional — `merge` passes it only when no open child is still
+  based on this PR's head branch, and names the child that held it back when
+  one is. The retarget ran two nodes earlier and should have left nothing
+  standing on that head, so the condition is normally satisfied and the check
+  normally costs nothing: it is a second lock on the door the retarget already
+  shut. The run it exists for is the one where the retarget failed QUIETLY,
+  because that is the run in which deleting the branch destroys a PR that can
+  then be neither reopened nor retargeted.
+
+  What its absence cost: PR #207 merged with `--delete-branch` at
+  2026-08-20T23:48:35Z. PR #211's base was #207's HEAD branch rather than
+  `main`, so GitHub deleted that base out from under it and closed it two
+  seconds later, at 23:48:37Z. A closed PR whose base branch is gone refuses
+  both calls that would undo it — "Cannot change the base branch of a closed
+  pull request", "Could not open the pull request" — so the work survived only
+  because the head branch outlived the base, and it was recovered by hand as
+  #223. The ASYMMETRY is what shapes the fix: not moving a child is
+  unrecoverable, while moving one that did not need it leaves a conflict a
+  person resolves inside the child. Grandchildren are deliberately left where
+  they are, so a chain shifts up one link and stays intact; the gate is told
+  instead that another link is there — the scan looks ONE link down, so it
+  says a next link exists and never how far the chain runs past it — because
+  "there is another link" is what tells the operator the next run of this
+  graph has the same job one PR down.
+
 ## [v0.11.0] - 2026-08-21
 
 **Minor because two things you may now type were errors before**, and one thing

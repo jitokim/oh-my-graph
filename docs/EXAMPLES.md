@@ -594,7 +594,8 @@ oh-my-graph run graphs/self-dev.yaml \
 The shipping side of that loop is a graph too: `graphs/merge-shepherd.yaml`
 takes a PR number, verifies its head locally in a throwaway worktree, marks
 it ready, waits for CI and CodeRabbit, triages the review comments, waits out
-the checks its own fix restarted, pauses at a human approval gate, and merges
+the checks its own fix restarted, moves any PR stacked on this one off its
+head branch, pauses at a human approval gate, and merges
 — the operator's by-hand PR-shepherding loop, pinned in YAML. That second wait
 (`recheck`) is why the gate is a decision rather than a chore: it judges the
 FINAL SHA and says which one, reading every reviewer's own review rather than
@@ -603,6 +604,21 @@ one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
 that requested changes, a run awaiting approval, a conflicting branch and a
 rate-limited bot are reported as `LATCHED <what>; unblock: <act>`, which fails
 the node at once instead of spending the timeout (ADR 0021).
+The stack step is the same care aimed at what a merge does to OTHER PRs:
+`stack-scan` reads this PR's own head branch and lists the open PRs based on
+it (`gh pr list --base <head>`), and `stack-retarget` moves each DIRECT child
+onto this PR's own base, re-reading every one so "it moved" is a `baseRefName`
+it read back. Both run BEFORE the gate rather than after the approval, because
+the window closes when the PR MERGES: GitHub deletes the head branch,
+auto-closes every child, and a closed PR whose base is gone can be neither
+reopened nor retargeted — which is how #207's merge closed #211 two seconds
+later, recovered by hand as #223. The gate is therefore told what has already
+happened: `stack-retarget`'s artifact opens with a `STACK:` block naming each
+child — where it was moved to and whether the move left it conflicting, or,
+for a child the re-read still finds on this head, that it was NOT retargeted,
+a row that carries no mergeability at all because nothing re-evaluated a child
+that never moved — and whether `--delete-branch` will be applied, which
+`merge` passes only when no open child is still standing on this head branch.
 Its merge verdict is deliberately two-valued: the node
 passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
 to merge past an unfinished review is the graph working. So a green run of

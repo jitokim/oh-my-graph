@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -216,11 +217,23 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 
 	// The chain is the fix: the re-wait sits BETWEEN triage and the gate, so
 	// the SHA the operator approves is one something waited on.
+	//
+	// What has to hold is that ORDER, not one particular edge. `stack-scan`
+	// and `stack-retarget` were later spliced between the re-wait and the
+	// gate, and an assertion naming the gate's immediate parent reads that
+	// splice as the defect it was written to catch — so it is the ANCESTRY
+	// that is pinned here. A gate the re-wait cannot reach is still the
+	// defect; a gate it reaches through two more nodes is not. The topology
+	// as shipped: approve-merge → stack-retarget → stack-scan → recheck →
+	// triage. The walk is not a weakening of the old adjacency check — cut
+	// recheck out of that chain (point stack-scan at triage) with the recheck
+	// node still in the file, and the assertion below fails, naming the
+	// ancestry it did find.
 	if len(recheck.DependsOn) != 1 || recheck.DependsOn[0] != "triage" {
 		t.Errorf("recheck depends on %v, want [triage] — it re-waits for the checks triage's push restarted", recheck.DependsOn)
 	}
-	if len(gate.DependsOn) != 1 || gate.DependsOn[0] != "recheck" {
-		t.Errorf("approve-merge depends on %v, want [recheck] — a gate reached without the re-wait is the defect this node fixes", gate.DependsOn)
+	if ancestors := ancestorsOf(g.Graph, gate.ID); !ancestors["recheck"] {
+		t.Errorf("approve-merge's ancestry is %v with no recheck in it — a gate reached without the re-wait is the defect this node fixes", sortedIDs(ancestors))
 	}
 
 	// The narrowest grant that can read check state: `gh pr view` has no
@@ -290,6 +303,44 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 			t.Errorf("recheck's pattern ACCEPTS what it must reject (%s):\n%s", name, reply)
 		}
 	}
+}
+
+// ancestorsOf returns every node id `id` transitively depends on. Validation
+// has already refused a cycle by the time a loaded graph reaches a test, so the
+// walk needs no depth bound beyond the visited set it keeps anyway.
+func ancestorsOf(g *Graph, id string) map[string]bool {
+	byID := make(map[string]*Node, len(g.Nodes))
+	for i, n := range g.Nodes {
+		byID[n.ID] = &g.Nodes[i]
+	}
+	seen := map[string]bool{}
+	var walk func(string)
+	walk = func(cur string) {
+		n, ok := byID[cur]
+		if !ok {
+			return
+		}
+		for _, parent := range n.DependsOn {
+			if seen[parent] {
+				continue
+			}
+			seen[parent] = true
+			walk(parent)
+		}
+	}
+	walk(id)
+	return seen
+}
+
+// sortedIDs makes an ancestry printable in a failure message, in an order that
+// does not depend on map iteration.
+func sortedIDs(set map[string]bool) []string {
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // TestBothWaitsSeparateLatchesFromTimeouts pins the half of the latch grammar
@@ -607,7 +658,7 @@ const qualifierClause = "Anything you need to qualify"
 //     fragment. That gap is the point DESIGN.md is making, so a change that
 //     closes it (fragments abandoned, say) should fail here and be re-argued.
 func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
-	const wantDeclarations, wantNodes = 24, 33
+	const wantDeclarations, wantNodes = 26, 35
 
 	declarations := 0
 	for _, dir := range []string{
