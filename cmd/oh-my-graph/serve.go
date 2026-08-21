@@ -120,8 +120,15 @@ func runServeRuntime(requested runner.Runtime, requestedSet bool, args []string)
 	}
 
 	// Bound to 127.0.0.1 only — run directories hold prompts and session ids,
-	// so the live view must never be reachable off-host (serve.Listen).
-	listener, err := serve.Listen(flags.port)
+	// so the live view must never be reachable off-host (serve.ListenAs).
+	//
+	// This binary's build goes in because this is the one bind that can lose a
+	// race for a FIXED port: --port (or the default 8642) is the port a previous
+	// `serve` is still holding. Told who we are, the failure can name both
+	// builds — the one answering on that port and the one that just failed to
+	// take it — which is the difference between "port taken" and knowing the
+	// browser is showing yesterday's server.
+	listener, err := serve.ListenAs(flags.port, serve.CurrentBuild(Version))
 	if err != nil {
 		return err
 	}

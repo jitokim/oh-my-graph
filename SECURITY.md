@@ -37,7 +37,7 @@ where the line is.
   alone. The scrub is asserted by a unit test at every call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) that sets
-  both variables in the parent process and proves neither survives into the
+  all four variables in the parent process and proves none survives into the
   built child command.
 - **Never `--bare`.** On Claude that flag disables OAuth; oh-my-graph never
   passes it.
@@ -635,8 +635,9 @@ session persistence is on by design, in the CLI's own session transcript under
 
 ## What is exposed while a node runs
 
-A node's full prompt is passed to `claude` as an argv element (`-p <prompt>`, in
-`internal/runner/claude.go`), so for the lifetime of that subprocess it is
+A node's full prompt is passed to the selected CLI as an argv element (`-p
+<prompt>` for `claude`, a positional argument for `codex exec`, both built in
+`internal/runner/`), so for the lifetime of that subprocess it is
 readable from the process table — `ps auxww`, and on Linux
 `/proc/<pid>/cmdline`, which is world-readable unless the machine sets `hidepid`.
 Any process running as you can read it on any platform.

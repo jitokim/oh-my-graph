@@ -92,12 +92,12 @@ instead.
 You get a live line per node as the graph runs, then a cost ledger:
 
 ```text
-Run 20260729-101532 — PASS, 2 node(s)
-NODE             VERDICT              SESSION                   COST(USD)  DETAIL
----------------------------------------------------------------------------------
-critique         PASS (exit-only)     a1b2c3d4-e5f6-47a8-9…        0.0034
-write            PASS (verified)      f9e8d7c6-b5a4-4321-8…        0.0091
----------------------------------------------------------------------------------
+Run 20260729-101532 — 2 node(s)
+NODE             VERDICT              SESSION           COST(USD)  DETAIL
+-------------------------------------------------------------------------
+critique         PASS (exit-only)     a1b2c3d4-e5f6-4…     0.0034
+write            PASS (verified)      f9e8d7c6-b5a4-4…     0.0091
+-------------------------------------------------------------------------
 TOTAL COST: $0.0125
 ```
 
@@ -114,8 +114,8 @@ it refuses to overwrite? [docs/INSTALL.md](docs/INSTALL.md).
 ## The graph is a file, not a transcript
 
 The DAG lives in YAML you version, review in a pull request and replay — the
-same topology, the same tool ceiling, the same prompts every time. That is the
-opposite of an agent improvising a fresh plan on every invocation.
+same topology, the same prompts every time. That is the opposite of an agent
+improvising a fresh plan on every invocation.
 
 ```yaml
 name: dev-review-pr
