@@ -10,6 +10,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-08-21
+
+**Minor because two things you may now type were errors before**, and one thing
+the engine does on its own changed. `auto` gains `--accept-loaded-user-config`,
+and `serve` answers a question it used to shrug at. Compared by name against
+v0.10.0: the eleven subcommands are unchanged, so nothing new was *invented* —
+what changed is what the existing ones accept and what they tell you.
+
+The headline is **the operator's opt-in** (ADR 0032). A planned node has been
+isolated from your own configuration since the auto ceiling was built, and an
+external review put the cost plainly: Codex `auto` nodes drop user settings,
+AGENTS files and MCP servers, so they do not inherit what you configured. That
+reading was correct. The answer is not to weaken the ceiling but to notice that
+the workaround people already had — plan, then hand-run the saved plan — drops
+*all five layers*, so refusing to build a narrow door was routing everyone
+through a wider one.
+
+Two engine behaviours were repaired by measuring them first, and both
+measurements are committed so the numbers can be recomputed rather than
+re-argued: the `changelog` guard was checking something other than what it
+printed, and the goal loop was discarding a finished cycle when the model CLI
+was replaced mid-run.
+
 ### Changed
 
 - **`auto` now REFUSES TO START in a directory where a build system is
