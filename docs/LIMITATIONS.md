@@ -78,17 +78,23 @@ has no open issue behind it.
 - **A PASS row does not say *which* outcome passed.** A node whose verdict is a
   two-valued alternation (DESIGN.md, "Verdict patterns") passes on either of
   its legitimate answers, and the ledger has one column for both. `merge-shepherd`
-  ships two of them: `merge` answers `MERGED <sha>` or `WITHHELD <reason>` —
+  ships four of them: `merge` answers `MERGED <sha>` or `WITHHELD <reason>` —
   refusing to merge past an unfinished review is the graph working — and
   `recheck` answers `RECHECKED <sha>` or `UNSETTLED <sha>`, which is the
   difference between checks that concluded green and checks that were still
   moving when the wait ran out. (Its third verdict, `LATCHED <sha>`, is not in
   this gap: it fails the node on purpose, so it shows up as a red row that
-  names the act on its first line.) So a green run of that graph is **not** by
+  names the act on its first line.) The stack pair is the same shape:
+  `stack-scan` answers `STACKED <n>` or `UNSTACKED 0`, and `stack-retarget`
+  answers `RETARGETED <n>` or `PARTIAL <landed>/<total>` — a PASS meaning at
+  least one PR stacked on this one is still based on its head branch, which is
+  exactly why `merge` then withholds `--delete-branch` and why that child needs
+  a person afterwards. So a green run of that graph is **not** by
   itself evidence
   that anything landed, or even that anything was checked. The ledger prints
   `PASS` either way; only the node's artifact (`<run-id>/merge.out`,
-  `<run-id>/recheck.out`) says which. Read it, or `git log`. The
+  `<run-id>/recheck.out`, `<run-id>/stack-retarget.out`) says which. Read it,
+  or `git log`. The
   engine has no notion of a "partial" verdict to print instead, and inventing
   one would mean the engine parsing verdict semantics out of a regex it
   deliberately treats as opaque.
@@ -162,7 +168,7 @@ has no open issue behind it.
     is the pushed SHA. Its LAST node, `verify`, is `permission_mode: plan` with
     `git diff`/`log`/`show` and needs no network at all. So a graph can publish
     without finishing on a network node.
-  - **Several** — `merge-shepherd`, which runs `gh` in all five of its model
+  - **Several** — `merge-shepherd`, which runs `gh` in all seven of its model
     nodes. Its FIRST node, `verify`, runs `gh pr view`, `gh pr diff` and
     `git fetch origin pull/<n>/head`, so a Codex run of it fails at node 1
     having done nothing. That is cheaper than a late failure, not worse — but
