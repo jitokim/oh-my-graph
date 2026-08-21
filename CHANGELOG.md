@@ -107,6 +107,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   names the coverage census that would overturn it. **Proposed. No behaviour
   changed, no flag, no schema field, no new exec seam.**
 
+  - That deliverable is now written where a reader meets the gap, not only in
+    the ADR: the `--verify-cmd` example in [`README.md`](README.md) gains the
+    complement of its positive half — evidence is established per RUN, so a
+    planned non-sink node carries no engine-run verify and its `PASS` is the
+    subprocess exit status and its own sentence — and the passage in
+    [`DESIGN.md`](DESIGN.md) that explains `validatePlannedNodeVerify`'s
+    refusal now says what that refusal costs in coverage. Both name the same
+    route rather than warning without one: `run`, on a hand-written graph, with
+    your own `verify:` on whichever nodes you mean.
+
 ## [v0.11.0] - 2026-08-21
 
 **Minor because two things you may now type were errors before**, and one thing
