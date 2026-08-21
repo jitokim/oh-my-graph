@@ -33,6 +33,7 @@ func TestInterpolate_MissingInput(t *testing.T) {
 	if iErr.Reference != "nope" || iErr.Kind != "inputs" {
 		t.Fatalf("error identified the wrong reference: %+v", iErr)
 	}
+	assertQuotingHint(t, err)
 }
 
 // --- interpolation: artifacts ----------------------------------------------
@@ -102,6 +103,52 @@ func TestInterpolate_ArtifactNotYetAvailable(t *testing.T) {
 	}
 	if iErr.Kind != "artifacts" || iErr.Reference != "pending" {
 		t.Fatalf("wrong reference in error: %+v", iErr)
+	}
+	assertQuotingHint(t, err)
+}
+
+// assertQuotingHint pins the second diagnostic line by its own words, not by
+// the constant that produces it: an assertion written against quotingHint
+// would keep passing if the sentence lost the rule or the remedy.
+func assertQuotingHint(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected an interpolation error, got nil")
+	}
+	for _, want := range []string{
+		"every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained",
+		`break the two braces apart ("{ {")`,
+		"pass the text in as an input or artifact",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error is missing the quoting hint %q:\n%v", want, err)
+		}
+	}
+}
+
+// TestInterpolate_MentionedPlaceholderExplainsItself is the reported defect: a
+// prompt that only TALKS ABOUT a placeholder is interpolated like any other,
+// and the bare reason then asserts a wiring bug — for artifacts, that a node
+// which does not exist "has not completed". Both forms must carry the hint,
+// because both reach the reader with nothing else to explain what happened.
+func TestInterpolate_MentionedPlaceholderExplainsItself(t *testing.T) {
+	h := New(t.TempDir(), nil)
+
+	for _, tc := range []struct {
+		name string
+		tmpl string
+	}{
+		{"inputs", "In another graph you would write {{ inputs.demo }} to read an input."},
+		{"artifacts", "In another graph you would write {{ artifacts.nosuch }} to read an artifact."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.Interpolate(tc.tmpl)
+			var iErr *InterpolationError
+			if !errors.As(err, &iErr) {
+				t.Fatalf("expected *InterpolationError, got %T: %v", err, err)
+			}
+			assertQuotingHint(t, err)
+		})
 	}
 }
 

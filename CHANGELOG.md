@@ -12,6 +12,17 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
+  merely-quoted placeholder is resolved too, and how to quote one.** The two
+  reasons were written as if the graph had meant the token — the artifact one
+  asserts "its producing node has not completed" about a node that may not
+  exist — so a prompt that only explains the syntax to the model got a
+  diagnostic pointing at wiring that was never there. Both errors gain one
+  line: every `{{ ... }}` in a prompt is resolved, including one only being
+  quoted or explained; to keep such text literal, break the two braces apart
+  (`{ {`) or pass the text in as an input or artifact. Wording only — no
+  escaping syntax, no flag, and interpolation itself is unchanged.
+
 - **`runs list` collapses the per-run skip warnings into one summary line, and
   the detail moves behind `--show-skipped`.** Option chosen: *collapse by
   default, restore on demand* — not silence, and not a filter. Every skipped
