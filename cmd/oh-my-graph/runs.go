@@ -35,7 +35,8 @@ func runRuns(args []string) error {
 		return req
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("runs: missing subcommand (usage: oh-my-graph runs list)")
+		line, _ := usageSynopsisFor("runs")
+		return fmt.Errorf("runs: missing subcommand (usage: %s)", line)
 	}
 	switch args[0] {
 	case "list":
