@@ -103,6 +103,22 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
+- **The `changelog` guard now checks the heading it names.** It asked only
+  whether `CHANGELOG.md` appeared in the changed-file list, so a trailing space
+  passed it, and so did an entry filed under an already-released heading — the
+  two ways of touching the file that leave a reader with nothing. It named
+  `## [Unreleased]` in its error text and never looked at it. The question is
+  now answered by `scripts/changelog-entry-check.sh`, which requires a line the
+  diff genuinely adds inside the Unreleased section: an added line that only
+  restates a removed one is a reflow, not an entry. A release cut is exempt —
+  it moves entries into a new `## [vX.Y.Z]` heading and leaves Unreleased empty
+  by design, which the old shape of this check never had to think about.
+
+  The script is a file rather than an inline workflow block so a contributor can
+  run it before pushing. That is the actual repair: the previous guard was never
+  falsifiable outside CI, and it had been wrong since it was written. Seven
+  cases were run against it by hand, including the two it used to let through.
+
 - **Documentation drift, swept across the seven user-facing documents against
   HEAD** — README.md, README.ko.md, DESIGN.md, SECURITY.md, CONTRIBUTING.md,
   docs/LIMITATIONS.md and docs/EXAMPLES.md. No behaviour changes; every edit

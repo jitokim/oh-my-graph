@@ -31,8 +31,6 @@ jobs:
       - name: go test
         run: go test ./... -race -count=1
 
-  # Heavy -race repetition over the concurrency-sensitive packages (flake
-  # post-mortem, v0.3.0). Gated on a paths filter so it only runs when the
   # A PR that changes anything but the changelog must say what changed.
   #
   # This replaces a Go test that asked the same question with the wrong trigger.
@@ -46,6 +44,13 @@ jobs:
   # knows what changed, while they are still looking at it.
   #
   # Skipping stays allowed and stays loud: put `no-changelog` in the PR body.
+  #
+  # What counts as an entry is decided by scripts/changelog-entry-check.sh, not
+  # here: this job used to ask only whether CHANGELOG.md appeared in the changed
+  # list, so a trailing space passed and so did an entry filed under an already
+  # released heading (#208). The script is a file rather than an inline block so
+  # that it can be run on a branch before pushing — a guard nobody can run
+  # outside CI is a guard nobody falsifies.
   changelog:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -61,12 +66,15 @@ jobs:
         run: |
           set -o pipefail
           base="origin/${{ github.base_ref }}"
-          changed=$(git diff --name-only "$(git merge-base "$base" HEAD)"...HEAD)
+          merge_base=$(git merge-base "$base" HEAD)
+          changed=$(git diff --name-only "$merge_base"...HEAD)
           echo "$changed" | sed 's/^/  /'
           outside=$(echo "$changed" | grep -v '^CHANGELOG\.md$' || true)
-          touched=$(echo "$changed" | grep -c '^CHANGELOG\.md$' || true)
-          if [ -z "$outside" ] || [ "$touched" -gt 0 ]; then
-            echo "ok"; exit 0
+          if [ -z "$outside" ]; then
+            echo "nothing outside CHANGELOG.md changed"; exit 0
+          fi
+          if sh scripts/changelog-entry-check.sh "$merge_base"; then
+            exit 0
           fi
           if printf '%s' "$BODY" | grep -qi 'no-changelog'; then
             echo "excused by the PR body"; exit 0
@@ -77,8 +85,14 @@ jobs:
         env:
           BODY: ${{ github.event.pull_request.body }}
 
-  # diff touches those packages — unrelated PRs skip it entirely. Advisory
-  # until promoted: do NOT add it to branch protection required checks yet.
+  # Heavy -race repetition over the concurrency-sensitive packages (flake
+  # post-mortem, v0.3.0). Gated on a paths filter so it only runs when the
+  # diff touches those packages — unrelated PRs skip it entirely, reporting
+  # green having repeated nothing.
+  #
+  # Required on main since #183, and enforced against admins. The comment that
+  # stood here said the opposite ("do NOT add it to branch protection required
+  # checks yet") for as long as it had already been required (#209).
   stress:
     runs-on: ubuntu-latest
     # paths-filter lists changed files via the API on pull_request events;

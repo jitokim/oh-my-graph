@@ -83,7 +83,7 @@ PR that wires one into a workflow.
 | rule | |
 |---|---|
 | `test` and `stress` must pass | both required; `stress` is the `-race -count=200` repeat over the concurrency-sensitive packages, and it reports green without repeating when the diff touches none of them |
-| a CHANGELOG entry, or a stated reason | the `changelog` job fails a PR that changes files without touching `CHANGELOG.md`; put `no-changelog` in the PR body to skip it |
+| a CHANGELOG entry, or a stated reason | the `changelog` job fails a PR that changes files and adds no line under `## [Unreleased]` — run `scripts/changelog-entry-check.sh "$(git merge-base main HEAD)"` before pushing; put `no-changelog` in the PR body to skip it |
 | the branch must be up to date with `main` | so the checks that passed are the checks for the merged tree |
 | every conversation resolved | a review comment cannot be merged past by ignoring it |
 | **administrators included** | there is no bypass, for anyone |
