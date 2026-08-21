@@ -23,9 +23,13 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   BEFORE the gate rather than after the approval, because the window closes at
   the instant of MERGE and a gate is asynchronous — a human may take hours.
   The gate then **discloses** what was already done: `stack-retarget`'s
-  artifact opens with a `STACK:` block naming every child, where it was moved
-  to, whether the move left it `CONFLICTING`, whether `--delete-branch` will be
-  applied or withheld, and the chain depth below. And `--delete-branch` stops
+  artifact opens with a `STACK:` block with one row per child, and the re-read
+  decides which of two forms that row takes — where the child was moved to and
+  whether the move left it `CONFLICTING`, or that it was NOT retargeted and is
+  still based on this head. A not-retargeted row carries no mergeability at
+  all, because nothing re-evaluated a child that never moved. The block then
+  says whether `--delete-branch` will be applied or withheld, and whether
+  another link hangs below. And `--delete-branch` stops
   being unconditional — `merge` passes it only when no open child is still
   based on this PR's head branch, and names the child that held it back when
   one is.
@@ -40,9 +44,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   #223. The ASYMMETRY is what shapes the fix: not moving a child is
   unrecoverable, while moving one that did not need it leaves a conflict a
   person resolves inside the child. Grandchildren are deliberately left where
-  they are, so a chain shifts up one link and stays intact; the depth is
-  reported at the gate instead, because "there is another link" is what tells
-  the operator the next run of this graph has the same job one PR down.
+  they are, so a chain shifts up one link and stays intact; the gate is told
+  instead that another link is there — the scan looks ONE link down, so it
+  says a next link exists and never how far the chain runs past it — because
+  "there is another link" is what tells the operator the next run of this
+  graph has the same job one PR down.
 
 ## [v0.11.0] - 2026-08-21
 
