@@ -55,7 +55,7 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	// contradicting itself, the same way the advisory channel above was.
 	printFragmentResolutions(w, loaded.Resolutions)
 	printResolvedPlan(w, g)
-	noteCodexRuntimePolicy(w, runtime, g, false)
+	noteCodexRuntimePolicy(w, runtime, g, handWrittenNodes)
 
 	if issues := inputIssues(g, inputs); len(issues) > 0 {
 		return reportDryRunIssues(w, path, issues)

@@ -108,6 +108,16 @@ type autoFlags struct {
 	// THIS RUN CARRIES NO BUILD EVIDENCE, which is a true thing about the run,
 	// not a feature being turned off — there was never a check to skip.
 	acceptNoBuildEvidence bool
+	// acceptLoadedUserConfig is ADR 0032's opt-in, and the only flag on `auto`
+	// that WIDENS what a planned node may do. Its name follows the same rule
+	// as the one above: what the operator states by typing it is that THIS
+	// RUN'S PLANNED NODES LOAD THEIR OWN CLI CONFIGURATION, which is a true
+	// thing about the run and a bill they are signing, not a feature switch.
+	// `resume` registers no counterpart — it inherits the choice from the
+	// snapshot's policies — and `chat` registers none either, because a flag
+	// that widens an unattended run must be typed at a launch and not implied
+	// by one [y/N] keystroke.
+	acceptLoadedUserConfig bool
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -136,6 +146,12 @@ type autoFlags struct {
 // spelling of a field the user already has. `resume` registers the pair too
 // (newResumeFlags), which is the re-supply half ADR 0016 §4 named and #198 hit:
 // the command still comes from the human, never from the run directory.
+//
+// --accept-loaded-user-config is `auto`'s alone for a third reason, and it is
+// the one that matters most (ADR 0032 §2.7): it WIDENS. `resume` must have no
+// spelling of it, because a resumed leg's own flags may only de-escalate — it
+// inherits the first leg's choice from the snapshot's policies instead, which
+// is not `resume` choosing.
 func newAutoFlags() *autoFlags {
 	f := &autoFlags{set: flag.NewFlagSet("auto", flag.ContinueOnError)}
 	f.register(f.set)
@@ -147,6 +163,7 @@ func newAutoFlags() *autoFlags {
 	f.set.Float64Var(&f.maxGoalBudgetUSD, "max-goal-budget-usd", 0, "soft cross-cycle spend ceiling for an iterated goal, checked before each cycle after the first — never a mid-flight kill; requires --max-cycles >= 2")
 	f.set.StringVar(&f.verifyCmd, "verify-cmd", "", "shell command the ENGINE runs at every sink node of the plan, as build evidence (ADR 0016) — e.g. './gradlew build'. No node is granted anything: the command is yours, it is attached by trusted code after the plan validates, and the engine judges its exit code itself, so a check node can no longer certify a branch that does not build. Every cycle of --max-cycles plans afresh and every cycle's sinks get it")
 	f.set.DurationVar(&f.verifyTimeout, "verify-timeout", 0, "bound on ONE --verify-cmd execution (0 = 10m, which is also the ceiling every verification has). Not the 2-minute default a hand-written verification gets: a cold Gradle, Cargo or Maven build is exactly what that default was not sized for")
+	f.set.BoolVar(&f.acceptLoadedUserConfig, "accept-loaded-user-config", false, "state that this run's planned nodes load YOUR CLI configuration, and run anyway (ADR 0032): user/project/local settings on Claude, ~/.codex/config.toml plus repository rules and AGENTS.md on Codex, and with them your CLAUDE.md, your hooks and your MCP servers. This is not only a capability — your standing permission grants load too, so on Claude a node's declared scope like Bash(git *) stops being enforced and is a declaration again; each node's --tools set and deny list still bind, and enterprise/managed policy is unaffected and cannot be widened by this flag. Agent mapping and skill activation are turned OFF for the run, because a staged definition is shadowed by a same-named one your restored settings discover. The choice is printed with the plan and readable in this run's state.json")
 	f.set.BoolVar(&f.acceptNoBuildEvidence, "accept-no-build-evidence", false, "state that this run carries no build evidence, and run anyway (ADR 0030). Without it, `auto` REFUSES to start in a directory where a build system is detected and no --verify-cmd was given — a planned node cannot carry a build command, so such a run's every judgement is the model's about its own work. This is not a verification switch: nothing is being skipped, because nothing was going to run. The choice is written to the run's state.json and printed with the plan, so a reader of that run later learns the absence was chosen. Accepted and inert where no build signal is detected")
 	return f
 }

@@ -86,6 +86,51 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   back into an indistinguishable one. Reading it back is `cat state.json` for
   now — `show`, `runs` and the dashboard do not surface it yet.
 
+- **`--accept-loaded-user-config` on `auto`** — a planned node may carry YOUR
+  CLI configuration, if you say so at launch (ADR 0032). Off by default and
+  **runtime-neutral**: the ceiling isolates settings for Claude and Codex
+  alike, and a Codex-only escape hatch would have claimed, without arguing it,
+  that the Claude ceiling is worth more. It drops two of the five ceiling
+  layers for the whole run — layer 1 (`--setting-sources ""` on Claude;
+  `--ignore-user-config`, `--ignore-rules` and the two `--config` settings on
+  Codex) and layer 4 (`--strict-mcp-config`) — so your user/project/local
+  settings, your `~/.codex/config.toml`, your repository's rules and
+  `AGENTS.md` files, and with them your `CLAUDE.md`, your hooks and your MCP
+  servers all load into planned nodes. Layers 2, 3 and 5 do not move: each
+  node's `--allowedTools`, its `--tools` set and its `--disallowedTools` still
+  bind. Layer 4 moves with layer 1 on purpose — whether `--strict-mcp-config`
+  closes MCP has never been measured (E5), so leaving it on would have made
+  *"your MCP servers load"* a claim nobody had checked.
+
+  **It is a statement, not a switch**, which is what `accept` spells. The bill
+  is printed with the plan, in the slot that says either the isolated sentence
+  or this one and never both: on Claude your standing permission grants load
+  with your settings, so a node's declared `Bash(git *)` is a declaration
+  again and not a limit. Agent mapping and skill activation are forced off for
+  the run — inside the coordinator option rather than at the call site, so no
+  later composition can reopen it — because both rest on layer 1 being `""`:
+  with it gone, a same-named `SKILL.md` in the repository under work beat the
+  staged copy **3 of 3**. Your CLI discovers your own agents and skills
+  natively instead, which is what a hand-written `run` node always did.
+
+  Why a flag when a wider door already existed: `auto --plan-only` then
+  `oh-my-graph run plans/<id>/graph.json` has always carried your
+  configuration — and it drops **all five** layers and puts the goal loop out
+  of reach, since nobody can hand-carry cycle *k*'s assessment into cycle
+  *k+1*. That path is not deprecated. This is the narrower one, and it says
+  what it costs.
+
+  **A run that does not type it is byte-for-byte the run that shipped in
+  v0.10.0** — same argv, same screens, same `state.json`. `run` is untouched,
+  `chat` cannot reach it, and `resume` registers no such flag: a resumed leg
+  inherits the choice from the snapshot's policy map (inside a non-empty
+  `ToolPolicies`, an absent `setting_sources` is unambiguous) and reprints the
+  disclosure before the banner, because a resumed leg's own flags may only
+  de-escalate. Enterprise and managed settings are unioned on top of the
+  source list and cannot be widened by this flag. ADR 0032 stays **Proposed**:
+  the measurement that would confirm layers 3 and 5 still bind under restored
+  settings (§8) does not exist yet, so that half is a projection.
+
 - **Both `serve` surfaces state their build in the page head, as `<meta>` tags a
   script can read** (#204). The footer has named the build since v0.5.2, but
   only for a reader: a stale server renders a stale label, so settling "is this

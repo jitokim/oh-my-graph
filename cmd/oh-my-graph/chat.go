@@ -91,7 +91,11 @@ func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Wri
 
 	var options []coordinator.Option
 	if runtime == runner.RuntimeClaude {
-		options = mappingOptions(out, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation)
+		// false: `chat` registers no --accept-loaded-user-config and never
+		// will (ADR 0032 §2.7). A flag that widens an unattended run has to be
+		// typed at a launch, and chat's one [y/N] already answers two
+		// questions; every chat-planned node stays isolated.
+		options = mappingOptions(out, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation, false)
 	} else {
 		fmt.Fprintln(out, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
 	}
