@@ -339,7 +339,8 @@ Two things that come with it, both real:
 
 - **Planned nodes are now more isolated and less capable.** They no longer see
   your CLAUDE.md, your hooks, or your configured MCP servers. If an `auto` run
-  of yours depended on an MCP server, it will stop working.
+  of yours depended on an MCP server, it will stop working unless that run types
+  `--accept-loaded-user-config`.
 - **It is still not a sandbox.** MCP closure is unverified (the flag is passed
   because it is free, not because it was measured); which skill a node actually
   activates is not knowable before the model chooses it, and slash-command
