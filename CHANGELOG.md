@@ -179,6 +179,37 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   while `cmd/oh-my-graph/version.go:9` reads `0.11.0`. The clause that survived
   the deletion is the true half: a run that types nothing is byte-for-byte the
   run that shipped in v0.10.0.
+- **`graphs/backlog-batch.yaml`'s header diagrammed four nodes the graph no
+  longer has, and its rule 1 advised an edit that will not load.** ADR 0029
+  folded lane A into a single `use: gated-lane` node, and commit `d232ce4`
+  deleted `dev-a`/`e2e-a`/`review-a`/`pr-a` — but that commit's diff on this
+  file begins at `@@ -45,15 +45,24 @@`, so it never reached the header. The
+  runtime ids are `lane-a/dev`, `lane-a/e2e`, `lane-a/review`, `lane-a/pr`, as
+  the file's own body comment already said (`graphs/backlog-batch.yaml:88`) and
+  as loading it prints:
+
+  ```sh
+  go run ./cmd/oh-my-graph run graphs/backlog-batch.yaml --dry-run \
+      --input repo=/tmp --input checks_command="make local" \
+      --input task_a=x --input task_b=y
+  # Graph "backlog-batch" (8 nodes): lane-a/dev, lane-a/e2e, lane-a/review,
+  #   lane-a/pr, dev-b, e2e-b, review-b, pr-b
+  ```
+
+  The second line was worse than stale. Rule 1 offered "make dev-b depend on
+  `pr-a`" as the way to serialize two overlapping tasks, and `depends_on:
+  [pr-a]` is a load error — `depends_on unknown node`,
+  `internal/graph/validate.go:454` — so a reader who took the advice got a
+  graph that would not run. It now names `lane-a/pr`
+  (`graphs/backlog-batch.yaml:16`). `init` emits this file and users copy it,
+  which is why a stale comment here is a stale instruction to a stranger.
+
+  Comments only: no node, prompt, or key changed, the graph still validates at
+  8 nodes, and no verdict clause moved, so the qualifier sweep's counts are
+  untouched. The remaining thirteen shipped graphs and fragments were audited
+  against v0.11.0 in the same pass and left alone — none of them names `auto`,
+  so neither `--accept-loaded-user-config` nor anything else new in v0.11.0
+  reaches them.
 
 ## [v0.11.0] - 2026-08-21
 
