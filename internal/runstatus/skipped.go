@@ -31,6 +31,13 @@ import (
 // shown". A summary that appears only when there is something to report leaves
 // those two cases rendering identically, and the second one is the case where
 // silence is a lie — 261 directories exist, and the table names none of them.
+//
+// The same argument is why the line now also states how many runs are IN
+// FLIGHT, and states it at zero: "no run is running" and "the status column is
+// broken" are the two cases an empty RUNNING column renders identically, and
+// only the first is the one the operator concluded. The count itself is
+// InFlightCount over statuses the caller already derived (inflight.go); nothing
+// about what makes a run in flight is decided or restated here.
 
 // SkipReason is why a run directory could not be read, at the coarseness the
 // error can actually PROVE. There are two values and not the seven distinct
@@ -114,22 +121,41 @@ func (s *Skipped) Runs() []SkippedRun { return s.runs }
 
 // Line is the ONE line every surface prints beside its listing, whether or not
 // anything was skipped. It states how many runs are shown out of how many were
-// found, how many were skipped and under which reason — counts only, no run
-// ids, no prose about any individual run — and it names the flag that prints
-// the rest. Naming a flag from here follows Recovery, which names `resume
-// --retry-failed` for the same reason: the reader needs the command, and there
-// is one place the wording can be kept consistent across surfaces.
+// found, HOW MANY OF THEM ARE IN FLIGHT, and how many were skipped and under
+// which reason — counts only, no run ids, no prose about any individual run —
+// and it names the flag that prints the rest. Naming a flag from here follows
+// Recovery, which names `resume --retry-failed` for the same reason: the reader
+// needs the command, and there is one place the wording can be kept consistent
+// across surfaces.
 //
 // listed is the number of rows the caller actually rendered; the total is
 // listed plus the skipped count, so the two numbers a reader compares always
 // come from the same walk.
-func (s *Skipped) Line(listed int, flag string) string {
+//
+// shown is the derived Status of each of those rendered rows, and the in-flight
+// clause is rendered from it by InFlightClause — the one wording, shared with
+// `show` and `watch`. It is a REQUIRED parameter rather than a variadic
+// convenience precisely because "0 in flight" must never be produced by a
+// caller that forgot to pass anything: nil is an explicit statement that
+// nothing was shown, which is the truth on the all-skipped path.
+//
+// The clause sits right after the shown/found pair and BEFORE the skipped
+// counts, so it cannot end up behind the per-reason breakdown and the trailing
+// `--show-skipped` hint, which are the parts of this line that grow.
+//
+// It counts what this walk could READ. A directory whose bytes were unreadable
+// is in the skipped count on the same line and in no other, so a reader who is
+// told "0 in flight; 3 skipped" can see exactly how much of the corpus the
+// first number covers — which is the same coverage contract the shown/found
+// pair has always carried.
+func (s *Skipped) Line(listed int, shown []Status, flag string) string {
 	total := listed + len(s.runs)
+	live := InFlightClause(shown...)
 	if len(s.runs) == 0 {
-		return fmt.Sprintf("%d of %d run(s) shown; 0 skipped.", listed, total)
+		return fmt.Sprintf("%d of %d run(s) shown; %s; 0 skipped.", listed, total, live)
 	}
-	return fmt.Sprintf("%d of %d run(s) shown; %d skipped (%s) — pass %s to name them.",
-		listed, total, len(s.runs), s.byReason(), flag)
+	return fmt.Sprintf("%d of %d run(s) shown; %s; %d skipped (%s) — pass %s to name them.",
+		listed, total, live, len(s.runs), s.byReason(), flag)
 }
 
 // byReason renders the per-reason counts in a fixed order, so two runs of the

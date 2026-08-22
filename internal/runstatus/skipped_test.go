@@ -47,9 +47,15 @@ func TestClassifySkip_AnythingUnprovableIsDamage(t *testing.T) {
 func TestSkipped_LineIsPresentAndAffirmativeWhenNothingWasSkipped(t *testing.T) {
 	var skipped Skipped
 
-	got := skipped.Line(3, "--show-skipped")
+	got := skipped.Line(3, []Status{Pass, Fail, Paused}, "--show-skipped")
 	if !strings.Contains(got, "3 of 3 run(s) shown") || !strings.Contains(got, "0 skipped") {
 		t.Errorf("Line() = %q, want it to state 3 of 3 shown and 0 skipped", got)
+	}
+	// The zero case of the other count on this line, and the hard one: three
+	// runs are shown, none of them alive, and the line must SAY so rather than
+	// leaving it to be read off a STATUS column with no RUNNING in it.
+	if !strings.Contains(got, "0 in flight") {
+		t.Errorf("Line() = %q, want it to state 0 in flight", got)
 	}
 	// With nothing to reveal, the flag would be an instruction to nowhere.
 	if strings.Contains(got, "--show-skipped") {
@@ -71,9 +77,16 @@ func TestSkipped_LineCountsEveryReason(t *testing.T) {
 		t.Fatalf("Len() = %d, want 3", skipped.Len())
 	}
 
-	got := skipped.Line(64, "--show-skipped")
+	shown := make([]Status, 64)
+	for i := range shown {
+		shown[i] = Pass
+	}
+	shown[0], shown[1] = Running, Planning
+
+	got := skipped.Line(64, shown, "--show-skipped")
 	for _, want := range []string{
 		"64 of 67 run(s) shown",
+		"2 in flight",
 		"3 skipped",
 		"1 unreadable run files",
 		"2 written by an incompatible snapshot schema",
@@ -103,9 +116,9 @@ func TestSkipped_LineOrdersReasonsDeterministically(t *testing.T) {
 		s.Add("d", &runstate.SchemaMismatchError{Path: "d/state.json", Found: 1, Want: 3})
 		return s
 	}
-	want := build().Line(1, "--show-skipped")
+	want := build().Line(1, []Status{Running}, "--show-skipped")
 	for i := 0; i < 20; i++ {
-		if got := build().Line(1, "--show-skipped"); got != want {
+		if got := build().Line(1, []Status{Running}, "--show-skipped"); got != want {
 			t.Fatalf("Line() is not deterministic:\n  %q\n  %q", want, got)
 		}
 	}
