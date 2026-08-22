@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -585,6 +586,214 @@ func cutLast(s, sep string) (before, after string, found bool) {
 		return s, "", false
 	}
 	return s[:i], s[i+len(sep):], true
+}
+
+// weaklyConnectedComponents partitions a graph's node ids by the UNDIRECTED
+// closure of `depends_on`, keyed by each component's lexicographically first
+// id so a failure message names the same representative on every run.
+//
+// Undirected is the whole point: two lanes that never cite each other are two
+// components, and the direction of the edges inside a lane says nothing about
+// whether the lanes are independent. Validate has already refused a dangling
+// `depends_on`, so every neighbour here is a node the graph contains.
+func weaklyConnectedComponents(g *Graph) map[string][]string {
+	adjacent := make(map[string][]string, len(g.Nodes))
+	for _, n := range g.Nodes {
+		for _, dep := range n.DependsOn {
+			adjacent[n.ID] = append(adjacent[n.ID], dep)
+			adjacent[dep] = append(adjacent[dep], n.ID)
+		}
+	}
+	seen := make(map[string]bool, len(g.Nodes))
+	components := make(map[string][]string)
+	for _, n := range g.Nodes {
+		if seen[n.ID] {
+			continue
+		}
+		seen[n.ID] = true
+		members := []string{}
+		for queue := []string{n.ID}; len(queue) > 0; {
+			id := queue[0]
+			queue = queue[1:]
+			members = append(members, id)
+			for _, next := range adjacent[id] {
+				if !seen[next] {
+					seen[next] = true
+					queue = append(queue, next)
+				}
+			}
+		}
+		sort.Strings(members)
+		components[members[0]] = members
+	}
+	return components
+}
+
+// TestIndependentLanesFailIndependently pins rule 5 of the batch idiom
+// (graphs/backlog-batch.yaml, header): a graph whose nodes fall into two or
+// more independent components is a BATCH, and a batch declares
+// `on_fail: continue`. Under the default halt policy the first failure in one
+// lane cancels the shared context, so the other lanes' unrelated work — work
+// with no dependency edge to the failure, often already most of the way to its
+// own PR — is discarded for a reason that has nothing to do with it.
+//
+// The components are computed from `depends_on` on the RESOLVED graph, which
+// is the only place they are visible: lane A of `backlog-batch` is one authored
+// node that splices into four, so a component count taken over the file's
+// `nodes:` list would read 2 where the run has 8 nodes in two lanes.
+//
+// Measured over the eight shipped templates when this test was written: exactly
+// one has more than one component (`backlog-batch`, 8 nodes, 2 lanes), and it
+// declares `on_fail: continue` at :84. Every other template is a single chain
+// or fan, where the rule says nothing at all.
+//
+// Two limits, both deliberate. First, this is a test over graphs/ rather than a
+// `lint` sweep, for the reason C of the survey memo gives: a new sweep owes a
+// measured noise rate, and the corpus that could measure one does not exist —
+// n=1 across everything this repo ships. A false positive here is a CI failure
+// the rule's own author fixes; the same predicate shipped as a warning would
+// reach a user whose fail-fast batch is deliberate. Which is the second limit:
+// a multi-component graph that WANTS the first failure to stop everything is a
+// real shape (a batch whose lanes are only nominally independent), and so is
+// leaving the choice to `--continue-on-fail` at run time, which ORs with the
+// graph's value (graph.go, ContinuesOnFail). Neither is available to a graph
+// this repo ships without saying so here first.
+func TestIndependentLanesFailIndependently(t *testing.T) {
+	batches := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		components := weaklyConnectedComponents(loaded.Graph)
+		if len(components) < 2 {
+			continue
+		}
+		batches++
+		if loaded.Graph.ContinuesOnFail() {
+			continue
+		}
+		lanes := make([]string, 0, len(components))
+		for representative := range components {
+			lanes = append(lanes, representative)
+		}
+		sort.Strings(lanes)
+		t.Errorf("%s has %d independent lanes (%v) but declares on_fail: %s — one lane's failure cancels the shared context and discards the others' unrelated work; declare on_fail: continue, or add the dependency edge that makes the lanes genuinely one pipeline",
+			name, len(components), lanes, loaded.Graph.OnFail)
+	}
+	if batches == 0 {
+		t.Error("no shipped graph has independent lanes any more — this test now asserts nothing, and the multi-lane batch idiom rule 5 exists for is demonstrated nowhere in graphs/")
+	}
+}
+
+// coldSafeGateFragment is the fragment that states the cold-safe wording once,
+// upstream, for every gate that resumes a session and retries.
+const coldSafeGateFragment = "e2e-verify"
+
+// TestASessionGateCitesTheColdSafeFragment pins rule 3 of the batch idiom's
+// mechanical half. A node that resumes its session-parent AND declares `retry`
+// starts COLD on the retried attempt — the resume is spent, the second attempt
+// gets a fresh session with none of the parent's context — and `LintSessions`
+// already warns about exactly that shape (internal/handoff/session_lint.go).
+// The warning is advisory and stays so: the shape is legitimate, and what makes
+// it legitimate is a prompt written to survive the cold attempt.
+//
+// Whether a given prompt survives it is a prose judgment with no predicate. But
+// this repo does not rely on prose for it: the wording exists ONCE, in
+// `e2e-verify`'s prompt ("Continue the work — or, on a retried attempt, start
+// from the branch's committed state"), and every shipped gate reaches it by
+// citing that fragment rather than by restating it. THAT is checkable, and it
+// is what this test checks — a shipped gate with this shape must have spliced
+// `e2e-verify`, so the sentence cannot be lost by a node that was written out
+// by hand and drifted.
+//
+// The false positive is named so the name of the test does not over-promise: a
+// gate whose author writes an honest cold-safe prompt by hand fails here while
+// being perfectly correct. That is the reason this is a test over graphs/ and
+// not a lint sweep — a user's hand-written gate is their own reviewed artifact,
+// and this rule would warn at it for a habit that belongs to this repo. Here
+// the cost is a CI failure and a decision: cite the fragment, or come back and
+// widen this test with the reason the hand-written wording is better.
+func TestASessionGateCitesTheColdSafeFragment(t *testing.T) {
+	gates := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		// Single-node resolutions only: a multi-node resolution's NodeID names
+		// the USING node, which no longer exists after the splice, and its
+		// spliced children carry resolutions of their own one Depth deeper.
+		fragmentOf := make(map[string]string, len(loaded.Resolutions))
+		for _, res := range loaded.Resolutions {
+			if len(res.Spliced) == 0 {
+				fragmentOf[res.NodeID] = res.Fragment
+			}
+		}
+		for _, n := range loaded.Graph.Nodes {
+			if n.Handoff != HandoffSession || n.Retry == nil || n.Retry.Max <= 0 {
+				continue
+			}
+			gates++
+			if fragmentOf[n.ID] != coldSafeGateFragment {
+				t.Errorf("%s: node %q resumes a session and retries — so a retried attempt starts cold — but it did not splice %s (it spliced %q); the wording that survives a cold attempt lives in that fragment and nowhere else, so a gate written out by hand can lose it silently",
+					name, n.ID, coldSafeGateFragment, fragmentOf[n.ID])
+			}
+		}
+	}
+	if gates == 0 {
+		t.Errorf("no shipped graph declares a session gate with retry any more — this test now asserts nothing, and %s's cold-safe wording has no adopter in graphs/", coldSafeGateFragment)
+	}
+}
+
+// TestAWorktreeGraphLeavesNoNodeOutsideALane pins the one mechanical fragment
+// of rule 1 ("lanes must not share files") that survives measurement.
+//
+// The rule itself is prose and stays prose: which files a lane owns lives in
+// the `--input` values a run supplies, not in the graph, so `lint` — which
+// takes a graph path and nothing else — cannot see the text it would have to
+// judge. Measured before this test was written, in
+// docs/measurements/0034-lane-file-ownership-predicate.md: the lexical form of
+// the predicate produced 1 hit across a 45-graph corpus, and hand-checking it
+// made it 1 noise (both lanes CITE CONTRIBUTING.md as the address of the commit
+// trailer convention; neither edits it). Verdict there: DO-NOT-SHIP.
+//
+// What is left reads no paths at all. A node with no `worktree:` in a graph
+// where some node HAS one runs in the user's own working tree
+// (internal/graph/graph.go, Node.Worktree), which means it shares files with
+// every lane by construction — the one instance of "lanes share files" the
+// schema can actually decide. The false positive is real and named in the memo:
+// a coordinating node that deliberately runs outside the lanes and touches only
+// files no lane owns — a final report, say. Today no shipped graph has one, and
+// the day one does, this test is where the decision gets written down.
+func TestAWorktreeGraphLeavesNoNodeOutsideALane(t *testing.T) {
+	laned := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		declared := false
+		for _, n := range loaded.Graph.Nodes {
+			if n.Worktree != "" {
+				declared = true
+				break
+			}
+		}
+		if !declared {
+			continue
+		}
+		laned++
+		for _, n := range loaded.Graph.Nodes {
+			if n.Worktree == "" {
+				t.Errorf("%s: node %q declares no worktree: in a graph whose other nodes do — it runs in the user's own tree, so it shares files with every lane at once, which is the one form of rule 1's collision the schema can see; give it a lane, or record here why a node outside every lane is right",
+					name, n.ID)
+			}
+		}
+	}
+	if laned == 0 {
+		t.Error("no shipped graph declares worktree: any more — this test now asserts nothing, and the multi-lane idiom rule 1 is written for has no adopter in graphs/")
+	}
 }
 
 // qualifierClause is the one unbroken line every shipped prefix verdict carries
