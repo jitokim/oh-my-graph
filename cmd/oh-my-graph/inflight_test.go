@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -150,5 +152,98 @@ func TestListRuns_TheAnswerIsOneLine(t *testing.T) {
 	}
 	if n := strings.Count(got, "in flight"); n != 1 {
 		t.Errorf("the corpus answer is said once, got %d occurrences:\n%s", n, got)
+	}
+}
+
+// --- `show`: the same sentence about one run ---------------------------------
+//
+// A fix on `runs list` alone would be half a fix: an operator who opened the
+// single-run view would be back to reading liveness out of a six-word
+// vocabulary they have to know by heart.
+
+func TestShowRun_HeaderStatesWhetherTheRunIsInFlight(t *testing.T) {
+	root := t.TempDir()
+	liveLegLock(t, openLegRun(t, root, "run-live", true))
+
+	var out strings.Builder
+	if err := showRun(&out, root+"/run-live", "run-live"); err != nil {
+		t.Fatalf("showRun returned error: %v", err)
+	}
+	header := lineContaining(t, out.String(), "Run run-live")
+	if !strings.Contains(header, "RUNNING") {
+		t.Fatalf("the status word must survive: %q", header)
+	}
+	if !strings.Contains(header, "1 in flight") {
+		t.Errorf("`show` must say the run is in flight, in the same words the corpus line uses: %q", header)
+	}
+}
+
+// TestShowRun_HeaderStatesZeroInFlightForASettledRun is `show`'s zero case, and
+// the one that matters: the reader who opened a finished run is TOLD nothing is
+// working on it, rather than deducing it from PASS.
+func TestShowRun_HeaderStatesZeroInFlightForASettledRun(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "run-done",
+		`{"name":"done","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{
+			"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.10},
+		})
+
+	var out strings.Builder
+	if err := showRun(&out, runDirFor("run-done"), "run-done"); err != nil {
+		t.Fatalf("showRun returned error: %v", err)
+	}
+	header := lineContaining(t, out.String(), "Run run-done")
+	if !strings.Contains(header, "PASS") {
+		t.Fatalf("the status word must survive: %q", header)
+	}
+	if !strings.Contains(header, "0 in flight") {
+		t.Errorf("a settled run must SAY nothing is working on it: %q", header)
+	}
+}
+
+// --- `watch`: the same sentence, before the first event ----------------------
+
+func TestWatchRun_StatusLineStatesWhetherAnythingIsInFlight(t *testing.T) {
+	root := t.TempDir()
+	dir := openLegRun(t, root, "run-live", true)
+	liveLegLock(t, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	var out, warn strings.Builder
+	if err := watchRun(ctx, &out, &warn, dir, "run-live", testPoll); err != nil {
+		t.Fatalf("watchRun refused a live run: %v", err)
+	}
+	status := lineContaining(t, out.String(), "run run-live is")
+	if !strings.Contains(status, "RUNNING") {
+		t.Fatalf("the status word must survive: %q", status)
+	}
+	if !strings.Contains(status, "1 in flight") {
+		t.Errorf("`watch` must say the run it is tailing is in flight: %q", status)
+	}
+}
+
+// TestWatchRun_StatusLineSaysZeroInFlightForASettledRun is watch's zero case,
+// and the one a waiting operator needs most: the tail is about to print a
+// finished stream and then stop, and the first line says so instead of leaving
+// them to conclude it from silence.
+func TestWatchRun_StatusLineSaysZeroInFlightForASettledRun(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "run-done",
+		`{"name":"done","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{
+			"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.10},
+		})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var out, warn strings.Builder
+	if err := watchRun(ctx, &out, &warn, runDirFor("run-done"), "run-done", testPoll); err != nil {
+		t.Fatalf("watchRun returned error: %v", err)
+	}
+	status := lineContaining(t, out.String(), "run run-done is")
+	if !strings.Contains(status, "0 in flight") {
+		t.Errorf("a tail that will never grow must say so up front: %q", status)
 	}
 }

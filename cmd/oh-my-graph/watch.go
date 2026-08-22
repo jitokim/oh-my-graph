@@ -118,7 +118,14 @@ func watchRun(ctx context.Context, w, warnW io.Writer, runDir, runID string, pol
 		// what tells a watcher whether the silence they are about to sit in is
 		// a planner call, a running node, or a stream that is already over —
 		// the three cases that look identical from a tail alone.
-		fmt.Fprintf(w, "run %s is %s\n", runID, status)
+		//
+		// The clause after it is runstatus.InFlightClause over this one run —
+		// the same words `runs list` puts in its coverage line and `show` on
+		// its header, so an operator learns one sentence and reads it on
+		// whichever surface they opened. Here it is the answer to the question
+		// a tail asks by existing: is anything going to arrive? A settled run
+		// says "0 in flight" and the watcher stops waiting.
+		fmt.Fprintf(w, "run %s is %s; %s.\n", runID, status, runstatus.InFlightClause(status))
 	}
 
 	// The tail loop itself is runfeed.Follow — the same reader `serve`'s SSE
