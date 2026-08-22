@@ -461,6 +461,19 @@ const findingsVerdict = "**FINDINGS:**\n\n- the persisting branch returns withou
 // must not read as a broken run; a gating review with no arc is that decision
 // reversed by omission.
 //
+// The rule the graphs state is SYMMETRIC — "Ship both or neither"
+// (graphs/backlog-batch.yaml rule 6, graphs/fragments/review-style.yaml,
+// graphs/fragments/gated-lane.yaml) — and so is this test since it grew its
+// second half: an ARC alone is checked here too. An arc on a node whose check
+// still accepts `FINDINGS:` cannot be reached by the verdict it was written
+// for. Being exact about what that costs, because "it never fires" would be
+// one word too strong: a review fragment declares no `verify`, so what is left
+// to reach the arc is a crashed CLI (nonzero_exit) or a reply that is neither
+// verdict (result_mismatch) — and re-running the implementer over a malformed
+// review repairs nothing, because nothing was found. So the arc is dead AS A
+// REPAIR ROUND while the graph, and the run's disclosure line, read exactly
+// like a lane that gates. Whichever half is missing, the fix names the other.
+//
 // So the rule is judged by BEHAVIOR, not by authoring form: any node that
 // spliced a review fragment and whose effective pattern rejects the findings
 // verdict is gating, however it was spelled, and must declare an arc.
@@ -514,7 +527,15 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 			// fire here — and the match is a SEARCH, the same call the
 			// scheduler makes (internal/schedule).
 			if regexp.MustCompile(node.SuccessCheck.ResultMatches).MatchString(findingsVerdict) {
-				continue // advisory: findings pass, nothing downstream is gated
+				// Advisory: findings pass, nothing downstream is gated — a
+				// decision a lane is entitled to make, and backlog-batch's lane
+				// B makes it on purpose. What it may not do is make it while
+				// carrying an arc.
+				if node.Feedback != nil {
+					t.Errorf("%s: node %q declares a feedback arc but its pattern %q still ACCEPTS a FINDINGS: reply — the arc cannot be reached by the verdict it was written for, so a real finding rides into the PR body while the graph reads as a lane that gates; narrow the success_check to the clean verdict, or drop the arc and advise deliberately",
+						name, res.NodeID, node.SuccessCheck.ResultMatches)
+				}
+				continue
 			}
 			gating++
 			if node.Feedback == nil {
