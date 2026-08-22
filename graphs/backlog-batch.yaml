@@ -126,6 +126,11 @@
 #     --input checks_command="make local" \
 #     --input task_a="implement <feature>" \
 #     --input task_b="update <docs> to match"
+#
+# VERDICT — already covered by a shipped fragment? PARTIALLY. Lane A's gating
+# shape IS graphs/fragments/gated-lane.yaml (its arc at :140, its narrowed check
+# at :126, {{ feedback.review }} quoted at :81). Lane B's ADVISORY shape is not,
+# and earns no twin: a multi-node use: declares wiring only (fragment.go:439).
 name: backlog-batch
 version: "0.1"
 inputs: [repo, checks_command, task_a, task_b]

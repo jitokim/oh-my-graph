@@ -214,6 +214,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `lint` over `graphs/*.yaml` is unchanged from the pre-edit baseline on both
   runtimes — claude 4 warnings, codex 11 warnings plus `adr-driven-dev`'s
   pre-existing exit 1.
+- **The lane-shape question is now answered in the file that raised it:
+  PARTIALLY covered.** `graphs/backlog-batch.yaml`'s header states the verdict
+  in four lines — lane A's gating shape *is* `graphs/fragments/gated-lane.yaml`
+  (arc at `:140`, narrowed check at `:126`, `{{ feedback.review }}` quoted at
+  `:81`), lane B's advisory shape is not, and the gap earns prose rather than a
+  near-duplicate fragment: a node citing a multi-node fragment may declare only
+  `id`, `use`, `with`, `depends_on`, `cwd` and `worktree`
+  (`internal/graph/fragment.go:439`), so no citing site can widen that check or
+  drop that arc. Comments only; no fragment created, no lint added.
 
 ## [v0.11.0] - 2026-08-21
 
