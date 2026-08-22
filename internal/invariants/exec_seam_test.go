@@ -597,6 +597,103 @@ func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 	}
 }
 
+// TestOnlyTheFourCallSitesConstructCommands closes the gap BETWEEN the two
+// lists above. allowedExecImporters lets eight files import os/exec, but
+// TestExecSeamCallSitesScrubEnv inspects only the four named in
+// execSeamCallSites. The other four — the build-tagged procgroup helpers — are
+// excused by a claim written in a comment (see execSeamCallSites): that they
+// "never call exec.Command/exec.CommandContext themselves, so they have no
+// spawn to scrub". Nothing held that claim to the code. An unscrubbed
+// exec.Command added to internal/runner/procgroup_unix.go was measured to pass
+// every test in this package — allowlisted file, so no new importer; not a
+// call site, so no scrub check — while linking into the release binary and
+// handing the parent's environment, provider API keys included, to its child
+// (docs/measurements/0002-exec-seam-guard-falsification.md).
+//
+// So this test asks the question from the other end. Rather than trusting a
+// list of files to inspect, it walks the repo for every non-test file that
+// CONSTRUCTS an *exec.Cmd and requires that set to be exactly
+// execSeamCallSites. A construction anywhere else is red, whether or not its
+// file is allowlisted, which is what makes "no spawn to scrub" an enforced
+// property of the procgroup files instead of a promise about them.
+//
+// Absence is the easy half and the dangerous half: a walk that reached nothing
+// would report no constructors and pass. So the presence half runs FIRST and
+// is fatal — files were scanned, constructors were found, and each of the four
+// known call sites was seen at its own path.
+//
+// One shape it does not see: `import . "os/exec"` writes Command(...) as a bare
+// identifier, not a selector, so isExecCommandCall cannot match it. Such a file
+// is not a hole today because only the eight allowlisted files may import
+// os/exec at all and none dot-imports it; a ninth would be red under
+// TestOnlyTheFourExecSeamsImportOsExec before reaching here.
+func TestOnlyTheFourCallSitesConstructCommands(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+
+	scanned := 0
+	constructors := map[string]bool{}
+	walkRepoGoFiles(t, repoRoot, func(rel string, file *ast.File) {
+		scanned++
+		execName, ok := importLocalName(file, "os/exec")
+		if !ok {
+			return
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, isCall := n.(*ast.CallExpr); isCall && isExecCommandCall(call, execName) {
+				constructors[rel] = true
+			}
+			return true
+		})
+	})
+
+	// Presence first. Each of these three failures is the same failure — the
+	// scan did not look where it thinks it looked — and each would otherwise
+	// read as "nothing constructs a command", which is this test passing.
+	if scanned == 0 {
+		t.Fatalf("the repo walk from %s parsed no Go files at all, so this test's green means "+
+			"nothing was examined. Check skippedDirs and the walk root before trusting any "+
+			"result here.", repoRoot)
+	}
+	if len(constructors) == 0 {
+		t.Fatalf("the repo walk parsed %d Go file(s) but found no exec.Command/exec.CommandContext "+
+			"call anywhere, when the four exec seams each contain one. Either the walk is not "+
+			"reaching internal/, or isExecCommandCall stopped matching — either way this test "+
+			"can no longer see a spawn being constructed.", scanned)
+	}
+	for _, rel := range execSeamCallSites {
+		if !constructors[rel] {
+			t.Fatalf("%s is an exec-seam call site but the repo walk (%d file(s) parsed) did not find "+
+				"an exec.Command/exec.CommandContext call in it. This test detects a spawn added "+
+				"outside the four call sites; if it cannot even see the four, it detects nothing.",
+				rel, scanned)
+		}
+	}
+
+	// Absence: nothing else may construct one.
+	expected := map[string]bool{}
+	for _, rel := range execSeamCallSites {
+		expected[rel] = true
+	}
+	var unexpected []string
+	for rel := range constructors {
+		if !expected[rel] {
+			unexpected = append(unexpected, rel)
+		}
+	}
+	sort.Strings(unexpected)
+	for _, rel := range unexpected {
+		t.Errorf("%s calls exec.Command/exec.CommandContext but is not one of the four exec-seam "+
+			"call sites %v, so TestExecSeamCallSitesScrubEnv never checks that its child "+
+			"environment goes through childenv.Scrub — and an unscrubbed child inherits the "+
+			"provider API-auth variables that silently move the tool off subscription billing "+
+			"onto the metered API. Being in allowedExecImporters does not cover this: that list "+
+			"says which files may IMPORT os/exec, and the procgroup files are on it precisely "+
+			"because they only mutate an already-built *exec.Cmd. Route the spawn through the "+
+			"seam's existing builder, or write the ADR for a new seam (docs/adr/0002, 0005, 0006) "+
+			"and add its single call site to execSeamCallSites.", rel, execSeamCallSites)
+	}
+}
+
 // importLocalName returns the identifier a file uses to refer to importPath and
 // whether it imports it at all. An explicit alias wins; otherwise Go binds the
 // package's own name, which for every import here is the path's last segment

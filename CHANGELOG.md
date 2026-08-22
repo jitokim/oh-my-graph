@@ -12,6 +12,30 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **The exec-seam guard now fails on a spawn constructed anywhere but the four
+  call sites, not just on a new file that imports `os/exec`.** Two lists split
+  the eight allowlisted files: `allowedExecImporters` says which may import
+  `os/exec`, and `execSeamCallSites` says which must prove they scrub the child
+  environment. The four build-tagged procgroup files sit in the gap, excused by
+  a comment claiming they never call `exec.Command` themselves. Nothing tested
+  that claim, so an unscrubbed `exec.Command` added to
+  `internal/runner/procgroup_unix.go` passed every test in the package while
+  linking into the release binary and handing its child the parent's
+  environment, provider API keys included — measured, and reproducible from
+  `docs/measurements/0002-exec-seam-guard-falsification.md`.
+
+  `TestOnlyTheFourCallSitesConstructCommands` asks it from the other end: walk
+  the repo for every non-test file that *constructs* an `*exec.Cmd` and require
+  that set to be exactly the four call sites. Neither list changed, and the
+  existing tests are untouched. Because the whole check is about absence — and a
+  walk that reached nothing would report no constructors and pass — the presence
+  half runs first and is fatal: files were parsed, a constructor was found, and
+  each of the four call sites was seen at its own path.
+
+  Contributors adding a helper to a seam package are the ones who will meet
+  this. The failure names the file and points at the seam's existing builder, or
+  at the ADR a genuine fifth seam needs.
+
 - **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
   merely-quoted placeholder is resolved too, and how to quote one.** The two
   reasons were written as if the graph had meant the token — the artifact one
