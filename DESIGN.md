@@ -1792,11 +1792,21 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   `VERDICT`, which would have kept the very conflation the enumeration
   removes) and, under its total, one line saying how much of the run home the
   table covers: how many runs are shown out of how many directories were found,
-  how many were skipped and under which reason. It is printed whether or not
+  **how many of them are in flight**, and how many were skipped and under which
+  reason (`3 of 4 run(s) shown; 2 in flight, 1 abandoned; 1 skipped (…)`). It is
+  printed whether or not
   anything was skipped, because a reader must be able to tell "nothing was
   hidden from me" apart from "64 of 325 runs are shown" — a summary that
   appeared only when there was something to report renders those two cases
-  identically. `--show-skipped` names each skipped directory and quotes the
+  identically. The in-flight clause is there for the same reason and is stated
+  AT ZERO: "no run is running" and "the status column is broken" are what an
+  empty `RUNNING` column renders identically, and only the first is the
+  conclusion an operator draws from it. `show` and `watch` append the same
+  clause to their own status lines (`run run-x is PASS; 0 in flight.`) so one
+  wording answers the question on every surface. The count is
+  `runstatus.InFlightCount` over statuses those surfaces already derived —
+  `Derive` remains the only place the open-leg-AND-held-lock rule lives, and no
+  surface re-decides it. `--show-skipped` names each skipped directory and quotes the
   reader's own reason, one line each on stderr; that per-run detail used to be
   unconditional and was four fifths of the command's output on a long-lived run
   home. That per-run sentence is `runstatus.Unreadable` and is the ONE wording
