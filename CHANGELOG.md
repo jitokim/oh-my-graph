@@ -12,6 +12,41 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
+  merely-quoted placeholder is resolved too, and how to quote one.** The two
+  reasons were written as if the graph had meant the token — the artifact one
+  asserts "its producing node has not completed" about a node that may not
+  exist — so a prompt that only explains the syntax to the model got a
+  diagnostic pointing at wiring that was never there.
+
+  Before, both errors said only what was missing:
+
+  ```
+  cannot resolve {{ inputs.demo }}: no such input was provided
+  cannot resolve {{ artifacts.nosuch }}: artifact not available (its producing node has not completed)
+  ```
+
+  After, each carries a second line stating the rule and the way out:
+
+  ```
+  cannot resolve {{ inputs.demo }}: no such input was provided
+  note: every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained — to keep such text literal, break the two braces apart ("{ {"), or pass the text in as an input or artifact instead of writing it in the prompt
+  ```
+
+  The artifacts form gains the same single line after `artifact not available
+  (its producing node has not completed)`. The command those two captures came
+  from is the address for them — a graph whose prompts only *mention* the
+  syntax:
+
+  ```sh
+  go run ./cmd/oh-my-graph run /tmp/omg-repro-placeholder.yaml --dry-run
+  ```
+
+  Appended at exactly those two sites and nowhere else: a filter on a feedback
+  token and an unreadable artifact file are real wiring bugs, where this advice
+  would mislead. Wording only — no escaping syntax, no flag, and what
+  `Interpolate` resolves is unchanged.
+
 - **`runs list` collapses the per-run skip warnings into one summary line, and
   the detail moves behind `--show-skipped`.** Option chosen: *collapse by
   default, restore on demand* — not silence, and not a filter. Every skipped
@@ -69,6 +104,22 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   reason counts and this detail lives in `internal/runstatus`, so the four
   surfaces answer for the same directory with the same words instead of four
   different ones.
+
+- **A guard over the user-facing documents, run by `make test`:** `go test
+  ./internal/docsclaims/`. It **walks** the document set rather than listing it
+  — every `*.md` at the repository root and every `*.md` under `docs/` and
+  `plugin/` — so a document that lands tomorrow is scanned tomorrow, and the
+  roots it must reach are asserted present rather than used to pick what gets
+  read. What it fails on is narrow: the two absolutes ADR 0032 falsified, stated
+  anywhere with nothing conditioning them. Each failure carries the file, the
+  line, the sentence and the code address that falsifies it
+  (`internal/coordinator/coordinator.go:763-765`,
+  `internal/runner/claude_protocol.go:55-56`), so it can be retraced instead of
+  believed. It demands nothing of any document: a file that states neither claim
+  is never a finding. It was watched failing before it was trusted — the
+  pre-correction `docs/EXAMPLES.md` wording put back verbatim, the failure read,
+  the file restored.
+
 ### Fixed
 
 - **The planner now shares the assessor's bounded spawn retry.** #214 gave the
@@ -116,6 +167,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
     refusal now says what that refusal costs in coverage. Both name the same
     route rather than warning without one: `run`, on a hand-written graph, with
     your own `verify:` on whichever nodes you mean.
+- **Five documentation sentences that v0.11.0 made false**, each corrected
+  against the code rather than against the surrounding prose. `docs/EXAMPLES.md`
+  told a reader whose `auto` run depended on an MCP server that it "will stop
+  working", full stop, when `--accept-loaded-user-config` is exactly the door out
+  of that (`internal/coordinator/coordinator.go:763-766` sets `StrictMCPConfig`
+  false, and `internal/runner/claude_protocol.go:55-56` then emits no flag).
+  `docs/LIMITATIONS.md` said no tagged build carried that flag — `git grep
+  accept-loaded-user-config v0.11.0 -- cmd/oh-my-graph/flags.go` finds it at
+  `:166` inside the tag — and stamped its gaps "as of v0.10.0" in three places
+  while `cmd/oh-my-graph/version.go:9` reads `0.11.0`. The clause that survived
+  the deletion is the true half: a run that types nothing is byte-for-byte the
+  run that shipped in v0.10.0.
 
 ## [v0.11.0] - 2026-08-21
 

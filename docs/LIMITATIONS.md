@@ -1,7 +1,7 @@
 # Limitations & platform notes
 
 Detail moved out of the README: the full platform-support notes, the honest
-gaps as of **v0.10.0**, and what is deliberately deferred. Where a gap has
+gaps as of **v0.11.0**, and what is deliberately deferred. Where a gap has
 already been closed on `main` but not in a tagged release, this file says so
 in the paragraph that describes it rather than in the stamp.
 
@@ -51,7 +51,7 @@ On Windows, prefer WSL.
 
 ## Known limitations
 
-Honest gaps as of v0.10.0. **This file is where they are tracked** — the issue
+Honest gaps as of v0.11.0. **This file is where they are tracked** — the issue
 numbers below name the *closed* issue each gap was carved out of, which is
 provenance, not a tracker: those issues asked for the feature that shipped,
 and were closed when it did. What survived the feature is the paragraph, here.
@@ -260,9 +260,8 @@ has no open issue behind it.
   and `approval_policy="never"` are argv on every node, outside the branch the
   flag switches, so the sandbox floor and the no-network limit above are
   unchanged.
-  <br>Unreleased: no tagged build carries the flag, and a run that types
-  nothing is byte-for-byte the run that shipped in v0.10.0 — same argv, same
-  screens, same `state.json`.
+  <br>A run that types nothing is byte-for-byte the run that shipped in
+  v0.10.0 — same argv, same screens, same `state.json`.
   ([ADR 0032](adr/0032-a-planned-node-may-carry-the-operators-configuration.md))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not
@@ -348,7 +347,7 @@ See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
 ## Deferred (not implemented)
 
-Called out honestly — these are **not** implemented as of v0.10.0:
+Called out honestly — these are **not** implemented as of v0.11.0:
 
 - parallel-group sugar / any DSL beyond `depends_on`. (Retry is *not* on this
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause
