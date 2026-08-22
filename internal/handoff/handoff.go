@@ -44,6 +44,19 @@ func (e *InterpolationError) Error() string {
 	return fmt.Sprintf("cannot resolve {{ %s.%s }}: %s", e.Kind, e.Reference, e.Reason)
 }
 
+// quotingHint is the second line of the two diagnostics a prompt earns when it
+// only MENTIONS a placeholder instead of using one. Both reasons below name a
+// wiring bug ("no such input", "its producing node has not completed"), which
+// presumes the graph meant the token — but the commonest way to reach them is a
+// prompt that quotes the syntax from another graph or explains it to the model.
+// The hint states the rule and the way out, so the reader is not left debugging
+// a node that does not exist. It is appended ONLY at those two sites: a filter
+// on a feedback token, or an unreadable artifact file, are real wiring bugs
+// where this advice would mislead.
+const quotingHint = "\nnote: every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained — " +
+	"to keep such text literal, break the two braces apart (\"{ {\"), or pass the text in as an input or artifact " +
+	"instead of writing it in the prompt"
+
 // placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} /
 // {{ feedback.id }} with an optional `| inline` filter. Group 1 = kind,
 // group 2 = reference, group 3 = filter (empty or "inline"). Whitespace
@@ -143,7 +156,7 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 	if kind == "inputs" {
 		value, ok := h.inputs[ref]
 		if !ok {
-			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no such input was provided"}
+			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no such input was provided" + quotingHint}
 		}
 		return value, nil
 	}
@@ -167,7 +180,7 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 		return "", &InterpolationError{
 			Kind:      kind,
 			Reference: ref,
-			Reason:    "artifact not available (its producing node has not completed)",
+			Reason:    "artifact not available (its producing node has not completed)" + quotingHint,
 		}
 	}
 	if filter != "inline" {

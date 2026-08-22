@@ -12,6 +12,41 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
+  merely-quoted placeholder is resolved too, and how to quote one.** The two
+  reasons were written as if the graph had meant the token — the artifact one
+  asserts "its producing node has not completed" about a node that may not
+  exist — so a prompt that only explains the syntax to the model got a
+  diagnostic pointing at wiring that was never there.
+
+  Before, both errors said only what was missing:
+
+  ```
+  cannot resolve {{ inputs.demo }}: no such input was provided
+  cannot resolve {{ artifacts.nosuch }}: artifact not available (its producing node has not completed)
+  ```
+
+  After, each carries a second line stating the rule and the way out:
+
+  ```
+  cannot resolve {{ inputs.demo }}: no such input was provided
+  note: every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained — to keep such text literal, break the two braces apart ("{ {"), or pass the text in as an input or artifact instead of writing it in the prompt
+  ```
+
+  The artifacts form gains the same single line after `artifact not available
+  (its producing node has not completed)`. The command those two captures came
+  from is the address for them — a graph whose prompts only *mention* the
+  syntax:
+
+  ```sh
+  go run ./cmd/oh-my-graph run /tmp/omg-repro-placeholder.yaml --dry-run
+  ```
+
+  Appended at exactly those two sites and nowhere else: a filter on a feedback
+  token and an unreadable artifact file are real wiring bugs, where this advice
+  would mislead. Wording only — no escaping syntax, no flag, and what
+  `Interpolate` resolves is unchanged.
+
 - **`runs list` collapses the per-run skip warnings into one summary line, and
   the detail moves behind `--show-skipped`.** Option chosen: *collapse by
   default, restore on demand* — not silence, and not a filter. Every skipped
