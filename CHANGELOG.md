@@ -179,6 +179,41 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   while `cmd/oh-my-graph/version.go:9` reads `0.11.0`. The clause that survived
   the deletion is the true half: a run that types nothing is byte-for-byte the
   run that shipped in v0.10.0.
+- **Every rule in `graphs/backlog-batch.yaml`'s header now states its own
+  disposition** — either CHECKED BY, naming the checker and its file, or STAYS
+  PROSE with the one sentence saying what the schema would have to grow first.
+  The seven rules had been indistinguishable to a reader: rule 3 is warned on
+  by name, twice, in this very graph (`handoff.LintSessions`,
+  `internal/handoff/session_lint.go`), while rule 4's subject is a lane's diff,
+  which no part of the engine reads at any point. Both read as advice; only one
+  had a checker.
+
+  Two rules are checked and five are prose. Rule 3 by
+  `handoff.LintSessions`; rule 6 by `TestAGatingReviewCarriesItsRecoveryArc`
+  (`internal/graph/shipped_graphs_test.go`) — a test over this repo's graphs
+  and deliberately not a shipped sweep, because a narrowed review check with no
+  `feedback:` arc is a defect in *these* graphs and a legitimate choice in a
+  user's. Rules 1, 2, 4 and 7 name the missing schema key or the prose-reading
+  they would require, and rule 2 records the trap: "a `budget_usd` with no
+  `timeout:`" looks structural and is false on `graphs/fragments/e2e-verify.yaml`,
+  which declares exactly that, on purpose, and argues for it in place.
+
+  Rule 7 also closes the fragment question it kept re-raising. The gating lane
+  shape is already citable — `graphs/fragments/gated-lane.yaml`, which lane A
+  cites — and no advisory-lane twin is built: an advisory lane is defined by two
+  keys being ABSENT, a substitution point binds a value and can never make a key
+  present or absent, and the fold would in fact be refused by the loader, since
+  `gated-lane`'s dev prompt quotes `{{ feedback.review }}` and a token naming a
+  node that declares no arc is a load error (`internal/graph/feedback.go`).
+
+  Comments only — no rule renumbered, no node, schema or scheduler touched, and
+  **no new lint shipped**: the rule-5 candidate was measured at 1 hit / 0 real /
+  1 noise over 51 graphs and rejected on structure, since the planner's reply
+  schema has no graph-level key for its second conjunct to read
+  ([`docs/measurements/0034b-independent-lane-failure-predicate.md`](docs/measurements/0034b-independent-lane-failure-predicate.md)).
+  `lint` over `graphs/*.yaml` is unchanged from the pre-edit baseline on both
+  runtimes — claude 4 warnings, codex 11 warnings plus `adr-driven-dev`'s
+  pre-existing exit 1.
 
 ## [v0.11.0] - 2026-08-21
 
