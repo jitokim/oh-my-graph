@@ -34,6 +34,11 @@ handoff, retry, and halt-on-fail logic are all exercised through
 `map[nodeID]NodeOutcome` fixtures, so CI never needs a `claude` login and
 never costs money.
 
+Inside that suite, `go test ./internal/docsclaims/` walks every Markdown file at
+the repository root and under `docs/` and `plugin/` for the absolutes ADR 0032
+falsified — run it instead of hand-writing a cross-check grep when a change
+makes a documented claim conditional.
+
 One file outside the four exec-seam packages is a **sanctioned exception to
 "spawns nothing"**, and it is still an exception to nothing above:
 `cmd/oh-my-graph/skillargv_test.go` drives the real `CLIRunner` against a
