@@ -142,6 +142,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   cancelled context still stop on the first answer — retrying those is
   re-rolling a verdict until the loop likes one.
 
+### Documented
+
+- **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
+  ADR 0030 is deliberately not extended one level down**
+  ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
+  answering [#218](https://github.com/jitokim/oh-my-graph/issues/218)). A
+  planned node cannot carry its own `success_check.verify` and never will —
+  `validatePlannedNodeVerify` refuses a planner-authored one — and no supplier
+  for a per-node command keeps that reply untrusted: an operator cannot type a
+  mapping keyed on ids the planner has not invented yet, and the one command
+  they *can* type before the plan exists would measure the same thing at every
+  node instead of each node's own work. So `--verify-cmd` stays a per-run
+  command attached to a run's sinks, the deliverable is documentation, and §7
+  names the coverage census that would overturn it. **Proposed. No behaviour
+  changed, no flag, no schema field, no new exec seam.**
+
+  - That deliverable is now written where a reader meets the gap, not only in
+    the ADR: the `--verify-cmd` example in [`README.md`](README.md) gains the
+    complement of its positive half — evidence is established per RUN, so a
+    planned non-sink node carries no engine-run verify and its `PASS` is the
+    subprocess exit status and its own sentence — and the passage in
+    [`DESIGN.md`](DESIGN.md) that explains `validatePlannedNodeVerify`'s
+    refusal now says what that refusal costs in coverage. Both name the same
+    route rather than warning without one: `run`, on a hand-written graph, with
+    your own `verify:` on whichever nodes you mean.
 - **Five documentation sentences that v0.11.0 made false**, each corrected
   against the code rather than against the surrounding prose. `docs/EXAMPLES.md`
   told a reader whose `auto` run depended on an MCP server that it "will stop

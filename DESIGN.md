@@ -1020,7 +1020,13 @@ planned graph carries no verification a MODEL wrote either —
 `validatePlannedNodeVerify` refuses a planner-authored `verify:`, so the only
 one it can carry is the `--verify-cmd` the user supplied, which is
 advisory-eligible like any other command line but is still the user's own
-string.
+string. What that refusal costs is coverage, and it is worth stating:
+engine-run evidence in a planned graph is established per RUN — the user's
+`--verify-cmd` attaches at the graph's sinks — so an interior planned node's
+verdict is its own word plus the subprocess exit status, by construction and
+not by omission (ADR 0033). The supported route to interior coverage is `run`
+on a hand-written graph, which writes `verify:` on whichever node its author
+means (`DESIGN.md:1589`).
 
 ```go
 type SuccessCheck struct {

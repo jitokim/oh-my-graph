@@ -70,6 +70,13 @@ mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 ```
 
+Engine-run evidence is established per RUN, not per node: `--verify-cmd`
+attaches your command to the sinks of the plan (ADR 0030), and a planned
+non-sink node carries no engine-run verify at all — its `PASS` is the
+subprocess exit status and its own sentence, by construction and not by
+omission. If you want an interior node checked, write your own `verify:` on it
+in a hand-written graph and run it with `run` (ADR 0033).
+
 Log in once with the selected CLI (`claude` or `codex login`). No API key is
 needed: Anthropic and OpenAI API-key variables are deleted from child process
 environments so the CLI uses its saved login. The default remains Claude;
