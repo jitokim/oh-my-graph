@@ -1,40 +1,85 @@
 # backlog-batch — the parallel multi-lane batch idiom, as a documented
 # skeleton you copy and grow (two example lanes; add lane-c the same way).
 #
-#   dev-a ──▶ e2e-a ──▶ review-a ──▶ pr-a     (feature lane, worktree lane-a)
-#   dev-b ──▶ e2e-b ──▶ review-b ──▶ pr-b     (docs lane,    worktree lane-b)
+#   lane-a/dev ──▶ lane-a/e2e ──▶ lane-a/review ──▶ lane-a/pr  (feature lane, worktree lane-a — one `use: gated-lane` node, four spliced)
+#   dev-b      ──▶ e2e-b      ──▶ review-b      ──▶ pr-b       (docs lane,    worktree lane-b — written out; rule 7)
 #
 # Each lane runs in its OWN managed git worktree (branched off the invocation
 # repo's HEAD), so the lanes edit fully in parallel and each ends in its own
 # PR. Invoke from inside the target repo and pass repo="$PWD".
 #
-# The hard-won rules of the idiom — learned by breaking each one once:
+# The hard-won rules of the idiom — learned by breaking each one once. Each
+# rule ends in its disposition: either the check that now enforces it, named,
+# and whether that check WARNS at you or REFUSES; or one sentence saying why
+# the rule is irreducibly a judgement and stays prose. A test over `graphs/`
+# refuses inside THIS repo — it fails the build, never a user's run.
 #
 #   1. Lanes must not share files. Two lanes touching one file merge-conflict
 #      at PR time and can silently undo each other. Dedupe file ownership at
 #      authoring time — or, if two tasks genuinely overlap, serialize them
-#      into one lane (make dev-b depend on pr-a) instead of parallelizing.
+#      into one lane (make dev-b depend on lane-a/pr) instead of parallelizing.
+#      PROSE, and not for want of trying: which files a lane owns arrives at
+#      run time in `--input task_a`/`task_b`, so the graph a checker reads
+#      never contains the thing this rule judges. The lexical stand-in was
+#      measured before it was written off — 1 hit across a 45-graph corpus,
+#      and the hand-check made that hit noise (both lanes CITE
+#      CONTRIBUTING.md as the address of a commit convention; neither edits
+#      it) — verdict DO-NOT-SHIP, in
+#      docs/measurements/0034-lane-file-ownership-predicate.md.
+#      One fragment of the rule survives and REFUSES:
+#      `TestAWorktreeGraphLeavesNoNodeOutsideALane` fails the build if a graph
+#      where some node declares `worktree:` leaves another node without one.
+#      That node runs in the user's own tree, so it shares files with every
+#      lane at once — the only collision the schema itself can decide.
 #   2. Phased commits. Every dev prompt has the node CHOOSE a commit
 #      granularity fitting its work and commit as it goes: a node timeout must
 #      never lose finished work, and worktree cleanup only preserves a lane's
 #      branch if it gained commits. The hang guard is a generous `timeout:`,
 #      not a tight `budget_usd` — a tight budget kills a nearly-done node at
 #      the threshold, and the salvage costs more than letting it finish.
+#      PROSE: deciding whether a prompt genuinely hands the node its own
+#      granularity means reading prompt prose for an instruction, the
+#      predicate family this repo already measured and rejected at 110 noise
+#      in 114 hits (docs/measurements/0213-tool-grant-predicate.md). The
+#      mechanical-looking second half is false the moment you write it down:
+#      `e2e-verify` declares `budget_usd` and no `timeout:`, correctly, and
+#      argues for it in its own header.
 #   3. Cold-safe session prompts. An e2e node that resumes its dev session
-#      AND declares retry starts cold on the retried attempt (`lint` warns,
-#      advisory) — so every session prompt here opens with the
-#      continue-or-start-from-committed-state form and survives that case.
-#      That wording is no longer restated per lane: both gates cite the
-#      `e2e-verify` fragment (ADR 0013), so the shape is fixed once, upstream,
-#      and a lane declares only what is genuinely its own.
+#      AND declares retry starts cold on the retried attempt — so every
+#      session prompt here opens with the continue-or-start-from-committed-
+#      state form and survives that case. That wording is no longer restated
+#      per lane: both gates cite the `e2e-verify` fragment (ADR 0013), so the
+#      shape is fixed once, upstream, and a lane declares only what is
+#      genuinely its own.
+#      CHECKED in two halves. `handoff.LintSessions`
+#      (internal/handoff/session_lint.go) WARNS at the shape itself —
+#      advisory, and expected on this graph's two gates. And
+#      `TestASessionGateCitesTheColdSafeFragment` REFUSES the drift that would
+#      empty it: a shipped node with that shape which did not splice
+#      `e2e-verify` fails the build, so the single copy of the wording cannot
+#      be lost by a gate someone wrote out by hand. The last step stays
+#      prose — whether a particular hand-written prompt really survives a cold
+#      start is a reading, and no predicate performs it.
 #   4. Stress runs for concurrency diffs. A lane whose diff touches
 #      concurrency-sensitive code must stress the affected tests
 #      (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
 #      a flaky test passes a single run; determinism is the claim under test.
+#      PROSE: the subject of the rule is the lane's DIFF, which does not exist
+#      when the graph is loaded and is never read at run time either, leaving
+#      a checker nothing to look at but whether a prompt carries a literal —
+#      and ADR 0024 went the other way and took that literal out.
 #   5. Independent lanes fail independently. A batch of independent lanes
 #      should declare `on_fail: continue` (as this graph does): one lane's
 #      failure must not halt the others' unrelated work. Dependency edges
 #      still hold — a failed node's own downstream nodes never run.
+#      CHECKED, and it REFUSES: `TestIndependentLanesFailIndependently` takes
+#      the weakly connected components of the RESOLVED graph — lane A is one
+#      authored node and four run nodes, so the file's `nodes:` list is the
+#      wrong place to count — and fails the build on a graph with two or more
+#      of them that still declares `on_fail: halt`. Deliberately not a lint: a
+#      fail-fast batch is a legitimate thing for a user to want, and a new
+#      warning owes a measured noise rate, which n=1 across everything this
+#      repo ships cannot supply.
 #   6. A review is ADVISORY unless the lane says otherwise. The `review-style`
 #      fragment passes on BOTH its verdicts — `CLEAN` and `FINDINGS:` —
 #      because a review's job is to judge, not to be clean. Nothing else reads
@@ -45,7 +90,16 @@
 #      PAIR: narrow the review's `success_check` to the clean verdict, and
 #      give that same node a `feedback:` arc saying what to do about the
 #      failure. Ship both or neither — a narrowed check with no arc turns a
-#      reviewer that did its job into a failed run.
+#      reviewer that did its job into a failed run, and an arc with no
+#      narrowing never fires at all.
+#      CHECKED on both halves, symmetrically, and it REFUSES:
+#      `TestAGatingReviewCarriesItsRecoveryArc` reads every node that splices
+#      a `review-*` fragment and fails the build on either half alone — a
+#      check narrowed past `FINDINGS:` carrying no arc, and an arc on a node
+#      whose check still ACCEPTS `FINDINGS:`, which the failing verdict can
+#      therefore never reach. What the test cannot judge is which disposition
+#      a lane should have chosen; it judges only that the choice is spelled
+#      whole.
 #      Lane A gates and lane B advises, and the two are now spelled
 #      DIFFERENTLY, which is the point of rule 7. Lane A's whole shape — the
 #      pair included — is the `gated-lane` fragment; lane B stays written out,
@@ -63,6 +117,20 @@
 #      of the next author: it advises where lane A gates, and that difference
 #      is the presence of two keys rather than the value of one. When a lane
 #      resists conversion, check which of the two it is before forcing it.
+#      PROSE: telling a repeated SHAPE from a differing KEY is exactly the
+#      judgement the rule exists to provoke, and a predicate that made it
+#      would be answering the question for you. The one case it kept raising
+#      is settled, so that the next author does not re-litigate it: the lane
+#      shape is already a fragment, graphs/fragments/gated-lane.yaml, and no
+#      second lane fragment is coming. An `advisory-lane` twin would re-cite
+#      the same three single-node fragments lane B already cites and add one
+#      more surface to drift against `gated-lane` — while the existing
+#      fragment could not have served lane B in any case: its dev prompt
+#      quotes `{{ feedback.review }}` (gated-lane.yaml:81) against the arc it
+#      declares itself (:140), and a `{{ feedback.<id> }}` pointed at a node
+#      declaring no arc is a LOAD ERROR (internal/graph/feedback.go), so
+#      citing it leaves a lane no way to decline the arc. Not merely a fold
+#      that would not help — one the loader refuses.
 #
 # `checks_command` is the command the ENGINE runs as each gate's evidence
 # (success_check.verify) — your stack's full-check target, e.g. `make local`,

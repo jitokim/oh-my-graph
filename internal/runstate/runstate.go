@@ -407,6 +407,27 @@ type Snapshot struct {
 	// It changes what a node failure means (prune a subtree vs. halt), so a resume
 	// must honor the same choice the first leg ran under, not a fresh default.
 	ContinueOnFail bool `json:"continue_on_fail,omitempty"`
+	// DefaultPermissionMode is the permission mode this run's nodes fall back to
+	// when they declare none — schedule's default as it stood when the run was
+	// launched. Persisted for the same reason ContinueOnFail is: a resumed leg
+	// must run what the first leg really ran, not whatever this binary's default
+	// has since become. A node that named its own mode is unaffected either way;
+	// the graph in the snapshot already carries that.
+	//
+	// ABSENT MEANS dontAsk. Every snapshot written before the default became
+	// auto has no such key, and every one of those runs ran dontAsk — so the
+	// resume path reads an empty value as dontAsk and writes the resolved value
+	// back, which leaves the question open exactly once per run and never again.
+	//
+	// Deliberately omitempty, and deliberately NOT canonicalized in MarshalJSON
+	// the way Runtime is. Runtime could be canonicalized because one value
+	// ("claude") was right for every file that omitted it; here the right value
+	// for an old file (dontAsk) is not the right value for a new run (auto), so
+	// there is nothing the boundary could stamp that would be true of both. The
+	// field is additive and optional, so Schema stays 3: an older binary reading
+	// a newer snapshot ignores a key it does not know and resolves the mode
+	// exactly as it did before.
+	DefaultPermissionMode string `json:"default_permission_mode,omitempty"`
 	// ToolPolicies is the per-node execution ceiling for an auto run, keyed by node
 	// id. nil for a hand-written `run`, whose nodes run under the user's own
 	// settings. Resuming an auto run without it would drop the whole planned-node
