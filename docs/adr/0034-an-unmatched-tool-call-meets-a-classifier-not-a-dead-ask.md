@@ -673,6 +673,18 @@ against behaviour that is already running, not against a design.
   denied, 49 `PASS`, 44 with no engine-run check. The measurement that does
   **not** support this change (§1.5), and the script §6 re-runs. Issue
   [#218](https://github.com/jitokim/oh-my-graph/issues/218).
+- ADR 0004 — *Auto mode tool ceiling by settings isolation*
+  (`docs/adr/0004-auto-mode-tool-ceiling-by-settings-isolation.md`). **The record
+  this one amends.** It is where the layer table came from and where the sentence
+  removed from `SECURITY.md` and `DESIGN.md` originated — its own layer 2 row
+  reads *"`--allowedTools` + `dontAsk` default-deny"* (`0004:68`), and it states
+  *"The CLI is already default-deny for our unattended nodes"* (`0004:28-30`) and
+  that *"`--allowedTools "Bash(git *)"` under `dontAsk` means git and nothing
+  else"* (`0004:361`). **It is not edited**, in the same way ADR 0033 did not
+  edit ADR 0030: it was true of the default it was written under, and an ADR is a
+  dated decision rather than a live document. The amendment is one sentence —
+  **layer 2's complement is adjudicated rather than refused, and the four other
+  layers ADR 0004 established are untouched** (§2.2).
 - ADR 0033 — *The run is the unit of evidence, not the node*. Where the 44
   belongs, and why it is not this record's argument.
 - ADR 0032 — *A planned node may carry the operator's configuration, if the
