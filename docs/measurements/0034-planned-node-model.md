@@ -68,6 +68,13 @@ model census over ALL transcripts (NOT a node census):
 directory-wide census and on no graph node at all — that is exactly what a
 contaminated measurement would have added. The 851/267 figures carry none of it.
 
+**So: is the hand-written bucket contaminated? No — by construction.** It is
+reached only through `state.json` node records, so a session no graph node ever
+claimed cannot enter it. The contamination that a directory-wide census *would*
+have introduced is measured rather than asserted, and its size is **1156
+transcripts** claimed by no graph node (the `orphan` counter printed at
+`docs/measurements/0034-planned-node-model.go:475`).
+
 ### The 6 planned outliers are agent-mapped, every one
 
 Joining each planned node record to its graph node's `agent:` field:
@@ -101,9 +108,36 @@ Which is why the claim ADR 0034 rests on is *"181 planned nodes ran a model
 nobody selected, which happened to land in the same family"*, and not *"181
 planned nodes ran the wrong model"*.
 
+### Not measured — the explicit list
+
+Each line below is something this corpus does **not** answer. None of these is a
+weak or borderline result; they were never in the corpus to begin with.
+
+- The `[1m]` context-window variant. `message.model` records `claude-opus-5` for
+  a session its own harness names `claude-opus-5[1m]`, so opus and opus[1m] are
+  indistinguishable in every figure above. <!-- 미측정 -->
+- Which model a **codex** node ran. A codex node writes no
+  `~/.claude/projects/*.jsonl`, so the join finds nothing: 12 records excluded
+  under `note = "session_id present but no ... matched"` (3 planned, 9
+  hand-written) — counted from the raw rows by the note aggregation in
+  "Reproduction" below. <!-- 미측정 -->
+- The 77 node records carrying **no `session_id`** (5 planned, 72 hand-written)
+  and the 3 whose transcript held no assistant record naming a model. They are
+  excluded from the denominators, not folded into the majority. <!-- 미측정 -->
+- Whether the operator's `~/.claude/settings.json` held the **same `model` value
+  across the whole corpus window** — earliest row `20260730-204118`, latest row
+  `20260822-230615.538102000-1` (the run-id aggregation in "Reproduction"). The
+  census reads transcripts only; the settings file keeps no history and none was
+  reconstructed. <!-- 미측정 -->
+- The **hand-written bucket split by `agent:`**. The agent join was run for the
+  6 planned outliers only; `nodeRow` carries no agent field, so 851/267 is not
+  decomposed into agent-mapped and plain nodes. <!-- 미측정 -->
+- Whether ADR 0034's `--model` **fixes** this. Every run in the corpus predates
+  the change; this measures the defect, never the repair. <!-- 미측정 -->
+
 ## Reproduction and independent check
 
-Re-running the program on 2026-08-24 reproduced every node-bucket figure
+Re-running the program earlier on 2026-08-24 reproduced every node-bucket figure
 above exactly. The only cell that moved was the contamination census
 (2504 → 2505 transcripts, 1155 → 1156 unclaimed), because the session doing the
 re-run wrote a transcript of its own — which is itself the reason the node
@@ -121,3 +155,52 @@ print(*sorted(c.items(), key=lambda x:-x[1]), sep='\n')"
 ```
 
 Both methods agree: 181 / 6 planned, 851 / 267 hand-written.
+
+The exclusion notes and the corpus window come off the same rows:
+
+```sh
+python3 -c "
+import json,collections
+d=json.load(open('docs/measurements/0034-planned-node-model-raw.json'))
+print(collections.Counter(r['note'] for r in d if r.get('note')))
+ids=sorted({r['run_id'] for r in d}); print(ids[0], ids[-1])"
+```
+
+77 no-`session_id`, 12 no-transcript, 3 no-assistant-record; window
+`20260730-204118` → `20260822-230615.538102000-1`.
+
+### Later re-run, 2026-08-24 ~11:00 — the corpus has grown
+
+Every figure in "Result" above is a snapshot of the corpus as it stood when
+`0034-planned-node-model-raw.json` was written, and that file is their address.
+The runs directory keeps growing, so a later re-run does not reproduce them. Run
+from a scratch directory, because the program writes its raw output to
+`docs/measurements/...` **relative to the working directory** and would otherwise
+overwrite the committed file:
+
+```sh
+mkdir -p /tmp/w-model-rerun-0034
+cd /tmp/w-model-rerun-0034 && go run /private/tmp/w-model/docs/measurements/0034-planned-node-model.go
+```
+
+That command exits cleanly and reports:
+
+| cell | committed raw JSON | later re-run |
+|---|---|---|
+| run directories | 348 | 349 |
+| PLANNED runs | 45 | 46 |
+| HAND-WRITTEN runs | 299 | 299 |
+| in-flight excluded | `20260824-010050.356583000-1` | `20260824-015702.576813000-2` |
+| PLANNED node records / joined | 195 / 187 | 200 / 192 |
+| **PLANNED `claude-opus-5`** | **181** | **186** |
+| PLANNED `claude-sonnet-5` | 6 | 6 |
+| HAND-WRITTEN records / joined | 1202 / 1118 | 1202 / 1118 |
+| **HAND-WRITTEN opus / fable** | **851 / 267** | **851 / 267** |
+| transcripts / unclaimed | 2505 / 1156 | 2511 / 1157 |
+| raw rows written | 1397 | 1402 |
+
+The whole delta is +5 planned node records, all `claude-opus-5`, from planned
+runs this branch's own work started after the raw file was written. The
+hand-written bucket does not move at all. The direction of the finding is
+unchanged, and the numbers this document commits to are the committed-raw-JSON
+column — the one with a durable address.
