@@ -42,8 +42,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   The capability ceiling is unchanged. A model name grants no tool, loads no
   file and runs no hook; exactly one preference crosses layer 1, by name.
   Claude only — under `--runtime codex` a planned node still takes the CLI's
-  default ([#245](https://github.com/jitokim/oh-my-graph/issues/245),
-  [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+  default ([docs/LIMITATIONS.md](docs/LIMITATIONS.md); the Codex follow-up is
+  carried in the operator's private backlog — oh-my-graph-hq
+  `notes/open.md` — not in the public tracker).
 
 ### Changed
 

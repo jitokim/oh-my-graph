@@ -394,8 +394,9 @@ tools, files and hooks and never about which model does the thinking. On a
 `--runtime codex` run they lose that too — `--ignore-user-config` withholds
 `~/.codex/config.toml` and oh-my-graph does not read it, so a planned Codex node
 runs the model `codex` itself defaults to
-([docs/LIMITATIONS.md](docs/LIMITATIONS.md),
-[#245](https://github.com/jitokim/oh-my-graph/issues/245)).
+([docs/LIMITATIONS.md](docs/LIMITATIONS.md); the Codex follow-up is carried in
+the operator's private backlog — oh-my-graph-hq `notes/open.md` — not in the
+public tracker).
 **Through v0.6.0 agent-mapped nodes were the exception in both directions** — no
 *settings* were dropped for them, so your CLAUDE.md and hooks, and the
 repository's, did load, and they were correspondingly less isolated, not more.

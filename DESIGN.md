@@ -164,7 +164,9 @@ it would be a fix for a population nobody has measured. So under `--runtime
 codex` a planned node answers with whatever model `codex` itself defaults to;
 `codexProtocol.buildArgs` ignores `NodeInvocation.Model`, says so in place, and a
 test pins that silence. `docs/LIMITATIONS.md` states it where a user meets it and
-[#245](https://github.com/jitokim/oh-my-graph/issues/245) carries the research.
+ADR 0034 §2.6 carries the research; the follow-up itself is carried in the
+operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the public
+tracker.
 
 A `turn.completed` event supplies the final
 token usage; the last completed `agent_message` is the node result. A

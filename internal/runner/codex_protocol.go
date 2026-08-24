@@ -38,8 +38,10 @@ func (codexProtocol) sessionFromLine(line []byte) string {
 //
 // So Codex is the documented-asymmetry runtime here, beside ADR 0009's session
 // limits and ADR 0026's budget_usd (ADR 0034 §2.6): docs/LIMITATIONS.md states
-// the absence where the user meets it, and issue #245 carries the research
-// above so the next person does not re-derive it.
+// the absence where the user meets it, and the research above is written down
+// here and in ADR 0034 §2.6 so the next person does not re-derive it. The
+// follow-up itself is carried in the operator's private backlog (oh-my-graph-hq
+// notes/open.md), not in the public tracker.
 func (codexProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"exec",

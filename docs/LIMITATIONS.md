@@ -201,8 +201,10 @@ has no open issue behind it.
   fix for a population nobody has measured
   ([docs/measurements/0034-planned-node-model.md](measurements/0034-planned-node-model.md)).
   The mechanism is written down in
-  [#245](https://github.com/jitokim/oh-my-graph/issues/245) so the next person
-  does not re-derive it.
+  [ADR 0034 §2.6](adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)
+  so the next person does not re-derive it; the follow-up itself is carried in
+  the operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the
+  public tracker.
 - **ADR 0009's session-limit pause does not exist on Codex.** A Claude node
   that hits a plan session limit becomes a resumable pause (exit 2). The
   matcher is Claude's own prose and `SessionLimited` is set only for the Claude
