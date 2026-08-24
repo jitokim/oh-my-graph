@@ -151,7 +151,22 @@ assessor add `--ignore-user-config`, `--ignore-rules`,
 nodes unless the run typed `--accept-loaded-user-config`, which omits all four
 (ADR 0032; `--sandbox` and `approval_policy="never"` are appended outside that
 branch and are unaffected). Hand-written nodes and the
-planner keep normal Codex config. A `turn.completed` event supplies the final
+planner keep normal Codex config.
+
+**No `--model` appears here, and that absence is a decision, not an omission**
+(ADR 0034 §6b). The defect is identical — `--ignore-user-config` withholds
+`$CODEX_HOME/config.toml`, which is where the operator's `model` key lives — and
+the mechanism to fix it exists (`codex exec` takes a model flag, and the
+`-c model="…"` override this protocol already uses for `approval_policy`). It is
+not used because **no codex node's model is observable in this repository's
+corpus**: a codex thread writes no `~/.claude/projects` transcript, so shipping
+it would be a fix for a population nobody has measured. So under `--runtime
+codex` a planned node answers with whatever model `codex` itself defaults to;
+`codexProtocol.buildArgs` ignores `NodeInvocation.Model`, says so in place, and a
+test pins that silence. `docs/LIMITATIONS.md` states it where a user meets it and
+[#245](https://github.com/jitokim/oh-my-graph/issues/245) carries the research.
+
+A `turn.completed` event supplies the final
 token usage; the last completed `agent_message` is the node result. A
 `turn.failed` event is a failed node even if the CLI process itself exits zero.
 `--skip-git-repo-check` preserves the graph contract that a node `cwd` may be a
@@ -2440,6 +2455,18 @@ type ToolPolicy struct {
 The table is the default — the run that types nothing. Layers 1 and 4 are the
 two an operator may decline together, at launch, and nothing else in it moves;
 "The operator's opt-in" below is the whole of that difference.
+
+`--model` is **not** on this table and is not a sixth layer either — it is not
+even on `ToolPolicy`, it rides on `runner.NodeInvocation` beside the prompt.
+Every layer here bounds capability: which grants bind, which tools exist, whose
+settings, hooks and `CLAUDE.md` load. A model name binds no grant, adds no tool
+and loads no file, so the operator's own choice — ONE key of their settings
+file, read at plan time by `internal/usermodel` and carried on `Plan.Model`
+(ADR 0034) — crosses layer 1 by name without moving a row of it. That the
+ceiling really is untouched is a test, not a claim:
+`TestPlan_ModelLeavesTheCeilingUntouched` diffs every layer of a plan that read
+a model against one that did not. An agent-mapped node gets no `--model`,
+because its staged definition declares one and that is the more specific choice.
 
 `PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
 a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
