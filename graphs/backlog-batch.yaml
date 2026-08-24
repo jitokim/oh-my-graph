@@ -17,10 +17,7 @@
 #   1. Lanes must not share files. Two lanes touching one file merge-conflict
 #      at PR time and can silently undo each other. Dedupe file ownership at
 #      authoring time — or, if two tasks genuinely overlap, serialize them
-<<<<<<< HEAD
 #      into one lane (make dev-b depend on lane-a/pr) instead of parallelizing.
-=======
-#      into one lane (make dev-b depend on pr-a) instead of parallelizing.
 #      PROSE, and not for want of trying: which files a lane owns arrives at
 #      run time in `--input task_a`/`task_b`, so the graph a checker reads
 #      never contains the thing this rule judges. The lexical stand-in was
@@ -34,7 +31,6 @@
 #      where some node declares `worktree:` leaves another node without one.
 #      That node runs in the user's own tree, so it shares files with every
 #      lane at once — the only collision the schema itself can decide.
->>>>>>> origin/main
 #   2. Phased commits. Every dev prompt has the node CHOOSE a commit
 #      granularity fitting its work and commit as it goes: a node timeout must
 #      never lose finished work, and worktree cleanup only preserves a lane's
