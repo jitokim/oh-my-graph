@@ -44,7 +44,7 @@ import (
 const (
 	defaultConcurrency   = 4
 	globalConcurrencyCap = 10
-	// defaultPermissionMode is what a node declaring no permission_mode runs
+	// DefaultPermissionMode is what a node declaring no permission_mode runs
 	// under. `auto` puts a call no allow rule matched to the CLI's own
 	// classifier, which approves or denies it on the spot; `dontAsk`, the
 	// default before this, resolved the same call to an unanswerable ask and
@@ -58,7 +58,12 @@ const (
 	// Every other layer of the ceiling still binds — a deny rule is evaluated
 	// before the classifier is asked at all, and --tools removes a tool rather
 	// than gating it (docs/adr, SECURITY.md "Ceiling layers").
-	defaultPermissionMode = graph.PermissionAuto
+	//
+	// Exported because it is not only a fallback but a fact about a run that
+	// outlives the process: the CLI records it into state.json so a later
+	// `resume` can put the run back under the mode it started in. One constant
+	// for the resolution and the record, so a second literal cannot drift.
+	DefaultPermissionMode = graph.PermissionAuto
 )
 
 // predicateVerify is the success_check predicate name carried by a failed
@@ -167,6 +172,13 @@ type Options struct {
 	// (see effectiveContinueOnFail) — so a false here still continues when the
 	// graph itself opted in.
 	ContinueOnFail bool
+	// DefaultPermissionMode is the mode a node declaring none runs under. Empty
+	// means DefaultPermissionMode, this package's constant — which is what every
+	// fresh run wants. A resumed leg passes the mode its snapshot recorded
+	// instead, so a run keeps the default it was launched under for the rest of
+	// its life rather than changing mode halfway through because the binary was
+	// upgraded between legs (runstate.Snapshot.DefaultPermissionMode).
+	DefaultPermissionMode string
 	// Gate resolves gate nodes. Defaults to gate.PauseController: a gate node
 	// pauses the run unless a caller (resume) injects a RecordedController.
 	Gate gate.GateController
@@ -313,13 +325,17 @@ type RunAccounting struct {
 type Scheduler struct {
 	runner         runner.NodeRunner
 	continueOnFail bool
-	concurrency    int
-	gate           gate.GateController
-	verifier       verify.Verifier
-	worktrees      worktree.Provider
-	progress       io.Writer
-	recorder       Recorder
-	events         EventSink
+	// defaultPermissionMode is resolved once at construction, never empty:
+	// Options' value if the caller supplied one (a resumed leg), otherwise the
+	// package constant.
+	defaultPermissionMode string
+	concurrency           int
+	gate                  gate.GateController
+	verifier              verify.Verifier
+	worktrees             worktree.Provider
+	progress              io.Writer
+	recorder              Recorder
+	events                EventSink
 	// toolPolicies is the per-node tool ceiling keyed by node id (nil for
 	// hand-written graphs). A missing key means "no ceiling was imposed" — see
 	// buildInvocation.
@@ -380,22 +396,27 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	if eventSink == nil {
 		eventSink = noopEventSink{}
 	}
+	permissionMode := opts.DefaultPermissionMode
+	if permissionMode == "" {
+		permissionMode = DefaultPermissionMode
+	}
 	return &Scheduler{
-		runner:           nodeRunner,
-		continueOnFail:   opts.ContinueOnFail,
-		concurrency:      opts.Concurrency,
-		gate:             gateController,
-		verifier:         verifier,
-		worktrees:        worktrees,
-		progress:         progressWriter,
-		recorder:         recorder,
-		events:           eventSink,
-		toolPolicies:     opts.ToolPolicies,
-		completedNodes:   opts.CompletedNodes,
-		settledNodes:     opts.SettledNodes,
-		nodeRounds:       opts.NodeRounds,
-		opening:          opts.OpeningAccounting,
-		serializedVerify: opts.SerializedVerifyNodes,
+		runner:                nodeRunner,
+		continueOnFail:        opts.ContinueOnFail,
+		defaultPermissionMode: permissionMode,
+		concurrency:           opts.Concurrency,
+		gate:                  gateController,
+		verifier:              verifier,
+		worktrees:             worktrees,
+		progress:              progressWriter,
+		recorder:              recorder,
+		events:                eventSink,
+		toolPolicies:          opts.ToolPolicies,
+		completedNodes:        opts.CompletedNodes,
+		settledNodes:          opts.SettledNodes,
+		nodeRounds:            opts.NodeRounds,
+		opening:               opts.OpeningAccounting,
+		serializedVerify:      opts.SerializedVerifyNodes,
 	}
 }
 
@@ -1335,7 +1356,7 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 
 	permissionMode := node.PermissionMode
 	if permissionMode == "" {
-		permissionMode = defaultPermissionMode
+		permissionMode = s.defaultPermissionMode
 	}
 
 	policy, err := s.policyFor(node)

@@ -1028,9 +1028,13 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Graph:           graphJSON,
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
-		ToolPolicies:    toNodeToolPolicies(toolPolicies),
-		Goal:            goal,
-		BuildEvidence:   buildEvidenceRecord(flags.buildEvidence),
+		// Recorded, not defaulted: a later `resume` must be able to put this run
+		// back under the mode it was launched in even if the binary's default has
+		// changed underneath it (see runstate.Snapshot.DefaultPermissionMode).
+		DefaultPermissionMode: schedule.DefaultPermissionMode,
+		ToolPolicies:          toNodeToolPolicies(toolPolicies),
+		Goal:                  goal,
+		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }

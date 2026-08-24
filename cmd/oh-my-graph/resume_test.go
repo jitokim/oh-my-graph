@@ -15,6 +15,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -455,6 +456,69 @@ func TestResume_WarnsOnBypassPermissions(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "bypassPermissions") || !strings.Contains(stderr, `"ship"`) {
 		t.Errorf("expected a stderr warning naming the bypassPermissions node, got %q", stderr)
+	}
+}
+
+// --- a resumed leg keeps the default its first leg ran under -----------------
+
+// TestResume_SnapshotWithoutDefaultPermissionModeStaysDontAsk is the upgrade
+// case for the permission-mode default. A snapshot has never recorded the
+// RESOLVED mode of a node — an undeclared permission_mode is absent from the
+// graph JSON too (internal/graph, Node.PermissionMode is omitempty) — so
+// nothing in a pre-flip state.json says which mode its nodes actually ran
+// under. Without the recorded default, a run that paused at a gate under
+// `dontAsk` would finish under `auto` the moment a newer binary resumed it:
+// same run, two permission regimes, no warning and nothing to detect it with.
+//
+// Both halves are pinned here because either alone would pass while the run
+// still changed mode mid-flight: a launch that records its default, and a
+// resume that reads an ABSENT one as dontAsk rather than as "unset, use mine".
+func TestResume_SnapshotWithoutDefaultPermissionModeStaysDontAsk(t *testing.T) {
+	isolateRunHome(t)
+	runID, _ := pausedGateFlowRun(t)
+	statePath := filepath.Join(runDirFor(runID), stateFileName)
+
+	snap, err := runstate.Load(statePath)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if snap.DefaultPermissionMode != schedule.DefaultPermissionMode {
+		t.Fatalf("a run launched now recorded default %q, want %q — its own later legs have nothing to hold onto",
+			snap.DefaultPermissionMode, schedule.DefaultPermissionMode)
+	}
+
+	// Age the snapshot into one an older binary wrote. The key is omitempty, so
+	// clearing the field removes it from the file outright — the same bytes a
+	// pre-flip binary produced, not an approximation of them.
+	snap.DefaultPermissionMode = ""
+	if err := runstate.Write(statePath, snap); err != nil {
+		t.Fatalf("write aged snapshot: %v", err)
+	}
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read aged snapshot: %v", err)
+	}
+	if strings.Contains(string(raw), "default_permission_mode") {
+		t.Fatalf("the aged snapshot still names a default, so this test proves nothing:\n%s", raw)
+	}
+
+	rec := &capturingRunner{}
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil); err != nil {
+		t.Fatalf("executeResume: %v", err)
+	}
+	if got := rec.invocationFor("ship").PermissionMode; got != graph.PermissionDontAsk {
+		t.Errorf("a node resumed from a pre-auto snapshot ran as %q, want %q", got, graph.PermissionDontAsk)
+	}
+
+	// The resumed leg writes the resolved answer back, so a run is only ever
+	// ambiguous on the first leg after the upgrade — and a third leg reads an
+	// answer instead of inferring one.
+	after, err := runstate.Load(statePath)
+	if err != nil {
+		t.Fatalf("reload snapshot: %v", err)
+	}
+	if after.DefaultPermissionMode != graph.PermissionDontAsk {
+		t.Errorf("the resumed leg recorded default %q, want %q", after.DefaultPermissionMode, graph.PermissionDontAsk)
 	}
 }
 

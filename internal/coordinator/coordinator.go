@@ -50,7 +50,7 @@ const maxOutputInError = 500
 // plannedToolAllowlist is the fixed, coordinator-owned safety allowlist for
 // tools a coordinator-planned node may DECLARE. A planned graph comes from
 // untrusted LLM output and runs unattended under permission_mode auto (see
-// schedule.defaultPermissionMode) — nothing prompts a human before a tool call
+// schedule.DefaultPermissionMode) — nothing prompts a human before a tool call
 // fires, and a call this list never authorized is settled by the CLI's own
 // classifier rather than by anyone who read the plan. The planner prompt (below) asks the model to pick least-privilege
 // tools from exactly this list, but that is only a request to an untrusted
@@ -722,7 +722,7 @@ func toolPoliciesByNode(g *graph.Graph, loadedUserConfig bool) map[string]runner
 // allow-rule source. What an unmatched call then resolves to is the default
 // permission mode's business: under `dontAsk` it became an unanswerable ask and
 // therefore a DENY; under `auto` — the default since
-// schedule.defaultPermissionMode changed — it reaches the CLI's own classifier,
+// schedule.DefaultPermissionMode changed — it reaches the CLI's own classifier,
 // which approves or denies it there and then.
 //
 // Measured end-to-end on claude 2.1.220 (DESIGN.md, E1), under `dontAsk`: with
