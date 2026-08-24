@@ -10,6 +10,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.12.0] - 2026-08-25
+
+**Minor because the default changed under you.** A node that declares no
+`permission_mode` now runs as `auto` rather than `dontAsk` (ADR 0034), and that
+is the one thing in this release a user could be surprised by — so it is the
+first sentence rather than a line in a list.
+
+The release has one through-line: **the tool now says things it used to leave
+you to infer.** `runs list` states how many runs are in flight instead of
+letting an empty grep stand for "nothing is running", and the same fact is
+answerable by a shell through an exit code. A bind failure names the build
+holding the port. A node denied its tools is a measured quantity rather than a
+suspicion.
+
+That is not a theme somebody chose; it is what a week of measuring turned up.
+Four measurements are committed with their scripts and frozen data, and **two of
+them argued against shipping something** — a tool-grant lint was built, run,
+hand-checked at 4 real hits in 114, and rejected, and a compound-command
+hypothesis was measured and found not to be the dominant cause after all.
+
+Three ADRs land as records rather than code: the run is the unit of evidence and
+not the node (0033), the default permission mode moves and says which ceiling
+layers still bind (0034), and cross-run session reuse is **rejected** (0036),
+closing a backlog item that had been open since 2026-08-01.
+
 ### Changed
 
 - **The default permission mode is now `auto`, where it was `dontAsk`.** A node
