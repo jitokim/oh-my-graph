@@ -144,6 +144,30 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **ADR 0036 — cross-run session reuse is rejected: a resumed session is not a
+  reused node**
+  ([`docs/adr/0036-cross-run-session-reuse-is-rejected.md`](docs/adr/0036-cross-run-session-reuse-is-rejected.md),
+  superseding [ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md),
+  which recommended *defer*). A node may not `--resume` a session created by a
+  previous run, and the ground is not the substrate ADR 0008 was waiting on. The
+  proposal lands on none of the four identity items this product judges by: in
+  this repo *"node 재사용"* has a settled referent — reusing a node's
+  **definition**, which is what a fragment is (ADR 0013, extended by 0027 and
+  0029) — and a transcript is not a definition, so two things containing the word
+  *reuse* are not the same item. That is dispositive on its own; the cost is
+  priced anyway. It converts `NodeRecord.SessionID`
+  (`internal/runstate/runstate.go:166`), documented as the one datum resume
+  cannot recompute, into a **reference** whose target sits in a directory this
+  snapshot does not own — a third fact none of the six surfaces sharing ADR
+  0015's rule (`internal/runstatus/runstatus.go:13-16`) gathers, and one that
+  rule has no arm for, because *"the referenced session is dead"* has no
+  affirmative reading the way a free lock does. When the target is gone there
+  are exactly three answers — fail the node on housekeeping elsewhere, start
+  cold and quietly lie, or probe foreign directories from inside graph
+  validation — and each is independently disqualifying. §5 names six ways to
+  falsify that, starting with the identity list itself. **Rejected. No behaviour
+  changed, no graph key, no `state.json` field, no flag, no new exec seam; and
+  `handoff: session`'s exactly-one-session-parent rule is untouched.**
 - **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
   ADR 0030 is deliberately not extended one level down**
   ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
