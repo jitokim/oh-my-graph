@@ -1852,6 +1852,21 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   starting run would read abandoned for its first instants; that ordering is
   stated at `acquireRunLock` and pinned by
   `TestRunLeg_LockBracketsTheEventStream`.
+
+  The same derivation answers a MACHINE at the same invocation, on the exit
+  code rather than in the table: `runs list --exit-in-flight` exits **4** while
+  any listed run is `PLANNING` or `RUNNING` (`Status.InFlight`), and **0** when
+  none is — so `until oh-my-graph runs list --exit-in-flight >/dev/null; do
+  sleep 30; done` is a supervisor's terminal condition for a whole run home,
+  where before there was one only for a single known run id (`watch`, which
+  stops on `run_finished`). Nothing is added to the output: the table is not a
+  contract (ADR 0015, open question 4), so the channel a script reads must not
+  be one it has to grep. `ABANDONED` counts as NOT in flight, which is exactly
+  the half of the rule a stream-only consumer cannot compute — reading
+  `events.jsonl` alone, a dead leg stays open forever and such a loop would
+  never end. Without the flag the exit code is unchanged, and a read failure
+  stays 1, so a loop keeps waiting rather than declaring "done" over a corpus
+  it could not read.
 - **The residual hazard is an orphaned `claude`, and the mitigation is
   wording.** Every child is spawned with `Setpgid`, so a death that took the
   engine alone (SIGHUP, `kill -9`, a panic, an OOM kill) leaves a subprocess

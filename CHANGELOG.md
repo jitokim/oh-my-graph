@@ -212,6 +212,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **`runs list --exit-in-flight`** — a script can now wait for a whole run home
+  to settle without parsing anything. The flag moves the table's own answer onto
+  the exit code: **4** while any listed run is still `PLANNING` or `RUNNING`,
+  **0** when none is, and **1** if the corpus could not be read (so a loop keeps
+  waiting rather than declaring "done" over a directory it never saw).
+
+  ```sh
+  until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done
+  ```
+
+  Before this, the only terminal condition in the tool was `watch <run-id>`,
+  which needs a run id you already know and cannot see a run that starts later;
+  everything else meant grepping a table that is explicitly not a contract (ADR
+  0015). `ABANDONED` counts as **not** in flight — that is the half of the rule a
+  consumer reading `events.jsonl` alone cannot compute, since a dead leg stays
+  open forever and such a loop would never end. The count comes from the same
+  `runstatus` derivation the table prints, so the two cannot disagree. Nothing
+  is added to the output, and without the flag the exit code is unchanged.
+
 - **`runs list --show-skipped`** — names every run directory the listing had to
   skip, one line each, in the shared unreadable-run sentence that `runs show`
   and `runs watch` also speak. The classification behind both the summary's
