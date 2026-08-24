@@ -662,7 +662,7 @@ against behaviour that is already running, not against a design.
 
 ## 9. References
 
-- `docs/measurements/0034-what-auto-mode-does-on-disk.md` — 45 strings from
+- `docs/measurements/0034-what-auto-mode-does-on-disk.md` — 46 strings from
   `claude` 2.1.241, pinned with the binary's SHA-256 and the `strings` command.
   The source of §1.2, §1.3 and every `0034-strings` citation.
 - `docs/measurements/0213b-compound-commands-defeat-grants.md` — 246 denied Bash

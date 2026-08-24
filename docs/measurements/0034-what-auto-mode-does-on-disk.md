@@ -9,7 +9,9 @@ which changed the scheduler's default permission mode from `dontAsk` to `auto`.
 
 It exists as a file because the extract it was originally read from
 (`/tmp/permauto-evidence/claude-2.1.241.strings.txt`) is a session-lived path,
-and an ADR is not. The 44 lines the ADR leans on are pinned here.
+and an ADR is not. The 46 extract lines the ADR leans on are pinned here — 40
+of them as rows of the tables below, the other 6 quoted inline in §B and §G.
+Each carries its string verbatim, which is the part that survives a re-extract.
 
 ## The binary
 
