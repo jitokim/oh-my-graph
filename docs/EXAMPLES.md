@@ -323,10 +323,15 @@ dropped ([SECURITY.md](../SECURITY.md#codex-planned-node-isolation)). The
 load-bearing part of the Claude ceiling is `--setting-sources ""`: your own `~/.claude/settings.json` is loaded as
 another source of permission *rules*, so a standing `Bash(*)` there used to
 match before a planned node's narrower `Bash(git *)` ever mattered. Loading none
-of your settings leaves oh-my-graph's own argv as the only allow-rule source,
-and under `dontAsk` anything unmatched is denied. On top of that, `--tools`
-narrows the node's tool set to what it declared, `--strict-mcp-config` bounds
-MCP, and the previous `--disallowedTools` list is kept as a backstop.
+of your settings leaves oh-my-graph's own argv as the only allow-rule source.
+What an unmatched call then becomes is the permission mode's business: under
+`dontAsk` it was denied outright, and under `auto` — the default since
+[ADR 0034](adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md)
+— it goes to the CLI's own model classifier, which approves or denies it. On top
+of that, `--tools` narrows the node's tool set to what it declared (a tool left
+out does not exist, whatever any classifier thinks), `--strict-mcp-config` bounds
+MCP, and the previous `--disallowedTools` list is kept as a backstop — an
+explicit deny is evaluated before the classifier is consulted at all.
 
 **Measured against a real `claude` 2.1.220, not read off `--help`:** with a
 settings.json granting `Bash(*)` and a node declaring `Bash(git *)`, an

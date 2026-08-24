@@ -80,6 +80,19 @@ func showRun(w io.Writer, runDir, runID string) error {
 	if statusErr == nil {
 		status, spoken = runstatus.Probe(runDir, facts), runstatus.Spoken(facts)
 	}
+	word := statusWord(status, spoken, statusErr)
+	// Whether THIS run is one of the ones still being worked on, in the words
+	// `runs list` uses for the whole corpus and `watch` uses for one run — the
+	// same runstatus.InFlightClause, over a slice of one. The status word alone
+	// leaves it to be inferred from a six-value vocabulary the reader has to
+	// know by heart; "0 in flight" says it. It is empty exactly when the word
+	// is: a directory with no status makes no claim about being alive either,
+	// and it is the one case where saying zero would be a guess rather than an
+	// answer.
+	live := ""
+	if word != "" {
+		live = runstatus.InFlightClause(status)
+	}
 
 	statePath := filepath.Join(runDir, stateFileName)
 	snap, err := runstate.Load(statePath)
@@ -88,8 +101,8 @@ func showRun(w io.Writer, runDir, runID string) error {
 			if statusErr != nil {
 				return fmt.Errorf("read run %q: %w", runID, statusErr)
 			}
-			if word := statusWord(status, spoken, statusErr); word != "" {
-				fmt.Fprintf(w, "Run %s — %s\n", runID, word)
+			if word != "" {
+				fmt.Fprintf(w, "Run %s — %s; %s.\n", runID, word, live)
 			} else {
 				fmt.Fprintf(w, "Run %s\n", runID)
 			}
@@ -118,7 +131,7 @@ func showRun(w io.Writer, runDir, runID string) error {
 		// still a run to print; only its status is missing.
 		fmt.Fprintln(w, runstatus.Unreadable(runID, statusErr))
 	}
-	printRunDetail(w, runID, statusWord(status, spoken, statusErr), showRecords(snap),
+	printRunDetail(w, runID, word, live, showRecords(snap),
 		snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
 			InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
 			OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
@@ -232,9 +245,14 @@ const (
 // already lands on; empty means the derivation could not answer and the header
 // says only what it knows. It is deliberately not a column: it describes the
 // run, and every row below it describes a node.
-func printRunDetail(w io.Writer, runID, status string, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
+//
+// live is runstatus.InFlightClause for that same run and rides the same line
+// for the same reason — one read, not two — and the two arrive together
+// precisely so they cannot disagree: both are computed from the one derived
+// Status in showRun, and live is empty exactly when status is.
+func printRunDetail(w io.Writer, runID, status, live string, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
 	if status != "" {
-		fmt.Fprintf(w, "Run %s — %s, %d node(s)\n", runID, status, len(records))
+		fmt.Fprintf(w, "Run %s — %s, %d node(s); %s.\n", runID, status, len(records), live)
 	} else {
 		fmt.Fprintf(w, "Run %s — %d node(s)\n", runID, len(records))
 	}

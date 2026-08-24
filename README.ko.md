@@ -132,7 +132,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: Implement the change and summarize what you did.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
-    permission_mode: dontAsk
+    permission_mode: dontAsk  # 선택 사항; 선언하지 않으면 `auto`, 이건 더 엄격한 쪽을 요청하는 것
 
   - id: e2e
     depends_on: [dev]
@@ -209,6 +209,18 @@ MCP server를 제외한 뒤 read-only 또는 workspace sandbox를 적용합니�
 rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
 `--accept-loaded-user-config`는 `auto`에서도 그것들을 원한다고 소리 내어
 선언하는 플래그입니다.
+
+그 ceiling 안에서 최근에 바뀐 것이 하나 있고, 계층을 읽기 전에 알아둘 값어치가
+있습니다. `permission_mode`를 선언하지 않은 노드는 이제 `--permission-mode auto`로
+실행됩니다 — 이전에는 `dontAsk`였습니다. 노드의 allow 규칙 중 어느 것과도 매칭되지
+않은 tool 호출이 곧바로 거부되는 대신, CLI 자신의 모델 분류기(classifier)에게
+넘어가 승인 또는 거부됩니다. tool 권한 자체는 움직이지 않았습니다 — 선언한
+`Bash(git *)`는 그대로 전달되고, 명시적 deny는 여전히 분류기보다 먼저 이기며,
+노드의 tool 집합에서 빠진 tool은 여전히 존재하지 않습니다. 더 엄격한 쪽으로
+되돌리려면 노드에 `permission_mode: dontAsk`를 적으면 됩니다. 근거와, 이 결정을
+뒤집게 될 측정치는
+[ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md)에
+있습니다.
 
 계층별 입장과 그 뒤의 모든 측정은 [SECURITY.md](SECURITY.md)에, 나머지 정직한
 빈틈들과 플랫폼 지원 매트릭스(macOS·Linux 지원, WSL first-class, 네이티브

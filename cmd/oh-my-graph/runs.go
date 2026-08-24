@@ -205,6 +205,14 @@ func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
 // to report would render those two cases identically. The one exception is a
 // corpus with nothing in it at all, where "No runs found." already is that
 // statement.
+//
+// HOW MANY RUNS ARE IN FLIGHT is on that same line, and at zero as much as at
+// three. It used to be readable only as an inference from absence — no RUNNING
+// row meant nothing was running, a conclusion equally consistent with a broken
+// filter, a table that failed to render, or a derivation that answered wrong.
+// The number is runstatus.InFlightClause over the rows' own derived statuses
+// (shownStatuses), so this surface reports what runstatus decided rather than
+// what the STATUS column happens to spell.
 func listRunsCountingInFlight(w, warnW io.Writer, root string, showSkipped bool) (int, error) {
 	// A root that does not exist yet reads as no entries at all: "nothing has
 	// ever run here" and "nothing here is listable" are the same answer to the
@@ -243,8 +251,11 @@ func listRunsCountingInFlight(w, warnW io.Writer, root string, showSkipped bool)
 		fmt.Fprintln(w, "No runs found.")
 		// The one place the count line matters most: with every directory
 		// unreadable, "No runs found." on its own says a full run home is empty.
+		// nil, not the statuses of the rows: there are none, and "0 in flight"
+		// is then a statement about a walk that read nothing, which is exactly
+		// what the skipped count beside it says.
 		if skipped.Len() > 0 {
-			fmt.Fprintln(w, skipped.Line(0, showSkippedFlag))
+			fmt.Fprintln(w, skipped.Line(0, nil, showSkippedFlag))
 		}
 		return 0, nil
 	}
@@ -254,7 +265,7 @@ func listRunsCountingInFlight(w, warnW io.Writer, root string, showSkipped bool)
 	// descending string sort is a descending time sort.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].runID > rows[j].runID })
 
-	printRuns(w, rows, skipped.Line(len(rows), showSkippedFlag))
+	printRuns(w, rows, skipped.Line(len(rows), shownStatuses(rows), showSkippedFlag))
 	// The count, off the same Status the row printed. ABANDONED is deliberately
 	// NOT counted: its leg's process is gone, so nothing is working on it, and a
 	// consumer that read the event stream alone would have no way to say so —
@@ -269,6 +280,30 @@ func listRunsCountingInFlight(w, warnW io.Writer, root string, showSkipped bool)
 		}
 	}
 	return inFlight, nil
+}
+
+// shownStatuses is the derived Status of every row the table renders, in row
+// order — the input the coverage line's in-flight clause is counted from. It is
+// a projection and nothing more: each value came from runstatus.Probe in
+// summarizeRun, so the count is over the SHARED derivation rather than over
+// what the STATUS column happens to spell, and `runs list` cannot arrive at a
+// different number than `show` does about the same run.
+//
+// A row that has NOT spoken contributes nothing, for the same reason its STATUS
+// cell says "-" and no hint is printed beneath it (statusCell, printRuns): the
+// derivation is total, so Probe answers for that directory anyway, and letting
+// its default arm into a count would put a run the table declines to classify
+// on one side of the ledger. Nothing is lost by dropping it — a stream that has
+// said nothing has no open leg, so such a row can never be the in-flight one.
+func shownStatuses(rows []runSummary) []runstatus.Status {
+	statuses := make([]runstatus.Status, 0, len(rows))
+	for _, row := range rows {
+		if !row.spoken {
+			continue
+		}
+		statuses = append(statuses, row.status)
+	}
+	return statuses
 }
 
 // summarizeRun builds one run's row from its persisted files. It reuses the
@@ -388,8 +423,9 @@ func statusCell(row runSummary) string {
 
 // printRuns writes the table: a header, one aligned row per run, a footer with
 // the run count and the cost total across every listed run, then coverage — the
-// one line saying how much of the run home this table actually covers, from the
-// shared accumulator (runstatus.Skipped.Line) — and then one recovery hint per
+// one line saying how much of the run home this table actually covers and how
+// many of the runs in it are in flight, from the shared accumulator
+// (runstatus.Skipped.Line) — and then one recovery hint per
 // abandoned run and one resume hint per paused run. Coverage sits directly under
 // the footer and above the hints because it is about the table, and because the
 // hints are unbounded: a reader with forty abandoned runs would otherwise scroll
