@@ -1630,6 +1630,58 @@ func (f *fakeRecorder) pauseRecorded(gateNodeID string) bool {
 	return f.pausedGates[gateNodeID]
 }
 
+// --- permission mode --------------------------------------------------------
+
+// TestScheduler_UndeclaredPermissionModeRunsUnderTheDefault pins what a node
+// that declares nothing is launched with. Almost every node declares nothing,
+// so this constant — not any graph's YAML — is what decides how the CLI settles
+// a tool call no allow rule matched, and the value travels to argv verbatim as
+// `--permission-mode <mode>` (internal/runner/claude_protocol.go, buildArgs,
+// whose own passthrough is pinned in internal/runner/claude_test.go).
+//
+// Asserted as the mode the node DOES run under, never as "not the old one": a
+// negative would keep passing if the resolution broke into some third value.
+func TestScheduler_UndeclaredPermissionModeRunsUnderTheDefault(t *testing.T) {
+	g := mustGraph(t, `
+name: undeclared
+nodes:
+  - { id: only, prompt: only }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"only": pass("s-only", 0)}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("only").PermissionMode; got != graph.PermissionAuto {
+		t.Errorf("a node declaring no permission_mode ran as %q, want %q", got, graph.PermissionAuto)
+	}
+}
+
+// TestScheduler_DeclaredPermissionModeWinsOverTheDefault proves the default is
+// a fallback and nothing more: a node that names a mode is launched with that
+// mode, whatever the default has since become. A table over several modes
+// rather than one case, because a resolution that wrongly read the default
+// would still pass any single case whose mode happened to equal it — and
+// dontAsk is in the table on purpose, since a graph that wants the old
+// behaviour must still be able to ask for it by name.
+func TestScheduler_DeclaredPermissionModeWinsOverTheDefault(t *testing.T) {
+	for _, declared := range []string{graph.PermissionDontAsk, graph.PermissionPlan, graph.PermissionAcceptEdits} {
+		t.Run(declared, func(t *testing.T) {
+			g := mustGraph(t, "name: declared\nnodes:\n  - { id: only, prompt: only, permission_mode: "+declared+" }\n")
+			rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"only": pass("s-only", 0)}}
+			s, h, led := newHarness(t, rec, Options{})
+
+			if err := s.Run(context.Background(), g, h, led); err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+			if got := rec.invocationFor("only").PermissionMode; got != declared {
+				t.Errorf("node declaring %q ran as %q", declared, got)
+			}
+		})
+	}
+}
+
 // --- execution ceiling ------------------------------------------------------
 
 // TestScheduler_ForwardsPerNodeToolPolicy proves the Scheduler routes each

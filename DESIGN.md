@@ -95,8 +95,9 @@ subscription session limit, say) instead of only "exit code 1".
 - permission modes are a **closed, load-validated set** — the `claude` CLI's own
   `--permission-mode` choices, measured from `claude --help` (claude 2.1.221,
   2026-08-05): `acceptEdits`, `auto`, `bypassPermissions`, `dontAsk`, `manual`,
-  `plan`. `dontAsk` is the unattended default the Scheduler substitutes when a
-  node declares none; `plan` is read-only; `bypassPermissions` is the loud
+  `plan`. `auto` is the unattended default the Scheduler substitutes when a
+  node declares none (`schedule.DefaultPermissionMode`; it was `dontAsk` before
+  ADR 0034); `plan` is read-only; `bypassPermissions` is the loud
   opt-in below. Anything else is a load-time `GraphValidationError` naming the
   node and listing the set, like an unknown `retry.on` cause — the value is
   passed through verbatim to argv, so an unvalidated typo (`dontask`) used to
@@ -105,9 +106,16 @@ subscription session limit, say) instead of only "exit code 1".
   future `claude` adds is refused until this list enumerates it.
 - **The permission model is rules + mode, and the rules come from more places
   than the argv.** A tool call is matched against every loaded permission rule;
-  if nothing matches, the call resolves to *ask*, and the mode decides what an
-  unanswerable ask becomes — under `dontAsk` (our unattended default) it becomes
-  a **deny**. So the CLI is already default-deny for us. The reason
+  if nothing matches, the call resolves to *ask*, and the mode decides what
+  happens next. Under `dontAsk` an unanswerable ask becomes a **deny** — the CLI
+  is default-deny. Under `auto`, our unattended default since ADR 0034, the same
+  call is put to the CLI's own model classifier, which approves or denies it:
+  **default-classifier, not default-deny.** Neither mode prompts, because a node
+  is a headless subprocess with no TTY, and claude 2.1.241 carries a denial
+  reason for that case rather than code that waits
+  (`docs/measurements/0034-what-auto-mode-does-on-disk.md` §B). An explicit deny
+  rule is evaluated ahead of the classifier and is unaffected by the mode. The
+  reason
   `--allowedTools` still cannot bound a node is not the flag: it is that the
   user's own `~/.claude/settings.json` is loaded as another rule source, and a
   standing `Bash(*)` grant there matches first. `--disallowedTools` subtracts
@@ -199,7 +207,7 @@ Node schema:
     Run make local PORT=8080 and report PASS or FAIL.
   cwd: "{{ inputs.repo }}"
   allowed_tools: [Read, "Bash(make *)", "Bash(git *)"]
-  permission_mode: dontAsk
+  permission_mode: dontAsk    # optional: undeclared is `auto` (schedule.DefaultPermissionMode) — this asks for the stricter one
   agent: code-reviewer        # optional (v1.1): run as this Claude Code subagent — see "Node-as-subagent"
   worktree: lane              # optional: run in a managed git worktree shared by every node naming it — see "Worktree isolation"
   budget_usd: 0.50            # per-node cost cap: claude aborts mid-run (--max-budget-usd) + post-hoc FAIL (see Execution engine)
@@ -1560,10 +1568,18 @@ incompatible snapshot is refused rather than misread:
   resume does not silently depend on the YAML not having been edited. `auto`
   already writes `graph.json`; `run` must now snapshot the same normalized form.
 - **the run's inputs and the flags that change meaning**: `--input` bindings,
-  `continue_on_fail`, and — critically — the per-node tool policies for an auto
+  `continue_on_fail`, `default_permission_mode`, and — critically — the per-node
+  tool policies for an auto
   run. Resuming a planned graph without its ceiling would silently drop the
   entire Layer-1/2 guard; the snapshot carries it for the same reason
   `executePlan` takes a whole `Plan` instead of two arguments.
+  `default_permission_mode` is there for the same class of reason as
+  `continue_on_fail`: a node declaring no mode falls back to whatever the binary's
+  default is, so without it a run launched under one default would silently
+  resume under another after an upgrade. **Absent means `dontAsk`** — every
+  snapshot written before ADR 0034 ran that mode — and a resumed leg writes the
+  resolved value back, so the question is open exactly once per run. Optional and
+  additive: the schema stays at 3.
 - **per-node completion records**: verdict, **session id**, cost, duration,
   artifact path. The session id is the one thing resume needs that today exists
   only in `Handoff.sessions` in memory — without it a `handoff: session` child
@@ -2437,7 +2453,7 @@ type ToolPolicy struct {
 |---|---|---|
 | 0 declaration | `plannedToolAllowlist`, plan-time rejection | a plan asking for `Bash(*)` |
 | 1 **isolation** | `--setting-sources ""` (nil, flag omitted, under `--accept-loaded-user-config`) | the user's standing grants; settings hooks |
-| 2 grant | `--allowedTools "Read,Bash(git *)"` + `dontAsk` default-deny | **scoped Bash** |
+| 2 grant | `--allowedTools "Read,Bash(git *)"` — the allow rules themselves | **scoped Bash** |
 | 3 narrowing | `--tools "<bare names declared>"` | tools the model can even attempt |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` (false, flag omitted, under the same opt-in) | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` (PR #5's list, retained) | anything the above missed |
@@ -2445,6 +2461,17 @@ type ToolPolicy struct {
 The table is the default — the run that types nothing. Layers 1 and 4 are the
 two an operator may decline together, at launch, and nothing else in it moves;
 "The operator's opt-in" below is the whole of that difference.
+
+**The permission mode is a separate axis from the table, and ADR 0034 moved it.**
+The default is now `auto` where it was `dontAsk`, and that changes exactly one
+layer's reach: layers 0, 1, 3, 4 and 5 bind precisely as before, layer 2's argv
+is byte-identical, and what moved is the disposition of the calls that argv does
+NOT name — from a categorical deny to a question put to the CLI's own model
+classifier. **Default-deny became default-classifier, at layer 2 and nowhere
+else.** Two layers gain weight rather than losing it: layer 3, because `--tools`
+removes a tool outright and leaves the classifier nothing to adjudicate, and
+layer 5, because an explicit deny is evaluated ahead of the classifier and is
+now the only categorical refusal in the stack.
 
 `PluginDirs` is the sixth field and **not** a sixth layer: it ADDS definitions —
 a staged skill corpus (ADR 0017) or the one agent a node was mapped onto
@@ -2468,9 +2495,15 @@ still loaded and still cannot be escaped — nor can they be escaped by omitting
 the flag, which is why the opt-in below can widen everything it widens and still
 not reach a managed policy. Combined with `dontAsk` — under which
 an unmatched call resolves to *ask* and an unanswerable ask becomes a **deny** —
-`Bash(git *)` means *git and nothing else*. **Measured, not inferred** (E1): the
+`Bash(git *)` meant *git and nothing else*. **Measured, not inferred** (E1): the
 identical node declaration ran an out-of-scope `touch` without Layer 1 and had
-it denied with Layer 1, while in-scope `git` kept working. The gap "a node
+it denied with Layer 1, while in-scope `git` kept working. **E1 ran under
+`dontAsk`, and only one of its halves depends on that.** The load-bearing half is
+Layer 1's: isolation is what stops the user's standing `Bash(*)` from matching
+before the node's own narrower grant, and that is true under any mode. The
+*denial* half is the mode's, so under today's `auto` default the same
+out-of-scope `touch` reaches the classifier instead of being refused outright,
+and whether it survives that is unmeasured. The gap "a node
 declaring a scoped `Bash(...)` keeps the whole `Bash` tool" is closed for
 planned nodes — **including the agent-mapped ones, since 2026-08-12.** Those
 used to drop Layer 1 to `nil` so `--agent` could resolve (E2), and for them it
@@ -2907,7 +2940,7 @@ credentials, never proxies auth, never runs as a shared service. Scrubs
 ANTHROPIC_API_KEY/AUTH_TOKEN plus OPENAI_API_KEY/CODEX_API_KEY from every child
 (one list, no runtime branch; unit-tested). Never --bare, never an Agent SDK. Least privilege per node (allowed_tools + permission_mode); bypassPermissions
 opt-in per node with a loud warning, never a default. For auto-planned graphs
-(untrusted LLM output run unattended under `dontAsk`), least privilege is not
+(untrusted LLM output run unattended under `auto`, ADR 0034), least privilege is not
 just a prompt convention and not just a declaration check:
 `coordinator.validatePlannedNodes` rejects a planned node whose `allowed_tools`
 is empty or names a tool outside the fixed allowlist, or that sets `cwd`,
@@ -2964,7 +2997,13 @@ on documentation.
   `--setting-sources ""` = "load none of the user's settings files".
 - **V2.** Under `dontAsk`, a tool call whose rule evaluation lands on *ask* is
   converted to `{behavior: "deny", decisionReason: {type: "mode", mode:
-  "dontAsk"}}`. The CLI is already default-deny for our unattended nodes.
+  "dontAsk"}}` — the CLI is default-deny under that mode. **This reading stands
+  and no longer describes the default.** Since ADR 0034 an undeclared node runs
+  `auto`, where the same call reaches a model classifier that approves or denies
+  it; an explicit deny rule is still evaluated first, and neither mode prompts a
+  node that has no TTY. Read out of claude 2.1.241 rather than 2.1.220, and
+  recorded separately in
+  `docs/measurements/0034-what-auto-mode-does-on-disk.md`.
 - **V3.** `--tools` feeds a distinct permission-rule source labelled
   "CLI tool narrowing", i.e. it narrows the tool set rather than adding an allow.
 - **V4.** An enterprise `allowManagedPermissionRulesOnly` policy causes

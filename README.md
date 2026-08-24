@@ -133,7 +133,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: Implement the change and summarize what you did.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
-    permission_mode: dontAsk
+    permission_mode: dontAsk  # optional; undeclared is `auto`, this asks for stricter
 
   - id: e2e
     depends_on: [dev]
@@ -210,6 +210,18 @@ directory you are willing to have modified. Both are scoped to planned nodes:
 a hand-written graph you launch with `run` keeps your user config, project
 rules/AGENTS files, hooks and MCP servers, and `--accept-loaded-user-config`
 states out loud that you want them under `auto` too.
+
+One thing inside that ceiling changed recently and is worth knowing before you
+read the layers. A node that declares no `permission_mode` runs under
+`--permission-mode auto`, where it used to run `dontAsk`: a tool call matching
+none of the node's allow rules is now put to the CLI's own model classifier,
+which approves or denies it, rather than being denied outright. The tool grants
+themselves did not move — a declared `Bash(git *)` is still exactly what is
+passed, an explicit deny still wins ahead of the classifier, and a tool left out
+of the node's set still does not exist. Write `permission_mode: dontAsk` on a
+node to get the stricter disposition back. The reasoning, and the measurement
+that would reverse it, are in
+[ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md).
 
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support

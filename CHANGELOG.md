@@ -12,6 +12,36 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **The default permission mode is now `auto`, where it was `dontAsk`.** A node
+  that declares no `permission_mode` used to run `claude --permission-mode
+  dontAsk`, under which a tool call matching none of its allow rules resolved to
+  an *ask* that a headless subprocess could never answer, and therefore to a
+  **deny**. It now runs `--permission-mode auto`, under which the same call goes
+  to the CLI's own model classifier, which approves or denies it on the spot.
+  **Default-deny became default-classifier.** The decision, its five sub-decisions
+  and the count that would revert it are
+  [ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md).
+
+  Nothing else about the ceiling moved. Layers 0, 1, 3, 4 and 5 bind exactly as
+  they did — a deny rule is still evaluated ahead of the classifier, and `--tools`
+  still removes a tool rather than gating it — and layer 2's `--allowedTools`
+  argv is byte-identical. What changed is the disposition of everything that argv
+  does *not* name. `bypassPermissions` is still refused for a planned node and
+  still prints a loud per-node warning for a hand-written one.
+
+  **Claude runtime only.** A Codex run's argv does not change by one byte:
+  `codex exec` has no `--permission-mode`, and both `auto` and `dontAsk` map to
+  the same `--sandbox workspace-write`.
+
+  A hand-written `run` gets the same new default as a planned `auto`, argued in
+  ADR 0034 §2.4 rather than assumed. A graph that wants the old behaviour asks
+  for it by name — `permission_mode: dontAsk` — per node, as before.
+
+  **A run now keeps the mode it was launched under.** `state.json` gains an
+  optional `default_permission_mode`, written at launch and read on resume;
+  **absent means `dontAsk`**, so a run started before this change resumes under
+  the mode it really ran rather than silently adopting the new default. The
+  field is additive and the snapshot schema stays at 3.
 - **`runs list`, `show` and `watch` now state how many runs are IN FLIGHT,
   including when the answer is zero.** Asked how many graphs were running, an
   operator could only run `oh-my-graph runs list | grep -c RUNNING` and read
