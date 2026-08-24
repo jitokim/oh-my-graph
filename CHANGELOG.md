@@ -12,6 +12,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **The spawn retry now waits long enough to be useful.** #214 gave the
+  assessor a bounded retry for a CLI that never started, and #226 extended it to
+  the planner. Both shipped with a **3-attempt, 300ms** bound — a 600ms window —
+  and then two more lanes died on the same failure *after* the retry was in
+  place:
+
+  ```
+  assessor run: claude run: spawn failed: exec: "claude": executable file not found in $PATH
+  planner run:  claude run: spawn failed: exec: "claude": executable file not found in $PATH
+  ```
+
+  Four occurrences in one day, two of them post-fix, say the bound was **correct
+  in shape and useless in size**: 600ms is less than a package manager takes to
+  relink a binary. Widened to **5 attempts, 2s apart** — eight seconds of
+  patience, which buys the common case. A machine that genuinely has no CLI
+  installed still fails, eight seconds later, saying exactly what it said before.
+
+  Nothing else changed: only a spawn that never happened is retried. A refused
+  reply, a non-zero exit, a timeout and a cancelled context still stop on the
+  first answer.
+
+### Changed
+
 - **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
   merely-quoted placeholder is resolved too, and how to quote one.** The two
   reasons were written as if the graph had meant the token — the artifact one
