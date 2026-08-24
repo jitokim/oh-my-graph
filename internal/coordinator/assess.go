@@ -195,17 +195,28 @@ func assessmentFailure(reason string, outcome runner.NodeOutcome) *AssessError {
 // claim is measured, not assumed: E8 (assess_manual_test.go, `-tags manual`;
 // recorded in ADR 0011's Measurement outcome, 2026-08-02) fed this stance a
 // read-this-file lure and the file's content never reached the verdict.
-// assessorSpawnAttempts bounds how many times the assessor's subprocess may be
-// launched. Small on purpose: this covers a binary that is momentarily absent —
-// the case that named it was an npm update replacing `claude` on PATH mid-run
-// (#214) — not a machine that has no CLI installed, which fails all three just
-// as fast and reports the same thing.
-const assessorSpawnAttempts = 3
+// assessorSpawnAttempts bounds how many times a coordinator call's subprocess
+// may be launched. It covers a binary that is momentarily absent — an npm update
+// replacing `claude` on PATH mid-run (#214) — not a machine with no CLI
+// installed, which exhausts the attempts just as fast and reports the same thing.
+//
+// Widened from 3×300ms to 5×2s on 2026-08-22, because the first window was
+// shorter than the thing it was covering. Four occurrences in one day, two of
+// them AFTER the retry shipped:
+//
+//	assessor run: claude run: spawn failed: exec: "claude": executable file not found in $PATH
+//	planner run:  claude run: spawn failed: exec: "claude": executable file not found in $PATH
+//
+// 600ms is less than an npm install takes to relink a binary, so the retry was
+// correct in shape and useless in size. 8s of total patience buys the common
+// case; a machine that genuinely lacks the CLI still fails, just eight seconds
+// later, and says the same thing it said before.
+const assessorSpawnAttempts = 5
 
-// assessorSpawnRetryDelay separates the attempts. Short, because the failure it
-// covers is a file being replaced rather than a service being down; long enough
-// that three attempts do not all land inside one `mv`.
-var assessorSpawnRetryDelay = 300 * time.Millisecond
+// assessorSpawnRetryDelay separates the attempts. Long enough that the attempts
+// do not all land inside one package manager's relink — the failure this covers
+// is a file being replaced, and the replacement is not instantaneous.
+var assessorSpawnRetryDelay = 2 * time.Second
 
 // runAssessorWithSpawnRetry launches a coordinator call, retrying ONLY when the
 // CLI never started.
