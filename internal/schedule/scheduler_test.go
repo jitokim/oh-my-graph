@@ -1715,6 +1715,67 @@ nodes:
 	}
 }
 
+// TestScheduler_ForwardsTheRunsModelToEveryNode proves the operator's model
+// choice reaches every node's invocation, unaltered — the run-wide answer to
+// "which model does the thinking", carried beside the per-node ceiling and
+// never merged into it.
+//
+// Fan-out again, so two goroutines read the same value under -race.
+func TestScheduler_ForwardsTheRunsModelToEveryNode(t *testing.T) {
+	g := mustGraph(t, `
+name: planned
+nodes:
+  - { id: root, prompt: root, allowed_tools: [Read] }
+  - { id: scan, prompt: scan, depends_on: [root], allowed_tools: [Read] }
+  - { id: edit, prompt: edit, depends_on: [root], allowed_tools: [Edit] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{
+		"root": pass("s-root", 0), "scan": pass("s-scan", 0), "edit": pass("s-edit", 0),
+	}}
+	none := ""
+	s, h, led := newHarness(t, rec, Options{
+		Model: "opus[1m]",
+		ToolPolicies: map[string]runner.ToolPolicy{
+			"root": {AllowedTools: []string{"Read"}, SettingSources: &none},
+			"scan": {AllowedTools: []string{"Read"}, SettingSources: &none},
+			"edit": {AllowedTools: []string{"Edit"}, SettingSources: &none},
+		},
+	})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for _, id := range []string{"root", "scan", "edit"} {
+		if got := rec.invocationFor(id).Model; got != "opus[1m]" {
+			t.Errorf("node %s ran with Model %q, want the run's own %q", id, got, "opus[1m]")
+		}
+		// The ceiling is still the ceiling: a model rode along, nothing else did.
+		if src := rec.invocationFor(id).Policy.SettingSources; src == nil || *src != "" {
+			t.Errorf("node %s lost layer 1 while gaining a model: %v", id, src)
+		}
+	}
+}
+
+// A run that set no model hands every node an empty one, so the argv keeps the
+// CLI's own default. This is the hand-written `run` path, which needs no model
+// from us: its nodes load the operator's settings themselves.
+func TestScheduler_NoRunModelLeavesEveryNodeOnTheDefault(t *testing.T) {
+	g := mustGraph(t, `
+name: handwritten
+nodes:
+  - { id: only, prompt: only, allowed_tools: [Read] }
+`)
+	rec := &recordingRunner{outcomes: map[string]runner.NodeOutcome{"only": pass("s-only", 0)}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := rec.invocationFor("only").Model; got != "" {
+		t.Errorf("hand-written node was handed Model %q, want none", got)
+	}
+}
+
 // TestScheduler_MissingPolicyUnderAnImposedCeilingFailsClosed pins the
 // direction this fails in. When a ceiling IS imposed (a non-nil policy map) but
 // some node has no entry, the tempting behaviour — fall back to the node's own

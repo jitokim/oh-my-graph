@@ -23,6 +23,14 @@ type commonRunFlags struct {
 	noWeb               bool
 	planningCostUnknown bool
 	planningUsage       runner.TokenUsage
+	// plannedModel is the model this run's planned nodes answer with — the
+	// operator's own choice, read from one key of their settings file at plan
+	// time (coordinator.Plan.Model, ADR 0034). Not a flag, and deliberately not
+	// registered as one: there is exactly one surface for the choice, the
+	// settings file, so a run cannot disagree with it (§6c). Empty for `run`,
+	// which executes a hand-written graph whose nodes load those settings
+	// themselves.
+	plannedModel string
 	// buildEvidence is the launch-time build-evidence question and its answer
 	// (ADR 0030 §2.5a), for the snapshot to record and the plan screen to state.
 	// Not a flag: it is what the gate concluded from the flags plus the

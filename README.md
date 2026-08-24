@@ -211,6 +211,16 @@ a hand-written graph you launch with `run` keeps your user config, project
 rules/AGENTS files, hooks and MCP servers, and `--accept-loaded-user-config`
 states out loud that you want them under `auto` too.
 
+One preference crosses that line by name, and only that one: the `model` key of
+your `~/.claude/settings.json` is read on its own and passed to a planned Claude
+node as `--model <value>`, so it answers with the model **you** chose instead of
+whatever the CLI falls back to when its settings are withheld (measured: 181 of
+187 planned nodes ran a model nobody selected —
+[ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+The node's capability ceiling is unchanged by it: a model name grants no tool,
+loads no file and runs no hook. Nothing else in that file is read, and under
+`--runtime codex` nothing is.
+
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support
 matrix (macOS and Linux supported, WSL first-class, native Windows best-effort)

@@ -10,6 +10,33 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A planned node answers with the model you chose.** `--setting-sources ""`
+  withholds `~/.claude/settings.json` from a planned node, and your `model` key
+  lives in it — so 181 of the 187 planned nodes measured in this repository's
+  corpus ran a model nobody selected, while 267 hand-written nodes on the same
+  machine tracked the settings file
+  ([docs/measurements/0034-planned-node-model.md](docs/measurements/0034-planned-node-model.md)).
+  oh-my-graph now reads **that one key** at plan time and passes it verbatim as
+  `--model <value>` (`internal/usermodel`,
+  [ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+
+  No allowlist: an unknown name reaches the CLI and fails the node with the
+  provider's own message, rather than silently becoming a different model. No
+  flag and no new configuration: the settings file is the single surface. No
+  `--model` for an agent-mapped node — its definition declares one, and 6 of
+  those 187 nodes rely on that. The planner and the assessor keep the CLI
+  default: the engine parses their replies, so their model is a compatibility
+  surface, not a preference. A settings file that cannot be read costs one
+  stderr line per run and never the run.
+
+  The capability ceiling is unchanged. A model name grants no tool, loads no
+  file and runs no hook; exactly one preference crosses layer 1, by name.
+  Claude only — under `--runtime codex` a planned node still takes the CLI's
+  default ([#245](https://github.com/jitokim/oh-my-graph/issues/245),
+  [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+
 ### Changed
 
 - **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a

@@ -188,6 +188,21 @@ has no open issue behind it.
     file the sandbox can READ (it restricts writes and network, not reads), so
     `network_access=true` probably does fix `gh` there. That case is
     **unmeasured**; the macOS result above is the only one this repo has run.
+- **Model inheritance is Claude-only.** Under `--runtime codex`, a planned node
+  runs the model `codex` itself defaults to; `--ignore-user-config` withholds
+  `~/.codex/config.toml`'s `model` key, and oh-my-graph does not read it. A
+  Claude planned node does inherit the operator's choice — one key of
+  `~/.claude/settings.json`, passed as `--model`
+  ([ADR 0034](adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+  The Codex mechanism exists (`codex exec` takes a model flag, and
+  `-c model="..."` overrides the same key) and is not used yet for one reason:
+  **measured, no codex node's model is observable in this repository's corpus**
+  — a codex thread writes no `~/.claude/projects` transcript — so it would be a
+  fix for a population nobody has measured
+  ([docs/measurements/0034-planned-node-model.md](measurements/0034-planned-node-model.md)).
+  The mechanism is written down in
+  [#245](https://github.com/jitokim/oh-my-graph/issues/245) so the next person
+  does not re-derive it.
 - **ADR 0009's session-limit pause does not exist on Codex.** A Claude node
   that hits a plan session limit becomes a resumable pause (exit 2). The
   matcher is Claude's own prose and `SessionLimited` is set only for the Claude

@@ -24,6 +24,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
+	"github.com/jitokim/oh-my-graph/internal/usermodel"
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
@@ -550,6 +551,28 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		noteLoadedUserConfig(os.Stdout, runtime)
 	}
 
+	// A resumed PLANNED leg reads the operator's model choice again (ADR 0034).
+	// Its nodes are isolated exactly as the first leg's were, so without this
+	// they would answer with the CLI's default — the same defect, arriving one
+	// leg late. The discriminator is the one `resume` already uses to tell a
+	// planned graph from a hand-written one: a non-empty tool ceiling.
+	//
+	// Re-READ rather than persisted, and that is the point: the settings file is
+	// the single surface for this choice (there is no flag — §6c), so a leg
+	// running now honours the answer the operator would give now, exactly as a
+	// fresh run started now would. Nothing here can widen anything: the value
+	// reaches argv as `--model`, and every ceiling layer this leg runs under was
+	// rehydrated above from the snapshot.
+	var plannedModel string
+	if runtime == runner.RuntimeClaude && len(policies) > 0 {
+		model, err := usermodel.Read(usermodel.DefaultPath())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not read your model preference (%v).\n"+
+				"this leg's nodes will run whatever model your CLI defaults to.\n", err)
+		}
+		plannedModel = model
+	}
+
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:               runID,
 		Runtime:             snap.Runtime,
@@ -626,6 +649,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Verifier:       verify.NewShellVerifier(),
 		Worktrees:      worktrees,
 		ToolPolicies:   policies,
+		Model:          plannedModel,
 		// An injected evidence command runs one at a time on a resumed leg for
 		// the same load-bearing reason it does on a fresh one (ADR 0016 §2): two
 		// concurrent builds of one directory can each fail on the other's
