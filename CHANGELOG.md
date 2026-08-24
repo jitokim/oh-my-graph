@@ -12,6 +12,67 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **`runs list`, `show` and `watch` now state how many runs are IN FLIGHT,
+  including when the answer is zero.** Asked how many graphs were running, an
+  operator could only run `oh-my-graph runs list | grep -c RUNNING` and read
+  `0` — an inference from ABSENCE, indistinguishable from a table that failed
+  to render, a mis-filter, or broken status logic. The summary line counted
+  what was HIDDEN and never counted what was ALIVE.
+
+  Before, on a run home with one settled run and nothing running:
+
+  ```
+  1 of 1 run(s) shown; 0 skipped.
+  ```
+
+  After, the same corpus:
+
+  ```
+  1 of 1 run(s) shown; 0 in flight; 0 skipped.
+  ```
+
+  With two live runs, one abandoned one and one directory this build cannot
+  read, before:
+
+  ```
+  3 of 4 run(s) shown; 1 skipped (1 written by an incompatible snapshot schema) — pass --show-skipped to name them.
+  ```
+
+  After:
+
+  ```
+  3 of 4 run(s) shown; 2 in flight, 1 abandoned; 1 skipped (1 written by an incompatible snapshot schema) — pass --show-skipped to name them.
+  ```
+
+  It is the SAME line, not a second one: one line is one read, while a second
+  line can be scrolled past, cropped by a pager, or emitted only
+  conditionally — the exact failure mode this change exists to kill. An
+  abandoned run is named in the same sentence when there is one, and is never
+  added into the in-flight number: a reader asking "is anything running" is
+  answered wrongly by a count that folds in dead runs, and badly served by
+  silence about a run whose process died holding a lock.
+
+  The two single-run surfaces say the same sentence, so an operator learns one
+  wording rather than three. `show`, before and after:
+
+  ```
+  Run run-done — PASS, 1 node(s)
+  Run run-done — PASS, 1 node(s); 0 in flight.
+  ```
+
+  `watch`, before and after:
+
+  ```
+  run run-done is PASS
+  run run-done is PASS; 0 in flight.
+  ```
+
+  The count is `runstatus.InFlightCount` over statuses the surfaces already
+  derived, so nothing re-decides what in-flight means (ADR 0015 §4's open leg
+  AND held lock stays the one rule, in `runstatus.Derive`). The machine-readable
+  surfaces are unchanged: `/api/cards`, `/api/graph` and `events.jsonl` keep
+  their shapes and gain no prose — a consumer counts live runs itself from the
+  state token, as the dashboard's own page already does.
 - **The spawn retry now waits long enough to be useful.** #214 gave the
   assessor a bounded retry for a CLI that never started, and #226 extended it to
   the planner. Both shipped with a **3-attempt, 300ms** bound — a 600ms window —
