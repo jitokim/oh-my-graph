@@ -47,7 +47,7 @@ read that persisted runtime; passing a different explicit value is an error.
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N`, `--no-web` and `--no-skill-activation`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
-| `runs list [--show-skipped]` | List runs, newest first: graph name, node count, cost, token counts, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. Under the total, one line of coverage — how many runs are shown out of how many directories were found, and how many were skipped under which reason — printed whether or not anything was skipped, so a complete table says it is complete. A run directory this build cannot READ (a corrupt file, or a snapshot from an incompatible schema) is skipped rather than listed, because there is nothing honest to put in its cells; `--show-skipped` names each one and quotes the reader's own reason, one line each on stderr. Read-only. |
+| `runs list [--show-skipped] [--exit-in-flight]` | List runs, newest first: graph name, node count, cost, token counts, status (`PLANNING`, `RUNNING`, `PASS`, `FAIL`, `PAUSED`, `ABANDONED`), plus a total. `--exit-in-flight` gives the same walk's answer to a **machine**, on the exit code and not in the table: **4** while any listed run is `PLANNING` or `RUNNING`, **0** when none is, **1** if the corpus could not be read — see [waiting for everything to settle](#waiting-for-everything-to-settle) below. Under the total, one line of coverage — how many runs are shown out of how many directories were found, and how many were skipped under which reason — printed whether or not anything was skipped, so a complete table says it is complete. A run directory this build cannot READ (a corrupt file, or a snapshot from an incompatible schema) is skipped rather than listed, because there is nothing honest to put in its cells; `--show-skipped` names each one and quotes the reader's own reason, one line each on stderr. Read-only. |
 | `show <run-id>` | Print one run's status and its per-node ledger (session, cost, verdict, duration) with the total. Where the status cannot be derived, the run is named above the table in the same words `runs list --show-skipped` uses for it — the table still prints, because the snapshot loaded. Read-only. |
 | `watch <run-id>` | Tail a run's event stream as plain text, `tail -f` style. A run whose status cannot be derived (typically a snapshot from an incompatible schema) is named on stderr in those same words instead of the status line, and the tail runs on. Read-only. |
 | `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
@@ -691,6 +691,43 @@ with session persistence on: a claude node is an ordinary session in
 `~/.claude/projects` from the moment it starts, and a Codex node's `codex exec`
 thread id — the `SESSION` column, and `session_id` in both files — is what
 `codex exec resume` takes.
+
+### Waiting for everything to settle
+
+A human reads the table above. A **script** waiting for a whole run home to go
+quiet reads the exit code of the same command instead, under
+`--exit-in-flight`:
+
+```sh
+until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done
+```
+
+| exit | meaning | what a loop should do |
+|---|---|---|
+| `0` | nothing listed is in flight — every run read as `PASS`, `FAIL`, `PAUSED` or `ABANDONED` | stop waiting |
+| `4` | at least one listed run is `PLANNING` or `RUNNING` | keep waiting |
+| `1` | the corpus could not be read | keep waiting — never declare "done" over something you could not see |
+
+The count is the same `runstatus` derivation the `STATUS` column prints, so the
+two cannot disagree, and `ABANDONED` deliberately counts as **not** in flight: a
+run whose process died is nothing anyone is working on. That is the half of the
+rule a consumer reading `events.jsonl` on its own cannot compute — a dead leg's
+`run_started` never gets its `run_finished`, so tailing the stream alone would
+wait on a corpse forever ([docs/RUN-FEED.md](RUN-FEED.md#liveness--resumelock-adr-0015)
+says as much to any consumer that cannot `flock`). Letting the CLI answer is how
+a shell gets the liveness half without reimplementing it.
+
+Two honest limits. The answer is about the runs **this walk could read**: a
+directory skipped as unreadable appears only in the coverage line, and one that
+has taken its lock but not yet written its first event has no status at all yet.
+Both are the shared rule's own limits, not new ones. And nothing here changes
+the default — plain `runs list` exits 0 as it always has, so no existing
+`set -e` script behaves differently.
+
+For a **single** run whose id you already know, `watch <run-id>` remains the
+narrower answer: it returns when that run's `run_finished` event lands. It
+cannot see a run that starts after it, and it does not distinguish the outcome
+by exit code; `--exit-in-flight` is the whole-corpus form.
 
 ## Ambient chat (prototype)
 
