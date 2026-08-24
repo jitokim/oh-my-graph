@@ -45,6 +45,7 @@ node's own `timeout:` or the runner's default.
 A Claude node is one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
+  [ --model <value> ] \
   [ --max-budget-usd <amount> ] \
   [ --setting-sources "" ] [ --plugin-dir <dir> ]… [ --agent <name> ] \
   [ --allowedTools "<comma,joined>" ] \
@@ -56,8 +57,12 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
 This is emission order, not just a flag inventory: `runner.buildArgs` appends
 in exactly this sequence and `claude_test.go`'s `want` argv pins it
 element-by-element, so a reordering is a test failure, not a style choice.
-Note where `--max-budget-usd` sits — immediately after `--permission-mode`,
-*before* the ceiling flags, because it is not one of them. Note too where
+Note where `--model` and `--max-budget-usd` sit — immediately after
+`--permission-mode`, *before* the ceiling flags, because neither is one of
+them. `--model` carries the operator's own model choice, read from ONE key of
+their settings file at plan time (`internal/usermodel`, ADR 0034) and passed
+verbatim; it is omitted when they expressed none, and omitted for an
+agent-mapped node, whose definition declares its own model. Note too where
 `--plugin-dir` sits — after isolation and before the grant, one flag per
 `ToolPolicy.PluginDirs` entry in order, because it restores instruction material
 layer 1 withheld before any layer decides what may be done with it. It is what

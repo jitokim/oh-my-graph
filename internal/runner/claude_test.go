@@ -37,6 +37,10 @@ func noSettings() *string {
 // Pinning them together in the canonical argv test would enshrine a
 // configuration that can never occur. `--agent`'s own position is pinned by
 // TestBuildCmd_AgentArgv against the shape that does occur.
+//
+// It DOES set Model, because the operator's model choice is the ordinary state
+// of a planned node: the flag's position — after --permission-mode, before
+// --max-budget-usd — is pinned here along with every other.
 func TestBuildCmd_Argv(t *testing.T) {
 	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
@@ -44,6 +48,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		Cwd:            "/tmp/omg",
 		PermissionMode: "acceptEdits",
 		ResumeSession:  "sess-123",
+		Model:          "opus[1m]",
 		BudgetUSD:      0.50,
 		Policy: ToolPolicy{
 			AllowedTools:    []string{"Read", "Bash(make *)"},
@@ -59,6 +64,7 @@ func TestBuildCmd_Argv(t *testing.T) {
 		"-p", testPrompt,
 		"--output-format", "json",
 		"--permission-mode", "acceptEdits",
+		"--model", "opus[1m]",
 		"--max-budget-usd", "0.5",
 		"--setting-sources", "",
 		"--allowedTools", "Read,Bash(make *)",
@@ -182,6 +188,145 @@ func TestBuildCmd_AgentArgv(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_ModelIsPassedThroughVerbatim proves the operator's own string
+// reaches the CLI unaltered — no normalisation, no case-folding, no stripping
+// of a "[1m]" context-window suffix, and no allowlist standing between a name
+// and the CLI that owns its vocabulary. An allowlist that rejected a value the
+// operator really chose, and fell back to the default, would BE the defect this
+// flag repairs.
+//
+// Each case asserts the flag is PRESENT with that exact value, so deleting the
+// emission fails every one of them.
+func TestBuildCmd_ModelIsPassedThroughVerbatim(t *testing.T) {
+	for _, model := range []string{
+		"opus[1m]",           // the operator's own value on the machine this was measured on
+		"claude-fable-5",     // a full model name
+		"sonnet",             // an alias
+		"MODEL-nobody-ships", // a name this build has never heard of: still passed on, so the CLI can reject it loudly
+	} {
+		r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
+		cmd := r.buildCmd(context.Background(), NodeInvocation{
+			Prompt:         testPrompt,
+			PermissionMode: "dontAsk",
+			Model:          model,
+			Policy:         ToolPolicy{AllowedTools: []string{"Read"}, SettingSources: noSettings()},
+		})
+
+		if !hasFlagValue(cmd.Args, "--model", model) {
+			t.Errorf("argv carries no `--model %s`: %q", model, cmd.Args)
+		}
+	}
+}
+
+// TestBuildCmd_PlannedNodeModelArgv pins the whole argv of the shape this
+// change actually ships: an isolated planned node carrying the operator's
+// model. The comparison is whole rather than a contains-check so a --model
+// added while a ceiling flag quietly vanished fails here.
+func TestBuildCmd_PlannedNodeModelArgv(t *testing.T) {
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Model:          "opus[1m]",
+		Policy: ToolPolicy{
+			AllowedTools:    []string{"Read", "Bash(git *)"},
+			Tools:           []string{"Read", "Bash"},
+			SettingSources:  noSettings(),
+			StrictMCPConfig: true,
+			DisallowedTools: []string{"Write"},
+		},
+	})
+
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--model", "opus[1m]",
+		"--setting-sources", "",
+		"--allowedTools", "Read,Bash(git *)",
+		"--tools", "Read,Bash",
+		"--strict-mcp-config",
+		"--disallowedTools", "Write",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// A node that expressed no model choice gets no flag at all, and its argv is
+// byte-identical to the one it had before models were inherited — the CLI's own
+// default has to stay reachable, because it is what every machine with no
+// settings key still runs on.
+func TestBuildCmd_NoModelEmitsNoFlag(t *testing.T) {
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}, SettingSources: noSettings()},
+	})
+
+	if _, present := flagValue(cmd.Args, "--model"); present {
+		t.Fatalf("argv carries --model with no Model set: %q", cmd.Args)
+	}
+	want := []string{
+		"claude",
+		"-p", testPrompt,
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--setting-sources", "",
+		"--allowedTools", "Read",
+	}
+	if got := cmd.Args; !equalArgs(got, want) {
+		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// An agent-mapped node keeps the model its definition declares: `--agent`
+// supplies one from the definition's frontmatter, and 6 of the 187 planned
+// nodes measured for this change get their model from exactly that route
+// (docs/measurements/0034-planned-node-model.md). Which source the CLI would
+// prefer if both were passed is undocumented and unmeasured, so both are never
+// passed — the more specific choice wins by the flag being withheld.
+func TestBuildCmd_AgentMappedNodeGetsNoModelFlag(t *testing.T) {
+	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Model:          "opus[1m]",
+		Agent:          "test-coder",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}, SettingSources: noSettings()},
+	})
+
+	if _, present := flagValue(cmd.Args, "--model"); present {
+		t.Fatalf("an agent-mapped node must not be handed --model: %q", cmd.Args)
+	}
+	if !hasFlagValue(cmd.Args, "--agent", "test-coder") {
+		t.Fatalf("argv lost --agent, so this test would pass for the wrong reason: %q", cmd.Args)
+	}
+}
+
+// Codex takes no model flag from oh-my-graph even when the invocation carries
+// one: the operator's model lives in ~/.codex/config.toml, which
+// --ignore-user-config withholds, and repairing that is a follow-up with no
+// measured population behind it yet (codexProtocol.buildArgs, docs/LIMITATIONS.md).
+// The asymmetry is documented, so it must also be pinned.
+func TestBuildCmd_CodexIgnoresTheModel(t *testing.T) {
+	r := NewCLIRunner(RuntimeCodex, WithBinary("codex"))
+	cmd := r.buildCmd(context.Background(), NodeInvocation{
+		Prompt:         testPrompt,
+		PermissionMode: "dontAsk",
+		Model:          "opus[1m]",
+		Policy:         ToolPolicy{AllowedTools: []string{"Read"}, SettingSources: noSettings()},
+	})
+
+	for _, arg := range cmd.Args {
+		if arg == "--model" || arg == "opus[1m]" || strings.HasPrefix(arg, "model=") {
+			t.Fatalf("codex argv carries a model oh-my-graph chose: %q", cmd.Args)
+		}
+	}
+}
+
 // TestBuildCmd_SessionIDArgv pins the full argv of the shape a pre-assigned
 // session id actually occurs in: a fresh-session node (never a resuming one —
 // NodeInvocation documents the two fields as mutually exclusive, and the
@@ -224,7 +369,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	for _, flag := range []string{
 		"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume",
 		"--setting-sources", "--tools", "--strict-mcp-config", "--agent",
-		"--session-id",
+		"--session-id", "--model",
 	} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)

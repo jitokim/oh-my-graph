@@ -123,6 +123,26 @@ type NodeInvocation struct {
 	// (ADR 0022). A hand-written node's agent is still discovered, because
 	// oh-my-graph stages nothing for it and its policy imposes no layer 1.
 	Agent string
+	// Model, when non-empty, is the model this node answers with, rendered as
+	// `--model <value>` — the operator's own choice, read from ONE key of their
+	// settings file at plan time (internal/usermodel) and carried here verbatim.
+	// The runner neither validates nor normalises it: the vocabulary is the
+	// CLI's, and an unknown name is a NODE FAILURE (the CLI exits non-zero
+	// printing "Unknown model", which parseEnvelope turns into a
+	// *NodeOutputError carrying that stderr) — never a silent fall back to the
+	// default, which is the defect this field repairs.
+	//
+	// Empty means "no choice was expressed" and the argv is byte-identical to
+	// the pre-inheritance one, which is every hand-written node (its own CLI
+	// settings load, so the choice arrives through them) and every planned node
+	// on a machine with no settings key.
+	//
+	// It is a plain scalar outside Policy, like BudgetUSD and Timeout, and for a
+	// stronger reason than theirs: the ToolPolicy layers bound CAPABILITY, and a
+	// model name grants no tool, loads no file and runs no hook. It is also
+	// suppressed when Agent is set — see claudeProtocol.buildArgs. Codex ignores
+	// it entirely (codexProtocol.buildArgs says why).
+	Model string
 	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none.
 	// A positive value is passed to claude as --max-budget-usd, which makes the
 	// CLI abort THIS invocation the moment its own running spend crosses the
