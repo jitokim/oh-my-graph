@@ -144,6 +144,61 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **Every rule in the batch-lane idiom now ends in a disposition: the check
+  that enforces it, named, or one sentence saying why it is judgement**
+  ([`graphs/backlog-batch.yaml`](graphs/backlog-batch.yaml)). The header stated
+  seven hard-won rules and left a reader to guess which of them anything
+  enforced — a rule with a test behind it read exactly like one no code has
+  ever looked at.
+
+  Three rules are mechanically checked, all three as tests over `graphs/` in
+  `internal/graph/shipped_graphs_test.go`, so a violation fails THIS repo's
+  build rather than warning at a user's own graph:
+  `TestIndependentLanesFailIndependently` (rule 5 — two or more weakly
+  connected components in the resolved graph must come with
+  `on_fail: continue`), `TestASessionGateCitesTheColdSafeFragment` (rule 3 — a
+  node that resumes a session and retries must have spliced `e2e-verify`, where
+  the cold-safe wording exists once), and
+  `TestAGatingReviewCarriesItsRecoveryArc`, extended to rule 6's second half:
+  it already refused a narrowed review check with no `feedback:` arc, and now
+  equally refuses an arc on a node whose check still accepts `FINDINGS:` — an
+  arc the failing verdict can never reach. Rule 3's risky shape keeps its
+  existing advisory warning from `handoff.LintSessions`; the test guards only
+  what the warning cannot, that the wording has not been copied out by hand.
+
+  Rules 2, 4 and 7 stay prose, each saying why in the header: rule 2 would have
+  to read prompt prose for an instruction, the predicate family this repo
+  measured and rejected at 110 noise in 114 hits
+  ([`docs/measurements/0213-tool-grant-predicate.md`](docs/measurements/0213-tool-grant-predicate.md));
+  rule 4's subject is a lane's diff, which does not exist when a graph is
+  loaded; and rule 7 asks whether a repeat is a shape or a difference in a key,
+  which is the judgement it exists to provoke.
+
+  Rule 1 — "lanes must not share files" — stays prose too, and was measured
+  before it was written off, in
+  [`docs/measurements/0034-lane-file-ownership-predicate.md`](docs/measurements/0034-lane-file-ownership-predicate.md).
+  Over 45 graphs and 216 resolved nodes, only one graph can fire the predicate
+  at all (a planned graph may not declare a `worktree:`), and the lexical form
+  produced **1 hit, of which the hand-check made 1 noise** — both lanes cite
+  `CONTRIBUTING.md` as the address of the commit-trailer convention and neither
+  edits it. Verdict: DO-NOT-SHIP. The command is the address for those numbers:
+
+  ```sh
+  go run docs/measurements/0034-lane-file-ownership-predicate.go
+  ```
+
+  What survives of rule 1 reads no paths at all and is a test:
+  `TestAWorktreeGraphLeavesNoNodeOutsideALane` refuses a graph that declares
+  lanes and leaves some node without one, since that node runs in the user's
+  own tree and so shares files with every lane at once.
+
+  No new `lint` sweep and no new load error — a new warning owes a measured
+  noise rate, and the corpus that could measure one is n=1 across everything
+  this repo ships. The header also settles the fragment question so it is not
+  reopened: the lane shape is already a fragment,
+  [`graphs/fragments/gated-lane.yaml`](graphs/fragments/gated-lane.yaml), and
+  no second lane fragment is coming. Nothing in the graph body changed, and
+  both runtimes' `lint` output for the eight shipped graphs is unchanged.
 - **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
   ADR 0030 is deliberately not extended one level down**
   ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
