@@ -15,7 +15,7 @@
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-//	oh-my-graph runs list [--show-skipped]
+//	oh-my-graph runs list [--show-skipped] [--exit-in-flight]
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
@@ -26,8 +26,13 @@
 // resumable — at a gate awaiting a human decision (ADR 0003) or because the
 // subscription's session limit was hit (ADR 0009), 3 `auto` refused to start
 // because the directory has a build system and the run would have checked none
-// of it (ADR 0030). A pause is not a failure, and a refusal is neither: nothing
-// ran, nothing is resumable, nothing was billed.
+// of it (ADR 0030), 4 `runs list --exit-in-flight` found at least one listed run
+// still PLANNING or RUNNING. A pause is not a failure, and a refusal is neither:
+// nothing ran, nothing is resumable, nothing was billed. Nor is 4: nothing ran
+// there either — the command was asked a question about other runs and answered
+// it, which is why it gets a code a supervisor loop can wait on
+// (`until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done`)
+// instead of grepping a table that is not a contract.
 // An iterated auto run (--max-cycles ≥ 2, ADR 0011) makes the contract
 // goal-level: exit 0 additionally requires the assessor's goal-met verdict on
 // a passed final cycle, and stopping unmet (cycles exhausted, budget ceiling,
@@ -73,8 +78,10 @@ func main() {
 // passed), 1 (the run failed — printed to stderr), 2 (the run paused — at
 // a gate or on a session limit — and is resumable; the resume hint was
 // already printed to stdout by executeGraph/runResume, so this path prints
-// nothing further), or 3 (`auto` refused for want of build evidence — printed
-// here, to stdout, by the error itself). Separated from main so the exit path
+// nothing further), 3 (`auto` refused for want of build evidence — printed
+// here, to stdout, by the error itself), or 4 (`runs list --exit-in-flight`
+// found a run still in flight; it prints nothing beyond the table it already
+// printed, because the code is the answer). Separated from main so the exit path
 // lives in exactly one place and the mapping itself is testable without calling
 // os.Exit.
 func mainExitCode(args []string) int {
@@ -146,6 +153,19 @@ func exitCodeForError(err error) int {
 	if errors.As(err, &missingEvidence) {
 		return 3
 	}
+	// The one code that is not about the invocation's own work: `runs list
+	// --exit-in-flight` asked whether anything is still running and the answer
+	// was yes (runsInFlightError). A question answered is not a failure — the
+	// table printed and every readable directory was read — so it must not be
+	// exit 1, where a supervisor loop could not tell it from a corpus it could
+	// not read. That distinction is the whole point: exit 1 means "ask again",
+	// exit 4 means "not yet", exit 0 means "nothing is in flight". It also stays
+	// outside ADR 0023 §2.6's exit-code/run-status agreement, which is about the
+	// run an invocation just executed; this invocation executes none.
+	var inFlight *runsInFlightError
+	if errors.As(err, &inFlight) {
+		return 4
+	}
 	return 1
 }
 
@@ -163,7 +183,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-       oh-my-graph runs list [--show-skipped]
+       oh-my-graph runs list [--show-skipped] [--exit-in-flight]
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
