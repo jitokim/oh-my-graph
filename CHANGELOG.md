@@ -22,6 +22,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `--model <value>` (`internal/usermodel`,
   [ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
 
+  - **Before:** a planned node answered with **the `claude` CLI's own fallback
+    default** — the model the CLI picks when no settings source and no flag
+    names one.
+  - **After:** a planned node answers with **the model named by the `model` key
+    of your own `~/.claude/settings.json`**, passed through unmodified — no
+    normalisation, no case-folding, no stripping of a variant suffix such as
+    `[1m]`.
+
   No allowlist: an unknown name reaches the CLI and fails the node with the
   provider's own message, rather than silently becoming a different model. No
   flag and no new configuration: the settings file is the single surface. No
