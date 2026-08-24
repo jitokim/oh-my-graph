@@ -42,9 +42,23 @@ import (
 // graph's constant rather than a literal — the same set the load-time validator
 // enforces, so the default can never be a mode a graph would be refused for.
 const (
-	defaultConcurrency    = 4
-	globalConcurrencyCap  = 10
-	defaultPermissionMode = graph.PermissionDontAsk
+	defaultConcurrency   = 4
+	globalConcurrencyCap = 10
+	// defaultPermissionMode is what a node declaring no permission_mode runs
+	// under. `auto` puts a call no allow rule matched to the CLI's own
+	// classifier, which approves or denies it on the spot; `dontAsk`, the
+	// default before this, resolved the same call to an unanswerable ask and
+	// therefore a DENY. Neither prompts: a node is a headless subprocess with
+	// no TTY to answer on, and claude 2.1.241 carries a denial reason for
+	// exactly that case rather than code that waits ("Action requires
+	// interactive approval and permission prompts are not available in this
+	// context"). So the switch changes which calls are refused, never whether
+	// a refusal can hang the node.
+	//
+	// Every other layer of the ceiling still binds — a deny rule is evaluated
+	// before the classifier is asked at all, and --tools removes a tool rather
+	// than gating it (docs/adr, SECURITY.md "Ceiling layers").
+	defaultPermissionMode = graph.PermissionAuto
 )
 
 // predicateVerify is the success_check predicate name carried by a failed
