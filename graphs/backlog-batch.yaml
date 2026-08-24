@@ -1,8 +1,8 @@
 # backlog-batch — the parallel multi-lane batch idiom, as a documented
 # skeleton you copy and grow (two example lanes; add lane-c the same way).
 #
-#   dev-a ──▶ e2e-a ──▶ review-a ──▶ pr-a     (feature lane, worktree lane-a)
-#   dev-b ──▶ e2e-b ──▶ review-b ──▶ pr-b     (docs lane,    worktree lane-b)
+#   lane-a/dev ──▶ lane-a/e2e ──▶ lane-a/review ──▶ lane-a/pr  (feature lane, worktree lane-a — one `use: gated-lane` node, four spliced)
+#   dev-b      ──▶ e2e-b      ──▶ review-b      ──▶ pr-b       (docs lane,    worktree lane-b — written out; rule 7)
 #
 # Each lane runs in its OWN managed git worktree (branched off the invocation
 # repo's HEAD), so the lanes edit fully in parallel and each ends in its own
@@ -17,7 +17,7 @@
 #   1. Lanes must not share files. Two lanes touching one file merge-conflict
 #      at PR time and can silently undo each other. Dedupe file ownership at
 #      authoring time — or, if two tasks genuinely overlap, serialize them
-#      into one lane (make dev-b depend on pr-a) instead of parallelizing.
+#      into one lane (make dev-b depend on lane-a/pr) instead of parallelizing.
 #      PROSE, and not for want of trying: which files a lane owns arrives at
 #      run time in `--input task_a`/`task_b`, so the graph a checker reads
 #      never contains the thing this rule judges. The lexical stand-in was
