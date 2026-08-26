@@ -348,6 +348,16 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, runtime)
 	}
 
+	// The missing-CLI preflight, here rather than deeper because everything
+	// deeper costs something to reach: executeGraph opens the run leg, which
+	// creates the run directory, and the node that would have discovered the
+	// same fact discovers it as a spawn failure after the scheduler is already
+	// running. --dry-run sits above this line on purpose — it spawns nothing, so
+	// it must keep working on a machine with no model CLI installed.
+	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+		return err
+	}
+
 	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
 	// against the graph file's own fragments/ sibling before validation.
 	// LoadFile keeps the entry file's raw bytes so executeGraph can snapshot
@@ -433,6 +443,15 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	}
 	if runtime == runner.RuntimeCodex && flags.maxGoalBudgetUSD > 0 {
 		return errors.New("auto: --max-goal-budget-usd is unavailable with --runtime codex because Codex reports tokens, not USD")
+	}
+	// The same preflight `run` does, and `auto` needs it one step earlier: its
+	// very first spawn is the planner call, and planAndExecute opens the run leg
+	// before making it — so without this line a missing CLI leaves a run
+	// directory behind for a run that never had a CLI to run. --plan-only is
+	// below the line, unlike --dry-run, because a plan-only invocation still
+	// spawns the planner.
+	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+		return err
 	}
 	flags.runtime = runtime
 
