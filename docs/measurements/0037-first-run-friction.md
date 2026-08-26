@@ -478,8 +478,8 @@ The only pre-flight that exists, `runner.ValidateGraphForRuntime`
 Claude runtime (`internal/runner/preflight.go:43-45`) and otherwise judges only
 `agent:` and `budget_usd`. It never asks whether the binary exists.
 
-**(b) The failure is a spawn error raised inside the run.** The one exec seam
-is `exec.CommandContext(ctx, r.binary, ...)` at
+**(b) The failure is a spawn error raised inside the run.** The model-CLI exec
+seam is `exec.CommandContext(ctx, r.binary, ...)` at
 `internal/runner/cli.go:252`. When `cmd.Run()` fails with anything that is not
 an `*exec.ExitError`, the runner returns
 `&NodeSpawnError{Runtime: ..., Err: runErr}` (`internal/runner/cli.go:306-311`),
