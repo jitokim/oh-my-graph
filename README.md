@@ -6,7 +6,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>Describe the goal — run the graph with your Claude or Codex login.</em></p>
+<p align="center"><em>Each node of your graph runs as a real subprocess of your own <code>claude</code> or <code>codex</code> CLI — your settings, your skills.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -19,17 +19,17 @@
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
 
-> A graph-native multi-agent orchestrator whose node runtime is your own
-> logged-in `claude` or `codex` CLI — not an API key.
+> Each node of a graph you write runs as a real subprocess of the `claude` or
+> `codex` CLI you already have logged in — so it starts inside your own
+> settings, CLAUDE.md, MCP servers and skills.
 
 ## What it is
 
-oh-my-graph does not require a direct model API or Agent SDK. You describe the
-work as a DAG in YAML, and
-each node runs through the CLI login you already use: `claude` by default, or
-`codex` when selected for the run. **That is not the same as free.** It spends
-your plan allowance. Claude reports USD cost; Codex reports token usage and the
-ledger labels USD cost `unknown` rather than inventing `$0`. [Bring your own
+You describe the work as a DAG in YAML — or hand `auto` a goal and let it plan
+the graph through the same validator — and each node runs as one subprocess of
+the CLI login you already use: `claude` by default, `codex` when selected for
+the run. Your own logged-in CLI, not a metered API key. **That is not the same
+as free.** It spends your plan allowance. [Bring your own
 login](#bring-your-own-login) is how that is enforced in code, and
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md) is how it compares to its nearest
 neighbours — conductor, OMK, open-multi-agent.
