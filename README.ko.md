@@ -49,6 +49,9 @@ OMK, open-multi-agent — 과의 비교는
 ## 빠른 시작
 
 ```sh
+# Go 툴체인 없이 미리 빌드된 바이너리로 (정확한 명령: docs/INSTALL.md) — https://github.com/jitokim/oh-my-graph/releases 에서
+# oh-my-graph_<version>_<os>_<arch>.tar.gz (darwin/linux × amd64/arm64)를 받아, 옆의 checksums.txt로
+# 검증하고, 풀어서 PATH에 두세요. 소스에서 받으려면 Go 1.25+ 와 $(go env GOPATH)/bin 이 PATH에 있어야 합니다:
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
 # 바이너리에 임베드된 예제 그래프를 ./graphs/에 풀어 놓습니다:
@@ -113,9 +116,6 @@ TOTAL COST: $0.0125
 실제로 한 일은
 [Reading the ledger](docs/EXAMPLES.md#reading-the-ledger--what-a-pass-says)에
 있습니다.
-
-미리 빌드된 바이너리, 체크섬 검증, 그리고 `init`이 정확히 무엇을 쓰고 무엇을
-덮어쓰지 않는지: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## 그래프는 transcript가 아니라 파일입니다
 

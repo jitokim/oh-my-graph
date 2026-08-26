@@ -45,7 +45,7 @@ neighbours — conductor, OMK, open-multi-agent.
 ## Quickstart
 
 ```sh
-# Prebuilt binary, no Go toolchain — from https://github.com/jitokim/oh-my-graph/releases take
+# Prebuilt binary, no Go toolchain (exact commands: docs/INSTALL.md) — from https://github.com/jitokim/oh-my-graph/releases take
 # oh-my-graph_<version>_<os>_<arch>.tar.gz (darwin/linux × amd64/arm64), verify it against the
 # checksums.txt beside it, unpack, put it on your PATH. Or from source, with Go 1.25+ and $(go env GOPATH)/bin on PATH:
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
