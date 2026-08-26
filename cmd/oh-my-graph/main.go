@@ -348,16 +348,6 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, runtime)
 	}
 
-	// The missing-CLI preflight, here rather than deeper because everything
-	// deeper costs something to reach: executeGraph opens the run leg, which
-	// creates the run directory, and the node that would have discovered the
-	// same fact discovers it as a spawn failure after the scheduler is already
-	// running. --dry-run sits above this line on purpose — it spawns nothing, so
-	// it must keep working on a machine with no model CLI installed.
-	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
-		return err
-	}
-
 	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
 	// against the graph file's own fragments/ sibling before validation.
 	// LoadFile keeps the entry file's raw bytes so executeGraph can snapshot
@@ -402,6 +392,21 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
+	// The missing-CLI preflight, on the last line before the run costs anything:
+	// executeGraph opens the run leg, which creates the run directory, and the
+	// node that would otherwise discover this discovers it as a spawn failure
+	// with the scheduler already running.
+	//
+	// LAST, not first. Everything above it — the YAML load, DAG validation, the
+	// runtime check, the bypassPermissions warning — is a verdict about the
+	// graph, and a graph verdict must not be displaced by a verdict about the
+	// machine: a newcomer with a cycle in their YAML and no CLI installed still
+	// needs to be told about the cycle. `--dry-run` returns further up for the
+	// same reason from the other side: it spawns nothing, so it must keep
+	// working on a machine with no model CLI at all.
+	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+		return err
+	}
 	// nil leg: `run` has no planning phase, so it opens its leg at executeGraph
 	// exactly as it always has (ADR 0023 §2.2).
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
@@ -444,15 +449,6 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	if runtime == runner.RuntimeCodex && flags.maxGoalBudgetUSD > 0 {
 		return errors.New("auto: --max-goal-budget-usd is unavailable with --runtime codex because Codex reports tokens, not USD")
 	}
-	// The same preflight `run` does, and `auto` needs it one step earlier: its
-	// very first spawn is the planner call, and planAndExecute opens the run leg
-	// before making it — so without this line a missing CLI leaves a run
-	// directory behind for a run that never had a CLI to run. --plan-only is
-	// below the line, unlike --dry-run, because a plan-only invocation still
-	// spawns the planner.
-	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
-		return err
-	}
 	flags.runtime = runtime
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -475,6 +471,22 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		return err
 	}
 	flags.buildEvidence = evidence
+
+	// The same preflight `run` does, and BELOW ADR 0030's gate on purpose. Both
+	// refuse before anything spends, so neither is racing the other for the
+	// user's money — what the order decides is which refusal a directory that
+	// earns both gets, and the gate's answer must not depend on what happens to
+	// be installed. Placed above, a machine with no CLI would turn a §2.4
+	// refusal (exit 3) into an exit 1, which is exactly the confusion that exit
+	// code exists to prevent.
+	//
+	// Still upstream of planAndExecute, which is where `auto` opens its run leg
+	// — before the planner call, its first spawn — so a missing CLI leaves no
+	// run directory behind. `--plan-only` is below this line, unlike `run`'s
+	// `--dry-run`, because a plan-only invocation still spawns the planner.
+	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+		return err
+	}
 
 	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop

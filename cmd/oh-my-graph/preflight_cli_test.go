@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
 
@@ -95,5 +96,59 @@ func TestRunGraphWith_DryRunStillWorksWithNoCLIOnPath(t *testing.T) {
 	}
 	if !strings.Contains(out, "validation passed") {
 		t.Errorf("--dry-run output lost its verdict:\n%s", out)
+	}
+}
+
+// The preflight must never displace ADR 0030's refusal. A directory that earns
+// both — a build system, no --verify-cmd, no declaration — still gets the
+// evidence refusal and still exits 3, whether or not a CLI is installed. Both
+// refuse before anything spends, so the order is not about money; it is about
+// the exit code a script reads, and exit 3 exists precisely so "add a flag" is
+// distinguishable from everything else.
+func TestRunAutoWith_MissingCLIDoesNotDisplaceTheBuildEvidenceRefusal(t *testing.T) {
+	isolateRunHome(t)
+	inBuildDir(t, "gradlew")
+	fake := missingCLIFake(t)
+
+	var err error
+	captureStdout(t, func() {
+		err = runAutoWith([]string{"add a README section"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+
+	var missingEvidence *coordinator.MissingBuildEvidenceError
+	if !errors.As(err, &missingEvidence) {
+		t.Fatalf("auto returned %v, want ADR 0030's refusal even with no CLI installed", err)
+	}
+	var notFound *runner.CLINotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatalf("the CLI preflight answered a question ADR 0030 owns: %v", err)
+	}
+	if code := exitCodeForError(err); code != 3 {
+		t.Errorf("exit code = %d, want 3 — the refusal's own code, unchanged by the preflight", code)
+	}
+}
+
+// A verdict about the graph must not be displaced by a verdict about the
+// machine: a newcomer with a broken YAML and no CLI installed still needs to be
+// told about the YAML, which is the one thing they can fix without installing
+// anything.
+func TestRunGraphWith_MissingCLIDoesNotDisplaceAGraphVerdict(t *testing.T) {
+	isolateRunHome(t)
+	path := writeGraphFile(t, "name: cyclic\nnodes:\n  - { id: a, prompt: a, depends_on: [b] }\n  - { id: b, prompt: b, depends_on: [a] }\n")
+	fake := missingCLIFake(t)
+
+	var err error
+	captureStdout(t, func() {
+		err = runGraphWith([]string{path}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err == nil {
+		t.Fatal("a cyclic graph was accepted")
+	}
+	var notFound *runner.CLINotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatalf("the CLI preflight spoke over DAG validation: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "cycle") {
+		t.Errorf("error = %q, want the cycle the reader can actually fix", err)
 	}
 }
