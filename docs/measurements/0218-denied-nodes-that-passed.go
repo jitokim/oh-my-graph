@@ -71,6 +71,14 @@ type snapshot struct {
 	// record, which is why the graph half and the runtime half have to be
 	// joined on that key below.
 	Nodes map[string]nodeRecord `json:"nodes"`
+	// DefaultPermissionMode is the mode this run's nodes fell back to, written
+	// with `omitempty` (internal/runstate/runstate.go:430). ABSENT MEANS
+	// dontAsk — runstate says so in those words, and says why: every snapshot
+	// written before the default became auto omits the key, and every one of
+	// those runs really did run dontAsk. The split below is on THIS FIELD and
+	// never on a run id's date: a date is a proxy for when the default
+	// changed, and this is the thing itself.
+	DefaultPermissionMode string `json:"default_permission_mode"`
 }
 
 // nodeRecord is runstate.NodeRecord's readable half. Provenance is carried into
@@ -123,6 +131,22 @@ func (c successCheck) kind() string {
 		return kindMatches
 	}
 	return kindExit
+}
+
+// bucketDontAsk is graph.PermissionDontAsk, the mode an absent field means.
+const bucketDontAsk = "dontAsk"
+
+// bucketOf names the permission-mode bucket a run belongs to. Absent or empty
+// is dontAsk, because that is what those runs actually ran under. Any other
+// value is its own bucket under its own name rather than being folded into one
+// of the two names this file knows: a mode nobody here anticipated must show up
+// as itself, the same way an unexpected verdict string is reported and not
+// counted as PASS.
+func bucketOf(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return bucketDontAsk
+	}
+	return mode
 }
 
 // runsDir is $OMG_HOME/runs when OMG_HOME is set, else $HOME/.oh-my-graph/runs.
@@ -195,7 +219,11 @@ type corpus struct {
 // exclusion nobody is told about is the same silent omission the skip
 // breakdown above already guards against.
 type inFlightRun struct {
-	id        string
+	id string
+	// mode is the excluded run's bucket, printed because an exclusion moves one
+	// bucket's denominator and not the other's — this lane's own run is an
+	// auto run, and its absence has to be visible in the auto bucket.
+	mode      string
 	graphSize int
 	recorded  int
 	noRecord  []string
@@ -315,6 +343,7 @@ func scan(dir string) (corpus, error) {
 			sort.Strings(noRecord)
 			c.inFlight = append(c.inFlight, inFlightRun{
 				id:        id,
+				mode:      bucketOf(snap.DefaultPermissionMode),
 				graphSize: len(g.Nodes),
 				recorded:  len(snap.Nodes),
 				noRecord:  noRecord,
@@ -512,6 +541,12 @@ func transcriptsFor(sessionID string) []string {
 type nodeDetail struct {
 	RunID  string `json:"run_id"`
 	NodeID string `json:"node_id"`
+	// PermissionMode is the run's default_permission_mode verbatim — empty when
+	// the key is absent — and Bucket is what that was bucketed as. Both are
+	// carried so the raw file distinguishes "absent" from "declared dontAsk",
+	// which the bucket name alone cannot.
+	PermissionMode string `json:"default_permission_mode"`
+	Bucket         string `json:"permission_bucket"`
 	// NodeType and AllowedTools are carried so a reader can see the ceiling the
 	// node held; the prior node showed the ceiling does NOT predict denial
 	// (denial is per-command, not per-tool), so they are evidence, not inputs.
@@ -552,6 +587,20 @@ const (
 const verdictPass = "PASS"
 const verdictFail = "FAIL"
 
+// bucketStats is one permission-mode bucket's share of the very counts the
+// whole-corpus report already prints: same planned test, same discriminator,
+// same denominator rule, only partitioned. Nothing here re-decides anything.
+type bucketStats struct {
+	runs           []string
+	plannedNodes   int
+	withTranscript int
+	missing        int
+	missingNodes   []string
+	denied         int
+	deniedPass     int
+	byKind         map[string]int
+}
+
 func main() {
 	dir := runsDir()
 	c, err := scan(dir)
@@ -566,11 +615,34 @@ func main() {
 	var readErrs []string
 	oddVerdicts := map[string][]string{}
 
+	buckets := map[string]*bucketStats{}
+	bucketFor := func(name string) *bucketStats {
+		b, ok := buckets[name]
+		if !ok {
+			b = &bucketStats{byKind: map[string]int{}}
+			buckets[name] = b
+		}
+		return b
+	}
+	// anyModeDeclared distinguishes "this corpus straddles the boundary" from
+	// "the field is absent everywhere, so the single bucket below is a fact
+	// about the field and not about how the runs behaved".
+	anyModeDeclared := false
+	for _, p := range c.planned {
+		b := bucketFor(bucketOf(p.snap.DefaultPermissionMode))
+		b.runs = append(b.runs, p.id)
+		if strings.TrimSpace(p.snap.DefaultPermissionMode) != "" {
+			anyModeDeclared = true
+		}
+	}
+
 	for _, p := range c.planned {
 		for _, n := range p.graph.Nodes {
 			d := nodeDetail{
 				RunID:            p.id,
 				NodeID:           n.ID,
+				PermissionMode:   p.snap.DefaultPermissionMode,
+				Bucket:           bucketOf(p.snap.DefaultPermissionMode),
 				NodeType:         n.Type,
 				AllowedTools:     n.AllowedTools,
 				DeniedTools:      []string{},
@@ -654,6 +726,8 @@ func main() {
 	)
 	for _, d := range details {
 		undecodable += d.UndecodableLines
+		b := bucketFor(d.Bucket)
+		b.plannedNodes++
 		if len(d.ExtraTranscripts) > 0 {
 			multiMatch++
 		}
@@ -666,21 +740,35 @@ func main() {
 			continue
 		case d.Transcript == "missing":
 			missing++
+			b.missing++
+			b.missingNodes = append(b.missingNodes, d.RunID+"/"+d.NodeID+" session "+d.SessionID)
 			continue
 		case d.Unreadable:
 			unreadable++
 			continue
 		}
 		withTranscript++
+		b.withTranscript++
 		if !d.Denied {
 			continue
 		}
 		denied = append(denied, d)
+		b.denied++
 		if d.Verdict == verdictPass {
 			deniedPass = append(deniedPass, d)
 			byKind[d.SuccessCheckKind]++
+			b.deniedPass++
+			b.byKind[d.SuccessCheckKind]++
 		}
 	}
+
+	// Bucket names are sorted so the output is byte-identical between two runs
+	// over the same corpus, the way the rest of this report already is.
+	var bucketNames []string
+	for name := range buckets {
+		bucketNames = append(bucketNames, name)
+	}
+	sort.Strings(bucketNames)
 
 	// ---- the report -------------------------------------------------------
 	fmt.Printf("runs directory:                  %s\n", dir)
@@ -700,8 +788,8 @@ func main() {
 		fmt.Println("and no record carries FAIL, so the run was still executing rather than halted;")
 		fmt.Println("its unfinished nodes' denials are not yet on disk — including this script's own):")
 		for _, r := range c.inFlight {
-			fmt.Printf("  %s | %d graph nodes, %d recorded | no record: %s\n",
-				r.id, r.graphSize, r.recorded, strings.Join(r.noRecord, " "))
+			fmt.Printf("  %s | bucket %s | %d graph nodes, %d recorded | no record: %s\n",
+				r.id, r.mode, r.graphSize, r.recorded, strings.Join(r.noRecord, " "))
 		}
 		fmt.Println()
 	}
@@ -729,6 +817,41 @@ func main() {
 	fmt.Printf("          %-16s (engine ran a command) %d of %d\n", kindVerify, byKind[kindVerify], len(deniedPass))
 	fmt.Printf("          %-16s (node's own words)     %d of %d\n", kindMatches, byKind[kindMatches], len(deniedPass))
 	fmt.Printf("          %-16s (nothing but exit)     %d of %d\n", kindExit, byKind[kindExit], len(deniedPass))
+	fmt.Println()
+
+	fmt.Println("THE SAME THREE COUNTS, SPLIT BY THE RUN'S default_permission_mode")
+	fmt.Println("(state.json, internal/runstate/runstate.go:430 — ABSENT OR EMPTY IS BUCKETED AS")
+	fmt.Println("dontAsk, because that is what those runs ran; the split is on the field, not on")
+	fmt.Println("a date. In-flight runs are already excluded above and are in no bucket):")
+	fmt.Println("  NOTE: the discriminator is the dontAsk SENTENCE (see the header). A bucket")
+	fmt.Println("  whose runs did not run dontAsk therefore reads near zero BY CONSTRUCTION —")
+	fmt.Println("  that is an artifact of this predicate, not a finding about those runs.")
+	if !anyModeDeclared {
+		fmt.Println()
+		fmt.Println("  !! default_permission_mode is ABSENT FROM EVERY PLANNED RUN in this corpus.")
+		fmt.Println("  !! There is one bucket below and NO OBSERVABLE BOUNDARY in this field. The")
+		fmt.Println("  !! run ids are printed per bucket so the boundary can be checked by hand;")
+		fmt.Println("  !! do not read a single bucket as evidence that no run ran another mode.")
+	}
+	for _, name := range bucketNames {
+		b := buckets[name]
+		fmt.Println()
+		fmt.Printf("  bucket %-10s %d planned run(s), %d planned node(s)\n", name, len(b.runs), b.plannedNodes)
+		for _, id := range b.runs {
+			fmt.Printf("      run %s\n", id)
+		}
+		fmt.Printf("    denominator (planned nodes with a readable transcript): %d\n", b.withTranscript)
+		fmt.Printf("    sessions with NO transcript on disk (excluded):         %d\n", b.missing)
+		for _, n := range b.missingNodes {
+			fmt.Printf("        %s\n", n)
+		}
+		fmt.Printf("    (a) planned nodes DENIED at least one tool call:  %d of %d\n", b.denied, b.withTranscript)
+		fmt.Printf("    (b)   of those, recorded verdict %q:            %d of %d\n", verdictPass, b.deniedPass, b.denied)
+		fmt.Printf("    (c)     of those, success_check declared:\n")
+		fmt.Printf("              %-16s (engine ran a command) %d of %d\n", kindVerify, b.byKind[kindVerify], b.deniedPass)
+		fmt.Printf("              %-16s (node's own words)     %d of %d\n", kindMatches, b.byKind[kindMatches], b.deniedPass)
+		fmt.Printf("              %-16s (nothing but exit)     %d of %d\n", kindExit, b.byKind[kindExit], b.deniedPass)
+	}
 	fmt.Println()
 
 	fmt.Printf("verdict strings treated as PASS: exactly %q (internal/runstate declares only\n", verdictPass)
