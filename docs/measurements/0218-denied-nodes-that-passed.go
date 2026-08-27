@@ -374,12 +374,46 @@ func scan(dir string) (corpus, error) {
 //     predicate counts those as denials; HasPrefix rejects all of them.
 //
 // The apostrophe in "don't" is ASCII U+0027, checked at the codepoint.
+//
+// Observed at (dontAsk), a `toolDenialKind: "permission-rule"` record:
+//
+//	~/.claude/projects/-private-tmp-auto-b1/f17f7543-7f89-497e-b894-a868b45e7c3f.jsonl  line 9
 const denialHead = "Permission to use "
 const denialCore = " has been denied because Claude Code is running in don't ask mode."
 
-// isDontAskDenial reports whether a rendered tool_result prose is a dontAsk
-// permission denial, and names the tool the CLI said it denied.
-func isDontAskDenial(prose string) (tool string, ok bool) {
+// autoHead is the sentence an AUTO-mode denial carries. It was read off a real
+// transcript, not copied from the comment that used to name it and not
+// invented; the census that found it walks every *.jsonl under
+// ~/.claude/projects, decodes each record, and groups the `toolDenialKind`
+// field against the tool_result content it sits on. Exactly one record in that
+// census is `automode-blocked`:
+//
+//	~/.claude/projects/-Users-imac-IdeaProjects-oh-my-graph/f85ea6fb-f3a0-4cd8-8b05-7c86a570fbae.jsonl  line 16600
+//	  toolDenialKind "automode-blocked", is_error true,
+//	  tool_use_id toolu_018K6eTvdepwbE7oeUq2qqDz, which joins to the assistant
+//	  Bash tool_use on line 16599 (a `gh pr merge 207 --squash` command).
+//
+// Anchored at offset 0 for exactly the reason denialHead is: this repository's
+// own sessions quote this sentence while measuring it, so it also occurs inside
+// ordinary Bash stdout behind an "Exit code 1\n" prefix. HasPrefix rejects
+// every one of those; Contains would count them.
+const autoHead = "Permission for this action was denied by the Claude Code auto mode classifier."
+
+// autoTool is the tool name recorded for an auto-mode denial. The classifier's
+// sentence does not name the tool it blocked — unlike the dontAsk sentence,
+// which carries the tool between denialHead and denialCore — so the row says
+// that in words rather than inventing a name or joining one in.
+const autoTool = "(not named by the auto-mode classifier)"
+
+// isDenial reports whether a rendered tool_result prose is a permission denial
+// under either of the two modes this corpus straddles, and names the tool the
+// CLI said it denied. The dontAsk arm is unchanged from the discriminator the
+// prior node established; the auto arm was added only after its wording had
+// been observed at the address above.
+func isDenial(prose string) (tool string, ok bool) {
+	if strings.HasPrefix(prose, autoHead) { // anchored at offset 0 — load-bearing
+		return autoTool, true
+	}
 	if !strings.HasPrefix(prose, denialHead) { // anchored at offset 0 — load-bearing
 		return "", false
 	}
@@ -390,15 +424,20 @@ func isDontAskDenial(prose string) (tool string, ok bool) {
 	return prose[len(denialHead):i], true
 }
 
-// This predicate deliberately excludes four other denial-ish classes, each of
+// This predicate deliberately excludes three other denial-ish classes, each of
 // which the prior node addressed separately and each of which is a different
 // decision for #218: the rule/interactive phrasing that names the command
-// ("Permission to use Bash with command … has been denied."), the auto-mode
-// classifier ("Permission for this action was denied by the Claude Code auto
-// mode classifier."), interactive user rejection (needs a TTY; cannot occur in
-// a `claude -p` node), and "No such tool available" (a grant-time absence —
-// that is #154's class, not a runtime denial). Numbers below are therefore a
-// FLOOR on denials, not a total.
+// ("Permission to use Bash with command … has been denied."), interactive user
+// rejection (`toolDenialKind: "user-rejected"` — needs a TTY, so it cannot
+// occur in a `claude -p` node), and "No such tool available" (a grant-time
+// absence — that is #154's class, not a runtime denial). Numbers below are
+// therefore a FLOOR on denials, not a total.
+//
+// The auto-mode classifier used to be a fourth entry on this list, which is why
+// the auto bucket read zero the first time this file was split by permission
+// mode: the bucketing was added without touching the predicate, so the auto
+// side was measuring the dontAsk sentence's absence. autoHead above closes
+// that, and the two arms are now symmetric.
 
 type record struct {
 	Type    string          `json:"type"`
@@ -497,7 +536,7 @@ func scanTranscript(path string, res *scanResult) error {
 			if b.Type != "tool_result" || b.IsError == nil || !*b.IsError {
 				continue
 			}
-			tool, ok := isDontAskDenial(renderProse(b.Content))
+			tool, ok := isDenial(renderProse(b.Content))
 			if !ok {
 				continue
 			}
@@ -810,7 +849,7 @@ func main() {
 	}
 	fmt.Println()
 
-	fmt.Println("the discriminator (anchored dontAsk denial prose; see the file header):")
+	fmt.Println("the discriminator (anchored denial prose, dontAsk OR auto; see the file header):")
 	fmt.Printf("(a) planned nodes DENIED at least one tool call:  %d of %d\n", len(denied), withTranscript)
 	fmt.Printf("(b)   of those, recorded verdict %q:            %d of %d\n", verdictPass, len(deniedPass), len(denied))
 	fmt.Printf("(c)     of those, success_check declared:\n")
@@ -823,9 +862,10 @@ func main() {
 	fmt.Println("(state.json, internal/runstate/runstate.go:430 — ABSENT OR EMPTY IS BUCKETED AS")
 	fmt.Println("dontAsk, because that is what those runs ran; the split is on the field, not on")
 	fmt.Println("a date. In-flight runs are already excluded above and are in no bucket):")
-	fmt.Println("  NOTE: the discriminator is the dontAsk SENTENCE (see the header). A bucket")
-	fmt.Println("  whose runs did not run dontAsk therefore reads near zero BY CONSTRUCTION —")
-	fmt.Println("  that is an artifact of this predicate, not a finding about those runs.")
+	fmt.Println("  NOTE: the discriminator now carries BOTH sentences — the dontAsk one and the")
+	fmt.Println("  auto-mode classifier's (autoHead, observed in a real transcript; see the")
+	fmt.Println("  header). Neither bucket is zero by construction any more. What DOES limit")
+	fmt.Println("  the auto bucket is its size: read its denominator before reading its rate.")
 	if !anyModeDeclared {
 		fmt.Println()
 		fmt.Println("  !! default_permission_mode is ABSENT FROM EVERY PLANNED RUN in this corpus.")
