@@ -8,7 +8,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>목표를 설명하세요 — Claude 또는 Codex 로그인으로 그래프를 실행합니다.</em></p>
+<p align="center"><em>직접 쓴 그래프의 각 노드가, 이미 로그인해 둔 <code>claude</code> 또는 <code>codex</code> CLI 의 진짜 서브프로세스로 돕니다 — 당신의 설정, 당신의 스킬 그대로.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>

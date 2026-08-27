@@ -35,6 +35,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   unsaid (Go 1.25+, and `$(go env GOPATH)/bin` on `PATH`). The prebuilt path had
   been named seventy lines below the command most readers would already have
   run.
+### Changed
+
+- **The README now leads with what a node *is*, not with what it doesn't
+  cost.** Each node of a graph you write is a real subprocess of your own
+  logged-in `claude` or `codex` CLI, starting inside your settings, CLAUDE.md,
+  MCP servers and skills; "your own logged-in CLI, not a metered API key" is
+  kept, but as the second beat rather than the headline. Documentation only —
+  no code changed. The GitHub repository description still leads with the
+  subscription hook; the replacement text is drafted but not applied (it is a
+  repository setting, not a file in this tree).
 
 ## [v0.12.0] - 2026-08-25
 
