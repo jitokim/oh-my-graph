@@ -404,8 +404,15 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// needs to be told about the cycle. `--dry-run` returns further up for the
 	// same reason from the other side: it spawns nothing, so it must keep
 	// working on a machine with no model CLI at all.
-	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
-		return err
+	// …and only for a graph that will actually spawn one. A graph whose nodes
+	// are all gates never touches the NodeRunner, so demanding a CLI from it is
+	// a refusal about a capability the run does not use — which is how this
+	// preflight broke TestMainExitCode_PauseMapsToExitCode2 on a machine
+	// without the CLI installed (CI), while passing on one that has it.
+	if graphSpawnsRuntime(loaded.Graph) {
+		if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+			return err
+		}
 	}
 	// nil leg: `run` has no planning phase, so it opens its leg at executeGraph
 	// exactly as it always has (ADR 0023 §2.2).
@@ -2176,4 +2183,17 @@ func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinat
 		return
 	}
 	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
+}
+
+// graphSpawnsRuntime reports whether any node of this graph would launch the
+// model CLI. A gate node pauses for a human and spawns nothing; a graph made
+// only of them needs no CLI installed, and refusing it for a missing one is a
+// verdict about a capability the run never reaches for.
+func graphSpawnsRuntime(g *graph.Graph) bool {
+	for _, node := range g.Nodes {
+		if node.Type != graph.TypeGate {
+			return true
+		}
+	}
+	return false
 }
