@@ -29,6 +29,8 @@ type FakeRunner struct {
 	calls       []string
 	invocations []NodeInvocation
 	invokedN    map[string]int
+	// cliUnavailable is the scripted answer for CheckCLIAvailable (nil = found).
+	cliUnavailable error
 }
 
 // NewFakeRunner builds a FakeRunner from a scripted outcome map. The map is
@@ -58,6 +60,25 @@ func (f *FakeRunner) SetOutcome(key string, outcome NodeOutcome) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.outcomes[key] = outcome
+}
+
+// InjectCLIUnavailable scripts CheckCLIAvailable to report err, so a test can
+// walk the missing-CLI path of a command end to end without uninstalling
+// anything or spawning anything. The zero value reports the CLI as available,
+// which is what every existing fixture wants.
+func (f *FakeRunner) InjectCLIUnavailable(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliUnavailable = err
+}
+
+// CheckCLIAvailable satisfies CLIAvailabilityChecker with the scripted answer.
+// A scripted runner has no CLI to look for, so "available" is the honest default
+// rather than a lookup nobody asked for.
+func (f *FakeRunner) CheckCLIAvailable() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cliUnavailable
 }
 
 // key resolves the node key for an invocation via KeyFn, defaulting to Prompt.

@@ -248,6 +248,28 @@ func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 	return r
 }
 
+// lookPath resolves a command name against PATH. It is a variable rather than a
+// direct call so a test can drive both branches without depending on which CLIs
+// happen to be installed on the machine running the suite.
+var lookPath = exec.LookPath
+
+// CheckCLIAvailable answers, without spawning anything, whether the provider CLI
+// this runner would spawn can be found at all. It is a PATH lookup and nothing
+// else, which is why it lives here beside the spawn it speaks for and adds no
+// new process-starting object to the program.
+//
+// What it CANNOT answer is whether that CLI is signed in. A signed-out CLI is on
+// PATH and starts perfectly well; it fails afterwards as an ordinary non-zero
+// exit carrying the provider's own words, and no check short of running it tells
+// the two apart. CLINotFoundError's text is written to claim only the narrower
+// thing.
+func (r *CLIRunner) CheckCLIAvailable() error {
+	if _, err := lookPath(r.binary); err != nil {
+		return &CLINotFoundError{Runtime: r.protocol.runtime(), Binary: r.binary, Err: err}
+	}
+	return nil
+}
+
 func (r *CLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.binary, r.buildArgs(spec)...)
 	cmd.Dir = spec.Cwd

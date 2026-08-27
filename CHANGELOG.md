@@ -10,6 +10,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **`run` and `auto` now say the provider CLI is missing before they start,
+  instead of failing deep inside the run.** If `claude` (or `codex`, under
+  `--runtime codex`) is not on `PATH`, the invocation stops with a message
+  naming the runtime, the command it looked for, `docs/INSTALL.md`'s runtime
+  prerequisite and the other runtime you could select — and no run directory is
+  created, so nothing is left behind for a run that never had a CLI to run.
+  Previously this reached the operator as Go's `exec: "claude": executable file
+  not found in $PATH` from inside a scheduler that had already made the run
+  directory (measured: `docs/measurements/0037-first-run-friction.md`, row 7).
+  **The check is a `PATH` lookup and nothing more: it CANNOT tell whether the
+  CLI is signed in.** A signed-out CLI is on `PATH`, starts normally and fails
+  afterwards as an ordinary non-zero exit; distinguishing that would require
+  spawning it, so the message says in as many words that being signed in was not
+  checked. `run --dry-run` is deliberately unaffected — it spawns nothing and
+  keeps working with no model CLI installed at all.
+
+### Changed
+
+- **The Quickstart's first install command is now the prebuilt binary**, with
+  `go install` beside it carrying the two prerequisites it had been leaving
+  unsaid (Go 1.25+, and `$(go env GOPATH)/bin` on `PATH`). The prebuilt path had
+  been named seventy lines below the command most readers would already have
+  run.
 ### Changed
 
 - **The README now leads with what a node *is*, not with what it doesn't

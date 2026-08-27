@@ -1,6 +1,9 @@
 package runner
 
 import (
+	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -92,4 +95,87 @@ func TestValidateGraphForRuntimeAllowsSharedFieldsAndClaude(t *testing.T) {
 	if warnings != nil {
 		t.Errorf("warnings = %q, want nil — the Claude path says nothing new", warnings)
 	}
+}
+
+// The availability check is a PATH lookup and reports the runtime, the command
+// name and what to do next. It must NOT claim anything about being signed in:
+// that state is invisible without spawning the CLI, and a message that blurred
+// the two would send a logged-out user to reinstall a binary they already have.
+func TestCheckCLIAvailableReportsAMissingBinaryNarrowly(t *testing.T) {
+	restore := lookPath
+	lookPath = func(name string) (string, error) {
+		return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
+	defer func() { lookPath = restore }()
+
+	err := NewCLIRunner(RuntimeClaude).CheckCLIAvailable()
+	var notFound *CLINotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("CheckCLIAvailable() = %v, want *CLINotFoundError", err)
+	}
+	if notFound.Runtime != RuntimeClaude || notFound.Binary != "claude" {
+		t.Errorf("error = %+v, want the claude runtime and its binary", notFound)
+	}
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("error does not unwrap to the lookup failure: %v", err)
+	}
+	text := err.Error()
+	for _, want := range []string{
+		"claude runtime",
+		`"claude" is not on PATH`,
+		"docs/INSTALL.md",
+		"--runtime codex",
+		"NOT checked: whether it is signed in",
+		"no run directory was created",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("message = %q, missing %q", text, want)
+		}
+	}
+	// The suggestion must never offer the CLI that was just found missing.
+	codex := NewCLIRunner(RuntimeCodex).CheckCLIAvailable()
+	if !strings.Contains(codex.Error(), "--runtime claude") {
+		t.Errorf("codex message = %q, want it to suggest the claude runtime", codex)
+	}
+	if strings.Contains(codex.Error(), "--runtime codex") {
+		t.Errorf("codex message = %q, suggests the runtime that is missing", codex)
+	}
+}
+
+// A CLI that resolves is silence: the check has no verdict to add, and a run
+// proceeds exactly as it did before this check existed.
+func TestCheckCLIAvailablePassesWhenTheBinaryResolves(t *testing.T) {
+	restore := lookPath
+	lookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
+	defer func() { lookPath = restore }()
+
+	if err := NewCLIRunner(RuntimeCodex).CheckCLIAvailable(); err != nil {
+		t.Fatalf("CheckCLIAvailable() = %v, want nil for a resolvable binary", err)
+	}
+}
+
+// CheckRunnerCLI is what commands call, so it must answer for any NodeRunner:
+// the scripted answer for a runner that has one, and nil for a runner that
+// cannot know — a scripted fake has no PATH, and forcing it to guess would fail
+// runs on machines where the fake is the whole point.
+func TestCheckRunnerCLIAsksOnlyRunnersThatCanAnswer(t *testing.T) {
+	fake := NewFakeRunner(nil)
+	if err := CheckRunnerCLI(fake); err != nil {
+		t.Fatalf("CheckRunnerCLI(fake) = %v, want nil by default", err)
+	}
+	injected := &CLINotFoundError{Runtime: RuntimeClaude, Binary: "claude"}
+	fake.InjectCLIUnavailable(injected)
+	if err := CheckRunnerCLI(fake); !errors.Is(err, error(injected)) {
+		t.Errorf("CheckRunnerCLI(fake) = %v, want the scripted error", err)
+	}
+	if err := CheckRunnerCLI(silentRunner{}); err != nil {
+		t.Errorf("CheckRunnerCLI(runner without the interface) = %v, want nil", err)
+	}
+}
+
+// silentRunner is a NodeRunner that does not implement CLIAvailabilityChecker.
+type silentRunner struct{}
+
+func (silentRunner) Run(context.Context, NodeInvocation) (NodeOutcome, error) {
+	return NodeOutcome{}, nil
 }

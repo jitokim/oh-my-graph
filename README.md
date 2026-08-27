@@ -45,6 +45,9 @@ neighbours — conductor, OMK, open-multi-agent.
 ## Quickstart
 
 ```sh
+# Prebuilt binary, no Go toolchain (exact commands: docs/INSTALL.md) — from https://github.com/jitokim/oh-my-graph/releases take
+# oh-my-graph_<version>_<os>_<arch>.tar.gz (darwin/linux × amd64/arm64), verify it against the
+# checksums.txt beside it, unpack, put it on your PATH. Or from source, with Go 1.25+ and $(go env GOPATH)/bin on PATH:
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
 # Unpack the example graphs that ship inside the binary into ./graphs/:
@@ -115,9 +118,6 @@ not print as the same word. `exit-only` above means nothing beyond the exit
 status was checked. The closed set of four qualifiers, and what the engine
 actually did for each, is in [Reading the
 ledger](docs/EXAMPLES.md#reading-the-ledger--what-a-pass-says).
-
-Prefer a prebuilt binary, or want to know exactly what `init` writes and what
-it refuses to overwrite? [docs/INSTALL.md](docs/INSTALL.md).
 
 ## The graph is a file, not a transcript
 
