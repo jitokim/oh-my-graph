@@ -196,8 +196,11 @@ func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
 // on a long-lived run home is the whole screen — 261 of 331 lines on the
 // machine this was measured on, every one of them the same sentence about the
 // same schema version. Those lines are not gone, they are behind showSkipped
-// (--show-skipped) and still on warnW, byte for byte what they were; what
-// changed is that the DEFAULT states the counts instead of enumerating them.
+// (--show-skipped) and still on warnW — one per skipped directory, now through
+// runstatus.Unreadable (internal/runstatus/skipped.go:201), which replaced the
+// old "WARNING: skipping run …" wording in this same commit because that
+// sentence claimed a consequence only one of the three surfaces has. What
+// changed by DEFAULT is that the counts are stated instead of enumerated.
 //
 // The count line is printed whether or not anything was skipped, because a
 // reader must be able to tell "nothing was hidden from me" apart from "64 of
