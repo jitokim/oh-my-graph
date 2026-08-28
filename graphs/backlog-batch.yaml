@@ -127,10 +127,13 @@
 #      more surface to drift against `gated-lane` — while the existing
 #      fragment could not have served lane B in any case: its dev prompt
 #      quotes `{{ feedback.review }}` (gated-lane.yaml:81) against the arc it
-#      declares itself (:140), and a `{{ feedback.<id> }}` pointed at a node
-#      declaring no arc is a LOAD ERROR (internal/graph/feedback.go), so
-#      citing it leaves a lane no way to decline the arc. Not merely a fold
-#      that would not help — one the loader refuses.
+#      declares itself (:140), and a node citing a MULTI-NODE fragment may
+#      declare only wiring — id, use:, with:, depends_on, cwd, worktree
+#      (internal/graph/fragment.go:439-441, refused at :1194-1195) — so lane B
+#      has no way to write a `feedback:` of its own that declines it. Citing it
+#      LOADS: lane B would silently acquire the gate and the repair round it
+#      does not want. Not a fold the loader refuses — a fold that quietly
+#      changes the lane's disposition.
 #
 # `checks_command` is the command the ENGINE runs as each gate's evidence
 # (success_check.verify) — your stack's full-check target, e.g. `make local`,
