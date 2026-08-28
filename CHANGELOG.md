@@ -10,6 +10,32 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.13.0] - 2026-08-29
+
+**Minor, and the whole of it is the first ten minutes.** Nothing in this release
+changes what a graph does. It changes what happens to someone who has never run
+one — which, until now, this project had never measured.
+
+`docs/measurements/` held 22 records and **not one was about a first run.**
+Everything the project knew about itself came from a corpus made by its own
+author, on his machine, with a logged-in CLI and a populated settings directory.
+A newcomer is none of those things, and three of them were charging him for it:
+the Quickstart led with `go install` while four prebuilt binaries were already
+shipping every release; a missing CLI surfaced as a spawn failure deep inside a
+run instead of a sentence before it; and the front page led with what the tool
+does *not* need — an API key — rather than with what a node *is*.
+
+All three are now the other way round. The measurement that named them is
+committed with them, including the steps it could **not** execute and said so
+rather than inventing.
+
+One bug came out of the fix and is worth recording, because it only failed where
+it mattered: the new preflight demanded a CLI from every run, including graphs
+whose nodes are all gates — which spawn nothing. It passed on a machine with
+`claude` installed and failed on CI, which has none. The test it broke had
+already written the reason down in its own comment: *"a root gate never touches
+the NodeRunner."* The preflight, not the test, was wrong.
+
 ### Added
 
 - **`run` and `auto` now say the provider CLI is missing before they start,
