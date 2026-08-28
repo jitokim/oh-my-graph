@@ -51,8 +51,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   kills the node with no flag-stripped retry; an absent key, an absent file and
   a malformed one each leave a runnable argv, the last costing one stderr
   warning that names the path and never the file's contents
-  (`internal/runner/model_resolve_test.go`). The engine half only — whether the
-  real CLI rejects an unknown name is still unmeasured (ADR 0034 §6).
+  (`internal/runner/model_resolve_test.go`, run by
+  `go test ./internal/runner -run TestModelResolvesFromSettingsToArgv -v`). The
+  engine half only — the unknown name meets a scripted refusal there, so the
+  real CLI's own message is still unobserved (ADR 0034 §2.2, §5).
+
+- **A malformed `settings.json` is settled as an argued exception, not a
+  defect.** It is the one case where a node answers with a model you did not
+  choose, so [ADR 0034 §2.8](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)
+  now carries the argument for keeping it instead of failing the run: an
+  unparseable file means **no** choice is known — the same state as a missing
+  key — so nothing is substituted for a name you gave; and refusing to run
+  would make oh-my-graph die on a document another product owns and may change,
+  turning an optional preference into a precondition for every run.
+  The exception rests on the fallback being announced, so both places that
+  announce it are now asserted rather than read: the first leg by
+  `TestExecutePlan_ModelWarningIsPrintedOnce` and the resumed leg by
+  `TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath`
+  (`go test ./cmd/oh-my-graph -run 'ModelWarning|ResumedPlannedModel' -v`) —
+  the latter's warning had no test at all until now. Known gap, recorded in
+  ADR 0034 §5: the warning is stderr-only, so a run watched through `serve` or
+  read from `events.jsonl` cannot see that its nodes fell back.
 
 ## [v0.13.0] - 2026-08-29
 

@@ -79,7 +79,7 @@ second key needs its own ADR.
 | key present but blank | treated as absent; the CLI itself rejects an empty value, so emitting it turns a config typo into a dead run |
 | key absent | no flag; argv byte-identical to before this change |
 | file absent | no flag, no warning — a machine with no settings file is supported |
-| malformed / unreadable | no flag, **one warning per run** on stderr naming the path and the error, never the contents; the run proceeds |
+| malformed / unreadable | no flag, **one warning per run** on stderr naming the path and the error, never the contents; the run proceeds — the argued exception to the rule below, see §2.8 |
 | value unknown to this build | passed through verbatim — **no allowlist** |
 
 The last row is the one worth arguing. An allowlist goes stale with the CLI's
@@ -93,9 +93,35 @@ name must produce a dead node, never a different answer** — nothing may catch
 that rejection and retry without the flag. `--fallback-model` is opt-in and
 oh-my-graph never passes it.
 
-*Not yet confirmed by hand:* the exact stderr an unknown name produces has not
-been observed under `make smoke`; it is inferred from the CLI's error strings
-plus the existing envelope handling. Recording the observed message is owed.
+*Measured, 2026-08-29.* The unknown-name path was executed end to end rather
+than reasoned about, in
+`TestModelResolvesFromSettingsToArgv/unknown_model_name_reaches_argv_verbatim_and_the_rejection_kills_the_node`
+(`internal/runner/model_resolve_test.go`), run by:
+
+```sh
+go test ./internal/runner -run TestModelResolvesFromSettingsToArgv -v
+```
+
+From a scratch `HOME` whose real `settings.json` says
+`claude-not-a-real-model-9`, `usermodel.Read` returned that string unchanged and
+the argv `CLIRunner` built was:
+
+```
+claude -p <prompt> --output-format json --permission-mode dontAsk \
+  --model claude-not-a-real-model-9 --setting-sources "" --allowedTools Read,Glob
+```
+
+A stub standing in for the CLI then refused it the way §2.2 claims a real one
+does — nothing on stdout, a complaint on stderr, exit 1 — and `Run` returned a
+`*NodeOutputError` naming the model. The stub echoes its own argv, so what is
+asserted is that the flag reached the **child process**, not merely a `[]string`
+in the test.
+
+What that does **not** measure is the real CLI's exact stderr wording, since no
+`claude` is spawned; the test scripts a refusal of that shape rather than
+observing this build's own. The load-bearing half — the flag arrives verbatim,
+and a refusal kills the node instead of being retried without the flag — is
+measured. Recording the real message under `make smoke` remains owed (§5).
 
 ### 2.3 argv only; never the environment
 
@@ -165,6 +191,64 @@ same reason: with no read, its isolated nodes would answer with the CLI's
 default — the defect, one leg late. Re-reading means a leg running now honours
 the answer the operator would give now, exactly as a fresh run started now would.
 
+### 2.8 A malformed settings file warns and proceeds — the argued exception
+
+This ADR's rule is **a wrong model name must not become a silent fallback**
+(§2.2). A malformed settings file proceeds without `--model`, so the node
+answers with a model the operator did not select, and the row in §2.2's table
+therefore needs an argument rather than an assertion. Held deliberately, on
+three grounds.
+
+**1. Nothing is substituted for a known choice, because no choice is known.**
+Case 1 and case 4 look alike and are not. In case 1 oh-my-graph *knows* the
+operator's string, transmits it verbatim, and the CLI kills the node — measured
+above. Swallowing that rejection and retrying without the flag would be
+substitution, and is what §2.2 forbids. In case 4 the document does not parse,
+so oh-my-graph knows nothing: it cannot tell an operator who set `model` from
+one who never did. That is the same epistemic state as *key absent* and *file
+absent*, both of which are settled as ordinary, and the outcome is the same one
+every run made before this ADR existed.
+
+**2. A hard failure would make correctness depend on a weak parse of a foreign
+schema, which ADR 0009 forbids.** `settings.json` is the Claude CLI's document,
+not oh-my-graph's, and it may change under us. Refusing to run on a parse
+failure turns an *optional preference* into a *mandatory precondition*: the day
+that CLI accepts something `encoding/json` does not, every `auto`, `chat` and
+`resume` run on that machine dies — including runs whose operator never set
+`model` and never wanted this feature. The node itself does not need the file:
+it runs under `--setting-sources ""` and never reads it, so a parse failure here
+says nothing about whether the node can run correctly. Failing loudly would also
+throw away a paid planner call, since the read happens after it
+(`internal/coordinator/coordinator.go:680`).
+
+**3. The fallback is announced at every entry point, and both announcements are
+now measured.** Not "loud" as a claim about wording — loud as an assertion in
+the suite, because there are exactly two places a planned node is spawned and
+both were required to say so:
+
+| entry point | code | test |
+|---|---|---|
+| first leg (`auto`, `chat`) | `cmd/oh-my-graph/main.go:859` prints `Plan.ModelWarning` once | `TestExecutePlan_ModelWarningIsPrintedOnce` |
+| resumed leg (`resume`) | `resumedPlannedModel`, `cmd/oh-my-graph/resume.go` | `TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath` |
+
+```sh
+go test ./cmd/oh-my-graph -run 'ModelWarning|ResumedPlannedModel' -v
+```
+
+Both name the settings path and the decode error, and both assert the planted
+credential in the fixture is **not** echoed. The resumed leg's warning was an
+inline block inside `continueRun` until 2026-08-29 and no test could reach it;
+it was extracted for no other reason than to make this row a measurement.
+The warning's content is checked in `internal/usermodel/usermodel_test.go` and
+`internal/coordinator/usermodel_test.go` as well.
+
+**What this exception does not cover.** The warning goes to stderr only. It is
+not in `state.json` or `events.jsonl`, so a run read afterwards through `serve`
+or a run-feed consumer cannot see that its nodes fell back — an operator
+watching the dashboard rather than the terminal is not reached. That is a real
+gap in the word "announced", it is recorded in §5, and it is a reason to carry
+the warning into the run record later, not a reason to kill the run now.
+
 ## 3. Why this does not weaken the ceiling
 
 The auto ceiling is a bound on **capability**: layer 1 controls which settings,
@@ -216,8 +300,14 @@ change. Word it exactly:
 
 ## 5. Owed
 
-- Confirm the unknown-model failure path once by hand under `make smoke` and
-  record the observed message here (§2.2 is currently an inference).
+- Observe the real CLI's stderr for an unknown model name once by hand under
+  `make smoke` and record it in §2.2. The path itself is no longer an inference
+  — it is executed by `TestModelResolvesFromSettingsToArgv` — but the refusal it
+  meets there is a scripted stub, not this build's own message.
+- Carry the malformed-settings warning into the run record (`state.json` /
+  `events.jsonl`), so a run watched through `serve` or read by a run-feed
+  consumer can see that its nodes fell back. §2.8 holds the exception on the
+  stderr announcement alone and names this as its gap.
 - The Codex follow-up, with the mechanism already researched in §2.6. It is
   carried in the operator's private backlog (oh-my-graph-hq `notes/open.md`),
   not in the public tracker.
