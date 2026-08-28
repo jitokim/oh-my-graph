@@ -385,6 +385,9 @@ was found while confirming §1.1: `planAndExecute` saves `graph.json` into
 leaves behind a `runs/<id>/` holding a `graph.json` and no `state.json` —
 which `runs list` reports through `WARNING: skipping run …` and the dashboard
 paints `unknown`. A declined plan manufactures a corrupt run today.
+(Wording since #230/`16f0ecc`: `WARNING: run "<id>" could not be read in full
+(<class>): <err>` — `internal/runstatus/skipped.go:201`. The quote above is
+kept as this record wrote it.)
 
 Forcing a declined plan into the enumeration instead was considered and refused:
 `FAIL` for a run the user chose not to start is precisely the defect §1.2 exists
