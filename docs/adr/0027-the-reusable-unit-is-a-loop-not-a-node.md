@@ -528,7 +528,8 @@ top-level key, subtree replacement" that survives the ambiguity. So for a
 multi-node fragment the using node may declare only **`id`, `use:`,
 `with:`, `depends_on`, `cwd` and `worktree`** — the wiring — and any
 behavior key (`prompt`, `allowed_tools`, `success_check`, `retry`,
-`handoff`, `timeout`, `budget_usd`, `agent`, `permission_mode`, `type`) on
+`feedback`, `handoff`, `timeout`, `budget_usd`, `agent`, `permission_mode`,
+`type` — illustrative; the rule is the whitelist above, not this list) on
 a multi-node `use:` is a **load error** naming the key. A loop that needs a
 different gate needs a substitution point or a different fragment; that is
 ADR 0013's "declare it upstream or fork honestly", applied where the

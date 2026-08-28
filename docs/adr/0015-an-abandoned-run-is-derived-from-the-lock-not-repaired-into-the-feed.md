@@ -400,7 +400,10 @@ so `InFlight` keeps its exact current meaning ("the last leg is open"). The
 probe belongs to `internal/runstate`, which already owns the lock file. The
 derivation rule — *in flight = open leg AND held lock* — is stated once and
 shared, and the existing cross-surface agreement test
-(`TestBuildCard_InFlightAgreesWithRunfeed`) is extended to judge the three
+(`TestBuildCard_InFlightAgreesWithRunfeed` — the symbol that shipped is
+`TestBuildCard_AgreesWithTheSharedRule`, `internal/serve/dashboard_test.go:350`,
+with its CLI arm `TestListRuns_StatusAgreesWithTheSharedRule`,
+`cmd/oh-my-graph/abandoned_test.go:166`; see ADR 0036:390) is extended to judge the three
 surfaces against the same rule, so `runs list`, the dashboard card and
 `ResolveRun` cannot drift apart the way they would if each composed the two
 facts by hand.
@@ -478,6 +481,9 @@ informational and explicitly not a liveness test.
   The moment such a run derives abandoned, `inFlight` is false, the excuse
   lapses, and the directory becomes `WARNING: skipping run …` — it **vanishes
   from `runs list`**, where today it at least shows a RUNNING placeholder row.
+  (Wording since #230/`16f0ecc`: `WARNING: run "<id>" could not be read in full
+  (<class>): <err>` — `internal/runstatus/skipped.go:201`. The quote above is
+  kept as this record wrote it.)
   The guard's real intent was "not settled", of which in-flight was the only
   case; it becomes *in flight **or** abandoned*, rendering an ABANDONED row
   with the same `-` placeholders. `internal/serve/card.go:144` already handles
