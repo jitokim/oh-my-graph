@@ -63,7 +63,13 @@ envelope. Neither id is invented by the scheduler.
 ## Least privilege per node
 
 - Each node declares its own `allowed_tools` and `permission_mode`. Grant only
-  what a node needs.
+  what a node needs. **A node that declares no `permission_mode` runs under
+  `auto`** (it was `dontAsk` before
+  [ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md)):
+  a tool call matching none of the loaded allow rules is put to the CLI's own
+  model classifier, which approves or denies it, where before it was denied
+  outright. Declare `permission_mode: dontAsk` on a node to get the older,
+  stricter disposition back.
 - **`allowed_tools` is a declaration, not a sandbox.** It is passed to the CLI as
   `--allowedTools`, which is *unioned* with the permissions your own
   `~/.claude/settings.json` already grants — it can never shrink them. If your
@@ -222,7 +228,7 @@ The layers:
 |---|---|---|
 | 0 declaration | `coordinator.plannedToolAllowlist` | what a plan may name at all — plan time, before any node runs |
 | 1 isolation | `--setting-sources ""` — on **every** planned node since 2026-08-12, agent-mapped included, **unless the run typed `--accept-loaded-user-config`** | your standing grants; settings hooks |
-| 2 grant | `--allowedTools` under `dontAsk` default-deny | **scoped Bash** |
+| 2 grant | `--allowedTools` — the allow rules themselves | **scoped Bash** |
 | 3 narrowing | `--tools "<names declared>"` | tools the model can attempt at all |
 | 4 MCP | `--strict-mcp-config`, no `--mcp-config` — **dropped together with layer 1 by that same opt-in** | `mcp__<server>__<tool>` |
 | 5 residual | `--disallowedTools` | anything the layers above got wrong |
@@ -231,6 +237,41 @@ Layer 0 is the only plan-time layer: it is the fixed allowlist above, enforced
 by `validatePlannedNodeTools` before anything runs, so a plan naming `Bash`,
 `Bash(*)` or an unrestricted `WebFetch` never becomes a graph. Layers 1–5 then
 bound what the surviving declaration is worth at run time.
+
+**What the permission mode changes, and what it does not.** Since
+[ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md)
+a planned node runs under `--permission-mode auto` rather than `dontAsk`. That
+moves exactly one thing, and it is worth being precise about which, because
+"the ceiling loosened" would be the wrong summary:
+
+| layer | after the change |
+|---|---|
+| 0 declaration | **still binds.** A plan-time rejection; it runs before anything spawns and knows nothing about permission modes. |
+| 1 isolation | **still binds.** It decides which *sources* supply allow rules, not what an unmatched call becomes. |
+| 2 grant | **loosened — the only one.** The argv is byte-identical. Its *complement* changed: a call matching no allow rule used to be denied outright and is now put to the CLI's own model classifier, which approves or denies it. |
+| 3 narrowing | **still binds, and binds harder.** `--tools` replaces the built-in tool set rather than gating it. A tool that is absent cannot be called and there is nothing for a classifier to adjudicate. |
+| 4 MCP | **still binds.** A separate axis, untouched. |
+| 5 residual | **still binds, and now carries more weight.** An explicit deny is evaluated *before* the classifier is consulted and is honoured even under `bypassPermissions`. It is now the only layer that refuses a call categorically. |
+
+So the honest one-line form is **default-deny became default-classifier**, at
+layer 2 and nowhere else. Read-only operations — reading files, searching code —
+do not reach the classifier at all, which is a widening that layer 3 still
+bounds: a node whose `--tools` omits `Read` has no `Read` to widen.
+
+Two consequences a reader should not have to derive. `auto` **ignores allow
+rules it judges broad enough to bypass its own classifier**, which for a planned
+node changes nothing (layer 0 forbids a plan from ever declaring `Bash` or
+`Bash(*)`, so its grants are narrow patterns by construction) but may narrow a
+hand-written graph running under your standing grants. And `auto` adds a **new
+failure mode with no `dontAsk` equivalent**: the CLI aborts a headless agent that
+accumulates too many classifier denials. The threshold is not published and has
+not been measured here. What has been ruled out is a headless node *blocking* on
+a permission prompt — the strings behind that, and the binary they came from, are
+in [`docs/measurements/0034-what-auto-mode-does-on-disk.md`](docs/measurements/0034-what-auto-mode-does-on-disk.md).
+
+**Codex runs are unaffected.** `codex exec` takes no `--permission-mode`; the
+mode is translated only into a filesystem sandbox, and `auto` and `dontAsk` both
+map to `workspace-write`. This is a Claude-runtime change.
 
 **Layers 1 and 4 are the two an operator may decline**, together, off by
 default and only by typing `--accept-loaded-user-config` at launch. Unless that
@@ -266,6 +307,15 @@ declaring any scoped `Bash(...)` pattern keeps the whole `Bash` tool"* — is
 hand-written graphs, which run without layer 1's isolation: their declared
 `allowed_tools` is still rendered as `--allowedTools` (layer 2 applies to every
 graph), but layers 1 and 3–5 are auto mode's alone by design.
+
+**That measurement ran under `dontAsk`, and one half of it does not depend on
+the mode.** The load-bearing half is that isolation stops your standing
+`Bash(*)` from matching before the node's own narrower grant — layer 1, mode
+independent. The *denial* half is precisely what the mode decides, so under
+today's `auto` default the same out-of-scope `touch` is put to the classifier
+instead of refused outright, and **whether it survives that has not been
+measured.** The reading above is not withdrawn; it is dated, and its second half
+is now a claim about `dontAsk` specifically.
 
 **Through v0.6.0 it was NOT closed for an auto-planned node that oh-my-graph
 mapped onto one of your own subagents, and since 2026-08-12 it is.** Those

@@ -40,6 +40,10 @@ func sampleSnapshot() Snapshot {
 		Graph:           json.RawMessage(`{"name":"g","nodes":[{"id":"dev","prompt":"dev"}]}`),
 		Inputs:          map[string]string{"repo": "/work/app"},
 		ContinueOnFail:  true,
+		// dontAsk rather than the current default, so the round-trip proves the
+		// field carries the run's OWN answer and not whatever schedule's constant
+		// happens to be — which is the entire point of persisting it.
+		DefaultPermissionMode: "dontAsk",
 		ToolPolicies: map[string]NodeToolPolicy{
 			"dev": {
 				AllowedTools:    []string{"Read", "Bash(git *)"},

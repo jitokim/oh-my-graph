@@ -15,7 +15,7 @@
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-//	oh-my-graph runs list [--show-skipped]
+//	oh-my-graph runs list [--show-skipped] [--exit-in-flight]
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
@@ -26,8 +26,13 @@
 // resumable — at a gate awaiting a human decision (ADR 0003) or because the
 // subscription's session limit was hit (ADR 0009), 3 `auto` refused to start
 // because the directory has a build system and the run would have checked none
-// of it (ADR 0030). A pause is not a failure, and a refusal is neither: nothing
-// ran, nothing is resumable, nothing was billed.
+// of it (ADR 0030), 4 `runs list --exit-in-flight` found at least one listed run
+// still PLANNING or RUNNING. A pause is not a failure, and a refusal is neither:
+// nothing ran, nothing is resumable, nothing was billed. Nor is 4: nothing ran
+// there either — the command was asked a question about other runs and answered
+// it, which is why it gets a code a supervisor loop can wait on
+// (`until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done`)
+// instead of grepping a table that is not a contract.
 // An iterated auto run (--max-cycles ≥ 2, ADR 0011) makes the contract
 // goal-level: exit 0 additionally requires the assessor's goal-met verdict on
 // a passed final cycle, and stopping unmet (cycles exhausted, budget ceiling,
@@ -74,8 +79,10 @@ func main() {
 // passed), 1 (the run failed — printed to stderr), 2 (the run paused — at
 // a gate or on a session limit — and is resumable; the resume hint was
 // already printed to stdout by executeGraph/runResume, so this path prints
-// nothing further), or 3 (`auto` refused for want of build evidence — printed
-// here, to stdout, by the error itself). Separated from main so the exit path
+// nothing further), 3 (`auto` refused for want of build evidence — printed
+// here, to stdout, by the error itself), or 4 (`runs list --exit-in-flight`
+// found a run still in flight; it prints nothing beyond the table it already
+// printed, because the code is the answer). Separated from main so the exit path
 // lives in exactly one place and the mapping itself is testable without calling
 // os.Exit.
 func mainExitCode(args []string) int {
@@ -147,6 +154,19 @@ func exitCodeForError(err error) int {
 	if errors.As(err, &missingEvidence) {
 		return 3
 	}
+	// The one code that is not about the invocation's own work: `runs list
+	// --exit-in-flight` asked whether anything is still running and the answer
+	// was yes (runsInFlightError). A question answered is not a failure — the
+	// table printed and every readable directory was read — so it must not be
+	// exit 1, where a supervisor loop could not tell it from a corpus it could
+	// not read. That distinction is the whole point: exit 1 means "ask again",
+	// exit 4 means "not yet", exit 0 means "nothing is in flight". It also stays
+	// outside ADR 0023 §2.6's exit-code/run-status agreement, which is about the
+	// run an invocation just executed; this invocation executes none.
+	var inFlight *runsInFlightError
+	if errors.As(err, &inFlight) {
+		return 4
+	}
 	return 1
 }
 
@@ -164,7 +184,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
-       oh-my-graph runs list [--show-skipped]
+       oh-my-graph runs list [--show-skipped] [--exit-in-flight]
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
@@ -373,6 +393,28 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// servers and tool permissions, unchanged. 0 planning cost: `run` has no
 	// planning step, so its total shows no planning line and is exactly the
 	// per-node sum.
+	// The missing-CLI preflight, on the last line before the run costs anything:
+	// executeGraph opens the run leg, which creates the run directory, and the
+	// node that would otherwise discover this discovers it as a spawn failure
+	// with the scheduler already running.
+	//
+	// LAST, not first. Everything above it — the YAML load, DAG validation, the
+	// runtime check, the bypassPermissions warning — is a verdict about the
+	// graph, and a graph verdict must not be displaced by a verdict about the
+	// machine: a newcomer with a cycle in their YAML and no CLI installed still
+	// needs to be told about the cycle. `--dry-run` returns further up for the
+	// same reason from the other side: it spawns nothing, so it must keep
+	// working on a machine with no model CLI at all.
+	// …and only for a graph that will actually spawn one. A graph whose nodes
+	// are all gates never touches the NodeRunner, so demanding a CLI from it is
+	// a refusal about a capability the run does not use — which is how this
+	// preflight broke TestMainExitCode_PauseMapsToExitCode2 on a machine
+	// without the CLI installed (CI), while passing on one that has it.
+	if graphSpawnsRuntime(loaded.Graph) {
+		if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+			return err
+		}
+	}
 	// nil leg: `run` has no planning phase, so it opens its leg at executeGraph
 	// exactly as it always has (ADR 0023 §2.2).
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
@@ -437,6 +479,22 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		return err
 	}
 	flags.buildEvidence = evidence
+
+	// The same preflight `run` does, and BELOW ADR 0030's gate on purpose. Both
+	// refuse before anything spends, so neither is racing the other for the
+	// user's money — what the order decides is which refusal a directory that
+	// earns both gets, and the gate's answer must not depend on what happens to
+	// be installed. Placed above, a machine with no CLI would turn a §2.4
+	// refusal (exit 3) into an exit 1, which is exactly the confusion that exit
+	// code exists to prevent.
+	//
+	// Still upstream of planAndExecute, which is where `auto` opens its run leg
+	// — before the planner call, its first spawn — so a missing CLI leaves no
+	// run directory behind. `--plan-only` is below this line, unlike `run`'s
+	// `--dry-run`, because a plan-only invocation still spawns the planner.
+	if err := runner.CheckRunnerCLI(nodeRunner); err != nil {
+		return err
+	}
 
 	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
@@ -1047,9 +1105,13 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Graph:           graphJSON,
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
-		ToolPolicies:    toNodeToolPolicies(toolPolicies),
-		Goal:            goal,
-		BuildEvidence:   buildEvidenceRecord(flags.buildEvidence),
+		// Recorded, not defaulted: a later `resume` must be able to put this run
+		// back under the mode it was launched in even if the binary's default has
+		// changed underneath it (see runstate.Snapshot.DefaultPermissionMode).
+		DefaultPermissionMode: schedule.DefaultPermissionMode,
+		ToolPolicies:          toNodeToolPolicies(toolPolicies),
+		Goal:                  goal,
+		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
@@ -2140,4 +2202,17 @@ func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinat
 		return
 	}
 	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
+}
+
+// graphSpawnsRuntime reports whether any node of this graph would launch the
+// model CLI. A gate node pauses for a human and spawns nothing; a graph made
+// only of them needs no CLI installed, and refusing it for a missing one is a
+// verdict about a capability the run never reaches for.
+func graphSpawnsRuntime(g *graph.Graph) bool {
+	for _, node := range g.Nodes {
+		if node.Type != graph.TypeGate {
+			return true
+		}
+	}
+	return false
 }

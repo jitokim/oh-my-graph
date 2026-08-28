@@ -6,7 +6,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>Describe the goal — run the graph with your Claude or Codex login.</em></p>
+<p align="center"><em>Each node of a graph you write runs as a real subprocess of your own <code>claude</code> or <code>codex</code> CLI — your settings, your skills.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -19,17 +19,17 @@
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
 
-> A graph-native multi-agent orchestrator whose node runtime is your own
-> logged-in `claude` or `codex` CLI — not an API key.
+> Each node of a graph you write runs as a real subprocess of the `claude` or
+> `codex` CLI you already have logged in — so it starts inside your own
+> settings, CLAUDE.md, MCP servers and skills.
 
 ## What it is
 
-oh-my-graph does not require a direct model API or Agent SDK. You describe the
-work as a DAG in YAML, and
-each node runs through the CLI login you already use: `claude` by default, or
-`codex` when selected for the run. **That is not the same as free.** It spends
-your plan allowance. Claude reports USD cost; Codex reports token usage and the
-ledger labels USD cost `unknown` rather than inventing `$0`. [Bring your own
+You describe the work as a DAG in YAML — or hand `auto` a goal and let it plan
+the graph through the same validator — and each node runs as one subprocess of
+the CLI login you already use: `claude` by default, `codex` when selected for
+the run. Your own logged-in CLI, not a metered API key. **That is not the same
+as free.** It spends your plan allowance. [Bring your own
 login](#bring-your-own-login) is how that is enforced in code, and
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md) is how it compares to its nearest
 neighbours — conductor, OMK, open-multi-agent.
@@ -45,6 +45,9 @@ neighbours — conductor, OMK, open-multi-agent.
 ## Quickstart
 
 ```sh
+# Prebuilt binary, no Go toolchain (exact commands: docs/INSTALL.md) — from https://github.com/jitokim/oh-my-graph/releases take
+# oh-my-graph_<version>_<os>_<arch>.tar.gz (darwin/linux × amd64/arm64), verify it against the
+# checksums.txt beside it, unpack, put it on your PATH. Or from source, with Go 1.25+ and $(go env GOPATH)/bin on PATH:
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
 # Unpack the example graphs that ship inside the binary into ./graphs/:
@@ -89,7 +92,8 @@ Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
 is also a network boundary, so a Codex graph halts at its first node that
 pushes or calls `gh`. Codex does
 not report USD or implement Claude's `agent:` selector, so `agent:` and
-`--max-goal-budget-usd` are rejected before a Codex run spends anything. A
+`--max-goal-budget-usd` are rejected before a Codex run spends anything; the
+ledger labels its USD cost `unknown` rather than inventing `$0`. A
 node's `budget_usd` is not rejected: with no USD to bound it simply cannot
 apply, so the graph loads and one warning per node says so and names the
 `timeout:` that still guards it. Claude Code agent mapping and skill
@@ -115,9 +119,6 @@ status was checked. The closed set of four qualifiers, and what the engine
 actually did for each, is in [Reading the
 ledger](docs/EXAMPLES.md#reading-the-ledger--what-a-pass-says).
 
-Prefer a prebuilt binary, or want to know exactly what `init` writes and what
-it refuses to overwrite? [docs/INSTALL.md](docs/INSTALL.md).
-
 ## The graph is a file, not a transcript
 
 The DAG lives in YAML you version, review in a pull request and replay — the
@@ -133,7 +134,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: Implement the change and summarize what you did.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
-    permission_mode: dontAsk
+    permission_mode: dontAsk  # optional; undeclared is `auto`, this asks for stricter
 
   - id: e2e
     depends_on: [dev]
@@ -220,6 +221,18 @@ whatever the CLI falls back to when its settings are withheld (measured: 181 of
 The node's capability ceiling is unchanged by it: a model name grants no tool,
 loads no file and runs no hook. Nothing else in that file is read, and under
 `--runtime codex` nothing is.
+
+One thing inside that ceiling changed recently and is worth knowing before you
+read the layers. A node that declares no `permission_mode` runs under
+`--permission-mode auto`, where it used to run `dontAsk`: a tool call matching
+none of the node's allow rules is now put to the CLI's own model classifier,
+which approves or denies it, rather than being denied outright. The tool grants
+themselves did not move — a declared `Bash(git *)` is still exactly what is
+passed, an explicit deny still wins ahead of the classifier, and a tool left out
+of the node's set still does not exist. Write `permission_mode: dontAsk` on a
+node to get the stricter disposition back. The reasoning, and the measurement
+that would reverse it, are in
+[ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md).
 
 The layer-by-layer stance and every measurement behind it are in
 [SECURITY.md](SECURITY.md); the rest of the honest gaps, the platform support

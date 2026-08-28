@@ -71,3 +71,69 @@ func nodeTimeoutGuard(node graph.Node) string {
 	}
 	return fmt.Sprintf("the runner's default timeout: %s", defaultTimeout)
 }
+
+// CLIAvailabilityChecker is the NodeRunner-side plumbing for the one question a
+// caller can ask about a run before it starts: is the CLI this runner would
+// spawn even installed? It is an optional interface rather than a NodeRunner
+// method because a scripted runner has no PATH to consult and must not be forced
+// to invent an answer.
+type CLIAvailabilityChecker interface {
+	// CheckCLIAvailable returns a *CLINotFoundError when the provider CLI cannot
+	// be found on PATH, and nil otherwise — including when the runner has no way
+	// to tell.
+	CheckCLIAvailable() error
+}
+
+// CheckRunnerCLI is what a command calls before it commits to a run: it asks the
+// runner it is about to hand nodes to whether that runner's CLI exists, and
+// returns nil for any runner that cannot answer. Callers therefore need no type
+// switch of their own, and none of them import os/exec to ask.
+func CheckRunnerCLI(r NodeRunner) error {
+	checker, ok := r.(CLIAvailabilityChecker)
+	if !ok {
+		return nil
+	}
+	return checker.CheckCLIAvailable()
+}
+
+// CLINotFoundError is the missing-CLI refusal. Without it the same machine state
+// surfaced far downstream: the run directory was already on disk, the planner
+// call had already been retried for seconds, and what finally reached the
+// operator was Go's exec.Error wording about a file in $PATH — a sentence that
+// names neither oh-my-graph's runtime selection nor what to install.
+//
+// Its text is deliberately NARROW. It reports a PATH lookup, so it claims a PATH
+// lookup: "not installed" and "installed but signed out" are different states,
+// and only the first one is visible without spawning the CLI. Widening this
+// message to speak for the second would be a guess printed in the voice of a
+// check.
+type CLINotFoundError struct {
+	// Runtime is the run-wide runtime whose CLI was looked for.
+	Runtime Runtime
+	// Binary is the command name that was not found.
+	Binary string
+	// Err is the underlying lookup failure (an *exec.Error), kept so a caller
+	// can still reach the original wording.
+	Err error
+}
+
+func (e *CLINotFoundError) Error() string {
+	return fmt.Sprintf("%s runtime: %q is not on PATH, so nothing in this run can start\n"+
+		"  install it and complete its login — docs/INSTALL.md, \"Runtime prerequisite\"\n"+
+		"  or select the CLI you do have, before the subcommand: oh-my-graph --runtime %s ...\n"+
+		"  checked: that the command exists. NOT checked: whether it is signed in — that\n"+
+		"  cannot be known without running it, and a signed-out CLI fails later as an\n"+
+		"  ordinary non-zero exit. Nothing has been spent; no run directory was created.",
+		e.Runtime, e.Binary, otherRuntime(e.Runtime))
+}
+
+func (e *CLINotFoundError) Unwrap() error { return e.Err }
+
+// otherRuntime names the runtime a reader could switch to, so the suggestion in
+// CLINotFoundError never offers the very CLI that was just found missing.
+func otherRuntime(r Runtime) Runtime {
+	if r == RuntimeCodex {
+		return RuntimeClaude
+	}
+	return RuntimeCodex
+}

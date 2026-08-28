@@ -573,6 +573,18 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		plannedModel = model
 	}
 
+	// The mode this run's undeclared nodes ran under on its first leg. A
+	// snapshot written before the default became auto carries no
+	// default_permission_mode at all, and absent means dontAsk — that IS what
+	// those runs ran (runstate.Snapshot.DefaultPermissionMode). Resolved once
+	// here so the recorder below and the scheduler further down cannot disagree,
+	// and written back resolved, so the next leg reads an answer instead of an
+	// absence.
+	defaultPermissionMode := snap.DefaultPermissionMode
+	if defaultPermissionMode == "" {
+		defaultPermissionMode = graph.PermissionDontAsk
+	}
+
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:               runID,
 		Runtime:             snap.Runtime,
@@ -584,7 +596,12 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:               snap.Graph,
 		Inputs:              snap.Inputs,
 		ContinueOnFail:      snap.ContinueOnFail,
-		ToolPolicies:        toNodeToolPolicies(policies),
+		// This recorder rewrites the WHOLE snapshot on every RecordNode, so a
+		// field omitted here is a field the first settling node ERASES — which
+		// for this one would silently move the run's remaining nodes onto the
+		// current default at the next leg.
+		DefaultPermissionMode: defaultPermissionMode,
+		ToolPolicies:          toNodeToolPolicies(policies),
 		// Goal lineage carries across legs: a resumed cycle of a goal loop
 		// (a session-limit pause mid-loop, ADR 0011 §2) must not lose its
 		// group membership just because a second process finished it.
@@ -645,11 +662,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
-		Gate:           gate.NewRecordedController(toGateDecisions(decisions)),
-		Verifier:       verify.NewShellVerifier(),
-		Worktrees:      worktrees,
-		ToolPolicies:   policies,
-		Model:          plannedModel,
+		// The first leg's default, not this binary's: a run that started under
+		// dontAsk finishes under dontAsk, however many upgrades happen between
+		// its legs.
+		DefaultPermissionMode: defaultPermissionMode,
+		Gate:                  gate.NewRecordedController(toGateDecisions(decisions)),
+		Verifier:              verify.NewShellVerifier(),
+		Worktrees:             worktrees,
+		ToolPolicies:          policies,
+		Model:                 plannedModel,
 		// An injected evidence command runs one at a time on a resumed leg for
 		// the same load-bearing reason it does on a fresh one (ADR 0016 §2): two
 		// concurrent builds of one directory can each fail on the other's

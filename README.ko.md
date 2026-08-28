@@ -8,7 +8,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>목표를 설명하세요 — Claude 또는 Codex 로그인으로 그래프를 실행합니다.</em></p>
+<p align="center"><em>직접 쓴 그래프의 각 노드가, 이미 로그인해 둔 <code>claude</code> 또는 <code>codex</code> CLI 의 진짜 서브프로세스로 돕니다 — 당신의 설정, 당신의 스킬 그대로.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -49,6 +49,9 @@ OMK, open-multi-agent — 과의 비교는
 ## 빠른 시작
 
 ```sh
+# Go 툴체인 없이 미리 빌드된 바이너리로 (정확한 명령: docs/INSTALL.md) — https://github.com/jitokim/oh-my-graph/releases 에서
+# oh-my-graph_<version>_<os>_<arch>.tar.gz (darwin/linux × amd64/arm64)를 받아, 옆의 checksums.txt로
+# 검증하고, 풀어서 PATH에 두세요. 소스에서 받으려면 Go 1.25+ 와 $(go env GOPATH)/bin 이 PATH에 있어야 합니다:
 go install github.com/jitokim/oh-my-graph/cmd/oh-my-graph@latest
 
 # 바이너리에 임베드된 예제 그래프를 ./graphs/에 풀어 놓습니다:
@@ -114,9 +117,6 @@ TOTAL COST: $0.0125
 [Reading the ledger](docs/EXAMPLES.md#reading-the-ledger--what-a-pass-says)에
 있습니다.
 
-미리 빌드된 바이너리, 체크섬 검증, 그리고 `init`이 정확히 무엇을 쓰고 무엇을
-덮어쓰지 않는지: [docs/INSTALL.md](docs/INSTALL.md).
-
 ## 그래프는 transcript가 아니라 파일입니다
 
 DAG는 버전 관리하고, pull request에서 리뷰하고, 다시 재생할 수 있는 YAML 파일로
@@ -132,7 +132,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: Implement the change and summarize what you did.
     allowed_tools: [Read, Edit, Write, "Bash(git *)"]
-    permission_mode: dontAsk
+    permission_mode: dontAsk  # 선택 사항; 선언하지 않으면 `auto`, 이건 더 엄격한 쪽을 요청하는 것
 
   - id: e2e
     depends_on: [dev]
@@ -221,6 +221,18 @@ rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
 아무것도 읽지 않고, `--runtime codex`에서는 아무것도 읽지 않습니다 — codex는
 `--ignore-user-config`가 `~/.codex/config.toml`을 막으므로 planned node가 `codex`
 자체의 기본 모델로 답합니다 ([docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+
+그 ceiling 안에서 최근에 바뀐 것이 하나 있고, 계층을 읽기 전에 알아둘 값어치가
+있습니다. `permission_mode`를 선언하지 않은 노드는 이제 `--permission-mode auto`로
+실행됩니다 — 이전에는 `dontAsk`였습니다. 노드의 allow 규칙 중 어느 것과도 매칭되지
+않은 tool 호출이 곧바로 거부되는 대신, CLI 자신의 모델 분류기(classifier)에게
+넘어가 승인 또는 거부됩니다. tool 권한 자체는 움직이지 않았습니다 — 선언한
+`Bash(git *)`는 그대로 전달되고, 명시적 deny는 여전히 분류기보다 먼저 이기며,
+노드의 tool 집합에서 빠진 tool은 여전히 존재하지 않습니다. 더 엄격한 쪽으로
+되돌리려면 노드에 `permission_mode: dontAsk`를 적으면 됩니다. 근거와, 이 결정을
+뒤집게 될 측정치는
+[ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md)에
+있습니다.
 
 계층별 입장과 그 뒤의 모든 측정은 [SECURITY.md](SECURITY.md)에, 나머지 정직한
 빈틈들과 플랫폼 지원 매트릭스(macOS·Linux 지원, WSL first-class, 네이티브

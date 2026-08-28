@@ -50,9 +50,10 @@ const maxOutputInError = 500
 
 // plannedToolAllowlist is the fixed, coordinator-owned safety allowlist for
 // tools a coordinator-planned node may DECLARE. A planned graph comes from
-// untrusted LLM output and runs unattended under permission_mode dontAsk (see
-// schedule.defaultPermissionMode) — nothing prompts a human before a tool call
-// fires. The planner prompt (below) asks the model to pick least-privilege
+// untrusted LLM output and runs unattended under permission_mode auto (see
+// schedule.DefaultPermissionMode) — nothing prompts a human before a tool call
+// fires, and a call this list never authorized is settled by the CLI's own
+// classifier rather than by anyone who read the plan. The planner prompt (below) asks the model to pick least-privilege
 // tools from exactly this list, but that is only a request to an untrusted
 // producer; validatePlannedNodeTools is what enforces it, rejecting any planned
 // node naming a tool outside this set. So "Bash", "Bash(*)", "Bash(rm -rf *)",
@@ -808,11 +809,20 @@ func toolPoliciesByNode(g *graph.Graph, loadedUserConfig bool) map[string]runner
 // was matching before this node's own narrower `Bash(git *)` ever mattered —
 // which is why layer 2 used to be a declaration rather than a limit. Loading
 // none of the user/project/local settings leaves this argv as the only
-// allow-rule source, and under permission-mode dontAsk an unmatched call
-// resolves to ask and an unanswerable ask becomes a DENY. Measured end-to-end
-// on claude 2.1.220 (DESIGN.md, E1): with the user's settings granting
-// `Bash(*)` and this node declaring `Bash(git *)`, an out-of-scope `touch` ran
-// without isolation and was denied with it, while `git init` kept working.
+// allow-rule source. What an unmatched call then resolves to is the default
+// permission mode's business: under `dontAsk` it became an unanswerable ask and
+// therefore a DENY; under `auto` — the default since
+// schedule.DefaultPermissionMode changed — it reaches the CLI's own classifier,
+// which approves or denies it there and then.
+//
+// Measured end-to-end on claude 2.1.220 (DESIGN.md, E1), under `dontAsk`: with
+// the user's settings granting `Bash(*)` and this node declaring `Bash(git *)`,
+// an out-of-scope `touch` ran without isolation and was denied with it, while
+// `git init` kept working. The half of that E1 does not depend on the mode is
+// the load-bearing one — isolation is what stops the user's `Bash(*)` from
+// matching before this node's own grant. The denial half is precisely what the
+// mode decides, so under `auto` the same `touch` is put to the classifier
+// instead; whether it survives that is NOT measured.
 //
 // Layer 1 also closes the settings-hook gap for free: writing a
 // `.claude/settings.local.json` into the invocation directory achieves nothing

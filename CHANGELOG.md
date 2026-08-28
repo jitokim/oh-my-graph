@@ -46,6 +46,207 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   carried in the operator's private backlog — oh-my-graph-hq
   `notes/open.md` — not in the public tracker).
 
+## [v0.13.0] - 2026-08-29
+
+**Minor, and the whole of it is the first ten minutes.** Nothing in this release
+changes what a graph does. It changes what happens to someone who has never run
+one — which, until now, this project had never measured.
+
+`docs/measurements/` held 22 records and **not one was about a first run.**
+Everything the project knew about itself came from a corpus made by its own
+author, on his machine, with a logged-in CLI and a populated settings directory.
+A newcomer is none of those things, and three of them were charging him for it:
+the Quickstart led with `go install` while four prebuilt binaries were already
+shipping every release; a missing CLI surfaced as a spawn failure deep inside a
+run instead of a sentence before it; and the front page led with what the tool
+does *not* need — an API key — rather than with what a node *is*.
+
+All three are now the other way round. The measurement that named them is
+committed with them, including the steps it could **not** execute and said so
+rather than inventing.
+
+One bug came out of the fix and is worth recording, because it only failed where
+it mattered: the new preflight demanded a CLI from every run, including graphs
+whose nodes are all gates — which spawn nothing. It passed on a machine with
+`claude` installed and failed on CI, which has none. The test it broke had
+already written the reason down in its own comment: *"a root gate never touches
+the NodeRunner."* The preflight, not the test, was wrong.
+
+### Added
+
+- **`run` and `auto` now say the provider CLI is missing before they start,
+  instead of failing deep inside the run.** If `claude` (or `codex`, under
+  `--runtime codex`) is not on `PATH`, the invocation stops with a message
+  naming the runtime, the command it looked for, `docs/INSTALL.md`'s runtime
+  prerequisite and the other runtime you could select — and no run directory is
+  created, so nothing is left behind for a run that never had a CLI to run.
+  Previously this reached the operator as Go's `exec: "claude": executable file
+  not found in $PATH` from inside a scheduler that had already made the run
+  directory (measured: `docs/measurements/0037-first-run-friction.md`, row 7).
+  **The check is a `PATH` lookup and nothing more: it CANNOT tell whether the
+  CLI is signed in.** A signed-out CLI is on `PATH`, starts normally and fails
+  afterwards as an ordinary non-zero exit; distinguishing that would require
+  spawning it, so the message says in as many words that being signed in was not
+  checked. `run --dry-run` is deliberately unaffected — it spawns nothing and
+  keeps working with no model CLI installed at all.
+
+### Changed
+
+- **The Quickstart's first install command is now the prebuilt binary**, with
+  `go install` beside it carrying the two prerequisites it had been leaving
+  unsaid (Go 1.25+, and `$(go env GOPATH)/bin` on `PATH`). The prebuilt path had
+  been named seventy lines below the command most readers would already have
+  run.
+### Changed
+
+- **The README now leads with what a node *is*, not with what it doesn't
+  cost.** Each node of a graph you write is a real subprocess of your own
+  logged-in `claude` or `codex` CLI, starting inside your settings, CLAUDE.md,
+  MCP servers and skills; "your own logged-in CLI, not a metered API key" is
+  kept, but as the second beat rather than the headline. Documentation only —
+  no code changed. The GitHub repository description still leads with the
+  subscription hook; the replacement text is drafted but not applied (it is a
+  repository setting, not a file in this tree).
+
+## [v0.12.0] - 2026-08-25
+
+**Minor because the default changed under you.** A node that declares no
+`permission_mode` now runs as `auto` rather than `dontAsk` (ADR 0034), and that
+is the one thing in this release a user could be surprised by — so it is the
+first sentence rather than a line in a list.
+
+The release has one through-line: **the tool now says things it used to leave
+you to infer.** `runs list` states how many runs are in flight instead of
+letting an empty grep stand for "nothing is running", and the same fact is
+answerable by a shell through an exit code. A bind failure names the build
+holding the port. A node denied its tools is a measured quantity rather than a
+suspicion.
+
+That is not a theme somebody chose; it is what a week of measuring turned up.
+Four measurements are committed with their scripts and frozen data, and **two of
+them argued against shipping something** — a tool-grant lint was built, run,
+hand-checked at 4 real hits in 114, and rejected, and a compound-command
+hypothesis was measured and found not to be the dominant cause after all.
+
+Three ADRs land as records rather than code: the run is the unit of evidence and
+not the node (0033), the default permission mode moves and says which ceiling
+layers still bind (0034), and cross-run session reuse is **rejected** (0036),
+closing a backlog item that had been open since 2026-08-01.
+
+### Changed
+
+- **The default permission mode is now `auto`, where it was `dontAsk`.** A node
+  that declares no `permission_mode` used to run `claude --permission-mode
+  dontAsk`, under which a tool call matching none of its allow rules resolved to
+  an *ask* that a headless subprocess could never answer, and therefore to a
+  **deny**. It now runs `--permission-mode auto`, under which the same call goes
+  to the CLI's own model classifier, which approves or denies it on the spot.
+  **Default-deny became default-classifier.** The decision, its five sub-decisions
+  and the count that would revert it are
+  [ADR 0034](docs/adr/0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md).
+
+  Nothing else about the ceiling moved. Layers 0, 1, 3, 4 and 5 bind exactly as
+  they did — a deny rule is still evaluated ahead of the classifier, and `--tools`
+  still removes a tool rather than gating it — and layer 2's `--allowedTools`
+  argv is byte-identical. What changed is the disposition of everything that argv
+  does *not* name. `bypassPermissions` is still refused for a planned node and
+  still prints a loud per-node warning for a hand-written one.
+
+  **Claude runtime only.** A Codex run's argv does not change by one byte:
+  `codex exec` has no `--permission-mode`, and both `auto` and `dontAsk` map to
+  the same `--sandbox workspace-write`.
+
+  A hand-written `run` gets the same new default as a planned `auto`, argued in
+  ADR 0034 §2.4 rather than assumed. A graph that wants the old behaviour asks
+  for it by name — `permission_mode: dontAsk` — per node, as before.
+
+  **A run now keeps the mode it was launched under.** `state.json` gains an
+  optional `default_permission_mode`, written at launch and read on resume;
+  **absent means `dontAsk`**, so a run started before this change resumes under
+  the mode it really ran rather than silently adopting the new default. The
+  field is additive and the snapshot schema stays at 3.
+- **`runs list`, `show` and `watch` now state how many runs are IN FLIGHT,
+  including when the answer is zero.** Asked how many graphs were running, an
+  operator could only run `oh-my-graph runs list | grep -c RUNNING` and read
+  `0` — an inference from ABSENCE, indistinguishable from a table that failed
+  to render, a mis-filter, or broken status logic. The summary line counted
+  what was HIDDEN and never counted what was ALIVE.
+
+  Before, on a run home with one settled run and nothing running:
+
+  ```
+  1 of 1 run(s) shown; 0 skipped.
+  ```
+
+  After, the same corpus:
+
+  ```
+  1 of 1 run(s) shown; 0 in flight; 0 skipped.
+  ```
+
+  With two live runs, one abandoned one and one directory this build cannot
+  read, before:
+
+  ```
+  3 of 4 run(s) shown; 1 skipped (1 written by an incompatible snapshot schema) — pass --show-skipped to name them.
+  ```
+
+  After:
+
+  ```
+  3 of 4 run(s) shown; 2 in flight, 1 abandoned; 1 skipped (1 written by an incompatible snapshot schema) — pass --show-skipped to name them.
+  ```
+
+  It is the SAME line, not a second one: one line is one read, while a second
+  line can be scrolled past, cropped by a pager, or emitted only
+  conditionally — the exact failure mode this change exists to kill. An
+  abandoned run is named in the same sentence when there is one, and is never
+  added into the in-flight number: a reader asking "is anything running" is
+  answered wrongly by a count that folds in dead runs, and badly served by
+  silence about a run whose process died holding a lock.
+
+  The two single-run surfaces say the same sentence, so an operator learns one
+  wording rather than three. `show`, before and after:
+
+  ```
+  Run run-done — PASS, 1 node(s)
+  Run run-done — PASS, 1 node(s); 0 in flight.
+  ```
+
+  `watch`, before and after:
+
+  ```
+  run run-done is PASS
+  run run-done is PASS; 0 in flight.
+  ```
+
+  The count is `runstatus.InFlightCount` over statuses the surfaces already
+  derived, so nothing re-decides what in-flight means (ADR 0015 §4's open leg
+  AND held lock stays the one rule, in `runstatus.Derive`). The machine-readable
+  surfaces are unchanged: `/api/cards`, `/api/graph` and `events.jsonl` keep
+  their shapes and gain no prose — a consumer counts live runs itself from the
+  state token, as the dashboard's own page already does.
+- **The spawn retry now waits long enough to be useful.** #214 gave the
+  assessor a bounded retry for a CLI that never started, and #226 extended it to
+  the planner. Both shipped with a **3-attempt, 300ms** bound — a 600ms window —
+  and then two more lanes died on the same failure *after* the retry was in
+  place:
+
+  ```
+  assessor run: claude run: spawn failed: exec: "claude": executable file not found in $PATH
+  planner run:  claude run: spawn failed: exec: "claude": executable file not found in $PATH
+  ```
+
+  Four occurrences in one day, two of them post-fix, say the bound was **correct
+  in shape and useless in size**: 600ms is less than a package manager takes to
+  relink a binary. Widened to **5 attempts, 2s apart** — eight seconds of
+  patience, which buys the common case. A machine that genuinely has no CLI
+  installed still fails, eight seconds later, saying exactly what it said before.
+
+  Nothing else changed: only a spawn that never happened is retried. A refused
+  reply, a non-zero exit, a timeout and a cancelled context still stop on the
+  first answer.
+
 ### Changed
 
 - **An unresolvable `{{ inputs.x }}` or `{{ artifacts.id }}` now says that a
@@ -134,6 +335,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **`runs list --exit-in-flight`** — a script can now wait for a whole run home
+  to settle without parsing anything. The flag moves the table's own answer onto
+  the exit code: **4** while any listed run is still `PLANNING` or `RUNNING`,
+  **0** when none is, and **1** if the corpus could not be read (so a loop keeps
+  waiting rather than declaring "done" over a directory it never saw).
+
+  ```sh
+  until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done
+  ```
+
+  Before this, the only terminal condition in the tool was `watch <run-id>`,
+  which needs a run id you already know and cannot see a run that starts later;
+  everything else meant grepping a table that is explicitly not a contract (ADR
+  0015). `ABANDONED` counts as **not** in flight — that is the half of the rule a
+  consumer reading `events.jsonl` alone cannot compute, since a dead leg stays
+  open forever and such a loop would never end. The count comes from the same
+  `runstatus` derivation the table prints, so the two cannot disagree. Nothing
+  is added to the output, and without the flag the exit code is unchanged.
+
 - **`runs list --show-skipped`** — names every run directory the listing had to
   skip, one line each, in the shared unreadable-run sentence that `runs show`
   and `runs watch` also speak. The classification behind both the summary's
@@ -180,6 +400,85 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **ADR 0036 — cross-run session reuse is rejected: a resumed session is not a
+  reused node**
+  ([`docs/adr/0036-cross-run-session-reuse-is-rejected.md`](docs/adr/0036-cross-run-session-reuse-is-rejected.md),
+  superseding [ADR 0008](docs/adr/0008-cross-run-session-reuse-is-deferred.md),
+  which recommended *defer*). A node may not `--resume` a session created by a
+  previous run, and the ground is not the substrate ADR 0008 was waiting on. The
+  proposal lands on none of the four identity items this product judges by: in
+  this repo *"node 재사용"* has a settled referent — reusing a node's
+  **definition**, which is what a fragment is (ADR 0013, extended by 0027 and
+  0029) — and a transcript is not a definition, so two things containing the word
+  *reuse* are not the same item. That is dispositive on its own; the cost is
+  priced anyway. It converts `NodeRecord.SessionID`
+  (`internal/runstate/runstate.go:166`), documented as the one datum resume
+  cannot recompute, into a **reference** whose target sits in a directory this
+  snapshot does not own — a third fact none of the six surfaces sharing ADR
+  0015's rule (`internal/runstatus/runstatus.go:13-16`) gathers, and one that
+  rule has no arm for, because *"the referenced session is dead"* has no
+  affirmative reading the way a free lock does. When the target is gone there
+  are exactly three answers — fail the node on housekeeping elsewhere, start
+  cold and quietly lie, or probe foreign directories from inside graph
+  validation — and each is independently disqualifying. §5 names six ways to
+  falsify that, starting with the identity list itself. **Rejected. No behaviour
+  changed, no graph key, no `state.json` field, no flag, no new exec seam; and
+  `handoff: session`'s exactly-one-session-parent rule is untouched.**
+- **Every rule in the batch-lane idiom now ends in a disposition: the check
+  that enforces it, named, or one sentence saying why it is judgement**
+  ([`graphs/backlog-batch.yaml`](graphs/backlog-batch.yaml)). The header stated
+  seven hard-won rules and left a reader to guess which of them anything
+  enforced — a rule with a test behind it read exactly like one no code has
+  ever looked at.
+
+  Three rules are mechanically checked, all three as tests over `graphs/` in
+  `internal/graph/shipped_graphs_test.go`, so a violation fails THIS repo's
+  build rather than warning at a user's own graph:
+  `TestIndependentLanesFailIndependently` (rule 5 — two or more weakly
+  connected components in the resolved graph must come with
+  `on_fail: continue`), `TestASessionGateCitesTheColdSafeFragment` (rule 3 — a
+  node that resumes a session and retries must have spliced `e2e-verify`, where
+  the cold-safe wording exists once), and
+  `TestAGatingReviewCarriesItsRecoveryArc`, extended to rule 6's second half:
+  it already refused a narrowed review check with no `feedback:` arc, and now
+  equally refuses an arc on a node whose check still accepts `FINDINGS:` — an
+  arc the failing verdict can never reach. Rule 3's risky shape keeps its
+  existing advisory warning from `handoff.LintSessions`; the test guards only
+  what the warning cannot, that the wording has not been copied out by hand.
+
+  Rules 2, 4 and 7 stay prose, each saying why in the header: rule 2 would have
+  to read prompt prose for an instruction, the predicate family this repo
+  measured and rejected at 110 noise in 114 hits
+  ([`docs/measurements/0213-tool-grant-predicate.md`](docs/measurements/0213-tool-grant-predicate.md));
+  rule 4's subject is a lane's diff, which does not exist when a graph is
+  loaded; and rule 7 asks whether a repeat is a shape or a difference in a key,
+  which is the judgement it exists to provoke.
+
+  Rule 1 — "lanes must not share files" — stays prose too, and was measured
+  before it was written off, in
+  [`docs/measurements/0034-lane-file-ownership-predicate.md`](docs/measurements/0034-lane-file-ownership-predicate.md).
+  Over 45 graphs and 216 resolved nodes, only one graph can fire the predicate
+  at all (a planned graph may not declare a `worktree:`), and the lexical form
+  produced **1 hit, of which the hand-check made 1 noise** — both lanes cite
+  `CONTRIBUTING.md` as the address of the commit-trailer convention and neither
+  edits it. Verdict: DO-NOT-SHIP. The command is the address for those numbers:
+
+  ```sh
+  go run docs/measurements/0034-lane-file-ownership-predicate.go
+  ```
+
+  What survives of rule 1 reads no paths at all and is a test:
+  `TestAWorktreeGraphLeavesNoNodeOutsideALane` refuses a graph that declares
+  lanes and leaves some node without one, since that node runs in the user's
+  own tree and so shares files with every lane at once.
+
+  No new `lint` sweep and no new load error — a new warning owes a measured
+  noise rate, and the corpus that could measure one is n=1 across everything
+  this repo ships. The header also settles the fragment question so it is not
+  reopened: the lane shape is already a fragment,
+  [`graphs/fragments/gated-lane.yaml`](graphs/fragments/gated-lane.yaml), and
+  no second lane fragment is coming. Nothing in the graph body changed, and
+  both runtimes' `lint` output for the eight shipped graphs is unchanged.
 - **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
   ADR 0030 is deliberately not extended one level down**
   ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
@@ -215,6 +514,37 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   while `cmd/oh-my-graph/version.go:9` reads `0.11.0`. The clause that survived
   the deletion is the true half: a run that types nothing is byte-for-byte the
   run that shipped in v0.10.0.
+- **`graphs/backlog-batch.yaml`'s header diagrammed four nodes the graph no
+  longer has, and its rule 1 advised an edit that will not load.** ADR 0029
+  folded lane A into a single `use: gated-lane` node, and commit `d232ce4`
+  deleted `dev-a`/`e2e-a`/`review-a`/`pr-a` — but that commit's diff on this
+  file begins at `@@ -45,15 +45,24 @@`, so it never reached the header. The
+  runtime ids are `lane-a/dev`, `lane-a/e2e`, `lane-a/review`, `lane-a/pr`, as
+  the file's own body comment already said (`graphs/backlog-batch.yaml:88`) and
+  as loading it prints:
+
+  ```sh
+  go run ./cmd/oh-my-graph run graphs/backlog-batch.yaml --dry-run \
+      --input repo=/tmp --input checks_command="make local" \
+      --input task_a=x --input task_b=y
+  # Graph "backlog-batch" (8 nodes): lane-a/dev, lane-a/e2e, lane-a/review,
+  #   lane-a/pr, dev-b, e2e-b, review-b, pr-b
+  ```
+
+  The second line was worse than stale. Rule 1 offered "make dev-b depend on
+  `pr-a`" as the way to serialize two overlapping tasks, and `depends_on:
+  [pr-a]` is a load error — `depends_on unknown node`,
+  `internal/graph/validate.go:454` — so a reader who took the advice got a
+  graph that would not run. It now names `lane-a/pr`
+  (`graphs/backlog-batch.yaml:16`). `init` emits this file and users copy it,
+  which is why a stale comment here is a stale instruction to a stranger.
+
+  Comments only: no node, prompt, or key changed, the graph still validates at
+  8 nodes, and no verdict clause moved, so the qualifier sweep's counts are
+  untouched. The remaining thirteen shipped graphs and fragments were audited
+  against v0.11.0 in the same pass and left alone — none of them names `auto`,
+  so neither `--accept-loaded-user-config` nor anything else new in v0.11.0
+  reaches them.
 
 ## [v0.11.0] - 2026-08-21
 

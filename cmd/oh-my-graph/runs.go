@@ -44,7 +44,7 @@ func runRuns(args []string) error {
 		if err := f.parse(args[1:]); err != nil {
 			return err
 		}
-		return listRuns(os.Stdout, os.Stderr, runsRoot(), f.showSkipped)
+		return listRunsForExit(os.Stdout, os.Stderr, runsRoot(), f.showSkipped, f.exitInFlight)
 	default:
 		return fmt.Errorf("runs: unknown subcommand %q (want list)", args[0])
 	}
@@ -59,6 +59,10 @@ const showSkippedFlag = "--show-skipped"
 // `list` because that is the command whose output they change.
 type runsListFlags struct {
 	showSkipped bool
+	// exitInFlight moves the table's own answer onto the exit code. It changes
+	// no byte of the output — see listRunsForExit for why the machine channel
+	// is a code and not a sentence.
+	exitInFlight bool
 
 	set *flag.FlagSet
 }
@@ -68,6 +72,8 @@ func newRunsListFlags() *runsListFlags {
 	f := &runsListFlags{set: flag.NewFlagSet("runs list", flag.ContinueOnError)}
 	f.set.BoolVar(&f.showSkipped, "show-skipped", false,
 		"name every run directory the table could not read, one line each on stderr")
+	f.set.BoolVar(&f.exitInFlight, "exit-in-flight", false,
+		"exit 4 instead of 0 while any listed run is still PLANNING or RUNNING")
 	return f
 }
 
@@ -120,8 +126,60 @@ type runSummary struct {
 	hasAccounting bool
 }
 
-// listRuns renders one row per run directory under root, newest first, plus a
-// total across the listed runs. Every row's STATUS is one of the six values the
+// runsInFlightError is the answer `runs list --exit-in-flight` gives on the
+// machine channel: at least one listed run is still working, so an operator
+// asking "is everything done?" gets a no. It is not a failure of the command —
+// the table printed, every directory that could be read was read — which is why
+// it carries its own exit code (4) rather than joining exit 1, and why the
+// sentence it holds is never printed: mainExitCode prints an error only for
+// exit 1. The exit code IS the answer. A code exists at all because `runs
+// list`'s table is explicitly not a contract (ADR 0015, open question 4), so a
+// supervisor loop must never have to grep it.
+type runsInFlightError struct{ count int }
+
+func (e *runsInFlightError) Error() string {
+	return fmt.Sprintf("%d listed run(s) still in flight", e.count)
+}
+
+// listRunsForExit is `runs list` as the CLI invokes it: the table for the human,
+// then — only under --exit-in-flight — the same walk's answer for a machine.
+// One derivation, two audiences: the count comes from the Status each row
+// already holds (runstatus.Probe → Status.InFlight), so the settled/in-flight/
+// abandoned rule is asked, never restated here.
+//
+// Without the flag the exit code is exactly what it has always been, so no
+// existing `set -e` script changes behaviour.
+//
+// WHAT THE COUNT IS HONESTLY ABOUT: the runs this walk could READ. A directory
+// skipped as unreadable is counted only on the coverage line, and a directory
+// that has taken its lock but not yet written its first event has no status at
+// all (runstatus.Spoken, ADR 0023 §2.1.1) and so counts as nothing here. Both
+// are the shared rule's own limits rather than new ones taken on here, and
+// neither is worth a second predicate: a loop polling this is asking about a
+// corpus, and the answer it gets is about the corpus this binary could see.
+func listRunsForExit(w, warnW io.Writer, root string, showSkipped, exitInFlight bool) error {
+	inFlight, err := listRunsCountingInFlight(w, warnW, root, showSkipped)
+	if err != nil {
+		return err
+	}
+	if exitInFlight && inFlight > 0 {
+		return &runsInFlightError{count: inFlight}
+	}
+	return nil
+}
+
+// listRuns is the table alone, for every caller that wants the rows rendered and
+// has no exit code to decide — the shape this command had before the flag, and
+// the shape the flag's default still produces.
+func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
+	return listRunsForExit(w, warnW, root, showSkipped, false)
+}
+
+// listRunsCountingInFlight renders one row per run directory under root, newest
+// first, plus a total across the listed runs, and reports how many of those rows
+// are IN FLIGHT — the count listRunsForExit turns into an exit code, taken from
+// the rows this walk already derived rather than from a second pass or a second
+// rule. Every row's STATUS is one of the six values the
 // shared derivation produces (runstatus.Of) — PLANNING while a run is still
 // inside its planner call, RUNNING, ABANDONED when its leg's process is gone,
 // PAUSED, PASS or FAIL — including before its first completed node has produced
@@ -138,8 +196,11 @@ type runSummary struct {
 // on a long-lived run home is the whole screen — 261 of 331 lines on the
 // machine this was measured on, every one of them the same sentence about the
 // same schema version. Those lines are not gone, they are behind showSkipped
-// (--show-skipped) and still on warnW, byte for byte what they were; what
-// changed is that the DEFAULT states the counts instead of enumerating them.
+// (--show-skipped) and still on warnW — one per skipped directory, now through
+// runstatus.Unreadable (internal/runstatus/skipped.go:201), which replaced the
+// old "WARNING: skipping run …" wording in this same commit because that
+// sentence claimed a consequence only one of the three surfaces has. What
+// changed by DEFAULT is that the counts are stated instead of enumerated.
 //
 // The count line is printed whether or not anything was skipped, because a
 // reader must be able to tell "nothing was hidden from me" apart from "64 of
@@ -147,14 +208,22 @@ type runSummary struct {
 // to report would render those two cases identically. The one exception is a
 // corpus with nothing in it at all, where "No runs found." already is that
 // statement.
-func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
+//
+// HOW MANY RUNS ARE IN FLIGHT is on that same line, and at zero as much as at
+// three. It used to be readable only as an inference from absence — no RUNNING
+// row meant nothing was running, a conclusion equally consistent with a broken
+// filter, a table that failed to render, or a derivation that answered wrong.
+// The number is runstatus.InFlightClause over the rows' own derived statuses
+// (shownStatuses), so this surface reports what runstatus decided rather than
+// what the STATUS column happens to spell.
+func listRunsCountingInFlight(w, warnW io.Writer, root string, showSkipped bool) (int, error) {
 	// A root that does not exist yet reads as no entries at all: "nothing has
 	// ever run here" and "nothing here is listable" are the same answer to the
 	// user, so both fall through to the one empty-table path below rather than
 	// printing the same message from two places.
 	entries, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("read runs dir %q: %w", root, err)
+		return 0, fmt.Errorf("read runs dir %q: %w", root, err)
 	}
 
 	var rows []runSummary
@@ -185,10 +254,13 @@ func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
 		fmt.Fprintln(w, "No runs found.")
 		// The one place the count line matters most: with every directory
 		// unreadable, "No runs found." on its own says a full run home is empty.
+		// nil, not the statuses of the rows: there are none, and "0 in flight"
+		// is then a statement about a walk that read nothing, which is exactly
+		// what the skipped count beside it says.
 		if skipped.Len() > 0 {
-			fmt.Fprintln(w, skipped.Line(0, showSkippedFlag))
+			fmt.Fprintln(w, skipped.Line(0, nil, showSkippedFlag))
 		}
-		return nil
+		return 0, nil
 	}
 
 	// Newest first: a run id is a nanosecond UTC timestamp plus a per-process
@@ -196,8 +268,45 @@ func listRuns(w, warnW io.Writer, root string, showSkipped bool) error {
 	// descending string sort is a descending time sort.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].runID > rows[j].runID })
 
-	printRuns(w, rows, skipped.Line(len(rows), showSkippedFlag))
-	return nil
+	printRuns(w, rows, skipped.Line(len(rows), shownStatuses(rows), showSkippedFlag))
+	// The count, off the same Status the row printed. ABANDONED is deliberately
+	// NOT counted: its leg's process is gone, so nothing is working on it, and a
+	// consumer that read the event stream alone would have no way to say so —
+	// it would see an open leg and wait on a corpse forever (docs/RUN-FEED.md,
+	// "a consumer that cannot flock"). That is the half of ADR 0015's rule this
+	// exit code exists to hand to a shell, and asking Status.InFlight is how it
+	// is handed over rather than re-decided.
+	inFlight := 0
+	for _, row := range rows {
+		if row.status.InFlight() {
+			inFlight++
+		}
+	}
+	return inFlight, nil
+}
+
+// shownStatuses is the derived Status of every row the table renders, in row
+// order — the input the coverage line's in-flight clause is counted from. It is
+// a projection and nothing more: each value came from runstatus.Probe in
+// summarizeRun, so the count is over the SHARED derivation rather than over
+// what the STATUS column happens to spell, and `runs list` cannot arrive at a
+// different number than `show` does about the same run.
+//
+// A row that has NOT spoken contributes nothing, for the same reason its STATUS
+// cell says "-" and no hint is printed beneath it (statusCell, printRuns): the
+// derivation is total, so Probe answers for that directory anyway, and letting
+// its default arm into a count would put a run the table declines to classify
+// on one side of the ledger. Nothing is lost by dropping it — a stream that has
+// said nothing has no open leg, so such a row can never be the in-flight one.
+func shownStatuses(rows []runSummary) []runstatus.Status {
+	statuses := make([]runstatus.Status, 0, len(rows))
+	for _, row := range rows {
+		if !row.spoken {
+			continue
+		}
+		statuses = append(statuses, row.status)
+	}
+	return statuses
 }
 
 // summarizeRun builds one run's row from its persisted files. It reuses the
@@ -317,8 +426,9 @@ func statusCell(row runSummary) string {
 
 // printRuns writes the table: a header, one aligned row per run, a footer with
 // the run count and the cost total across every listed run, then coverage — the
-// one line saying how much of the run home this table actually covers, from the
-// shared accumulator (runstatus.Skipped.Line) — and then one recovery hint per
+// one line saying how much of the run home this table actually covers and how
+// many of the runs in it are in flight, from the shared accumulator
+// (runstatus.Skipped.Line) — and then one recovery hint per
 // abandoned run and one resume hint per paused run. Coverage sits directly under
 // the footer and above the hints because it is about the table, and because the
 // hints are unbounded: a reader with forty abandoned runs would otherwise scroll
