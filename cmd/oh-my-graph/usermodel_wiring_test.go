@@ -133,3 +133,79 @@ func TestExecutePlan_ModelWarningIsPrintedOnce(t *testing.T) {
 		t.Fatalf("warning printed %d times, want exactly 1 (a run owns this warning, not a node):\n%s", n, got)
 	}
 }
+
+// The resumed leg's half of ADR 0034 §7. The exception for a malformed settings
+// file rests on the fallback being ANNOUNCED wherever a planned node is spawned,
+// and `resume` is the second such place — its warning was uncovered while the
+// first leg's (TestExecutePlan_ModelWarningIsPrintedOnce) was not, which made
+// half the exception's premise a reading of the code rather than a measurement.
+func TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, usermodel.SettingsFileName)
+	// A credential in the fixture: the warning may name the path and the decode
+	// error, never a byte of the contents (internal/usermodel's one-field struct).
+	if err := os.WriteFile(path, []byte(`{"model": "opus[1m]", "env": {"TOKEN": "super-secret-value"`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	none := ""
+	policies := map[string]runner.ToolPolicy{"scan": {AllowedTools: []string{"Read"}, SettingSources: &none}}
+
+	var out strings.Builder
+	model := resumedPlannedModel(&out, runner.RuntimeClaude, policies, path)
+
+	t.Logf("resumedPlannedModel returned model=%q, wrote:\n%s", model, out.String())
+	if !strings.Contains(out.String(), "could not read your model preference") {
+		t.Fatalf("a broken settings file must not be silent on a resumed leg; got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Errorf("warning does not name the settings path %q:\n%s", path, out.String())
+	}
+	if strings.Contains(out.String(), "super-secret-value") {
+		t.Errorf("warning leaks the settings file's contents:\n%s", out.String())
+	}
+}
+
+// The same seam on the ordinary path: a readable choice is carried to the leg's
+// nodes and says nothing.
+func TestResumedPlannedModel_CarriesTheOperatorsChoice(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, usermodel.SettingsFileName)
+	if err := os.WriteFile(path, []byte(`{"model": "opus[1m]"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	none := ""
+	policies := map[string]runner.ToolPolicy{"scan": {AllowedTools: []string{"Read"}, SettingSources: &none}}
+
+	var out strings.Builder
+	if got := resumedPlannedModel(&out, runner.RuntimeClaude, policies, path); got != "opus[1m]" {
+		t.Fatalf("resumedPlannedModel = %q, want the settings file's own %q", got, "opus[1m]")
+	}
+	if out.String() != "" {
+		t.Errorf("a readable settings file owes the screen nothing; got:\n%s", out.String())
+	}
+}
+
+// A hand-written graph carries no tool ceiling, and a Codex run has no --model
+// at all (ADR 0025) — neither reads the file, so neither can warn about it.
+func TestResumedPlannedModel_OnlyAClaudePlannedLegReadsTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, usermodel.SettingsFileName)
+	if err := os.WriteFile(path, []byte(`{"model": "opus[1m]"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	none := ""
+	planned := map[string]runner.ToolPolicy{"scan": {AllowedTools: []string{"Read"}, SettingSources: &none}}
+
+	for name, tc := range map[string]struct {
+		rt       runner.Runtime
+		policies map[string]runner.ToolPolicy
+	}{
+		"hand-written graph has no ceiling": {runner.RuntimeClaude, nil},
+		"codex leg sends no model":          {runner.RuntimeCodex, planned},
+	} {
+		var out strings.Builder
+		if got := resumedPlannedModel(&out, tc.rt, tc.policies, path); got != "" || out.String() != "" {
+			t.Errorf("%s: model = %q, wrote %q; want both empty", name, got, out.String())
+		}
+	}
+}

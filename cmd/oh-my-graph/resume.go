@@ -563,15 +563,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// fresh run started now would. Nothing here can widen anything: the value
 	// reaches argv as `--model`, and every ceiling layer this leg runs under was
 	// rehydrated above from the snapshot.
-	var plannedModel string
-	if runtime == runner.RuntimeClaude && len(policies) > 0 {
-		model, err := usermodel.Read(usermodel.DefaultPath())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not read your model preference (%v).\n"+
-				"this leg's nodes will run whatever model your CLI defaults to.\n", err)
-		}
-		plannedModel = model
-	}
+	plannedModel := resumedPlannedModel(os.Stderr, runtime, policies, usermodel.DefaultPath())
 
 	// The mode this run's undeclared nodes ran under on its first leg. A
 	// snapshot written before the default became auto carries no
@@ -795,6 +787,40 @@ func toGateDecisions(decisions map[string]runstate.GateDecision) map[string]gate
 // indistinguishable from one whose model chose none. Since 2026-08-07 no path
 // puts the field back: dropSkillActivation completes the de-escalation by
 // taking `Skill` out of Tools too, and says so.
+// resumedPlannedModel is the model a resumed PLANNED leg's nodes run with, and
+// it writes the one warning an unreadable settings file owes the screen.
+//
+// A resumed leg reads the operator's model choice again (ADR 0034). Its nodes
+// are isolated exactly as the first leg's were, so without this they would
+// answer with the CLI's default — the same defect, arriving one leg late. The
+// discriminator is the one `resume` already uses to tell a planned graph from a
+// hand-written one: a non-empty tool ceiling.
+//
+// Re-READ rather than persisted, and that is the point: the settings file is the
+// single surface for this choice (there is no flag — §6c), so a leg running now
+// honours the answer the operator would give now, exactly as a fresh run started
+// now would. Nothing here can widen anything: the value reaches argv as
+// `--model`, and every ceiling layer this leg runs under was rehydrated from the
+// snapshot.
+//
+// A read failure warns and carries on, which is ADR 0034 §7's argued exception
+// for a malformed settings file. That exception's premise is that the fallback
+// is ANNOUNCED at every entry point, so this is a function rather than an inline
+// block: the announcement is asserted by
+// TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath, not inferred
+// from reading the code.
+func resumedPlannedModel(w io.Writer, rt runner.Runtime, policies map[string]runner.ToolPolicy, settingsPath string) string {
+	if rt != runner.RuntimeClaude || len(policies) == 0 {
+		return ""
+	}
+	model, err := usermodel.Read(settingsPath)
+	if err != nil {
+		fmt.Fprintf(w, "could not read your model preference (%v).\n"+
+			"this leg's nodes will run whatever model your CLI defaults to.\n", err)
+	}
+	return model
+}
+
 func toRunnerToolPolicies(policies map[string]runstate.NodeToolPolicy) map[string]runner.ToolPolicy {
 	if policies == nil {
 		return nil
