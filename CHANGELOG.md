@@ -10,6 +10,23 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **The `serve` dashboard's `unknown` card now carries the same sentence about
+  an unreadable run that every other surface does.** A run directory the binary
+  cannot read still renders as a card rather than being dropped, but the reason
+  on it was the raw reader error — `decode snapshot
+  "/…/run-broken/state.json": invalid character 'n' looking for beginning of
+  object key string` — while `runs list --show-skipped`, `show` and `watch` all
+  said `WARNING: run "run-broken" could not be read in full (unreadable run
+  files): …` about the same directory. The card was the one surface classifying
+  the damage for itself, which is exactly what
+  [ADR 0015](docs/adr/0015-an-abandoned-run-is-derived-from-the-lock-not-repaired-into-the-feed.md)
+  put in `internal/runstatus`. It now calls `runstatus.Unreadable` like the
+  other three, so one broken directory reads the same wherever it is named; the
+  reader's own error is still quoted whole inside that sentence, so nothing the
+  card used to show is lost (#227).
+
 ## [v0.13.0] - 2026-08-29
 
 **Minor, and the whole of it is the first ten minutes.** Nothing in this release

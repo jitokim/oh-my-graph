@@ -90,7 +90,9 @@ type runCard struct {
 	// spends money, and the operator must be told what it is about to allow
 	// BEFORE pressing it (ADR 0015 §4, the residual-hazard paragraph).
 	Hint string `json:"hint,omitempty"`
-	// Error is why this run reads as stateUnknown, shown on the card.
+	// Error is why this run reads as stateUnknown, shown on the card. It is
+	// runstatus.Unreadable's sentence verbatim, not a reader error this package
+	// words itself — see brokenCard.
 	Error string `json:"error,omitempty"`
 }
 
@@ -258,9 +260,15 @@ func buildCard(runsRoot, runID string) runCard {
 	return card
 }
 
-// brokenCard is the card for a run directory this binary refuses to read.
+// brokenCard is the card for a run directory this binary refuses to read. The
+// reason it carries is runstatus.Unreadable — the ONE sentence every surface
+// says about a single unreadable directory (ADR 0015), the same one `show`
+// prints above its table and `watch` prints in place of its status line — so
+// the dashboard classifies the damage exactly as they do rather than showing a
+// raw reader error only this page words its own way. Same reason card.Hint is
+// runstatus.Hint and not a string this package composes.
 func brokenCard(runID string, err error) runCard {
-	return runCard{RunID: runID, State: stateUnknown, Error: err.Error()}
+	return runCard{RunID: runID, State: stateUnknown, Error: runstatus.Unreadable(runID, err)}
 }
 
 // runState is a MAPPING from the shared enumeration to this page's vocabulary,
