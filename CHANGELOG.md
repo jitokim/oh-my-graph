@@ -46,6 +46,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   carried in the operator's private backlog — oh-my-graph-hq
   `notes/open.md` — not in the public tracker).
 
+- **The four settings-file cases above are executed rather than reasoned
+  about.** An unknown model name reaches argv verbatim and the CLI's rejection
+  kills the node with no flag-stripped retry; an absent key, an absent file and
+  a malformed one each leave a runnable argv, the last costing one stderr
+  warning that names the path and never the file's contents
+  (`internal/runner/model_resolve_test.go`). The engine half only — whether the
+  real CLI rejects an unknown name is still unmeasured (ADR 0034 §6).
+
 ## [v0.13.0] - 2026-08-29
 
 **Minor, and the whole of it is the first ten minutes.** Nothing in this release
