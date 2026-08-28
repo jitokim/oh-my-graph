@@ -263,7 +263,7 @@ func runAssessorWithSpawnRetry(ctx context.Context, r runner.NodeRunner, invocat
 // repository), tool-less, and denied even the read tools.
 //
 // Like coordinatorInvocation it sets NO Model, and for the second of that
-// helper's two reasons (ADR 0034 §6a): the engine parses this reply against a
+// helper's two reasons (ADR 0037 §2.5): the engine parses this reply against a
 // verdict grammar, so the model behind it is a compatibility surface, not a
 // preference — and it must not change silently because the operator edited a
 // settings key meaning "the model I want my work done in". The assessor stays

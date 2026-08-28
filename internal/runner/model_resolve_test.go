@@ -13,7 +13,7 @@ import (
 )
 
 // This file EXERCISES the settings-read → argv path instead of reasoning about
-// it. Every other test of ADR 0034 starts halfway along: usermodel_test.go
+// it. Every other test of ADR 0037 starts halfway along: usermodel_test.go
 // hands Read a path it built itself, claude_test.go hands buildArgs a Model
 // string a human typed, and the coordinator tests inject a fake reader. None of
 // them starts where a real run starts — at a settings.json on disk — so none of

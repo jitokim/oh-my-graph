@@ -193,7 +193,7 @@ has no open issue behind it.
   `~/.codex/config.toml`'s `model` key, and oh-my-graph does not read it. A
   Claude planned node does inherit the operator's choice — one key of
   `~/.claude/settings.json`, passed as `--model`
-  ([ADR 0034](adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+  ([ADR 0037](adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
   The Codex mechanism exists (`codex exec` takes a model flag, and
   `-c model="..."` overrides the same key) and is not used yet for one reason:
   **measured, no codex node's model is observable in this repository's corpus**
@@ -201,7 +201,7 @@ has no open issue behind it.
   fix for a population nobody has measured
   ([docs/measurements/0034-planned-node-model.md](measurements/0034-planned-node-model.md)).
   The mechanism is written down in
-  [ADR 0034 §2.6](adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)
+  [ADR 0037 §2.6](adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)
   so the next person does not re-derive it; the follow-up itself is carried in
   the operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the
   public tracker.

@@ -60,7 +60,7 @@ element-by-element, so a reordering is a test failure, not a style choice.
 Note where `--model` and `--max-budget-usd` sit — immediately after
 `--permission-mode`, *before* the ceiling flags, because neither is one of
 them. `--model` carries the operator's own model choice, read from ONE key of
-their settings file at plan time (`internal/usermodel`, ADR 0034) and passed
+their settings file at plan time (`internal/usermodel`, ADR 0037) and passed
 verbatim; it is omitted when they expressed none, and omitted for an
 agent-mapped node, whose definition declares its own model. Note too where
 `--plugin-dir` sits — after isolation and before the grant, one flag per
@@ -162,7 +162,7 @@ branch and are unaffected). Hand-written nodes and the
 planner keep normal Codex config.
 
 **No `--model` appears here, and that absence is a decision, not an omission**
-(ADR 0034 §6b). The defect is identical — `--ignore-user-config` withholds
+(ADR 0037 §2.6). The defect is identical — `--ignore-user-config` withholds
 `$CODEX_HOME/config.toml`, which is where the operator's `model` key lives — and
 the mechanism to fix it exists (`codex exec` takes a model flag, and the
 `-c model="…"` override this protocol already uses for `approval_policy`). It is
@@ -172,7 +172,7 @@ it would be a fix for a population nobody has measured. So under `--runtime
 codex` a planned node answers with whatever model `codex` itself defaults to;
 `codexProtocol.buildArgs` ignores `NodeInvocation.Model`, says so in place, and a
 test pins that silence. `docs/LIMITATIONS.md` states it where a user meets it and
-ADR 0034 §2.6 carries the research; the follow-up itself is carried in the
+ADR 0037 §2.6 carries the research; the follow-up itself is carried in the
 operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the public
 tracker.
 
@@ -2505,7 +2505,7 @@ Every layer here bounds capability: which grants bind, which tools exist, whose
 settings, hooks and `CLAUDE.md` load. A model name binds no grant, adds no tool
 and loads no file, so the operator's own choice — ONE key of their settings
 file, read at plan time by `internal/usermodel` and carried on `Plan.Model`
-(ADR 0034) — crosses layer 1 by name without moving a row of it. That the
+(ADR 0037) — crosses layer 1 by name without moving a row of it. That the
 ceiling really is untouched is a test, not a claim:
 `TestPlan_ModelLeavesTheCeilingUntouched` diffs every layer of a plan that read
 a model against one that did not. An agent-mapped node gets no `--model`,

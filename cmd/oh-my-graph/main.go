@@ -515,7 +515,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		// Claude only, and one of the two places the real settings path enters
 		// the coordinator: a planned node's `--setting-sources ""` withholds the
 		// file the operator's model choice lives in, so the choice is read back
-		// out of it by name (ADR 0034). A codex run reads nothing here — its
+		// out of it by name (ADR 0037). A codex run reads nothing here — its
 		// model lives in ~/.codex/config.toml, which oh-my-graph does not read
 		// (docs/LIMITATIONS.md).
 		options = append(options, coordinator.WithUserSettingsPath(usermodel.DefaultPath()))
@@ -851,7 +851,7 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	}
 	// The operator's model choice travels with the plan that read it, so no
 	// path can execute a planned graph while forgetting which model its nodes
-	// were meant to answer with (ADR 0034). A settings file that could not be
+	// were meant to answer with (ADR 0037). A settings file that could not be
 	// read says so once, here — one line per run, never per node — and the run
 	// proceeds on the CLI's default: a broken settings file is the operator's,
 	// and killing the run over it is the worse outcome.

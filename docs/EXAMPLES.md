@@ -349,7 +349,7 @@ Two things that come with it, both real:
   keep**: the `model` key of `~/.claude/settings.json` is read on its own and
   passed as `--model <value>`, so "less capable" is about tools, files and hooks
   and never about which model answers
-  ([ADR 0034](adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+  ([ADR 0037](adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
   That grants nothing — a model name binds no permission rule and loads no file
   — and it is Claude-only: under `--runtime codex` a planned node answers with
   the model `codex` itself defaults to.
@@ -462,7 +462,7 @@ the same source list and are implied rather than measured, and it holds no
 `Skill` tool, so it can invoke no skill at all. Its **model** comes from the
 agent file itself rather than from your settings key: a mapped node is the one
 planned node that gets no `--model`, because the definition you wrote already
-declares one and that is the more specific choice (ADR 0034). (Its argv also carries
+declares one and that is the more specific choice (ADR 0037). (Its argv also carries
 `--strict-mcp-config`, as every planned node's has unless the run typed
 `--accept-loaded-user-config`, which drops it along with the isolation; whether
 it closes MCP is unmeasured, so read it as a flag rather than a result.) **Through v0.6.0
@@ -560,7 +560,7 @@ notice).
 your settings (measured; your CLAUDE.md and hooks arrive by that same source
 list, so their absence is implied rather than measured — the one key oh-my-graph
 reads back out of that file by name is `model`, which is passed as a flag and
-grants nothing, ADR 0034), they run under
+grants nothing, ADR 0037), they run under
 `--strict-mcp-config` (whether that closes MCP is not something anyone has
 measured), and a declared scope like `Bash(git *)` is enforced — the only change
 activation makes is that the `Skill` tool exists for the nodes it reaches. What

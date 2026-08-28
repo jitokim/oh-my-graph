@@ -225,7 +225,7 @@ type Options struct {
 	// `--model <value>` on a Claude node's argv. It is ONE value for the run
 	// rather than a per-node map because it answers a question with one answer:
 	// which model did the operator choose (coordinator.Plan.Model, read from one
-	// key of their settings file — ADR 0034).
+	// key of their settings file — ADR 0037).
 	//
 	// Empty is the default and means no flag at all: the hand-written `run` path
 	// passes nothing here, because such a node loads the operator's own settings

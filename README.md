@@ -217,7 +217,7 @@ your `~/.claude/settings.json` is read on its own and passed to a planned Claude
 node as `--model <value>`, so it answers with the model **you** chose instead of
 whatever the CLI falls back to when its settings are withheld (measured: 181 of
 187 planned nodes ran a model nobody selected —
-[ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+[ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
 The node's capability ceiling is unchanged by it: a model name grants no tool,
 loads no file and runs no hook. Nothing else in that file is read, and under
 `--runtime codex` nothing is.

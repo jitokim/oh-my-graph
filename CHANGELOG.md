@@ -20,7 +20,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   ([docs/measurements/0034-planned-node-model.md](docs/measurements/0034-planned-node-model.md)).
   oh-my-graph now reads **that one key** at plan time and passes it verbatim as
   `--model <value>` (`internal/usermodel`,
-  [ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+  [ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
 
   - **Before:** a planned node answered with **the `claude` CLI's own fallback
     default** — the model the CLI picks when no settings source and no flag
@@ -54,11 +54,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   (`internal/runner/model_resolve_test.go`, run by
   `go test ./internal/runner -run TestModelResolvesFromSettingsToArgv -v`). The
   engine half only — the unknown name meets a scripted refusal there, so the
-  real CLI's own message is still unobserved (ADR 0034 §2.2, §5).
+  real CLI's own message is still unobserved (ADR 0037 §2.2, §5).
 
 - **A malformed `settings.json` is settled as an argued exception, not a
   defect.** It is the one case where a node answers with a model you did not
-  choose, so [ADR 0034 §2.8](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)
+  choose, so [ADR 0037 §2.8](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)
   now carries the argument for keeping it instead of failing the run: an
   unparseable file means **no** choice is known — the same state as a missing
   key — so nothing is substituted for a name you gave; and refusing to run
@@ -70,8 +70,23 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath`
   (`go test ./cmd/oh-my-graph -run 'ModelWarning|ResumedPlannedModel' -v`) —
   the latter's warning had no test at all until now. Known gap, recorded in
-  ADR 0034 §5: the warning is stderr-only, so a run watched through `serve` or
+  ADR 0037 §5: the warning is stderr-only, so a run watched through `serve` or
   read from `events.jsonl` cannot see that its nodes fell back.
+
+### Changed
+
+- **The model ADR is renumbered 0034 → 0037.** It was written as 0034 on a
+  branch cut before `main` merged its own 0034 — *an unmatched tool call meets a
+  classifier* — so merging left two documents under one number and the READMEs,
+  DESIGN.md and SECURITY.md citing different ones by it. `main`'s keeps 0034;
+  the model record is now
+  [ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md),
+  and every citation that meant it — in DESIGN.md, README.md, README.ko.md,
+  SECURITY.md, docs/EXAMPLES.md, docs/LIMITATIONS.md, this file and the code
+  comments — moved with it. Text only: no behaviour, no test and no argv
+  changed. A citation of "ADR 0034" written before 2026-08-29 may mean either
+  document; read it by subject. The measurement companion keeps the name it was
+  written under, `docs/measurements/0034-planned-node-model.md`.
 
 ## [v0.13.0] - 2026-08-29
 

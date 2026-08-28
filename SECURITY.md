@@ -282,7 +282,7 @@ and 5 are unchanged either way.
 **One preference crosses layer 1 by name, and grants nothing.** Every layer in
 the table above bounds **capability** — which grants bind, which tools exist,
 whose settings, hooks and `CLAUDE.md` load. Since
-[ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)
+[ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)
 oh-my-graph reads exactly one key of your `~/.claude/settings.json` — `model` —
 and hands it to a planned Claude node as `--model <value>`, so the node answers
 with the model **you** chose rather than the CLI's own fallback default. A model
@@ -380,7 +380,7 @@ empties and are, as above, **implied rather than measured**. It was the one
 planned node that did. **Its model comes from neither of those places**: an
 agent-mapped node is the one planned node that gets no `--model`, because the
 agent definition you wrote declares one and that is the more specific choice —
-the route 6 of the 187 planned nodes measured for ADR 0034 already took. **MCP is not on that list in either direction**: layer 4 is a
+the route 6 of the 187 planned nodes measured for ADR 0037 already took. **MCP is not on that list in either direction**: layer 4 is a
 flag rather than a settings scope, so `--strict-mcp-config` was already on a
 mapped node's argv before this change and still is, and whether that flag
 actually closes MCP is the one thing here nobody has observed (E5) — read it as

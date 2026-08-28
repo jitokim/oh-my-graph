@@ -231,7 +231,7 @@ type Plan struct {
 	//
 	// It travels on the Plan for the same reason ToolPolicies does: the caller
 	// must hand it to the Scheduler, or every planned node silently answers with
-	// a model nobody selected — which is the whole defect (ADR 0034). Unlike
+	// a model nobody selected — which is the whole defect (ADR 0037). Unlike
 	// ToolPolicies it is not part of the ceiling and cannot become one: it
 	// grants no tool, loads no file and runs no hook.
 	Model string
@@ -398,7 +398,7 @@ func WithLoadedUserConfig() Option {
 // WithUserSettingsPath sets the operator's Claude settings file, from which
 // each Plan reads ONE key — `model` — so a planned node answers with the model
 // the operator chose instead of the one the CLI falls back to when
-// `--setting-sources ""` withholds their settings (ADR 0034). The CLI passes
+// `--setting-sources ""` withholds their settings (ADR 0037). The CLI passes
 // usermodel.DefaultPath(); tests pass a temp file; unset means no read at all.
 //
 // This does NOT widen the ceiling and is not an option in the class of
@@ -449,7 +449,7 @@ func New(nodeRunner runner.NodeRunner, opts ...Option) *Coordinator {
 // a convention so a future coordinator call cannot forget the deny list and
 // silently inherit the user's standing grants.
 //
-// It sets NO Model, and that silence is a decision (ADR 0034 §6a). These calls
+// It sets NO Model, and that silence is a decision (ADR 0037 §2.5). These calls
 // keep the CLI's default for two reasons. First, the planner sets no
 // SettingSources at all — see attemptPlan — so no `--setting-sources` is
 // emitted and it ALREADY loads the operator's settings, model key included;
@@ -765,7 +765,7 @@ func planIssueReasons(issues []*PlanError) []string {
 // one warning a settings file that could not be read owes the screen.
 //
 // A read failure is never a plan failure. The model is a preference, and a plan
-// that ran without it is the plan every run made before ADR 0034 — whereas a
+// that ran without it is the plan every run made before ADR 0037 — whereas a
 // refusal here would throw away a paid planner call over a file oh-my-graph
 // does not own. Both halves are returned rather than logged from inside, so the
 // coordinator keeps writing to no terminal of its own (the caller prints it
@@ -831,7 +831,7 @@ func toolPoliciesByNode(g *graph.Graph, loadedUserConfig bool) map[string]runner
 // The cost, which belongs in the README and not in a surprise: a planned node
 // also loses the user's CLAUDE.md, hooks and MCP servers. Planned nodes are
 // more isolated and less capable than they were. ONE key of that settings file
-// does reach a planned node since ADR 0034 — `model`, read separately and
+// does reach a planned node since ADR 0037 — `model`, read separately and
 // passed as `--model <value>` (Plan.Model, internal/usermodel) — and this
 // paragraph would be false if it did not say so. The node's capability ceiling
 // is unchanged by it: one PREFERENCE crosses, by name, and only that one.

@@ -215,7 +215,7 @@ rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
 `--model <value>`로 전달하므로, 그 node는 설정이 차단됐을 때 CLI가 기본값으로
 되돌아가는 모델이 아니라 **당신이** 고른 모델로 답합니다 (측정: planned node
 187개 중 181개가 아무도 고르지 않은 모델로 실행됨 —
-[ADR 0034](docs/adr/0034-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+[ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
 이것으로 node의 capability ceiling은 달라지지 않습니다. 모델 이름은 tool을 주지
 않고, 파일을 로드하지 않으며, hook을 실행하지 않습니다. 그 파일에서 다른 것은
 아무것도 읽지 않고, `--runtime codex`에서는 아무것도 읽지 않습니다 — codex는

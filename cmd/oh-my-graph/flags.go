@@ -25,7 +25,7 @@ type commonRunFlags struct {
 	planningUsage       runner.TokenUsage
 	// plannedModel is the model this run's planned nodes answer with — the
 	// operator's own choice, read from one key of their settings file at plan
-	// time (coordinator.Plan.Model, ADR 0034). Not a flag, and deliberately not
+	// time (coordinator.Plan.Model, ADR 0037). Not a flag, and deliberately not
 	// registered as one: there is exactly one surface for the choice, the
 	// settings file, so a run cannot disagree with it (§6c). Empty for `run`,
 	// which executes a hand-written graph whose nodes load those settings

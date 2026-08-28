@@ -551,7 +551,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		noteLoadedUserConfig(os.Stdout, runtime)
 	}
 
-	// A resumed PLANNED leg reads the operator's model choice again (ADR 0034).
+	// A resumed PLANNED leg reads the operator's model choice again (ADR 0037).
 	// Its nodes are isolated exactly as the first leg's were, so without this
 	// they would answer with the CLI's default — the same defect, arriving one
 	// leg late. The discriminator is the one `resume` already uses to tell a
@@ -790,20 +790,20 @@ func toGateDecisions(decisions map[string]runstate.GateDecision) map[string]gate
 // resumedPlannedModel is the model a resumed PLANNED leg's nodes run with, and
 // it writes the one warning an unreadable settings file owes the screen.
 //
-// A resumed leg reads the operator's model choice again (ADR 0034). Its nodes
+// A resumed leg reads the operator's model choice again (ADR 0037). Its nodes
 // are isolated exactly as the first leg's were, so without this they would
 // answer with the CLI's default — the same defect, arriving one leg late. The
 // discriminator is the one `resume` already uses to tell a planned graph from a
 // hand-written one: a non-empty tool ceiling.
 //
 // Re-READ rather than persisted, and that is the point: the settings file is the
-// single surface for this choice (there is no flag — ADR 0034 §2.7), so a leg running now
+// single surface for this choice (there is no flag — ADR 0037 §2.7), so a leg running now
 // honours the answer the operator would give now, exactly as a fresh run started
 // now would. Nothing here can widen anything: the value reaches argv as
 // `--model`, and every ceiling layer this leg runs under was rehydrated from the
 // snapshot.
 //
-// A read failure warns and carries on, which is ADR 0034 §2.8's argued exception
+// A read failure warns and carries on, which is ADR 0037 §2.8's argued exception
 // for a malformed settings file. That exception's premise is that the fallback
 // is ANNOUNCED at every entry point, so this is a function rather than an inline
 // block: the announcement is asserted by

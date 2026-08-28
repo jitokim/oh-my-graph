@@ -139,7 +139,7 @@ func TestPlan_MalformedSettingsWarnsButStillPlans(t *testing.T) {
 	}
 }
 
-// The planner call keeps the CLI's default (ADR 0034 §6a): it already loads the
+// The planner call keeps the CLI's default (ADR 0037 §2.5): it already loads the
 // operator's settings (it sets no SettingSources at all), and the engine PARSES
 // its reply, so its model is a compatibility surface rather than a preference.
 func TestPlan_ThePlannerCallCarriesNoModelOfItsOwn(t *testing.T) {

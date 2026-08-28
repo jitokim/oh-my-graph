@@ -1,4 +1,4 @@
-# ADR 0034 — A planned node answers with the model the operator chose
+# ADR 0037 — A planned node answers with the model the operator chose
 
 **Status:** Accepted, and implemented in the same change that adds this record.
 
@@ -8,6 +8,15 @@ that introduces `internal/usermodel`. Pre-change addresses (§1) were read on
 the function, because the line moves and the function does not.
 
 **Date:** 2026-08-24
+
+**Renumbered 0034 → 0037 on 2026-08-29.** This record was written as 0034 on a
+branch cut before `main` merged its own 0034
+(`0034-an-unmatched-tool-call-meets-a-classifier-not-a-dead-ask.md`, added by
+`7d6dd26`); merging `main` into this lane put two documents under one number.
+`main`'s keeps 0034 and this one moved. A citation of "ADR 0034" dated before
+this renumber — in commit messages, issues or PR #248 — may mean either
+document; read it by subject, not by number. Its measurement companion keeps the
+name it was written under, `docs/measurements/0034-planned-node-model.md`.
 
 ## 1. Context — the defect, confirmed rather than assumed
 

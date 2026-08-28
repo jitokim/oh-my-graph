@@ -89,7 +89,7 @@ No exceptions in either direction, and both agent definitions declare their
 model (`~/.claude/agents/test-coder.md:4` and `doc-writer.md:4`, each
 `model: sonnet`). So the planned bucket is not "181 correct + 6 noise": it is
 two populations, one taking the CLI default and one taking a model the operator
-chose in a different file. That is what makes ADR 0034 suppress `--model` for an
+chose in a different file. That is what makes ADR 0037 suppress `--model` for an
 agent-mapped node.
 
 ## What this corpus CANNOT tell you
@@ -104,7 +104,7 @@ is reported by its own harness as `claude-opus-5[1m]` and records
 > **not measurable from this corpus**, and is neither confirmed nor refuted by
 > the 181.
 
-Which is why the claim ADR 0034 rests on is *"181 planned nodes ran a model
+Which is why the claim ADR 0037 rests on is *"181 planned nodes ran a model
 nobody selected, which happened to land in the same family"*, and not *"181
 planned nodes ran the wrong model"*.
 
@@ -132,7 +132,7 @@ weak or borderline result; they were never in the corpus to begin with.
 - The **hand-written bucket split by `agent:`**. The agent join was run for the
   6 planned outliers only; `nodeRow` carries no agent field, so 851/267 is not
   decomposed into agent-mapped and plain nodes. <!-- 미측정 -->
-- Whether ADR 0034's `--model` **fixes** this. Every run in the corpus predates
+- Whether ADR 0037's `--model` **fixes** this. Every run in the corpus predates
   the change; this measures the defect, never the repair. <!-- 미측정 -->
 
 ## Reproduction and independent check

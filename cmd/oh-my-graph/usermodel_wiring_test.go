@@ -17,7 +17,7 @@ import (
 // the model it read. The coordinator reading one settings key and the scheduler
 // forwarding a model are each tested in their own package, and neither notices
 // if this hop drops it — the suite would stay green while every planned node
-// answered with a model nobody selected, which is the defect (ADR 0034).
+// answered with a model nobody selected, which is the defect (ADR 0037).
 func TestExecutePlan_CarriesTheOperatorsModelIntoEveryNode(t *testing.T) {
 	g := mustParse(t, `{"name":"planned","nodes":[
 		{"id":"scan","prompt":"scan","allowed_tools":["Read"]},
@@ -134,7 +134,7 @@ func TestExecutePlan_ModelWarningIsPrintedOnce(t *testing.T) {
 	}
 }
 
-// The resumed leg's half of ADR 0034 §7. The exception for a malformed settings
+// The resumed leg's half of ADR 0037 §2.8. The exception for a malformed settings
 // file rests on the fallback being ANNOUNCED wherever a planned node is spawned,
 // and `resume` is the second such place — its warning was uncovered while the
 // first leg's (TestExecutePlan_ModelWarningIsPrintedOnce) was not, which made
