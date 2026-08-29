@@ -184,15 +184,17 @@ func (s *Skipped) byReason() string {
 // human surface that says anything at all about such a directory says exactly
 // this — `runs list --show-skipped` once per skipped row (Details below is
 // literally this function in a loop), `show` above the table it can still
-// print, `watch` in place of the status line it cannot print — so one directory
-// reads the same wherever it is named, and no surface classifies for itself.
+// print, `watch` in place of the status line it cannot print, the dashboard as
+// the `unknown` card's reason — so one directory reads the same wherever it is
+// named, and no surface classifies for itself.
 //
 // It deliberately states no CONSEQUENCE, because the consequence is the one
 // thing the surfaces legitimately disagree about: the row is dropped, the table
-// is printed anyway, the tail runs on regardless. Each surface's own output
-// already shows which, and a sentence that claimed one of them would be a lie
-// on the other two — "skipping run …", which this replaces, was exactly that
-// lie the moment a second surface printed it.
+// is printed anyway, the tail runs on regardless, the card renders in an
+// unknown state. Each surface's own output already shows which, and a sentence
+// that claimed one of them would be a lie on the rest — "skipping run …",
+// which this replaces, was exactly that lie the moment a second surface printed
+// it.
 //
 // "in full" is load-bearing: on `show` the snapshot DID load (the table below
 // the warning is real) and only the status could not be derived, while on

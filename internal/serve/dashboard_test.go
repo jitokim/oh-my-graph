@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -345,7 +346,27 @@ func TestDashboard_AnUnreadableRunIsShownNotDropped(t *testing.T) {
 	if card.State != stateUnknown || card.Error == "" {
 		t.Errorf("card = (state %q, error %q), want an unknown card carrying the reason", card.State, card.Error)
 	}
+
+	// The reason is the SHARED sentence (ADR 0015), not the raw reader error
+	// this page used to show: the same wording, with the same classification,
+	// that `runs list --show-skipped`, `show` and `watch` say about the same
+	// directory. The expected framing is taken from runstatus.Unreadable itself
+	// rather than written out again here — a copy in this package's tests would
+	// be the very fork the one-sentence rule exists to prevent, and would keep
+	// passing after the shared wording changed.
+	frame := strings.TrimSuffix(runstatus.Unreadable("run-broken", errors.New(sentinelReaderError)), sentinelReaderError)
+	if !strings.HasPrefix(card.Error, frame) {
+		t.Errorf("card error = %q, want it composed by runstatus.Unreadable (prefix %q)", card.Error, frame)
+	}
+	// ...and the reader's own error still survives inside it, quoted whole.
+	if !strings.Contains(card.Error, "invalid character") {
+		t.Errorf("card error = %q, want the reader's own error quoted whole", card.Error)
+	}
 }
+
+// sentinelReaderError is a reader error no reader produces, used to read the
+// framing runstatus.Unreadable puts AROUND an error without restating it.
+const sentinelReaderError = "sentinel-reader-error"
 
 func TestBuildCard_AgreesWithTheSharedRule(t *testing.T) {
 	// The cross-surface agreement test, and the reason ADR 0015 §2 puts the

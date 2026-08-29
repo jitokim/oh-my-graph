@@ -10,6 +10,39 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **The `serve` dashboard's `unknown` card now carries the same sentence about
+  an unreadable run that every other surface does.** A run directory the binary
+  cannot read still renders as a card rather than being dropped, but the reason
+  on it was the raw reader error — `decode snapshot
+  "/…/run-broken/state.json": invalid character 'n' looking for beginning of
+  object key string` — while `runs list --show-skipped`, `show` and `watch` all
+  said `WARNING: run "run-broken" could not be read in full (unreadable run
+  files): …` about the same directory. The card was the one surface classifying
+  the damage for itself, which is exactly what
+  [ADR 0015](docs/adr/0015-an-abandoned-run-is-derived-from-the-lock-not-repaired-into-the-feed.md)
+  put in `internal/runstatus`. It now calls `runstatus.Unreadable` like the
+  other three, so one broken directory reads the same wherever it is named; the
+  reader's own error is still quoted whole inside that sentence, so nothing the
+  card used to show is lost (#227).
+
+### Fixed
+
+- **A `lint`-output claim in the v0.12.0 entry named no way to retrace it, and
+  now names one.** The entry for the `backlog-batch` rule header ended "both
+  runtimes' `lint` output for the eight shipped graphs is unchanged" — a
+  statement about what a command printed, with no command, no file and no date
+  beside it. Two of the three things it asserted do have addresses and now cite
+  them: the resolved-graph golden `e8f0c39` left untouched, and
+  `shippedGraphsUnderCodex`, the table in
+  [`internal/runner/shipped_graphs_runtime_test.go`](internal/runner/shipped_graphs_runtime_test.go)
+  that `make test` holds to each graph's Codex verdict and budget-warning
+  count. The third — the full `lint` output, advisory sweeps included — has no
+  committed baseline anywhere in the tree, so it is withdrawn rather than
+  reworded: a claim that cannot be retraced is not improved by being restated
+  more carefully (#241).
+
 ## [v0.13.0] - 2026-08-29
 
 **Minor, and the whole of it is the first ten minutes.** Nothing in this release
@@ -441,8 +474,18 @@ closing a backlog item that had been open since 2026-08-01.
   this repo ships. The header also settles the fragment question so it is not
   reopened: the lane shape is already a fragment,
   [`graphs/fragments/gated-lane.yaml`](graphs/fragments/gated-lane.yaml), and
-  no second lane fragment is coming. Nothing in the graph body changed, and
-  both runtimes' `lint` output for the eight shipped graphs is unchanged.
+  no second lane fragment is coming. Nothing in the graph body changed — the
+  header is comments, and `e8f0c39` left
+  [`internal/graph/testdata/golden/backlog-batch.resolved.json`](internal/graph/testdata/golden/backlog-batch.resolved.json)
+  untouched, which `TestShippedTemplateGoldens_ResolvedGraphsMatchFixtures`
+  would not have allowed had a node, edge or declaration moved. What the Codex
+  runtime owes each of the eight shipped graphs — its verdict and its
+  budget-warning count — is pinned by `shippedGraphsUnderCodex` in
+  [`internal/runner/shipped_graphs_runtime_test.go`](internal/runner/shipped_graphs_runtime_test.go),
+  which `make test` enforces and which fails if `graphs/` gains a template with
+  no row. The wider `lint` output adds the handoff advisory sweeps on top of
+  that and has no committed baseline, so this entry no longer claims it was
+  unchanged under both runtimes (#241).
 - **ADR 0033 — the run, not the node, is the unit of engine-run evidence, and
   ADR 0030 is deliberately not extended one level down**
   ([`docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md`](docs/adr/0033-the-run-is-the-unit-of-evidence-not-the-node.md),
