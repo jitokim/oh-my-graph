@@ -45,6 +45,7 @@ node's own `timeout:` or the runner's default.
 A Claude node is one subprocess:
 ```
 claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
+  [ --model <value> ] \
   [ --max-budget-usd <amount> ] \
   [ --setting-sources "" ] [ --plugin-dir <dir> ]… [ --agent <name> ] \
   [ --allowedTools "<comma,joined>" ] \
@@ -56,8 +57,12 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
 This is emission order, not just a flag inventory: `runner.buildArgs` appends
 in exactly this sequence and `claude_test.go`'s `want` argv pins it
 element-by-element, so a reordering is a test failure, not a style choice.
-Note where `--max-budget-usd` sits — immediately after `--permission-mode`,
-*before* the ceiling flags, because it is not one of them. Note too where
+Note where `--model` and `--max-budget-usd` sit — immediately after
+`--permission-mode`, *before* the ceiling flags, because neither is one of
+them. `--model` carries the operator's own model choice, read from ONE key of
+their settings file at plan time (`internal/usermodel`, ADR 0037) and passed
+verbatim; it is omitted when they expressed none, and omitted for an
+agent-mapped node, whose definition declares its own model. Note too where
 `--plugin-dir` sits — after isolation and before the grant, one flag per
 `ToolPolicy.PluginDirs` entry in order, because it restores instruction material
 layer 1 withheld before any layer decides what may be done with it. It is what
@@ -154,7 +159,24 @@ assessor add `--ignore-user-config`, `--ignore-rules`,
 nodes unless the run typed `--accept-loaded-user-config`, which omits all four
 (ADR 0032; `--sandbox` and `approval_policy="never"` are appended outside that
 branch and are unaffected). Hand-written nodes and the
-planner keep normal Codex config. A `turn.completed` event supplies the final
+planner keep normal Codex config.
+
+**No `--model` appears here, and that absence is a decision, not an omission**
+(ADR 0037 §2.6). The defect is identical — `--ignore-user-config` withholds
+`$CODEX_HOME/config.toml`, which is where the operator's `model` key lives — and
+the mechanism to fix it exists (`codex exec` takes a model flag, and the
+`-c model="…"` override this protocol already uses for `approval_policy`). It is
+not used because **no codex node's model is observable in this repository's
+corpus**: a codex thread writes no `~/.claude/projects` transcript, so shipping
+it would be a fix for a population nobody has measured. So under `--runtime
+codex` a planned node answers with whatever model `codex` itself defaults to;
+`codexProtocol.buildArgs` ignores `NodeInvocation.Model`, says so in place, and a
+test pins that silence. `docs/LIMITATIONS.md` states it where a user meets it and
+ADR 0037 §2.6 carries the research; the follow-up itself is carried in the
+operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the public
+tracker.
+
+A `turn.completed` event supplies the final
 token usage; the last completed `agent_message` is the node result. A
 `turn.failed` event is a failed node even if the CLI process itself exits zero.
 `--skip-git-repo-check` preserves the graph contract that a node `cwd` may be a
@@ -2476,6 +2498,18 @@ type ToolPolicy struct {
 The table is the default — the run that types nothing. Layers 1 and 4 are the
 two an operator may decline together, at launch, and nothing else in it moves;
 "The operator's opt-in" below is the whole of that difference.
+
+`--model` is **not** on this table and is not a sixth layer either — it is not
+even on `ToolPolicy`, it rides on `runner.NodeInvocation` beside the prompt.
+Every layer here bounds capability: which grants bind, which tools exist, whose
+settings, hooks and `CLAUDE.md` load. A model name binds no grant, adds no tool
+and loads no file, so the operator's own choice — ONE key of their settings
+file, read at plan time by `internal/usermodel` and carried on `Plan.Model`
+(ADR 0037) — crosses layer 1 by name without moving a row of it. That the
+ceiling really is untouched is a test, not a claim:
+`TestPlan_ModelLeavesTheCeilingUntouched` diffs every layer of a plan that read
+a model against one that did not. An agent-mapped node gets no `--model`,
+because its staged definition declares one and that is the more specific choice.
 
 **The permission mode is a separate axis from the table, and ADR 0034 moved it.**
 The default is now `auto` where it was `dontAsk`, and that changes exactly one

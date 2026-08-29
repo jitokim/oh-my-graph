@@ -279,6 +279,19 @@ is said, everything in this section describes what runs; where it is said, the
 differences are set out under "The operator's opt-in" below, and layers 0, 2, 3
 and 5 are unchanged either way.
 
+**One preference crosses layer 1 by name, and grants nothing.** Every layer in
+the table above bounds **capability** — which grants bind, which tools exist,
+whose settings, hooks and `CLAUDE.md` load. Since
+[ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)
+oh-my-graph reads exactly one key of your `~/.claude/settings.json` — `model` —
+and hands it to a planned Claude node as `--model <value>`, so the node answers
+with the model **you** chose rather than the CLI's own fallback default. A model
+name adds no tool, loads no file, runs no hook and widens no grant: not one row
+of the table moves, and the value reaches argv rather than a prompt, so no
+planner output can select it (the graph schema has no `model` key). Nothing else
+in that file is read — its `permissions` block holds the very standing grants
+layer 1 exists to withhold, and a second key would need its own ADR.
+
 Layer 1 is what makes the rest bind. Permission rules are matched from every
 loaded source, so a standing `Bash(*)` in your own `~/.claude/settings.json` was
 previously matching before a planned node's narrower `Bash(git *)` ever
@@ -364,7 +377,10 @@ measured** in both directions, and nothing here should be read as covering them.
 your standing grants — that half is measured — and no longer gets your
 `CLAUDE.md` or your hooks, which arrive by the same source list `--setting-sources ""`
 empties and are, as above, **implied rather than measured**. It was the one
-planned node that did. **MCP is not on that list in either direction**: layer 4 is a
+planned node that did. **Its model comes from neither of those places**: an
+agent-mapped node is the one planned node that gets no `--model`, because the
+agent definition you wrote declares one and that is the more specific choice —
+the route 6 of the 187 planned nodes measured for ADR 0037 already took. **MCP is not on that list in either direction**: layer 4 is a
 flag rather than a settings scope, so `--strict-mcp-config` was already on a
 mapped node's argv before this change and still is, and whether that flag
 actually closes MCP is the one thing here nobody has observed (E5) — read it as
@@ -422,6 +438,15 @@ MCP servers for those nodes. That is the intended direction, but it is a real
 behaviour change: if your `auto` runs depended on an MCP server, they will stop
 — and `--accept-loaded-user-config` is the narrow door out of that, per run,
 typed at launch, at the price set out below.
+**The one thing they do not lose is your model choice**: that key is read on its
+own and passed as `--model`, per the paragraph above, so "less capable" is about
+tools, files and hooks and never about which model does the thinking. On a
+`--runtime codex` run they lose that too — `--ignore-user-config` withholds
+`~/.codex/config.toml` and oh-my-graph does not read it, so a planned Codex node
+runs the model `codex` itself defaults to
+([docs/LIMITATIONS.md](docs/LIMITATIONS.md); the Codex follow-up is carried in
+the operator's private backlog — oh-my-graph-hq `notes/open.md` — not in the
+public tracker).
 **Through v0.6.0 agent-mapped nodes were the exception in both directions** — no
 *settings* were dropped for them, so your CLAUDE.md and hooks, and the
 repository's, did load, and they were correspondingly less isolated, not more.

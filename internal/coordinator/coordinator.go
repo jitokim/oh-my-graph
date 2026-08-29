@@ -33,6 +33,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/usermodel"
 )
 
 // plannerPermissionMode is the permission mode of every coordinator-owned
@@ -221,6 +222,27 @@ type Plan struct {
 	// plan, since the entire point is that the user learns it BEFORE a node
 	// spends anything working in a checkout someone else may be standing in.
 	Unisolated *UnisolatedScan
+	// Model is the model every planned node of this plan runs with, rendered as
+	// `--model <value>` (runner.NodeInvocation.Model) — the operator's own
+	// choice, read once here from ONE key of their settings file
+	// (internal/usermodel). Empty means they expressed none, or the Coordinator
+	// was built without a settings path, and the argv is then exactly what it
+	// was before models were inherited.
+	//
+	// It travels on the Plan for the same reason ToolPolicies does: the caller
+	// must hand it to the Scheduler, or every planned node silently answers with
+	// a model nobody selected — which is the whole defect (ADR 0037). Unlike
+	// ToolPolicies it is not part of the ceiling and cannot become one: it
+	// grants no tool, loads no file and runs no hook.
+	Model string
+	// ModelWarning is non-empty when the settings file exists but could not be
+	// read or decoded. The caller must print it ONCE, and then run anyway: a
+	// broken settings file is the operator's, and killing a 45-node run over it
+	// is a worse outcome than running the CLI's default. Silence is not an
+	// option either — that reproduces the defect with a new cause. It names the
+	// path and the decode error, never the file's contents (that document also
+	// holds credentials).
+	ModelWarning string
 	// SkillScan says a skill scan ran and over which directories, so the
 	// caller can distinguish "scanned, found nothing" from "never scanned",
 	// which are indistinguishable when the only output is a corpus and the
@@ -264,6 +286,14 @@ type Coordinator struct {
 	// Empty — the production value — means the process's working directory,
 	// which is where auto runs every planned node; tests pass a temp dir.
 	invocationDir string
+	// userSettingsPath is the operator's Claude settings file, read at plan time
+	// for ONE key: the model their planned nodes should answer with
+	// (internal/usermodel). The CLI passes usermodel.DefaultPath(); tests pass a
+	// temp file. Empty — the library default — means the file is never opened
+	// and no `--model` is emitted, exactly like agentDirs and skillDirs: a
+	// Coordinator only reads the filesystem when its constructor was explicitly
+	// told where.
+	userSettingsPath string
 	// loadedUserConfig is the operator's statement that this run's planned
 	// nodes load THEIR configuration — the `--accept-loaded-user-config` flag
 	// (ADR 0032), set via WithLoadedUserConfig. It is the one option here that
@@ -365,6 +395,29 @@ func WithLoadedUserConfig() Option {
 	}
 }
 
+// WithUserSettingsPath sets the operator's Claude settings file, from which
+// each Plan reads ONE key — `model` — so a planned node answers with the model
+// the operator chose instead of the one the CLI falls back to when
+// `--setting-sources ""` withholds their settings (ADR 0037). The CLI passes
+// usermodel.DefaultPath(); tests pass a temp file; unset means no read at all.
+//
+// This does NOT widen the ceiling and is not an option in the class of
+// WithLoadedUserConfig. The ceiling bounds capability — which tools bind, which
+// files load, whose hooks run — and every one of those layers is untouched by
+// this. What crosses is one preference, by name, that grants nothing: the value
+// reaches argv rather than a prompt, and no planner can select it (the graph
+// schema has no `model` key). Reading a SECOND key would be a different
+// decision and needs its own ADR — the same document's permissions block holds
+// the standing grants layer 1 exists to withhold.
+//
+// It is Claude-only, and the CLI wires it on the Claude branch alone: a Codex
+// run's model lives in ~/.codex/config.toml, which oh-my-graph does not read
+// (docs/LIMITATIONS.md), and codexProtocol.buildArgs would ignore the value
+// anyway.
+func WithUserSettingsPath(path string) Option {
+	return func(c *Coordinator) { c.userSettingsPath = path }
+}
+
 // WithSkillDirs sets the directories scanned for skill definitions, lowest
 // precedence first (scanSkillDirs lets later directories win). The CLI passes
 // DefaultSkillDirs; tests pass temp dirs.
@@ -395,6 +448,19 @@ func New(nodeRunner runner.NodeRunner, opts ...Option) *Coordinator {
 // and the full deny list of a node that declared nothing. A helper rather than
 // a convention so a future coordinator call cannot forget the deny list and
 // silently inherit the user's standing grants.
+//
+// It sets NO Model, and that silence is a decision (ADR 0037 §2.5). These calls
+// keep the CLI's default for two reasons. First, the planner sets no
+// SettingSources at all — see attemptPlan — so no `--setting-sources` is
+// emitted and it ALREADY loads the operator's settings, model key included;
+// naming the model explicitly here would be a no-op at best and a divergence
+// from whatever the CLI resolves at worst. Second, and the reason this holds
+// for the assessor too, THE ENGINE PARSES THESE REPLIES: the planner's must
+// satisfy graph.Parse, the assessor's a verdict grammar. Changing the model
+// behind a parser is a compatibility change wearing a preference's clothes, and
+// it would be made silently from a key the operator edited for a different
+// purpose. The operator's model choice governs the nodes that do the work, not
+// the engine's own machinery.
 func coordinatorInvocation(prompt string) runner.NodeInvocation {
 	return runner.NodeInvocation{
 		Prompt:         prompt,
@@ -606,6 +672,12 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		Spec:         []byte(spec),
 		ToolPolicies: toolPoliciesByNode(g, c.loadedUserConfig),
 	}
+	// Read ONCE per plan, here, and never per node: the answer is the same for
+	// every node of the run, and a per-node read would put one warning on the
+	// screen per planned node for a single broken file. It is deliberately in
+	// the coordinator and not in internal/runner — CLIRunner is an exec seam and
+	// stays a pure argv/session/output protocol.
+	plan.Model, plan.ModelWarning = c.chosenModel()
 	// Computed HERE, on the planner's own prompts, and deliberately before the
 	// post-validation steps below, so what it reads is what the planner
 	// actually wrote and every path it reports is one the plan chose.
@@ -689,6 +761,24 @@ func planIssueReasons(issues []*PlanError) []string {
 	return reasons
 }
 
+// chosenModel is the operator's model choice for this plan's nodes, plus the
+// one warning a settings file that could not be read owes the screen.
+//
+// A read failure is never a plan failure. The model is a preference, and a plan
+// that ran without it is the plan every run made before ADR 0037 — whereas a
+// refusal here would throw away a paid planner call over a file oh-my-graph
+// does not own. Both halves are returned rather than logged from inside, so the
+// coordinator keeps writing to no terminal of its own (the caller prints it
+// with the plan's other disclosures).
+func (c *Coordinator) chosenModel() (string, string) {
+	model, err := usermodel.Read(c.userSettingsPath)
+	if err != nil {
+		return "", fmt.Sprintf("could not read your model preference (%v).\n"+
+			"planned nodes will run whatever model your CLI defaults to.", err)
+	}
+	return model, ""
+}
+
 // toolPoliciesByNode derives the run's execution ceiling: one complete policy
 // per planned node. It runs after validation, so every node here already
 // declared a non-empty allowed_tools drawn from plannedToolAllowlist.
@@ -740,7 +830,12 @@ func toolPoliciesByNode(g *graph.Graph, loadedUserConfig bool) map[string]runner
 //
 // The cost, which belongs in the README and not in a surprise: a planned node
 // also loses the user's CLAUDE.md, hooks and MCP servers. Planned nodes are
-// more isolated and less capable than they were. That is the intended
+// more isolated and less capable than they were. ONE key of that settings file
+// does reach a planned node since ADR 0037 — `model`, read separately and
+// passed as `--model <value>` (Plan.Model, internal/usermodel) — and this
+// paragraph would be false if it did not say so. The node's capability ceiling
+// is unchanged by it: one PREFERENCE crosses, by name, and only that one.
+// That is the intended
 // direction, and it is still the DEFAULT — but since ADR 0032 it is a
 // direction the operator may depart from for one run, out loud, by typing
 // --accept-loaded-user-config. loadedUserConfig is that statement, and it

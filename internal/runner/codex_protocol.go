@@ -25,6 +25,23 @@ func (codexProtocol) sessionFromLine(line []byte) string {
 	return ""
 }
 
+// buildArgs deliberately ignores NodeInvocation.Model, and this silence is a
+// decision rather than an omission. Codex carries the SAME defect Claude did —
+// `--ignore-user-config` above withholds $CODEX_HOME/config.toml, which is where
+// the operator's `model` key lives — and the mechanism to repair it exists
+// (`codex exec` takes a model flag, and `-c model="..."` overrides the same
+// key). It is not used, for one reason: no codex node's model is observable in
+// this repository's corpus at all — a codex thread writes no
+// ~/.claude/projects transcript — so shipping it would be a fix for a
+// population nobody has measured. It also needs a second foreign schema in a
+// second format (TOML, and the repo has no dependency for one).
+//
+// So Codex is the documented-asymmetry runtime here, beside ADR 0009's session
+// limits and ADR 0026's budget_usd (ADR 0037 §2.6): docs/LIMITATIONS.md states
+// the absence where the user meets it, and the research above is written down
+// here and in ADR 0037 §2.6 so the next person does not re-derive it. The
+// follow-up itself is carried in the operator's private backlog (oh-my-graph-hq
+// notes/open.md), not in the public tracker.
 func (codexProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"exec",

@@ -10,6 +10,83 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A planned node answers with the model you chose.** `--setting-sources ""`
+  withholds `~/.claude/settings.json` from a planned node, and your `model` key
+  lives in it — so 181 of the 187 planned nodes measured in this repository's
+  corpus ran a model nobody selected, while 267 hand-written nodes on the same
+  machine tracked the settings file
+  ([docs/measurements/0034-planned-node-model.md](docs/measurements/0034-planned-node-model.md)).
+  oh-my-graph now reads **that one key** at plan time and passes it verbatim as
+  `--model <value>` (`internal/usermodel`,
+  [ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+
+  - **Before:** a planned node answered with **the `claude` CLI's own fallback
+    default** — the model the CLI picks when no settings source and no flag
+    names one.
+  - **After:** a planned node answers with **the model named by the `model` key
+    of your own `~/.claude/settings.json`**, passed through unmodified — no
+    normalisation, no case-folding, no stripping of a variant suffix such as
+    `[1m]`.
+
+  No allowlist: an unknown name reaches the CLI and fails the node with the
+  provider's own message, rather than silently becoming a different model. No
+  flag and no new configuration: the settings file is the single surface. No
+  `--model` for an agent-mapped node — its definition declares one, and 6 of
+  those 187 nodes rely on that. The planner and the assessor keep the CLI
+  default: the engine parses their replies, so their model is a compatibility
+  surface, not a preference. A settings file that cannot be read costs one
+  stderr line per run and never the run.
+
+  The capability ceiling is unchanged. A model name grants no tool, loads no
+  file and runs no hook; exactly one preference crosses layer 1, by name.
+  Claude only — under `--runtime codex` a planned node still takes the CLI's
+  default ([docs/LIMITATIONS.md](docs/LIMITATIONS.md); the Codex follow-up is
+  carried in the operator's private backlog — oh-my-graph-hq
+  `notes/open.md` — not in the public tracker).
+
+- **The four settings-file cases above are executed rather than reasoned
+  about.** An unknown model name reaches argv verbatim and the CLI's rejection
+  kills the node with no flag-stripped retry; an absent key, an absent file and
+  a malformed one each leave a runnable argv, the last costing one stderr
+  warning that names the path and never the file's contents
+  (`internal/runner/model_resolve_test.go`, run by
+  `go test ./internal/runner -run TestModelResolvesFromSettingsToArgv -v`). The
+  engine half only — the unknown name meets a scripted refusal there, so the
+  real CLI's own message is still unobserved (ADR 0037 §2.2, §5).
+
+- **A malformed `settings.json` is settled as an argued exception, not a
+  defect.** It is the one case where a node answers with a model you did not
+  choose, so [ADR 0037 §2.8](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)
+  now carries the argument for keeping it instead of failing the run: an
+  unparseable file means **no** choice is known — the same state as a missing
+  key — so nothing is substituted for a name you gave; and refusing to run
+  would make oh-my-graph die on a document another product owns and may change,
+  turning an optional preference into a precondition for every run.
+  The exception rests on the fallback being announced, so both places that
+  announce it are now asserted rather than read: the first leg by
+  `TestExecutePlan_ModelWarningIsPrintedOnce` and the resumed leg by
+  `TestResumedPlannedModel_MalformedSettingsWarnsAndNamesThePath`
+  (`go test ./cmd/oh-my-graph -run 'ModelWarning|ResumedPlannedModel' -v`) —
+  the latter's warning had no test at all until now. Known gap, recorded in
+  ADR 0037 §5: the warning is stderr-only, so a run watched through `serve` or
+  read from `events.jsonl` cannot see that its nodes fell back.
+
+### Changed
+
+- **The model ADR is renumbered 0034 → 0037.** It was written as 0034 on a
+  branch cut before `main` merged its own 0034 — *an unmatched tool call meets a
+  classifier* — so merging left two documents under one number and the READMEs,
+  DESIGN.md and SECURITY.md citing different ones by it. `main`'s keeps 0034;
+  the model record is now
+  [ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md),
+  and every citation that meant it — in DESIGN.md, README.md, README.ko.md,
+  SECURITY.md, docs/EXAMPLES.md, docs/LIMITATIONS.md, this file and the code
+  comments — moved with it. Text only: no behaviour, no test and no argv
+  changed. A citation of "ADR 0034" written before 2026-08-29 may mean either
+  document; read it by subject. The measurement companion keeps the name it was
+  written under, `docs/measurements/0034-planned-node-model.md`.
 ### Changed
 
 - **The `serve` dashboard's `unknown` card now carries the same sentence about

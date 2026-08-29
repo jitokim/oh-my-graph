@@ -212,6 +212,16 @@ a hand-written graph you launch with `run` keeps your user config, project
 rules/AGENTS files, hooks and MCP servers, and `--accept-loaded-user-config`
 states out loud that you want them under `auto` too.
 
+One preference crosses that line by name, and only that one: the `model` key of
+your `~/.claude/settings.json` is read on its own and passed to a planned Claude
+node as `--model <value>`, so it answers with the model **you** chose instead of
+whatever the CLI falls back to when its settings are withheld (measured: 181 of
+187 planned nodes ran a model nobody selected —
+[ADR 0037](docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md)).
+The node's capability ceiling is unchanged by it: a model name grants no tool,
+loads no file and runs no hook. Nothing else in that file is read, and under
+`--runtime codex` nothing is.
+
 One thing inside that ceiling changed recently and is worth knowing before you
 read the layers. A node that declares no `permission_mode` runs under
 `--permission-mode auto`, where it used to run `dontAsk`: a tool call matching

@@ -221,6 +221,23 @@ type Options struct {
 	// only forwards policies; deciding what belongs in one is the
 	// coordinator's job.
 	ToolPolicies map[string]runner.ToolPolicy
+	// Model is the model every node of this run answers with, rendered as
+	// `--model <value>` on a Claude node's argv. It is ONE value for the run
+	// rather than a per-node map because it answers a question with one answer:
+	// which model did the operator choose (coordinator.Plan.Model, read from one
+	// key of their settings file — ADR 0037).
+	//
+	// Empty is the default and means no flag at all: the hand-written `run` path
+	// passes nothing here, because such a node loads the operator's own settings
+	// itself and would get the same model through them. Only the planned path
+	// sets it, and only because `--setting-sources ""` withholds the file the
+	// preference lives in.
+	//
+	// It is NOT part of the ceiling and must not be read as a sixth layer:
+	// ToolPolicies bounds what a node may DO, and a model name grants no tool,
+	// loads no file and runs no hook. It sits beside ToolPolicies here for the
+	// same reason NodeInvocation.Model sits outside ToolPolicy.
+	Model string
 	// CompletedNodes is the set of node ids an earlier leg already completed
 	// successfully — nil (the zero value) for a fresh `run`/`auto`, where
 	// nothing has completed yet. `resume` passes runstate.Snapshot.CompletedNodes()
@@ -340,6 +357,9 @@ type Scheduler struct {
 	// hand-written graphs). A missing key means "no ceiling was imposed" — see
 	// buildInvocation.
 	toolPolicies map[string]runner.ToolPolicy
+	// model is the run-wide model choice, empty for a hand-written run — see
+	// Options.Model.
+	model string
 	// completedNodes is the set of node ids an earlier leg already finished —
 	// see Options.CompletedNodes.
 	completedNodes map[string]bool
@@ -412,6 +432,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		recorder:              recorder,
 		events:                eventSink,
 		toolPolicies:          opts.ToolPolicies,
+		model:                 opts.Model,
 		completedNodes:        opts.CompletedNodes,
 		settledNodes:          opts.SettledNodes,
 		nodeRounds:            opts.NodeRounds,
@@ -1370,9 +1391,16 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		PermissionMode: permissionMode,
 		ResumeSession:  resume,
 		Agent:          node.Agent,
-		BudgetUSD:      node.BudgetUSD,
-		Timeout:        node.TimeoutDuration(),
-		Policy:         policy,
+		// The run's one model, forwarded unchanged and unconditionally. Whether
+		// it is emitted is the protocol's call, not the scheduler's: a Claude
+		// node renders `--model`, an agent-mapped node deliberately does not
+		// (its definition declares one), and Codex ignores it — all three rules
+		// live in one place, runner.buildArgs, so no scheduling path can hold a
+		// different opinion about them.
+		Model:     s.model,
+		BudgetUSD: node.BudgetUSD,
+		Timeout:   node.TimeoutDuration(),
+		Policy:    policy,
 	}, nil
 }
 

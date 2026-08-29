@@ -14,6 +14,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/usermodel"
 )
 
 // chatFlags holds the parsed `chat` subcommand options. Like every other
@@ -96,6 +97,10 @@ func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Wri
 		// typed at a launch, and chat's one [y/N] already answers two
 		// questions; every chat-planned node stays isolated.
 		options = mappingOptions(out, flags.noAgentMapping, flags.noAgents, flags.noSkillActivation, false)
+		// A chat-planned node is a planned node: it is isolated exactly as
+		// `auto`'s is, so it loses the settings file the operator's model choice
+		// lives in and gets that one key read back out of it (ADR 0037).
+		options = append(options, coordinator.WithUserSettingsPath(usermodel.DefaultPath()))
 	} else {
 		fmt.Fprintln(out, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
 	}

@@ -33,6 +33,16 @@ func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 		"--output-format", "json",
 		"--permission-mode", spec.PermissionMode,
 	}
+	// The operator's own model choice, verbatim, and never for an agent-mapped
+	// node: `--agent` supplies its own model from the definition's frontmatter,
+	// which is a choice the operator made in a more specific place. The CLI
+	// tracks `modelCli` and `agentSelectedByCli` as distinct model sources and
+	// which of them wins is undocumented, so this does not find out by shipping —
+	// it declines to send both. Empty means the node expressed no choice and the
+	// CLI's own default stands.
+	if spec.Model != "" && spec.Agent == "" {
+		args = append(args, "--model", spec.Model)
+	}
 	if spec.BudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(spec.BudgetUSD, 'f', -1, 64))
 	}

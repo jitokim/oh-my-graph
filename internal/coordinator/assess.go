@@ -258,6 +258,16 @@ func runAssessorWithSpawnRetry(ctx context.Context, r runner.NodeRunner, invocat
 	}
 }
 
+// assessorInvocation is the judge's own stance: isolated like a planned node
+// (unlike the planner, which loads the operator's settings so it can read this
+// repository), tool-less, and denied even the read tools.
+//
+// Like coordinatorInvocation it sets NO Model, and for the second of that
+// helper's two reasons (ADR 0037 §2.5): the engine parses this reply against a
+// verdict grammar, so the model behind it is a compatibility surface, not a
+// preference — and it must not change silently because the operator edited a
+// settings key meaning "the model I want my work done in". The assessor stays
+// on the CLI's default until someone changes it on purpose.
 func assessorInvocation(prompt string) runner.NodeInvocation {
 	return runner.NodeInvocation{
 		Prompt:         prompt,
