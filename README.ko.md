@@ -39,9 +39,9 @@ OMK, open-multi-agent — 과의 비교는
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md)에 있습니다.
 
 <p align="center">
-  <img src="assets/live-view.png" alt="실제 oh-my-graph run의 web live view: 왼쪽은 노드 출력 피드, 오른쪽은 passed/running/pending 노드가 표시된 DAG 맵, 헤더에는 실시간 비용과 경과 시간" width="100%" />
+  <img src="assets/live-view.png" alt="실제 oh-my-graph run의 실행 중 web live view: 두 연구 갈래가 각각 별도 프로세스로 동시에 진행 중, 왼쪽은 노드 출력 피드, 오른쪽은 passed/running/pending 노드가 표시된 DAG 맵, 헤더에는 실시간 비용과 경과 시간" width="100%" />
 </p>
-<p align="center"><em>실행 중의 live view — 실제 dogfood run을 라이브로 캡처한 화면: 왼쪽은 노드 출력 피드, 오른쪽은 DAG 맵, 헤더에는 비용과 경과 시간.</em></p>
+<p align="center"><em>실제 run의 실행 중 화면. 논문 두 편을 읽고 프로토타입하는 두 갈래가 <b>동시에</b> 돕니다 — <code>read-a → code-a</code>는 37초에 끝났고 <code>read-b → code-b</code>는 아직 도는 중입니다. 그래프 어디에도 "병렬로 돌라"고 쓰지 않았고, 서로 기다릴 이유가 없다고만 쓰여 있습니다. 비용과 경과 시간은 헤더에서 실시간으로 움직입니다.</em></p>
 
 <a id="quickstart"></a>
 <a id="example"></a>

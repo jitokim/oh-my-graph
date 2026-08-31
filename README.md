@@ -35,9 +35,9 @@ login](#bring-your-own-login) is how that is enforced in code, and
 neighbours — conductor, OMK, open-multi-agent.
 
 <p align="center">
-  <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run: node output feed on the left, DAG map with passed/running/pending nodes on the right, live cost and elapsed time in the header" width="100%" />
+  <img src="assets/live-view.png" alt="Web live view of a real oh-my-graph run, mid-flight: two research chains running as separate processes at the same time, node output feed on the left, DAG map on the right showing which nodes have passed and which are still running, live cost and elapsed time in the header" width="100%" />
 </p>
-<p align="center"><em>The live view mid-run — a real dogfood run captured live: node output feed on the left, the DAG map on the right, cost and elapsed time in the header.</em></p>
+<p align="center"><em>A real run, mid-flight. Two papers are being read and prototyped in parallel — <code>read-a → code-a</code> has finished in 37s while <code>read-b → code-b</code> is still going — because nothing in the graph says they must wait for each other. Cost and elapsed time are live in the header.</em></p>
 
 <a id="quickstart"></a>
 <a id="example"></a>

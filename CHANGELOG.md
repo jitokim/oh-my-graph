@@ -10,6 +10,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **The README's live-view screenshot now shows a graph doing something worth
+  graphing.** The old one was a real run but a linear one, and its DAG map was
+  decoration. The new one is a seven-node research pipeline caught mid-flight —
+  two papers read and prototyped down **independent chains**, one 37s ahead of
+  the other, then converging on a verdict. The shape is the point, and now the
+  shape is legible: the map's node names are readable and the two chains are
+  visibly at different stages.
+
+  Both READMEs carry it, and both captions say the thing the picture cannot:
+  **nothing in the graph asks for parallelism.** It declares what each node
+  depends on, and independence is what is left over.
+
 ### Added
 
 - **A planned node answers with the model you chose.** `--setting-sources ""`
