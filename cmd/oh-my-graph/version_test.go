@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -131,6 +133,69 @@ func TestPluginManifestsMatchVersion(t *testing.T) {
 		}
 		if !strings.Contains(string(data), want) {
 			t.Errorf("%s does not carry %s — bump it with cmd/oh-my-graph/version.go", rel, want)
+		}
+	}
+}
+
+// TestChangelogHasFootnoteForThisVersion and TestLimitationsStampMatchesVersion
+// exist because the release checklist never called either place, and both went
+// stale in the same way for three releases running: `[Unreleased]` still
+// compared against v0.10.0 while v0.11.0, v0.12.0 and v0.13.0 shipped with no
+// footnote at all, and docs/LIMITATIONS.md still stamped itself "as of v0.11.0"
+// after two releases — in a file whose most recent commit had been titled
+// "five sentences v0.11.0 made false".
+//
+// CONTRIBUTING says why a checklist item was never going to be enough:
+// "A checklist item that depends on someone reading it is a note about a guard
+// nobody wrote." So this is the guard, not another line to read.
+func TestChangelogHasFootnoteForThisVersion(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatalf("read CHANGELOG.md: %v", err)
+	}
+	text := string(body)
+
+	footnote := fmt.Sprintf("[v%s]: https://", Version)
+	if !strings.Contains(text, footnote) {
+		t.Errorf("CHANGELOG.md has no link footnote for the current version: want a line starting %q.\n"+
+			"Every released heading needs one, or the version's compare link resolves to nothing.", footnote)
+	}
+
+	// `[Unreleased]` must compare against the version that shipped, not against
+	// whatever it compared against three releases ago.
+	unreleased := fmt.Sprintf("[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v%s...HEAD", Version)
+	if !strings.Contains(text, unreleased) {
+		t.Errorf("CHANGELOG.md's [Unreleased] footnote does not compare against v%s.\n"+
+			"want the line: %s\n"+
+			"An [Unreleased] that points at an older tag silently claims the releases between them do not exist.", Version, unreleased)
+	}
+}
+
+// TestLimitationsStampMatchesVersion pins the "as of" stamps in the honest-gaps
+// document. A gaps file that stamps an older version is claiming its list was
+// last checked against code that has since moved — which is the one thing that
+// file exists not to do.
+func TestLimitationsStampMatchesVersion(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "docs", "LIMITATIONS.md"))
+	if err != nil {
+		t.Fatalf("read docs/LIMITATIONS.md: %v", err)
+	}
+	text := string(body)
+
+	// Assert PRESENCE of this version's stamp rather than the absence of older
+	// ones: a file that dropped every stamp would pass an absence check while
+	// telling the reader nothing.
+	stamp := "v" + Version
+	if !strings.Contains(text, stamp) {
+		t.Fatalf("docs/LIMITATIONS.md never mentions %s — its 'as of' stamps have not been moved for this release", stamp)
+	}
+
+	// And no stamp may name a version other than this one. `as of vX` is the
+	// exact phrase the three drifting stamps used.
+	stale := regexp.MustCompile(`as of \*{0,2}v(\d+\.\d+\.\d+)`)
+	for _, match := range stale.FindAllStringSubmatch(text, -1) {
+		if match[1] != Version {
+			t.Errorf("docs/LIMITATIONS.md stamps %q while this build is v%s — the gaps list claims a check against code that has moved", match[0], Version)
 		}
 	}
 }

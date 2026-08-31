@@ -10,6 +10,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two places the release checklist never called, and a guard so it does not
+  have to.** `docs/LIMITATIONS.md` still stamped itself *"as of v0.11.0"* after
+  two releases — in a file whose most recent commit had been titled *"five
+  sentences v0.11.0 made false"* — and `CHANGELOG.md`'s `[Unreleased]` footnote
+  still compared against **v0.10.0**, so v0.11.0, v0.12.0 and v0.13.0 had no
+  compare link at all.
+
+  Both are corrected, and both are now **tested** rather than listed.
+  CONTRIBUTING already knew why the list was never going to be enough — *"a
+  checklist item that depends on someone reading it is a note about a guard
+  nobody wrote"* — which is the same sentence v0.8.0 earned by shipping with
+  stale plugin manifests.
+
+  The stamp check asserts the current version is **present** and that no `as of
+  vX` names a different one; asserting only the absence of old stamps would pass
+  for a file that had dropped every stamp and told the reader nothing.
+
 ### Changed
 
 - **The README's live-view screenshot now shows a graph doing something worth
@@ -4551,7 +4570,10 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...HEAD
+[v0.13.0]: https://github.com/jitokim/oh-my-graph/compare/v0.12.0...v0.13.0
+[v0.12.0]: https://github.com/jitokim/oh-my-graph/compare/v0.11.0...v0.12.0
+[v0.11.0]: https://github.com/jitokim/oh-my-graph/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/jitokim/oh-my-graph/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/jitokim/oh-my-graph/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/jitokim/oh-my-graph/compare/v0.7.0...v0.8.0
