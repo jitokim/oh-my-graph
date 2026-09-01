@@ -34,13 +34,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `"paused"`; the process exits **2**; and the hint prints
 
   ```
-  Session limit reached. Resume with:
+  Session limit reached (resets Sep 13th, 2026 10:04 PM).
+  Resume after Sep 13th, 2026 10:04 PM with:
     oh-my-graph resume <run-id> --retry-failed
   ```
 
-  with no reset time on purpose — the `try again at Sep 13th, 2026 10:04 PM`
-  sentence arrives in an `error` record the parser does not decode, and a
-  timestamp naming no timezone is not something to invent a clock from.
+  carrying Codex's reset time as the CLI's own prose and never as a parsed
+  clock — `Sep 13th, 2026 10:04 PM` names no timezone, so it is printed and not
+  slept on, exactly as `resets 5:20pm` is on Claude.
   `resume --retry-failed` then re-launches exactly the node that never ran.
 
   **That AFTER is what the engine's tests establish, not a second run against
@@ -51,8 +52,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `--runtime codex run` goes end to end to exit 2 and that hint in
   `cmd/oh-my-graph/sessionlimit_test.go` — through the real `CLIRunner`, the
   real codex protocol and the real matcher, against a shell stub replaying the
-  captured stream (`internal/runner/testdata/codex-usage-limit.jsonl`). No test
-  spawns a `codex` or `claude` process.
+  captured stream (`internal/runner/testdata/codex-usage-limit.jsonl`, whose
+  message is byte for byte the one run `20260901-171816.016378000-1` recorded
+  as its `FailureCause`). No test spawns a `codex` or `claude` process.
 
   Detection is prose — `(?i)hit your usage limit`, substring — kept in
   `internal/runner/sessionlimit.go` beside Claude's pattern and deliberately not

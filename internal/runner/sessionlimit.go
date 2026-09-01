@@ -17,12 +17,16 @@ import (
 // keeping the pattern here, pinned by sessionlimit_test.go against the real
 // message, is what makes a wording change a one-line fix instead of a hunt.
 //
-// Codex reports its own limit as prose too (observed 2026-09-02, recorded byte
-// for byte in testdata/codex-usage-limit.jsonl): `codex exec --json` writes an
+// Codex reports its own limit as prose too (observed 2026-09-02 on run
+// 20260901-171816.016378000-1; the message is in
+// testdata/codex-usage-limit.jsonl byte for byte, recovered from that run's own
+// records — codexLimitRecords in sessionlimit_test.go states the provenance):
+// `codex exec --json` writes an
 // `{"type":"error","message":"You've hit your usage limit…"}` record the parser
-// does not decode, then a `turn.failed` whose error.message repeats it, and
-// THAT is the only copy the engine sees (codex_protocol.go: turn.failed fills
-// FailureCause). The typed shape cannot do the deciding here, because
+// does not decode, then a `turn.failed` whose error.message repeats the whole
+// sentence, reset clause included, and THAT is the only copy the engine sees
+// (codex_protocol.go: turn.failed fills FailureCause). The typed shape cannot
+// do the deciding here, because
 // turn.failed is Codex's one terminal-failure record — "model unavailable"
 // (codex_protocol_test.go) and a stubbed refusal
 // (cmd/oh-my-graph/loadeduserconfig_cli_test.go) arrive in exactly that shape,

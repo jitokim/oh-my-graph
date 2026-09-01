@@ -24,10 +24,11 @@ const limitCauseMsg = "You've hit your session limit · resets 5:20pm"
 
 // codexLimitCauseMsg is the Codex counterpart, as parseCodexJSONL builds it
 // from the recorded stream (internal/runner/testdata/codex-usage-limit.jsonl).
-// The `turn.failed` record — the only copy the engine sees — carries no reset
-// time, so this cause exercises the hint's no-time branch, which is the honest
-// output for it rather than an invented clock.
-const codexLimitCauseMsg = "You've hit your usage limit. …"
+// The `turn.failed` record — the only copy the engine sees — repeats the whole
+// sentence including the reset clause, so this cause exercises the hint's
+// with-a-time branch. The no-time branch is still pinned below, by a cause that
+// really carries no time.
+const codexLimitCauseMsg = "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM."
 
 // codexLimitStream is the same fixture as a stub `codex exec --json` transcript:
 // the thread.started the parser requires, then the turn.failed carrying the
@@ -82,13 +83,12 @@ func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		cause string
-		// hint is what the exit hint must say about WHY it paused. Claude's
-		// cause yields a reset time; Codex's turn.failed does not, and the hint
-		// must then say so plainly rather than invent one.
+		// hint is what the exit hint must say about WHY it paused: each
+		// runtime's own reset prose, carried as the CLI printed it.
 		hint string
 	}{
 		{"claude session limit", limitCauseMsg, "resets 5:20pm"},
-		{"codex usage limit", codexLimitCauseMsg, "Session limit reached. Resume with:"},
+		{"codex usage limit", codexLimitCauseMsg, "resets Sep 13th, 2026 10:04 PM"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
@@ -239,18 +239,18 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 		t.Fatalf("the hint must still carry the exact resume command:\n%s", out)
 	}
 
-	// The Codex cause takes the second branch for a real reason, not a
-	// contrived one: the reset time appears in an `error` record the parser
-	// does not decode, so the turn.failed the engine sees carries none.
+	// The Codex cause takes the FIRST branch, and its time is carried as prose
+	// the CLI owns: "Sep 13th, 2026 10:04 PM" names no timezone, so it is
+	// printed and never parsed into a clock.
 	buf.Reset()
 	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: codexLimitCauseMsg}, coordinator.VerifyCommand{})
 	out = buf.String()
-	if strings.Contains(out, "resets") {
-		t.Fatalf("the codex cause carries no reset time; the hint must not invent one:\n%s", out)
+	if !strings.Contains(out, "(resets Sep 13th, 2026 10:04 PM)") ||
+		!strings.Contains(out, "Resume after Sep 13th, 2026 10:04 PM") {
+		t.Fatalf("the codex cause carries its own reset prose; the hint must print it:\n%s", out)
 	}
-	if !strings.Contains(out, "Session limit reached. Resume with:") ||
-		!strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
-		t.Fatalf("a codex limit must get the same hint and the same resume command:\n%s", out)
+	if !strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
+		t.Fatalf("a codex limit must get the same resume command:\n%s", out)
 	}
 }
 

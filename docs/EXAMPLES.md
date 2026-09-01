@@ -123,12 +123,13 @@ Everything else in this file describes the default, Claude. Under Codex:
   ([ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md), amended
   2026-09-02). Codex's own wording is matched beside Claude's, so the run drains
   its in-flight nodes, records the limited one nowhere and exits 2 with a
-  `resume --retry-failed` hint. Two differences from a Claude limit, both small:
-  the hint carries no reset time (Codex prints one, in a record the engine does
-  not decode, and it will not invent a clock from prose), and the match is still
-  prose — a reworded message degrades to an ordinary failure that
-  `resume --retry-failed` salvages anyway. No runtime *owes* this signal; Codex
-  volunteers it.
+  `resume --retry-failed` hint. The hint carries Codex's own reset prose
+  (`resets Sep 13th, 2026 10:04 PM`) exactly as a Claude one carries
+  `resets 5:20pm` — printed, never parsed into a clock, since neither names a
+  timezone. One difference from a Claude limit: nothing, except the sentence.
+  The match is still prose on both — a reworded message degrades to an ordinary
+  failure that `resume --retry-failed` salvages anyway. No runtime *owes* this
+  signal; Codex volunteers it.
 - **The live view shows no per-node transcript tail.** Node states, verdicts and
   the settled per-node result render as they do for a Claude run, with the cost
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
@@ -1150,7 +1151,8 @@ the check with one. Detection is
 honest string-matching on the CLI's message — one pattern per runtime, because
 neither CLI offers a structured signal — so an unrecognized wording safely
 degrades to an ordinary failure that the same command still salvages. A Codex
-pause prints the hint with no reset time: the sentence naming one arrives in a
-record the engine does not decode, and it will not invent a clock from prose.
+pause prints its reset time the same way, in the CLI's own words
+(`try again at Sep 13th, 2026 10:04 PM`) — carried, never turned into a clock,
+because it names no timezone.
 
 Spec: [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md).

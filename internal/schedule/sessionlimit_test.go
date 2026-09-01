@@ -32,7 +32,7 @@ func limitedOutcome() runner.NodeOutcome {
 func codexLimitedOutcome() runner.NodeOutcome {
 	return runner.NodeOutcome{
 		ExitCode:       1,
-		FailureCause:   "You've hit your usage limit. …",
+		FailureCause:   "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM.",
 		SessionLimited: true,
 	}
 }

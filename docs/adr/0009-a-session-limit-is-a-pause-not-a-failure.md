@@ -85,9 +85,14 @@ mitigation list below exists to survive matching prose.
 >
 > - *"there is nothing for another runtime's message to match"* — there is.
 >   `codex exec --json` reports its own limit as prose, recorded byte for byte
->   in `internal/runner/testdata/codex-usage-limit.jsonl` from a run on
->   2026-09-02: `You've hit your usage limit. Upgrade to Plus to continue using
->   Codex (…), or try again at Sep 13th, 2026 10:04 PM.`
+>   in `internal/runner/testdata/codex-usage-limit.jsonl` from run
+>   `20260901-171816.016378000-1` on 2026-09-02: `You've hit your usage limit.
+>   Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus),
+>   or try again at Sep 13th, 2026 10:04 PM.` (First written down with the
+>   message elided; recovered in full from that run's own `state.json` and
+>   `events.jsonl`, which stored the sentence as a `FailureCause` — and
+>   `codex_protocol.go` builds a `FailureCause` from `turn.failed`'s
+>   `error.message` and nothing else.)
 > - *"removing that gate … would produce a pause that can never fire"* — it
 >   fires. The gate was removed **and** a matcher added; the sentence only
 >   considered the first half.
@@ -134,13 +139,23 @@ mitigation list below exists to survive matching prose.
 > that reason ("Alternatives considered"). A typed field around a value does not
 > make the value typed.
 >
-> **In practice the engine prints no Codex reset time at all**, and that is the
-> hint behaving as specified rather than a gap. The sentence carrying `try again
-> at …` arrives in a leading `{"type":"error", …}` record the parser does not
-> decode; the `turn.failed` the engine does see repeats the limit and is not
-> known to carry the time. So the hint takes its existing no-time branch —
-> `Session limit reached. Resume with: oh-my-graph resume <run-id>
-> --retry-failed` — rather than inventing a clock time from prose the CLI owns.
+> **The engine prints Codex's reset time, in Codex's own words.** The hint takes
+> the same with-a-time branch a Claude limit takes: `Session limit reached
+> (resets Sep 13th, 2026 10:04 PM). Resume after Sep 13th, 2026 10:04 PM with:
+> oh-my-graph resume <run-id> --retry-failed`.
+>
+> *(Corrected 2026-09-02, hours after this amendment was first written. It said
+> the opposite — that the engine prints no Codex reset time, because the `try
+> again at …` sentence arrives only in a leading `{"type":"error", …}` record
+> the parser does not decode, and the `turn.failed` the engine sees "is not
+> known to carry the time". The hedge was honest and the conclusion was wrong:
+> the capture the claim rested on had that record's message ELIDED after
+> `usage limit.`, so nobody had looked. Run
+> `20260901-171816.016378000-1` had: its `FailureCause` — which
+> `codex_protocol.go` fills from `turn.failed`'s `error.message` and nothing
+> else — is the whole sentence, reset clause included. The fixture is now
+> unelided and `TestSessionLimitReset_CarriesCodexProseUntouched` asserts the
+> time out of the parsed cause, not just out of the undecoded record.)*
 >
 > **Everything in the Decision below is unchanged, and is now asserted from both
 > ends.** No ledger row, no snapshot record, no retry, drain-don't-cancel, a

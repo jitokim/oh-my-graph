@@ -86,22 +86,38 @@ exit 1
 }
 
 // codexThreadStarted is the ONE record the tests below add to the recorded
-// stream. The capture starts at the error record, but the stream it came from
-// must have opened with a thread.started: parseCodexJSONL rejects a stream
-// without one, and the run that produced this limit reported a parsed outcome
-// ("exit code 1: You've hit your usage limit…") rather than a NodeOutputError.
-// It carries no message text, so it cannot influence what is matched.
+// stream, and it is scaffolding rather than evidence — which is why it lives
+// here and not in the fixture file. The capture starts at the error record, but
+// the stream it came from did open with a thread.started: parseCodexJSONL
+// rejects a stream without one, and run 20260901-171816.016378000-1 recorded
+// its node's session id as 01a05dfa-8c96-73a0-88ad-8cb71b780bc8, which the
+// parser can only have read off that record's thread_id. The id was written
+// down; the record was not, so the placeholder below stands in for it. It
+// carries no message text, so it cannot influence what is matched.
 const codexThreadStarted = `{"type":"thread.started","thread_id":"thread-limit"}`
 
 // codexLimitRecords returns the two records `codex exec --json` wrote on
 // 2026-09-02 when this machine's Codex login hit its usage limit, read from
 // testdata/codex-usage-limit.jsonl exactly as recorded.
 //
-// One honesty note about that file, because it is the evidence the rest of this
-// rests on: the "(…)" and the trailing "…" are ELISIONS IN THE CAPTURE, not
-// characters the CLI printed — the elided spans were never written down. The
-// sentence that does the deciding survived both records intact, which is why
-// the matcher is keyed on that sentence and on nothing decorative around it.
+// The provenance of that file, because it is the evidence the rest of this
+// rests on. The capture first written down had the message elided in both
+// records ("Codex (…)" and a trailing "…"); the full sentence was recovered
+// afterwards from the run that produced it, run 20260901-171816.016378000-1,
+// which stored it twice — `state.json` and `events.jsonl` — as
+//
+//	You've hit your usage limit. Upgrade to Plus to continue using Codex
+//	(https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM.
+//
+// That string is a FailureCause, and codex_protocol.go builds a FailureCause
+// from `turn.failed`'s error.message and nothing else, so it is the second
+// record's message byte for byte — reset clause included, which the elided
+// capture had hidden. The first record's message differs from it only where
+// the capture's "(…)" stood, so the URL is restored there from its twin.
+//
+// The two records are the fields the parser decodes; a live `codex exec --json`
+// record may carry more keys than these, and the capture did not write those
+// down either way.
 func codexLimitRecords(t *testing.T) (errRecord, turnFailed string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "codex-usage-limit.jsonl"))
@@ -234,11 +250,17 @@ func TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream(t *testing.T) {
 }
 
 // TestSessionLimitReset_CarriesCodexProseUntouched reads the reset hint out of
-// the recorded error record, which is where the capture kept it. It is carried
-// as the CLI wrote it and never turned into a clock: "Sep 13th, 2026 10:04 PM"
-// names no timezone, and ADR 0009 already refused to sleep on a weaker version
-// of this string.
+// BOTH recorded records — the leading error record the parser never decodes,
+// and the FailureCause the engine actually holds. That the second one yields a
+// time is the thing the elided capture hid: the reset clause is not stranded in
+// an undecoded record, so a Codex pause prints a time like a Claude one.
+//
+// It is carried as the CLI wrote it and never turned into a clock:
+// "Sep 13th, 2026 10:04 PM" names no timezone, and ADR 0009 already refused to
+// sleep on a weaker version of this string.
 func TestSessionLimitReset_CarriesCodexProseUntouched(t *testing.T) {
+	const want = "Sep 13th, 2026 10:04 PM"
+
 	errRecord, _ := codexLimitRecords(t)
 	var record struct {
 		Message string `json:"message"`
@@ -246,7 +268,12 @@ func TestSessionLimitReset_CarriesCodexProseUntouched(t *testing.T) {
 	if err := json.Unmarshal([]byte(errRecord), &record); err != nil {
 		t.Fatalf("the recorded error record must be JSON: %v", err)
 	}
-	if got, want := SessionLimitReset(record.Message), "Sep 13th, 2026 10:04 PM"; got != want {
+	if got := SessionLimitReset(record.Message); got != want {
 		t.Errorf("SessionLimitReset(%q) = %q, want %q", record.Message, got, want)
+	}
+
+	cause := codexLimitCause(t)
+	if got := SessionLimitReset(cause); got != want {
+		t.Errorf("reset hint from the cause the engine holds = %q, want %q (cause %q)", got, want, cause)
 	}
 }
