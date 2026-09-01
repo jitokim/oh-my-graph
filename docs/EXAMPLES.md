@@ -1154,8 +1154,9 @@ gives the limit no envelope subtype, and Codex's `turn.failed` is its ONE
 terminal-failure record, so the field is typed and the value is prose — so an
 unrecognized wording safely degrades to an ordinary failure that the same
 command still salvages. A Codex
-pause prints its reset time the same way, in the CLI's own words
-(`try again at Sep 13th, 2026 10:04 PM`) — carried, never turned into a clock,
+pause prints its reset time the same way, in the CLI's own words (the CLI
+writes `try again at Sep 13th, 2026 10:04 PM`; the hint prints
+`resets Sep 13th, 2026 10:04 PM`) — carried, never turned into a clock,
 because it names no timezone.
 
 Spec: [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md).

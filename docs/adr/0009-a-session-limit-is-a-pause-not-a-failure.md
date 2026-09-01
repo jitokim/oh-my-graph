@@ -77,11 +77,11 @@ to revisit — and it would be a better foundation than this one, since the whol
 mitigation list below exists to survive matching prose.
 
 > **Amendment — 2026-09-02, closing #222: the pause carries to Codex, and the
-> three paragraphs above are wrong about why it could not.**
+> Scope above is wrong about why it could not.**
 >
-> They are left as written — a record that edits away what it decided teaches a
-> future reader nothing (the convention ADR 0007 states). Two of their factual
-> claims are now false. Their conclusion is not:
+> It is left as written — a record that edits away what it decided teaches a
+> future reader nothing (the convention ADR 0007 states). Two of its factual
+> claims are now false. Its conclusion is not:
 >
 > - *"there is nothing for another runtime's message to match"* — there is.
 >   `codex exec --json` reports its own limit as prose, recorded byte for byte
