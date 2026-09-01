@@ -207,7 +207,9 @@ identifiers, and — after `validatePlannedNodes` has run — performs every pat
 resolution and splice itself, re-applying the planned-node tool and permission
 refusals to what it spliced (§2.3); the planner may name an identifier from the
 menu and bind that entry's listed slots, and may never name a path, a file, an
-unlisted slot, or an identifier that is not on the menu.**
+unlisted slot, or an identifier that is not on the menu; the refusal at
+`internal/coordinator/coordinator.go:639` stays in force, unweakened, over the
+`use:`/`with:` spellings it already governs.**
 
 **On today's corpus the admitted set is empty — zero of six** (§2.2.1). That is
 measured, not feared, and §6 treats it as this record's first and cheapest
@@ -273,18 +275,42 @@ fragment file with the loader that already parses it (`loadFragmentFile`,
 | `binds` | the file's `substitutions:` key, filtered to the slots the body actually references (`fragmentFile.referenced`, `fragment.go:454`) |
 | `summary` | the file's `description:` key, verbatim, one line |
 
-**What is not shown.** No path. No file name. No directory. No fragment body,
-no `prompt:` text, no `allowed_tools`, no `success_check`, no `verify`
-command, no line of the file beyond the four derived fields above. A planner
-that sees this menu cannot tell where the files are, how many other files sit
-beside them, or what any of them contains.
+**What is not shown.** No path. No directory. No fragment body, no `prompt:`
+text, no `allowed_tools`, no `success_check`, no `verify` command, no line of
+the file beyond the four derived fields above. A planner that sees this menu
+cannot tell where the files are, how many other files sit beside them, or what
+any of them contains.
+
+**What IS shown, and an earlier draft denied: the id is the file's name.** That
+draft listed *"no file name"* in the paragraph above. It is false by
+construction, and the construction is enforced. `loadFragmentCached` resolves a
+name to `<dir>/fragments/<name>.yaml` (`fragment.go:1319`), and
+`loadFragmentFile` makes any disagreement a load error — *"fragment file
+declares `fragment: %q` but is stored as `%q.yaml` — the filename is the name a
+`use:` resolves, so a disagreement is a typo no reader would catch"*
+(`fragment.go:1385-1386`). So `id: review-style` **is** `review-style.yaml`, and
+a planner shown that id has been shown a file stem.
+
+The identifiers on this menu are therefore **not opaque tokens**. They are the
+operator's own declared names, and the honest description of what the menu
+withholds is narrower than "opacity": not the directory, not the contents, and —
+the property that actually carries this decision — **the planner did not write
+the id**. Non-authorship is the load-bearing half, not secrecy: an id the
+planner did not mint cannot select a file the operator did not admit, whether or
+not the planner can guess what that file is called. A design that leaned on
+secrecy would be leaning on the one thing `fragment.go:1385-1386` guarantees it
+cannot have. Minting synthetic handles to buy back literal opacity is rejected
+in §5.
 
 **What the planner may emit.** Exactly two new keys on a node: `reuse:`, whose
 value must match an id in the menu it was shown, and `bind:`, a flat map whose
 keys must be exactly that entry's `binds` and whose values are strings.
 Nothing else.
 
-**What the planner may still not emit.** A path or file name in any position.
+**What the planner may still not emit.** A path or file name in any position —
+`reuse: review-style.yaml` is refused as an id absent from the menu, even though
+the menu's `review-style` determines exactly that file name (previous
+paragraph); what the planner may write is the id, never the spelling of a file.
 `use:` or `with:` — those spellings stay refused at `coordinator.go:639` and
 `validate.go:621`, unchanged, because that backstop also guards snapshots and
 replayed specs, not only plans. An id absent from the menu. A slot absent from
@@ -868,6 +894,20 @@ Rejected: `0017:463-476`'s own argument is that a trusted-code selector at plan
 time is the measured defect (ADR 0012's 7%). A fragment has no run-time gate to
 fall back on, so this alternative is the bad half of 0017 with none of the
 good half.
+
+**Show synthetic handles (`shape-1`, `shape-2`) instead of the fragments' own
+names.** Rejected. It is the only way to make the menu's identifiers literally
+opaque, since a real id is a file stem by load-time enforcement
+(`fragment.go:1385-1386`, §2.2), and it buys nothing this record depends on:
+what bounds a citation is §2.2.1's admission test, not whether the planner can
+guess a file name. It costs three things that are not free — §C.1's refusal
+would name `shape-2` to an operator who has never seen that string, the plan
+printout (`printPlanForRuntime`, `main.go:1205`) would print topology under
+names that appear in no file, and the handle→name mapping would have to be
+recorded in `reuse-catalog.json` anyway, which is where a reader would go to
+undo the obfuscation. A run-scoped handle would also make two runs of one goal
+cite different strings for one shape, which is the opposite of what §4's
+`reuse-catalog.json` sidecar exists to make recoverable.
 
 **Stage the fragments into `<run-dir>/` like skills and agents.** Not needed,
 and rejected as cost with no property: staging exists so a *spawned process*
