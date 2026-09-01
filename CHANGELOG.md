@@ -27,7 +27,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   cut is the rest of the same sentence, ending `…or try again at Sep 13th,
   2026 10:04 PM.`; the untruncated `detail` is in that run's `state.json` and
   `events.jsonl`. The node carries a FAIL verdict it did not earn (its prompt
-  never ran), its in-flight siblings are cancelled, and the run is over.
+  never ran), and the run is over. Cancelling in-flight siblings is what
+  `on_fail: halt` does next, and this reproduction did not show it: its graph is
+  `write` → `critique` at concurrency 1, so nothing was in flight beside the
+  limited node and `critique` never launched. That half is the scheduler's
+  tested rule, not this transcript's evidence.
 
   **After**, the same limit takes the pause ADR 0009 already specified for
   Claude. The run stops launching new work and **drains** in-flight siblings
