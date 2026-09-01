@@ -10,16 +10,45 @@ tree rather than copied from the survey brief that preceded this record; where
 a line and a symbol could disagree, the symbol is the address that keeps.
 
 **Where the evidence comes from.** Two independent readings, agreeing: the
-repo's own loader (`./bin/oh-my-graph lint graphs/*.yaml`, whose fragment
-disclosure lines name each splice) and a full read of all fourteen YAML files
-under `graphs/`. No number in this record came from `grep`.
+repo's own loader, whose fragment disclosure lines name each splice, and a full
+read of all fourteen YAML files under `graphs/` — eight graphs and six
+fragments. No number in this record came from `grep`.
+
+`lint` takes exactly one graph, so the command an earlier draft of this record
+printed does not run: `./bin/oh-my-graph lint graphs/*.yaml` exits 1 with
+`oh-my-graph: lint: unexpected argument "graphs/apply-flags.yaml" (usage:
+oh-my-graph lint <graph.yaml>)`. The loader reading is a per-file loop, and this
+is the form every splice count below is reproducible from:
+
+```sh
+cd /tmp/w-reuse
+for f in graphs/*.yaml
+do
+  ./bin/oh-my-graph lint "$f"
+done > /tmp/lintout.txt 2>&1
+grep -c '^fragment: ' /tmp/lintout.txt      # -> 17
+ls -1 graphs/*.yaml                          # -> 8 graphs
+ls -1 graphs/fragments/*.yaml                # -> 6 fragments
+```
 
 **Date:** 2026-09-02
 
 **Number.** `git ls-tree --name-only main docs/adr/` and `ls docs/adr` both
-have maximum `0037`. `0035` is a deliberate gap from the 2026-08-29
-renumbering (`docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md:12`)
-and is not reused. `0038` is the next number.
+have maximum `0037`, so `0038` is the next number.
+
+`0035` is empty because it was **never assigned**: no file has ever been added
+or deleted under that number.
+
+```sh
+git log --all --oneline --name-only --diff-filter=AD -- 'docs/adr/003[45]*'
+```
+
+returns `0034` entries only. An earlier draft of this record called `0035` "a
+deliberate gap from the 2026-08-29 renumbering" and cited
+`docs/adr/0037-a-planned-node-answers-with-the-model-the-operator-chose.md:12`
+for it. That address is real and its claim is real, but it is a different claim:
+`:12-19` records `0034 -> 0037` and does not mention `0035` at all. The number's
+emptiness is confirmed; the story attached to it was not.
 
 ---
 
@@ -114,7 +143,7 @@ turns on. Read from the six files:
 | `gated-lane` | repo, task, focus, publish | `prompt:` (`:50`, `:56`, `:124`, `:147`) |
 | `gated-lane` | **tools** | **`allowed_tools`** (`:86`) |
 | `gated-lane` | checks, verify_command | a nested `use: e2e-verify`'s `with:` (`:102`, `:103`) |
-| `repair-round` | review_focus, apply_scope | `prompt:` |
+| `repair-round` | review_focus, apply_scope | `prompt:` (`:43`, `:79`) |
 | `repair-round` | **review_agent** | **`agent:`** (`:41`) |
 | `repair-round` | **review_timeout** | **`timeout:`** (`:62`) |
 | `repair-round` | **verify_command** | **`success_check.verify.command`** (`:101`) |
@@ -123,9 +152,12 @@ turns on. Read from the six files:
 at least one slot landing in a field a planned node is forbidden to write.
 
 Shipped citations, for scale: fourteen `use:` lines are written across four of
-the nine graphs (`adr-driven-dev.yaml:272,:291`; `backlog-batch.yaml:173,:241,:253,:271`;
+the **eight** graphs (`ls -1 graphs/*.yaml` -> 8, which is the fourteen YAML
+files above less the six fragments)
+(`adr-driven-dev.yaml:272,:291`; `backlog-batch.yaml:173,:241,:253,:271`;
 `dev-review-pr.yaml:63,:96,:104,:117`; `self-dev.yaml:67,:95,:103,:111`), and
-the loader performs seventeen splices, because `gated-lane` itself cites three
+the loader performs seventeen splices (the per-file lint loop in the header ->
+17), because `gated-lane` itself cites three
 fragments (`gated-lane.yaml:99,:119,:143` — ADR 0029). Fourteen is the written
 count; seventeen is the resolved count. This record uses **written** unless it
 says otherwise.
@@ -154,13 +186,22 @@ a staged catalog fills.
 
 ### 2.1 (A) The decision in one sentence
 
-**Trusted code scans the invocation repository's `graphs/fragments/` sibling,
-admits only fragments whose every declared substitution point lands in prompt
-text, offers the planner that admitted set as a menu of identifiers, and — after
-`validatePlannedNodes` has run — performs every path resolution and splice
-itself; the planner may name an identifier from the menu and bind that entry's
-listed slots, and may never name a path, a file, an unlisted slot, or an
-identifier that is not on the menu.**
+**Trusted code scans `<invocation root>/graphs/fragments/` — where
+`<invocation root>` is `resolveInvocationRoot(c.invocationDir)`
+(`internal/coordinator/unisolated.go:173`, called at `coordinator.go:688`): the
+git checkout root when the working directory sits in one, the working directory
+otherwise — admits only fragments that pass BOTH an inertness test on their
+substitution slots (§2.2) AND a static-field test on everything they declare
+that is not a prompt (§2.2.1), offers the planner that admitted set as a menu of
+identifiers, and — after `validatePlannedNodes` has run — performs every path
+resolution and splice itself, re-applying the planned-node tool and permission
+refusals to what it spliced (§2.3); the planner may name an identifier from the
+menu and bind that entry's listed slots, and may never name a path, a file, an
+unlisted slot, or an identifier that is not on the menu.**
+
+**On today's corpus the admitted set is empty — zero of six** (§2.2.1). That is
+measured, not feared, and §6 treats it as this record's first and cheapest
+falsification rather than a defect to route around.
 
 ### 2.2 (B) What the planner is shown, verbatim
 
@@ -231,6 +272,24 @@ the entry. And every field `validatePlannedNodes` refuses today —
 `agent` (`:1462`), a `/` in an id (`:1484`), `worktree` (`:1503`) — remains
 refused on a `reuse:` node exactly as on any other.
 
+**And what a splice may not carry in on the planner's behalf.** A field the
+planner may not *write* is not thereby a field that cannot *arrive*. Two fields
+reach a `reuse:` node from the fragment file rather than from the plan, and this
+record disposes of both explicitly, because an earlier draft did not and was
+wrong as a result:
+
+- **`allowed_tools` declared by the fragment.** Admitted only when every element
+  is a member of `plannedToolAllowlist` (`coordinator.go:70-73`) under the same
+  exact-string test `validatePlannedNodeTools` uses
+  (`plannedToolAllowlistSet[tool]`, `coordinator.go:1523`, set built at `:113`).
+  Otherwise the fragment is not on the menu at all.
+- **`permission_mode` declared by the fragment.** Not admitted. A fragment that
+  declares one is off the menu. The planner prompt forbids the key outright
+  (`coordinator.go:1741-1742`), and a spliced declaration is the same key
+  arriving by a different door.
+
+§2.2.1 measures what those two rules cost.
+
 **Why `bind:` is allowed at all, when `with:` is not.** This is the one place
 this record grants the planner something new, so the reason has to be exact. A
 slot is **inert** when every `{{ with.X }}` occurrence of it in the fragment
@@ -248,6 +307,72 @@ partially admitted with that slot left unbound: blanking
 evidence command is the empty string — ADR 0030's hazard, manufactured by the
 mechanism meant to help.
 
+#### 2.2.1 The static-field test, and the hole it closes
+
+**Inertness is not sufficient, and believing it was is the defect this
+subsection exists to record.** Inertness constrains the `substitutions:` slots.
+It says nothing about the fields a fragment declares **statically**, which are
+not slots, are never bound by anyone, and ride into the citing node on the same
+splice. Every one of the six fragments declares some.
+
+The concrete case that broke the earlier draft: `pr-publish` passed inertness
+(its one slot, `publish`, lands in `prompt:` at `:32`) and was therefore on the
+menu. `pr-publish.yaml:45` declares
+`allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]`. `Bash(gh *)` is **not** in
+`plannedToolAllowlist` (`coordinator.go:70-73`), which carries `Bash(gh pr *)`
+and nothing wider. Because §2.3 places the splice *after*
+`validatePlannedNodes`, `validatePlannedNodeTools` (`coordinator.go:1516-1528`)
+would never have seen that grant. `reuse: pr-publish` would have handed a
+planner-authored node a tool grant the planner would have been refused for
+writing — the laundering channel §3 says the menu must not be, arriving through
+the field nobody was watching. `pr-publish.yaml:46` adds
+`permission_mode: dontAsk` by the same route, a key the planner prompt forbids
+outright (`coordinator.go:1741-1742`).
+
+**The rule.** A fragment is admitted only when, in addition to inertness: every
+element of every `allowed_tools` it declares is a member of
+`plannedToolAllowlist` by exact string (`coordinator.go:1523`, the same
+`plannedToolAllowlistSet` lookup built at `:113` — there is no pattern
+subsumption anywhere in that check, and this record does not invent one), and it
+declares no `permission_mode` on any node.
+
+**What that costs, measured.** Read from the six files; membership decided
+against the twelve literals at `coordinator.go:71-72`:
+
+| fragment | inert? | declared `allowed_tools` | non-members | `permission_mode` | admitted |
+|---|---|---|---|---|---|
+| `pr-publish` | yes | `:45` | `Bash(gh *)` | `dontAsk` (`:46`) | **no** |
+| `review-security` | yes | `:28` | `Bash(git diff*)`, `Bash(git log*)` | `plan` (`:29`) | **no** |
+| `review-style` | yes | `:31` | `Bash(git diff*)`, `Bash(git log*)` | `plan` (`:32`) | **no** |
+| `e2e-verify` | no | `:46` | `Bash(go build *)`, `Bash(go test *)`, `Bash(go vet *)`, `Bash(git status*)`, `Bash(git diff*)`, `Bash(git log*)` | `dontAsk` (`:47`) | no |
+| `gated-lane` | no | `:86` (a slot) | — | `dontAsk` (`:87`) | no |
+| `repair-round` | no | `:60`, `:92` | none | `plan` (`:61`), `dontAsk` (`:93`) | no |
+
+**Zero of six.** The three that inertness admitted are all removed by the static
+test, and each is removed twice over — once for a tool literal, once for
+`permission_mode`.
+
+Note the shape of the tool failures rather than only their count: every
+non-member except `Bash(gh *)` is a *narrowing* of a member —
+`Bash(git diff*)` ⊂ `Bash(git *)`, `Bash(go test *)` ⊂ `Bash(go *)`. The
+operator's fragments are more careful than the allowlist, and the exact-string
+test cannot see it. That is a real and slightly absurd outcome, and this record
+accepts it rather than fixing it here, for one reason: a subsumption rule is a
+new decision about what a tool pattern *means*, it would be the only place in
+the codebase where one exists, and getting it wrong grants more than the literal
+test ever could. `Bash(gh *)` is exactly the case that proves a hand-written
+"obviously it's narrower" rule would be applied to a pattern that is not.
+Whoever wants the menu non-empty has two honest routes and this record endorses
+neither in advance: widen `plannedToolAllowlist` in its own ADR (it is layer 0
+of the ceiling — `coordinator.go:63-65`), or let the operator write fragments
+that already fit. What is not available is quietly skipping the test.
+
+**`unverified`:** nothing in this subsection is unverified — every row was read
+from the file at the cited line, and membership was decided against the literal
+list at `coordinator.go:71-72`. What *is* unmeasured is whether an operator
+library other than this repo's six would fare better; this repo's fragments are
+the only corpus that exists, and §6 turns exactly on that.
+
 ### 2.3 (C) The three failure cases
 
 The plan is untrusted output, so each case is answered at a named point in the
@@ -257,15 +382,46 @@ pipeline. The pipeline order this record fixes:
 planner reply
   → graph.Parse                       (coordinator.go:624)
   → validatePlannedNodes              (coordinator.go:1014)   ← C.1 answered here
+      · empty prompt        (coordinator.go:1048-1049)  EXEMPT for a reuse: node
+      · empty allowed_tools (coordinator.go:1517-1521)  EXEMPT for a reuse: node
+      · everything else                                 applies unchanged
   → catalog splice                    NEW, first of the post-validation
                                       mutations at coordinator.go:691-729
                                       ← C.2 and C.3 answered here
+  → RE-APPLY to each spliced node:    NEW, same call, immediately after splice
+      · validatePlannedNodeTools      (coordinator.go:1516)
+      · the PermissionBypass refusal  (coordinator.go:1054-1058)
+      · the empty-prompt check        (coordinator.go:1048-1049)
   → Graph.Validate on the spliced graph (validate.go:80)
   → applyAgentMapping                 (coordinator.go:699)
   → attachVerifyCommand               (coordinator.go:712)
   → applySkillActivation              (coordinator.go:727)
   → save graph.json                   (cmd/oh-my-graph/main.go:1135, :733)
 ```
+
+**The two exemptions, and why they are required rather than convenient.** The
+menu (§2.2) instructs the planner that *"a node that sets `reuse` writes no
+prompt and no allowed_tools of its own: the shape supplies both."* A plan that
+follows that instruction exactly is refused **before** the splice ever runs:
+`validatePlannedNodes` rejects an empty prompt at `coordinator.go:1048-1049` and
+`validatePlannedNodeTools` rejects an empty `allowed_tools` at
+`coordinator.go:1517-1521`. An earlier draft of this record left both in force
+and placed the splice after them, which made the whole mechanism unreachable —
+every well-formed citation died one step before the code that would have honored
+it. Both checks are therefore skipped for a node whose `reuse:` is set and
+**re-applied to the spliced result**, at the two addresses named in the diagram.
+The invariant those checks encode — *no planned node runs with an empty prompt
+or an unbounded tool list* — is preserved exactly; only the moment it is
+evaluated moves, from before the field is filled to after.
+
+**The re-apply is enforcement; §2.2.1 is admission. Both, not either.**
+Admission decides what goes on the menu, using the file as read at catalog time.
+The re-apply decides what actually runs, using the file as read at splice time.
+They are separated because C.2's window sits between them: a fragment file can
+change after the menu was rendered, so a catalog record is a statement about the
+past and cannot be the enforcement point. If the re-apply ever fails on an
+admitted fragment, that is C.2's digest mismatch by another name, and the run
+fails with both messages.
 
 Splicing lands **first** among the post-validation mutations so that agent
 mapping and verify attachment see the spliced nodes, and **before** the spec is
@@ -306,9 +462,15 @@ mechanism this record relies on to stop the hole recurring, and it is why
 **The engine pins a digest, and refuses the run rather than the citation.**
 This is ADR 0022's manifest, applied to a second artifact class. At catalog
 time, trusted code records for every *offered* entry: the id, the absolute
-source path, the file size, and its SHA-256 — the same three facts
-`newAgentStaging` records (`0022:126-128`, `agentstage.go:181`,
-`agentstage.go:301`). The record is written to
+source path, the file size, and its SHA-256 — the same **four** facts
+`StagedAgent` holds (`agentstage.go:122-128`: `Name`, `SourcePath`, `Bytes`,
+`SHA256`), built one file at a time by `agentManifestRow`
+(`agentstage.go:185`) and assembled by `newAgentStaging` (`agentstage.go:157`).
+Two of the four are the disclosure ADR 0022 discusses — the source path and the
+SHA-256 (`0022:126-128`) — and the re-read that gives the hash its meaning is
+`agentstage.go:301`. (An earlier draft of this record called four facts "three"
+and hung them on `agentstage.go:181`, which is inside `agentManifestRow`'s
+docstring, not `newAgentStaging`.) The record is written to
 `<run-dir>/reuse-catalog.json`, beside `graph.json`, owner-only, as this run's
 statement of what it offered and what the plan took.
 
@@ -353,8 +515,11 @@ body is spliced onto the citing node and declares no id of its own
 (`fragment.go:984-986`, and the same fact restated at `fragment.go:1142-1144`).
 Two citations of `review-style` produce two nodes bearing the *planner's own
 two ids* — and duplicate planned ids are already refused by `Graph.Validate`'s
-uniqueness check, reached from `validate.go:147`'s issue set. There is no
-remainder here either, and no `/` is minted.
+uniqueness check, `validateNodesUnique` (`validate.go:399`), reached from the
+`Issues()` list at `validate.go:136`. There is no
+remainder here either, and no `/` is minted. (An earlier draft cited
+`validate.go:147` for this; that line is `validateFragmentsResolved`, two
+entries further down the same list.)
 
 *The honest conclusion.* **All three fragments admitted by §3's inertness test
 on today's corpus are single-node** (`pr-publish`, `review-security`,
@@ -425,11 +590,32 @@ a shrug:
 **The switch:** `--no-reuse` on `auto` (and on `chat`'s planning path, which
 shares `plannerPrompt`, `coordinator.go:1564`).
 
-**The default: on** — the catalog is offered. Reading `graphs/fragments/`
-beside the invocation directory is already what `run` does for every
-hand-written graph that carries a `use:` (`fragment.go:1319`); this adds no new
-class of read, and a feature that must be discovered by flag is a feature the
-measurement in §6 would never see used.
+**The default: on** — the catalog is offered.
+
+**This is a second read root, and an earlier draft's "this adds no new class of
+read" was wrong.** Today's fragment read is anchored to *the graph file being
+loaded*: `filepath.Join(filepath.Dir(entryPath), "fragments", name+".yaml")`
+(`fragment.go:1319`), and the loader's own error text fixes that as the entire
+rule — *"a use: resolves against the graph file's own fragments/ sibling, and
+nowhere else"* (`fragment.go:1337`). §1.4 established that an `auto` plan has
+**no entry path**. The catalog therefore cannot inherit that anchor; it needs
+one of its own, and §2.1 gives it `<invocation root>/graphs/fragments/`, where
+`<invocation root>` is `resolveInvocationRoot` (`unisolated.go:173`, called at
+`coordinator.go:688`). That is a second base directory for fragment reads —
+exactly the change §2.4 lists under "Where" and calls *"Both are real changes"*.
+This subsection labels it the same way instead of describing it as free. (§2.1
+and this subsection now name one path; they previously named two slightly
+different ones, "the invocation repository's `graphs/fragments/` sibling" and
+"beside the invocation directory", which are not the same directory when
+oh-my-graph is invoked from a subdirectory of a checkout.)
+
+Two things make the new root defensible, and neither makes it free: it is the
+boundary the unisolated-settings scan already resolves for this very run
+(`coordinator.go:688`), so no new notion of "where the operator is" is
+introduced; and every resolution off it is printed before the run, per the
+disclosure paragraph below. The reason to keep the default **on** regardless is
+§6 — a feature that must be discovered by flag is a feature the measurement
+would never see used.
 
 **Three ways a run has no catalog, and they are indistinguishable by design:**
 `--no-reuse`; no `graphs/fragments/` sibling; or a `graphs/fragments/` in which
@@ -488,19 +674,47 @@ selling point is that trusted code performs the resolution. Trusted code
 resolving the *path* while the planner fills the *shell command* is not the
 0017/0022 property. It is the property's name attached to its opposite.
 
-**The alternative taken instead** is §2's: keep the menu, and narrow what may
-be on it to fragments where the break cannot occur. A slot is inert when every
-`{{ with.X }}` occurrence of it lies inside a `prompt:` scalar; a fragment is
-admissible when all its slots are inert. On today's corpus that is three of
-six (§1.3), and the three excluded are excluded for a reason a reader can
-check in one line each.
+**The alternative taken instead** is §2's: keep the menu, and narrow what may be
+on it to fragments where the break cannot occur. That narrowing has two tests,
+not one, and the second was discovered only after the first was written down:
 
-**Why the narrowed form is genuinely the 0017/0022 property and not a weaker
-cousin:** on an admitted fragment, the planner's `bind:` values reach only
-prompt text, which is a channel the planner already owns outright. The set of
-things a planner can cause is unchanged by this decision; only the *amount of
-already-reviewed text it can reach* grows. That is what "reuse" was supposed to
-mean.
+1. **Inertness**, on the `substitutions:` slots — a slot is inert when every
+   `{{ with.X }}` occurrence of it lies inside a `prompt:` scalar; a fragment
+   passes when all its slots are inert. On today's corpus that is **three of
+   six** (§1.3), and the three excluded are excluded for a reason a reader can
+   check in one line each.
+2. **The static-field test**, on everything the fragment declares that is not a
+   prompt (§2.2.1) — because a statically declared `allowed_tools` or
+   `permission_mode` is not a slot and inertness never looked at it. This
+   removes **all three** survivors of test 1.
+
+**Net: zero of six.** The mechanism as specified would ship with an empty menu
+against this repository's own fragment library.
+
+**Why the narrowed form is the 0017/0022 property — and the one sentence this
+record got wrong.** On an admitted fragment the planner's `bind:` values reach
+only prompt text, a channel the planner already owns outright. That half holds.
+What does *not* hold is the sentence an earlier draft carried here: *"the set of
+things a planner can cause is unchanged by this decision."* It is false, and
+inertness is precisely why it looked true. Inertness is a test on
+`substitutions:` slots. A fragment's **statically declared** non-prompt fields
+are not slots, are bound by no one, and ride in on the same splice — and all six
+fragments declare some (§2.2.1). `pr-publish` is the proof: inert, and carrying
+`Bash(gh *)` (`pr-publish.yaml:45`) which `plannedToolAllowlist`
+(`coordinator.go:70-73`) does not contain, plus `permission_mode: dontAsk`
+(`:46`) which the planner prompt forbids (`coordinator.go:1741-1742`). Choosing
+a fragment is choosing its tool grant, and the planner does the choosing.
+
+**The truthful sentence.** This decision widens what a planned node may carry by
+exactly the static non-prompt fields of an admitted fragment. So admission is
+narrowed until that widening is empty — every declared tool must already be an
+allowlist member and no `permission_mode` may be declared (§2.2.1) — and the
+splice re-checks it against the file it actually read (§2.3). With those two
+additions the "unchanged" claim holds by construction rather than by hope. It
+costs the entire menu on today's corpus, zero of six, and that price is the
+honest reading of the shape rather than an argument against it: the 0017/0022
+property was never free, and here it turns out the operator's library has not
+yet been written to fit inside it.
 
 **Two places where this record departs from 0017/0022 and must own it:**
 
@@ -514,8 +728,10 @@ mean.
    the only candidate that has the goal in view is the planner. 0017 does not
    endorse this; it simply does not reach it.
 2. **0022 (l) narrowed the agent scan out of repository scope** (`0022:142-149`),
-   and this record adds a read of the *invocation repository's*
-   `graphs/fragments/`. That is the same direction, walked forward. The
+   and this record adds a read of `<invocation root>/graphs/fragments/`
+   (§2.1's one path expression, `resolveInvocationRoot`,
+   `unisolated.go:173`) — a **second** fragment read root, not an extension of
+   the existing one (§2.5). That is the opposite direction, walked one step. The
    defensible difference: a staged agent becomes the node's **system prompt**,
    through a channel `--setting-sources ""` cannot shut and which is
    deliberately invisible in `graph.json` (`0017:420-425`). A spliced fragment
@@ -621,9 +837,22 @@ the whole integrity obligation.
 
 **Pre-registered, before implementation.**
 
-**The primary observation.** Over the first **N = 20** `auto` runs in which a
-**non-empty catalog was offered**, if the number of nodes carrying a
-`reuse:` citation is **0**, this design is falsified as *built*.
+**Falsifier zero, already observed, no runs required.** §2.2.1 measures the
+admitted set on this repository's own six fragments at **zero**. The N = 20
+experiment below has an empty sample by construction until that changes, and
+this record refuses to hide that behind a future measurement. Concretely: **§2
+must not be implemented while the admitted set is empty**, because shipping it
+would add a prompt block, a sidecar, a flag, a splice step and two new node
+fields in order to offer nothing. Whichever of §2.2.1's two routes is taken
+first — widening `plannedToolAllowlist` in its own ADR, or writing fragments
+that fit — is a precondition of §2, not a follow-up to it. That precondition is
+the single most useful thing this record produces, and it was invisible until
+the static-field test was written down.
+
+**The primary observation** (applies once the precondition is met). Over the
+first **N = 20** `auto` runs in which a **non-empty catalog was offered**, if
+the number of nodes carrying a `reuse:` citation is **0**, this design is
+falsified as *built*.
 
 **Where the count is read from.** `<OMG_HOME>/runs/*/reuse-catalog.json` — the
 sidecar §C.2 requires, beside `graph.json`
@@ -748,5 +977,8 @@ This record does not touch and does not decide:
   mapped node keeps ceiling layer 1 (ADR 0022) — and skill activation (ADR
   0017…)"*. Trusted code resolves local files; the planner never names them.
 - **The corpus** — `graphs/fragments/*.yaml` (six files) and `graphs/*.yaml`
-  (nine graphs), read in full; counts cross-checked against
-  `./bin/oh-my-graph lint graphs/*.yaml`.
+  (**eight** graphs — `ls -1 graphs/*.yaml`), read in full; counts
+  cross-checked against the per-file lint loop printed in this record's header.
+  `lint` accepts exactly one graph, so `./bin/oh-my-graph lint graphs/*.yaml`
+  does not run: it exits 1 with `oh-my-graph: lint: unexpected argument
+  "graphs/apply-flags.yaml"`. Fourteen YAML files = 8 graphs + 6 fragments.
