@@ -181,9 +181,13 @@ transcript — so it would be a fix for a population nobody has measured, which 
 what this repository's first rule exists to prevent. It also needs a second
 foreign schema in a second format (TOML; the repo has no dependency for one).
 Codex is already the documented-asymmetry runtime (ADR 0009 for session limits,
-ADR 0026 for `budget_usd`); `docs/LIMITATIONS.md` states the absence where the
-user meets it, and the research is written down in this section so the next
-person does not re-derive it. The follow-up itself is carried in the operator's
+ADR 0026 for `budget_usd`) — though ADR 0009 stopped being an example of that
+on 2026-09-02, when its amendment made the resumable pause cover both runtimes
+([#222](https://github.com/jitokim/oh-my-graph/issues/222)); the model key of
+this section and `budget_usd` are the asymmetries that remain.
+`docs/LIMITATIONS.md` states the absence where the user meets it, and the
+research is written down in this section so the next person does not re-derive
+it. The follow-up itself is carried in the operator's
 private backlog (oh-my-graph-hq `notes/open.md`), not in the public tracker.
 
 ### 2.7 No per-run flag
