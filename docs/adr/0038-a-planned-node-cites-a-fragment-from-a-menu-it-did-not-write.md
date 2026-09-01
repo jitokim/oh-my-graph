@@ -33,8 +33,10 @@ ls -1 graphs/fragments/*.yaml                # -> 6 fragments
 
 **Date:** 2026-09-02
 
-**Number.** `git ls-tree --name-only main docs/adr/` and `ls docs/adr` both
-have maximum `0037`, so `0038` is the next number.
+**Number.** `git ls-tree --name-only main docs/adr/` has maximum `0037`, so
+`0038` is the next number. `ls docs/adr` in this worktree now returns `0038`
+as well — this file — so the branch tree is no longer the check that decides
+the number; `main` is.
 
 `0035` is empty because it was **never assigned**: no file has ever been added
 or deleted under that number.
@@ -102,7 +104,7 @@ it is the first "yes" the planner has ever been offered.
 |---|---|---|
 | what trusted code stages | the whole scanned corpus, no selector (`0017:463-476`) | the one matched definition, with source path + SHA-256 (`0022:126-128`) |
 | where | `<run-dir>/skills-plugin/` (`0017:504-510`) | `<run-dir>/agents-plugin/` (`0022:129-132`) |
-| re-checked | — | `GuardAgentStaging` before **every** spawn, deleting unmanifested paths and restoring changed bytes (`0022:133-136`, `internal/coordinator/agentstage.go:340`) |
+| re-checked | — | `GuardAgentStaging` before **every** spawn, deleting unmanifested paths and restoring changed bytes (`0022:133-136`, `internal/coordinator/agentstage.go:348`) |
 | what the planner may emit | **nothing**; `plannedToolAllowlist` is not extended (`0017:410-418`) | **nothing**; `agent:` stays refused (`coordinator.go:1462`) |
 | scan scope | user scope | `~/.claude/agents` only, narrowed 2026-08-12 (`0022:142-149`) |
 
@@ -491,7 +493,8 @@ source path, the file size, and its SHA-256 — the same **four** facts
 (`agentstage.go:185`) and assembled by `newAgentStaging` (`agentstage.go:157`).
 Two of the four are the disclosure ADR 0022 discusses — the source path and the
 SHA-256 (`0022:126-128`) — and the re-read that gives the hash its meaning is
-`agentstage.go:301`. (An earlier draft of this record called four facts "three"
+`agentstage.go:297-302`: the source file is read again at `:297` and the digest
+compared at `:302`. (An earlier draft of this record called four facts "three"
 and hung them on `agentstage.go:181`, which is inside `agentManifestRow`'s
 docstring, not `newAgentStaging`.) The record is written to
 `<run-dir>/reuse-catalog.json`, beside `graph.json`, owner-only, as this run's
@@ -503,7 +506,7 @@ plan with the id, the path, and both digests. The operator confirmed a
 topology derived from bytes that no longer exist; substituting different ones
 under the same name is the failure mode, not the recovery.
 
-Note the difference from `GuardAgentStaging` (`agentstage.go:340`), which
+Note the difference from `GuardAgentStaging` (`agentstage.go:348`), which
 re-materialises before *every* spawn because the hazard there is what the
 previous node wrote. A fragment is a **load-time** splice (ADR 0013's title):
 after resolution there is nothing left to re-check, because there is no file
@@ -512,7 +515,7 @@ the run still reads. One check, at splice, is the whole obligation.
 **Where:** in the catalog-splice step, before `Graph.Validate`.
 **What the operator sees:** a refusal naming the shape and the path, and the
 plan is preserved as a refused spec under the existing rejected-spec name
-(`cmd/oh-my-graph/main.go:1141`), not discarded.
+(`rejectedSpecFileName`, `cmd/oh-my-graph/main.go:1142`), not discarded.
 
 #### C.3 — the same fragment cited twice, and node-id collision
 
@@ -541,8 +544,9 @@ two ids* — and duplicate planned ids are already refused by `Graph.Validate`'s
 uniqueness check, `validateNodesUnique` (`validate.go:399`), reached from the
 `Issues()` list at `validate.go:136`. There is no
 remainder here either, and no `/` is minted. (An earlier draft cited
-`validate.go:147` for this; that line is `validateFragmentsResolved`, two
-entries further down the same list.)
+`validate.go:147` for this; that line is `validateFragmentsResolved`, a
+different entry further down the same `Issues()` list — `validateNodesUnique`
+is `validate.go:136`.)
 
 *The honest conclusion.* Under **both** admission tests the set is empty
 (§2.2.1), so the case is vacuous today; stated over the wider set that
