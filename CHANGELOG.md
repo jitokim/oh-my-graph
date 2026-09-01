@@ -10,6 +10,64 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A Codex usage limit is a pause now, not a dead run.** ADR 0009's resumable
+  pause had been Claude-only since [#171](https://github.com/jitokim/oh-my-graph/issues/171)
+  settled it that way, and the reason it gave was that another runtime's message
+  had nothing to match. It does. Reproduced 2026-09-02 against an exhausted
+  Codex quota — **before**:
+
+  ```
+  write  FAIL  …  node "write" failed success_check exit_zero: exit code 1: You've hit your usage limit…
+  oh-my-graph: run halted at node "write"
+  ```
+
+  — exit **1**. The node carries a FAIL verdict it did not earn (its prompt
+  never ran), its in-flight siblings are cancelled, and the run is over.
+
+  **After**, the same limit takes the pause ADR 0009 already specified for
+  Claude. The run stops launching new work and **drains** in-flight siblings
+  instead of cancelling them; the limited node is **recorded nowhere** — no
+  ledger row, no `state.json` record, no terminal event, no retry, its absence
+  *is* its state; the leg closes on the stream as `run_finished` outcome
+  `"paused"`; the process exits **2**; and the hint prints
+
+  ```
+  Session limit reached. Resume with:
+    oh-my-graph resume <run-id> --retry-failed
+  ```
+
+  with no reset time on purpose — the `try again at Sep 13th, 2026 10:04 PM`
+  sentence arrives in an `error` record the parser does not decode, and a
+  timestamp naming no timezone is not something to invent a clock from.
+  `resume --retry-failed` then re-launches exactly the node that never ran.
+
+  **That AFTER is what the engine's tests establish, not a second run against
+  the real CLI.** Nothing here re-observes a live Codex limit. What is asserted:
+  every invariant above runs against **both** runtimes' scripted outcomes in
+  `internal/schedule/sessionlimit_test.go` (the scheduler names no runtime
+  anywhere, and this is what turns that from an assumption into a test), and
+  `--runtime codex run` goes end to end to exit 2 and that hint in
+  `cmd/oh-my-graph/sessionlimit_test.go` — through the real `CLIRunner`, the
+  real codex protocol and the real matcher, against a shell stub replaying the
+  captured stream (`internal/runner/testdata/codex-usage-limit.jsonl`). No test
+  spawns a `codex` or `claude` process.
+
+  Detection is prose — `(?i)hit your usage limit`, substring — kept in
+  `internal/runner/sessionlimit.go` beside Claude's pattern and deliberately not
+  folded into an alternation with it, so a rewording on one runtime cannot widen
+  the other. A reworded message stops matching and degrades to the BEFORE, which
+  `resume --retry-failed` still salvages. Codex's signal is **not** the
+  structured one [#222](https://github.com/jitokim/oh-my-graph/issues/222) is
+  titled for: `turn.failed` is its single terminal-failure record, so the typed
+  field decides nothing and the sentence inside it decides everything
+  ([ADR 0009's 2026-09-02 amendment](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
+
+  Still stale in the tree and not corrected here: the pre-run disclosure
+  `cmd/oh-my-graph/main.go` prints before a Codex run still says *"No
+  session-limit pause"*.
+
 ### Fixed
 
 - **Two places the release checklist never called, and a guard so it does not
