@@ -184,13 +184,23 @@ mitigation list below exists to survive matching prose.
 > anywhere, which is why this was one condition and not one mechanism; the
 > two-runtime table is what turns that blindness from an assumption into a test.
 >
-> **One sentence above is now stale and is not yet corrected in the tree:** the
-> claim that *"the pre-run disclosure names the absence"*.
-> `cmd/oh-my-graph/main.go` still prints `No session-limit pause: ADR 0009's
-> resumable pause is Claude-only …` before a Codex run that will in fact pause.
-> `docs/LIMITATIONS.md` has been corrected with this amendment; the printed line
-> has not, because it is code with two tests pinned to its wording
-> (`cmd/oh-my-graph/wiring_test.go`, `cmd/oh-my-graph/planonly_test.go`).
+> **One sentence above went stale with this amendment, and is now corrected in
+> the tree:** the claim that *"the pre-run disclosure names the absence"*. There
+> is no absence left to name. `cmd/oh-my-graph/main.go` had gone on printing
+> `No session-limit pause: ADR 0009's resumable pause is Claude-only …` before a
+> Codex run that would in fact pause — printed, in the pre-fix run
+> `20260901-171816.016378000-1`, by the same binary that would later print
+> `⏸ … session limit reached — pausing run`. It now discloses the pause instead,
+> and says in the same breath that detection is prose on both runtimes, since a
+> line promising the pause without its brittleness would be the next stale
+> sentence. The two tests pinned to the old wording
+> (`cmd/oh-my-graph/wiring_test.go`, `cmd/oh-my-graph/planonly_test.go`) assert
+> the new text and keep the old as a negative.
+>
+> `docs/EXAMPLES.md`, `DESIGN.md` (three passages), `README.md` and
+> `docs/LIMITATIONS.md` were corrected with this amendment;
+> `internal/schedule/errors.go`'s `LimitPausedError` docstring, which called the
+> subprocess a claude one, followed with the disclosure.
 
 - **The runner classifies.** `CLIRunner.Run` sets
   `NodeOutcome.SessionLimited` when the captured `FailureCause` (envelope
