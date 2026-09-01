@@ -205,18 +205,26 @@ has no open issue behind it.
   so the next person does not re-derive it; the follow-up itself is carried in
   the operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the
   public tracker.
-- **ADR 0009's session-limit pause does not exist on Codex.** A Claude node
-  that hits a plan session limit becomes a resumable pause (exit 2). The
-  matcher is Claude's own prose and `SessionLimited` is set only for the Claude
-  runtime, so the same situation under `--runtime codex` is an ordinary node
-  failure — recoverable with `resume --retry-failed`, but not the pause the ADR
-  promises. **Settled 2026-08-15: that promise belongs to the Claude runtime,
-  not to the engine**, so no runtime owes a session-limit signal and this
-  entry describes a decision rather than a gap
-  ([ADR 0009 "Scope"](adr/0009-a-session-limit-is-a-pause-not-a-failure.md),
-  closing [#171](https://github.com/jitokim/oh-my-graph/issues/171)). Removing
-  the runtime gate would not add the pause — the matcher is Claude's prose, so
-  it would only add a pause that can never fire.
+- **ADR 0009's session-limit pause now covers Codex too — closed on `main`
+  after v0.13.0, so not yet in a tagged release.** In v0.13.0 a limit under
+  `--runtime codex` is an ordinary node failure: the matcher is Claude's own
+  prose and `SessionLimited` is set only for the Claude runtime, so the run
+  halts at exit 1 with a FAIL on a node whose prompt never ran — recoverable
+  with `resume --retry-failed`, but not the pause the ADR promises. On `main`
+  the runtime gate is gone and Codex's own wording is matched beside Claude's,
+  so the same situation pauses: the limited node is recorded nowhere, in-flight
+  siblings drain instead of being cancelled, and the run exits 2 with a
+  `resume --retry-failed` hint. **The 2026-08-15 settlement still stands** — the
+  pause is a promise of a runtime, not of the engine, so no runtime *owes* a
+  session-limit signal; Codex volunteers what it does not owe
+  ([ADR 0009 "Scope"](adr/0009-a-session-limit-is-a-pause-not-a-failure.md) and
+  its 2026-09-02 amendment, closing
+  [#171](https://github.com/jitokim/oh-my-graph/issues/171) and answering
+  [#222](https://github.com/jitokim/oh-my-graph/issues/222)). Detection is prose
+  on both runtimes, so a reworded message on either degrades to exactly the
+  v0.13.0 behaviour described above. One narrower gap survives on `main`: the
+  reset time Codex prints (`try again at …`) arrives in a record the engine does
+  not decode, so a Codex pause hint names no time where a Claude one does.
 - **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
   approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
   cannot pre-approve one: every gate stops the run with a resumable snapshot and

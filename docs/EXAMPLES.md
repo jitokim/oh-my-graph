@@ -119,13 +119,16 @@ Everything else in this file describes the default, Claude. Under Codex:
   either way. Claude agent mapping
   and staged skill activation are not refused but not attempted — a planned
   Codex run prints one line saying so.
-- **A session limit is an ordinary failure**, not the resumable pause of
-  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md). The detection
-  is gated on the runtime, not on wording, so a Codex limit can never be read as
-  a pause; `resume --retry-failed` still salvages it
-  (scoped to the Claude runtime by
-  [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md), so no
-  runtime owes one).
+- **A usage limit pauses the run, the same as a Claude session limit does**
+  ([ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md), amended
+  2026-09-02). Codex's own wording is matched beside Claude's, so the run drains
+  its in-flight nodes, records the limited one nowhere and exits 2 with a
+  `resume --retry-failed` hint. Two differences from a Claude limit, both small:
+  the hint carries no reset time (Codex prints one, in a record the engine does
+  not decode, and it will not invent a clock from prose), and the match is still
+  prose — a reworded message degrades to an ordinary failure that
+  `resume --retry-failed` salvages anyway. No runtime *owes* this signal; Codex
+  volunteers it.
 - **The live view shows no per-node transcript tail.** Node states, verdicts and
   the settled per-node result render as they do for a Claude run, with the cost
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
@@ -1131,10 +1134,11 @@ Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v1
 
 ## Session limits pause, not fail
 
-This one is the Claude runtime's ([What `--runtime codex`
+This one holds on both runtimes ([What `--runtime codex`
 changes](#what---runtime-codex-changes)).
 
-When your Claude subscription hits its session limit mid-run, the limited node is not
+When your subscription hits its limit mid-run — Claude's session limit or
+Codex's usage limit — the limited node is not
 marked failed: the run stops launching new work, lets in-flight nodes finish,
 and exits with code 2 and a hint like `Resume after 5:20pm with: oh-my-graph
 resume <run-id> --retry-failed` — which later finishes exactly the work that
@@ -1143,8 +1147,10 @@ never ran. If the run carries build evidence the hint appends `--verify-cmd
 back off disk; the printed command is still the whole command — quoted so that
 pasting it runs what it says, and followed by `--verify-timeout D` if you bound
 the check with one. Detection is
-honest string-matching on the CLI's message (it offers no structured signal), so
-an unrecognized wording safely degrades to an ordinary failure that the same
-command still salvages.
+honest string-matching on the CLI's message — one pattern per runtime, because
+neither CLI offers a structured signal — so an unrecognized wording safely
+degrades to an ordinary failure that the same command still salvages. A Codex
+pause prints the hint with no reset time: the sentence naming one arrives in a
+record the engine does not decode, and it will not invent a clock from prose.
 
 Spec: [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md).
