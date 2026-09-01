@@ -20,10 +20,13 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
   ```
   write  FAIL  …  node "write" failed success_check exit_zero: exit code 1: You've hit your usage limit…
-  oh-my-graph: run halted at node "write"
+  oh-my-graph: run halted at node "write": …
   ```
 
-  — exit **1**. The node carries a FAIL verdict it did not earn (its prompt
+  — exit **1**. Both lines are abbreviated at the `…`, and both times what is
+  cut is the rest of the same sentence, ending `…or try again at Sep 13th,
+  2026 10:04 PM.`; the untruncated `detail` is in that run's `state.json` and
+  `events.jsonl`. The node carries a FAIL verdict it did not earn (its prompt
   never ran), its in-flight siblings are cancelled, and the run is over.
 
   **After**, the same limit takes the pause ADR 0009 already specified for

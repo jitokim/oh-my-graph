@@ -171,13 +171,21 @@ On exit 2 + a recorded limit pause, the supervisor sleeps a fixed interval and
 issues `resume --retry-failed`. If the limit is still in force the run pauses
 again and the supervisor sleeps again, up to `--max-waits`.
 
-**It does not read the reset time.** `SessionLimitReset`'s prose ("5:20pm") is
-a hint for a human and stays one: it has no date, no timezone, no locale
-guarantee, and ADR 0009 already documents that the wording is the CLI's own and
-may change. Polling is strictly more robust than parsing — it survives a
+**It does not read the reset time.** `SessionLimitReset`'s prose ("5:20pm" on
+claude, "Sep 13th, 2026 10:04 PM" on codex) is a hint for a human and stays
+one: neither names a timezone, neither carries a locale guarantee, and ADR 0009
+already documents that the wording is the CLI's own and may change. Polling is
+strictly more robust than parsing — it survives a
 wording change that would silently break a scheduler, and its failure mode is
 "woke up too early, paused again, slept again" rather than "slept until the
 wrong hour."
+
+*(Corrected 2026-09-02. This paragraph said the prose "has no date", which was
+true of the only reset hint that existed when it was written. Codex's does
+carry one — `Sep 13th, 2026 10:04 PM`, reaching `FailureCause` intact, run
+`20260901-171816.016378000-1`'s `events.jsonl:3`. The decision is untouched:
+the missing timezone is the reason not to parse, and a date without one is not
+an instant.)*
 
 This is the same reasoning ADR 0009 used to justify string matching as the
 honest option, applied one layer out: *do not build a clock on top of prose.*

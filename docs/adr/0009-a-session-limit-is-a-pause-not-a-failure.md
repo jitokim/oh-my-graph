@@ -120,6 +120,22 @@ mitigation list below exists to survive matching prose.
 > not one more. What actually changed is smaller and duller than a structured
 > signal: the prose matching turned out to port.
 >
+> *(One loose end, recorded rather than acted on, 2026-09-02.* Codex does emit
+> an enumerated `codex_error_info: "usage_limit_exceeded"` beside that message —
+> in this machine's own records, at
+> `~/.codex/sessions/2026/09/02/rollout-2026-09-02T02-18-16-01a05dfa-8c96-73a0-88ad-8cb71b780bc8.jsonl:12`,
+> the rollout for the very session the limited node ran under (`node_started`'s
+> `session_id` in that run's `events.jsonl`), and as `"other"` on an ordinary
+> failure at `.../2026/08/14/rollout-2026-08-14T22-03-25-…jsonl:9`. **That is
+> not evidence about the stream this engine parses.** The rollout is Codex's own
+> on-disk session log, where the record is an `event_msg` payload of type
+> `task_complete`; it holds no `turn.failed` record at all. Whether the field
+> also rides `codex exec --json` **stdout**, which is the only surface
+> `codex_protocol.go` reads, is **UNVERIFIED** — no stdout capture on disk
+> records the key set of a limit record, and this amendment did not spawn Codex
+> to find out. Nothing is built on the field either way; matching stays on the
+> prose.)*
+>
 > **What is matched.** `(?i)hit your usage limit`, substring, against
 > `NodeOutcome.FailureCause` — in `internal/runner/sessionlimit.go`, the one
 > file mitigation 1 names, beside Claude's pattern and deliberately **not**
