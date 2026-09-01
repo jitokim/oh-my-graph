@@ -2,7 +2,12 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -77,5 +82,161 @@ exit 1
 	}
 	if got := SessionLimitReset(outcome.FailureCause); got != "5:20pm" {
 		t.Errorf("reset hint from the captured cause = %q, want 5:20pm", got)
+	}
+}
+
+// codexThreadStarted is the ONE record the tests below add to the recorded
+// stream. The capture starts at the error record, but the stream it came from
+// must have opened with a thread.started: parseCodexJSONL rejects a stream
+// without one, and the run that produced this limit reported a parsed outcome
+// ("exit code 1: You've hit your usage limit…") rather than a NodeOutputError.
+// It carries no message text, so it cannot influence what is matched.
+const codexThreadStarted = `{"type":"thread.started","thread_id":"thread-limit"}`
+
+// codexLimitRecords returns the two records `codex exec --json` wrote on
+// 2026-09-02 when this machine's Codex login hit its usage limit, read from
+// testdata/codex-usage-limit.jsonl exactly as recorded.
+//
+// One honesty note about that file, because it is the evidence the rest of this
+// rests on: the "(…)" and the trailing "…" are ELISIONS IN THE CAPTURE, not
+// characters the CLI printed — the elided spans were never written down. The
+// sentence that does the deciding survived both records intact, which is why
+// the matcher is keyed on that sentence and on nothing decorative around it.
+func codexLimitRecords(t *testing.T) (errRecord, turnFailed string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "codex-usage-limit.jsonl"))
+	if err != nil {
+		t.Fatalf("reading the recorded codex limit stream: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the fixture is the two recorded records; got %d lines", len(lines))
+	}
+	return lines[0], lines[1]
+}
+
+// codexLimitCause is the FailureCause the parser really produces from the
+// recorded stream — read through parseCodexJSONL rather than retyped, so the
+// matcher table below is tested against the string the engine will actually
+// hand it.
+func codexLimitCause(t *testing.T) string {
+	t.Helper()
+	errRecord, turnFailed := codexLimitRecords(t)
+	outcome, err := parseCodexJSONL([]byte(strings.Join([]string{codexThreadStarted, errRecord, turnFailed}, "\n")), nil, nil)
+	if err != nil {
+		t.Fatalf("the recorded limit stream must parse: %v", err)
+	}
+	if outcome.FailureCause == "" {
+		t.Fatal("the recorded turn.failed must reach the engine as a FailureCause")
+	}
+	return outcome.FailureCause
+}
+
+// TestLimitCause_MatchesEachRuntimesOwnWordingOnly pins both halves of decision
+// 1: Codex's limit is recognized from the recorded wording, and neither
+// runtime's pattern reaches into the other's. The negative cases are shapes
+// that actually occur — `turn.failed` is Codex's single terminal-failure
+// record, so "not a limit" has to be decided on the sentence it carries.
+func TestLimitCause_MatchesEachRuntimesOwnWordingOnly(t *testing.T) {
+	codexCause := codexLimitCause(t)
+	for _, tc := range []struct {
+		name    string
+		runtime Runtime
+		cause   string
+		want    bool
+	}{
+		{"codex: the recorded usage limit", RuntimeCodex, codexCause, true},
+		{"codex: the same cause flattened into a wider report", RuntimeCodex, "codex run failed / " + codexCause, true},
+		{"codex: a turn.failed from an unavailable model", RuntimeCodex, "model unavailable", false},
+		{"codex: the stubbed turn.failed the cmd tests script", RuntimeCodex, "stub codex: failing on request", false},
+		{"codex: the fallback cause for an error-less turn.failed", RuntimeCodex, "codex turn failed", false},
+		{"codex: a network-blocked run", RuntimeCodex, "error connecting to api.github.com", false},
+		{"codex: no failure at all", RuntimeCodex, "", false},
+		{"claude: the recorded session limit still matches", RuntimeClaude, realLimitMessage, true},
+		{"claude: a rate limit is still not a session limit", RuntimeClaude, "You've hit your rate limit", false},
+		{"claude's wording does not match under codex", RuntimeCodex, realLimitMessage, false},
+		{"codex's wording does not match under claude", RuntimeClaude, codexCause, false},
+		{"an unnamed runtime is owed no limit signal", Runtime("gemini"), codexCause, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLimitCause(tc.runtime, tc.cause); got != tc.want {
+				t.Errorf("isLimitCause(%q, %q) = %v, want %v", tc.runtime, tc.cause, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream is the Codex mirror of
+// TestRun_ClassifiesSessionLimitFromEnvelope: it proves the classification
+// happens in CLIRunner.Run, so the scheduler receives the SAME typed
+// NodeOutcome.SessionLimited the Claude path already sets — no second
+// vocabulary for the same condition. FakeRunner cannot stand in here, because
+// it bypasses CLIRunner entirely; this spawns a shell stub, never real codex.
+func TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	errRecord, turnFailed := codexLimitRecords(t)
+	for _, tc := range []struct {
+		name        string
+		stream      []string
+		exit        int
+		wantLimited bool
+	}{
+		{
+			name:        "the recorded usage-limit stream is a limit",
+			stream:      []string{codexThreadStarted, errRecord, turnFailed},
+			exit:        1,
+			wantLimited: true,
+		},
+		{
+			name:        "a turn.failed from another cause is an ordinary failure",
+			stream:      []string{codexThreadStarted, `{"type":"turn.failed","error":{"message":"model unavailable"}}`},
+			exit:        1,
+			wantLimited: false,
+		},
+		{
+			name: "a completed turn is never limited",
+			stream: []string{
+				codexThreadStarted,
+				`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`,
+				`{"type":"turn.completed","usage":{}}`,
+			},
+			exit:        0,
+			wantLimited: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := writeStub(t, "#!/bin/sh\ncat <<'JSON'\n"+strings.Join(tc.stream, "\n")+"\nJSON\nexit "+strconv.Itoa(tc.exit)+"\n")
+			r := NewCLIRunner(RuntimeCodex, WithBinary(stub))
+			outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+			if err != nil {
+				t.Fatalf("a parseable codex stream is an outcome, not a Run error: %v", err)
+			}
+			if outcome.SessionLimited != tc.wantLimited {
+				t.Fatalf("SessionLimited = %v, want %v (FailureCause %q)", outcome.SessionLimited, tc.wantLimited, outcome.FailureCause)
+			}
+			if tc.wantLimited && !strings.Contains(outcome.FailureCause, "hit your usage limit") {
+				t.Errorf("the limit cause must still carry the CLI's own message; got %q", outcome.FailureCause)
+			}
+		})
+	}
+}
+
+// TestSessionLimitReset_CarriesCodexProseUntouched reads the reset hint out of
+// the recorded error record, which is where the capture kept it. It is carried
+// as the CLI wrote it and never turned into a clock: "Sep 13th, 2026 10:04 PM"
+// names no timezone, and ADR 0009 already refused to sleep on a weaker version
+// of this string.
+func TestSessionLimitReset_CarriesCodexProseUntouched(t *testing.T) {
+	errRecord, _ := codexLimitRecords(t)
+	var record struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(errRecord), &record); err != nil {
+		t.Fatalf("the recorded error record must be JSON: %v", err)
+	}
+	if got, want := SessionLimitReset(record.Message), "Sep 13th, 2026 10:04 PM"; got != want {
+		t.Errorf("SessionLimitReset(%q) = %q, want %q", record.Message, got, want)
 	}
 }

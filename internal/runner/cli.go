@@ -344,9 +344,9 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	if exitCode != 0 && outcome.FailureCause == "" {
 		outcome.FailureCause = flattenLines(tailOf(stderr.Bytes(), maxStderrInError))
 	}
-	if r.protocol.runtime() == RuntimeClaude {
-		outcome.SessionLimited = isSessionLimitCause(outcome.FailureCause)
-	}
+	// One matcher, one call site (ADR 0009). Which prose belongs to which
+	// runtime is sessionlimit.go's business, not this function's.
+	outcome.SessionLimited = isLimitCause(r.protocol.runtime(), outcome.FailureCause)
 	return outcome, nil
 }
 
