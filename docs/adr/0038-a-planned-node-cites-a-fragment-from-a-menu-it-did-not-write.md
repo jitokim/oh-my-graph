@@ -140,16 +140,24 @@ turns on. Read from the six files:
 | `review-style` | diff, focus | `prompt:` (`:14`, `:15`) |
 | `e2e-verify` | checks | `prompt:` (`:27`) |
 | `e2e-verify` | **verify_command** | **`success_check.verify.command`** (`:65`) |
-| `gated-lane` | repo, task, focus, publish | `prompt:` (`:50`, `:56`, `:124`, `:147`) |
+| `gated-lane` | repo, task | `prompt:` (`:50`, `:56`) |
 | `gated-lane` | **tools** | **`allowed_tools`** (`:86`) |
 | `gated-lane` | checks, verify_command | a nested `use: e2e-verify`'s `with:` (`:102`, `:103`) |
+| `gated-lane` | **focus** | a nested `use: review-style`'s `with:` (`:124`, inside the block opened at `:119`) |
+| `gated-lane` | **publish** | a nested `use: pr-publish`'s `with:` (`:147`, inside the block opened at `:143`) |
 | `repair-round` | review_focus, apply_scope | `prompt:` (`:43`, `:79`) |
 | `repair-round` | **review_agent** | **`agent:`** (`:41`) |
 | `repair-round` | **review_timeout** | **`timeout:`** (`:62`) |
 | `repair-round` | **verify_command** | **`success_check.verify.command`** (`:101`) |
 
-**Three of six** have every slot landing in prompt text. **Three of six** have
-at least one slot landing in a field a planned node is forbidden to write.
+**Three of six** have every slot landing in prompt text (`pr-publish`,
+`review-security`, `review-style`). **Three of six** have at least one slot
+landing somewhere else: a field a planned node is forbidden to write
+(`allowed_tools`, `agent:`, `timeout:`, `success_check.verify.command`), or a
+nested `use:`'s `with:`, which is a forwarded binding rather than prompt text
+and is why §6's second secondary falsifier requires inertness to be computed
+**transitively**. Four of `gated-lane`'s seven slots land in one of those two
+categories, not in a `prompt:` scalar.
 
 Shipped citations, for scale: fourteen `use:` lines are written across four of
 the **eight** graphs (`ls -1 graphs/*.yaml` -> 8, which is the fourteen YAML
@@ -206,8 +214,19 @@ falsification rather than a defect to route around.
 ### 2.2 (B) What the planner is shown, verbatim
 
 The block is appended to `plannerPromptTemplate` (`coordinator.go:1698`) and is
-**omitted entirely** when the admitted set is empty (§2.5). Literal text, with
-two entries from today's admitted set:
+**omitted entirely** when the admitted set is empty (§2.5).
+
+The literal text follows. **The two entries in it are hypothetical**, written
+here to fix the field names and the rendering — they are not a sample of
+today's menu, because §2.1's admitted set is empty (zero of six, §2.2.1) and on
+this repository the block below would therefore not be rendered at all. The two
+ids are borrowed from real files precisely so the gap is legible: neither
+`review-style` nor `pr-publish` is admitted today. `review-style.yaml:31`
+declares `Bash(git diff*)` and `Bash(git log*)`, `:32` declares
+`permission_mode: plan`; `pr-publish.yaml:45` declares `Bash(gh *)`, `:46`
+declares `permission_mode: dontAsk`. Each of those four is a §2.2.1 failure.
+Read the block as *the shape a menu would take once §2.2.1's precondition is
+met*, never as evidence that a menu exists:
 
 ```
 Reusable shapes the operator already keeps. Each is a node (or a group of
@@ -444,7 +463,11 @@ writes its own `prompt:`.
 **Repairable:** yes — one paid re-plan, like the existing refusals, and the
 refusal text names the id and lists the menu, so the repair prompt carries
 enough to converge.
-**What the operator sees:** the ordinary plan-refusal line, e.g.
+**What the operator sees:** the ordinary plan-refusal line. Illustrated with
+the same **hypothetical** menu as §2.2 — on this repository the offered set is
+empty (§2.2.1), so this exact line cannot occur here, and a run with an empty
+menu never reaches this refusal because the block is not rendered and `reuse:`
+is refused by its disposition case instead:
 `planned node "style-check" names the reusable shape "review-styles", which is
 not one of the shapes offered (offered: review-style, review-security,
 pr-publish)`.
@@ -521,10 +544,12 @@ remainder here either, and no `/` is minted. (An earlier draft cited
 `validate.go:147` for this; that line is `validateFragmentsResolved`, two
 entries further down the same list.)
 
-*The honest conclusion.* **All three fragments admitted by §3's inertness test
-on today's corpus are single-node** (`pr-publish`, `review-security`,
-`review-style` — forms at `pr-publish.yaml:29`, `review-security.yaml:12`,
-`review-style.yaml:11`). ADR 0027's namespace machinery is therefore **fully
+*The honest conclusion.* Under **both** admission tests the set is empty
+(§2.2.1), so the case is vacuous today; stated over the wider set that
+**inertness alone** would admit, **all three are single-node** (`pr-publish`,
+`review-security`, `review-style` — forms at `pr-publish.yaml:29`,
+`review-security.yaml:12`, `review-style.yaml:11`), so no `/` is minted on
+either set. ADR 0027's namespace machinery is therefore **fully
 adequate and entirely unexercised** by this decision as it would ship: correct
 for the multi-node case, and the multi-node case is currently empty. What
 closes the remainder is nothing — there is no remainder — but the reason is
@@ -619,7 +644,12 @@ would never see used.
 
 **Three ways a run has no catalog, and they are indistinguishable by design:**
 `--no-reuse`; no `graphs/fragments/` sibling; or a `graphs/fragments/` in which
-no file passes §3's inertness test. In all three the catalog block of §2.2 is
+no file passes **both** admission tests — §2.2's inertness test *and* §2.2.1's
+static-field test. Both, not either: inertness alone passes three of this
+repository's six fragments, and a rule implemented against inertness alone
+would render a three-entry menu here, contradicting §2.1's *zero of six* and
+§6's falsifier zero. Against both tests this repository is the third case
+today. In all three the catalog block of §2.2 is
 **omitted entirely** — not rendered as an empty list. An empty menu spends
 prompt tokens teaching a vocabulary with no words in it and invites the planner
 to invent an id, which is then §C.1's refusal charged to the engine's own
@@ -796,11 +826,21 @@ change. This widens it: a fragment edit is now also a change to what future
 `auto` runs are offered, in a repository whose owner may not have written any
 graph at all.
 
-**What gets cheaper.** The three admitted shapes are already-reviewed prompts
-with settled verdict contracts — `review-style.yaml:19-29` is a worked example
-of the verdict-token discipline that planner-authored review nodes get wrong.
-A cited node inherits it. That is the actual usefulness the maintainer asked
-for, and it is worth naming that it is bounded to three shapes today.
+**What gets cheaper — today, nothing.** The admitted set is **zero of six**
+(§2.2.1: `pr-publish.yaml:45-46`, `review-security.yaml:28-29`,
+`review-style.yaml:31-32` each fail twice over), so on this repository the
+benefit of §2 as decided is exactly none, and the honest entry in a
+consequences section is a zero rather than a promise.
+
+What the mechanism *would* buy, once one of §2.2.1's two routes has been taken
+— widening `plannedToolAllowlist` in its own ADR, or rewriting the fragments to
+fit the existing allowlist — is that an admitted shape is an already-reviewed
+prompt with a settled verdict contract; `review-style.yaml:19-29` is a worked
+example of the verdict-token discipline that planner-authored review nodes get
+wrong, and a citing node would inherit it. **Three is the ceiling of that
+future benefit, not its present value**: three is the count that clears
+inertness (§1.3), so no route can raise the admitted set above three without
+also making a currently non-inert fragment inert. Today's number is zero.
 
 ---
 
@@ -881,10 +921,12 @@ test, because both bind an engine-run verify command. That 13-of-18 is
 `unverified` here: the lane corpus it was measured over is not in this
 worktree, so this record quotes ADR 0027's 2026-08-16 measurement rather than
 re-taking it. `repair-round.yaml:5-9` states the same thing in the fragment's
-own header, and that file *is* in this tree. The mechanism admits the three *smallest*
-shapes and excludes the two the corpus actually reaches for. If reuse is going
-to be worth anything, that is where it would have to bite, and here it does
-not.
+own header, and that file *is* in this tree. **On the inertness test alone**,
+the mechanism admits the three *smallest* shapes and excludes the two the
+corpus actually reaches for; adding §2.2.1's static-field test drops the three
+as well, so the admitted set is 0, not 3. Either way the two shapes worth
+reusing are out, and if reuse is going to be worth anything, that is where it
+would have to bite, and here it does not.
 
 But the candidate is **not decisive on its own**, because a zero has two causes
 this measurement cannot separate: (i) nothing in the catalog fits the goals
@@ -904,20 +946,31 @@ the falsifier is pre-registered as a **pair**:
 
 **Two secondary falsifiers**, both cheap:
 
-- **§C.3's coverage claim is corpus-contingent.** It holds because all three
-  admitted fragments are single-node. The first admitted **multi-node**
+- **§C.3's coverage claim is corpus-contingent, and vacuous today.** Zero
+  fragments are admitted (§2.2.1), so the claim has nothing to range over; the
+  substantive version of it is conditional — *the three fragments that would
+  have been admitted **on the inertness test alone** are all single-node*
+  (`pr-publish.yaml:29`, `review-security.yaml:12`, `review-style.yaml:11`),
+  so no `/` is minted on that set either. The first admitted **multi-node**
   fragment re-opens the question, and its first double citation is the test:
   two citations must produce `<a>/<internal>` and `<b>/<internal>` and pass
   `Graph.Validate`, or ADR 0027's coverage does not carry over as claimed.
 - **§3's inertness test is a claim about the *shape* of fragments, not just
   today's six.** If the inertness test admits a fragment that turns out to
   reach a non-prompt field — through a nested `use:` (ADR 0029) whose inner
-  fragment binds a token forwarded from the outer one, the pattern at
-  `gated-lane.yaml:102-103` — then the test is unsound and the admission rule,
+  fragment binds a token forwarded from the outer one — then the test is
+  unsound and the admission rule,
   not the catalog, is what needs rewriting. Inertness must be computed
   **transitively through the citation chain**, and that requirement is stated
   here so its absence in an implementation is a review-blocking defect rather
-  than a discovery.
+  than a discovery. §1.3's table is the worked instance: `gated-lane` forwards
+  four of its seven slots into a nested `use:`'s `with:` rather than into a
+  `prompt:` scalar — `checks` and `verify_command` into `use: e2e-verify`
+  (`gated-lane.yaml:102`, `:103`), `focus` into `use: review-style` (`:124`)
+  and `publish` into `use: pr-publish` (`:147`). A non-transitive test reading
+  only `gated-lane`'s own scalars sees four bindings it cannot classify; the
+  fields they ultimately reach are the inner fragments' business, which is the
+  whole reason the computation has to follow the chain.
 
 ---
 
