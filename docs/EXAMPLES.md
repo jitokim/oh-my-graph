@@ -1149,8 +1149,11 @@ back off disk; the printed command is still the whole command — quoted so that
 pasting it runs what it says, and followed by `--verify-timeout D` if you bound
 the check with one. Detection is
 honest string-matching on the CLI's message — one pattern per runtime, because
-neither CLI offers a structured signal — so an unrecognized wording safely
-degrades to an ordinary failure that the same command still salvages. A Codex
+nothing in the stream oh-my-graph parses tells a limit apart by type: Claude
+gives the limit no envelope subtype, and Codex's `turn.failed` is its ONE
+terminal-failure record, so the field is typed and the value is prose — so an
+unrecognized wording safely degrades to an ordinary failure that the same
+command still salvages. A Codex
 pause prints its reset time the same way, in the CLI's own words
 (`try again at Sep 13th, 2026 10:04 PM`) — carried, never turned into a clock,
 because it names no timezone.
