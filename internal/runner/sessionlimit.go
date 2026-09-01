@@ -22,8 +22,10 @@ import (
 // testdata/codex-usage-limit.jsonl byte for byte, recovered from that run's own
 // records — codexLimitRecords in sessionlimit_test.go states the provenance):
 // `codex exec --json` writes an
-// `{"type":"error","message":"You've hit your usage limit…"}` record the parser
-// does not decode, then a `turn.failed` whose error.message repeats the whole
+// `{"type":"error","message":"You've hit your usage limit. …"}` record the
+// parser does not decode — abbreviated on THIS line for shape only; the fixture
+// carries the sentence whole, which is what "byte for byte" above is about —
+// then a `turn.failed` whose error.message repeats the whole
 // sentence, reset clause included, and THAT is the only copy the engine sees
 // (codex_protocol.go: turn.failed fills FailureCause). The typed shape cannot
 // do the deciding here, because

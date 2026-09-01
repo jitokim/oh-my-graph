@@ -37,8 +37,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `"paused"`; the process exits **2**; and the hint prints
 
   ```
-  Session limit reached (resets Sep 13th, 2026 10:04 PM).
-  Resume after Sep 13th, 2026 10:04 PM with:
+  Session limit reached (resets Sep 13th, 2026 10:04 PM). Resume after Sep 13th, 2026 10:04 PM with:
     oh-my-graph resume <run-id> --retry-failed
   ```
 
@@ -69,9 +68,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   field decides nothing and the sentence inside it decides everything
   ([ADR 0009's 2026-09-02 amendment](docs/adr/0009-a-session-limit-is-a-pause-not-a-failure.md)).
 
-  Still stale in the tree and not corrected here: the pre-run disclosure
-  `cmd/oh-my-graph/main.go` prints before a Codex run still says *"No
-  session-limit pause"*.
+  The pre-run disclosure printed before a Codex run said *"No session-limit
+  pause"* and now describes the pause it performs; both tests that read that
+  disclosure (`cmd/oh-my-graph/wiring_test.go`, `planonly_test.go`) pin the new
+  wording and reject the old sentence.
 
 ### Fixed
 

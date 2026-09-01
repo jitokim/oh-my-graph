@@ -98,7 +98,8 @@ const codexThreadStarted = `{"type":"thread.started","thread_id":"thread-limit"}
 
 // codexLimitRecords returns the two records `codex exec --json` wrote on
 // 2026-09-02 when this machine's Codex login hit its usage limit, read from
-// testdata/codex-usage-limit.jsonl exactly as recorded.
+// testdata/codex-usage-limit.jsonl — the second record verbatim, the first
+// restored where the capture elided it (see below).
 //
 // The provenance of that file, because it is the evidence the rest of this
 // rests on. The capture first written down had the message elided in both
@@ -114,6 +115,16 @@ const codexThreadStarted = `{"type":"thread.started","thread_id":"thread-limit"}
 // record's message byte for byte — reset clause included, which the elided
 // capture had hidden. The first record's message differs from it only where
 // the capture's "(…)" stood, so the URL is restored there from its twin.
+//
+// That restoration is no longer an inference from the twin. Codex's own session
+// rollout for the same run wrote the sentence down independently, URL included:
+// ~/.codex/sessions/2026/09/02/rollout-2026-09-02T02-18-16-01a05dfa-8c96-73a0-88ad-8cb71b780bc8.jsonl
+// line 12, the `payload.error.message` of that turn's task_complete. Parsed and
+// compared on 2026-09-02, it equals BOTH fixture records' message exactly, so the
+// first record's text is confirmed by a second record rather than reconstructed
+// from its twin. What the rollout does not witness is the stream ENVELOPE:
+// `{"type":"error","message":…}` is the shape `codex exec --json` printed, and
+// that is as captured.
 //
 // The two records are the fields the parser decodes; a live `codex exec --json`
 // record may carry more keys than these, and the capture did not write those
