@@ -137,6 +137,10 @@ func codexLimitCause(t *testing.T) string {
 // runtime's pattern reaches into the other's. The negative cases are shapes
 // that actually occur — `turn.failed` is Codex's single terminal-failure
 // record, so "not a limit" has to be decided on the sentence it carries.
+//
+// The question is put the way CLIRunner.Run puts it — select the runtime, ask
+// the protocol it selected — so this table also pins the wiring from a
+// --runtime value to the pattern that answers for it.
 func TestLimitCause_MatchesEachRuntimesOwnWordingOnly(t *testing.T) {
 	codexCause := codexLimitCause(t)
 	for _, tc := range []struct {
@@ -156,11 +160,17 @@ func TestLimitCause_MatchesEachRuntimesOwnWordingOnly(t *testing.T) {
 		{"claude: a rate limit is still not a session limit", RuntimeClaude, "You've hit your rate limit", false},
 		{"claude's wording does not match under codex", RuntimeCodex, realLimitMessage, false},
 		{"codex's wording does not match under claude", RuntimeClaude, codexCause, false},
-		{"an unnamed runtime is owed no limit signal", Runtime("gemini"), codexCause, false},
+		// A runtime no protocol claims cannot reach here from the CLI —
+		// ParseRuntime rejects it — and NewCLIRunner falls back to the claude
+		// protocol, which owes nothing to Codex's wording. Kept as the third
+		// direction of the same rule: an unrecognized selection gets some
+		// protocol's narrow pattern, never a permissive one.
+		{"an unnamed runtime is owed no codex signal", Runtime("gemini"), codexCause, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isLimitCause(tc.runtime, tc.cause); got != tc.want {
-				t.Errorf("isLimitCause(%q, %q) = %v, want %v", tc.runtime, tc.cause, got, tc.want)
+			protocol := NewCLIRunner(tc.runtime).protocol
+			if got := protocol.isLimitCause(tc.cause); got != tc.want {
+				t.Errorf("%q protocol isLimitCause(%q) = %v, want %v", tc.runtime, tc.cause, got, tc.want)
 			}
 		})
 	}

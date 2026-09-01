@@ -40,6 +40,16 @@ func isSessionLimitCause(cause string) bool {
 	return sessionLimitPattern.MatchString(cause)
 }
 
+// isLimitCause answers, for the claude protocol's OWN output, whether the
+// captured cause is that runtime's subscription limit. It is one half of the
+// cliProtocol method CLIRunner.Run calls exactly once (ADR 0009: one matcher,
+// one call site) — the classification asks the protocol rather than switching
+// on a Runtime, so no code outside this file has to know which prose belongs to
+// which CLI, and the scheduler downstream sees only NodeOutcome.SessionLimited.
+func (claudeProtocol) isLimitCause(cause string) bool {
+	return isSessionLimitCause(cause)
+}
+
 // codexUsageLimitPattern recognizes Codex's wording for the same condition.
 // Deliberately NOT folded into an alternation with sessionLimitPattern: that
 // pattern is a narrow contract of its own
@@ -50,22 +60,16 @@ func isSessionLimitCause(cause string) bool {
 // matching.
 var codexUsageLimitPattern = regexp.MustCompile(`(?i)hit your usage limit`)
 
-// isLimitCause reports whether a NodeOutcome.FailureCause is the selected
-// runtime's subscription limit. This is the ONE runtime branch in the
-// classification, and it lives here rather than at the call site so a reader of
-// this file sees the whole policy without hunting cli.go for a gate —
-// CLIRunner.Run still calls it exactly once (ADR 0009: one matcher, one call
-// site). A runtime this switch does not name owes no limit signal and gets
-// none, which is ADR 0009's Scope section stated in code.
-func isLimitCause(rt Runtime, cause string) bool {
-	switch rt {
-	case RuntimeClaude:
-		return isSessionLimitCause(cause)
-	case RuntimeCodex:
-		return codexUsageLimitPattern.MatchString(cause)
-	default:
-		return false
-	}
+// isLimitCause is the codex half of the same method. A protocol answers only
+// for the stream it decodes: codex's pattern is never asked about claude's
+// output and vice versa, so a rewording on one runtime cannot widen or narrow
+// the other. Adding a third runtime means implementing this method — a
+// protocol that has no limit wording to match returns false and degrades the
+// way ADR 0009 specifies (the node FAILs carrying the message, and
+// `resume --retry-failed` salvages the run), which is that ADR's Scope section
+// stated in code.
+func (codexProtocol) isLimitCause(cause string) bool {
+	return codexUsageLimitPattern.MatchString(cause)
 }
 
 // sessionLimitResetPattern captures the human-readable reset time the limit
