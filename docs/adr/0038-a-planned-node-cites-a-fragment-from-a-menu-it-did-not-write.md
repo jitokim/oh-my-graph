@@ -203,7 +203,9 @@ git checkout root when the working directory sits in one, the working directory
 otherwise — admits only fragments that pass BOTH an inertness test on their
 substitution slots (§2.2) AND a static-field test on everything they declare
 that is not a prompt (§2.2.1), offers the planner that admitted set as a menu of
-identifiers, and — after `validatePlannedNodes` has run — performs every path
+identifiers the operator wrote and the planner did not (§2.2 — they are the
+fragments' own names, not opaque handles), and — after `validatePlannedNodes`
+has run — performs every path
 resolution and splice itself, re-applying the planned-node tool and permission
 refusals to what it spliced (§2.3); the planner may name an identifier from the
 menu and bind that entry's listed slots, and may never name a path, a file, an
