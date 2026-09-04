@@ -85,61 +85,54 @@ exit 1
 	}
 }
 
-// codexThreadStarted is the ONE record the tests below add to the recorded
-// stream, and it is scaffolding rather than evidence — which is why it lives
-// here and not in the fixture file. The capture starts at the error record, but
-// the stream it came from did open with a thread.started: parseCodexJSONL
-// rejects a stream without one, and run 20260901-171816.016378000-1 recorded
-// its node's session id as 01a05dfa-8c96-73a0-88ad-8cb71b780bc8, which the
-// parser can only have read off that record's thread_id. The id was written
-// down; the record was not, so the placeholder below stands in for it. It
-// carries no message text, so it cannot influence what is matched.
-const codexThreadStarted = `{"type":"thread.started","thread_id":"thread-limit"}`
+// The fixture is the WHOLE stream `codex exec --json` wrote when this machine's
+// Codex login hit its usage limit — four records, captured 2026-09-04, nothing
+// synthesised and nothing elided:
+//
+//	{"type":"thread.started","thread_id":"…"}
+//	{"type":"turn.started"}
+//	{"type":"error","message":"You've hit your usage limit. …"}
+//	{"type":"turn.failed","error":{"message":"You've hit your usage limit. …"}}
+//
+// It is the whole stream rather than the interesting half on purpose. An
+// earlier capture held only the last two records with their messages elided,
+// so the test had to prepend a synthetic `thread.started` for the parser to
+// accept the stream at all — and a fixture that carries scaffolding is a
+// fixture that can drift from what the CLI does without the test noticing.
+// The limit reproduces on demand until the quota resets, so the real capture
+// cost one command.
+//
+// Records are pulled out by TYPE, never by index, so a capture that gains a
+// record does not silently shift what these tests are asserting about.
 
-// codexLimitRecords returns the two records `codex exec --json` wrote on
-// 2026-09-02 when this machine's Codex login hit its usage limit, read from
-// testdata/codex-usage-limit.jsonl — the second record verbatim, the first
-// restored where the capture elided it (see below).
-//
-// The provenance of that file, because it is the evidence the rest of this
-// rests on. The capture first written down had the message elided in both
-// records ("Codex (…)" and a trailing "…"); the full sentence was recovered
-// afterwards from the run that produced it, run 20260901-171816.016378000-1,
-// which stored it twice — `state.json` and `events.jsonl` — as
-//
-//	You've hit your usage limit. Upgrade to Plus to continue using Codex
-//	(https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM.
-//
-// That string is a FailureCause, and codex_protocol.go builds a FailureCause
-// from `turn.failed`'s error.message and nothing else, so it is the second
-// record's message byte for byte — reset clause included, which the elided
-// capture had hidden. The first record's message differs from it only where
-// the capture's "(…)" stood, so the URL is restored there from its twin.
-//
-// That restoration is no longer an inference from the twin. Codex's own session
-// rollout for the same run wrote the sentence down independently, URL included:
-// ~/.codex/sessions/2026/09/02/rollout-2026-09-02T02-18-16-01a05dfa-8c96-73a0-88ad-8cb71b780bc8.jsonl
-// line 12, the `payload.error.message` of that turn's task_complete. Parsed and
-// compared on 2026-09-02, it equals BOTH fixture records' message exactly, so the
-// first record's text is confirmed by a second record rather than reconstructed
-// from its twin. What the rollout does not witness is the stream ENVELOPE:
-// `{"type":"error","message":…}` is the shape `codex exec --json` printed, and
-// that is as captured.
-//
-// The two records are the fields the parser decodes; a live `codex exec --json`
-// record may carry more keys than these, and the capture did not write those
-// down either way.
-func codexLimitRecords(t *testing.T) (errRecord, turnFailed string) {
+func codexLimitRecord(t *testing.T, kind string) string {
+	t.Helper()
+	for _, line := range strings.Split(codexLimitRecords(t), "\n") {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &probe); err != nil {
+			t.Fatalf("fixture line is not JSON: %v", err)
+		}
+		if probe.Type == kind {
+			return line
+		}
+	}
+	t.Fatalf("the recorded stream carries no %q record", kind)
+	return ""
+}
+
+func codexLimitRecords(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "codex-usage-limit.jsonl"))
 	if err != nil {
 		t.Fatalf("reading the recorded codex limit stream: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("the fixture is the two recorded records; got %d lines", len(lines))
+	stream := strings.TrimSpace(string(raw))
+	if got := len(strings.Split(stream, "\n")); got != 4 {
+		t.Fatalf("the fixture is the whole recorded stream, four records; got %d lines", got)
 	}
-	return lines[0], lines[1]
+	return stream
 }
 
 // codexLimitCause is the FailureCause the parser really produces from the
@@ -148,8 +141,7 @@ func codexLimitRecords(t *testing.T) (errRecord, turnFailed string) {
 // hand it.
 func codexLimitCause(t *testing.T) string {
 	t.Helper()
-	errRecord, turnFailed := codexLimitRecords(t)
-	outcome, err := parseCodexJSONL([]byte(strings.Join([]string{codexThreadStarted, errRecord, turnFailed}, "\n")), nil, nil)
+	outcome, err := parseCodexJSONL([]byte(codexLimitRecords(t)), nil, nil)
 	if err != nil {
 		t.Fatalf("the recorded limit stream must parse: %v", err)
 	}
@@ -213,7 +205,11 @@ func TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stub is a shebang script; this pins the unix path")
 	}
-	errRecord, turnFailed := codexLimitRecords(t)
+	errRecord := codexLimitRecord(t, "error")
+	turnFailed := codexLimitRecord(t, "turn.failed")
+	// The real opening record, not a placeholder: parseCodexJSONL rejects a
+	// stream without one, and the capture supplies it.
+	threadStarted := codexLimitRecord(t, "thread.started")
 	for _, tc := range []struct {
 		name        string
 		stream      []string
@@ -222,20 +218,20 @@ func TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream(t *testing.T) {
 	}{
 		{
 			name:        "the recorded usage-limit stream is a limit",
-			stream:      []string{codexThreadStarted, errRecord, turnFailed},
+			stream:      []string{threadStarted, errRecord, turnFailed},
 			exit:        1,
 			wantLimited: true,
 		},
 		{
 			name:        "a turn.failed from another cause is an ordinary failure",
-			stream:      []string{codexThreadStarted, `{"type":"turn.failed","error":{"message":"model unavailable"}}`},
+			stream:      []string{threadStarted, `{"type":"turn.failed","error":{"message":"model unavailable"}}`},
 			exit:        1,
 			wantLimited: false,
 		},
 		{
 			name: "a completed turn is never limited",
 			stream: []string{
-				codexThreadStarted,
+				threadStarted,
 				`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`,
 				`{"type":"turn.completed","usage":{}}`,
 			},
@@ -272,7 +268,7 @@ func TestRun_ClassifiesCodexUsageLimitFromTheRecordedStream(t *testing.T) {
 func TestSessionLimitReset_CarriesCodexProseUntouched(t *testing.T) {
 	const want = "Sep 13th, 2026 10:04 PM"
 
-	errRecord, _ := codexLimitRecords(t)
+	errRecord := codexLimitRecord(t, "error")
 	var record struct {
 		Message string `json:"message"`
 	}
