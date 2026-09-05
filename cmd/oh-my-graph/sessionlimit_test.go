@@ -22,6 +22,21 @@ import (
 // pins (internal/runner/sessionlimit_test.go).
 const limitCauseMsg = "You've hit your session limit · resets 5:20pm"
 
+// codexLimitCauseMsg is the Codex counterpart, as parseCodexJSONL builds it
+// from the recorded stream (internal/runner/testdata/codex-usage-limit.jsonl).
+// The `turn.failed` record — the only copy the engine sees — repeats the whole
+// sentence including the reset clause, so this cause exercises the hint's
+// with-a-time branch. The no-time branch is still pinned below, by a cause that
+// really carries no time.
+const codexLimitCauseMsg = "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM."
+
+// codexLimitStream is the same fixture as a stub `codex exec --json` transcript:
+// the thread.started the parser requires, then the turn.failed carrying the
+// limit sentence. Used to drive the REAL CLIRunner and the REAL matcher; it
+// spawns a shell script, never codex.
+const codexLimitStream = `{"type":"thread.started","thread_id":"t-limit"}
+{"type":"turn.failed","error":{"message":"` + codexLimitCauseMsg + `"}}`
+
 // limitRunner limits the FIRST invocation of each prompt named in limitFirst
 // — returning the outcome CLIRunner classifies for a limit-killed
 // subprocess — and passes everything else, counting invocations so a test can
@@ -30,6 +45,9 @@ type limitRunner struct {
 	mu          sync.Mutex
 	invocations map[string]int
 	limitFirst  map[string]bool
+	// cause is the CLI sentence the limited outcome carries; empty means the
+	// Claude one, so every existing caller keeps its shape.
+	cause string
 }
 
 func (r *limitRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
@@ -40,7 +58,11 @@ func (r *limitRunner) Run(_ context.Context, spec runner.NodeInvocation) (runner
 	}
 	r.invocations[spec.Prompt]++
 	if r.limitFirst[spec.Prompt] && r.invocations[spec.Prompt] == 1 {
-		return runner.NodeOutcome{ExitCode: 1, FailureCause: limitCauseMsg, SessionLimited: true}, nil
+		cause := r.cause
+		if cause == "" {
+			cause = limitCauseMsg
+		}
+		return runner.NodeOutcome{ExitCode: 1, FailureCause: cause, SessionLimited: true}, nil
 	}
 	return runner.NodeOutcome{SessionID: "s-" + spec.Prompt, Result: "PASS", ExitCode: 0}, nil
 }
@@ -55,65 +77,83 @@ func (r *limitRunner) count(prompt string) int {
 // story end to end: the first leg hits the limit, exits with the reset-time
 // hint, records the limited node nowhere; `resume --retry-failed` then runs
 // the unfinished nodes to completion, bracketed as its own leg on the stream.
+// It runs for both runtimes' limit wording: the operator story is the same
+// story, and the pause has to reach `--retry-failed` from either one.
 func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
-	isolateRunHome(t)
-	g := mustParse(t, `{"name":"limit-flow","nodes":[
+	for _, tc := range []struct {
+		name  string
+		cause string
+		// hint is what the exit hint must say about WHY it paused: each
+		// runtime's own reset prose, carried as the CLI printed it.
+		hint string
+	}{
+		{"claude session limit", limitCauseMsg, "resets 5:20pm"},
+		{"codex usage limit", codexLimitCauseMsg, "resets Sep 13th, 2026 10:04 PM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			g := mustParse(t, `{"name":"limit-flow","nodes":[
 		{"id":"a","prompt":"a"},
 		{"id":"b","prompt":"b","depends_on":["a"]}]}`)
-	rec := &limitRunner{limitFirst: map[string]bool{"a": true}}
-	runID := "run-limit"
+			rec := &limitRunner{limitFirst: map[string]bool{"a": true}, cause: tc.cause}
+			runID := "run-limit"
 
-	var runErr error
-	out := captureStdout(t, func() {
-		runErr = executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "limit-flow.yaml", []byte("name: limit-flow\n"), false, nil, nil, nil)
-	})
-	var limited *schedule.LimitPausedError
-	if !errors.As(runErr, &limited) {
-		t.Fatalf("expected *LimitPausedError from the first leg, got %T: %v", runErr, runErr)
-	}
-	if !strings.Contains(out, "resets 5:20pm") || !strings.Contains(out, "resume "+runID+" --retry-failed") {
-		t.Fatalf("the exit hint should carry the reset time and the exact resume command:\n%s", out)
-	}
-	if got := rec.count("b"); got != 0 {
-		t.Fatalf("b ran %d time(s) on the limited leg, want 0", got)
-	}
+			var runErr error
+			out := captureStdout(t, func() {
+				runErr = executeGraph(context.Background(), runID, g, rec, commonRunFlags{inputs: inputFlag{}}, nil, 0, "limit-flow.yaml", []byte("name: limit-flow\n"), false, nil, nil, nil)
+			})
+			var limited *schedule.LimitPausedError
+			if !errors.As(runErr, &limited) {
+				t.Fatalf("expected *LimitPausedError from the first leg, got %T: %v", runErr, runErr)
+			}
+			if got := exitCodeForError(runErr); got != 2 {
+				t.Fatalf("exit code = %d, want 2 — a limit pause exits like a gate pause, not like a failure", got)
+			}
+			if !strings.Contains(out, tc.hint) || !strings.Contains(out, "resume "+runID+" --retry-failed") {
+				t.Fatalf("the exit hint should carry %q and the exact resume command:\n%s", tc.hint, out)
+			}
+			if got := rec.count("b"); got != 0 {
+				t.Fatalf("b ran %d time(s) on the limited leg, want 0", got)
+			}
 
-	var resumeErr error
-	out = captureStdout(t, func() {
-		resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
-	})
-	if resumeErr != nil {
-		t.Fatalf("the retry leg should finish the run cleanly, got: %v", resumeErr)
-	}
-	if !strings.Contains(out, "running unfinished nodes") {
-		t.Fatalf("the retry banner should say it is running unfinished nodes (nothing FAILED):\n%s", out)
-	}
-	if got := rec.count("a"); got != 2 {
-		t.Fatalf("a ran %d time(s) across both legs, want 2 — the limited node was never marked passed", got)
-	}
-	if got := rec.count("b"); got != 1 {
-		t.Fatalf("b ran %d time(s) after the retry leg, want 1", got)
-	}
+			var resumeErr error
+			out = captureStdout(t, func() {
+				resumeErr = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), rec, nil)
+			})
+			if resumeErr != nil {
+				t.Fatalf("the retry leg should finish the run cleanly, got: %v", resumeErr)
+			}
+			if !strings.Contains(out, "running unfinished nodes") {
+				t.Fatalf("the retry banner should say it is running unfinished nodes (nothing FAILED):\n%s", out)
+			}
+			if got := rec.count("a"); got != 2 {
+				t.Fatalf("a ran %d time(s) across both legs, want 2 — the limited node was never marked passed", got)
+			}
+			if got := rec.count("b"); got != 1 {
+				t.Fatalf("b ran %d time(s) after the retry leg, want 1", got)
+			}
 
-	events := readRunEvents(t, runID)
-	if got := countEvents(events, runfeed.EventRunStarted, ""); got != 2 {
-		t.Fatalf("events.jsonl holds %d run_started, want 2 — the retry is its own leg", got)
-	}
-	var outcomes, details []string
-	for _, e := range events {
-		if e.Type == runfeed.EventRunFinished {
-			outcomes = append(outcomes, e.Outcome)
-			details = append(details, e.Detail)
-		}
-	}
-	if len(outcomes) != 2 || outcomes[0] != runfeed.OutcomePaused || outcomes[1] != runfeed.OutcomePassed {
-		t.Fatalf("run_finished outcomes = %v, want [paused passed]", outcomes)
-	}
-	if !strings.Contains(details[0], "session limit reached at a") {
-		t.Fatalf("the paused leg's run_finished detail should name the limit, got %q", details[0])
-	}
-	if eventSeen(events, runfeed.EventNodeFailed, "a") {
-		t.Error("the limited node must never appear as node_failed on the stream")
+			events := readRunEvents(t, runID)
+			if got := countEvents(events, runfeed.EventRunStarted, ""); got != 2 {
+				t.Fatalf("events.jsonl holds %d run_started, want 2 — the retry is its own leg", got)
+			}
+			var outcomes, details []string
+			for _, e := range events {
+				if e.Type == runfeed.EventRunFinished {
+					outcomes = append(outcomes, e.Outcome)
+					details = append(details, e.Detail)
+				}
+			}
+			if len(outcomes) != 2 || outcomes[0] != runfeed.OutcomePaused || outcomes[1] != runfeed.OutcomePassed {
+				t.Fatalf("run_finished outcomes = %v, want [paused passed]", outcomes)
+			}
+			if !strings.Contains(details[0], "session limit reached at a") {
+				t.Fatalf("the paused leg's run_finished detail should name the limit, got %q", details[0])
+			}
+			if eventSeen(events, runfeed.EventNodeFailed, "a") {
+				t.Error("the limited node must never appear as node_failed on the stream")
+			}
+		})
 	}
 }
 
@@ -146,6 +186,35 @@ func TestMainExitCode_SessionLimitMapsToExitCode2(t *testing.T) {
 	}
 }
 
+// TestMainExitCode_CodexUsageLimitMapsToTheSameExitCode2 is the Codex mirror,
+// and the one test that runs the whole chain the gate change opened: the real
+// `--runtime codex run`, the real CLIRunner, the codex protocol's own decoding
+// of a turn.failed, the matcher it answers with, and the scheduler's pause —
+// arriving at the SAME exit code 2 as a gate pause and as a Claude limit. A
+// failure here would be exit 1, so the assertion cannot pass by the run merely
+// breaking some other way.
+func TestMainExitCode_CodexUsageLimitMapsToTheSameExitCode2(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub codex is a shebang script; this pins the unix path")
+	}
+	isolateRunHome(t)
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "codex")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncat <<'JSON'\n"+codexLimitStream+"\nJSON\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write stub codex: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	graphPath := filepath.Join(dir, "limit.yaml")
+	if err := os.WriteFile(graphPath, []byte("name: limit\nnodes:\n  - { id: a, prompt: a }\n"), 0o644); err != nil {
+		t.Fatalf("write graph file: %v", err)
+	}
+
+	if code := mainExitCode([]string{"--runtime", "codex", "run", graphPath}); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for a codex usage-limit pause", code)
+	}
+}
+
 // TestPrintPauseHint_SessionLimit pins the hint's two formats: with the
 // parsed reset time when the cause yields one, and without any time — never
 // an invented one — when it doesn't.
@@ -168,6 +237,20 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
 		t.Fatalf("the hint must still carry the exact resume command:\n%s", out)
+	}
+
+	// The Codex cause takes the FIRST branch, and its time is carried as prose
+	// the CLI owns: "Sep 13th, 2026 10:04 PM" names no timezone, so it is
+	// printed and never parsed into a clock.
+	buf.Reset()
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: codexLimitCauseMsg}, coordinator.VerifyCommand{})
+	out = buf.String()
+	if !strings.Contains(out, "(resets Sep 13th, 2026 10:04 PM)") ||
+		!strings.Contains(out, "Resume after Sep 13th, 2026 10:04 PM") {
+		t.Fatalf("the codex cause carries its own reset prose; the hint must print it:\n%s", out)
+	}
+	if !strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
+		t.Fatalf("a codex limit must get the same resume command:\n%s", out)
 	}
 }
 
