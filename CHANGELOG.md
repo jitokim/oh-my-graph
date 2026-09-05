@@ -220,6 +220,13 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   reworded: a claim that cannot be retraced is not improved by being restated
   more carefully (#241).
 
+### Documented
+
+- **ADR 0038 — a planned node cites a fragment from a menu it did not write**
+  ([`docs/adr/0038-a-planned-node-cites-a-fragment-from-a-menu-it-did-not-write.md`](docs/adr/0038-a-planned-node-cites-a-fragment-from-a-menu-it-did-not-write.md)),
+  **Proposed. Decision record only — no code, no schema change, no graph shipped
+  with it.**
+
 ## [v0.13.0] - 2026-08-29
 
 **Minor, and the whole of it is the first ten minutes.** Nothing in this release
