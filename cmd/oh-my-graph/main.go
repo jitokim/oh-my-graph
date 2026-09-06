@@ -1316,7 +1316,8 @@ func noteCodexRuntimePolicy(w io.Writer, runtime runner.Runtime, g *graph.Graph,
 	fmt.Fprintln(w, "  Cost is unknown for every Codex node: tokens are counted, USD never is, so this run reports no dollar figure per node or in total.")
 	fmt.Fprintln(w, "  A node's budget_usd therefore loads but cannot apply — there is no spend to compare it against, and that node's runaway guard is its timeout: (each such node is warned by name). `auto --max-goal-budget-usd` is refused instead, because it is checked only at a cycle boundary: an unmeasurable ceiling would buy a whole cycle before stopping to say it cannot be checked, where an inapplicable node cap costs nothing extra. The loop stays bounded either way — --max-cycles is what bounds iterations (ADR 0026).")
 	fmt.Fprintln(w, "  approval_policy=\"never\" is passed on every node: a non-interactive run cannot answer a prompt, so nothing is escalated for approval.")
-	fmt.Fprintln(w, "  No session-limit pause: ADR 0009's resumable pause is Claude-only, so a Codex session limit is an ordinary node failure (ADR 0009 scopes it to the Claude runtime).")
+	fmt.Fprintln(w, "  Session-limit pause: unchanged — ADR 0009's resumable pause covers this runtime too, so a Codex usage limit drains the in-flight nodes, records the limited one nowhere and exits 2 with a `resume --retry-failed` hint (ADR 0009 amended 2026-09-02, closing #222).")
+	fmt.Fprintln(w, "    Detection is prose on both runtimes, not a typed signal: `hit your usage limit` here, `hit your session limit` on Claude. `turn.failed` is Codex's one terminal-failure record, so the message text is what tells a limit from any other failure — a reworded message degrades to an ordinary node failure that `resume --retry-failed` still salvages.")
 	switch config {
 	case isolatedPlannedNodes:
 		fmt.Fprintln(w, "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.")

@@ -198,8 +198,9 @@ type NodeOutcome struct {
 	// (sessionlimit.go, ADR 0009). Unlike every other failure this one is not
 	// the node's fault and not final: the Scheduler treats it as a pause (the
 	// node stays un-run, the run drains and exits resumable) rather than a
-	// FAIL. FailureCause still carries the full message, including the "resets
-	// <time>" hint the CLI prints.
+	// FAIL. FailureCause still carries the full message, including whatever
+	// reset hint the CLI prints ("resets 5:20pm" on claude, "try again at
+	// <date>" on codex).
 	SessionLimited bool
 }
 

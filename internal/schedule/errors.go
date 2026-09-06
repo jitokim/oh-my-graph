@@ -102,16 +102,20 @@ func (e *PausedError) Error() string {
 	)
 }
 
-// LimitPausedError is Run's result when a node's claude subprocess hit the
-// subscription's session limit (ADR 0009): the limited node was recorded
+// LimitPausedError is Run's result when a node's model CLI subprocess — claude
+// or codex, the scheduler never learns which — hit that subscription's limit
+// (ADR 0009, amended 2026-09-02 to cover both runtimes; the runner classifies
+// through cliProtocol.isLimitCause and everything here sees only
+// NodeOutcome.SessionLimited): the limited node was recorded
 // nowhere (not FAILED — it never really ran), in-flight siblings were drained
 // (not cancelled), and no new work launched, so the run is resumable with
 // `oh-my-graph resume <run-id> --retry-failed` once the limit resets — the
 // limited node re-runs because it was never marked passed. NodeIDs lists every
 // node that hit the limit before the drain finished (siblings draining
 // concurrently may join the paused set), sorted; Cause is the first limited
-// node's captured failure cause, carrying the CLI's own "resets <time>" hint
-// for the CLI layer to surface. cmd/oh-my-graph maps this to exit code 2,
+// node's captured failure cause, carrying whatever reset hint that CLI worded
+// for itself ("resets 5:20pm", "try again at Sep 13th, 2026 10:04 PM") for the
+// CLI layer to surface as prose. cmd/oh-my-graph maps this to exit code 2,
 // exactly like a gate pause — a limit is not a failure and must never be
 // reported or logged as one.
 type LimitPausedError struct {

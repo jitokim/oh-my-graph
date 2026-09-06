@@ -160,7 +160,7 @@ other run concurrently, up to a cap. `allowed_tools` is the node's own grant,
 not a hint. And failure is a first-class grammar rather than glue code you
 maintain: evidence checks, per-cause `retry`, graph-level `on_fail`, bounded
 `feedback:` review loops, `type: gate` nodes that stop the run for a human
-approval, and a Claude subscription session limit that *pauses* the run so
+approval, and a subscription session limit — Claude's or Codex's — that *pauses* the run so
 `resume --retry-failed` can later finish exactly the work that never ran.
 
 Every subcommand, every flag, and a recipe per node field — including `auto` in

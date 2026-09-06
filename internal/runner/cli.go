@@ -164,6 +164,10 @@ type cliProtocol interface {
 	sessionFromLine([]byte) string
 	buildArgs(NodeInvocation) []string
 	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
+	// isLimitCause answers whether a failure cause THIS protocol produced is
+	// its provider's subscription limit — implemented in sessionlimit.go, where
+	// both runtimes' wording lives together (ADR 0009).
+	isLimitCause(cause string) bool
 }
 
 // protocolOutput retains stdout for terminal decoding while publishing any
@@ -344,9 +348,12 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	if exitCode != 0 && outcome.FailureCause == "" {
 		outcome.FailureCause = flattenLines(tailOf(stderr.Bytes(), maxStderrInError))
 	}
-	if r.protocol.runtime() == RuntimeClaude {
-		outcome.SessionLimited = isSessionLimitCause(outcome.FailureCause)
-	}
+	// One classification site (ADR 0009), and no runtime branch at it: the
+	// protocol that decoded this output is the one asked whether it is a limit,
+	// so which prose belongs to which CLI stays in sessionlimit.go and nothing
+	// downstream of NodeOutcome.SessionLimited ever sees a runtime-specific
+	// sentence it would have to re-interpret.
+	outcome.SessionLimited = r.protocol.isLimitCause(outcome.FailureCause)
 	return outcome, nil
 }
 

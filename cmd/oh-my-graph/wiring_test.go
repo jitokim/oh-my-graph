@@ -149,10 +149,24 @@ nodes:
 		"Every node: merge-shepherd",
 		"Cost is unknown for every Codex node",
 		`approval_policy="never" is passed on every node`,
-		"No session-limit pause",
+		// Reversed by ADR 0009's 2026-09-02 amendment (#222): this line used to
+		// read "No session-limit pause". Both halves are pinned — that the pause
+		// applies, and that detection is still prose — because a disclosure that
+		// promised the pause without the brittleness would be the new lie.
+		"ADR 0009's resumable pause covers this runtime too",
+		"exits 2 with a `resume --retry-failed` hint",
+		"Detection is prose on both runtimes, not a typed signal",
+		"hit your usage limit",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Codex handwritten run hid %q:\n%s", want, out)
+		}
+	}
+	// The claim this replaced, kept as a negative so it cannot silently revert:
+	// it was printed in the very same run that then printed "⏸ … pausing run".
+	for _, wrong := range []string{"No session-limit pause", "resumable pause is Claude-only"} {
+		if strings.Contains(out, wrong) {
+			t.Errorf("Codex handwritten run still denies the pause it performs, %q:\n%s", wrong, out)
 		}
 	}
 }

@@ -211,7 +211,13 @@ func TestRunAutoWith_CodexPlanPrintsSandboxNotGranularToolClaims(t *testing.T) {
 		"network_access=true",
 		"Cost is unknown for every Codex node",
 		`approval_policy="never" is passed on every node`,
-		"No session-limit pause",
+		// Was "No session-limit pause" until ADR 0009's 2026-09-02 amendment
+		// (#222). Pinned as both halves — the pause applies, and the signal is
+		// still prose — so neither can be dropped while the suite stays green.
+		"ADR 0009's resumable pause covers this runtime too",
+		"exits 2 with a `resume --retry-failed` hint",
+		"Detection is prose on both runtimes, not a typed signal",
+		"hit your usage limit",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Codex plan does not disclose %q:\n%s", want, out)
@@ -220,7 +226,7 @@ func TestRunAutoWith_CodexPlanPrintsSandboxNotGranularToolClaims(t *testing.T) {
 	// The claim this replaced, kept as a negative: it named merge-shepherd,
 	// whose FIRST node is `gh`, and apply-flags publishes from its first node
 	// while ending on a read-only one.
-	for _, wrong := range []string{"does the work and then fails on that node", "graph ending in a publish node"} {
+	for _, wrong := range []string{"does the work and then fails on that node", "graph ending in a publish node", "No session-limit pause", "resumable pause is Claude-only"} {
 		if strings.Contains(out, wrong) {
 			t.Errorf("Codex plan claims every publishing graph fails LAST (%q):\n%s", wrong, out)
 		}

@@ -2,6 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-08-02
+- **Amended in place on 2026-09-02 (#222): the "Scope" section below is
+  revised, and only it.** A Codex usage limit is now the same pause. Nothing in
+  the Decision moved — what changed is one condition on
+  `NodeOutcome.SessionLimited`, not one line of the pause it triggers. See
+  "Amendment — 2026-09-02" at the end of Scope.
 
 ## Context
 
@@ -70,6 +75,132 @@ names the absence, and `docs/LIMITATIONS.md` carries the long form.
 Should a future runtime expose a **structured** limit signal, that is a reason
 to revisit — and it would be a better foundation than this one, since the whole
 mitigation list below exists to survive matching prose.
+
+> **Amendment — 2026-09-02, closing #222: the pause carries to Codex, and the
+> Scope above is wrong about why it could not.**
+>
+> It is left as written — a record that edits away what it decided teaches a
+> future reader nothing (the convention ADR 0007 states). Two of its factual
+> claims are now false. Its conclusion is not:
+>
+> - *"there is nothing for another runtime's message to match"* — there is.
+>   `codex exec --json` reports its own limit as prose, recorded byte for byte
+>   in `internal/runner/testdata/codex-usage-limit.jsonl` from run
+>   `20260901-171816.016378000-1` on 2026-09-02: `You've hit your usage limit.
+>   Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus),
+>   or try again at Sep 13th, 2026 10:04 PM.` (First written down with the
+>   message elided; recovered in full from that run's own `state.json` and
+>   `events.jsonl`, which stored the sentence as a `FailureCause` — and
+>   `codex_protocol.go` builds a `FailureCause` from `turn.failed`'s
+>   `error.message` and nothing else.)
+> - *"removing that gate … would produce a pause that can never fire"* — it
+>   fires. The gate was removed **and** a matcher added; the sentence only
+>   considered the first half.
+> - *"a second runtime does **not** owe a session-limit signal"* — **still true,
+>   and kept.** #171's settlement is not reopened: this is a runtime
+>   volunteering what it does not owe. A third runtime with no limit wording to
+>   match implements `cliProtocol.isLimitCause` returning false and degrades
+>   exactly as mitigation 2 above specifies.
+>
+> **The revisit condition this ADR wrote for itself was NOT met.** It reads:
+>
+> > Should a future runtime expose a **structured** limit signal, that is a
+> > reason to revisit — and it would be a better foundation than this one, since
+> > the whole mitigation list below exists to survive matching prose.
+>
+> Codex exposes no such thing, and #222's title — *"the one runtime whose limit
+> signal is actually structured"* — is the belief this amendment corrects. There
+> is a typed field (`turn.failed`'s `error.message`), but the type does no
+> deciding: `turn.failed` is Codex's ONE terminal-failure record, and `"model
+> unavailable"` (`internal/runner/codex_protocol_test.go`) and a stubbed refusal
+> (`cmd/oh-my-graph/loadeduserconfig_cli_test.go`) arrive in exactly that shape
+> carrying nothing but a different sentence. The field is typed; the value is
+> prose. If anything Codex's signal is the **weaker** of the two — Claude at
+> least wraps its limit in an `is_error` envelope, so Codex has one layer fewer,
+> not one more. What actually changed is smaller and duller than a structured
+> signal: the prose matching turned out to port.
+>
+> *(One loose end, recorded rather than acted on, 2026-09-02.* Codex does emit
+> an enumerated `codex_error_info: "usage_limit_exceeded"` beside that message —
+> in this machine's own records, at
+> `~/.codex/sessions/2026/09/02/rollout-2026-09-02T02-18-16-01a05dfa-8c96-73a0-88ad-8cb71b780bc8.jsonl:12`,
+> the rollout for the very session the limited node ran under (`node_started`'s
+> `session_id` in that run's `events.jsonl`), and as `"other"` on an ordinary
+> failure at `.../2026/08/14/rollout-2026-08-14T22-03-25-…jsonl:9`. **That is
+> not evidence about the stream this engine parses.** The rollout is Codex's own
+> on-disk session log, where the record is an `event_msg` payload of type
+> `task_complete`; it holds no `turn.failed` record at all. Whether the field
+> also rides `codex exec --json` **stdout**, which is the only surface
+> `codex_protocol.go` reads, is **UNVERIFIED** — no stdout capture on disk
+> records the key set of a limit record, and this amendment did not spawn Codex
+> to find out. Nothing is built on the field either way; matching stays on the
+> prose.)*
+>
+> **What is matched.** `(?i)hit your usage limit`, substring, against
+> `NodeOutcome.FailureCause` — in `internal/runner/sessionlimit.go`, the one
+> file mitigation 1 names, beside Claude's pattern and deliberately **not**
+> folded into an alternation with it: a rewording on one runtime must not widen
+> what the other matches. The plan name (*"Upgrade to Plus"*) and the reset date
+> are left out of the pattern on purpose — both vary per account, and every
+> extra word is another way a reworded message stops matching. The
+> classification is still ONE call site (`CLIRunner.Run`), and it now names no
+> runtime at all: `cliProtocol` grew an `isLimitCause` method, so the protocol
+> that decoded the output is the one asked whether its own output is a limit.
+>
+> **The reset timestamp is NOT parsed into a clock, and Codex's
+> more-machine-readable-looking one changes nothing.** `SessionLimitReset`
+> returns `Sep 13th, 2026 10:04 PM` as the prose the CLI printed, exactly as it
+> returns `5:20pm`. It carries no timezone, and a wrongly parsed instant is
+> worse than none — this ADR already refused to sleep on the weaker `5:20pm` for
+> that reason ("Alternatives considered"). A typed field around a value does not
+> make the value typed.
+>
+> **The engine prints Codex's reset time, in Codex's own words.** The hint takes
+> the same with-a-time branch a Claude limit takes: `Session limit reached
+> (resets Sep 13th, 2026 10:04 PM). Resume after Sep 13th, 2026 10:04 PM with:
+> oh-my-graph resume <run-id> --retry-failed`.
+>
+> *(Corrected 2026-09-02, hours after this amendment was first written. It said
+> the opposite — that the engine prints no Codex reset time, because the `try
+> again at …` sentence arrives only in a leading `{"type":"error", …}` record
+> the parser does not decode, and the `turn.failed` the engine sees "is not
+> known to carry the time". The hedge was honest and the conclusion was wrong:
+> the capture the claim rested on had that record's message ELIDED after
+> `usage limit.`, so nobody had looked. Run
+> `20260901-171816.016378000-1` had: its `FailureCause` — which
+> `codex_protocol.go` fills from `turn.failed`'s `error.message` and nothing
+> else — is the whole sentence, reset clause included. The fixture is now
+> unelided and `TestSessionLimitReset_CarriesCodexProseUntouched` asserts the
+> time out of the parsed cause, not just out of the undecoded record.)*
+>
+> **Everything in the Decision below is unchanged, and is now asserted from both
+> ends.** No ledger row, no snapshot record, no retry, drain-don't-cancel, a
+> limit outranking continue-on-fail pruning, exit code 2 with the resume hint,
+> the leg closing as `run_finished` outcome `"paused"` — every one of them runs
+> against BOTH runtimes' scripted outcomes in
+> `internal/schedule/sessionlimit_test.go`, plus `--runtime codex run` end to end
+> against a shell stub (no `codex` spawned) in
+> `cmd/oh-my-graph/sessionlimit_test.go`. The scheduler names no `Runtime`
+> anywhere, which is why this was one condition and not one mechanism; the
+> two-runtime table is what turns that blindness from an assumption into a test.
+>
+> **One sentence above went stale with this amendment, and is now corrected in
+> the tree:** the claim that *"the pre-run disclosure names the absence"*. There
+> is no absence left to name. `cmd/oh-my-graph/main.go` had gone on printing
+> `No session-limit pause: ADR 0009's resumable pause is Claude-only …` before a
+> Codex run that would in fact pause — printed, in the pre-fix run
+> `20260901-171816.016378000-1`, by the same binary that would later print
+> `⏸ … session limit reached — pausing run`. It now discloses the pause instead,
+> and says in the same breath that detection is prose on both runtimes, since a
+> line promising the pause without its brittleness would be the next stale
+> sentence. The two tests pinned to the old wording
+> (`cmd/oh-my-graph/wiring_test.go`, `cmd/oh-my-graph/planonly_test.go`) assert
+> the new text and keep the old as a negative.
+>
+> `docs/EXAMPLES.md`, `DESIGN.md` (three passages), `README.md` and
+> `docs/LIMITATIONS.md` were corrected with this amendment;
+> `internal/schedule/errors.go`'s `LimitPausedError` docstring, which called the
+> subprocess a claude one, followed with the disclosure.
 
 - **The runner classifies.** `CLIRunner.Run` sets
   `NodeOutcome.SessionLimited` when the captured `FailureCause` (envelope

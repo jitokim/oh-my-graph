@@ -132,3 +132,13 @@ by default. Prefixes and values containing those names remain untouched.
   carrying the provider's message, salvageable with `resume --retry-failed`.
   **A new runtime therefore does not owe a session-limit signal.** The absence
   is disclosed before the run spends, not discovered in the ledger afterwards.
+
+  > **Superseded 2026-09-02 (#222), except its last sentence.** The pause DOES
+  > apply under `--runtime codex`: Codex reports its own limit as prose too
+  > (`hit your usage limit`), `CLIRunner` asks the protocol that decoded the
+  > output instead of switching on a runtime, and the limit pauses, drains and
+  > exits 2 exactly as a Claude one does. What survives is the bolded clause —
+  > no runtime *owes* the signal, and Codex is volunteering what it does not
+  > owe, so #171's settlement is not reopened. Left as written per ADR 0007;
+  > the reasoning is corrected in
+  > [ADR 0009's amendment](0009-a-session-limit-is-a-pause-not-a-failure.md).
