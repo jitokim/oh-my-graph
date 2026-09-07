@@ -26,6 +26,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   provider CLI that command reaches back on metered API billing.
   ([#266](https://github.com/jitokim/oh-my-graph/issues/266))
 
+- **ADR 0039 — a gate is authored, not attached**
+  ([`docs/adr/0039-a-gate-is-authored-not-attached.md`](docs/adr/0039-a-gate-is-authored-not-attached.md)),
+  **Proposed. Decision record only — no flag, no schema key, no new seam, no
+  behaviour change.** `auto` gains no way to splice a `type: gate` into a
+  planned graph the way `--verify-cmd` splices a command. A gate ends the leg
+  rather than blocking it, so attaching one after validation is a topology
+  change: it collides with the loader's own gate rules on plans the planner is
+  invited to write, it cannot coexist with `--verify-cmd` at a sink, and it
+  parks an unattended run in a state every "is anything still running" surface
+  reads as settled. The path that exists is `auto --plan-only` → add the gate
+  and your own `verify:` → `run`, and the record states what that costs.
+  ([#265](https://github.com/jitokim/oh-my-graph/issues/265))
+
 ### Added
 
 - **`graphs/fragments/read-and-report.yaml`** — the first fragment written to be
