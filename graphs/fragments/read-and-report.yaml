@@ -1,0 +1,75 @@
+# read-and-report — the first fragment written to be citable by a planned node.
+#
+# Every other fragment in this directory declares authority: its own
+# `allowed_tools` with a narrowing like `Bash(git diff*)`, and its own
+# `permission_mode`. That is right for a hand-written graph, where the author
+# is the operator and the grant is the operator's to give.
+#
+# It is exactly wrong for a node a PLANNER wrote. ADR 0038 §2.2.1 measured the
+# consequence: zero of six fragments could be offered to `auto`, because a
+# fragment carrying a tool grant is a channel for handing a planner-authored
+# node a permission the planner would have been refused for writing itself —
+# `pr-publish` declares `Bash(gh *)`, which `plannedToolAllowlist` does not
+# carry, and the splice happens after `validatePlannedNodeTools` has already
+# run.
+#
+# So this one declares SHAPE and PROMPT and nothing else that rides the splice:
+#
+#   * `allowed_tools` uses only exact members of `plannedToolAllowlist`
+#     (`internal/coordinator/coordinator.go:71-72`) — `Read`, `Grep`, `Glob`.
+#     Not `Bash(grep *)`, not a narrowing of anything; that check is exact
+#     string membership with no pattern subsumption.
+#   * no `permission_mode` at all. A hand-written citation inherits the
+#     scheduler's default; a planned one is given the engine's.
+#
+# What it is FOR: the shape that keeps recurring across this repository's own
+# measurement lanes — read some documents, and report what they say with the
+# address each claim rests on. It is the reading half of every audit run here,
+# and it was rewritten by hand in each of them.
+#
+# Reuse it with:
+#
+#   - id: read-limits
+#     use: read-and-report
+#     with:
+#       target: "docs/LIMITATIONS.md"
+#       question: "which gap does this file call the biggest, and where"
+#
+# Its verdict is DONE, and its qualifications go after the verdict, like every
+# other shipped node — a sweep counts that clause and it must not break.
+fragment: read-and-report
+description: read one document and answer one question about it, with the file:line the answer rests on
+
+substitutions:
+  # Both land in `prompt:` only. ADR 0038 §2.2 calls a slot inert when it can
+  # reach nowhere else; a slot that landed in `allowed_tools` or `cwd` would
+  # let a citing plan choose authority or location, which is the whole thing
+  # the menu must not become.
+  - target
+  - question
+
+node:
+  type: claude-run
+  prompt: |
+    Read {{ with.target }} and answer this, in English:
+
+      {{ with.question }}
+
+    Read enough of the file to be accurate rather than plausible. Quote the
+    sentence you are relying on and give its `file:line`, so the answer can be
+    retraced without reading the whole file again.
+
+    If the file does not answer the question, say that plainly. "The file does
+    not say" is a correct answer and is worth more than a confident guess — a
+    claim nobody can retrace is the failure this repository keeps writing down.
+
+    Your FINAL reply IS the verdict: this node's turn ends the moment you reply,
+    so work you promise to do afterwards never happens. START with the bare word
+    DONE — those four characters FIRST, no markdown emphasis (`**DONE**` is
+    WRONG), no heading, no preamble — then the answer.
+    Anything you need to qualify goes AFTER the verdict, never before it: a line
+    of context ahead of the token fails this node even when the reading is good.
+  allowed_tools: [Read, Grep, Glob]
+  timeout: 10m
+  handoff: artifact
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }

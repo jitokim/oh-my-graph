@@ -837,7 +837,7 @@ const qualifierClause = "Anything you need to qualify"
 //     fragment. That gap is the point DESIGN.md is making, so a change that
 //     closes it (fragments abandoned, say) should fail here and be re-argued.
 func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
-	const wantDeclarations, wantNodes = 24, 33
+	const wantDeclarations, wantNodes = 25, 33
 
 	declarations := 0
 	for _, dir := range []string{
