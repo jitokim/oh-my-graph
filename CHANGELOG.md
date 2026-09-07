@@ -10,6 +10,22 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Documented
+
+- **Your `success_check.verify` command runs without the provider API keys, and
+  now something says so.** Every child oh-my-graph spawns starts with
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` deleted, and a verification command is one of those children —
+  so a suite that reads one of those names fails under `verify:` while passing
+  in your own shell, and the failure text offers only an exit code and an output
+  tail. That was already true and nowhere stated as a consequence for *your*
+  tests. `docs/LIMITATIONS.md` now carries it: the fact, why verification gets
+  no exception (the policy is one list with no branch on the command string, so
+  a provider variable added later cannot go missing from half of it), how to
+  hand your suite a key under a different name — and that doing so puts any
+  provider CLI that command reaches back on metered API billing.
+  ([#266](https://github.com/jitokim/oh-my-graph/issues/266))
+
 ### Added
 
 - **`graphs/fragments/read-and-report.yaml`** — the first fragment written to be

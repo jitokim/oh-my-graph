@@ -1506,6 +1506,13 @@ zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
 the key happened to be set. All four provider API-key switches are
 deleted from the verification child's env by the same shared policy the runner
 uses (`internal/childenv`), asserted by its own unit test.
+The consequence reaches the user's own suite, and is worth stating in that
+direction too: a `verify:` command that reads one of those names sees it unset
+and fails for that reason, not because the node's work broke it — and the
+failure text, an exit code and an output tail, does not say which.
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) says it where a user meets it, with
+why the policy has no exception for verification and what the remapping
+workaround costs.
 
 **Failure and retry.** A failed verification is a `*NodeCheckError` with
 `Predicate: "verify"` and a detail carrying the exit code and a truncated tail of

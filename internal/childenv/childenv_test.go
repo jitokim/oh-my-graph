@@ -1,6 +1,11 @@
 package childenv
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // TestScrub_RemovesBillingSwitchingVars is the policy itself: provider API
 // authentication variables must be gone from any child environment built here.
@@ -116,6 +121,51 @@ func TestScrub_EmptyParentYieldsEmptyEnv(t *testing.T) {
 	if got := Scrub(nil); len(got) != 0 {
 		t.Errorf("Scrub(nil) = %q, want empty", got)
 	}
+}
+
+// TestScrubbedVarsAreDocumentedForVerifyCommands pins the sentence a user needs
+// when their OWN test suite is the thing that fails: a `success_check.verify`
+// command is a child like any other, so these names are gone from it, and a
+// suite that reads one breaks under `verify:` while passing in the user's
+// shell. The engine cannot say that at the failure — the verify seam reports an
+// exit code and an output tail and knows nothing about the parent environment —
+// so docs/LIMITATIONS.md is the whole remedy, and a fifth variable added to
+// scrubbedVars without a matching line there would leave the remedy incomplete.
+//
+// It asserts PRESENCE: some bullet must name the verification command AND every
+// scrubbed variable. A file that dropped the passage entirely would pass an
+// absence check while telling the reader nothing.
+func TestScrubbedVarsAreDocumentedForVerifyCommands(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "docs", "LIMITATIONS.md"))
+	if err != nil {
+		t.Fatalf("read docs/LIMITATIONS.md: %v", err)
+	}
+
+	// Bullets in that file open with "- **" and carry their continuation
+	// paragraphs indented, so splitting on the marker keeps one gap per chunk.
+	for _, bullet := range strings.Split(string(body), "\n- **") {
+		if !strings.Contains(bullet, "success_check.verify") {
+			continue
+		}
+		if missing := namesMissingFrom(bullet); len(missing) == 0 {
+			return
+		}
+	}
+
+	t.Fatalf("docs/LIMITATIONS.md has no bullet naming success_check.verify together with all of %q — "+
+		"a user whose suite failed on a deleted provider key has nowhere to learn that the engine deleted it",
+		scrubbedVars)
+}
+
+// namesMissingFrom reports which scrubbed variables the passage never names.
+func namesMissingFrom(passage string) []string {
+	var missing []string
+	for _, name := range scrubbedVars {
+		if !strings.Contains(passage, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func contains(env []string, want string) bool {
