@@ -12,6 +12,24 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **`graphs/fragments/read-and-report.yaml`** — the first fragment written to be
+  citable by a **planned** node, not only by a hand-written one. ADR 0038
+  measured that none of the six existing fragments qualify, and the reason is
+  the design working: a fragment carrying its own `allowed_tools` would hand a
+  planner-authored node a grant the planner would have been refused for writing.
+
+  This one declares shape and prompt and nothing else that rides the splice —
+  tools drawn only as exact members of `plannedToolAllowlist`, no
+  `permission_mode`, and both substitution slots landing in `prompt:` alone. The
+  admitted set goes from zero of six to one of seven, which is the first move
+  against ADR 0038 §6's own falsification.
+
+  It covers no runtime node yet: no shipped graph cites it. DESIGN.md's
+  qualifier-clause count says so rather than implying a coverage that does not
+  exist.
+
+### Added
+
 - **A Codex usage limit is a pause now, not a dead run.** ADR 0009's resumable
   pause had been Claude-only since [#171](https://github.com/jitokim/oh-my-graph/issues/171)
   settled it that way, and the reason it gave was that another runtime's message
