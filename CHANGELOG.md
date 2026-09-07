@@ -10,6 +10,26 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A recorded tool policy now says whether it was a ceiling.** Every entry in
+  `state.json`'s `tool_policies` carries a new bool,
+  `allowed_tools_is_a_ceiling`. `false` means the `allowed_tools` list beside it
+  **did not bind** — the run was launched with `--accept-loaded-user-config`, so
+  the node loaded your settings and your standing permission grants with them,
+  and a declared scope like `Bash(git *)` was a declaration rather than a limit.
+  Until now that state was recorded by an ABSENT `setting_sources` key while the
+  restrictive state wrote a visible `""`, so the dangerous posture was the
+  invisible one and the safe one looked empty at a glance. It was read backwards
+  once, on a real run, by an operator who concluded from a six-entry
+  `allowed_tools` list that a node could not have posted GitHub comments it had
+  in fact posted. Nothing about the ceiling itself changes, and
+  `setting_sources` keeps its exact shape: the new field is derived from it when
+  the snapshot is written and read back by nothing, so there is no second copy
+  to drift. Snapshots written before this load unchanged.
+  ([ADR 0040](docs/adr/0040-a-recorded-policy-says-whether-it-was-a-ceiling.md),
+  [`docs/RUN-FEED.md`](docs/RUN-FEED.md))
+
 ### Documented
 
 - **Your `success_check.verify` command runs without the provider API keys, and
