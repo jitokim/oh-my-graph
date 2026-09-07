@@ -1684,6 +1684,20 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 // (validatePlannedNodes), so this pattern is the whole gate with no evidence
 // command behind it.
 //
+// The asymmetry a reader meets here is deliberate, and #264 read it as a gap
+// because this file never named the record that decided it. ADR 0019 §4 splits
+// the repo's verdict prompts in two: prefix verdicts get the caveat clause
+// ("anything you need to qualify goes AFTER the verdict, never before it" — 28
+// nodes), and the FOUR whole-reply pins keep the opposite instruction, "and
+// nothing else" (0019:126-130, :199-204). This is one of the four, and its
+// prompt already carries that instruction — branchEvidenceRule's closing
+// sentence, "its whole reply is exactly the four bare characters PASS and
+// nothing else". So the caveat clause has nowhere to land here, by design: the
+// place for a caveat is the FAIL reply, which no pattern pins. Relaxing the
+// trailing `$` to a prefix — #264's option 1 — would let PASS followed by the
+// exception pass on the one node class with no verify behind it, which is the
+// relaxation ADR 0019 §3 refused on replayed evidence rather than on principle.
+//
 // No graph-side mechanism can share this with the YAML spelling of the same
 // pin (`graphs/fragments/e2e-verify.yaml`), so a test does it instead:
 // TestPlannedVerdictPatternMatchesE2EVerifyFragment fails unless the two stay

@@ -75,6 +75,33 @@ has no open issue behind it.
   forces a node to carry evidence, and for nodes whose work is not externally
   observable (a review, a summary) there is nothing to verify against.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
+- **Your `verify` command runs without the provider API keys.** A
+  `success_check.verify` command is a child process oh-my-graph spawns, so it
+  gets the same environment policy every other child gets: `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and `CODEX_API_KEY` are **deleted**
+  before the command runs (`internal/childenv`, and SECURITY.md's
+  "Saved-login guarantees" publishes it as a promise). A suite that reads one of
+  those names — a test that calls a provider, a plugin that asserts a key is
+  set — therefore fails under `verify:` while passing in your own shell, and it
+  fails for *that* reason, not because the work the node did broke it. The
+  failure text will not say so: the ledger gets an exit code and a tail of the
+  command's output, nothing about the environment the engine built.
+
+  The scrub is not relaxed for verification, and that is a decision rather than
+  an oversight about whose command it is. A `verify: { command: "claude -p ..."
+  }` is legal, a repo's own git hooks may invoke a provider CLI, and telling
+  "the user's own test suite" apart from those would mean reading the command
+  string and branching on it. The policy is one list with no branch, on purpose,
+  so that a provider variable added later cannot go missing from half of it
+  (`internal/childenv/childenv.go`).
+
+  What to do instead: the scrub matches the **whole** variable name, so a key
+  carried under a different one survives, and the command can map it back inside
+  its own shell — `verify: { command: "OPENAI_API_KEY=$TEST_OPENAI_KEY make
+  test" }`. Know what that buys before doing it. Any provider CLI that command
+  goes on to reach then runs on API-key authentication and is billed to the API,
+  which is the thing the scrub exists to prevent. The guarantee is about the
+  environment oh-my-graph builds; a key your own command puts back is yours.
 - **A PASS row does not say *which* outcome passed.** A node whose verdict is a
   two-valued alternation (DESIGN.md, "Verdict patterns") passes on either of
   its legitimate answers, and the ledger has one column for both. `merge-shepherd`
