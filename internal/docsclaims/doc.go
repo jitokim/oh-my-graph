@@ -10,8 +10,10 @@
 // the commit that shipped --accept-loaded-user-config — conditioned both of
 // the absolutes below where they stood in docs/EXAMPLES.md, alongside
 // DESIGN.md, SECURITY.md, README.md, README.ko.md and docs/LIMITATIONS.md,
-// and still left docs/EXAMPLES.md:341 telling a reader that an MCP-dependent
-// `auto` run "will stop working", full stop; 77c9b6a fixed that one. Reading
+// and still left docs/EXAMPLES.md's isolation bullet telling a reader that an
+// MCP-dependent `auto` run "will stop working", full stop; 77c9b6a fixed that
+// one. The bullet is named rather than numbered for the reason the claim list
+// gives: that line was :342 when 77c9b6a found it and is :351 today. Reading
 // a file is not checking it, so the check here is a predicate rather than a
 // hand-written grep, and the document set it runs over is walked rather than
 // listed so that scope can never be the miss either.
