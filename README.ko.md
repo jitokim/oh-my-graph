@@ -158,7 +158,7 @@ nodes:
 그리고 실패는 당신이 유지보수하는 glue 코드가 아니라 일급 문법입니다: 근거 검사,
 원인별 `retry`, 그래프 레벨 `on_fail`, 경계가 있는 `feedback:` 리뷰 루프, 사람의
 승인을 위해 run을 멈추는 `type: gate` 노드, 그리고 run을 실패시키는 대신
-*일시정지*시키는 Claude 구독 세션 한도 — `resume --retry-failed`가 나중에
+*일시정지*시키는 구독 세션 한도(Claude든 Codex든) — `resume --retry-failed`가 나중에
 실행되지 못한 작업만 정확히 마저 끝냅니다.
 
 모든 subcommand와 플래그, 노드 필드별 레시피 — `auto` 심화, goal cycle, 플랜된
