@@ -1785,6 +1785,18 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   commit that never reached the intended branch fails the run instead of
   passing silently, while tolerating the markdown a model wraps a bare
   verdict in unbidden.
+  That leaves the node one judgement, so let its prompt settle it in
+  advance: PASS is reserved for the case where the assertion holds AND
+  there is nothing a reader would act on differently — then the whole
+  reply is that bare PASS and nothing else, no caveat, no note, no
+  markdown. Anything the node does need to report goes in the FAIL branch,
+  which no pattern pins and which is therefore free prose: if the
+  assertion does not hold, OR it holds only with a qualification a reader
+  would act on, reply FAIL and state that qualification in full — what
+  held, what did not, and what the reader should do about it. An
+  observation a reader would not act on is not a reason to withhold PASS:
+  the threshold is whether it changes what they do, not whether it is
+  worth mentioning.
 `
 
 // plannedVerdictPattern is the verdict regex the planner is told to give its

@@ -524,6 +524,31 @@ func TestPlannerPromptRendersTheVerdictPattern(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat pins the materiality
+// threshold #264 found missing. The check node is pinned to a WHOLE-REPLY
+// verdict (plannedVerdictPattern, ADR 0019 §4's fourth pin), so ADR 0019's
+// "anything you need to qualify goes AFTER the verdict" clause has nowhere to
+// land here — and the prompt used to stop at "FAIL otherwise", leaving a node
+// whose assertion held but which had something to report choosing between a
+// PASS that swallows it and a preamble that misses the pattern. The rule tells
+// it which side a qualification belongs on, in both spellings of the
+// paragraph, and says an immaterial observation does not withhold PASS so the
+// rule does not convert every caveat into a halt.
+func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
+	for _, supplied := range []bool{true, false} {
+		prompt := plannerPrompt("build it", nil, supplied)
+		if !strings.Contains(prompt, "there is nothing a reader would act on differently") {
+			t.Errorf("verify-cmd supplied=%v: the planner is not told what PASS is reserved for", supplied)
+		}
+		if !strings.Contains(prompt, "it holds only with a qualification a reader") {
+			t.Errorf("verify-cmd supplied=%v: the planner is not told a material qualification belongs in the FAIL branch", supplied)
+		}
+		if !strings.Contains(prompt, "is not a reason to withhold PASS") {
+			t.Errorf("verify-cmd supplied=%v: the planner is not told an immaterial observation still PASSes", supplied)
+		}
+	}
+}
+
 // --- §3: detection informs, it never grants ---------------------------------
 
 // TestDetectBuildSignals_ReadsMarkersNotContent — a marker file is detected by

@@ -123,13 +123,65 @@ func TestScrub_EmptyParentYieldsEmptyEnv(t *testing.T) {
 	}
 }
 
+// TestScrubbedVarsIn_NamesExactlyWhatScrubRemoved ties the report to the
+// policy rather than to a second list. ScrubbedVarsIn exists so a failure can
+// be explained — "the engine deleted OPENAI_API_KEY from this command" — and
+// that sentence is only true if the name it reports is a name Scrub really
+// took. Both read scrubbedVars through the same comparison (scrubbedName), so
+// the assertion here is a COUNT against Scrub's own behaviour: a variable added
+// to the list, or a comparison that stopped matching case-insensitively, moves
+// both sides together or fails.
+func TestScrubbedVarsIn_NamesExactlyWhatScrubRemoved(t *testing.T) {
+	parent := []string{
+		"PATH=/usr/bin",
+		"openai_api_key=sk-lowercase",      // matched case-insensitively
+		"ANTHROPIC_API_KEY_BACKUP=kept",    // a prefix, not the key
+		"NOTES=mentions ANTHROPIC_API_KEY", // the name is in the VALUE
+		"CODEX_API_KEY=sk-codex",           // matched exactly
+	}
+
+	got := ScrubbedVarsIn(parent)
+
+	// Canonical spellings, in the list's order — never the parent's spelling
+	// and never the parent's order, so the answer cannot depend on how a shell
+	// happened to lay out its environment.
+	want := []string{"OPENAI_API_KEY", "CODEX_API_KEY"}
+	if len(got) != len(want) {
+		t.Fatalf("ScrubbedVarsIn = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ScrubbedVarsIn = %q, want %q", got, want)
+		}
+	}
+	if removed := len(parent) - len(Scrub(parent)); removed != len(got) {
+		t.Errorf("Scrub removed %d entries but ScrubbedVarsIn named %d (%q) — "+
+			"the report and the policy have stopped reading the same list", removed, len(got), got)
+	}
+}
+
+// TestScrubbedVarsIn_ReportsNothingForAnEnvironmentThatHadNone is the absence
+// half, and it is the one that keeps the report honest: for a user who never
+// exported a provider key, nothing was taken from the child, and a report that
+// named the variables anyway would send them to fix an environment that was
+// already correct.
+func TestScrubbedVarsIn_ReportsNothingForAnEnvironmentThatHadNone(t *testing.T) {
+	if got := ScrubbedVarsIn([]string{"PATH=/usr/bin", "HOME=/home/dev"}); len(got) != 0 {
+		t.Errorf("ScrubbedVarsIn = %q, want nothing — none of those were set", got)
+	}
+	if got := ScrubbedVarsIn(nil); len(got) != 0 {
+		t.Errorf("ScrubbedVarsIn(nil) = %q, want nothing", got)
+	}
+}
+
 // TestScrubbedVarsAreDocumentedForVerifyCommands pins the sentence a user needs
 // when their OWN test suite is the thing that fails: a `success_check.verify`
 // command is a child like any other, so these names are gone from it, and a
 // suite that reads one breaks under `verify:` while passing in the user's
-// shell. The engine cannot say that at the failure — the verify seam reports an
-// exit code and an output tail and knows nothing about the parent environment —
-// so docs/LIMITATIONS.md is the whole remedy, and a fifth variable added to
+// shell. The engine says so at the failure only when it can prove it — the
+// variable was really set here (verify.Result.ScrubbedFromEnv) AND the command's
+// output names it (schedule.scrubHint) — so for every other suite
+// docs/LIMITATIONS.md is still the whole remedy, and a fifth variable added to
 // scrubbedVars without a matching line there would leave the remedy incomplete.
 //
 // It asserts PRESENCE: some bullet must name the verification command AND every

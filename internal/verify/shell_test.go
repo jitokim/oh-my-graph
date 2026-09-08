@@ -58,6 +58,43 @@ func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	}
 }
 
+// TestShellVerifierReportsOnlyScrubbedVarsThatWereSet is the reporting half of
+// the scrub, and it exists so a FAIL row can name the variable a suite died on
+// without inventing one. Result.ScrubbedFromEnv means exactly "the parent had
+// this and the child does not", so it must list the variable that was really
+// removed and must NOT list the three the parent never carried — a report that
+// named all four regardless would tell a user the engine deleted a key they
+// never set, sending them to fix an environment that was already correct.
+//
+// It goes through Verify rather than buildCmd because the report is attached
+// where the Result is built, and both construction sites (a clean exit and a
+// non-zero one) owe the same answer.
+func TestShellVerifierReportsOnlyScrubbedVarsThatWereSet(t *testing.T) {
+	// Only OPENAI_API_KEY of the four, plus what a shell needs to run at all.
+	parentEnv := []string{
+		"OPENAI_API_KEY=sk-the-user-really-set-this",
+		"PATH=" + os.Getenv("PATH"),
+	}
+	commands := map[string]string{
+		"clean exit":    "exit 0",
+		"non-zero exit": "exit 1",
+	}
+	for name, command := range commands {
+		t.Run(name, func(t *testing.T) {
+			v := NewShellVerifier(withEnviron(func() []string { return parentEnv }))
+
+			result, err := v.Verify(context.Background(), Request{Command: command})
+			if err != nil {
+				t.Fatalf("an exit status is a Result, not an error: %v", err)
+			}
+			if got := result.ScrubbedFromEnv; len(got) != 1 || got[0] != "OPENAI_API_KEY" {
+				t.Fatalf("ScrubbedFromEnv = %q, want exactly [OPENAI_API_KEY] — the other three "+
+					"were never in the parent environment, so nothing was taken from the child", got)
+			}
+		})
+	}
+}
+
 // TestBuildCmd_RunsThroughShellInRequestedCwd pins the invocation shape: the
 // command is handed to the interpreter as ONE argument, so a graph can write an
 // ordinary command line (pipes, &&, quoting) instead of an argv array. WHICH

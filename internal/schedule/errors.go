@@ -37,6 +37,17 @@ type NodeCheckError struct {
 	// handing the fixer node its own `PASS` back is the one payload guaranteed
 	// to be useless. A compiler's error list is the payload's whole point.
 	Evidence string
+	// ScrubHint is the one sentence a failed verification owes a reader whose
+	// suite broke on a provider key the ENGINE deleted (internal/childenv) —
+	// empty on every failure that does not meet both halves of that trigger.
+	//
+	// It sits BESIDE the Detail rather than inside it because of where the cap
+	// falls: capDetail keeps the TAIL, so a hint appended before the cut would
+	// become the tail and would pay for itself out of the command output the
+	// reader actually needs. failRecord appends this after capping the cause,
+	// so the hint costs the output nothing. Error() therefore does not carry
+	// it either — an Error() that did would be capped with it.
+	ScrubHint string
 }
 
 func (e *NodeCheckError) Error() string {
