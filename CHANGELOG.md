@@ -24,10 +24,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   {{ artifacts.… }}: artifact not available"). Deserved 11, noise 0, $5.92 of
   measurable waste plus two nodes killed cost-unknown; `lint` printed the
   warning for all four and nobody ran `lint`
-  (`docs/measurements/0244-auto-path-sweeps.md`). Two changes follow. That class
+  ([#244](https://github.com/jitokim/oh-my-graph/issues/244),
+  `docs/measurements/0244-auto-path-sweeps.md`). Two changes follow. That class
   is now a **plan refusal** (`coordinator.validatePlannedArtifactReferences`),
   because on `auto` there is nobody in front of the screen — it buys one
-  corrected re-plan carrying the refusal's text, and the refusal names both
+  corrected re-plan carrying the refusal's text, and if that re-plan quotes the
+  token too the run stops there, before any node spends. The refusal names both
   exits, since three of the four graphs had written the token as an
   *illustration* rather than as wiring, and the engine resolves a token that is
   only being quoted just the same. Every OTHER finding is now printed on the
