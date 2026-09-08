@@ -17,6 +17,10 @@ import (
 // that gets it. An unscripted command is an error, not a silent pass — a test
 // that mistypes a command must fail loudly rather than accidentally proving
 // nothing.
+//
+// Every field of Result is scripted this way, ScrubbedFromEnv included, so a
+// scheduler test can pose "the parent had OPENAI_API_KEY and this child did
+// not" without an environment or a spawn anywhere in it.
 type FakeVerifier struct {
 	// results maps a command to the Result Verify should return for it.
 	results map[string]Result

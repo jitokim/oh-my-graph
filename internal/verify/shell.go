@@ -164,6 +164,12 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// What the scrub actually took from this child, read from the same source
+	// buildCmd scrubs (v.environ — os.Environ in production, which oh-my-graph
+	// never writes to), so the two reads cannot disagree about what was denied.
+	// Reported, never acted on: buildCmd's scrub is unconditional either way.
+	scrubbed := childenv.ScrubbedVarsIn(v.environ())
+
 	// The FULL combined output is what a Result carries: output_matches is
 	// judged against it, so a tail here would quietly narrow the graph's
 	// predicate to the last few kilobytes. Only the no-verdict error path below
@@ -171,7 +177,7 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 	combined, runErr := v.buildCmd(cmdCtx, req).CombinedOutput()
 	output := string(combined)
 	if runErr == nil {
-		return Result{ExitCode: 0, Output: output}, nil
+		return Result{ExitCode: 0, Output: output, ScrubbedFromEnv: scrubbed}, nil
 	}
 
 	// Order matters: a killed process also surfaces as an *exec.ExitError, so
@@ -193,7 +199,7 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 	if !errors.As(runErr, &exitErr) {
 		return Result{}, fmt.Errorf("verification command %q failed to run: %w", req.Command, runErr)
 	}
-	return Result{ExitCode: exitErr.ExitCode(), Output: output}, nil
+	return Result{ExitCode: exitErr.ExitCode(), Output: output, ScrubbedFromEnv: scrubbed}, nil
 }
 
 // tailBytes keeps the last maxBytes of s, marking the cut. The tail is kept
