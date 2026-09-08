@@ -1515,7 +1515,7 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 	if expected := v.ExpectedExitCode(); result.ExitCode != expected {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` exited %d, want %d%s",
 			command, result.ExitCode, expected, outputTail(result.Output)),
-			evidenceOf(command, result.Output))
+			evidenceOf(command, result.Output), scrubHint(result))
 	}
 	if pattern == nil {
 		return nil
@@ -1523,9 +1523,45 @@ func judgeVerification(nodeID string, v graph.Verification, command string, resu
 	if !pattern.MatchString(result.Output) {
 		return verifyFailure(nodeID, fmt.Sprintf("`%s` output did not match /%s/%s",
 			command, v.OutputMatches, outputTail(result.Output)),
-			evidenceOf(command, result.Output))
+			evidenceOf(command, result.Output), scrubHint(result))
 	}
 	return nil
+}
+
+// scrubHint returns the sentence a verify FAIL owes a reader whose own test
+// suite is what broke, or "" when it owes none.
+//
+// The trigger is a CONJUNCTION, and both halves are load-bearing:
+//
+//   - the variable was really in oh-my-graph's environment, so the scrub really
+//     took it from this child. Saying "the engine deleted OPENAI_API_KEY" about
+//     a key the user never set is a lie in the other direction, and it would
+//     send the reader to fix an environment that was already correct.
+//   - the failing command's own output names it, judged against the FULL
+//     output (verify.Result.Output) rather than the tail the DETAIL column
+//     shows — a pytest that printed `KeyError: 'OPENAI_API_KEY'` five thousand
+//     lines before it stopped still said it.
+//
+// Either signal alone is noise. A hint on every failure is worse than noise: it
+// would teach a reader to skip the last sentence of every FAIL row, which is
+// where the one case that needs it lives. What the conjunction costs is stated
+// in CHANGELOG: a suite that reads the key without ever printing its name gets
+// no hint, and neither does a key the command loaded from a dotenv, because the
+// parent environment never had it and nothing was taken away.
+//
+// The first name that satisfies both wins, in childenv's list order, so a
+// reader gets ONE variable to act on rather than the whole policy recited back.
+func scrubHint(result verify.Result) string {
+	for _, name := range result.ScrubbedFromEnv {
+		if !strings.Contains(result.Output, name) {
+			continue
+		}
+		return fmt.Sprintf("; note: %s was deleted from this command's environment by the "+
+			"subscription-auth scrub and the output names it — the workaround is in "+
+			"docs/LIMITATIONS.md, under the bullet on running verify without the provider "+
+			"API keys.", name)
+	}
+	return ""
 }
 
 // maxEvidenceRunes bounds the verification output a feedback re-run is handed.
@@ -1559,9 +1595,17 @@ func evidenceOf(command, output string) string {
 
 // verifyFailure builds the error shape for evidence that was gathered and
 // judged insufficient — a verdict on the work. detail is the table-sized
-// summary; evidence is the model-sized payload a feedback re-run reads.
-func verifyFailure(nodeID, detail, evidence string) error {
-	return &NodeCheckError{NodeID: nodeID, Predicate: predicateVerify, Detail: detail, Evidence: evidence}
+// summary; evidence is the model-sized payload a feedback re-run reads; hint is
+// the environment note (usually empty), carried separately because failRecord
+// appends it after the Detail has been capped.
+func verifyFailure(nodeID, detail, evidence, hint string) error {
+	return &NodeCheckError{
+		NodeID:    nodeID,
+		Predicate: predicateVerify,
+		Detail:    detail,
+		Evidence:  evidence,
+		ScrubHint: hint,
+	}
 }
 
 // verifyFault builds the error shape for a verification that could not be
@@ -1826,7 +1870,7 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 }
 
 func failRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Duration, cause error) ledger.Record {
-	return ledger.Record{
+	rec := ledger.Record{
 		NodeID:      node.ID,
 		SessionID:   outcome.SessionID,
 		CostUSD:     outcome.TotalCostUSD,
@@ -1845,6 +1889,19 @@ func failRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 		// table, the snapshot, or an events.jsonl line.
 		Detail: capDetail(cause.Error()),
 	}
+	// The environment note goes on AFTER that cap, which is the whole reason a
+	// failed verification carries it beside its Detail instead of inside it.
+	// capDetail keeps the TAIL, so a sentence appended before the cut would BE
+	// the tail and would pay for itself out of the command output outputTail
+	// deliberately preserved — a hint that arrived by deleting the evidence it
+	// was explaining. Appended here it costs the output nothing and
+	// maxDetailRunes is unchanged; only a verify failure that met both halves
+	// of scrubHint's trigger has one at all.
+	var checkErr *NodeCheckError
+	if errors.As(cause, &checkErr) {
+		rec.Detail += checkErr.ScrubHint
+	}
+	return rec
 }
 
 func plural(n int) string {

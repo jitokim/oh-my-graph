@@ -127,9 +127,10 @@ func TestScrub_EmptyParentYieldsEmptyEnv(t *testing.T) {
 // when their OWN test suite is the thing that fails: a `success_check.verify`
 // command is a child like any other, so these names are gone from it, and a
 // suite that reads one breaks under `verify:` while passing in the user's
-// shell. The engine cannot say that at the failure — the verify seam reports an
-// exit code and an output tail and knows nothing about the parent environment —
-// so docs/LIMITATIONS.md is the whole remedy, and a fifth variable added to
+// shell. The engine says so at the failure only when it can prove it — the
+// variable was really set here (verify.Result.ScrubbedFromEnv) AND the command's
+// output names it (schedule.scrubHint) — so for every other suite
+// docs/LIMITATIONS.md is still the whole remedy, and a fifth variable added to
 // scrubbedVars without a matching line there would leave the remedy incomplete.
 //
 // It asserts PRESENCE: some bullet must name the verification command AND every
