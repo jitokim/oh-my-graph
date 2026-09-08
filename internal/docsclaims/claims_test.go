@@ -34,14 +34,19 @@ const qualifierWindow = 200
 var optIn = regexp.MustCompile(`--accept-loaded-user-config`)
 
 // The two absolutes ADR 0032 falsified. d537739 conditioned both where they
-// stood in docs/EXAMPLES.md (:451, :460 today); they are encoded here so that
-// no document — that one or a new one — can state either as an absolute again.
+// stood in docs/EXAMPLES.md: the `--strict-mcp-config` parenthetical, and the
+// paragraph on what `--no-agent <name>` buys. They are encoded here so that no
+// document — that one or a new one — can state either as an absolute again.
+//
+// The sentences are named, not numbered, on purpose: line numbers into that
+// document have rotted twice inside the file whose whole job is stopping rot,
+// and each claim's own name below is the phrase to search for.
 var falsifiedByADR0032 = []falsified{
 	{
 		name:      `"no planned node gets that any more"`,
 		absolute:  regexp.MustCompile(`no planned node gets that any more`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:763-764 — toolPolicyFor sets " +
+		address: "internal/coordinator/coordinator.go:868-871 — toolPolicyFor sets " +
 			"policy.SettingSources = nil when the run typed --accept-loaded-user-config, " +
 			"so every planned node of such a run does get the operator's configuration",
 	},
@@ -49,8 +54,8 @@ var falsifiedByADR0032 = []falsified{
 		name:      "\"as every planned node's has\", of `--strict-mcp-config`",
 		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:765 sets policy.StrictMCPConfig = false " +
-			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:55-56 " +
+		address: "internal/coordinator/coordinator.go:868-871 sets policy.StrictMCPConfig = false " +
+			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 	},
 }
