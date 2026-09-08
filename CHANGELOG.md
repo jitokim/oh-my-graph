@@ -12,6 +12,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **Seven facts #268 had to learn by running** — silent tool denials on a node
+  still recorded PASS, an unexpanded `cwd:`, exit-code-only `verify:`, the
+  verdict's provenance parenthesis, where the gate buttons live, a
+  `result did not match` FAIL as a possible pattern miss
+  ([#264](https://github.com/jitokim/oh-my-graph/issues/264)), and
+  `e2e-verify`'s one-parent rule — are now in the plugin agent, `/graph`, the
+  run-graph skill and that fragment's header.
+  ([#268](https://github.com/jitokim/oh-my-graph/issues/268))
+
 - **Your `success_check.verify` command runs without the provider API keys, and
   now something says so.** Every child oh-my-graph spawns starts with
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
