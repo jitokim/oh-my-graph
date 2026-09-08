@@ -241,3 +241,55 @@ func TestInterpolate_NeverLearnsWith(t *testing.T) {
 		t.Fatalf("the runtime resolved a with-token: %q", got)
 	}
 }
+
+// TestImpossibleArtifactFindings_IsTheRuntimeRefusedSubset pins the boundary
+// auto mode escalates on (#244). The subset must be drawn where the ENGINE
+// draws it — a token Interpolate refuses rather than one it passes through —
+// because the coordinator turns membership into a refused plan, and a plan
+// refused for a token that would merely have shipped verbatim is a run the user
+// paid for and did not get.
+//
+// The graph carries one of each: two impossible artifact references, and two
+// findings that are advisory everywhere (a malformed token, an undeclared
+// input). All four must be LintPlaceholders warnings; exactly two must be here.
+func TestImpossibleArtifactFindings_IsTheRuntimeRefusedSubset(t *testing.T) {
+	g := parseGraph(t, `
+name: subset
+version: "1"
+inputs: [repo]
+nodes:
+  - id: corpus
+    prompt: count the runs
+  - id: writeup
+    prompt: |
+      from {{ artifacts.corpus }} and {{ artifacts.nope }},
+      with {{ artifact.corpus }} and {{ inputs.undeclared }}
+`)
+
+	if all := LintPlaceholders(g); len(all) != 4 {
+		t.Fatalf("the sweep must still report all four findings, got %d: %v", len(all), all)
+	}
+
+	findings := ImpossibleArtifactFindings(g)
+	if len(findings) != 2 {
+		t.Fatalf("want the two artifact references, got %d: %v", len(findings), findings)
+	}
+	for _, finding := range findings {
+		if finding.NodeID != "writeup" {
+			t.Errorf("finding names %q, not the node that quotes the token: %v", finding.NodeID, finding)
+		}
+	}
+	joined := findings[0].String() + "\n" + findings[1].String()
+	for _, want := range []string{"{{ artifacts.corpus }}", "not an ancestor", "{{ artifacts.nope }}", "is not a node in the graph"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the subset does not carry %q:\n%s", want, joined)
+		}
+	}
+	// The negative half, and the one that costs a run if it is wrong: a token
+	// that ships verbatim is expensive, not fatal, and must stay advisory.
+	for _, unwanted := range []string{"{{ artifact.corpus }}", "does not declare in its inputs list"} {
+		if strings.Contains(joined, unwanted) {
+			t.Errorf("the subset swept in an advisory-only finding %q:\n%s", unwanted, joined)
+		}
+	}
+}

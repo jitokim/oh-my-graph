@@ -107,8 +107,9 @@ func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime
 }
 
 // warnAdvisories prints one `warning:` line per advisory finding in an
-// already-validated graph — the shared reporting half of `lint` and
-// `run --dry-run`, covering the six handoff sweeps (unresolvable
+// already-validated graph — the shared reporting half of `lint`,
+// `run --dry-run` and the PLAN SCREEN, covering the six handoff sweeps
+// (unresolvable
 // placeholder-like tokens, session-handoff resumes that may start cold,
 // verdicts a node's own success_check cannot read, nodes that can observe
 // no tool denial, a verify command carrying a model's own text into the
@@ -116,17 +117,48 @@ func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime
 // plus the graph-topology
 // one (a feedback arc that cannot reach one of its declarer's producers).
 // Warnings are advice only: they never affect any exit code.
+//
+// The third caller is printPlanForRuntime (main.go), and it is why this helper
+// is no longer only about a graph someone typed a command at: a planner-emitted
+// graph used to meet no sweep at all, because `auto` goes planner →
+// saveGeneratedSpec → printPlan → executePlan and none of those is `lint`.
+// Measured over the local run corpus, four planned graphs died on a defect
+// `lint` would have named from their own saved spec, which nobody ran
+// (docs/measurements/0244-auto-path-sweeps.md). The class that KILLS a run —
+// an `{{ artifacts.<id> }}` that cannot resolve — is not left on this channel:
+// it is a plan refusal in coordinator.validatePlannedArtifactReferences, because
+// on `auto` there is nobody in front of the screen to read a warning. What
+// prints here is the remainder, the findings that are smells rather than
+// certainties, and on `chat` they sit immediately above the [y/N].
+//
+// path may be empty, as it is on the chat plan screen — where the spec's
+// destination is exactly what the [y/N] decides, so there is no path to name
+// yet. warnLine drops the segment rather than printing an empty one.
 func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 	advisories := append(handoff.LintPlaceholders(g), handoff.LintSessions(g)...)
 	advisories = append(advisories, handoff.LintToolGrants(g)...)
 	advisories = append(advisories, handoff.LintVerifyInlining(g)...)
 	advisories = append(advisories, handoff.LintFeedbackQuoting(g)...)
 	for _, warning := range append(advisories, handoff.LintVerdicts(g)...) {
-		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
+		warnLine(warnW, path, warning.String())
 	}
 	for _, advisory := range g.LintFeedbackReach() {
-		fmt.Fprintf(warnW, "warning: %s: %s\n", path, advisory)
+		warnLine(warnW, path, advisory.String())
 	}
+}
+
+// warnLine is the one `warning:` line format every advisory in this command
+// shares, including the empty-path form the in-memory callers need: a graph
+// that is not (yet) a file on disk gets `warning: <text>`, and one that is gets
+// `warning: <path>: <text>`. It exists so a caller that judges a graph in
+// memory cannot invent a second shape — printing `warning: : <text>` was one
+// keystroke away from being the plan screen's version of this line.
+func warnLine(warnW io.Writer, path, text string) {
+	if path == "" {
+		fmt.Fprintf(warnW, "warning: %s\n", text)
+		return
+	}
+	fmt.Fprintf(warnW, "warning: %s: %s\n", path, text)
 }
 
 // warnRuntimePreflight prints one `warning:` line per runtime-preflight
@@ -148,11 +180,7 @@ func warnAdvisories(warnW io.Writer, path string, g *graph.Graph) {
 // warning that is not on the advisory channel.
 func warnRuntimePreflight(warnW io.Writer, path string, warnings []string) {
 	for _, warning := range warnings {
-		if path == "" {
-			fmt.Fprintf(warnW, "warning: %s\n", warning)
-			continue
-		}
-		fmt.Fprintf(warnW, "warning: %s: %s\n", path, warning)
+		warnLine(warnW, path, warning)
 	}
 }
 

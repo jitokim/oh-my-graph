@@ -354,3 +354,91 @@ func TestIssuesForPrompt_FirstRefusalTooLongStillDisclosesTheRest(t *testing.T) 
 		t.Error("the first refusal's head was lost")
 	}
 }
+
+// strandedArtifactSpec is n nodes each quoting an artifact of a node they do
+// not depend on — #244's corpus shape (docs/measurements/0244-auto-path-sweeps.md),
+// widened so the per-fault byte cost the comments quote can be read off a
+// series rather than estimated. Every id is the same length, so the series
+// scales without a caveat.
+func strandedArtifactSpec(n int) string {
+	spec := `{"name":"stranded","version":"1","nodes":[` +
+		`{"id":"corpus","prompt":"count the runs","allowed_tools":["Read"]}`
+	for i := 0; i < n; i++ {
+		spec += fmt.Sprintf(`,{"id":"writeup-%02d","prompt":"write it up from {{ artifacts.corpus }}","allowed_tools":["Edit"]}`, i)
+	}
+	return spec + "]}"
+}
+
+// TestArtifactRefusalRendersItsMeasuredSize is the third family's entry in the
+// measurement maxIssuesInPrompt is sized against — the "a third family fails
+// here rather than in a paid run" case its comment named before one existed.
+// Read it exactly as TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize is
+// read: a reworded refusal is EXPECTED to fail, and the fix is to carry the new
+// numbers to the comment that quotes them.
+//
+// The shape of the series is the claim: one shared paragraph (~754 bytes) plus
+// ~166 per fault, which is what makes six faults — the worst graph in the
+// corpus — cost 1762 rather than the ~5000 a per-token refusal would have spent
+// in a prompt capped at maxIssuesInPrompt.
+func TestArtifactRefusalRendersItsMeasuredSize(t *testing.T) {
+	for _, tc := range []struct{ faults, bytes int }{
+		{faults: 1, bytes: 920},
+		{faults: 2, bytes: 1098},
+		{faults: 3, bytes: 1264},
+		{faults: 6, bytes: 1762},
+	} {
+		g, err := graph.Parse([]byte(strandedArtifactSpec(tc.faults)))
+		if err != nil {
+			t.Fatalf("%d faults: the fixture must LOAD — a stranded artifact token is VALID, which is the point: %v", tc.faults, err)
+		}
+		issues := validatePlannedArtifactReferences(g)
+		if len(issues) != 1 {
+			t.Fatalf("%d faults: the family is compacted to ONE refusal, got %d", tc.faults, len(issues))
+		}
+		if got := len(issues[0].Reason); got != tc.bytes {
+			t.Errorf("%d faults: the artifact refusal renders %d bytes, the comments say %d.\n%s", tc.faults, got, tc.bytes, carryTheNumbers)
+		}
+	}
+}
+
+// TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire pins the tie-break
+// the ordering in validatePlannedNodes makes, on the one graph where the three
+// graph-level families together overrun the budget: three lanes each mis-aimed
+// AND blind, plus three stranded artifact tokens, renders past
+// maxIssuesInPrompt, and something has to go.
+//
+// It is the artifact refusal, deliberately, because it is the only one of the
+// three whose fault the ENGINE states for itself: a stranded token fails its
+// node at interpolation with `cannot resolve {{ artifacts.<id> }}`, loudly and
+// at the first node. A dropped feedback refusal buys silence instead — a loop
+// that runs every round it was given, produces the same output each time, and
+// passes the money through.
+//
+// What is asserted is that the loss is legible, not that it is free: the kept
+// refusals are whole, and the count of dropped ones is stated.
+func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
+	spec := strings.TrimSuffix(brokenLanesSpec(3), "]}") +
+		`,{"id":"corpus","prompt":"count","allowed_tools":["Read"]}` +
+		`,{"id":"w-1","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
+		`,{"id":"w-2","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
+		`,{"id":"w-3","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}]}`
+	g, err := graph.Parse([]byte(spec))
+	if err != nil {
+		t.Fatalf("the fixture must LOAD: %v", err)
+	}
+
+	issues := reasons(validatePlannedNodes(g, ""))
+	if got := len(strings.Join(issues, "\n")); got <= maxIssuesInPrompt {
+		t.Fatalf("the fixture no longer overruns the budget (%d bytes of %d) — it exists to be cut", got, maxIssuesInPrompt)
+	}
+
+	rendered := issuesForPrompt(issues)
+	if strings.Contains(rendered, "not guaranteed to exist when they run") {
+		t.Error("the artifact refusal survived a cut the ordering says it takes; a feedback refusal was dropped instead:\n" + rendered)
+	}
+	for _, want := range []string{"whose loop body excludes", "nothing in their loop bodies quotes", "1 further refusal could not fit"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the repair prompt lost %q, so the cut was not the one the ordering describes:\n%s", want, rendered)
+		}
+	}
+}

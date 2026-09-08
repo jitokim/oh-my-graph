@@ -10,6 +10,34 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Added
+
+- **A planner-emitted graph now meets the lint sweeps, and is refused outright
+  for an artifact reference that cannot resolve.** Until now the advisory sweeps
+  ran under `lint` and `run --dry-run` only, and `auto` reaches neither: it
+  plans, writes `graph.json`, prints the plan and executes it, so a defect the
+  engine could name from that very spec was paid for instead. Measured over 398
+  local run directories: 83 held a planner-emitted graph, 4 of those quoted an
+  `{{ artifacts.<id> }}` naming an unknown node, the quoting node itself, or a
+  node they did not depend on — 11 tokens in all — and every one of the 4 has a
+  `node_failed` record naming one of its own tokens ("cannot resolve
+  {{ artifacts.… }}: artifact not available"). Deserved 11, noise 0, $5.92 of
+  measurable waste plus two nodes killed cost-unknown; `lint` printed the
+  warning for all four and nobody ran `lint`
+  (`docs/measurements/0244-auto-path-sweeps.md`). Two changes follow. That class
+  is now a **plan refusal** (`coordinator.validatePlannedArtifactReferences`),
+  because on `auto` there is nobody in front of the screen — it buys one
+  corrected re-plan carrying the refusal's text, and the refusal names both
+  exits, since three of the four graphs had written the token as an
+  *illustration* rather than as wiring, and the engine resolves a token that is
+  only being quoted just the same. Every OTHER finding is now printed on the
+  **plan screen** (`printPlanForRuntime`), before any node spends, where on
+  `chat` it sits immediately above the `[y/N]`. The sweeps themselves are
+  unchanged, `lint` and `run --dry-run` print exactly what they printed before,
+  and nothing here touches an exit code: `auto` refuses nothing that `run`
+  accepts, except a graph carrying a token the engine itself would refuse to
+  resolve.
+
 ## [v0.14.0] - 2026-09-08
 
 ### Added

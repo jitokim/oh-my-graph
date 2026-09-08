@@ -1257,6 +1257,32 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// none of it at all — so it has to be read second or the two look
 	// contradictory.
 	noteUnisolatedPaths(w, plan.Unisolated)
+	// The advisory sweeps, and this is the only place a planner-emitted graph
+	// meets them: `auto` goes planner → saveGeneratedSpec → here → executePlan,
+	// and none of the other three is `lint`. Four planned graphs in the local
+	// corpus died on a defect `lint` names from their own saved spec, which
+	// nobody ran (docs/measurements/0244-auto-path-sweeps.md). One call site
+	// rather than one in goal.go and one in chat.go, because two would drift
+	// and this single line covers both surfaces where a graph nobody wrote is
+	// shown to a person.
+	//
+	// LAST on the screen on purpose. On `chat` this screen is printed by
+	// confirmPlan and followed immediately by the [y/N], so a warning here is
+	// the last thing read before the answer; anywhere higher it would be
+	// separated from the question by the whole disclosure block. The stream is
+	// the caller's own w — the same one the topology and the ceiling printed
+	// on — for warnRuntimePreflight's reason: these lines are about the nodes
+	// listed a few lines above them, and an annotation that lands on a
+	// different stream than its subject is a worse read than a warning off the
+	// advisory channel.
+	//
+	// Advice only, on both surfaces: nothing here changes an exit code, and
+	// `auto` refuses nothing that `run` would have accepted. The one class of
+	// finding that DOES stop a planned run — an artifact reference that cannot
+	// resolve — never reaches this screen: coordinator.validatePlanned-
+	// ArtifactReferences refused the plan before it was printed, because on
+	// `auto` nobody is in front of the screen at all.
+	warnAdvisories(w, specPath, g)
 	fmt.Fprintln(w)
 }
 
