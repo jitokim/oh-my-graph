@@ -984,6 +984,12 @@ func toolName(rule string) string {
 //     in its loop body (validatePlannedFeedbackQuoting — the other graph-level
 //     check, and ADR 0028's escalation: the planner prompt asks for the arc and
 //     the quote in one sentence, and this is the half that was prose only);
+//   - no planned prompt may quote an `{{ artifacts.<id> }}` that is not
+//     guaranteed to resolve — an unknown node, the quoting node itself, a
+//     non-ancestor (validatePlannedArtifactReferences — the third graph-level
+//     check, since ancestry is a property of the topology; measured at 11
+//     deserved hits and 0 noise over the local corpus,
+//     docs/measurements/0244-auto-path-sweeps.md);
 //   - no planned node may declare a retry max above maxPlannedRetries
 //     (validatePlannedNodeRetry);
 //   - no planned node may reference a fragment (use:/with:) — refused before
@@ -1038,7 +1044,21 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// arc into ONE sentence, and issuesForPrompt drops whole refusals and says
 	// how many it dropped instead of cutting one mid-sentence and silently
 	// losing the rest.
+	//
+	// The artifact-reference family (#244) joins the graph-level group and is
+	// LAST of the three, ahead of every per-node refusal and behind both
+	// feedback ones. Ahead of the per-node refusals because it is another long
+	// compacted sentence — 920 bytes for one fault, ~166 per fault after that —
+	// which a dozen short ones would push out. Behind the feedback pair because
+	// when all three fire and overrun the budget, this is the right one to
+	// lose: a stranded `{{ artifacts.<id> }}` announces itself at run time, in
+	// the engine's own words, at the first node that reads it, where a blind or
+	// mis-aimed loop announces nothing at all and spends every round it was
+	// given. Losing a refusal always costs money; this one costs the least of
+	// the three. TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire is
+	// that sentence as a probe.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
+	issues = append(issues, validatePlannedArtifactReferences(g)...)
 	add := func(err *PlanError) {
 		if err != nil {
 			issues = append(issues, err)
@@ -1280,6 +1300,98 @@ func validatePlannedFeedbackQuoting(g *graph.Graph) []*PlanError {
 // TestPlan_TwoBlindArcsCostOneRefusal reads the plural rendering for exactly
 // that kind of leftover singular.
 const plannedFeedbackQuoteRefusal = "%[1]s %[2]s %[3]s, but nothing in %[4]s quotes %[5]s — the re-run gets the prompt it already ran, produces the same output, and the declaring node fails again for the same reason, at twice the cost, until the rounds are spent. Paste %[6]s, at the end of %[7]s and after %[8]s verdict contract, introduced as review feedback that is empty on the first pass. Do not make a node's work conditional on a feedback section appearing: on the first pass it never does."
+
+// validatePlannedArtifactReferences refuses a planned graph whose prompt quotes
+// an `{{ artifacts.<id> }}` that cannot be counted on to resolve — the token
+// naming a node the graph does not have, naming the quoting node itself, or
+// naming a node that is not one of its ancestors. It is the third escalation of
+// an advisory sweep for planner output, on the same argument as the two above
+// it, and the one with a measured corpus behind it.
+//
+// THE MEASUREMENT (docs/measurements/0244-auto-path-sweeps.md, taken
+// 2026-09-08 over 398 local run directories). 83 of them held a planner-emitted
+// graph.json; 4 of those carried at least one token of this class, 11 tokens in
+// all, and every one of the 4 has a `node_failed` record in its own events.jsonl
+// naming one of its own hits — "cannot resolve {{ artifacts.… }}: artifact not
+// available". Deserved 11, noise 0: not a judgement call, since the runs
+// themselves answered it. The measurable waste across the four was $5.92 of
+// planner and node spend, plus two nodes killed cost-unknown. Three of the four
+// graphs had written the token as an ILLUSTRATION — quoting the syntax to the
+// model rather than wiring anything — which does not save them: the engine
+// resolves every token in a prompt, including one that is only being explained,
+// and says so itself (handoff's quotingHint).
+//
+// WHY A REFUSAL HERE AND AN ADVISORY THERE, for the third time: a hand-written
+// graph has an author who can read the `lint` line and decide the sweep is
+// wrong about their graph; planner output has nobody. The corpus makes that
+// concrete rather than plausible — `lint` PRINTS this warning today for all four
+// of those saved specs, and all four ran and died anyway, because `auto` never
+// calls a sweep on the graph it is about to execute. An advisory on the plan
+// screen is read afterwards, in scrollback, by someone who already has the
+// failure.
+//
+// WHY THIS CLASS AND NOT THE REST OF THE SWEEPS. The line is whether the graph
+// fails on the token no matter what the model does. handoff.Interpolate returns
+// an *InterpolationError the moment the node starts on these three shapes, so
+// the refusal cannot be wrong about the outcome — at worst it is early. Every
+// other advisory (`LintVerdicts`, `LintSessions`, `LintToolGrants`,
+// `LintVerifyInlining`, and the malformed-token half of `LintPlaceholders`) is a
+// smell that may be wrong about a given graph, and this measurement bought no
+// noise rate for any of them; they stay advisory, printed on the plan screen by
+// printPlanForRuntime. This repository has the scar that argues against
+// refusing on an unmeasured predicate: docs/measurements/0213-tool-grant-
+// predicate.md killed a candidate at 110 noise in 114 hits.
+//
+// The predicate is NOT recomputed here — handoff.ImpossibleArtifactFindings is
+// the sweep's own subset, worded by the sweep, and this function only decides
+// what auto mode does with it.
+//
+// WHAT IT COSTS WHEN IT IS WRONG: one corrected re-plan (repair.go) carrying
+// this refusal's text. The operator paid for that re-plan by hand twice inside
+// this very corpus, after the run had already died.
+//
+// ONE refusal for the whole graph, not one per token — validatePlannedFeedback-
+// Quoting's move, for its reason: everything around the ids is identical for
+// every token, and the one graph in the corpus with six of them would otherwise
+// have spent the paragraph six times in a repair prompt truncated at
+// maxIssuesInPrompt.
+func validatePlannedArtifactReferences(g *graph.Graph) []*PlanError {
+	findings := handoff.ImpossibleArtifactFindings(g)
+	if len(findings) == 0 {
+		return nil
+	}
+	faults := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		faults = append(faults, finding.String())
+	}
+	n := len(findings)
+	return []*PlanError{{Reason: fmt.Sprintf(
+		plannedArtifactRefusal,
+		plural(n, "a planned node references an artifact that is not guaranteed to exist when it runs",
+			"planned nodes reference artifacts that are not guaranteed to exist when they run"),
+		joinPhrases(faults),
+		plural(n, "the node", "each of those nodes"),
+	)}}
+}
+
+// plannedArtifactRefusal is the sentence the planner gets back, and the one a
+// repair prompt quotes verbatim.
+//
+// It offers two corrections and says which question decides between them,
+// rather than leading with one — plannedFeedbackReachRefusal's shape, for the
+// same reason: the two exits are not interchangeable and the rule cannot choose.
+// A token that is WIRED wrongly wants a depends_on edge; a token that is only
+// being SHOWN to the model wants to stop being a token at all, and three of the
+// four graphs in the corpus were the second kind. Leading with the edge would
+// have had those three add a dependency they do not want in order to make an
+// example resolve.
+//
+// The "every {{ ... }} is resolved, including one that is only being quoted"
+// clause is not decoration: without it, a planner that meant the token as an
+// illustration reads a refusal about wiring, cannot see what is wrong with its
+// prompt, and re-emits it. It is the same sentence the ENGINE prints at the
+// failure this refusal is trying to arrive before (handoff's quotingHint).
+const plannedArtifactRefusal = "%[1]s: %[2]s. Every {{ ... }} in a prompt is resolved when the node starts, including one that is only being quoted or explained, so %[3]s fails with `cannot resolve {{ artifacts.<id> }}: artifact not available` before doing any work, at full cost — nothing the model writes changes that. Which correction is right depends on why the token is there. If the node genuinely needs that output, name a node the graph HAS and put it in this node's depends_on, so the artifact is persisted before the node starts. If the token is only being SHOWN — quoted as an example of the syntax, or explained to the model — break the two braces apart (\"{ {\"), so it is not a reference at all."
 
 // quoteIDs renders node ids for a refusal sentence: `"a"`, `"a" and "b"`,
 // `"a", "b" and "c"`.

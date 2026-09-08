@@ -528,7 +528,7 @@ the **resolved** grant of each spliced node substitution touched. A grant
 written verbatim in the fragment adds no clause: one line per difference and
 no more — ADR 0013's #196 amendment) plus the same fragment advisories on
 the warning channel (`run` discloses what it spliced, so it discloses the
-drift smell too; the six *handoff* sweeps stay lint-only), the snapshot stores the re-encoded
+drift smell too; the six *handoff* sweeps stay off `run`), the snapshot stores the re-encoded
 **resolved** graph whenever any node resolved a fragment (so resume never
 re-reads a fragment; `GraphSHA256` still hashes the entry file's bytes), and
 scheduler, handoff, the event stream and every consumer reading it see
@@ -593,10 +593,16 @@ from the file that changed.
   `lint` on a graph `auto` planned and ran in the same breath, and the
   correction — one placeholder, empty on the first pass — costs nothing even
   when the refusal is wrong.
-  Note the reach of *any* of these sweeps: they are printed by `lint` and
-  `run --dry-run` only. A plain `run` loads the graph and starts spending
+  Note the reach of *any* of these sweeps: they are printed by `lint`,
+  `run --dry-run` and the **plan screen** (`printPlanForRuntime`) — the last of
+  those being the only place a planner-emitted graph meets them at all, since
+  `auto` goes planner → save spec → print → execute and `lint` is on none of
+  those paths. A plain `run` loads the graph and starts spending
   without them, which is why a defect this sweep can see is still paid for by an
-  operator who did not lint first.
+  operator who did not lint first. On `auto` nobody is in front of that screen
+  either, which is why the one class of finding that KILLS a planned run — an
+  `{{ artifacts.<id> }}` that cannot resolve — is a plan refusal rather than a
+  line of output (#244; see "Planned-node fields are deny-by-default").
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -2728,7 +2734,8 @@ turns that rule into a build failure. Current dispositions:
 
 | field | planned-node disposition |
 |---|---|
-| `prompt`, `depends_on`, `handoff` | allowed (prompt must be non-empty) |
+| `depends_on`, `handoff` | allowed |
+| `prompt` | constrained — non-empty, and every `{{ artifacts.<id> }}` it quotes must be able to resolve: a token naming an unknown node, the quoting node itself, or a node that is not one of its ancestors is rejected (`validatePlannedArtifactReferences`, #244). That is the advisory `handoff.LintPlaceholders` prints for a hand-written graph, escalated for planner output on the split this table's `feedback` row already takes twice; the refusal names both exits, because the rule cannot tell a mis-wired reference from one the prompt is merely quoting as an example — and three of the four graphs in the corpus that motivated it were the second kind (docs/measurements/0244-auto-path-sweeps.md) |
 | `id` | constrained — no `/`: the splice namespace is minted by the loader alone (`validatePlannedNodeID`, ADR 0027) |
 | `type` | constrained — `claude-run` only; `gate` rejected |
 | `allowed_tools` | constrained — non-empty, `plannedToolAllowlist` only |
@@ -2984,7 +2991,7 @@ internal/invariants/exec_seam_test.go          test-only: asserts only the four 
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
-internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`/`run --dry-run` print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
+internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`, `run --dry-run` and the plan screen print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)

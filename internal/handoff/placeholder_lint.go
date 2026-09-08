@@ -93,13 +93,73 @@ var placeholderKinds = map[string]bool{
 // Callers should hand it an already-validated graph — on a broken one
 // (e.g. a dependency cycle) the ancestry walk still terminates but the
 // findings may be noise on top of the real errors.
+//
+// Not every finding here has the same standing downstream. The three artifact
+// shapes — an unknown node, the node itself, a non-ancestor — are what the
+// RUNTIME refuses rather than passes through, and auto mode escalates exactly
+// those to a plan refusal; see ImpossibleArtifactFindings, which is this sweep
+// restricted to them. This function's own contract is unchanged by that: it
+// reports all of them, as advice, for every caller.
 func LintPlaceholders(g *graph.Graph) []Warning {
+	var warnings []Warning
+	for _, finding := range placeholderFindings(g) {
+		warnings = append(warnings, finding.warning)
+	}
+	return warnings
+}
+
+// ImpossibleArtifactFindings is LintPlaceholders restricted to the tokens that
+// cannot be counted on to resolve at all: an `{{ artifacts.<id> }}` naming the
+// node itself, naming a node the graph does not have, or naming a node that is
+// not one of its ancestors. It exists so the coordinator can escalate exactly
+// that class to a plan refusal (validatePlannedArtifactReferences) without
+// re-deciding the predicate — the same split FeedbackQuoteFindings has with
+// LintFeedbackQuoting, and graph.LintFeedbackReach with
+// validatePlannedFeedbackReach. The sweep stays the single definition; the
+// disposition lives at each caller.
+//
+// The subset is drawn where the ENGINE draws it, not where a taste for strict
+// graphs would. On these three shapes Interpolate returns an
+// *InterpolationError the moment the node starts (handoff.go's resolveLocked:
+// "artifact not available"), so the node fails before it does any work and no
+// model behaviour changes that. The rest of the sweep's findings — a malformed
+// or case-variant token, an undeclared input, a stray `{{ with.<name> }}` —
+// ship verbatim into the prompt instead, which is expensive but not fatal, and
+// stay advisory here as everywhere.
+//
+// It returns Warning, deliberately: the finding and its wording are the same
+// object as the advisory, and only what the caller DOES with it differs. A
+// second type would be a second place for the sentence to drift.
+func ImpossibleArtifactFindings(g *graph.Graph) []Warning {
+	var findings []Warning
+	for _, finding := range placeholderFindings(g) {
+		if finding.impossible {
+			findings = append(findings, finding.warning)
+		}
+	}
+	return findings
+}
+
+// placeholderFinding is one judged token plus the one bit its two callers
+// disagree about: whether the token can never resolve (see
+// ImpossibleArtifactFindings) or merely ships verbatim.
+type placeholderFinding struct {
+	warning    Warning
+	impossible bool
+}
+
+// placeholderFindings is the single walk over every interpolated field, shared
+// by LintPlaceholders and ImpossibleArtifactFindings. One walk, because two
+// would eventually disagree about which tokens are findings at all — and then
+// `lint` would print a warning auto mode does not refuse, or refuse one it
+// never printed.
+func placeholderFindings(g *graph.Graph) []placeholderFinding {
 	declared := make(map[string]bool, len(g.Inputs))
 	for _, name := range g.Inputs {
 		declared[name] = true
 	}
 
-	var warnings []Warning
+	var findings []placeholderFinding
 	for _, node := range g.Nodes {
 		ancestors := ancestorsOf(g, node.ID)
 		fields := []struct{ name, tmpl string }{
@@ -114,24 +174,34 @@ func LintPlaceholders(g *graph.Graph) []Warning {
 		}
 		for _, field := range fields {
 			for _, token := range looseTokenPattern.FindAllString(field.tmpl, -1) {
-				if detail := judgeToken(g, node.ID, declared, ancestors, token); detail != "" {
-					warnings = append(warnings, Warning{NodeID: node.ID, Field: field.name, Detail: detail})
+				detail, impossible := judgeToken(g, node.ID, declared, ancestors, token)
+				if detail == "" {
+					continue
 				}
+				findings = append(findings, placeholderFinding{
+					warning:    Warning{NodeID: node.ID, Field: field.name, Detail: detail},
+					impossible: impossible,
+				})
 			}
 		}
 	}
-	return warnings
+	return findings
 }
 
 // judgeToken decides what, if anything, is wrong with one {{ ... }} token.
 // It returns "" for a token that is either deliberate literal text (its body
 // does not start with a placeholder kind) or a well-formed reference to a
 // declared input / an ancestor node's artifact.
-func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bool, token string) string {
+//
+// The second return says whether the token is one the runtime will REFUSE
+// rather than pass through — the three artifact shapes below, and only those.
+// It carries no wording of its own: what is wrong with the token is still said
+// once, in the detail, so the advisory and the refusal quote the same sentence.
+func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bool, token string) (string, bool) {
 	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{{"), "}}"))
 	leading := leadingWordPattern.FindString(body)
 	if !placeholderKinds[strings.ToLower(leading)] {
-		return "" // deliberate literal text — none of the runtime's business, none of lint's
+		return "", false // deliberate literal text — none of the runtime's business, none of lint's
 	}
 
 	// The `with` kind gets its own message, not the generic malformed-token
@@ -140,7 +210,7 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	// lint has already been resolved, so any surviving with-token sits in a
 	// plain node, where the runtime will pass it through verbatim (ADR 0013).
 	if strings.EqualFold(leading, "with") {
-		return fmt.Sprintf("%s is a fragment substitution token, resolved at load time — outside a fragment it ships verbatim into a paid prompt", token)
+		return fmt.Sprintf("%s is a fragment substitution token, resolved at load time — outside a fragment it ships verbatim into a paid prompt", token), false
 	}
 
 	// The strict-parse judgment MUST come from placeholderPattern itself — the
@@ -148,18 +218,18 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	loc := placeholderPattern.FindStringIndex(token)
 	if loc == nil || loc[0] != 0 || loc[1] != len(token) {
 		if leading != strings.ToLower(leading) {
-			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token)
+			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token), false
 		}
-		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline) or {{ feedback.<id> }} — it will reach the prompt verbatim", token)
+		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline) or {{ feedback.<id> }} — it will reach the prompt verbatim", token), false
 	}
 
 	groups := placeholderPattern.FindStringSubmatch(token)
 	kind, ref := groups[1], groups[2]
 	if kind == "inputs" {
 		if !declared[ref] {
-			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token)
+			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token), false
 		}
-		return ""
+		return "", false
 	}
 	if kind == "feedback" {
 		// The feedback namespace is judged at LOAD, not here: an out-of-body
@@ -167,20 +237,20 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		// graph this lint is handed the token is already known-legal —
 		// re-reporting it would be noise, and warning about a legal one
 		// would contradict the validator.
-		return ""
+		return "", false
 	}
 
 	// kind == "artifacts"
 	if ref == nodeID {
-		return fmt.Sprintf("%s references the node's own artifact, which cannot exist while the node runs", token)
+		return fmt.Sprintf("%s references the node's own artifact, which cannot exist while the node runs", token), true
 	}
 	if _, ok := g.NodeByID(ref); !ok {
-		return fmt.Sprintf("%s references %q, which is not a node in the graph", token, ref)
+		return fmt.Sprintf("%s references %q, which is not a node in the graph", token, ref), true
 	}
 	if !ancestors[ref] {
-		return fmt.Sprintf("%s references node %q, which is not an ancestor of this node — its artifact may not exist when this node runs", token, ref)
+		return fmt.Sprintf("%s references node %q, which is not an ancestor of this node — its artifact may not exist when this node runs", token, ref), true
 	}
-	return ""
+	return "", false
 }
 
 // ancestorsOf walks the depends_on edges up from id and returns every

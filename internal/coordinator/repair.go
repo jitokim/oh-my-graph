@@ -60,13 +60,25 @@ const maxPlanRepairAttempts = 1
 // so; the two states are not comparable and were once written here as if they
 // were.
 //
-// validatePlannedNodes emits two graph-level refusal families, both of which
-// can fire on the same arc, and they are an order of magnitude longer than a
-// per-node refusal (83–172 bytes). Per mis-aimed declarer the reach family
-// renders 677 bytes. The quoting family renders 642 bytes for two blind arcs
-// and 702 for three — one shared diagnosis plus ~60 per arc — AFTER the
-// compaction in validatePlannedFeedbackQuoting; before it, the same family was
-// one 592-byte sentence per arc.
+// validatePlannedNodes emits three graph-level refusal families, and they are
+// an order of magnitude longer than a per-node refusal (83–172 bytes). The two
+// feedback families can both fire on the same arc. Per mis-aimed declarer the
+// reach family renders 677 bytes. The quoting family renders 642 bytes for two
+// blind arcs and 702 for three — one shared diagnosis plus ~60 per arc — AFTER
+// the compaction in validatePlannedFeedbackQuoting; before it, the same family
+// was one 592-byte sentence per arc. The artifact family (#244, last of the
+// three) renders 920 bytes for one stranded token and 1762 for six — the worst
+// graph in that corpus — one shared paragraph plus ~166 per fault, compacted on
+// the same argument. TestArtifactRefusalRendersItsMeasuredSize pins that series.
+//
+// Three lanes broken both ways AND three stranded tokens render 3980, past this
+// budget, and that graph is where the ordering earns its keep rather than the
+// number: issuesForPrompt drops the artifact refusal whole and says so, which
+// is the cheapest of the three to lose because the engine states that fault
+// itself at run time (see the ordering comment in validatePlannedNodes). The
+// budget is not raised to cover it — every byte here is model-authored text
+// quoted back into a prompt, and a graph broken three ways in nine places has a
+// second re-plan ahead of it whatever this number is.
 //
 // At the 2000 this was, the fixture rendered 2541 bytes uncompacted
 // (677 + 677 + 592 + 592, joined) and one of the two families was cut — the
