@@ -83,9 +83,14 @@ has no open issue behind it.
   "Saved-login guarantees" publishes it as a promise). A suite that reads one of
   those names — a test that calls a provider, a plugin that asserts a key is
   set — therefore fails under `verify:` while passing in your own shell, and it
-  fails for *that* reason, not because the work the node did broke it. The
-  failure text will not say so: the ledger gets an exit code and a tail of the
-  command's output, nothing about the environment the engine built.
+  fails for *that* reason, not because the work the node did broke it. The FAIL
+  row says so when it can: when the variable was set in oh-my-graph's own
+  environment — so the scrub really took it from the child — **and** the failing
+  command's output names it, the ledger detail ends with a sentence naming that
+  one variable and pointing back here. Both halves are required, so a suite that
+  reads a key without ever printing its name, and a key your command loads from
+  a dotenv rather than inheriting, still fail with nothing but an exit code and
+  a tail of the command's output.
 
   The scrub is not relaxed for verification, and that is a decision rather than
   an oversight about whose command it is. A `verify: { command: "claude -p ..."

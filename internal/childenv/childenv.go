@@ -67,14 +67,53 @@ func Scrub(parent []string) []string {
 	return out
 }
 
+// ScrubbedVarsIn reports which scrubbed variables parent actually carried —
+// that is, exactly the names Scrub deletes from it — spelled as scrubbedVars
+// spells them rather than as parent did, since the match is case-insensitive
+// and only the canonical spelling is worth showing a reader. The order is the
+// list's, so the answer never depends on how a shell happened to order its
+// environment.
+//
+// It means ONE thing: these names were in the parent environment, so the child
+// built from it does not have them. It is not what the child NEEDED and not
+// what it read — only what it was denied. A variable the caller never set is
+// absent from the result, because nothing was taken away.
+//
+// It exists so a failure can be explained: a success_check.verify command that
+// dies reading OPENAI_API_KEY is dying of this policy, not of the work the node
+// did, and only the spawner knows that. Nothing branches on it — the scrub
+// itself is unconditional and reads scrubbedVars directly — so this cannot
+// become a second, drifting copy of the list.
+func ScrubbedVarsIn(parent []string) []string {
+	var present []string
+	for _, name := range scrubbedVars {
+		for _, kv := range parent {
+			if got, ok := scrubbedName(kv); ok && got == name {
+				present = append(present, name)
+				break
+			}
+		}
+	}
+	return present
+}
+
 // isScrubbed reports whether a "KEY=value" entry names a scrubbed variable,
 // comparing the whole key without regard to case (see Scrub).
 func isScrubbed(kv string) bool {
+	_, ok := scrubbedName(kv)
+	return ok
+}
+
+// scrubbedName returns the scrubbedVars entry a "KEY=value" entry matches,
+// comparing the whole key without regard to case (see Scrub). It is the one
+// place that comparison is written, so deleting a variable and naming the one
+// that was deleted can never disagree.
+func scrubbedName(kv string) (string, bool) {
 	key, _, _ := strings.Cut(kv, "=")
 	for _, scrubbed := range scrubbedVars {
 		if strings.EqualFold(key, scrubbed) {
-			return true
+			return scrubbed, true
 		}
 	}
-	return false
+	return "", false
 }

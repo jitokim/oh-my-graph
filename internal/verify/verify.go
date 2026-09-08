@@ -48,6 +48,22 @@ type Result struct {
 	// rendered (the ledger's DETAIL column caps it at schedule.maxDetailRunes),
 	// not where it is judged.
 	Output string
+	// ScrubbedFromEnv names the subscription-auth variables (internal/childenv)
+	// that oh-my-graph's OWN environment carried when this command was spawned,
+	// and which were therefore DELETED from the command's environment.
+	//
+	// That is the only thing it means. It is not what the command read, not
+	// what it needed, and not a judgement that the scrub caused the failure —
+	// only which names this child was denied that the parent had. A variable
+	// the user never set is absent from this list, because nothing was taken
+	// away from the child, and reporting it would be a lie in the other
+	// direction. A key the command supplies itself (a dotenv it loads, a
+	// `KEY=$OTHER cmd` prefix) is likewise not here: the parent never had it.
+	//
+	// It exists so a FAIL row can explain a suite that passes in the user's
+	// shell and fails under verify:. Nothing branches on it — the scrub is
+	// unconditional (docs/adr/0002) and this field cannot make it otherwise.
+	ScrubbedFromEnv []string
 }
 
 // Verifier runs a verification command. Verify returns a Result whenever the
@@ -91,7 +107,9 @@ type RefusingVerifier struct{}
 // NewRefusingVerifier returns the refuse-everything default Verifier.
 func NewRefusingVerifier() RefusingVerifier { return RefusingVerifier{} }
 
-// Verify always fails, naming the command it declined to run.
+// Verify always fails, naming the command it declined to run. The empty Result
+// is the honest one: nothing was spawned, so nothing was scrubbed from a child
+// and ScrubbedFromEnv has nothing to report.
 func (RefusingVerifier) Verify(_ context.Context, req Request) (Result, error) {
 	return Result{}, &NotConfiguredError{Command: req.Command}
 }

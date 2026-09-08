@@ -10,6 +10,57 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
+  pins its final check node to a whole-reply verdict — the entire reply is the
+  bare `PASS` — because such a node may not set `success_check.verify`, so that
+  pattern is the whole gate with no evidence command behind it. The planner
+  prompt stated that form and said "FAIL otherwise", which covers the assertion
+  not holding and says nothing about the assertion holding while the node has
+  something you would want to know. A node in that position had to choose
+  between a `PASS` that swallows the caveat and a preamble that misses the
+  pattern, and the second is a FAIL row that reads like broken work when the
+  work was fine.
+
+  The prompt now carries the threshold: `PASS` is reserved for the assertion
+  holding **and** nothing a reader would act on differently, and anything the
+  node needs to report goes in the FAIL branch, which no pattern pins and is
+  therefore free prose. An observation you would not act on is explicitly not a
+  reason to withhold `PASS`, so the rule does not turn every remark into a
+  halted run. The verdict pattern itself is unchanged, and so is the shipped
+  `graphs/fragments/e2e-verify.yaml` spelling of it.
+
+### Fixed
+
+- **A `verify` failure now names the provider key the engine deleted.** Every
+  child oh-my-graph spawns has `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `OPENAI_API_KEY` and `CODEX_API_KEY` removed from its environment, and a
+  `success_check.verify` command is such a child. So a test suite that reads one
+  of those names passes in your own shell and fails under `verify:` — and the
+  FAIL row showed an exit code and a tail of the command's output, with nothing
+  about the environment the engine built. The reader debugged their code for a
+  failure their code had not caused.
+
+  That row now ends with one sentence naming the variable and pointing at the
+  workaround in `docs/LIMITATIONS.md`. It appears only when **both** halves
+  hold: the variable really was set in oh-my-graph's own environment, so the
+  scrub really took it from that child, and the failing command's own output
+  names it — matched against everything the command printed, not the truncated
+  tail the row shows. Either signal alone is noise, and a note on every failure
+  would teach you to skip the last sentence of every FAIL row, which is the one
+  place it matters.
+
+  What the conjunction costs is worth knowing before you rely on it: a suite
+  that reads the key without ever printing its name gets no note, and neither
+  does a key your command loads from a dotenv or a secrets file rather than
+  inheriting from your shell, because nothing was taken away from the child in
+  that case. The scrub itself is unchanged — same four names, one list, no
+  runtime branch, and nothing consults the new information to decide whether to
+  scrub. The note is appended after the detail's 240-rune cap rather than
+  inside it, so the command output the row retains is exactly what it was
+  before.
+
 ## [v0.14.0] - 2026-09-08
 
 ### Added

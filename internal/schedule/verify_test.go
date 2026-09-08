@@ -365,6 +365,164 @@ func TestJudgeVerification_DetailSurvivesAWhitespaceTail(t *testing.T) {
 	}
 }
 
+// --- the environment note at a verify failure -------------------------------
+
+// runVerifyFail drives one node whose `pytest` verification returns the
+// scripted result and hands back the FAIL row's Detail. FakeRunner and
+// FakeVerifier only: no process is spawned and nothing is read from the
+// environment of the machine running the test, so "the parent had
+// OPENAI_API_KEY" is posed rather than depended on.
+func runVerifyFail(t *testing.T, result verify.Result) string {
+	t.Helper()
+	g := mustGraph(t, `
+name: scrubbed
+nodes:
+  - id: dev
+    prompt: dev
+    success_check:
+      verify: { command: "pytest" }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"dev": pass("s-dev", 0)})
+	verifier := verify.NewFakeVerifier(map[string]verify.Result{"pytest": result})
+	s, h, led := newVerifyHarness(t, fake, verifier, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err == nil {
+		t.Fatal("expected the failed verification to fail the run")
+	}
+	rec, ok := findRecord(led, "dev")
+	if !ok {
+		t.Fatal("dev was never recorded in the ledger")
+	}
+	return rec.Detail
+}
+
+// TestVerifyFailDetailNamesTheScrubbedVarTheOutputCites is the reporter's case
+// in one test: a suite that reads OPENAI_API_KEY passes in the user's own shell
+// and fails under `verify:`, because the engine deletes that variable from
+// every child it spawns (internal/childenv). Before this, the FAIL row showed
+// an exit code and an output tail and said nothing about the environment, so
+// the reader debugged their code for a failure their code did not cause.
+//
+// The row must name the ONE variable in play. Reciting all four would make the
+// sentence a policy notice the reader has to translate.
+func TestVerifyFailDetailNamesTheScrubbedVarTheOutputCites(t *testing.T) {
+	detail := runVerifyFail(t, verify.Result{
+		ExitCode:        1,
+		Output:          "E   KeyError: 'OPENAI_API_KEY'\n1 failed in 0.42s\n",
+		ScrubbedFromEnv: []string{"OPENAI_API_KEY"},
+	})
+
+	for _, want := range []string{
+		"OPENAI_API_KEY",
+		"deleted from this command's environment",
+		"subscription-auth scrub",
+		"docs/LIMITATIONS.md",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("FAIL detail %q is missing %q", detail, want)
+		}
+	}
+	for _, unwanted := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY"} {
+		if strings.Contains(detail, unwanted) {
+			t.Errorf("the note must name the variable in play, not the whole policy: %q", detail)
+		}
+	}
+}
+
+// TestVerifyFailDetailOmitsScrubHintWhenTheVarWasNeverSet is the pair that
+// proves the note is not noise. It fires on a CONJUNCTION, and each half alone
+// must buy nothing:
+//
+//   - the output names the variable but this environment never had it. Then the
+//     scrub took nothing from the child, and "the engine deleted OPENAI_API_KEY"
+//     would be a lie in the other direction — one that sends the reader to fix
+//     an environment that was already right.
+//   - the environment had it but the failing command never named it. Then there
+//     is no evidence this failure is about that variable at all, and a note on
+//     every failure of a machine that happens to have a key exported teaches
+//     the reader to stop reading the end of FAIL rows.
+func TestVerifyFailDetailOmitsScrubHintWhenTheVarWasNeverSet(t *testing.T) {
+	cases := map[string]verify.Result{
+		"output names it but the parent env never had it": {
+			ExitCode: 1,
+			Output:   "E   KeyError: 'OPENAI_API_KEY'\n1 failed in 0.42s\n",
+		},
+		"parent env had it but the output never names it": {
+			ExitCode:        1,
+			Output:          "E   AssertionError: expected 2, got 1\n1 failed in 0.42s\n",
+			ScrubbedFromEnv: []string{"OPENAI_API_KEY"},
+		},
+	}
+	for name, result := range cases {
+		t.Run(name, func(t *testing.T) {
+			detail := runVerifyFail(t, result)
+
+			// Not "no OPENAI_API_KEY": the first case's own output names it, and
+			// quoting the command's output is the DETAIL column's job. What must
+			// be absent is the engine's claim ABOUT the environment.
+			for _, banned := range []string{"deleted from this command's environment", "subscription-auth scrub", "docs/LIMITATIONS.md"} {
+				if strings.Contains(detail, banned) {
+					t.Errorf("half the trigger produced a note anyway: detail %q contains %q", detail, banned)
+				}
+			}
+		})
+	}
+}
+
+// TestVerifyFailDetailHintDoesNotDisplaceTheCommandOutput pins the placement,
+// which is the reason the note is carried beside the Detail instead of inside
+// it. capDetail keeps the TAIL, so a sentence appended before the cut would BE
+// the tail and would pay for itself out of the command output — the reader
+// would trade the failing assertion for an explanation of it. Appended after
+// the cap, the retained output is byte-for-byte what it would have been with no
+// note at all.
+func TestVerifyFailDetailHintDoesNotDisplaceTheCommandOutput(t *testing.T) {
+	// Long enough that the cap certainly bites: a comparison of two details
+	// that both fit whole would prove nothing about displacement.
+	output := strings.Repeat("E   AssertionError: expected 2, got 1\n", 40) +
+		"E   KeyError: 'OPENAI_API_KEY'\n"
+
+	without := runVerifyFail(t, verify.Result{ExitCode: 1, Output: output})
+	with := runVerifyFail(t, verify.Result{
+		ExitCode:        1,
+		Output:          output,
+		ScrubbedFromEnv: []string{"OPENAI_API_KEY"},
+	})
+
+	if !strings.HasPrefix(without, "…") {
+		t.Fatalf("fixture too short for the cap to bite — the test would pass vacuously: %q", without)
+	}
+	if with == without {
+		t.Fatal("the note never arrived, so this proves nothing about what it costs")
+	}
+	if !strings.HasPrefix(with, without) {
+		t.Errorf("the note displaced command output:\n with = %q\n without = %q", with, without)
+	}
+}
+
+// TestScrubHintPointsAtALiveDocument keeps the note's pointer honest. It sends
+// the reader to a bullet in another file for the workaround (#267), and a
+// pointer that no longer resolves is worse than no pointer: it costs the reader
+// the search before it costs them the answer.
+func TestScrubHintPointsAtALiveDocument(t *testing.T) {
+	hint := scrubHint(verify.Result{
+		Output:          "KeyError: 'OPENAI_API_KEY'",
+		ScrubbedFromEnv: []string{"OPENAI_API_KEY"},
+	})
+	if hint == "" {
+		t.Fatal("scrubHint returned nothing for a result that meets both halves of its trigger")
+	}
+
+	path := filepath.Join("..", "..", "docs", "LIMITATIONS.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the note names docs/LIMITATIONS.md, which could not be read: %v", err)
+	}
+	if want := "without the provider API keys"; !strings.Contains(string(body), want) {
+		t.Errorf("the note sends the reader to the bullet on %q, and docs/LIMITATIONS.md no longer has it", want)
+	}
+}
+
 // TestScheduler_UnexpectedExitCodeFailsTheNode proves expect_exit is judged as
 // declared, not as "zero": a graph that expects a command to FAIL (grep finding
 // nothing, a should-not-compile check) fails when it unexpectedly succeeds.
