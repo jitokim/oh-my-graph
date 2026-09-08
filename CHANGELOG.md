@@ -32,6 +32,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **Seven facts #268 had to learn by running** — silent tool denials on a node
+  still recorded PASS, an unexpanded `cwd:`, exit-code-only `verify:`, the
+  verdict's provenance parenthesis, where the gate buttons live, a
+  `result did not match` FAIL as a possible pattern miss
+  ([#264](https://github.com/jitokim/oh-my-graph/issues/264)), and
+  `e2e-verify`'s one-parent rule — are now in the plugin agent, `/graph`, the
+  run-graph skill and that fragment's header.
+  ([#268](https://github.com/jitokim/oh-my-graph/issues/268))
+
 - **Your `success_check.verify` command runs without the provider API keys, and
   now something says so.** Every child oh-my-graph spawns starts with
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
@@ -145,6 +154,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   wording and reject the old sentence.
 
 ### Fixed
+
+- **Two prose-pinning tests promised a guard they did not implement.** This
+  release's rotating meta-review (`CONTRIBUTING.md`) took **tests** as its
+  subject and asked one question of them: *which test that pins a piece of prose
+  would still pass if that prose were deleted?* Two answered badly, and both
+  were shipped in this same release cycle.
+
+  `TestLimitationsStampMatchesVersion` carried a comment saying it asserts
+  presence of the version's stamp "rather than the absence of older ones" — and
+  then tested `strings.Contains(text, "v"+Version)`, which is presence of the
+  version *string*. `docs/LIMITATIONS.md` also names its version in ordinary
+  prose, so deleting all three `as of` stamps left that check satisfied while
+  the staleness loop, with nothing to iterate, said nothing either. Presence is
+  now derived from the same regex the staleness loop uses.
+
+  `TestQualifierClauseSweepMatchesDESIGN` never opened `DESIGN.md`. It restated
+  the two numbers as a constant and counted the graphs, so it caught one drift
+  direction of four: rewording DESIGN.md's sentence to any pair of numbers
+  passed, and deleting the passage outright passed. It now reads the numerals
+  out of the passage and requires the sentence to match exactly once.
+
+  Both fixes were proved by mutation rather than asserted: the passage was
+  removed and the stamps deleted, each test was confirmed red, and the tree was
+  restored. The mutation for the stamps also printed that the version string
+  survived it — which is precisely why the old check had passed.
 
 - **Two places the release checklist never called, and a guard so it does not
   have to.** `docs/LIMITATIONS.md` still stamped itself *"as of v0.11.0"* after

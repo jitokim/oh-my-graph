@@ -62,6 +62,7 @@ Five of those are worth knowing precisely:
 - `serve` with no run id is a dashboard of every run, each card opening that
   run's own view at `/run/<id>/`; with an id it goes straight to that run. It
   binds `127.0.0.1` only.
+  On exit 2 hand the user `/run/<id>/` under a standalone `serve` — the approve/reject buttons sit on the gate's feed entry there, never on `/` (#268).
 
 Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
 a human gate and is **resumable** — a pause is not a failure — and `3` `auto`
@@ -69,6 +70,8 @@ refused to start for want of build evidence. On exit 2,
 surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below.
+A FAIL detailed `result did not match` may be a verdict-pattern miss rather than
+broken work — unlike `verify_failed`, read the node's reply before acting (#264).
 
 ## The one refusal you must not resolve yourself
 
@@ -110,11 +113,15 @@ a reason to reach for it.
   graph without running it; `oh-my-graph run <graph.yaml> --dry-run`
   validates and prints the execution plan without spawning any node. Use
   these before a real run of new or edited YAML — nodes cost real money.
+  A `success_check.verify` command is judged by its exit code alone, so a target
+  ending in `|| true` always passes — read its body before you trust it (#268).
 - **Report the ledger.** After a run, relay the run ledger: one line per
   node — its five printed columns are node id, verdict, session id, cost and
   a short detail — plus the total cost. If a node failed, surface its failure
   reason. For `auto`, show the planned graph (node ids and dependencies)
   before the ledger.
+  Quote the verdict WITH its parenthesis — `(verified)` means the engine ran and
+  judged a command, `(self-reported)` means the node passed on its words (#268).
 - **Inspect, don't guess.** `runs list`, `show <run-id>`, and
   `watch <run-id>` (tails the run's event stream) answer "what happened /
   what is happening" — use them instead of speculating about run state.
@@ -146,6 +153,10 @@ when authoring or debugging:
 - **Verification.** A node's `success_check.verify` shell command is
   independent evidence that the node did what it claimed — encourage it for
   nodes whose output feeds later nodes.
+- **Grants and `cwd` decide what a node really did.** A denied tool call is
+  silent — `permission_denials` is not a field the engine reads — so a refused
+  node still narrates plausible work and is recorded PASS; keep what it reads
+  inside its `cwd`, and write `cwd:` absolute (`~` is not expanded) (#268).
 - **Fragments (`use:` / `with:`).** Instead of restating a proven node shape,
   a node may cite a single-node fragment with `use: <name>` plus `with:`
   bindings; the loader splices it in before validation, so the resolved graph

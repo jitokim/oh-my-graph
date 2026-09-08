@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -837,7 +838,7 @@ const qualifierClause = "Anything you need to qualify"
 //     fragment. That gap is the point DESIGN.md is making, so a change that
 //     closes it (fragments abandoned, say) should fail here and be re-argued.
 func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
-	const wantDeclarations, wantNodes = 25, 33
+	wantDeclarations, wantNodes := designQualifierCounts(t)
 
 	declarations := 0
 	for _, dir := range []string{
@@ -875,6 +876,46 @@ func TestQualifierClauseSweepMatchesDESIGN(t *testing.T) {
 	if nodes != wantNodes {
 		t.Errorf("the clause reaches %d runtime nodes, DESIGN.md says %d — update DESIGN.md's \"Verdict patterns\" section along with the graphs", nodes, wantNodes)
 	}
+}
+
+// designQualifierCounts reads the two numbers out of DESIGN.md's "Verdict
+// patterns" passage instead of restating them as constants.
+//
+// The test above used to carry `const wantDeclarations, wantNodes = 25, 33`,
+// and its name has always claimed a match against DESIGN.md that the body never
+// checked: it opened `graphs/` and nothing else. So it caught exactly one of the
+// drift directions — graphs move, DESIGN.md goes stale — and was silent on the
+// other three. Editing DESIGN.md's sentence to any pair of numbers passed;
+// deleting the passage outright passed.
+//
+// Reading the numerals OUT of the prose closes all four, and the shape is
+// borrowed from TestFenceCallSiteCountMatchesTheCode, which is the only other
+// test here that reads a number out of a document rather than beside it.
+//
+// The match must be unique. A passage duplicated by a careless edit would
+// otherwise let this test pin whichever copy came first while a reader met the
+// other.
+func designQualifierCounts(t *testing.T) (declarations, nodes int) {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "DESIGN.md"))
+	if err != nil {
+		t.Fatalf("read DESIGN.md: %v", err)
+	}
+
+	sentence := regexp.MustCompile(`sweep counts \*\*(\d+)\s+declarations, covering (\d+) runtime nodes\*\*`)
+	matches := sentence.FindAllStringSubmatch(string(body), -1)
+	if len(matches) != 1 {
+		t.Fatalf("DESIGN.md's \"Verdict patterns\" passage matched %d times, want exactly 1 — the sentence this test pins has been reworded or deleted, so nothing states the sweep's size to a reader", len(matches))
+	}
+
+	if declarations, err = strconv.Atoi(matches[0][1]); err != nil {
+		t.Fatalf("declaration count %q in DESIGN.md is not a number: %v", matches[0][1], err)
+	}
+	if nodes, err = strconv.Atoi(matches[0][2]); err != nil {
+		t.Fatalf("node count %q in DESIGN.md is not a number: %v", matches[0][2], err)
+	}
+	return declarations, nodes
 }
 
 // TestLocalrunStressBudgetMatchesItsTimeout holds together the two halves of
