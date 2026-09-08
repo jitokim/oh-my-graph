@@ -10,6 +10,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.14.0] - 2026-09-08
+
 ### Added
 
 - **A run's live view now offers a way back to the dashboard.** Under
@@ -39,63 +41,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   ([ADR 0040](docs/adr/0040-a-recorded-policy-says-whether-it-was-a-ceiling.md),
   [`docs/RUN-FEED.md`](docs/RUN-FEED.md))
 
-### Documented
-
-- **The evidence two open issues cite is now in the tree.**
-  [#243](https://github.com/jitokim/oh-my-graph/issues/243) and
-  [#244](https://github.com/jitokim/oh-my-graph/issues/244) both point at
-  `docs/measurements/0034b-independent-lane-failure-predicate.md`, which was
-  written on a lane branch that never landed — proved with
-  `git merge-base --is-ancestor`, not by reading a commit message. Both issues
-  were telling a reader to check something they could not reach, and one told
-  them to reproduce it by running a file that was not there.
-
-  It lands re-verified rather than copied: the address for *"the planner's reply
-  schema has no graph-level `on_fail`"* had drifted to
-  `internal/coordinator/coordinator.go:1725-1737`, and the planned-graph
-  population it measured grew from 43 to 77 — the conjunct is vacuous on all of
-  them, so the structural argument holds on a corpus nearly twice the size.
-  Three sibling commits on that branch were deliberately **not** landed: their
-  work reached `main` by another route (#237) in a stronger form.
-
-- **Seven facts #268 had to learn by running** — silent tool denials on a node
-  still recorded PASS, an unexpanded `cwd:`, exit-code-only `verify:`, the
-  verdict's provenance parenthesis, where the gate buttons live, a
-  `result did not match` FAIL as a possible pattern miss
-  ([#264](https://github.com/jitokim/oh-my-graph/issues/264)), and
-  `e2e-verify`'s one-parent rule — are now in the plugin agent, `/graph`, the
-  run-graph skill and that fragment's header.
-  ([#268](https://github.com/jitokim/oh-my-graph/issues/268))
-
-- **Your `success_check.verify` command runs without the provider API keys, and
-  now something says so.** Every child oh-my-graph spawns starts with
-  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
-  `CODEX_API_KEY` deleted, and a verification command is one of those children —
-  so a suite that reads one of those names fails under `verify:` while passing
-  in your own shell, and the failure text offers only an exit code and an output
-  tail. That was already true and nowhere stated as a consequence for *your*
-  tests. `docs/LIMITATIONS.md` now carries it: the fact, why verification gets
-  no exception (the policy is one list with no branch on the command string, so
-  a provider variable added later cannot go missing from half of it), how to
-  hand your suite a key under a different name — and that doing so puts any
-  provider CLI that command reaches back on metered API billing.
-  ([#266](https://github.com/jitokim/oh-my-graph/issues/266))
-
-- **ADR 0039 — a gate is authored, not attached**
-  ([`docs/adr/0039-a-gate-is-authored-not-attached.md`](docs/adr/0039-a-gate-is-authored-not-attached.md)),
-  **Proposed. Decision record only — no flag, no schema key, no new seam, no
-  behaviour change.** `auto` gains no way to splice a `type: gate` into a
-  planned graph the way `--verify-cmd` splices a command. A gate ends the leg
-  rather than blocking it, so attaching one after validation is a topology
-  change: it collides with the loader's own gate rules on plans the planner is
-  invited to write, it cannot coexist with `--verify-cmd` at a sink, and it
-  parks an unattended run in a state every "is anything still running" surface
-  reads as settled. The path that exists is `auto --plan-only` → add the gate
-  and your own `verify:` → `run`, and the record states what that costs.
-  ([#265](https://github.com/jitokim/oh-my-graph/issues/265))
-
-### Added
-
 - **`graphs/fragments/read-and-report.yaml`** — the first fragment written to be
   citable by a **planned** node, not only by a hand-written one. ADR 0038
   measured that none of the six existing fragments qualify, and the reason is
@@ -111,8 +56,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   It covers no runtime node yet: no shipped graph cites it. DESIGN.md's
   qualifier-clause count says so rather than implying a coverage that does not
   exist.
-
-### Added
 
 - **A Codex usage limit is a pause now, not a dead run.** ADR 0009's resumable
   pause had been Claude-only since [#171](https://github.com/jitokim/oh-my-graph/issues/171)
@@ -179,66 +122,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   disclosure (`cmd/oh-my-graph/wiring_test.go`, `planonly_test.go`) pin the new
   wording and reject the old sentence.
 
-### Fixed
-
-- **Two prose-pinning tests promised a guard they did not implement.** This
-  release's rotating meta-review (`CONTRIBUTING.md`) took **tests** as its
-  subject and asked one question of them: *which test that pins a piece of prose
-  would still pass if that prose were deleted?* Two answered badly, and both
-  were shipped in this same release cycle.
-
-  `TestLimitationsStampMatchesVersion` carried a comment saying it asserts
-  presence of the version's stamp "rather than the absence of older ones" — and
-  then tested `strings.Contains(text, "v"+Version)`, which is presence of the
-  version *string*. `docs/LIMITATIONS.md` also names its version in ordinary
-  prose, so deleting all three `as of` stamps left that check satisfied while
-  the staleness loop, with nothing to iterate, said nothing either. Presence is
-  now derived from the same regex the staleness loop uses.
-
-  `TestQualifierClauseSweepMatchesDESIGN` never opened `DESIGN.md`. It restated
-  the two numbers as a constant and counted the graphs, so it caught one drift
-  direction of four: rewording DESIGN.md's sentence to any pair of numbers
-  passed, and deleting the passage outright passed. It now reads the numerals
-  out of the passage and requires the sentence to match exactly once.
-
-  Both fixes were proved by mutation rather than asserted: the passage was
-  removed and the stamps deleted, each test was confirmed red, and the tree was
-  restored. The mutation for the stamps also printed that the version string
-  survived it — which is precisely why the old check had passed.
-
-- **Two places the release checklist never called, and a guard so it does not
-  have to.** `docs/LIMITATIONS.md` still stamped itself *"as of v0.11.0"* after
-  two releases — in a file whose most recent commit had been titled *"five
-  sentences v0.11.0 made false"* — and `CHANGELOG.md`'s `[Unreleased]` footnote
-  still compared against **v0.10.0**, so v0.11.0, v0.12.0 and v0.13.0 had no
-  compare link at all.
-
-  Both are corrected, and both are now **tested** rather than listed.
-  CONTRIBUTING already knew why the list was never going to be enough — *"a
-  checklist item that depends on someone reading it is a note about a guard
-  nobody wrote"* — which is the same sentence v0.8.0 earned by shipping with
-  stale plugin manifests.
-
-  The stamp check asserts the current version is **present** and that no `as of
-  vX` names a different one; asserting only the absence of old stamps would pass
-  for a file that had dropped every stamp and told the reader nothing.
-
-### Changed
-
-- **The README's live-view screenshot now shows a graph doing something worth
-  graphing.** The old one was a real run but a linear one, and its DAG map was
-  decoration. The new one is a seven-node research pipeline caught mid-flight —
-  two papers read and prototyped down **independent chains**, one 37s ahead of
-  the other, then converging on a verdict. The shape is the point, and now the
-  shape is legible: the map's node names are readable and the two chains are
-  visibly at different stages.
-
-  Both READMEs carry it, and both captions say the thing the picture cannot:
-  **nothing in the graph asks for parallelism.** It declares what each node
-  depends on, and independence is what is left over.
-
-### Added
-
 - **A planned node answers with the model you chose.** `--setting-sources ""`
   withholds `~/.claude/settings.json` from a planned node, and your `model` key
   lives in it — so 181 of the 187 planned nodes measured in this repository's
@@ -302,6 +185,18 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Changed
 
+- **The README's live-view screenshot now shows a graph doing something worth
+  graphing.** The old one was a real run but a linear one, and its DAG map was
+  decoration. The new one is a seven-node research pipeline caught mid-flight —
+  two papers read and prototyped down **independent chains**, one 37s ahead of
+  the other, then converging on a verdict. The shape is the point, and now the
+  shape is legible: the map's node names are readable and the two chains are
+  visibly at different stages.
+
+  Both READMEs carry it, and both captions say the thing the picture cannot:
+  **nothing in the graph asks for parallelism.** It declares what each node
+  depends on, and independence is what is left over.
+
 - **The model ADR is renumbered 0034 → 0037.** It was written as 0034 on a
   branch cut before `main` merged its own 0034 — *an unmatched tool call meets a
   classifier* — so merging left two documents under one number and the READMEs,
@@ -314,7 +209,6 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   changed. A citation of "ADR 0034" written before 2026-08-29 may mean either
   document; read it by subject. The measurement companion keeps the name it was
   written under, `docs/measurements/0034-planned-node-model.md`.
-### Changed
 
 - **The `serve` dashboard's `unknown` card now carries the same sentence about
   an unreadable run that every other surface does.** A run directory the binary
@@ -332,6 +226,48 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   card used to show is lost (#227).
 
 ### Fixed
+
+- **Two prose-pinning tests promised a guard they did not implement.** This
+  release's rotating meta-review (`CONTRIBUTING.md`) took **tests** as its
+  subject and asked one question of them: *which test that pins a piece of prose
+  would still pass if that prose were deleted?* Two answered badly, and both
+  were shipped in this same release cycle.
+
+  `TestLimitationsStampMatchesVersion` carried a comment saying it asserts
+  presence of the version's stamp "rather than the absence of older ones" — and
+  then tested `strings.Contains(text, "v"+Version)`, which is presence of the
+  version *string*. `docs/LIMITATIONS.md` also names its version in ordinary
+  prose, so deleting all three `as of` stamps left that check satisfied while
+  the staleness loop, with nothing to iterate, said nothing either. Presence is
+  now derived from the same regex the staleness loop uses.
+
+  `TestQualifierClauseSweepMatchesDESIGN` never opened `DESIGN.md`. It restated
+  the two numbers as a constant and counted the graphs, so it caught one drift
+  direction of four: rewording DESIGN.md's sentence to any pair of numbers
+  passed, and deleting the passage outright passed. It now reads the numerals
+  out of the passage and requires the sentence to match exactly once.
+
+  Both fixes were proved by mutation rather than asserted: the passage was
+  removed and the stamps deleted, each test was confirmed red, and the tree was
+  restored. The mutation for the stamps also printed that the version string
+  survived it — which is precisely why the old check had passed.
+
+- **Two places the release checklist never called, and a guard so it does not
+  have to.** `docs/LIMITATIONS.md` still stamped itself *"as of v0.11.0"* after
+  two releases — in a file whose most recent commit had been titled *"five
+  sentences v0.11.0 made false"* — and `CHANGELOG.md`'s `[Unreleased]` footnote
+  still compared against **v0.10.0**, so v0.11.0, v0.12.0 and v0.13.0 had no
+  compare link at all.
+
+  Both are corrected, and both are now **tested** rather than listed.
+  CONTRIBUTING already knew why the list was never going to be enough — *"a
+  checklist item that depends on someone reading it is a note about a guard
+  nobody wrote"* — which is the same sentence v0.8.0 earned by shipping with
+  stale plugin manifests.
+
+  The stamp check asserts the current version is **present** and that no `as of
+  vX` names a different one; asserting only the absence of old stamps would pass
+  for a file that had dropped every stamp and told the reader nothing.
 
 - **A `lint`-output claim in the v0.12.0 entry named no way to retrace it, and
   now names one.** The entry for the `backlog-batch` rule header ended "both
@@ -367,6 +303,59 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   matches nothing.
 
 ### Documented
+
+- **The evidence two open issues cite is now in the tree.**
+  [#243](https://github.com/jitokim/oh-my-graph/issues/243) and
+  [#244](https://github.com/jitokim/oh-my-graph/issues/244) both point at
+  `docs/measurements/0034b-independent-lane-failure-predicate.md`, which was
+  written on a lane branch that never landed — proved with
+  `git merge-base --is-ancestor`, not by reading a commit message. Both issues
+  were telling a reader to check something they could not reach, and one told
+  them to reproduce it by running a file that was not there.
+
+  It lands re-verified rather than copied: the address for *"the planner's reply
+  schema has no graph-level `on_fail`"* had drifted to
+  `internal/coordinator/coordinator.go:1725-1737`, and the planned-graph
+  population it measured grew from 43 to 77 — the conjunct is vacuous on all of
+  them, so the structural argument holds on a corpus nearly twice the size.
+  Three sibling commits on that branch were deliberately **not** landed: their
+  work reached `main` by another route (#237) in a stronger form.
+
+- **Seven facts #268 had to learn by running** — silent tool denials on a node
+  still recorded PASS, an unexpanded `cwd:`, exit-code-only `verify:`, the
+  verdict's provenance parenthesis, where the gate buttons live, a
+  `result did not match` FAIL as a possible pattern miss
+  ([#264](https://github.com/jitokim/oh-my-graph/issues/264)), and
+  `e2e-verify`'s one-parent rule — are now in the plugin agent, `/graph`, the
+  run-graph skill and that fragment's header.
+  ([#268](https://github.com/jitokim/oh-my-graph/issues/268))
+
+- **Your `success_check.verify` command runs without the provider API keys, and
+  now something says so.** Every child oh-my-graph spawns starts with
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` deleted, and a verification command is one of those children —
+  so a suite that reads one of those names fails under `verify:` while passing
+  in your own shell, and the failure text offers only an exit code and an output
+  tail. That was already true and nowhere stated as a consequence for *your*
+  tests. `docs/LIMITATIONS.md` now carries it: the fact, why verification gets
+  no exception (the policy is one list with no branch on the command string, so
+  a provider variable added later cannot go missing from half of it), how to
+  hand your suite a key under a different name — and that doing so puts any
+  provider CLI that command reaches back on metered API billing.
+  ([#266](https://github.com/jitokim/oh-my-graph/issues/266))
+
+- **ADR 0039 — a gate is authored, not attached**
+  ([`docs/adr/0039-a-gate-is-authored-not-attached.md`](docs/adr/0039-a-gate-is-authored-not-attached.md)),
+  **Proposed. Decision record only — no flag, no schema key, no new seam, no
+  behaviour change.** `auto` gains no way to splice a `type: gate` into a
+  planned graph the way `--verify-cmd` splices a command. A gate ends the leg
+  rather than blocking it, so attaching one after validation is a topology
+  change: it collides with the loader's own gate rules on plans the planner is
+  invited to write, it cannot coexist with `--verify-cmd` at a sink, and it
+  parks an unattended run in a state every "is anything still running" surface
+  reads as settled. The path that exists is `auto --plan-only` → add the gate
+  and your own `verify:` → `run`, and the record states what that costs.
+  ([#265](https://github.com/jitokim/oh-my-graph/issues/265))
 
 - **ADR 0038 — a planned node cites a fragment from a menu it did not write**
   ([`docs/adr/0038-a-planned-node-cites-a-fragment-from-a-menu-it-did-not-write.md`](docs/adr/0038-a-planned-node-cites-a-fragment-from-a-menu-it-did-not-write.md)),
@@ -4790,7 +4779,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.14.0...HEAD
+[v0.14.0]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...v0.14.0
 [v0.13.0]: https://github.com/jitokim/oh-my-graph/compare/v0.12.0...v0.13.0
 [v0.12.0]: https://github.com/jitokim/oh-my-graph/compare/v0.11.0...v0.12.0
 [v0.11.0]: https://github.com/jitokim/oh-my-graph/compare/v0.10.0...v0.11.0
