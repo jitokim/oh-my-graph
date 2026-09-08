@@ -2683,10 +2683,16 @@ isolated sentence or the loaded one, never both and never neither**, with a
 different literal per runtime because the bill differs (on Claude the operator's
 standing grants come back with their settings, so a declared `Bash(git *)` is a
 declaration again; on Codex `--sandbox` and `approval_policy="never"` are argv
-outside the branch and the flag widens neither). There is **no new snapshot
-field**: inside a non-empty `ToolPolicies` map an absent `setting_sources` is
-unambiguous, so the disclosure predicate reads the policies about to be spawned
-and cannot drift from the argv. `resume` therefore inherits the choice and
+outside the branch and the flag widens neither). `setting_sources` itself is
+unchanged: inside a non-empty `ToolPolicies` map an absent one is unambiguous, so
+the disclosure predicate reads the policies about to be spawned and cannot drift
+from the argv. But unambiguous is not the same as read, and it was misread once
+at a cost, so since ADR 0040 a recorded policy also carries
+**`allowed_tools_is_a_ceiling`** — a bool, present on every policy, derived from
+`SettingSources` by `runstate.NodeToolPolicy.MarshalJSON` and read back by
+nothing, so there is no stored copy to disagree with the argv. `false` says the
+`allowed_tools` list beside it did not bind; it claims nothing about layers 3 and
+5, which do bind under the opt-in. `resume` therefore inherits the choice and
 reprints the line before the banner while registering **no** flag of its own — a
 resumed leg's flags may only de-escalate (ADR 0017 §6, one direction over).
 

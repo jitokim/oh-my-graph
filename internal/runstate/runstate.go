@@ -131,6 +131,13 @@ type NodeToolPolicy struct {
 	// omitted; a pointer to "" means "load none of the user's settings files",
 	// which is the load-bearing Layer-1 isolation. A pointer (not a bare string) so
 	// "omitted" and "explicitly empty" stay distinguishable across a round-trip.
+	//
+	// It stays omitempty, so the nil case is still recorded as an ABSENT key and
+	// not as an explicit null: that absence is what ADR 0032 §2.7 chose, it is
+	// what `TestResume_DoesNotEraseTheLoadedConfigChoice` asserts at the byte
+	// level, and a null would be exactly as easy to skim past. What a reader of
+	// this policy actually gets wrong is not the mechanism but its CONSEQUENCE,
+	// so that is the thing MarshalJSON writes down (ADR 0040).
 	SettingSources *string `json:"setting_sources,omitempty"`
 	// StrictMCPConfig renders as --strict-mcp-config, bounding MCP servers.
 	StrictMCPConfig bool `json:"strict_mcp_config,omitempty"`
@@ -148,6 +155,58 @@ type NodeToolPolicy struct {
 	// snapshot without the field rehydrates as an isolated run, which is the
 	// correct default.
 	PluginDirs []string `json:"plugin_dirs,omitempty"`
+}
+
+// AllowedToolsIsACeilingKey is the derived key MarshalJSON stamps on every
+// recorded policy. Named because two tests and the consumer contract in
+// docs/RUN-FEED.md all have to spell it, and a fourth spelling of it is how
+// one of them would go quietly stale.
+const AllowedToolsIsACeilingKey = "allowed_tools_is_a_ceiling"
+
+// MarshalJSON encodes the policy with one field the struct does not hold:
+// `allowed_tools_is_a_ceiling`, always present, derived from SettingSources at
+// the encoding boundary.
+//
+// The field exists because the recorded policy answered the wrong question.
+// Layer 1 ON is a pointer to "" and writes `"setting_sources": ""`; layer 1
+// OFF is nil and, being omitempty, writes NOTHING — and layer 1 off is the
+// state where the node also inherits the operator's standing permission grants,
+// so its `allowed_tools` list is a declaration and not a limit (ADR 0032, and
+// the ceiling table in DESIGN.md). The dangerous state was the invisible one
+// and the safe state was a value that reads as empty at a glance, which is how
+// run 20260907-044244.824270000-1 came to be read as a node that could not
+// post GitHub comments, by an operator looking at a six-entry `allowed_tools`
+// list on a node that had already posted them.
+//
+// What is written down is therefore the CONSEQUENCE, not a second copy of the
+// mechanism. `setting_sources` keeps its exact shape — absent still means
+// layer 1 off, which is what ADR 0032 §2.7 decided and what the resume tests
+// assert on the raw bytes — and this field says what that costs the reader:
+// false means the list below it did not bind. It deliberately claims nothing
+// about layers 3 and 5, which still bind under the opt-in.
+//
+// It lives on the type rather than on Write for the reason Snapshot.MarshalJSON
+// gives at length: the hole is a property of the format, so it is closed at the
+// boundary where the format is produced, and no writer — Write, a resumed leg's
+// recorder, or any future one — can persist a policy without it.
+//
+// It is derived at every encode and read back by nothing: NodeToolPolicy has no
+// such Go field, so decoding ignores the key and the in-memory truth stays
+// SettingSources alone. That is what answers ADR 0032 §2.7's objection to a
+// second field ("could only ever disagree with the argv") structurally instead
+// of by promise — there is no stored copy that could drift, and an old snapshot
+// that predates the key yields the same answer it always did.
+func (p NodeToolPolicy) MarshalJSON() ([]byte, error) {
+	// A local defined type strips NodeToolPolicy's method set, so the embedded
+	// value below marshals by its struct tags instead of recursing here.
+	type policy NodeToolPolicy
+	return json.Marshal(struct {
+		policy
+		AllowedToolsIsACeiling bool `json:"allowed_tools_is_a_ceiling"`
+	}{
+		policy:                 policy(p),
+		AllowedToolsIsACeiling: p.SettingSources != nil,
+	})
 }
 
 // NodeRecord is one completed node's entry in the snapshot: exactly the fields

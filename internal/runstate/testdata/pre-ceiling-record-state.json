@@ -1,0 +1,28 @@
+{
+  "schema": 3,
+  "run_id": "20260907-044244.824270000-1",
+  "runtime": "claude",
+  "graph_source_path": "graphs/lane.yaml",
+  "graph_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "graph": {"name": "lane", "nodes": [{"id": "survey", "prompt": "survey"}, {"id": "reply-drafts", "prompt": "draft the replies", "depends_on": ["survey"]}]},
+  "tool_policies": {
+    "survey": {
+      "allowed_tools": ["Read", "Grep", "Glob"],
+      "disallowed_tools": ["MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"],
+      "tools": ["Read", "Grep", "Glob"]
+    },
+    "reply-drafts": {
+      "allowed_tools": ["Read", "Grep", "Glob", "Write", "Edit", "Bash(git *)"],
+      "disallowed_tools": ["MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"],
+      "tools": ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+    }
+  },
+  "nodes": {
+    "reply-drafts": {
+      "verdict": "PASS",
+      "session_id": "sess-reply-drafts",
+      "cost_usd": 1.2
+    }
+  },
+  "gate": {}
+}
