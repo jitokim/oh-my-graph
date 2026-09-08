@@ -32,6 +32,23 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Documented
 
+- **The evidence two open issues cite is now in the tree.**
+  [#243](https://github.com/jitokim/oh-my-graph/issues/243) and
+  [#244](https://github.com/jitokim/oh-my-graph/issues/244) both point at
+  `docs/measurements/0034b-independent-lane-failure-predicate.md`, which was
+  written on a lane branch that never landed — proved with
+  `git merge-base --is-ancestor`, not by reading a commit message. Both issues
+  were telling a reader to check something they could not reach, and one told
+  them to reproduce it by running a file that was not there.
+
+  It lands re-verified rather than copied: the address for *"the planner's reply
+  schema has no graph-level `on_fail`"* had drifted to
+  `internal/coordinator/coordinator.go:1725-1737`, and the planned-graph
+  population it measured grew from 43 to 77 — the conjunct is vacuous on all of
+  them, so the structural argument holds on a corpus nearly twice the size.
+  Three sibling commits on that branch were deliberately **not** landed: their
+  work reached `main` by another route (#237) in a stronger form.
+
 - **Seven facts #268 had to learn by running** — silent tool denials on a node
   still recorded PASS, an unexpanded `cwd:`, exit-code-only `verify:`, the
   verdict's provenance parenthesis, where the gate buttons live, a
