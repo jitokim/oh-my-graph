@@ -10,6 +10,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+### Changed
+
+- **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
+  pins its final check node to a whole-reply verdict — the entire reply is the
+  bare `PASS` — because such a node may not set `success_check.verify`, so that
+  pattern is the whole gate with no evidence command behind it. The planner
+  prompt stated that form and said "FAIL otherwise", which covers the assertion
+  not holding and says nothing about the assertion holding while the node has
+  something you would want to know. A node in that position had to choose
+  between a `PASS` that swallows the caveat and a preamble that misses the
+  pattern, and the second is a FAIL row that reads like broken work when the
+  work was fine.
+
+  The prompt now carries the threshold: `PASS` is reserved for the assertion
+  holding **and** nothing a reader would act on differently, and anything the
+  node needs to report goes in the FAIL branch, which no pattern pins and is
+  therefore free prose. An observation you would not act on is explicitly not a
+  reason to withhold `PASS`, so the rule does not turn every remark into a
+  halted run. The verdict pattern itself is unchanged, and so is the shipped
+  `graphs/fragments/e2e-verify.yaml` spelling of it.
+
 ### Fixed
 
 - **A `verify` failure now names the provider key the engine deleted.** Every
