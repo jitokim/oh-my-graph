@@ -396,6 +396,17 @@ knowingly.
 
 ### 2.7 The record is the policy itself, and the resumed leg inherits it and says so
 
+> **Update (2026-09-08):** amended in part by
+> [ADR 0040](0040-a-recorded-policy-says-whether-it-was-a-ceiling.md). Everything
+> below about `setting_sources` **stands unchanged** — it is still `omitempty`,
+> layer 1 OFF is still recorded as an ABSENT key, and the disclosure predicate
+> still reads the policies rather than the flag. What ADR 0040 corrects is the
+> "no new snapshot field" sentence: the answer being *derivable* is not the same
+> as a reader deriving it, and on run `20260907-044244.824270000-1` one did not,
+> at a cost. A policy now also carries `allowed_tools_is_a_ceiling`, derived from
+> `SettingSources` at the encoding boundary and read back by nothing — which is
+> why it cannot do the thing the last sentence here rules out.
+
 No new snapshot field. `runstate.NodeToolPolicy.SettingSources` is already a
 `*string` for exactly this reason
 (`internal/runstate/runstate.go:129-134`): *"A pointer (not a bare string) so

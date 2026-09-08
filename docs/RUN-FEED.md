@@ -157,14 +157,14 @@ the event schema, and vice versa.
 ## `state.json` — the snapshot
 
 The authoritative field-by-field documentation is the doc comments in
-`internal/runstate/runstate.go` (the `Snapshot`, `NodeRecord`, and `GateState`
-types); this section is the consumer-facing summary.
+`internal/runstate/runstate.go` (the `Snapshot`, `NodeRecord`, `NodeToolPolicy`
+and `GateState` types); this section is the consumer-facing summary.
 
 Top-level fields: `schema`, `run_id`, `runtime` (`"claude"` or `"codex"`),
 `planning_cost_usd`, `planning_cost_unknown`, `planning_usage`,
 `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
-`continue_on_fail`, `tool_policies` (auto runs only), `goal` (iterated auto
+`continue_on_fail`, `tool_policies` (auto runs only — see below), `goal` (iterated auto
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
 — see below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
@@ -173,6 +173,32 @@ terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one), and `gate` (`paused_at`, `decisions`).
+
+`tool_policies` is the per-node execution ceiling of an auto run, keyed by node
+id, and is absent entirely for a `run` of a hand-written graph. Each entry holds
+`allowed_tools`, `disallowed_tools`, `tools`, `setting_sources`,
+`strict_mcp_config`, `plugin_dirs` — the argv of ceiling layers 1–5 — and
+`allowed_tools_is_a_ceiling`.
+
+**Read `allowed_tools_is_a_ceiling` before you read `allowed_tools`.** It is a
+bool, present on every policy since ADR 0040, and `false` means the
+`allowed_tools` list beside it **did not bind**: that run was launched with
+`--accept-loaded-user-config`, so the operator's own settings — and with them
+their standing permission grants — loaded into the node, and a declared scope
+like `Bash(git *)` is a declaration rather than a limit. `true` means the list
+was the node's authority. It says nothing about `tools` or `disallowed_tools`,
+which bind either way.
+
+The mechanism it is derived from is `setting_sources`, whose shape is unchanged
+and is a trap worth stating: `""` is the restrictive state (load none of the
+user's settings) and the permissive state is the key being **absent**. A
+consumer that pins the old shape keeps working — the derived key is additive,
+and nothing in this repository decodes a snapshot with
+`DisallowUnknownFields` — but a consumer that reasons about authority should
+read the bool, which cannot be misread by omission. A snapshot written before
+ADR 0040 carries neither key on an unisolated policy; for those, absent
+`setting_sources` inside a non-empty `tool_policies` still means the list did
+not bind.
 
 `build_evidence` is the launch-time build-evidence question and its answer
 (ADR 0030), written on every auto-mode launch and absent on a `run` of a
