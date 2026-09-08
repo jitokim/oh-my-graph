@@ -12,6 +12,15 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **A run's live view now offers a way back to the dashboard.** Under
+  `oh-my-graph serve`, where the dashboard is at `/` and each run is mounted at
+  `/run/<id>/`, the run page's header carries a `← runs` link pointing at the
+  dashboard root. Under `oh-my-graph serve <run-id>`, where the run view IS the
+  whole site and no dashboard exists, no link appears at all — rather than one
+  pointing back at the page you are already on. Which mount is serving the page
+  is the only thing the page learns; every URL it fetches stays
+  document-relative as before.
+
 - **A recorded tool policy now says whether it was a ceiling.** Every entry in
   `state.json`'s `tool_policies` carries a new bool,
   `allowed_tools_is_a_ceiling`. `false` means the `allowed_tools` list beside it

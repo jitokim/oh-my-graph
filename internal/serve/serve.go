@@ -118,6 +118,11 @@ var indexTemplate = template.Must(template.ParseFS(uiFS, "ui/index.html"))
 // the dashboard's alike, because the two facts either page carries are the
 // serving PROCESS's, not the run's.
 //
+// Home is the exception and the one per-MOUNT fact here: it is read by
+// index.html alone and says whether a dashboard exists above this page (see
+// routes). The dashboard template never mentions it, which is correct — the
+// dashboard IS home.
+//
 // One named type rather than the two identical anonymous structs it replaces:
 // those were the same shape by discipline only, and a field added to one and not
 // the other is a "can't evaluate field" at REQUEST time — a 500 on the page —
@@ -125,6 +130,7 @@ var indexTemplate = template.Must(template.ParseFS(uiFS, "ui/index.html"))
 type pageData struct {
 	Token string
 	Build Build
+	Home  bool
 }
 
 // page pairs this process's build with the gate token it minted, for either
@@ -305,6 +311,13 @@ type Server struct {
 	// zero value — the default — renders an empty label and empty tags, which is
 	// what every test and any caller that does not care gets.
 	build Build
+	// home says a dashboard exists above this view, which is the single bit
+	// that makes its page render the link home. False in New — the standalone
+	// `serve <run-id>` is the whole site and has nowhere to go — and set true
+	// in the one place a Server is built for a mount, Dashboard.serverFor. A
+	// bool and not a href on purpose: it cannot carry a prefix, so the page
+	// still cannot learn WHERE it is mounted, only THAT something is above it.
+	home bool
 }
 
 // New builds a Server for one run directory. runID is the directory's name —
@@ -371,10 +384,19 @@ func (s *Server) Handler() http.Handler {
 // /run/<id>/ by the Dashboard, which applies requireLoopbackHost once across
 // everything it serves.
 //
-// Nothing in the route set or the page knows which of the two it is under:
-// every URL the page fetches is document-relative ("api/graph", "app.js"), so
-// the same bytes address /api/graph under one mount and /run/<id>/api/graph
-// under the other.
+// Nothing in the ROUTE SET knows which of the two it is under, and the page
+// knows exactly one bit: whether a dashboard exists above it (pageData.Home),
+// set true in the one place a Server is built for a mount — Dashboard.serverFor
+// — and false in New. It decides one thing: whether the header renders the link
+// home, so the standalone mount offers no link rather than a link to the page
+// you are already on.
+//
+// That bit does not reopen what this invariant was protecting, because it
+// cannot carry a prefix: every URL the page FETCHES is still document-relative
+// ("api/graph", "app.js"), so the same bytes still address /api/graph under one
+// mount and /run/<id>/api/graph under the other. The single absolute URL on the
+// page is that link's "/", and it is emitted only under the mount where "/" is
+// the dashboard — Dashboard.Handler owns that root.
 func (s *Server) routes() *http.ServeMux {
 	static, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -418,14 +440,20 @@ func (s *Server) WithBuild(b Build) *Server {
 // other two audiences: the token identifies this process to the server, the
 // footer's label identifies it to the reader, and the head's <meta> tags
 // identify it to whatever is scripting against the page (Build).
+//
+// The one fact on this render that is NOT the process's is home: it belongs to
+// the mount, and it is carried out here the same way, so the header can offer
+// the way home under the dashboard and offer nothing under `serve <run-id>`.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	var page bytes.Buffer
-	if err := indexTemplate.Execute(&page, s.build.page(s.token)); err != nil {
+	data := s.build.page(s.token)
+	data.Home = s.home
+	var rendered bytes.Buffer
+	if err := indexTemplate.Execute(&rendered, data); err != nil {
 		http.Error(w, fmt.Sprintf("render page: %v", err), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(page.Bytes())
+	w.Write(rendered.Bytes())
 }
 
 // graphPayload is /api/graph's response body. Available is false while the run
