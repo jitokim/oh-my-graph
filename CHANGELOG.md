@@ -338,6 +338,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   reworded: a claim that cannot be retraced is not improved by being restated
   more carefully (#241).
 
+- **One of the two claims in the docs-claims guard could never fire, and now
+  can.** `internal/docsclaims` encodes the two absolutes ADR 0032 falsified so
+  no document can state either unconditionally again. The second one's pattern
+  demanded an adverb — `every planned node('s)? always has` — that the sentence
+  it guards has never carried: the `--strict-mcp-config` sentence in
+  [`docs/EXAMPLES.md`](docs/EXAMPLES.md) reads "as every planned node's has
+  unless the run typed `--accept-loaded-user-config`", with no `always` in it.
+  Compiled against every document the walk covers, that pattern matched nowhere, so
+  the claim was decoration: the absolute form it exists to stop could have been
+  written into any document and the suite would have stayed green. The pattern
+  is now anchored on the apposition rather than the adverb and matches both
+  forms, and `TestNoDocumentStatesAnAbsoluteADR0032Falsified` grew a floor in
+  the shape `internal/graph/shipped_graphs_test.go` already uses: it counts
+  every match each claim makes during the same walk — conditioned matches
+  included, since a suppressed match still proves the pattern reaches its
+  sentence — and goes red naming the claim and its pattern if any claim
+  reaches zero. A guard that scans nothing passes; so does a guard that
+  matches nothing.
+
 ### Documented
 
 - **ADR 0038 — a planned node cites a fragment from a menu it did not write**

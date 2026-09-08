@@ -34,23 +34,28 @@ const qualifierWindow = 200
 var optIn = regexp.MustCompile(`--accept-loaded-user-config`)
 
 // The two absolutes ADR 0032 falsified. d537739 conditioned both where they
-// stood in docs/EXAMPLES.md (:451, :460 today); they are encoded here so that
-// no document — that one or a new one — can state either as an absolute again.
+// stood in docs/EXAMPLES.md: the `--strict-mcp-config` parenthetical, and the
+// paragraph on what `--no-agent <name>` buys. They are encoded here so that no
+// document — that one or a new one — can state either as an absolute again.
+//
+// The sentences are named, not numbered, on purpose: line numbers into that
+// document have rotted twice inside the file whose whole job is stopping rot,
+// and each claim's own name below is the phrase to search for.
 var falsifiedByADR0032 = []falsified{
 	{
 		name:      `"no planned node gets that any more"`,
 		absolute:  regexp.MustCompile(`no planned node gets that any more`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:763-764 — toolPolicyFor sets " +
+		address: "internal/coordinator/coordinator.go:868-871 — toolPolicyFor sets " +
 			"policy.SettingSources = nil when the run typed --accept-loaded-user-config, " +
 			"so every planned node of such a run does get the operator's configuration",
 	},
 	{
-		name:      "\"as every planned node's always has\", of `--strict-mcp-config`",
-		absolute:  regexp.MustCompile(`every planned node('s)? always has`),
+		name:      "\"as every planned node's has\", of `--strict-mcp-config`",
+		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:765 sets policy.StrictMCPConfig = false " +
-			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:55-56 " +
+		address: "internal/coordinator/coordinator.go:868-871 sets policy.StrictMCPConfig = false " +
+			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 	},
 }
@@ -135,6 +140,28 @@ func TestScanFiresOnTheAbsoluteAndNotOnTheConditionedForm(t *testing.T) {
 			want: 0,
 		},
 		{
+			// docs/EXAMPLES.md:469-472 as it stands today, with its `unless`
+			// clause cut out: the sentence the shipped one would regress to.
+			// The pattern used to demand an "always" this form never had, which
+			// is exactly the shape of miss the vacuity floor now catches.
+			name: "the strict-mcp-config absolute without the adverb",
+			text: "declares one and that is the more specific choice (ADR 0037). (Its argv also carries\n" +
+				"`--strict-mcp-config`, as every planned node's has; whether\n" +
+				"it closes MCP is unmeasured, so read it as a flag rather than a result.)\n",
+			want: 1,
+		},
+		{
+			// The conditioned branch of the same paragraph, EXAMPLES.md:480.
+			// "every planned node has it" states no absolute — it is inside the
+			// `--accept-loaded-user-config` case — and the qualifier is behind
+			// it, not ahead of it, so only the missing "as" keeps this silent.
+			name: "the conditioned branch, which names no qualifier after itself",
+			text: "because no planned node gets that any more — unless the run typed\n" +
+				"`--accept-loaded-user-config`, in which case every planned node has it and there\n" +
+				"is no agent mapping left to decline\n",
+			want: 0,
+		},
+		{
 			// Requirement 3: absence is never a failure. This document states
 			// neither claim, mentions neither flag, and must be silent.
 			name: "a document that claims nothing at all",
@@ -145,7 +172,7 @@ func TestScanFiresOnTheAbsoluteAndNotOnTheConditionedForm(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := scan([]byte(tc.text))
+			got, _ := scan([]byte(tc.text))
 			if len(got) != tc.want {
 				t.Fatalf("scan found %d finding(s), want %d: %+v", len(got), tc.want, got)
 			}
@@ -155,25 +182,46 @@ func TestScanFiresOnTheAbsoluteAndNotOnTheConditionedForm(t *testing.T) {
 
 func TestNoDocumentStatesAnAbsoluteADR0032Falsified(t *testing.T) {
 	root := repoRoot(t)
+	stated := make([]int, len(falsifiedByADR0032))
 	for _, rel := range docSet(t, root) {
 		raw, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
-		for _, f := range scan(raw) {
+		findings, counts := scan(raw)
+		for i, n := range counts {
+			stated[i] += n
+		}
+		for _, f := range findings {
 			t.Errorf("%s:%d states %s unconditionally.\n  quoted: %q\n  falsified by: %s\n"+
 				"  Condition it on --accept-loaded-user-config, or drop it.",
 				rel, f.line, f.claim.name, f.quote, f.claim.address)
 		}
 	}
+
+	// The floor. A claim that matches nothing at all cannot fail, so it is
+	// indistinguishable from a passing corpus — which is how a regexp demanding
+	// a word the documents never wrote survived here unnoticed.
+	for i, claim := range falsifiedByADR0032 {
+		if stated[i] == 0 {
+			t.Errorf("no document states %s any more, conditioned or not — this test now asserts nothing for that claim, and the absolute it exists to stop is demonstrated nowhere in the walked corpus.\n  pattern: /%s/\n  Re-word the pattern to the sentence the documents actually carry, or retire the claim.",
+				claim.name, claim.absolute)
+		}
+	}
 }
 
-// scan reports every absolute stated in raw with nothing conditioning it.
-func scan(raw []byte) []finding {
+// scan reports every absolute stated in raw with nothing conditioning it, and
+// beside it how many times each claim's absolute was stated at all, conditioned
+// or not. That second count is what the vacuity floor adds up: a suppressed
+// match still proves the pattern reaches the sentence it was written for, and a
+// claim with no matches of either kind is a guard that has stopped guarding.
+func scan(raw []byte) ([]finding, []int) {
 	text, offsets := normalize(raw)
 	var findings []finding
-	for _, claim := range falsifiedByADR0032 {
+	stated := make([]int, len(falsifiedByADR0032))
+	for i, claim := range falsifiedByADR0032 {
 		for _, m := range claim.absolute.FindAllStringIndex(text, -1) {
+			stated[i]++
 			end := m[1] + qualifierWindow
 			if end > len(text) {
 				end = len(text)
@@ -192,7 +240,7 @@ func scan(raw []byte) []finding {
 			})
 		}
 	}
-	return findings
+	return findings, stated
 }
 
 // normalize collapses every run of whitespace to one space, so a claim the
