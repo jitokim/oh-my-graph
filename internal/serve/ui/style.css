@@ -85,6 +85,22 @@ header {
 }
 
 .brand { font-weight: 600; }
+/* The way home from a run mounted under the dashboard. It wears the header's
+   standalone-control anatomy (the same box as .theme-toggle) rather than being
+   the brand made clickable: the brand is the identical first element of both
+   headers, and a logo that links on one mount and is inert on another reads as
+   broken. Absent entirely under `oh-my-graph serve <run-id>`, which has no
+   dashboard to return to. */
+.home-link {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-2);
+  text-decoration: none;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+}
+.home-link:hover { color: var(--ink); }
 .run-id { font-family: ui-monospace, Menlo, monospace; color: var(--ink-2); font-size: 13px; }
 .goal {
   font-size: 12px;

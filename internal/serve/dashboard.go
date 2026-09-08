@@ -200,6 +200,11 @@ func (d *Dashboard) handleRun(w http.ResponseWriter, r *http.Request) {
 // assignment below — plus the injected resumer, whose interface already names
 // the run per call.
 //
+// It is also the one place home is set: a Server built HERE is mounted under a
+// dashboard, and one built anywhere else is the whole site. That is why this is
+// the only assignment of the bit — being constructed by a Dashboard is exactly
+// what "a dashboard exists above me" means (see Server.home).
+//
 // Built per request rather than cached: a Server holds no state about its run
 // (every request re-reads the contract files), so a fresh one and a kept one
 // answer identically, and there is no cache to invalidate when a run
@@ -211,6 +216,7 @@ func (d *Dashboard) serverFor(runID string) *Server {
 	s.token = d.token
 	s.build = d.build
 	s.resumer = d.resumer
+	s.home = true
 	return s
 }
 

@@ -39,6 +39,15 @@
 <body>
   <header>
     <span class="brand">oh-my-graph</span>
+    {{- if .Home}}
+    <!-- The way home, rendered only under the dashboard mount (pageData.Home).
+         `oh-my-graph serve <run-id>` has no dashboard above it and so gets no
+         link at all, rather than one pointing at the page you are already on.
+         The href is absolute because this bit is true only under a Dashboard,
+         and a Dashboard always owns "/". Every URL this page FETCHES stays
+         document-relative; see routes() in serve.go. -->
+    <a class="home-link" href="/" aria-label="Back to all runs">← runs</a>
+    {{- end}}
     <span id="run-id" class="run-id">resolving run…</span>
     <!-- Goal lineage (ADR 0011): shown only when the snapshot carries a goal
          block, i.e. this run is one cycle of an iterated auto goal. The goal
