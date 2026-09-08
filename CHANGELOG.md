@@ -155,6 +155,31 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Fixed
 
+- **Two prose-pinning tests promised a guard they did not implement.** This
+  release's rotating meta-review (`CONTRIBUTING.md`) took **tests** as its
+  subject and asked one question of them: *which test that pins a piece of prose
+  would still pass if that prose were deleted?* Two answered badly, and both
+  were shipped in this same release cycle.
+
+  `TestLimitationsStampMatchesVersion` carried a comment saying it asserts
+  presence of the version's stamp "rather than the absence of older ones" — and
+  then tested `strings.Contains(text, "v"+Version)`, which is presence of the
+  version *string*. `docs/LIMITATIONS.md` also names its version in ordinary
+  prose, so deleting all three `as of` stamps left that check satisfied while
+  the staleness loop, with nothing to iterate, said nothing either. Presence is
+  now derived from the same regex the staleness loop uses.
+
+  `TestQualifierClauseSweepMatchesDESIGN` never opened `DESIGN.md`. It restated
+  the two numbers as a constant and counted the graphs, so it caught one drift
+  direction of four: rewording DESIGN.md's sentence to any pair of numbers
+  passed, and deleting the passage outright passed. It now reads the numerals
+  out of the passage and requires the sentence to match exactly once.
+
+  Both fixes were proved by mutation rather than asserted: the passage was
+  removed and the stamps deleted, each test was confirmed red, and the tree was
+  restored. The mutation for the stamps also printed that the version string
+  survived it — which is precisely why the old check had passed.
+
 - **Two places the release checklist never called, and a guard so it does not
   have to.** `docs/LIMITATIONS.md` still stamped itself *"as of v0.11.0"* after
   two releases — in a file whose most recent commit had been titled *"five

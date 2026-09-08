@@ -185,15 +185,23 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 	// Assert PRESENCE of this version's stamp rather than the absence of older
 	// ones: a file that dropped every stamp would pass an absence check while
 	// telling the reader nothing.
-	stamp := "v" + Version
-	if !strings.Contains(text, stamp) {
-		t.Fatalf("docs/LIMITATIONS.md never mentions %s — its 'as of' stamps have not been moved for this release", stamp)
+	//
+	// Presence is derived from the SAME regex the staleness loop uses, and that
+	// is the whole point of this shape. The first version of this test read
+	// `strings.Contains(text, "v"+Version)`, which is presence of the version
+	// STRING, not of a stamp — and this file names its version in prose too
+	// ("In v0.13.0, and on `main` today, a limit…"). Delete every `as of` stamp
+	// and that check stayed satisfied by the prose while the loop below, having
+	// nothing to iterate, said nothing either. The comment above promised a
+	// guard the code did not implement; a release's meta-review found it.
+	stale := regexp.MustCompile(`as of \*{0,2}v(\d+\.\d+\.\d+)`)
+	stamps := stale.FindAllStringSubmatch(text, -1)
+	if len(stamps) == 0 {
+		t.Fatalf("docs/LIMITATIONS.md carries no 'as of vX' stamp at all — the gaps list no longer says which build it was checked against")
 	}
 
-	// And no stamp may name a version other than this one. `as of vX` is the
-	// exact phrase the three drifting stamps used.
-	stale := regexp.MustCompile(`as of \*{0,2}v(\d+\.\d+\.\d+)`)
-	for _, match := range stale.FindAllStringSubmatch(text, -1) {
+	// And no stamp may name a version other than this one.
+	for _, match := range stamps {
 		if match[1] != Version {
 			t.Errorf("docs/LIMITATIONS.md stamps %q while this build is v%s — the gaps list claims a check against code that has moved", match[0], Version)
 		}
