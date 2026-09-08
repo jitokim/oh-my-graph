@@ -30,3 +30,4 @@ failed, surface its failure reason. For `auto`, also show the planned graph
 was generated. If `oh-my-graph` is not found on `$PATH`, tell the user to
 install it — see `plugin/README.md` for install options — and stop; do not
 try to reimplement graph execution yourself.
+Keep the verdict's parenthesis: `(verified)` is engine-judged, `(self-reported)` is not (#268).

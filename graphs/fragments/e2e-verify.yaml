@@ -17,6 +17,8 @@
 # evidence-grounded success_check whose failure is a retry cause (the engine
 # runs `verify` itself and judges the exit code, so a node that reports PASS
 # without the suite passing does not pass).
+# It carries `handoff: session` (below): a node citing it needs exactly one
+# parent, or load refuses it — a root must override `handoff: artifact` (#268).
 fragment: e2e-verify
 description: cold-safe e2e gate — session continuation, synchronous checks, verified verdict
 substitutions: [checks, verify_command]

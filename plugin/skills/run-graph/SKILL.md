@@ -26,6 +26,7 @@ reason and with the same consequences as for `/graph`; see
 3. Report the run ledger from stdout back to the user: one row per node — its
    five printed columns are node id, verdict, session id, cost, and a short
    detail — plus the total cost.
+   Keep the verdict's parenthesis: `(verified)` is engine-judged, `(self-reported)` is not (#268).
 4. If `oh-my-graph` is not found on `$PATH`, tell the user to install it (see
    `plugin/README.md`) and stop — do not attempt to run the graph nodes
    yourself in-session.
