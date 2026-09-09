@@ -60,6 +60,30 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   halted run. The verdict pattern itself is unchanged, and so is the shipped
   `graphs/fragments/e2e-verify.yaml` spelling of it.
 
+- **The planner is now told which node may carry the whole-reply verdict.** The
+  final-check paragraph handed out a pin whose entire reply must be the bare
+  word `PASS`, and spoke only of "the final check node" — with nothing
+  distinguishing a node whose job is to ASSERT from a node whose job is to
+  REPORT. Under a goal ending "record what you found", the last node is a doing
+  node by construction, and the two roles collide: a run planned exactly that,
+  gave its recording node the pin, and the node wrote rows to the operator's
+  backlog and committed them while its artifact read the bare word `PASS`. The
+  assessment that decides whether the goal was met read that word, could not see
+  the recording, and reported the cycle unmet over $17.28 of work that had
+  landed.
+
+  The prompt now says the pin is only for a node whose whole job is to assert,
+  that being LAST does not make a node such a node, and — because a prohibition
+  with no offer is the failure shape this project has paid for before — what a
+  reporting node gets instead: either no `success_check` at all, since its output
+  IS the evidence its reader judges, or a `result_matches` that is not anchored
+  at both ends and matches a verdict line inside the longer report. A goal that
+  wants both roles gets two nodes. This is instruction, not enforcement, and
+  deliberately so: "this node's job is to report" is a property of its prompt,
+  not of the topology, and a refusal keyed on the node being terminal would
+  refuse the true check node the same paragraph asks for. The verdict pattern
+  itself is unchanged, and so is every shipped graph.
+
 ### Fixed
 
 - **A `verify` failure now names the provider key the engine deleted.** Every

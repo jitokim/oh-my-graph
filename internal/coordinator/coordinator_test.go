@@ -228,6 +228,52 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes pins the rule that
+// decides WHICH node may carry the whole-reply PASS pin, in BOTH spellings of
+// the final-check paragraph — it is one prompt, and a rule that holds only when
+// --verify-cmd was omitted is a rule the next edit of the other spelling drops.
+//
+// Run 20260908-145107 planned a final node that recorded what it found in the
+// operator's backlog and committed it, and carried the pin: its artifact became
+// the bare word PASS, so the assessment that decides whether the goal was met
+// read that word, could not see the recording, and judged the cycle unmet over
+// work that had landed. Being LAST does not make a node a check node, and the
+// prompt must say both halves — that the pin is for a node whose whole job is
+// to assert, and what a reporting node gets instead, since a prohibition with
+// no offer is the shape DESIGN.md's "Verdict patterns" already records.
+func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
+	for _, supplied := range []bool{true, false} {
+		prompt := plannerPrompt("audit the corpus and record what you find", nil, supplied)
+
+		for _, want := range []string{
+			// who the pin is for
+			"whole-reply pin belongs ONLY on a node whose entire job is to",
+			// and the signal that is NOT it, which is the reported failure
+			"Being the LAST node of the",
+			// the node class it must never land on, named by what it does
+			"records what it found, writes a report or a summary, files issues",
+			// both offers a reporting node gets instead
+			`EITHER no "success_check" at all`,
+			"NOT anchored at both ends and matches a verdict LINE inside the",
+			// and the split when the goal wants both roles
+			"that is two\n  nodes, never one",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd supplied=%v: prompt lost the rule reserving the whole-reply pin for asserting nodes: missing %q", supplied, want)
+			}
+		}
+	}
+
+	// The rule must not have eaten the pin it qualifies: the paragraph still
+	// hands out the whole-reply pattern, and plannedVerdictPatternIn still finds
+	// the real one first (the new prose deliberately spells its counter-example
+	// without the "result_matches" marker, so it cannot be picked up instead).
+	prompt := plannerPrompt("audit the corpus and record what you find", nil, false)
+	if got := plannedVerdictPatternIn(t, prompt); got != plannedVerdictPattern {
+		t.Errorf("the pattern the planner is handed is no longer the whole-reply pin: %q", got)
+	}
+}
+
 // plannedVerdictPatternIn extracts the result_matches regex the planner prompt
 // hands out and decodes it the way the planner's JSON reply would be decoded,
 // so the test sees the pattern the engine would end up compiling.
