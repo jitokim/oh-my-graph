@@ -39,6 +39,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   and nothing here touches an exit code: `auto` refuses nothing that `run`
   accepts, except a graph carrying a token the engine itself would refuse to
   resolve.
+
+- **A repeated `###` heading inside `## [Unreleased]` now fails the pull
+  request that adds it.** `TestUnreleasedSectionHasNoDuplicateHeadings` refuses
+  a second `### Added` (or any name already present) in the Unreleased block.
+  Cutting v0.14.0 needed a dedicated graph node whose only job was to merge
+  eleven subheadings back into four — `### Added` x4, `### Changed` x3,
+  `### Fixed` x2, `### Documented` x2 — because each pull request appended its
+  own subsection instead of joining the one already there. Since
+  `scripts/release-notes.sh` extracts the `## [Unreleased]` block verbatim on
+  the tag push, the release body IS that section, so an unmerged one publishes
+  each heading several times and cannot be un-published. The failure names the
+  repeated heading and says to join the existing subsection; the fix is one
+  line, in the PR rather than at the release. Released sections are out of
+  scope, deliberately: only the Unreleased block becomes a release body.
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`

@@ -207,3 +207,57 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestUnreleasedSectionHasNoDuplicateHeadings refuses a second `### Added` (or
+// `### Fixed`, or any name already present) inside `## [Unreleased]`.
+//
+// It exists because cutting v0.14.0 needed a dedicated graph node whose only
+// job was to merge eleven subheadings back into four: `### Added` x4,
+// `### Changed` x3, `### Fixed` x2 and `### Documented` x2, because every pull
+// request appended its own subsection instead of joining the one already there.
+// That is not a formatting nicety — `scripts/release-notes.sh` extracts the
+// `## [Unreleased]` block verbatim on the tag push, so the release body IS this
+// section, and shipping it unmerged publishes a body that names each heading
+// several times. A tag is public the moment it lands; a red PR is not. This
+// fails the pull request that adds the second heading, where the fix is one
+// line, instead of at the release, where it costs a node.
+//
+// SCOPE IS DELIBERATE: only `## [Unreleased]` is checked. The release body is
+// extracted from that block alone, and released sections are settled history
+// that no longer accumulates entries — a duplicate there would be a fact about
+// a shipped release, not a defect a contributor can act on.
+//
+// The block starts at the `## [Unreleased]` heading and ends at the next line
+// beginning `## [`. Scanning the whole file instead would fold every past
+// release's headings together and report duplicates that are simply the next
+// release's `### Added`.
+func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatalf("read CHANGELOG.md: %v", err)
+	}
+	const heading = "## [Unreleased]"
+	var found, collecting bool
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		switch {
+		case strings.HasPrefix(line, heading):
+			found, collecting = true, true
+		case collecting && strings.HasPrefix(line, "## ["):
+			collecting = false
+		case collecting && strings.HasPrefix(line, "### "):
+			// Trimmed, and compared as written: `### Added` and `### Added `
+			// are the same subsection to a reader and to the release body.
+			name := strings.TrimSpace(line)
+			if seen[name] {
+				t.Errorf("CHANGELOG.md's %s section has more than one %q heading.\n"+
+					"Move your entry under the %q that is already there and delete the duplicate heading — do not append a second one.\n"+
+					"scripts/release-notes.sh publishes this section verbatim, so a repeated heading ships in the release body.", heading, name, name)
+			}
+			seen[name] = true
+		}
+	}
+	if !found {
+		t.Fatalf("CHANGELOG.md has no %s section — new entries have nowhere to land", heading)
+	}
+}
