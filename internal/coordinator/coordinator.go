@@ -1831,10 +1831,19 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   on a run where it was done and was paid for.
   A node that must produce a report gets one of two things instead.
   EITHER no "success_check" at all, which is the normal choice, since that
-  node's output IS the evidence its reader judges. OR a "result_matches"
-  that is NOT anchored at both ends and matches a verdict LINE inside the
-  longer report — a pattern shaped like "^RECORDED", carrying no trailing
-  dollar sign — so the report itself survives in the reply.
+  node's output IS the evidence its reader judges. OR a PREFIX verdict —
+  a "result_matches" anchored at the START only, carrying no trailing
+  dollar sign, shaped like "^RECORDED" — so the report itself survives in
+  the reply. If you choose the prefix verdict, the prompt must demand the
+  verdict token as the FIRST characters of the reply and put the report
+  AFTER it. That ordering is the whole of it: the engine compiles your
+  pattern with no flags, so "^" anchors to the start of the WHOLE reply
+  and never to the start of a later line. A token appended at the END of
+  a report does not match "^RECORDED", and neither does one on any line
+  but the first — a prompt saying "finish with RECORDED" rebuilds the
+  exact failure this rule exists to stop. Say where the rest goes, in the
+  words every prefix verdict in this project uses: anything you need to
+  qualify goes AFTER the verdict, never before it.
   When the goal needs BOTH the report and the assertion, that is two
   nodes, never one: the node that does the work and reports it, then a
   check node depending on it that asserts and carries the whole-reply pin.

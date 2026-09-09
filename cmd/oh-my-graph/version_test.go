@@ -217,8 +217,9 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 // request appended its own subsection instead of joining the one already there.
 // That is not a formatting nicety. Cutting a release renames this block to
 // `## [vX.Y.Z]`, and `scripts/release-notes.sh` extracts that heading's section
-// verbatim on the tag push (`want := "## [v$version]"`, from the tag in
-// .github/workflows/release.yml) — so whatever the Unreleased block looks like
+// verbatim on the tag push (`awk -v want="## [v$version]"`, release-notes.sh:56,
+// the version from the tag in .github/workflows/release.yml:44) — so whatever
+// the Unreleased block looks like
 // at the cut IS the release body, and shipping it unmerged publishes a body
 // that names each heading several times. A tag is public the moment it lands;
 // a red PR is not. This fails the pull request that adds the second heading,

@@ -93,8 +93,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   that being LAST does not make a node such a node, and — because a prohibition
   with no offer is the failure shape this project has paid for before — what a
   reporting node gets instead: either no `success_check` at all, since its output
-  IS the evidence its reader judges, or a `result_matches` that is not anchored
-  at both ends and matches a verdict line inside the longer report. A goal that
+  IS the evidence its reader judges, or a prefix verdict — a `result_matches`
+  anchored at the start only, with a prompt that puts the verdict token in the
+  reply's first characters and the report after it. The prompt spells out why
+  that ordering is the offer and not a detail: the engine compiles the pattern
+  with no flags, so `^` anchors to the start of the whole reply, and a token
+  appended at the end of a report matches nothing. A goal that
   wants both roles gets two nodes. This is instruction, not enforcement, and
   deliberately so: "this node's job is to report" is a property of its prompt,
   not of the topology, and a refusal keyed on the node being terminal would

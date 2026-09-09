@@ -241,6 +241,17 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // prompt must say both halves — that the pin is for a node whose whole job is
 // to assert, and what a reporting node gets instead, since a prohibition with
 // no offer is the shape DESIGN.md's "Verdict patterns" already records.
+//
+// The offer half has its own trap, pinned here too. `result_matches` is
+// compiled with no flags (internal/schedule/scheduler.go, evaluating
+// check.ResultMatches), so `^` anchors to the start of the WHOLE reply and a
+// verdict on a later line never matches — that is the measured finding in
+// DESIGN.md's "Where the verdict may sit", where two of the six pattern
+// misjudgements were exactly a verdict sitting below a preamble. An offer
+// phrased as "matches a verdict line inside the report" would therefore hand
+// the planner a pattern that cannot fire, so the prompt must give the prefix
+// ordering — token first, report after — and the caveat clause that keeps the
+// report from climbing above it.
 func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 	for _, supplied := range []bool{true, false} {
 		prompt := plannerPrompt("audit the corpus and record what you find", nil, supplied)
@@ -254,7 +265,14 @@ func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 			"records what it found, writes a report or a summary, files issues",
 			// both offers a reporting node gets instead
 			`EITHER no "success_check" at all`,
-			"NOT anchored at both ends and matches a verdict LINE inside the",
+			`a "result_matches" anchored at the START only`,
+			// the half that makes the second offer usable rather than a
+			// second way to fail: the engine adds no flags, so a prefix
+			// verdict is only reachable if the prompt orders the reply
+			// verdict-first (DESIGN.md, "Where the verdict may sit")
+			"verdict token as the FIRST characters of the reply",
+			"anchors to the start of the WHOLE reply",
+			"anything you need to\n  qualify goes AFTER the verdict, never before it",
 			// and the split when the goal wants both roles
 			"that is two\n  nodes, never one",
 		} {
