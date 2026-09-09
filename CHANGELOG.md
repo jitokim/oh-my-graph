@@ -46,13 +46,16 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   Cutting v0.14.0 needed a dedicated graph node whose only job was to merge
   eleven subheadings back into four — `### Added` x4, `### Changed` x3,
   `### Fixed` x2, `### Documented` x2 — because each pull request appended its
-  own subsection instead of joining the one already there. Since
-  `scripts/release-notes.sh` extracts the `## [Unreleased]` block verbatim on
-  the tag push, the release body IS that section, so an unmerged one publishes
-  each heading several times and cannot be un-published. The failure names the
-  repeated heading and says to join the existing subsection; the fix is one
-  line, in the PR rather than at the release. Released sections are out of
-  scope, deliberately: only the Unreleased block becomes a release body.
+  own subsection instead of joining the one already there. Cutting a release
+  renames this block to `## [vX.Y.Z]`, and `scripts/release-notes.sh` extracts
+  that heading's section verbatim on the tag push — so whatever the Unreleased
+  block looks like at the cut IS the release body, and an unmerged one
+  publishes each heading several times and cannot be un-published. The failure
+  names the repeated heading and says to join the existing subsection; the fix
+  is one line, in the PR rather than at the release. Released sections are out
+  of scope, deliberately: the Unreleased block is the only one still
+  accumulating entries, so a duplicate below it is a fact about a shipped
+  release rather than a defect a contributor can act on.
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`

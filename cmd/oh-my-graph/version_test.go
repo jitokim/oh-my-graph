@@ -215,32 +215,44 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 // job was to merge eleven subheadings back into four: `### Added` x4,
 // `### Changed` x3, `### Fixed` x2 and `### Documented` x2, because every pull
 // request appended its own subsection instead of joining the one already there.
-// That is not a formatting nicety — `scripts/release-notes.sh` extracts the
-// `## [Unreleased]` block verbatim on the tag push, so the release body IS this
-// section, and shipping it unmerged publishes a body that names each heading
-// several times. A tag is public the moment it lands; a red PR is not. This
-// fails the pull request that adds the second heading, where the fix is one
-// line, instead of at the release, where it costs a node.
+// That is not a formatting nicety. Cutting a release renames this block to
+// `## [vX.Y.Z]`, and `scripts/release-notes.sh` extracts that heading's section
+// verbatim on the tag push (`want := "## [v$version]"`, from the tag in
+// .github/workflows/release.yml) — so whatever the Unreleased block looks like
+// at the cut IS the release body, and shipping it unmerged publishes a body
+// that names each heading several times. A tag is public the moment it lands;
+// a red PR is not. This fails the pull request that adds the second heading,
+// where the fix is one line, instead of at the release, where it costs a node.
 //
-// SCOPE IS DELIBERATE: only `## [Unreleased]` is checked. The release body is
-// extracted from that block alone, and released sections are settled history
-// that no longer accumulates entries — a duplicate there would be a fact about
-// a shipped release, not a defect a contributor can act on.
+// SCOPE IS DELIBERATE: only `## [Unreleased]` is checked. It is the one block
+// still accumulating entries; released sections are settled history, so a
+// duplicate below it would be a fact about a shipped release, not a defect a
+// contributor can act on.
 //
 // The block starts at the `## [Unreleased]` heading and ends at the next line
 // beginning `## [`. Scanning the whole file instead would fold every past
 // release's headings together and report duplicates that are simply the next
 // release's `### Added`.
+//
+// Fenced blocks are skipped, for the same reason release-notes.sh tracks them:
+// this changelog quotes headings constantly, so a ```-fenced `### Added` is an
+// example of a heading, not a second one. Counting it would redden CI over an
+// entry that has no duplicate at all.
 func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("read CHANGELOG.md: %v", err)
 	}
 	const heading = "## [Unreleased]"
-	var found, collecting bool
+	var found, collecting, fenced bool
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "```") {
+			fenced = !fenced
+			continue
+		}
 		switch {
+		case fenced:
 		case strings.HasPrefix(line, heading):
 			found, collecting = true, true
 		case collecting && strings.HasPrefix(line, "## ["):
@@ -252,7 +264,7 @@ func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
 			if seen[name] {
 				t.Errorf("CHANGELOG.md's %s section has more than one %q heading.\n"+
 					"Move your entry under the %q that is already there and delete the duplicate heading — do not append a second one.\n"+
-					"scripts/release-notes.sh publishes this section verbatim, so a repeated heading ships in the release body.", heading, name, name)
+					"Cutting a release renames this block to ## [vX.Y.Z] and scripts/release-notes.sh publishes that section verbatim, so a repeated heading ships in the release body.", heading, name, name)
 			}
 			seen[name] = true
 		}
