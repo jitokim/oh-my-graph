@@ -1833,7 +1833,13 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   EITHER no "success_check" at all, which is the normal choice, since that
   node's output IS the evidence its reader judges. OR a PREFIX verdict —
   a "result_matches" anchored at the START only, carrying no trailing
-  dollar sign, shaped like "^RECORDED" — so the report itself survives in
+  dollar sign, and wrapping the token in the SAME decoration class the
+  whole-reply pin above carries, so it reads like the shipped reporting
+  node at graphs/fragments/read-and-report.yaml rather than a bare
+  "^RECORDED" — a model writes "**RECORDED**" unbidden, a bare anchor
+  fails on it, and that false FAIL is the very thing this rule exists to
+  stop. The node's prompt must ALSO name the decorated spelling as wrong,
+  the way that fragment does. So the report itself survives in
   the reply. If you choose the prefix verdict, the prompt must demand the
   verdict token as the FIRST characters of the reply and put the report
   AFTER it. That ordering is the whole of it: the engine compiles your
