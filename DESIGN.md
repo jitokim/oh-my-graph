@@ -1064,7 +1064,8 @@ engine-run evidence in a planned graph is established per RUN — the user's
 verdict is its own word plus the subprocess exit status, by construction and
 not by omission (ADR 0033). The supported route to interior coverage is `run`
 on a hand-written graph, which writes `verify:` on whichever node its author
-means (`DESIGN.md:1589`).
+means (see "Gate nodes and `resume`", on why the flag pair is registered on
+`resume` and on `auto` only).
 
 ```go
 type SuccessCheck struct {
@@ -1154,10 +1155,13 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
   their reply is the token *and nothing else*. For three of the four the answer
   to "where does the caveat go" is still "nowhere, and a caveat means this is
-  not the verdict you have": each names a branch for the assertion *not*
-  holding (`FAIL` on `haiku-smoke`'s `write` and on `e2e-verify`, a bare
-  `DRIFT` on `apply-flags`'s `verify`) and no place at all for a qualification
-  that arrives while the assertion does hold. The fourth now has one, and it is
+  not the verdict you have": `e2e-verify` names `FAIL` and `apply-flags`'s
+  `verify` a bare `DRIFT` for the assertion *not* holding, while
+  `haiku-smoke`'s `write` names no branch at all — its whole-reply pin is
+  `DONE`, and the case where the file was not written is judged by the engine's
+  `verify:` command rather than by anything the node says. What none of the
+  three has is any place for a qualification that arrives while the assertion
+  does hold. The fourth now has one, and it is
   that same FAIL branch, widened: `coordinator.plannedVerdictPattern`'s prompt
   reserves `PASS` for the assertion holding **and** nothing a reader would act
   on differently, and sends anything the node does need to report into the FAIL

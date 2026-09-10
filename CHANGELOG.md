@@ -70,6 +70,7 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   the fix is an edit rather than an investigation, and an anchor that has grown
   ambiguous says so rather than picking a line. Nothing a user runs changes:
   this is the guard keeping its own promise.
+
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
