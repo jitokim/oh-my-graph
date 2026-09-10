@@ -69,6 +69,71 @@ var falsifiedByADR0032 = []falsified{
 	},
 }
 
+// A stated is the other direction of the same drift, and the direction the
+// falsified list above cannot see: not a document asserting something the code
+// made false, but a document DENYING something the code shipped.
+//
+// The guard above is deliberately blind to it — "silence is not a finding" is
+// what keeps it from demanding that every document mention every feature. A
+// stated is narrower than that on purpose: it does not ask a document to cover
+// a subject, it pins one named sentence that a shipped behaviour has already
+// re-written once, in the document that was left denying it while a sibling
+// document was corrected in the same lane.
+//
+//   - doc is the one document that must carry it; other documents are not asked.
+//   - phrases are ALL required, matched against the whitespace-normalised text,
+//     so a sentence wrapped across lines still reads as one sentence.
+//   - address and anchors work exactly as they do for a falsified, and
+//     TestClaimAddressesResolve re-resolves them the same way: the code a
+//     document is pinned to moves, and the pin has to say where it went.
+type stated struct {
+	name    string
+	doc     string
+	phrases []*regexp.Regexp
+	address string
+	anchors []string
+}
+
+// The two sentences DESIGN.md was still denying after the behaviour shipped.
+// Both landed in 456d374, which corrected docs/LIMITATIONS.md and did not
+// touch DESIGN.md at all — one claim living in two places with only one of
+// them moving, which is the whole failure mode this package exists for.
+var statedByShippedBehaviour = []stated{
+	{
+		name: "a verify FAIL names the scrubbed variable when both halves hold",
+		doc:  "DESIGN.md",
+		phrases: []*regexp.Regexp{
+			regexp.MustCompile(`the failure text says which when it can`),
+			regexp.MustCompile(`trigger is a conjunction and both halves are load-bearing`),
+			regexp.MustCompile(`judged against the full output rather than the truncated tail`),
+			regexp.MustCompile(`Either signal alone is noise`),
+			regexp.MustCompile(`scrubHint`),
+		},
+		address: "internal/schedule/scheduler.go:1554-1565 — scrubHint returns the sentence " +
+			"only for a name that is BOTH in result.ScrubbedFromEnv and contained in the " +
+			"full result.Output, and returns the first such name in childenv's list order",
+		anchors: []string{"func scrubHint(result verify.Result) string {"},
+	},
+	{
+		name: "the fourth whole-reply pin's caveat goes in the FAIL branch",
+		doc:  "DESIGN.md",
+		phrases: []*regexp.Regexp{
+			regexp.MustCompile(`For three of the four the answer to "where does the caveat go" is still "nowhere`),
+			regexp.MustCompile(`The fourth now has one, and it is that same FAIL branch`),
+			regexp.MustCompile(`branchEvidenceRule`),
+			regexp.MustCompile(`The pattern itself is unchanged`),
+		},
+		address: "internal/coordinator/coordinator.go:1812-1819 — branchEvidenceRule reserves PASS " +
+			"for the assertion holding and nothing a reader would act on differently, and sends " +
+			"anything else into the FAIL branch; internal/coordinator/coordinator.go:1890 — the " +
+			"pattern the same paragraph hands out is unchanged, anchored at both ends",
+		anchors: []string{
+			"markdown. Anything the node does need to report goes in the FAIL branch,",
+			"const plannedVerdictPattern = ",
+		},
+	},
+}
+
 // expectedRoots is asserted PRESENT in the walk — it is never used to select
 // what gets scanned. Scanning follows the walk, so a document that lands under
 // docs/ or plugin/ tomorrow is scanned tomorrow with no edit here; this list
@@ -219,6 +284,38 @@ func TestNoDocumentStatesAnAbsoluteADR0032Falsified(t *testing.T) {
 	}
 }
 
+// TestDocumentStatesWhatTheCodeShipped is the presence half of this guard.
+//
+// Its subject is the drift TestNoDocumentStatesAnAbsoluteADR0032Falsified
+// cannot reach: a sentence that was true when it was written, that a shipped
+// change made false in the direction of DENIAL, and that survives because
+// nothing red goes off when a document merely stops short of what the code
+// does. Both claims below were corrected in one document and left standing in
+// another, so the pin is on the document that was missed.
+//
+// A missing phrase names itself in the failure, because "DESIGN.md no longer
+// states this claim" is not actionable and "DESIGN.md no longer contains
+// /Either signal alone is noise/" is.
+func TestDocumentStatesWhatTheCodeShipped(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range statedByShippedBehaviour {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.doc)))
+		if err != nil {
+			t.Errorf("claim %q is pinned to %s, which cannot be opened: %v", claim.name, claim.doc, err)
+			continue
+		}
+		text, _ := normalize(raw)
+		for _, phrase := range claim.phrases {
+			if phrase.MatchString(text) {
+				continue
+			}
+			t.Errorf("%s no longer states %q.\n  missing: /%s/\n  the code that makes it true: %s\n"+
+				"  The behaviour shipped, so the document may not go back to denying it — reword the phrase here only if you reworded the sentence there.",
+				claim.doc, claim.name, phrase, claim.address)
+		}
+	}
+}
+
 // citationRe finds the coordinates an address promises: a path carrying a
 // source extension, a first line, and optionally a last one. Requiring both the
 // extension and the `:digits` is what keeps it off the rest of the prose —
@@ -240,42 +337,58 @@ var citationRe = regexp.MustCompile(`([A-Za-z0-9_./-]+\.(?:go|sh|md)):(\d+)(?:-(
 //
 // A span's last line is bounded rather than anchored, because the line that
 // closes a block is usually `}` and `}` anchors nothing.
+//
+// It covers both claim kinds, because both print an address for the same
+// reason: a stated's failure hands its reader the code that shipped the
+// behaviour the document stopped denying, and that coordinate rots exactly as
+// readily as a falsified's.
 func TestClaimAddressesResolve(t *testing.T) {
 	root := repoRoot(t)
 	for _, claim := range falsifiedByADR0032 {
-		cites := citationRe.FindAllStringSubmatch(claim.address, -1)
-		switch {
-		case len(cites) == 0:
-			t.Errorf("claim %s promises no file:line at all, so its address cannot be retraced.\n  address: %s",
-				claim.name, claim.address)
-		case len(cites) != len(claim.anchors):
-			t.Errorf("claim %s promises %d coordinate(s) but declares %d anchor(s).\n"+
-				"  Every file:line an address names needs one anchor, in the order the address names them.\n"+
-				"  address: %s", claim.name, len(cites), len(claim.anchors), claim.address)
-		default:
-			for i, cite := range cites {
-				checkCitationResolves(t, root, claim, claim.anchors[i], cite)
-			}
+		checkAddressResolves(t, root, claim.name, claim.address, claim.anchors)
+	}
+	for _, claim := range statedByShippedBehaviour {
+		checkAddressResolves(t, root, claim.name, claim.address, claim.anchors)
+	}
+}
+
+// checkAddressResolves re-resolves every coordinate one claim's address
+// promises, against the anchors it declares for them.
+func checkAddressResolves(t *testing.T, root, name, address string, anchors []string) {
+	t.Helper()
+
+	cites := citationRe.FindAllStringSubmatch(address, -1)
+	switch {
+	case len(cites) == 0:
+		t.Errorf("claim %s promises no file:line at all, so its address cannot be retraced.\n  address: %s",
+			name, address)
+	case len(cites) != len(anchors):
+		t.Errorf("claim %s promises %d coordinate(s) but declares %d anchor(s).\n"+
+			"  Every file:line an address names needs one anchor, in the order the address names them.\n"+
+			"  address: %s", name, len(cites), len(anchors), address)
+	default:
+		for i, cite := range cites {
+			checkCitationResolves(t, root, name, anchors[i], cite)
 		}
 	}
 }
 
 // checkCitationResolves re-resolves one `path:first[-last]` against the file it
 // names. cite is a citationRe submatch: whole, path, first, last ("" if none).
-func checkCitationResolves(t *testing.T, root string, claim falsified, anchor string, cite []string) {
+func checkCitationResolves(t *testing.T, root string, name, anchor string, cite []string) {
 	t.Helper()
 
 	whole, path := cite[0], cite[1]
 	first, err := strconv.Atoi(cite[2])
 	if err != nil {
-		t.Errorf("claim %s: address coordinate %s has an unreadable line number: %v", claim.name, whole, err)
+		t.Errorf("claim %s: address coordinate %s has an unreadable line number: %v", name, whole, err)
 		return
 	}
 
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 	if err != nil {
 		t.Errorf("claim %s: address names %s, which cannot be opened — the file moved or went away: %v",
-			claim.name, whole, err)
+			name, whole, err)
 		return
 	}
 	lines := strings.Split(string(raw), "\n")
@@ -293,19 +406,19 @@ func checkCitationResolves(t *testing.T, root string, claim falsified, anchor st
 	case len(hits) == 0:
 		t.Errorf("claim %s: address %s is anchored on %q, which is nowhere in %s any more.\n"+
 			"  The code the address names was deleted or re-worded; re-read the file, then rewrite the address and its anchor together.",
-			claim.name, whole, anchor, path)
+			name, whole, anchor, path)
 		return
 	case len(hits) > 1:
 		t.Errorf("claim %s: anchor %q occurs %d times in %s, at lines %v, so it cannot say which line %s means.\n"+
 			"  Lengthen the anchor until exactly one line carries it.",
-			claim.name, anchor, len(hits), path, hits, whole)
+			name, anchor, len(hits), path, hits, whole)
 		return
 	}
 
 	if hits[0] != first {
 		t.Errorf("claim %s: address says %s, but its anchor %q sits at %s:%d today.\n"+
 			"  Update the address to %s.",
-			claim.name, whole, anchor, path, hits[0], shiftedCitation(path, first, cite[3], hits[0]))
+			name, whole, anchor, path, hits[0], shiftedCitation(path, first, cite[3], hits[0]))
 		return
 	}
 
@@ -314,13 +427,13 @@ func checkCitationResolves(t *testing.T, root string, claim falsified, anchor st
 	}
 	last, err := strconv.Atoi(cite[3])
 	if err != nil {
-		t.Errorf("claim %s: address coordinate %s has an unreadable last line: %v", claim.name, whole, err)
+		t.Errorf("claim %s: address coordinate %s has an unreadable last line: %v", name, whole, err)
 		return
 	}
 	if last < first || last > len(lines) {
 		t.Errorf("claim %s: address %s ends at line %d, which %s does not reach (it has %d lines).\n"+
 			"  Re-read the block and give the address the line it really ends on.",
-			claim.name, whole, last, path, len(lines))
+			name, whole, last, path, len(lines))
 	}
 }
 

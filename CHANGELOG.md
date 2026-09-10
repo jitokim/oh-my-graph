@@ -149,6 +149,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   inside it, so the command output the row retains is exactly what it was
   before.
 
+### Documented
+
+- **DESIGN.md stopped denying two behaviours from this same release.** Both
+  shipped in `456d374`, which corrected `docs/LIMITATIONS.md` and did not touch
+  `DESIGN.md` at all, so the design document went on telling a reader that a
+  `verify` failure "does not say which" variable the scrub took — it now names
+  it, when the variable really was in oh-my-graph's environment **and** the
+  failing command's output names it — and that for all four whole-reply verdict
+  pins a caveat has nowhere to go. Three of the four still have nowhere; the
+  fourth, `coordinator.plannedVerdictPattern`, has the FAIL branch, which is
+  the answer the planner prompt now hands out
+  ([#264](https://github.com/jitokim/oh-my-graph/issues/264),
+  [#266](https://github.com/jitokim/oh-my-graph/issues/266)).
+
+  A claim that lives in two documents and moves in one is not a sweep anyone
+  can be trusted to repeat, so both sentences are now pinned by a test.
+  `internal/docsclaims` gained a second direction: it already refused a
+  document that ASSERTS what the code falsified, and it now also refuses a
+  document that DENIES what the code shipped — one named sentence per claim,
+  in the one document that was missed, carrying the address of the code that
+  makes it true so `TestClaimAddressesResolve` re-resolves that address as the
+  code moves. Nothing a user runs changes.
+
 ## [v0.14.0] - 2026-09-08
 
 ### Added

@@ -1152,9 +1152,21 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
-  their reply is the token *and nothing else*, so for them the answer to "where
-  does the caveat go" is "nowhere, and a caveat means this is not the verdict
-  you have".
+  their reply is the token *and nothing else*. For three of the four the answer
+  to "where does the caveat go" is still "nowhere, and a caveat means this is
+  not the verdict you have": each names a branch for the assertion *not*
+  holding (`FAIL` on `haiku-smoke`'s `write` and on `e2e-verify`, a bare
+  `DRIFT` on `apply-flags`'s `verify`) and no place at all for a qualification
+  that arrives while the assertion does hold. The fourth now has one, and it is
+  that same FAIL branch, widened: `coordinator.plannedVerdictPattern`'s prompt
+  reserves `PASS` for the assertion holding **and** nothing a reader would act
+  on differently, and sends anything the node does need to report into the FAIL
+  branch, "which no pattern pins and which is therefore free prose"
+  (`branchEvidenceRule`, `internal/coordinator/coordinator.go`). The threshold
+  is stated with it, so the rule does not convert every remark into a halted
+  run: an observation a reader would not act on is not a reason to withhold
+  `PASS`. The pattern itself is unchanged — the caveat found a home in the
+  prompt, not in a relaxed anchor (#264).
 - **The pattern is the backstop.** Wrap the token in the decoration class
   ``[*_`\s]`` — emphasis, code span, whitespace — while keeping the anchor:
   ``'^[*_`\s]*PASS'`` for a prefix verdict, ``'^[*_`\s]*PASS[*_`\s]*$'`` when
@@ -1515,7 +1527,18 @@ uses (`internal/childenv`), asserted by its own unit test.
 The consequence reaches the user's own suite, and is worth stating in that
 direction too: a `verify:` command that reads one of those names sees it unset
 and fails for that reason, not because the node's work broke it — and the
-failure text, an exit code and an output tail, does not say which.
+failure text says which when it can. The trigger is a conjunction and both
+halves are load-bearing (`scrubHint`, `internal/schedule/scheduler.go`): the
+variable really was set in oh-my-graph's own environment, so the scrub really
+took it from that child, **and** the failing command's own output names it,
+judged against the full output rather than the truncated tail the row shows.
+Then the detail ends with one sentence naming that one variable — the first
+name satisfying both, in `childenv`'s list order, so the reader gets one thing
+to act on rather than the policy recited back — and pointing at the workaround.
+Either signal alone is noise, so what stays outside the conjunction still fails
+with an exit code and an output tail that do not say which: a suite that reads
+a key without ever printing its name, and a key the command loaded from a
+dotenv, which the parent environment never had and the scrub never took.
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) says it where a user meets it, with
 why the policy has no exception for verification and what the remapping
 workaround costs.
