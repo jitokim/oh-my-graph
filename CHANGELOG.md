@@ -167,6 +167,34 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   inside it, so the command output the row retains is exactly what it was
   before.
 
+- **An over-budget repair prompt now says WHAT it could not fit, not only how
+  many.** When a planner's reply is refused, the coordinator hands the
+  validator's own refusals back for the one corrected attempt it allows — and
+  when that text runs past the 3000-byte budget it drops whole refusals from
+  the tail rather than cutting one mid-sentence. It disclosed the loss as a
+  bare count ("1 further refusal could not fit in this prompt and was
+  omitted"). The refusal at that tail is the artifact one, so the graph that
+  overruns the budget is exactly the graph whose planner is told nothing about
+  the fault it most needs to correct: three lanes broken both ways plus three
+  stranded `{{ artifacts.<id> }}` tokens render 3980 bytes of refusal text into
+  3000. The corrected reply then re-emits the token, the plan is refused a
+  second time, and the run stops having bought two planner calls and executed
+  nothing.
+
+  The note now names each dropped refusal by its own opening clause as well as
+  counting it, so a planner that cannot be shown the correction is at least
+  told which class of fault its graph still has. The disclosure is bounded — at
+  most three classes, 120 bytes each — and is still reserved out of the same
+  3000 bytes before the last refusal is kept, so no refusal that is quoted gets
+  cut to pay for it: on that graph the prompt still quotes the same four
+  refusals it quoted before. Which refusal is dropped first is unchanged.
+
+  Its stated reason was not. Dropping the artifact refusal was called the
+  cheapest of the three "because the engine states that fault itself at run
+  time" — but a plan refused for that class never reaches run time, and under
+  `auto` nobody is reading the plan screen either, so the drop was cheap only
+  for a reader who was not there.
+
 ### Documented
 
 - **DESIGN.md stopped denying two behaviours from this same release.** Both
