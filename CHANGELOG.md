@@ -56,6 +56,38 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   of scope, deliberately: the Unreleased block is the only one still
   accumulating entries, so a duplicate below it is a fact about a shipped
   release rather than a defect a contributor can act on.
+
+- **The `file:line` addresses `docsclaims` prints in a failure are now checked
+  against the tree.** When a document states an absolute this repository's code
+  has already falsified, the failure hands its reader a coordinate into that
+  code and invites them to retrace it instead of trusting it — and a line
+  number rots on its own, silently, the moment somebody inserts a line above
+  it, so the one part of the guard that asks to be trusted was the part nothing
+  verified. Each claim now carries an anchor per coordinate: a line of code
+  that must occur exactly once in the file the address names, on the line it
+  names. `TestClaimAddressesResolve` re-resolves every coordinate against the
+  tree, and when the code has moved it names the address to write instead — so
+  the fix is an edit rather than an investigation, and an anchor that has grown
+  ambiguous says so rather than picking a line. Nothing a user runs changes:
+  this is the guard keeping its own promise.
+
+- **A verdict token a document names in a graph is now checked against that
+  graph.** `docsclaims` already refused a document that ASSERTS what the code
+  falsified, and (above) one that DENIES what the code shipped. Neither can see
+  a third shape, because it is neither: a sentence that is simply wrong about a
+  file it names. DESIGN.md's paragraph on the four whole-reply verdict pins
+  said `FAIL` on `haiku-smoke`'s `write`, and `graphs/haiku-smoke.yaml` carries
+  no `FAIL` at all — that node's pin is `DONE`, and the case where the file was
+  not written is judged by the engine's `verify:` command rather than by
+  anything the node's reply says. Nothing was red; a reader found it.
+  `TestGraphTokensNamedInDocumentsResolve` carries one triple per sentence —
+  the sentence, the graph it names, and the token it says is or is not in that
+  graph — and re-resolves it in the direction the sentence states, so a
+  document that invents a branch and a graph that grows one both fail, each
+  naming the file to re-read. The sentence is checked first, so a claim whose
+  sentence was reworded away fails instead of passing on nothing. Nothing a
+  user runs changes.
+
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
@@ -134,6 +166,29 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   scrub. The note is appended after the detail's 240-rune cap rather than
   inside it, so the command output the row retains is exactly what it was
   before.
+
+### Documented
+
+- **DESIGN.md stopped denying two behaviours from this same release.** Both
+  shipped in `456d374`, which corrected `docs/LIMITATIONS.md` and did not touch
+  `DESIGN.md` at all, so the design document went on telling a reader that a
+  `verify` failure "does not say which" variable the scrub took — it now names
+  it, when the variable really was in oh-my-graph's environment **and** the
+  failing command's output names it — and that for all four whole-reply verdict
+  pins a caveat has nowhere to go. Three of the four still have nowhere; the
+  fourth, `coordinator.plannedVerdictPattern`, has the FAIL branch, which is
+  the answer the planner prompt now hands out
+  ([#264](https://github.com/jitokim/oh-my-graph/issues/264),
+  [#266](https://github.com/jitokim/oh-my-graph/issues/266)).
+
+  A claim that lives in two documents and moves in one is not a sweep anyone
+  can be trusted to repeat, so both sentences are now pinned by a test.
+  `internal/docsclaims` gained a second direction: it already refused a
+  document that ASSERTS what the code falsified, and it now also refuses a
+  document that DENIES what the code shipped — one named sentence per claim,
+  in the one document that was missed, carrying the address of the code that
+  makes it true so `TestClaimAddressesResolve` re-resolves that address as the
+  code moves. Nothing a user runs changes.
 
 ## [v0.14.0] - 2026-09-08
 

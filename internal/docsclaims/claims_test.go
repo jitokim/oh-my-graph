@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -18,11 +19,17 @@ import (
 //     guard has no opinion about what a document must contain.
 //   - address is the code that falsifies it, carried into the failure message
 //     so whoever reads the failure can retrace it instead of trusting it.
+//   - anchors is one line of code per `path:first-last` span the address names,
+//     in the order the address names them. Each must appear exactly once in the
+//     file its span names, on that span's first line — which is what turns a
+//     promised coordinate into something a test can re-resolve rather than
+//     something a reader has to trust. See TestClaimAddressesResolve.
 type falsified struct {
 	name      string
 	absolute  *regexp.Regexp
 	qualifier *regexp.Regexp
 	address   string
+	anchors   []string
 }
 
 // How far after the absolute the qualifier may sit, in whitespace-normalised
@@ -49,6 +56,7 @@ var falsifiedByADR0032 = []falsified{
 		address: "internal/coordinator/coordinator.go:868-871 — toolPolicyFor sets " +
 			"policy.SettingSources = nil when the run typed --accept-loaded-user-config, " +
 			"so every planned node of such a run does get the operator's configuration",
+		anchors: []string{"if loadedUserConfig {"},
 	},
 	{
 		name:      "\"as every planned node's has\", of `--strict-mcp-config`",
@@ -57,6 +65,72 @@ var falsifiedByADR0032 = []falsified{
 		address: "internal/coordinator/coordinator.go:868-871 sets policy.StrictMCPConfig = false " +
 			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
+		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
+	},
+}
+
+// A stated is the other direction of the same drift, and the direction the
+// falsified list above cannot see: not a document asserting something the code
+// made false, but a document DENYING something the code shipped.
+//
+// The guard above is deliberately blind to it — "silence is not a finding" is
+// what keeps it from demanding that every document mention every feature. A
+// stated is narrower than that on purpose: it does not ask a document to cover
+// a subject, it pins one named sentence that a shipped behaviour has already
+// re-written once, in the document that was left denying it while a sibling
+// document was corrected in the same lane.
+//
+//   - doc is the one document that must carry it; other documents are not asked.
+//   - phrases are ALL required, matched against the whitespace-normalised text,
+//     so a sentence wrapped across lines still reads as one sentence.
+//   - address and anchors work exactly as they do for a falsified, and
+//     TestClaimAddressesResolve re-resolves them the same way: the code a
+//     document is pinned to moves, and the pin has to say where it went.
+type stated struct {
+	name    string
+	doc     string
+	phrases []*regexp.Regexp
+	address string
+	anchors []string
+}
+
+// The two sentences DESIGN.md was still denying after the behaviour shipped.
+// Both landed in 456d374, which corrected docs/LIMITATIONS.md and did not
+// touch DESIGN.md at all — one claim living in two places with only one of
+// them moving, which is the whole failure mode this package exists for.
+var statedByShippedBehaviour = []stated{
+	{
+		name: "a verify FAIL names the scrubbed variable when both halves hold",
+		doc:  "DESIGN.md",
+		phrases: []*regexp.Regexp{
+			regexp.MustCompile(`the failure text says which when it can`),
+			regexp.MustCompile(`trigger is a conjunction and both halves are load-bearing`),
+			regexp.MustCompile(`judged against the full output rather than the truncated tail`),
+			regexp.MustCompile(`Either signal alone is noise`),
+			regexp.MustCompile(`scrubHint`),
+		},
+		address: "internal/schedule/scheduler.go:1554-1565 — scrubHint returns the sentence " +
+			"only for a name that is BOTH in result.ScrubbedFromEnv and contained in the " +
+			"full result.Output, and returns the first such name in childenv's list order",
+		anchors: []string{"func scrubHint(result verify.Result) string {"},
+	},
+	{
+		name: "the fourth whole-reply pin's caveat goes in the FAIL branch",
+		doc:  "DESIGN.md",
+		phrases: []*regexp.Regexp{
+			regexp.MustCompile(`For three of the four the answer to "where does the caveat go" is still "nowhere`),
+			regexp.MustCompile(`The fourth now has one, and it is that same FAIL branch`),
+			regexp.MustCompile(`branchEvidenceRule`),
+			regexp.MustCompile(`The pattern itself is unchanged`),
+		},
+		address: "internal/coordinator/coordinator.go:1812-1819 — branchEvidenceRule reserves PASS " +
+			"for the assertion holding and nothing a reader would act on differently, and sends " +
+			"anything else into the FAIL branch; internal/coordinator/coordinator.go:1890 — the " +
+			"pattern the same paragraph hands out is unchanged, anchored at both ends",
+		anchors: []string{
+			"markdown. Anything the node does need to report goes in the FAIL branch,",
+			"const plannedVerdictPattern = ",
+		},
 	},
 }
 
@@ -210,6 +284,172 @@ func TestNoDocumentStatesAnAbsoluteADR0032Falsified(t *testing.T) {
 	}
 }
 
+// TestDocumentStatesWhatTheCodeShipped is the presence half of this guard.
+//
+// Its subject is the drift TestNoDocumentStatesAnAbsoluteADR0032Falsified
+// cannot reach: a sentence that was true when it was written, that a shipped
+// change made false in the direction of DENIAL, and that survives because
+// nothing red goes off when a document merely stops short of what the code
+// does. Both claims below were corrected in one document and left standing in
+// another, so the pin is on the document that was missed.
+//
+// A missing phrase names itself in the failure, because "DESIGN.md no longer
+// states this claim" is not actionable and "DESIGN.md no longer contains
+// /Either signal alone is noise/" is.
+func TestDocumentStatesWhatTheCodeShipped(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range statedByShippedBehaviour {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.doc)))
+		if err != nil {
+			t.Errorf("claim %q is pinned to %s, which cannot be opened: %v", claim.name, claim.doc, err)
+			continue
+		}
+		text, _ := normalize(raw)
+		for _, phrase := range claim.phrases {
+			if phrase.MatchString(text) {
+				continue
+			}
+			t.Errorf("%s no longer states %q.\n  missing: /%s/\n  the code that makes it true: %s\n"+
+				"  The behaviour shipped, so the document may not go back to denying it — reword the phrase here only if you reworded the sentence there.",
+				claim.doc, claim.name, phrase, claim.address)
+		}
+	}
+}
+
+// citationRe finds the coordinates an address promises: a path carrying a
+// source extension, a first line, and optionally a last one. Requiring both the
+// extension and the `:digits` is what keeps it off the rest of the prose —
+// `policy.SettingSources = nil` names no line, `ADR 0032` names no file.
+var citationRe = regexp.MustCompile(`([A-Za-z0-9_./-]+\.(?:go|sh|md)):(\d+)(?:-(\d+))?`)
+
+// TestClaimAddressesResolve opens every coordinate the claims promise and
+// checks it against the tree as it stands today.
+//
+// The address is the one part of this guard that is printed rather than
+// evaluated: a reader who sees TestNoDocumentStatesAnAbsoluteADR0032Falsified
+// go red is handed a file:line and told to retrace it, so the address is
+// trusted exactly as far as it is accurate — and a line number rots the moment
+// somebody inserts a line above it, silently, with nothing failing. Each
+// coordinate therefore carries an anchor: a line of code that must occur
+// exactly once in the file and must sit on the coordinate's first line. When
+// the code moves, this test finds where it moved to and the failure names the
+// address to write instead, so the fix is an edit rather than an investigation.
+//
+// A span's last line is bounded rather than anchored, because the line that
+// closes a block is usually `}` and `}` anchors nothing.
+//
+// It covers both claim kinds, because both print an address for the same
+// reason: a stated's failure hands its reader the code that shipped the
+// behaviour the document stopped denying, and that coordinate rots exactly as
+// readily as a falsified's.
+func TestClaimAddressesResolve(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range falsifiedByADR0032 {
+		checkAddressResolves(t, root, claim.name, claim.address, claim.anchors)
+	}
+	for _, claim := range statedByShippedBehaviour {
+		checkAddressResolves(t, root, claim.name, claim.address, claim.anchors)
+	}
+}
+
+// checkAddressResolves re-resolves every coordinate one claim's address
+// promises, against the anchors it declares for them.
+func checkAddressResolves(t *testing.T, root, name, address string, anchors []string) {
+	t.Helper()
+
+	cites := citationRe.FindAllStringSubmatch(address, -1)
+	switch {
+	case len(cites) == 0:
+		t.Errorf("claim %s promises no file:line at all, so its address cannot be retraced.\n  address: %s",
+			name, address)
+	case len(cites) != len(anchors):
+		t.Errorf("claim %s promises %d coordinate(s) but declares %d anchor(s).\n"+
+			"  Every file:line an address names needs one anchor, in the order the address names them.\n"+
+			"  address: %s", name, len(cites), len(anchors), address)
+	default:
+		for i, cite := range cites {
+			checkCitationResolves(t, root, name, anchors[i], cite)
+		}
+	}
+}
+
+// checkCitationResolves re-resolves one `path:first[-last]` against the file it
+// names. cite is a citationRe submatch: whole, path, first, last ("" if none).
+func checkCitationResolves(t *testing.T, root string, name, anchor string, cite []string) {
+	t.Helper()
+
+	whole, path := cite[0], cite[1]
+	first, err := strconv.Atoi(cite[2])
+	if err != nil {
+		t.Errorf("claim %s: address coordinate %s has an unreadable line number: %v", name, whole, err)
+		return
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+	if err != nil {
+		t.Errorf("claim %s: address names %s, which cannot be opened — the file moved or went away: %v",
+			name, whole, err)
+		return
+	}
+	lines := strings.Split(string(raw), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+
+	var hits []int
+	for n, line := range lines {
+		if strings.Contains(line, anchor) {
+			hits = append(hits, n+1)
+		}
+	}
+	switch {
+	case len(hits) == 0:
+		t.Errorf("claim %s: address %s is anchored on %q, which is nowhere in %s any more.\n"+
+			"  The code the address names was deleted or re-worded; re-read the file, then rewrite the address and its anchor together.",
+			name, whole, anchor, path)
+		return
+	case len(hits) > 1:
+		t.Errorf("claim %s: anchor %q occurs %d times in %s, at lines %v, so it cannot say which line %s means.\n"+
+			"  Lengthen the anchor until exactly one line carries it.",
+			name, anchor, len(hits), path, hits, whole)
+		return
+	}
+
+	if hits[0] != first {
+		t.Errorf("claim %s: address says %s, but its anchor %q sits at %s:%d today.\n"+
+			"  Update the address to %s.",
+			name, whole, anchor, path, hits[0], shiftedCitation(path, first, cite[3], hits[0]))
+		return
+	}
+
+	if cite[3] == "" {
+		return
+	}
+	last, err := strconv.Atoi(cite[3])
+	if err != nil {
+		t.Errorf("claim %s: address coordinate %s has an unreadable last line: %v", name, whole, err)
+		return
+	}
+	if last < first || last > len(lines) {
+		t.Errorf("claim %s: address %s ends at line %d, which %s does not reach (it has %d lines).\n"+
+			"  Re-read the block and give the address the line it really ends on.",
+			name, whole, last, path, len(lines))
+	}
+}
+
+// shiftedCitation is the address to write instead: the anchor's new line, and a
+// span end moved by the same distance the anchor moved.
+func shiftedCitation(path string, first int, rawLast string, found int) string {
+	if rawLast == "" {
+		return path + ":" + strconv.Itoa(found)
+	}
+	last, err := strconv.Atoi(rawLast)
+	if err != nil {
+		return path + ":" + strconv.Itoa(found)
+	}
+	return path + ":" + strconv.Itoa(found) + "-" + strconv.Itoa(last+found-first)
+}
+
 // scan reports every absolute stated in raw with nothing conditioning it, and
 // beside it how many times each claim's absolute was stated at all, conditioned
 // or not. That second count is what the vacuity floor adds up: a suppressed
@@ -322,4 +562,128 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("no go.mod at %s — this guard is scanning the wrong tree: %v", root, err)
 	}
 	return root
+}
+
+// A namedInGraph is the third direction, and the one that let the miss through
+// that this claim kind was written for: a document naming a verdict TOKEN in a
+// graph file, where the graph names no such thing.
+//
+// Neither guard above can see it. The sentence states no absolute the code
+// falsified, so the first direction is silent; it denies nothing that shipped,
+// so the second is silent too. It simply says `FAIL` about a file that carries
+// no FAIL — which is what DESIGN.md's three-of-four paragraph said of
+// `graphs/haiku-smoke.yaml`: 6d49bff wrote that sentence, in the same commit
+// that corrected two other sentences, with every test in the tree green, and
+// 1de664f corrected it — by reading the graph, which is what this test does.
+//
+//   - phrase is the sentence in doc that makes the claim, normalised the same
+//     way a stated's phrases are. It is checked first, so a claim whose
+//     sentence was reworded away fails instead of passing on nothing.
+//   - graph is the file a reader of that sentence would open, and reading it is
+//     what resolves the coordinate — which is why there is no anchor here: the
+//     address names a file, not a line, and a file does not shift when somebody
+//     inserts a line above it.
+//   - carried says which way the graph must answer: true when the document says
+//     the graph names the token, false when it says it does not.
+//
+// The check is on the file's bytes, which is the grep the sentence invites.
+// Absence is decisive — a token nowhere in the file is named nowhere in it,
+// and absence is the direction that actually drifted. Presence says only that
+// the word is there, not that it is the branch the sentence describes; that
+// half is still read by a person.
+type namedInGraph struct {
+	name    string
+	doc     string
+	phrase  *regexp.Regexp
+	graph   string
+	token   *regexp.Regexp
+	carried bool
+}
+
+// The tokens DESIGN.md's three-of-four paragraph names in the three shipped
+// graphs it names. The distinction the paragraph exists to draw is which of
+// them names a branch for the assertion NOT holding, so each of the three is
+// pinned in the direction the sentence states it.
+var graphTokensNamedInDocuments = []namedInGraph{
+	{
+		name:    "`haiku-smoke`'s `write` names no branch for the assertion not holding",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`haiku-smoke`'s `write` names no branch at all"),
+		graph:   "graphs/haiku-smoke.yaml",
+		token:   regexp.MustCompile(`\bFAIL\b`),
+		carried: false,
+	},
+	{
+		name:    "`haiku-smoke`'s `write` pins the whole reply to DONE",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("its whole-reply pin is `DONE`"),
+		graph:   "graphs/haiku-smoke.yaml",
+		token:   regexp.MustCompile(`\bDONE\b`),
+		carried: true,
+	},
+	{
+		name:    "the `e2e-verify` fragment names FAIL",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`e2e-verify` names `FAIL`"),
+		graph:   "graphs/fragments/e2e-verify.yaml",
+		token:   regexp.MustCompile(`\bFAIL\b`),
+		carried: true,
+	},
+	{
+		name:    "`apply-flags`'s `verify` names a bare DRIFT",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`apply-flags`'s `verify` a bare `DRIFT`"),
+		graph:   "graphs/apply-flags.yaml",
+		token:   regexp.MustCompile(`\bDRIFT\b`),
+		carried: true,
+	},
+}
+
+// TestGraphTokensNamedInDocumentsResolve re-resolves each token a document
+// names in a graph against that graph, in the direction the document states.
+//
+// It is the cheap mechanism for a class the other two directions are blind to
+// by construction, and it costs one triple per sentence: the sentence, the
+// graph it names, and the token it says is or is not in it.
+func TestGraphTokensNamedInDocumentsResolve(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range graphTokensNamedInDocuments {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.doc)))
+		if err != nil {
+			t.Errorf("claim %q is pinned to %s, which cannot be opened: %v", claim.name, claim.doc, err)
+			continue
+		}
+		text, _ := normalize(raw)
+		if !claim.phrase.MatchString(text) {
+			t.Errorf("%s no longer states %s, so nothing here checks %s any more.\n"+
+				"  missing: /%s/\n"+
+				"  Re-word the phrase here only if you re-worded the sentence there; retire the claim only if the sentence is gone.",
+				claim.doc, claim.name, claim.graph, claim.phrase)
+			continue
+		}
+
+		graphRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.graph)))
+		if err != nil {
+			t.Errorf("claim %s names %s, which cannot be opened — the graph moved or went away: %v",
+				claim.name, claim.graph, err)
+			continue
+		}
+		var hits []int
+		for n, line := range strings.Split(string(graphRaw), "\n") {
+			if claim.token.MatchString(line) {
+				hits = append(hits, n+1)
+			}
+		}
+
+		switch {
+		case claim.carried && len(hits) == 0:
+			t.Errorf("%s says %s, but /%s/ is nowhere in %s.\n"+
+				"  The document names a branch the graph does not have. Correct the sentence, or the graph.",
+				claim.doc, claim.name, claim.token, claim.graph)
+		case !claim.carried && len(hits) > 0:
+			t.Errorf("%s says %s, but %s carries /%s/ at line(s) %v.\n"+
+				"  The graph grew the branch the sentence says it has not; re-read the node and correct the sentence.",
+				claim.doc, claim.name, claim.graph, claim.token, hits)
+		}
+	}
 }
