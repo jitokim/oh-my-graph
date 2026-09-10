@@ -1051,12 +1051,22 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// compacted sentence — 920 bytes for one fault, ~166 per fault after that —
 	// which a dozen short ones would push out. Behind the feedback pair because
 	// when all three fire and overrun the budget, this is the right one to
-	// lose: a stranded `{{ artifacts.<id> }}` announces itself at run time, in
-	// the engine's own words, at the first node that reads it, where a blind or
-	// mis-aimed loop announces nothing at all and spends every round it was
-	// given. Losing a refusal always costs money; this one costs the least of
-	// the three. TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire is
-	// that sentence as a probe.
+	// lose: a graph refused for a stranded `{{ artifacts.<id> }}` never runs at
+	// all, where a blind or mis-aimed loop is a graph that DOES run, announces
+	// nothing, and spends every round it was given.
+	//
+	// The reason written here before was that the engine announces the stranded
+	// token itself, at run time, at the first node that reads it. It does not:
+	// this very function refuses the plan, so that run time never arrives, and
+	// under `auto` there is no reader at the plan screen either
+	// (docs/measurements/0244-auto-path-sweeps.md). The ordering is unchanged
+	// because the tie-break is still right, but it is no longer free: what the
+	// drop costs is bounded in issuesForPrompt instead, which names the class of
+	// every refusal it drops rather than only counting them.
+	// TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire is the
+	// tie-break as a probe, and
+	// TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt is what the
+	// planner is left holding.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	issues = append(issues, validatePlannedArtifactReferences(g)...)
 	add := func(err *PlanError) {

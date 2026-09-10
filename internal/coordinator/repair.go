@@ -23,6 +23,7 @@ package coordinator
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -73,12 +74,30 @@ const maxPlanRepairAttempts = 1
 //
 // Three lanes broken both ways AND three stranded tokens render 3980, past this
 // budget, and that graph is where the ordering earns its keep rather than the
-// number: issuesForPrompt drops the artifact refusal whole and says so, which
-// is the cheapest of the three to lose because the engine states that fault
-// itself at run time (see the ordering comment in validatePlannedNodes). The
-// budget is not raised to cover it — every byte here is model-authored text
-// quoted back into a prompt, and a graph broken three ways in nine places has a
-// second re-plan ahead of it whatever this number is.
+// number: issuesForPrompt drops the artifact refusal whole and says so.
+// TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt pins the 3980;
+// nothing did before, and the figure sat here as prose.
+//
+// What that drop was ARGUED to cost is corrected. This paragraph said the
+// artifact refusal was the cheapest of the three to lose "because the engine
+// states that fault itself at run time" — which assumed someone is at run time
+// to be told. Under `auto` nobody is (docs/measurements/0244-auto-path-sweeps.md),
+// and for this class the graph never reaches run time at all:
+// validatePlannedArtifactReferences refuses the plan, so the engine never gets
+// to say the sentence the argument was leaning on, and the corrected reply is
+// refused for the same fault a second time — two planner calls, nothing run.
+//
+// So the drop no longer takes the class with it. omittedRefusalNote names what
+// was dropped as well as counting it: every dropped refusal contributes its
+// own opening clause, bounded by maxOmittedClassBytes and maxOmittedClassesNamed
+// so the disclosure cannot grow without limit, and it is still counted against
+// this budget BEFORE the last kept refusal, so the rendering still fits. What
+// the planner loses is the correction half of a refusal it is now told it has;
+// what it no longer loses is the knowledge that the fault exists.
+//
+// The budget is still not raised to cover it — every byte here is model-authored
+// text quoted back into a prompt, and a graph broken three ways in nine places
+// has a second re-plan ahead of it whatever this number is.
 //
 // At the 2000 this was, the fixture rendered 2541 bytes uncompacted
 // (677 + 677 + 592 + 592, joined) and one of the two families was cut — the
@@ -95,11 +114,12 @@ const maxPlanRepairAttempts = 1
 // family or a longer sentence fails here rather than in a paid run.
 //
 // The bound is still a bound: past it, issuesForPrompt drops whole refusals and
-// says how many.
+// says how many, and of what kind.
 const maxIssuesInPrompt = 3000
 
 // issuesForPrompt renders the refusal list into at most maxIssuesInPrompt
-// bytes, dropping WHOLE refusals from the tail and saying how many it dropped.
+// bytes, dropping WHOLE refusals from the tail and saying how many it dropped
+// and what they were about.
 //
 // It replaced a head-only fence.Truncate of the joined list, which cut at a
 // byte and so did two invisible things at once: it left the last refusal it
@@ -118,6 +138,14 @@ const maxIssuesInPrompt = 3000
 // It also makes the template's closing sentence ("this list may be incomplete")
 // literally true rather than a hedge.
 //
+// A count alone was not enough, which is the correction this comment carried
+// before: "N further refusals were omitted" tells the planner that something is
+// missing without telling it WHAT, so the one corrected reply it is allowed can
+// only re-emit the fault by accident. So the note also names each dropped
+// refusal's class — see omittedRefusalNote. The named clause is a SUMMARY and
+// not an instruction, which is why it may be cut where a kept refusal may not:
+// nothing acts on it except the planner's attention.
+//
 // Ordering is the caller's contract, not this function's: validatePlannedNodes
 // puts the graph-level refusals first precisely because this is where the tail
 // goes.
@@ -132,7 +160,13 @@ func issuesForPrompt(issues []string) string {
 		if i > 0 {
 			cost++ // the "\n" this refusal is joined with
 		}
-		if used+cost+len(omittedRefusalNote(len(issues)-i)) > maxIssuesInPrompt {
+		// The note reserved here is the one that would actually be rendered if
+		// this refusal is KEPT — issues[i+1:], not issues[i:]. While the note
+		// was a bare count the two differed by a digit and the reservation was
+		// merely pessimistic; now that it names the classes it dropped, the
+		// off-by-one reserved room for a class that keeping this refusal
+		// removes, and paid for it by dropping this refusal instead.
+		if used+cost+len(omittedRefusalNote(issues[i+1:])) > maxIssuesInPrompt {
 			break
 		}
 		used += cost
@@ -151,23 +185,122 @@ func issuesForPrompt(issues []string) string {
 		// refusal, which the truncation marker announces, plus a count of the
 		// rest, which the note announces.
 		if len(issues) > 1 {
-			if budget := maxIssuesInPrompt - len(omittedRefusalNote(len(issues)-1)); budget > 0 {
-				return fence.Truncate(issues[0], budget) + omittedRefusalNote(len(issues)-1)
+			if budget := maxIssuesInPrompt - len(omittedRefusalNote(issues[1:])); budget > 0 {
+				return fence.Truncate(issues[0], budget) + omittedRefusalNote(issues[1:])
 			}
 		}
 		// A single refusal, or a budget too small to hold even the note: there
 		// is no shorter honest rendering, so bound it and let the marker speak.
 		return fence.Truncate(joined, maxIssuesInPrompt)
 	}
-	return strings.Join(issues[:kept], "\n") + omittedRefusalNote(len(issues)-kept)
+	return strings.Join(issues[:kept], "\n") + omittedRefusalNote(issues[kept:])
 }
+
+// maxOmittedClassBytes bounds ONE class name in omittedRefusalNote, and
+// maxOmittedClassesNamed bounds how many distinct ones it names. Together they
+// are what keeps the disclosure a line rather than a second list: the note can
+// never exceed its own sentence plus maxOmittedClassesNamed × (this + a
+// separator), whatever the validator hands over. Without them a graph with
+// forty dropped per-node refusals would spend the budget describing what it
+// could not afford to quote, and the packing loop — which reserves the note
+// before it keeps the last refusal — would keep fewer and fewer refusals to
+// pay for it.
+//
+// Three, because the dropped set is a TAIL and validatePlannedNodes puts the
+// long graph-level families at the head of it: whatever is dropped first is the
+// most expensive thing lost, and the per-node refusals that follow are the ones
+// the count alone describes adequately.
+const (
+	maxOmittedClassBytes   = 120
+	maxOmittedClassesNamed = 3
+)
 
 // omittedRefusalNote is the disclosure issuesForPrompt appends when the budget
 // cannot hold every refusal. It is counted against the budget before the last
 // refusal is kept, so the rendered text never exceeds maxIssuesInPrompt.
-func omittedRefusalNote(n int) string {
-	return fmt.Sprintf("\n(%d further %s could not fit in this prompt and %s omitted — re-check the whole graph against the rules above.)",
-		n, plural(n, "refusal", "refusals"), plural(n, "was", "were"))
+//
+// It names the dropped refusals' classes as well as counting them. A count is a
+// bound the planner can see but cannot act on: told only "1 further refusal was
+// omitted", the one corrected reply it is allowed (maxPlanRepairAttempts) is
+// written against the refusals it CAN read, and the dropped one refuses it a
+// second time. Told which class was dropped, the same reply is at least written
+// by a planner that knows the graph has an artifact fault in it, which is the
+// difference between a re-plan that can converge and one that cannot.
+func omittedRefusalNote(dropped []string) string {
+	n := len(dropped)
+	if n == 0 {
+		// Nothing was dropped, so there is nothing to disclose. The packing
+		// loop asks for this when it is weighing the LAST refusal.
+		return ""
+	}
+	return fmt.Sprintf("\n(%d further %s could not fit in this prompt and %s omitted — %s. Re-check the whole graph against the rules above.)",
+		n, plural(n, "refusal", "refusals"), plural(n, "was", "were"), omittedRefusalClasses(dropped))
+}
+
+// omittedRefusalClasses renders the classes of the dropped refusals, in the
+// order they were dropped, identical classes folded into one entry with a
+// count. Beyond maxOmittedClassesNamed the rest are counted rather than named.
+func omittedRefusalClasses(dropped []string) string {
+	named := make([]string, 0, maxOmittedClassesNamed)
+	seen := make(map[string]int, len(dropped))
+	unnamed := 0
+	for _, issue := range dropped {
+		class := refusalClass(issue)
+		if _, ok := seen[class]; !ok {
+			if len(named) == maxOmittedClassesNamed {
+				unnamed++
+				continue
+			}
+			named = append(named, class)
+		}
+		seen[class]++
+	}
+	parts := make([]string, 0, len(named)+1)
+	for _, class := range named {
+		if seen[class] > 1 {
+			parts = append(parts, fmt.Sprintf("%s (×%d)", class, seen[class]))
+			continue
+		}
+		parts = append(parts, class)
+	}
+	if unnamed > 0 {
+		parts = append(parts, fmt.Sprintf("and %d of other kinds", unnamed))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// refusalClass names a refusal by its own opening clause — the diagnosis, up to
+// the em dash the validator's sentences put between what is wrong and what it
+// costs, and bounded to maxOmittedClassBytes.
+//
+// It is DERIVED rather than declared, so a reworded refusal cannot leave a
+// hardcoded label describing a rule that no longer says that. The cost of
+// deriving it is that a refusal written without that clause is summarised by
+// its first maxOmittedClassBytes bytes, which is still the half of a sentence
+// that names the fault: every refusal this validator emits opens with what is
+// wrong and closes with how to fix it.
+//
+// The cut is at a word boundary and marked with a plain ellipsis, not
+// fence.TruncateMarker: the marker means "material was cut from something that
+// was going to be acted on", and this is a summary of material already
+// disclosed as dropped.
+func refusalClass(issue string) string {
+	if i := strings.Index(issue, " — "); i > 0 && i <= maxOmittedClassBytes {
+		return issue[:i]
+	}
+	if len(issue) <= maxOmittedClassBytes {
+		return issue
+	}
+	cut := maxOmittedClassBytes
+	if i := strings.LastIndex(issue[:cut], " "); i > 0 {
+		cut = i
+	}
+	for cut > 0 && !utf8.RuneStart(issue[cut]) {
+		cut--
+	}
+	// Trailing punctuation and a dangling brace go with the cut, so the summary
+	// does not end on the half of a token the planner would read as a token.
+	return strings.TrimRight(issue[:cut], " ,;:{") + "…"
 }
 
 // PlanRepair records that a plan was bought twice: the refusals the first
