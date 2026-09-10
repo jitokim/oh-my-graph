@@ -433,12 +433,7 @@ func TestArtifactRefusalRendersItsMeasuredSize(t *testing.T) {
 // legible: the kept refusals are whole, the count is stated, and the dropped
 // refusal's CORRECTION — the half a planner acts on — is what is gone.
 func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
-	spec := strings.TrimSuffix(brokenLanesSpec(3), "]}") +
-		`,{"id":"corpus","prompt":"count","allowed_tools":["Read"]}` +
-		`,{"id":"w-1","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
-		`,{"id":"w-2","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
-		`,{"id":"w-3","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}]}`
-	g, err := graph.Parse([]byte(spec))
+	g, err := graph.Parse([]byte(threeFamiliesSpec()))
 	if err != nil {
 		t.Fatalf("the fixture must LOAD: %v", err)
 	}
@@ -458,5 +453,83 @@ func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the repair prompt lost %q, so the cut was not the one the ordering describes:\n%s", want, rendered)
 		}
+	}
+}
+
+// threeFamiliesSpec is brokenLanesSpec(3) — three lanes each mis-aimed AND
+// blind — plus the three stranded `{{ artifacts.corpus }}` tokens that make the
+// #244 family fire beside them. It is the graph maxIssuesInPrompt's sizing
+// paragraph describes, and the only shape the corpus and the validator together
+// produce where all three graph-level families overrun the budget at once.
+//
+// It is shared by the two tests that read that overrun from opposite ends —
+// which refusal takes the cut, and what the planner is left holding — so that a
+// change to the shape cannot make one of them true and the other vacuous.
+func threeFamiliesSpec() string {
+	return strings.TrimSuffix(brokenLanesSpec(3), "]}") +
+		`,{"id":"corpus","prompt":"count","allowed_tools":["Read"]}` +
+		`,{"id":"w-1","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
+		`,{"id":"w-2","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}` +
+		`,{"id":"w-3","prompt":"use {{ artifacts.corpus }}","allowed_tools":["Read"]}]}`
+}
+
+// TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt is the
+// guarantee in its name: the refusal the budget drops is still named, by class,
+// in the prompt the one repair call (maxPlanRepairAttempts) is written against.
+//
+// The test above pins WHICH refusal is dropped. This one pins what that costs,
+// end to end through a rendered prompt rather than through issuesForPrompt,
+// because the prompt is the only model-facing route the content has: the plan
+// is refused at validation, so it never runs, and nothing else carries a plan
+// refusal to a planner. A count alone left the planner correcting the two
+// feedback families and re-emitting the artifact fault, which is refused a
+// second time — two planner calls, nothing executed.
+//
+// The over-budget case is CONSTRUCTED, not hoped for, and its size is asserted
+// first: 3980 bytes of rendered refusal text against a 3000-byte budget. That
+// figure is quoted in maxIssuesInPrompt's comment and had no test address
+// before this one.
+func TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt(t *testing.T) {
+	spec := threeFamiliesSpec()
+	g, err := graph.Parse([]byte(spec))
+	if err != nil {
+		t.Fatalf("the fixture must LOAD: %v", err)
+	}
+	if got := len(strings.Join(reasons(validatePlannedNodes(g, "")), "\n")); got != 3980 {
+		t.Fatalf("the three families render %d bytes of refusal text, the comments say 3980.\n%s", got, carryTheNumbers)
+	}
+
+	fake, repairPrompt := newRepairFake(
+		runner.NodeOutcome{Result: spec, TotalCostUSD: 0.02},
+		runner.NodeOutcome{Result: spec, TotalCostUSD: 0.03},
+	)
+
+	// The second reply repeats the graph, so Plan still fails — the assertion is
+	// on what the one repair call was told.
+	if _, err := New(fake).Plan(context.Background(), "three staging lanes reading one corpus", nil); err == nil {
+		t.Fatal("the repaired reply repeats every fault, so the plan must still fail")
+	}
+	if repairPrompt.Prompt == "" {
+		t.Fatal("no repair call was made, so there is no prompt to assert on")
+	}
+
+	// The drop is still a drop: the two feedback families are quoted whole, and
+	// the artifact refusal is not.
+	for _, want := range []string{"whose loop body excludes", "nothing in their loop bodies quotes", "1 further refusal could not fit"} {
+		if !strings.Contains(repairPrompt.Prompt, want) {
+			t.Errorf("the repair prompt lost %q, so the cut was not the one the ordering describes:\n%s", want, repairPrompt.Prompt)
+		}
+	}
+	if strings.Contains(repairPrompt.Prompt, "break the two braces apart") {
+		t.Error("the artifact refusal was quoted whole; this test is about what survives when it is NOT:\n" + repairPrompt.Prompt)
+	}
+
+	// The guarantee: what was dropped is named, so the planner knows the graph
+	// has an artifact fault in it even though it cannot read the correction.
+	if !strings.Contains(repairPrompt.Prompt, "not guaranteed to exist when they run") {
+		t.Errorf("the dropped refusal is disclosed as a bare count, so the one corrected reply is written by a planner that was never told this class exists:\n%s", repairPrompt.Prompt)
+	}
+	if strings.Contains(repairPrompt.Prompt, fence.TruncateMarker) {
+		t.Errorf("a kept refusal was cut mid-sentence; the disclosure is meant to cost the budget a line, not a refusal:\n%s", repairPrompt.Prompt)
 	}
 }
