@@ -56,6 +56,20 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   of scope, deliberately: the Unreleased block is the only one still
   accumulating entries, so a duplicate below it is a fact about a shipped
   release rather than a defect a contributor can act on.
+
+- **The `file:line` addresses `docsclaims` prints in a failure are now checked
+  against the tree.** When a document states an absolute this repository's code
+  has already falsified, the failure hands its reader a coordinate into that
+  code and invites them to retrace it instead of trusting it — and a line
+  number rots on its own, silently, the moment somebody inserts a line above
+  it, so the one part of the guard that asks to be trusted was the part nothing
+  verified. Each claim now carries an anchor per coordinate: a line of code
+  that must occur exactly once in the file the address names, on the line it
+  names. `TestClaimAddressesResolve` re-resolves every coordinate against the
+  tree, and when the code has moved it names the address to write instead — so
+  the fix is an edit rather than an investigation, and an anchor that has grown
+  ambiguous says so rather than picking a line. Nothing a user runs changes:
+  this is the guard keeping its own promise.
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`

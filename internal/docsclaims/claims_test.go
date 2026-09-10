@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -18,11 +19,17 @@ import (
 //     guard has no opinion about what a document must contain.
 //   - address is the code that falsifies it, carried into the failure message
 //     so whoever reads the failure can retrace it instead of trusting it.
+//   - anchors is one line of code per `path:first-last` span the address names,
+//     in the order the address names them. Each must appear exactly once in the
+//     file its span names, on that span's first line — which is what turns a
+//     promised coordinate into something a test can re-resolve rather than
+//     something a reader has to trust. See TestClaimAddressesResolve.
 type falsified struct {
 	name      string
 	absolute  *regexp.Regexp
 	qualifier *regexp.Regexp
 	address   string
+	anchors   []string
 }
 
 // How far after the absolute the qualifier may sit, in whitespace-normalised
@@ -49,6 +56,7 @@ var falsifiedByADR0032 = []falsified{
 		address: "internal/coordinator/coordinator.go:868-871 — toolPolicyFor sets " +
 			"policy.SettingSources = nil when the run typed --accept-loaded-user-config, " +
 			"so every planned node of such a run does get the operator's configuration",
+		anchors: []string{"if loadedUserConfig {"},
 	},
 	{
 		name:      "\"as every planned node's has\", of `--strict-mcp-config`",
@@ -57,6 +65,7 @@ var falsifiedByADR0032 = []falsified{
 		address: "internal/coordinator/coordinator.go:868-871 sets policy.StrictMCPConfig = false " +
 			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
+		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
 	},
 }
 
@@ -208,6 +217,124 @@ func TestNoDocumentStatesAnAbsoluteADR0032Falsified(t *testing.T) {
 				claim.name, claim.absolute)
 		}
 	}
+}
+
+// citationRe finds the coordinates an address promises: a path carrying a
+// source extension, a first line, and optionally a last one. Requiring both the
+// extension and the `:digits` is what keeps it off the rest of the prose —
+// `policy.SettingSources = nil` names no line, `ADR 0032` names no file.
+var citationRe = regexp.MustCompile(`([A-Za-z0-9_./-]+\.(?:go|sh|md)):(\d+)(?:-(\d+))?`)
+
+// TestClaimAddressesResolve opens every coordinate the claims promise and
+// checks it against the tree as it stands today.
+//
+// The address is the one part of this guard that is printed rather than
+// evaluated: a reader who sees TestNoDocumentStatesAnAbsoluteADR0032Falsified
+// go red is handed a file:line and told to retrace it, so the address is
+// trusted exactly as far as it is accurate — and a line number rots the moment
+// somebody inserts a line above it, silently, with nothing failing. Each
+// coordinate therefore carries an anchor: a line of code that must occur
+// exactly once in the file and must sit on the coordinate's first line. When
+// the code moves, this test finds where it moved to and the failure names the
+// address to write instead, so the fix is an edit rather than an investigation.
+//
+// A span's last line is bounded rather than anchored, because the line that
+// closes a block is usually `}` and `}` anchors nothing.
+func TestClaimAddressesResolve(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range falsifiedByADR0032 {
+		cites := citationRe.FindAllStringSubmatch(claim.address, -1)
+		switch {
+		case len(cites) == 0:
+			t.Errorf("claim %s promises no file:line at all, so its address cannot be retraced.\n  address: %s",
+				claim.name, claim.address)
+		case len(cites) != len(claim.anchors):
+			t.Errorf("claim %s promises %d coordinate(s) but declares %d anchor(s).\n"+
+				"  Every file:line an address names needs one anchor, in the order the address names them.\n"+
+				"  address: %s", claim.name, len(cites), len(claim.anchors), claim.address)
+		default:
+			for i, cite := range cites {
+				checkCitationResolves(t, root, claim, claim.anchors[i], cite)
+			}
+		}
+	}
+}
+
+// checkCitationResolves re-resolves one `path:first[-last]` against the file it
+// names. cite is a citationRe submatch: whole, path, first, last ("" if none).
+func checkCitationResolves(t *testing.T, root string, claim falsified, anchor string, cite []string) {
+	t.Helper()
+
+	whole, path := cite[0], cite[1]
+	first, err := strconv.Atoi(cite[2])
+	if err != nil {
+		t.Errorf("claim %s: address coordinate %s has an unreadable line number: %v", claim.name, whole, err)
+		return
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+	if err != nil {
+		t.Errorf("claim %s: address names %s, which cannot be opened — the file moved or went away: %v",
+			claim.name, whole, err)
+		return
+	}
+	lines := strings.Split(string(raw), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+
+	var hits []int
+	for n, line := range lines {
+		if strings.Contains(line, anchor) {
+			hits = append(hits, n+1)
+		}
+	}
+	switch {
+	case len(hits) == 0:
+		t.Errorf("claim %s: address %s is anchored on %q, which is nowhere in %s any more.\n"+
+			"  The code the address names was deleted or re-worded; re-read the file, then rewrite the address and its anchor together.",
+			claim.name, whole, anchor, path)
+		return
+	case len(hits) > 1:
+		t.Errorf("claim %s: anchor %q occurs %d times in %s, at lines %v, so it cannot say which line %s means.\n"+
+			"  Lengthen the anchor until exactly one line carries it.",
+			claim.name, anchor, len(hits), path, hits, whole)
+		return
+	}
+
+	if hits[0] != first {
+		t.Errorf("claim %s: address says %s, but its anchor %q sits at %s:%d today.\n"+
+			"  Update the address to %s.",
+			claim.name, whole, anchor, path, hits[0], shiftedCitation(path, first, cite[3], hits[0]))
+		return
+	}
+
+	if cite[3] == "" {
+		return
+	}
+	last, err := strconv.Atoi(cite[3])
+	if err != nil {
+		t.Errorf("claim %s: address coordinate %s has an unreadable last line: %v", claim.name, whole, err)
+		return
+	}
+	if last < first || last > len(lines) {
+		t.Errorf("claim %s: address %s ends at line %d, which %s does not reach (it has %d lines).\n"+
+			"  Re-read the block and give the address the line it really ends on.",
+			claim.name, whole, last, path, len(lines))
+	}
+}
+
+// shiftedCitation is the address to write instead: the anchor's new line, and a
+// span end moved by the same distance the anchor moved.
+func shiftedCitation(path string, first int, rawLast string, found int) string {
+	if rawLast == "" {
+		return path + ":" + strconv.Itoa(found)
+	}
+	last, err := strconv.Atoi(rawLast)
+	if err != nil {
+		return path + ":" + strconv.Itoa(found)
+	}
+	return path + ":" + strconv.Itoa(found) + "-" + strconv.Itoa(last+found-first)
 }
 
 // scan reports every absolute stated in raw with nothing conditioning it, and
