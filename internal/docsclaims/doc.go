@@ -2,7 +2,7 @@
 //
 // It carries no production code — the whole guard lives in claims_test.go, so
 // `make test` runs it and no separate runner exists to forget. What it checks
-// is narrow, and it checks it in two directions.
+// is narrow, and it checks it in three directions.
 //
 // The first is a document ASSERTING what the code has falsified: a document
 // may not state an absolute that this repository's own code has already made
@@ -18,6 +18,16 @@
 // are the same shape of miss: 456d374 shipped a behaviour and corrected
 // docs/LIMITATIONS.md, DESIGN.md said the opposite of the new behaviour and
 // was not in the diff, and nothing was red.
+//
+// The third is a document naming a verdict TOKEN in a graph that graph does
+// not carry, which neither of the first two can see: such a sentence asserts
+// no absolute the code falsified and denies nothing that shipped — it is
+// simply wrong about a file it names. DESIGN.md said `FAIL` on `haiku-smoke`'s
+// `write` while `graphs/haiku-smoke.yaml` carried no FAIL at all, and every
+// test in the tree stayed green: 6d49bff wrote that sentence and 1de664f
+// corrected it, by reading. A `namedInGraph` claim declares no anchor, because
+// the coordinate it promises is a file rather than a line, and opening the
+// file is what resolves it.
 //
 // It exists because the last sweep missed a sentence, not a file. d537739 —
 // the commit that shipped --accept-loaded-user-config — conditioned both of

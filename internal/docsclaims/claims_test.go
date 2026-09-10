@@ -563,3 +563,127 @@ func repoRoot(t *testing.T) string {
 	}
 	return root
 }
+
+// A namedInGraph is the third direction, and the one that let the miss through
+// that this claim kind was written for: a document naming a verdict TOKEN in a
+// graph file, where the graph names no such thing.
+//
+// Neither guard above can see it. The sentence states no absolute the code
+// falsified, so the first direction is silent; it denies nothing that shipped,
+// so the second is silent too. It simply says `FAIL` about a file that carries
+// no FAIL — which is what DESIGN.md's three-of-four paragraph said of
+// `graphs/haiku-smoke.yaml`: 6d49bff wrote that sentence, in the same commit
+// that corrected two other sentences, with every test in the tree green, and
+// 1de664f corrected it — by reading the graph, which is what this test does.
+//
+//   - phrase is the sentence in doc that makes the claim, normalised the same
+//     way a stated's phrases are. It is checked first, so a claim whose
+//     sentence was reworded away fails instead of passing on nothing.
+//   - graph is the file a reader of that sentence would open, and reading it is
+//     what resolves the coordinate — which is why there is no anchor here: the
+//     address names a file, not a line, and a file does not shift when somebody
+//     inserts a line above it.
+//   - carried says which way the graph must answer: true when the document says
+//     the graph names the token, false when it says it does not.
+//
+// The check is on the file's bytes, which is the grep the sentence invites.
+// Absence is decisive — a token nowhere in the file is named nowhere in it,
+// and absence is the direction that actually drifted. Presence says only that
+// the word is there, not that it is the branch the sentence describes; that
+// half is still read by a person.
+type namedInGraph struct {
+	name    string
+	doc     string
+	phrase  *regexp.Regexp
+	graph   string
+	token   *regexp.Regexp
+	carried bool
+}
+
+// The tokens DESIGN.md's three-of-four paragraph names in the three shipped
+// graphs it names. The distinction the paragraph exists to draw is which of
+// them names a branch for the assertion NOT holding, so each of the three is
+// pinned in the direction the sentence states it.
+var graphTokensNamedInDocuments = []namedInGraph{
+	{
+		name:    "`haiku-smoke`'s `write` names no branch for the assertion not holding",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`haiku-smoke`'s `write` names no branch at all"),
+		graph:   "graphs/haiku-smoke.yaml",
+		token:   regexp.MustCompile(`\bFAIL\b`),
+		carried: false,
+	},
+	{
+		name:    "`haiku-smoke`'s `write` pins the whole reply to DONE",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("its whole-reply pin is `DONE`"),
+		graph:   "graphs/haiku-smoke.yaml",
+		token:   regexp.MustCompile(`\bDONE\b`),
+		carried: true,
+	},
+	{
+		name:    "the `e2e-verify` fragment names FAIL",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`e2e-verify` names `FAIL`"),
+		graph:   "graphs/fragments/e2e-verify.yaml",
+		token:   regexp.MustCompile(`\bFAIL\b`),
+		carried: true,
+	},
+	{
+		name:    "`apply-flags`'s `verify` names a bare DRIFT",
+		doc:     "DESIGN.md",
+		phrase:  regexp.MustCompile("`apply-flags`'s `verify` a bare `DRIFT`"),
+		graph:   "graphs/apply-flags.yaml",
+		token:   regexp.MustCompile(`\bDRIFT\b`),
+		carried: true,
+	},
+}
+
+// TestGraphTokensNamedInDocumentsResolve re-resolves each token a document
+// names in a graph against that graph, in the direction the document states.
+//
+// It is the cheap mechanism for a class the other two directions are blind to
+// by construction, and it costs one triple per sentence: the sentence, the
+// graph it names, and the token it says is or is not in it.
+func TestGraphTokensNamedInDocumentsResolve(t *testing.T) {
+	root := repoRoot(t)
+	for _, claim := range graphTokensNamedInDocuments {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.doc)))
+		if err != nil {
+			t.Errorf("claim %q is pinned to %s, which cannot be opened: %v", claim.name, claim.doc, err)
+			continue
+		}
+		text, _ := normalize(raw)
+		if !claim.phrase.MatchString(text) {
+			t.Errorf("%s no longer states %s, so nothing here checks %s any more.\n"+
+				"  missing: /%s/\n"+
+				"  Re-word the phrase here only if you re-worded the sentence there; retire the claim only if the sentence is gone.",
+				claim.doc, claim.name, claim.graph, claim.phrase)
+			continue
+		}
+
+		graphRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(claim.graph)))
+		if err != nil {
+			t.Errorf("claim %s names %s, which cannot be opened — the graph moved or went away: %v",
+				claim.name, claim.graph, err)
+			continue
+		}
+		var hits []int
+		for n, line := range strings.Split(string(graphRaw), "\n") {
+			if claim.token.MatchString(line) {
+				hits = append(hits, n+1)
+			}
+		}
+
+		switch {
+		case claim.carried && len(hits) == 0:
+			t.Errorf("%s says %s, but /%s/ is nowhere in %s.\n"+
+				"  The document names a branch the graph does not have. Correct the sentence, or the graph.",
+				claim.doc, claim.name, claim.token, claim.graph)
+		case !claim.carried && len(hits) > 0:
+			t.Errorf("%s says %s, but %s carries /%s/ at line(s) %v.\n"+
+				"  The graph grew the branch the sentence says it has not; re-read the node and correct the sentence.",
+				claim.doc, claim.name, claim.graph, claim.token, hits)
+		}
+	}
+}

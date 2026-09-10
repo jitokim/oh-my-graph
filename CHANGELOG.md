@@ -71,6 +71,23 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   ambiguous says so rather than picking a line. Nothing a user runs changes:
   this is the guard keeping its own promise.
 
+- **A verdict token a document names in a graph is now checked against that
+  graph.** `docsclaims` already refused a document that ASSERTS what the code
+  falsified, and (above) one that DENIES what the code shipped. Neither can see
+  a third shape, because it is neither: a sentence that is simply wrong about a
+  file it names. DESIGN.md's paragraph on the four whole-reply verdict pins
+  said `FAIL` on `haiku-smoke`'s `write`, and `graphs/haiku-smoke.yaml` carries
+  no `FAIL` at all — that node's pin is `DONE`, and the case where the file was
+  not written is judged by the engine's `verify:` command rather than by
+  anything the node's reply says. Nothing was red; a reader found it.
+  `TestGraphTokensNamedInDocumentsResolve` carries one triple per sentence —
+  the sentence, the graph it names, and the token it says is or is not in that
+  graph — and re-resolves it in the direction the sentence states, so a
+  document that invents a branch and a graph that grows one both fail, each
+  naming the file to re-read. The sentence is checked first, so a claim whose
+  sentence was reworded away fails instead of passing on nothing. Nothing a
+  user runs changes.
+
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
