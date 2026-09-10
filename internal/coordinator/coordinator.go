@@ -1756,6 +1756,26 @@ const (
 // It still closes the bug the branch assertion was added for (a node that
 // commits on the default branch and PASSes anyway), and closes it wider: work
 // committed on the right branch but never pushed has no pull request either.
+//
+// Its closing rule names WHICH node may carry the whole-reply pin, which every
+// earlier spelling assumed and never said. The paragraph speaks of "the final
+// check node", and under a goal that ends "record what you found" the final
+// node is a DOING node: run 20260908-145107 planned exactly that, gave the
+// recording node the pin, and the node wrote rows to the operator's backlog and
+// committed them — while its artifact read the bare word PASS and nothing else.
+// The assessment that decides whether the goal was met read that word, could
+// not see the recording, and judged the cycle unmet over work that had landed.
+//
+// The rule lives in the prompt rather than in validatePlannedNodes because the
+// signal is not structural. "This node's job is to report" is a property of the
+// node's prompt, not of the topology: the recording node was terminal, and so
+// is the true check node this paragraph exists to ask for, whose artifact the
+// same assessment reads. A refusal keyed on terminality would refuse both, and
+// the assert/report distinction has no other structural spelling in graph.Node.
+// So the rule is stated where the pin is handed out, and — like the branch rule
+// above and ADR 0019's caveat clause — it says what a reporting node gets
+// INSTEAD, because a prohibition with no offer is the failure shape DESIGN.md's
+// "Verdict patterns" already records.
 const branchEvidenceRule = `- If the goal involves creating a branch or committing on one, the final
   check node MUST verify that the work landed on the intended feature
   branch and not on the repository's default branch (e.g. main or master).
@@ -1797,6 +1817,42 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   observation a reader would not act on is not a reason to withhold PASS:
   the threshold is whether it changes what they do, not whether it is
   worth mentioning.
+- That whole-reply pin belongs ONLY on a node whose entire job is to
+  ASSERT: it observes, it judges, and its reply IS the verdict, because
+  nothing else it produced is needed afterwards. Being the LAST node of the
+  graph does not make a node such a node. NEVER put the pin on a node that
+  also DOES something whose output is read afterwards — a node that
+  records what it found, writes a report or a summary, files issues, or
+  states what it changed. Pinned that way, that node's whole reply is the
+  bare word PASS, the report it was asked for is discarded along with
+  everything else it wrote, and whoever reads its result next — a human,
+  or oh-my-graph's own assessment of whether the goal was met — sees only
+  the word, cannot see that the work happened, and reports it as not done
+  on a run where it was done and was paid for.
+  A node that must produce a report gets one of two things instead.
+  EITHER no "success_check" at all, which is the normal choice, since that
+  node's output IS the evidence its reader judges. OR a PREFIX verdict —
+  a "result_matches" anchored at the START only, carrying no trailing
+  dollar sign, and wrapping the token in the SAME decoration class the
+  whole-reply pin above carries, so it reads like the shipped reporting
+  node at graphs/fragments/read-and-report.yaml rather than a bare
+  "^RECORDED" — a model writes "**RECORDED**" unbidden, a bare anchor
+  fails on it, and that false FAIL is the very thing this rule exists to
+  stop. The node's prompt must ALSO name the decorated spelling as wrong,
+  the way that fragment does. So the report itself survives in
+  the reply. If you choose the prefix verdict, the prompt must demand the
+  verdict token as the FIRST characters of the reply and put the report
+  AFTER it. That ordering is the whole of it: the engine compiles your
+  pattern with no flags, so "^" anchors to the start of the WHOLE reply
+  and never to the start of a later line. A token appended at the END of
+  a report does not match "^RECORDED", and neither does one on any line
+  but the first — a prompt saying "finish with RECORDED" rebuilds the
+  exact failure this rule exists to stop. Say where the rest goes, in the
+  words every prefix verdict in this project uses: anything you need to
+  qualify goes AFTER the verdict, never before it.
+  When the goal needs BOTH the report and the assertion, that is two
+  nodes, never one: the node that does the work and reports it, then a
+  check node depending on it that asserts and carries the whole-reply pin.
 `
 
 // plannedVerdictPattern is the verdict regex the planner is told to give its
