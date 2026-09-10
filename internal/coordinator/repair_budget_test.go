@@ -334,10 +334,16 @@ func reasons(issues []*PlanError) []string {
 // than it had been refused for, and nothing said so. That is the exact failure
 // issuesForPrompt exists to prevent, reached through its own boundary — which
 // is why this case is pinned rather than left to the general test above.
+//
+// The second refusal is written in the validator's own shape — a diagnosis, an
+// em dash, then the correction — because the disclosure now names the class of
+// what it dropped: the diagnosis half travels in the note, the correction half
+// does not. Its two halves are asserted separately for that reason, where this
+// test once asserted only that the whole sentence was absent.
 func TestIssuesForPrompt_FirstRefusalTooLongStillDisclosesTheRest(t *testing.T) {
 	// Fits inside the budget alone; cannot fit once the note is reserved.
 	first := "first: " + strings.Repeat("x", maxIssuesInPrompt-10)
-	issues := []string{first, "second: a refusal the planner must know exists"}
+	issues := []string{first, "second: a refusal the planner must know exists — aim the arc at the other node."}
 
 	got := issuesForPrompt(issues)
 
@@ -347,8 +353,11 @@ func TestIssuesForPrompt_FirstRefusalTooLongStillDisclosesTheRest(t *testing.T) 
 	if !strings.Contains(got, "1 further refusal") {
 		t.Errorf("the omitted refusal is not disclosed:\n%s", got[max(0, len(got)-200):])
 	}
-	if strings.Contains(got, "second: a refusal") {
-		t.Error("the second refusal was kept whole; this case is about disclosing, not keeping")
+	if !strings.Contains(got, "second: a refusal the planner must know exists") {
+		t.Errorf("the dropped refusal is disclosed as a bare count, so nothing says what it was about:\n%s", got[max(0, len(got)-300):])
+	}
+	if strings.Contains(got, "aim the arc at the other node") {
+		t.Error("the second refusal was kept whole; this case is about disclosing its class, not keeping its correction")
 	}
 	if !strings.HasPrefix(got, "first: ") {
 		t.Error("the first refusal's head was lost")
@@ -407,15 +416,22 @@ func TestArtifactRefusalRendersItsMeasuredSize(t *testing.T) {
 // AND blind, plus three stranded artifact tokens, renders past
 // maxIssuesInPrompt, and something has to go.
 //
-// It is the artifact refusal, deliberately, because it is the only one of the
-// three whose fault the ENGINE states for itself: a stranded token fails its
-// node at interpolation with `cannot resolve {{ artifacts.<id> }}`, loudly and
-// at the first node. A dropped feedback refusal buys silence instead — a loop
-// that runs every round it was given, produces the same output each time, and
-// passes the money through.
+// It is the artifact refusal, deliberately, because a dropped feedback refusal
+// buys silence — a loop that runs every round it was given, produces the same
+// output each time, and passes the money through — while this one's graph is
+// stopped at the plan either way.
 //
-// What is asserted is that the loss is legible, not that it is free: the kept
-// refusals are whole, and the count of dropped ones is stated.
+// The reason this comment used to give was that the ENGINE states the artifact
+// fault for itself at run time. It does not: validatePlannedArtifactReferences
+// refuses the plan, so that graph has no run time, and under `auto` there is
+// nobody reading the screen either (docs/measurements/0244-auto-path-sweeps.md).
+// The tie-break survived the correction; the argument for it did not, which is
+// why the drop now leaves the class behind — see
+// TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt.
+//
+// What is asserted here is which refusal takes the cut and that the loss is
+// legible: the kept refusals are whole, the count is stated, and the dropped
+// refusal's CORRECTION — the half a planner acts on — is what is gone.
 func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
 	spec := strings.TrimSuffix(brokenLanesSpec(3), "]}") +
 		`,{"id":"corpus","prompt":"count","allowed_tools":["Read"]}` +
@@ -433,8 +449,10 @@ func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
 	}
 
 	rendered := issuesForPrompt(issues)
-	if strings.Contains(rendered, "not guaranteed to exist when they run") {
-		t.Error("the artifact refusal survived a cut the ordering says it takes; a feedback refusal was dropped instead:\n" + rendered)
+	for _, gone := range []string{"break the two braces apart", "put it in this node's depends_on"} {
+		if strings.Contains(rendered, gone) {
+			t.Errorf("the artifact refusal survived a cut the ordering says it takes (%q is its correction); a feedback refusal was dropped instead:\n%s", gone, rendered)
+		}
 	}
 	for _, want := range []string{"whose loop body excludes", "nothing in their loop bodies quotes", "1 further refusal could not fit"} {
 		if !strings.Contains(rendered, want) {
