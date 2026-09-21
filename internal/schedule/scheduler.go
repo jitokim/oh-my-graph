@@ -192,6 +192,22 @@ type Options struct {
 	// the terminal looking dead. Defaults to os.Stderr; pass io.Discard to
 	// silence it (tests do this).
 	ProgressWriter io.Writer
+	// Heartbeat is how often a running node prints its `… <id>  still running
+	// (<elapsed>)` line to ProgressWriter, so a node that takes half an hour
+	// does not leave the terminal looking dead between `▶ running…` and its
+	// verdict (#284). 0 means DefaultHeartbeat. A gate never ticks — waiting
+	// on a human is not running — and a retried attempt gets its own window,
+	// elapsed still counted from the node's first `▶`. Not user-tunable in
+	// this change: no flag, no env var.
+	Heartbeat time.Duration
+	// NewTicker makes the heartbeat's ticker: it returns the channel ticks
+	// arrive on and the function that stops it. Defaults to time.NewTicker.
+	// Tests inject a channel they own and a no-op stop, so no test sleeps.
+	NewTicker func(time.Duration) (<-chan time.Time, func())
+	// Now is the clock a node's elapsed time is measured on — the heartbeat's
+	// elapsed and the verdict's recorded duration alike, so the two always
+	// agree. Defaults to time.Now. Tests inject a value they advance by hand.
+	Now func() time.Time
 	// Verifier runs the command a node's success_check.verify declares — the
 	// second exec seam, separate from the NodeRunner because a verification is
 	// not a claude invocation (docs/adr/0002). Defaults to
@@ -387,6 +403,15 @@ type Scheduler struct {
 	// separate goroutines, and io.Writer (e.g. a *bytes.Buffer) is not safe for
 	// concurrent use without one.
 	progressMu sync.Mutex
+	// heartbeat, newTicker and now are Options.Heartbeat, NewTicker and Now
+	// resolved to their defaults — see heartbeat.go.
+	heartbeat time.Duration
+	newTicker func(time.Duration) (<-chan time.Time, func())
+	now       func() time.Time
+	// heartbeats maps an in-flight node id to its ticking goroutine, guarded
+	// by heartbeatMu: startHeartbeat adds, stopHeartbeat removes and joins.
+	heartbeats  map[string]*heartbeat
+	heartbeatMu sync.Mutex
 }
 
 // NewScheduler builds a Scheduler bound to a NodeRunner. The runner is the seam:
@@ -407,6 +432,18 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 	progressWriter := opts.ProgressWriter
 	if progressWriter == nil {
 		progressWriter = os.Stderr
+	}
+	heartbeatInterval := opts.Heartbeat
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = DefaultHeartbeat
+	}
+	newTicker := opts.NewTicker
+	if newTicker == nil {
+		newTicker = realTicker
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
 	}
 	recorder := opts.Recorder
 	if recorder == nil {
@@ -438,6 +475,10 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		nodeRounds:            opts.NodeRounds,
 		opening:               opts.OpeningAccounting,
 		serializedVerify:      opts.SerializedVerifyNodes,
+		heartbeat:             heartbeatInterval,
+		newTicker:             newTicker,
+		now:                   now,
+		heartbeats:            map[string]*heartbeat{},
 	}
 }
 
@@ -775,7 +816,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 // *pauseSignal/*rejectSignal Run() intercepts before they could be mistaken
 // for one of these.
 func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, halt *haltCause) error {
-	start := time.Now()
+	start := s.now()
 	s.logProgress("▶ %s  running…\n", node.ID)
 
 	// A previous LEG's reply, if the resume path seeded one — a
@@ -803,9 +844,16 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		return s.evaluateGate(ctx, node, h, led, start)
 	}
 
+	// The sign-of-life starts here, after the gate branch, so a gate never
+	// ticks. Whichever settlement writer ends the node stops it first
+	// (settleProgress); the defer is the safety net for an exit that writes
+	// no settlement line, and is a no-op once one has.
+	s.startHeartbeat(node.ID, start)
+	defer s.stopHeartbeat(node.ID)
+
 	invocation, err := s.buildInvocation(ctx, node, h)
 	if err != nil {
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, err)
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, err)
 	}
 
 	// basePrompt is the interpolated node prompt with nothing appended, kept
@@ -854,7 +902,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				// DROPS a quote an earlier attempt may have carried, because
 				// the attempt immediately before this one is the one that died
 				// mid-spawn, and it is the only one a prompt may quote.
-				s.recordRetry(node)
+				s.recordRetry(node, start)
 				s.prepareRetry(&invocation, node, basePrompt, "")
 				continue
 			}
@@ -866,7 +914,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				// coupling for a diagnostic — so the detail says so instead.
 				runErr = fmt.Errorf("%w; cost unknown (killed before reporting)", runErr)
 			}
-			return s.recordFail(led, h, node, outcome, time.Since(start), attempt, runErr)
+			return s.recordFail(led, h, node, outcome, s.since(start), attempt, runErr)
 		}
 
 		if outcome.SessionLimited {
@@ -876,7 +924,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// event, no retry (an immediate re-spawn meets the same limit):
 			// the node stays un-run, and Run() turns this signal into the
 			// whole-run pause (ADR 0009).
-			s.logProgress("⏸ %s  session limit reached — pausing run\n", node.ID)
+			s.settleProgress(node.ID, "⏸ %s  session limit reached — pausing run\n", node.ID)
 			return &limitSignal{NodeID: node.ID, Cause: outcome.FailureCause}
 		}
 
@@ -903,7 +951,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
 				s.keepFailedReply(h, node, outcome.Result)
-				return s.recordFail(led, h, node, outcome, time.Since(start), attempt, persistErr)
+				return s.recordFail(led, h, node, outcome, s.since(start), attempt, persistErr)
 			}
 			// Budget is judged only after the output has been persisted, so a
 			// node that did useful work before blowing its budget still leaves
@@ -911,7 +959,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// semantics are untouched here — only the pass/fail verdict is.
 			verdictErr = evaluateBudget(node, outcome)
 			if verdictErr == nil {
-				return s.recordPass(led, h, node, outcome, time.Since(start), attempt, retryingPriorLeg)
+				return s.recordPass(led, h, node, outcome, s.since(start), attempt, retryingPriorLeg)
 			}
 		}
 
@@ -927,7 +975,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			if isJudgmentFailure(verdictErr) {
 				prior = outcome.Result
 			}
-			s.recordRetry(node)
+			s.recordRetry(node, start)
 			s.prepareRetry(&invocation, node, basePrompt, prior)
 			continue
 		}
@@ -936,7 +984,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		// arc returns the signal Run's launch loop intercepts; an exhausted
 		// (or absent, or non-judgment) one falls through to the terminal
 		// FAIL, its cause wrapped with the spend when rounds were used up.
-		signal, finalErr := s.judgeFeedback(node, outcome, h, led, time.Since(start), verdictErr)
+		signal, finalErr := s.judgeFeedback(node, outcome, h, led, s.since(start), verdictErr)
 		if signal != nil {
 			return signal
 		}
@@ -945,7 +993,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		// reacting to node_failed on the event stream never beats the file
 		// onto disk.
 		s.keepFailedReply(h, node, outcome.Result)
-		return s.recordFail(led, h, node, outcome, time.Since(start), attempt, finalErr)
+		return s.recordFail(led, h, node, outcome, s.since(start), attempt, finalErr)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -974,22 +1022,22 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
 	decision, err := s.gate.Evaluate(ctx, node)
 	if err != nil {
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
 	}
 
 	switch decision {
 	case gate.DecisionApprove:
-		return s.recordGateApprove(led, h, node, time.Since(start))
+		return s.recordGateApprove(led, h, node, s.since(start))
 	case gate.DecisionReject:
 		s.recordGateDecision(node, runstate.GateReject)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGateRejected, NodeID: node.ID})
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0, &rejectSignal{NodeID: node.ID})
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, &rejectSignal{NodeID: node.ID})
 	case gate.DecisionPause:
 		s.logProgress("⏸ %s  gate paused\n", node.ID)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGatePaused, NodeID: node.ID})
 		return &pauseSignal{NodeID: node.ID}
 	default:
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, time.Since(start), 0,
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0,
 			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision))
 	}
 }
@@ -1000,7 +1048,7 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 // attempt is the 0-based index of the terminal attempt — i.e. how many retries
 // preceded it (0 for a path that never retries, such as a gate).
 func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, cause error) error {
-	s.logProgress("✗ %s  FAILED: %s\n", node.ID, cause.Error())
+	s.settleProgress(node.ID, "✗ %s  FAILED: %s\n", node.ID, cause.Error())
 	rec := failRecord(node, outcome, duration, cause)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
@@ -1063,9 +1111,9 @@ func (s *Scheduler) dropFailedReply(h *handoff.Handoff, node graph.Node) {
 // event, then returns nil so callers can `return s.recordPass(...)` directly.
 func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) error {
 	if outcome.CostUnknown {
-		s.logProgress("✓ %s  %s  cost unknown  %s\n", node.ID, ledger.VerdictPass, duration.Round(time.Millisecond))
+		s.settleProgress(node.ID, "✓ %s  %s  cost unknown  %s\n", node.ID, ledger.VerdictPass, duration.Round(time.Millisecond))
 	} else {
-		s.logProgress("✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
+		s.settleProgress(node.ID, "✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
 	}
 	s.dropFailedReply(h, node)
 	rec := passRecord(node, outcome, duration, attempt, coldStart)
@@ -1199,8 +1247,15 @@ func (s *Scheduler) quotePriorAttempt(invocation *runner.NodeInvocation, node gr
 // recordRetry writes the node's live retry progress line. The selected runtime
 // emits node_retried through SessionStarted once that next attempt owns a
 // resumable session.
-func (s *Scheduler) recordRetry(node graph.Node) {
-	s.logProgress("↻ %s  retry\n", node.ID)
+//
+// The retry line settles the attempt that failed, so the heartbeat stops
+// before it and re-arms after it: the next attempt gets its own window, but
+// elapsed keeps counting from start — the same start recordPass prints as the
+// verdict's duration — because a retried node is still the one node, still
+// unsettled.
+func (s *Scheduler) recordRetry(node graph.Node, start time.Time) {
+	s.settleProgress(node.ID, "↻ %s  retry\n", node.ID)
+	s.startHeartbeat(node.ID, start)
 }
 
 // recordSnapshot converts rec into a runstate.NodeRecord — filling in

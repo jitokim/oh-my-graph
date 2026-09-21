@@ -238,7 +238,9 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 	}
 
 	round := s.feedback.fire(node.ID)
-	s.logProgress("↻ %s  feedback round %d/%d — re-running %s → %s\n", node.ID, round, f.Max, f.Rerun, node.ID)
+	// A re-arm settles this execution of the declarer (the body re-runs and
+	// prints a fresh `▶`), so it goes through settleProgress like a verdict.
+	s.settleProgress(node.ID, "↻ %s  feedback round %d/%d — re-running %s → %s\n", node.ID, round, f.Max, f.Rerun, node.ID)
 
 	// The non-final trio (ADR 0010): a ledger row pricing this failing
 	// execution, a non-terminal MARKER in the snapshot (round k, no verdict

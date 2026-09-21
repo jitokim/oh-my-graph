@@ -109,7 +109,7 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`Either signal alone is noise`),
 			regexp.MustCompile(`scrubHint`),
 		},
-		address: "internal/schedule/scheduler.go:1554-1565 — scrubHint returns the sentence " +
+		address: "internal/schedule/scheduler.go:1609-1620 — scrubHint returns the sentence " +
 			"only for a name that is BOTH in result.ScrubbedFromEnv and contained in the " +
 			"full result.Output, and returns the first such name in childenv's list order",
 		anchors: []string{"func scrubHint(result verify.Result) string {"},
