@@ -261,15 +261,20 @@ has no open issue behind it.
   into the hint on both runtimes, as that CLI's own prose and never as a parsed
   clock — neither `resets 5:20pm` nor `try again at Sep 13th, 2026 10:04 PM`
   names a timezone.
-- **A `gate` pauses a fresh run unless it was named at launch.** Gate nodes are
-  implemented (pause / approve / reject, continued by `oh-my-graph resume`).
-  `run --auto-approve <gate-id>` (repeatable, exact ids only, validated against
-  the graph before any node runs) pre-registers approval for the named gates;
-  every gate not named still stops the run with a resumable snapshot and exit
-  code 2, to be decided on resume. `auto` has no such flag: a planned graph
-  cannot contain a gate at all (the coordinator refuses one at plan time).
-  ([#9](https://github.com/jitokim/oh-my-graph/issues/9),
-  [#285](https://github.com/jitokim/oh-my-graph/issues/285))
+- **A fresh run pauses at every `gate` it was not told about.** Gate nodes are
+  implemented (pause / approve / reject, continued by `oh-my-graph resume`),
+  and `run --auto-approve <gate-id>` pre-registers approval for the named gates
+  on `run` only: repeatable, one exact gate node id per use, validated against
+  the loaded graph before the run directory exists or any node runs, so a
+  misspelt id fails the load with exit 1 and the graph's real gate ids in the
+  message. Every gate not named still stops the run with a resumable snapshot
+  and exit code 2, to be decided by `resume --approve` one gate per leg. `auto`
+  cannot carry a gate at all, named or not: `validatePlannedNodes` in
+  `internal/coordinator/coordinator.go` refuses any planned `type: gate` node
+  ("planned node %q is a gate node, which auto mode cannot run"), so a planned
+  graph never reaches a gate for a flag to answer and `auto` has no
+  `--auto-approve`.
+  ([#285](https://github.com/jitokim/oh-my-graph/issues/285))
 - **Auto mode's tool ceiling is a reduction, not a sandbox — and parts of it are
   unverified.** The isolation and scoped-Bash layers were measured against a
   real `claude` 2.1.220 and hold (see [SECURITY.md](../SECURITY.md)). MCP closure
