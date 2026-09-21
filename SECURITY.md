@@ -89,9 +89,11 @@ envelope. Neither id is invented by the scheduler.
 A planned graph is untrusted LLM output executed unattended, so it gets bounds a
 hand-written graph does not. Beyond the plan-time rejections (no
 `bypassPermissions`, no `cwd`, no planner-authored `success_check.verify`, no
-`agent`, no tool outside a fixed allowlist, and a capped `retry.max` and
-`feedback.max`), auto mode runs each planned node under a layered execution
-ceiling.
+`agent`, no `type: gate` — a gate is a decision the operator makes on a graph
+they wrote, and `run --auto-approve <gate-id>` is that decision typed at launch
+on a hand-written graph, never available to a planned one — no tool outside a
+fixed allowlist, and a capped `retry.max` and `feedback.max`), auto mode runs
+each planned node under a layered execution ceiling.
 
 A **planner-authored** `success_check.verify` is refused outright rather than
 constrained: it is a shell command the *engine* runs, not a tool call, so no
