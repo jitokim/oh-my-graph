@@ -1757,8 +1757,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   reported, one step downstream. Supplied where the flag has nothing to attach
   to — a hand-written graph — it is an error even when the leg would have been a
   no-op, rather than being accepted and ignored.
-- Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
-  pauses again. The decision map makes batch approval a later, additive change.
+- Multiple gates ⇒ multiple resumes, for the gates `run --auto-approve` did not
+  name: a resumed run advances to the next such gate and pauses again. A gate
+  named at launch is already in the decision map and is passed through, so only
+  the gates not covered by a launch-time approval cost one resume each.
 - `--retry-failed` salvages a failed run instead of deciding a gate; combining
   it with `--approve`/`--reject` is a flag error (a retry leg replays prior
   gate decisions unchanged and must never sneak a new one in). It keeps every
