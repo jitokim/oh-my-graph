@@ -1126,8 +1126,10 @@ Spec:
 - **`type: gate`** — the node spawns nothing and pauses the run for human
   approval, continued with `oh-my-graph resume <run-id> --approve <gate-id>`
   (or `--reject`), from the terminal or straight from the live view. A fresh
-  `run`/`auto` cannot pre-approve one: every gate stops the run with a resumable
-  snapshot and exit code 2.
+  `run` can pre-approve one by exact id — `run <graph.yaml> --auto-approve
+  <gate-id>`, repeatable — and every gate not named stops the run with a
+  resumable snapshot and exit code 2 (#285). `auto` has no such flag, because a
+  planned graph cannot contain a gate.
 - **`resume <run-id> --retry-failed`** — re-executes only a failed run's failed
   and cancelled nodes, keeping every passed node's artifact for its dependents.
 

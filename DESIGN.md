@@ -1616,16 +1616,25 @@ type GateController interface {
 	Evaluate(ctx context.Context, node graph.Node) (Decision, error)
 }
 ```
-- `PauseController` — injected by `run`/`auto`. Always `DecisionPause`: a fresh
-  run cannot carry an approval.
+- `PauseController` — injected by a fresh `run` with no `--auto-approve`, and
+  by `auto` (whose planned graphs cannot contain a gate). Always
+  `DecisionPause`: with nothing registered at launch there is no approval to
+  carry.
 - `RecordedController` — injected by `resume`, wrapping the snapshot's decision
-  map. Returns the recorded decision for a gate already decided, `DecisionPause`
-  for the next undecided one.
+  map, and by `run --auto-approve <gate-id>` (#285), wrapping the named gates'
+  approvals built from argv. Returns the recorded decision for a gate already
+  decided, `DecisionPause` for the next undecided one. A resumed leg adds the
+  snapshot's `auto_approve` list to its map for any named gate the earlier legs
+  never reached, so a launch-time approval holds for the whole run.
 
 The scheduler asks the same question either way and never branches on "am I
 resuming"; which controller answers is chosen once, at the CLI boundary, from
-the invocation. Adding a future `--auto-approve` policy or an interactive TTY
-controller is another implementation, not a scheduler change.
+the invocation. `--auto-approve` shipped as exactly that: the existing
+`RecordedController` fed from the command line, validated against the loaded
+graph (an exact gate id, so a typo fails the load with the real gate ids in
+the message; a pattern could not be validated and would silently never match),
+and not a scheduler change. An interactive TTY controller would be another
+implementation in the same seam.
 
 **What the snapshot must hold** — `~/.oh-my-graph/runs/<run-id>/state.json`,
 written temp-file + `rename` (atomic), with a `schema` version so an

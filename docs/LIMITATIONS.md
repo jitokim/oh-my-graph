@@ -261,11 +261,15 @@ has no open issue behind it.
   into the hint on both runtimes, as that CLI's own prose and never as a parsed
   clock — neither `resets 5:20pm` nor `try again at Sep 13th, 2026 10:04 PM`
   names a timezone.
-- **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
-  approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
-  cannot pre-approve one: every gate stops the run with a resumable snapshot and
-  exit code 2, and decisions are only supplied on resume.
-  ([#9](https://github.com/jitokim/oh-my-graph/issues/9))
+- **A `gate` pauses a fresh run unless it was named at launch.** Gate nodes are
+  implemented (pause / approve / reject, continued by `oh-my-graph resume`).
+  `run --auto-approve <gate-id>` (repeatable, exact ids only, validated against
+  the graph before any node runs) pre-registers approval for the named gates;
+  every gate not named still stops the run with a resumable snapshot and exit
+  code 2, to be decided on resume. `auto` has no such flag: a planned graph
+  cannot contain a gate at all (the coordinator refuses one at plan time).
+  ([#9](https://github.com/jitokim/oh-my-graph/issues/9),
+  [#285](https://github.com/jitokim/oh-my-graph/issues/285))
 - **Auto mode's tool ceiling is a reduction, not a sandbox — and parts of it are
   unverified.** The isolation and scoped-Bash layers were measured against a
   real `claude` 2.1.220 and hold (see [SECURITY.md](../SECURITY.md)). MCP closure
