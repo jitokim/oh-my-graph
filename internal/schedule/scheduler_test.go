@@ -1453,6 +1453,9 @@ nodes:
 	if !strings.Contains(feed, "✓ good  PASS") {
 		t.Errorf("progress feed missing the passing node's PASS line: %q", feed)
 	}
+	if strings.Contains(feed, "still running") {
+		t.Errorf("a node that settles before its first heartbeat tick must print no still-running line: %q", feed)
+	}
 }
 
 // --- test doubles -----------------------------------------------------------
@@ -1478,6 +1481,119 @@ func (r *sequenceRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 		spec.SessionStarted(outcome.SessionID)
 	}
 	return outcome, nil
+}
+
+// holdRunner holds one attempt of a node in flight until the test releases
+// it: Run closes entered when the held attempt begins, blocks on release (or
+// ctx.Done()), then returns that attempt's scripted outcome. Attempts before
+// holdAt return their outcome at once, so a retry test can hold only the
+// retried attempt. It exists because FakeRunner returns immediately and cannot
+// hold a node, and haltRunner releases only on context cancellation — which
+// turns the outcome into a context error — so neither serves a test that
+// needs a node to be running AND then pass (the heartbeat tests, #284).
+type holdRunner struct {
+	entered  chan struct{}
+	release  chan struct{}
+	holdAt   int
+	outcomes []runner.NodeOutcome
+	// onAttempt, when set, runs at the top of attempt i (0-based) — a test's
+	// hook to move a fake clock between attempts.
+	onAttempt func(i int)
+
+	mu    sync.Mutex
+	calls int
+	once  sync.Once
+}
+
+func (r *holdRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	r.mu.Lock()
+	attempt := r.calls
+	r.calls++
+	r.mu.Unlock()
+	if r.onAttempt != nil {
+		r.onAttempt(attempt)
+	}
+	if attempt == r.holdAt {
+		r.once.Do(func() { close(r.entered) })
+		select {
+		case <-r.release:
+		case <-ctx.Done():
+			return runner.NodeOutcome{}, ctx.Err()
+		}
+	}
+	i := attempt
+	if i >= len(r.outcomes) {
+		i = len(r.outcomes) - 1
+	}
+	outcome := r.outcomes[i]
+	if spec.SessionStarted != nil && outcome.SessionID != "" {
+		spec.SessionStarted(outcome.SessionID)
+	}
+	return outcome, nil
+}
+
+// signalWriter is a ProgressWriter that signals on every Write, so a test can
+// wait for a line to land by waiting on a channel instead of on a clock. The
+// channel is buffered one deep and the send never blocks: a Write that lands
+// between a test's check and its wait still wakes the wait.
+type signalWriter struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	wrote chan struct{}
+}
+
+func newSignalWriter() *signalWriter {
+	return &signalWriter{wrote: make(chan struct{}, 1)}
+}
+
+func (w *signalWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	n, err := w.buf.Write(p)
+	w.mu.Unlock()
+	select {
+	case w.wrote <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+func (w *signalWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// waitFor returns once the feed contains want, waking on each Write. The
+// failsafe fires only when the feature under test is broken; a passing test
+// never waits on it, so no test depends on real seconds.
+func (w *signalWriter) waitFor(t *testing.T, want string) {
+	t.Helper()
+	failsafe := time.After(30 * time.Second)
+	for !strings.Contains(w.String(), want) {
+		select {
+		case <-w.wrote:
+		case <-failsafe:
+			t.Fatalf("progress feed never contained %q; feed so far:\n%s", want, w.String())
+		}
+	}
+}
+
+// fakeClock is an Options.Now a test advances by hand.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }
 
 // haltRunner fails one node and blocks another until the context is cancelled
