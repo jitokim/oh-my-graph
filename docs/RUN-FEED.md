@@ -423,6 +423,25 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
+**There is deliberately no heartbeat event.** A node that runs for half an
+hour emits nothing between its `node_started` (or `node_retried`) and its
+terminal event, and that is by design: the stream records intent, not process
+liveness (the rule under "`state.json` — the snapshot" above), the event-type
+set is closed per schema, and a still-running event would carry no state
+transition — it would bump `schema` for every consumer to say something each
+of them can already compute. Elapsed for a running node is the consumer's own
+clock minus the `ts` of that node's open attempt (its latest `node_started` or
+`node_retried` with no `node_passed`, `node_failed` or `gate_paused` for the
+same `node_id` after it). That is exactly how `serve`'s card ticks its elapsed
+in the browser, and how `watch`'s periodic `… <node-id>  still running
+(<elapsed>)` line (#284) is derived: a local 60-second ticker over the events
+it has already read, printing the same text the scheduler prints on the run's
+own terminal, where the `…` glyph is the one the verifying line already used
+for "in flight, not settled". So #284 added no event type and left `schema`
+unchanged. The planner leg of an `auto` run has no `node_started`, so nothing
+ticks while planning; the `run_started` with `phase: "planning"` is the only
+marker there.
+
 Accounting appears exactly once per paid invocation: on a terminal node event,
 on a feedback `node_retried` when the prior judgment is deliberately
 non-terminal, on the unphased `run_started` that commits a successful plan, or

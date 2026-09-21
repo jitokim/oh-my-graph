@@ -414,9 +414,13 @@ Called out honestly — these are **not** implemented as of v0.14.0:
   list any more: a node's `retry` carries `max` **and** `on`, a per-cause
   filter over the closed cause set `nonzero_exit` / `run_error` / `timeout` /
   `output_error` / `budget_exceeded` / `verify_failed` / `result_mismatch`.)
-- a terminal TUI — the shipped views are the `serve` web ones (the live view
-  of one run, and the multi-run dashboard `serve` renders with no run id) and
-  the plain-text `runs list` / `show` / `watch`.
+- a terminal TUI — a redrawing screen. The shipped views are the `serve` web
+  ones (the live view of one run, and the multi-run dashboard `serve` renders
+  with no run id) and the plain-text `runs list` / `show` / `watch`. "No TUI"
+  does not mean "no progress signal": the plain-text `run` / `watch` path
+  prints a periodic `… <node-id>  still running (<elapsed>)` line for every
+  in-flight node, every 60 seconds, append-only with no redraw (#284). What
+  stays deferred is the screen that redraws, not the sign of life.
 - **sub-call / cross-node budget accounting.** Per-node budget is now enforced
   live (`--max-budget-usd` aborts a node mid-run) *and* post-hoc, so a runaway
   node no longer spends unbounded to the wall-clock timeout. Still deferred:
