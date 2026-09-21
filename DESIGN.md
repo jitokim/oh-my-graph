@@ -1617,9 +1617,10 @@ type GateController interface {
 }
 ```
 - `PauseController` — injected by a fresh `run` with no `--auto-approve`, and
-  by `auto` (whose planned graphs cannot contain a gate). Always
-  `DecisionPause`: with nothing registered at launch there is no approval to
-  carry.
+  by `auto` (whose planned graphs cannot contain a gate: `validatePlannedNodes`
+  in `internal/coordinator/coordinator.go` refuses one at plan time, so `auto`
+  has no `--auto-approve` to give). Always `DecisionPause`: with nothing
+  registered at launch there is no approval to carry.
 - `RecordedController` — injected by `resume`, wrapping the snapshot's decision
   map, and by `run --auto-approve <gate-id>` (#285), wrapping the named gates'
   approvals built from argv. Returns the recorded decision for a gate already
@@ -1655,7 +1656,14 @@ incompatible snapshot is refused rather than misread:
   resume under another after an upgrade. **Absent means `dontAsk`** — every
   snapshot written before ADR 0034 ran that mode — and a resumed leg writes the
   resolved value back, so the question is open exactly once per run. Optional and
-  additive: the schema stays at 3.
+  additive: the schema stays at 3. `auto_approve` (#285) is the same class: the
+  `run --auto-approve` list as launched, in argv order, so a resumed leg can seed
+  its `RecordedController` with the same approvals for any named gate the
+  earlier legs never reached, and so the record says the decision was the
+  operator's at launch rather than on a later resume. The approvals themselves
+  are not in this list but in the gate decisions below, written by the same
+  `recordGateApprove` path every approval takes. Optional and additive too:
+  absent on every flag-less `run` and on every `auto`, schema still 3.
 - **per-node completion records**: verdict, **session id**, cost, duration,
   artifact path. The session id is the one thing resume needs that today exists
   only in `Handoff.sessions` in memory — without it a `handoff: session` child
@@ -1707,8 +1715,10 @@ rather than silently swallowed; a snapshot write failure **at a gate pause is
 fatal**, because a pause whose state was not persisted is an unrecoverable
 stop, and reporting it as a clean pause would lie.
 
-**Two front-ends, one resume.** A gate decision reaches the run through
-`executeResume` and nothing else. `oh-my-graph resume` parses it from flags;
+**Two front-ends, one resume.** A gate decision on a paused run reaches it
+through `executeResume` and nothing else (the only decision that does not go
+through `resume` is the one `run --auto-approve` registered before the run
+started, and that one never pauses). `oh-my-graph resume` parses it from flags;
 the web live view POSTs it from the browser (`POST /api/gate/approve`
 |`/reject` → `serve.GateResumer` → `cliGateResumer` → the same
 `executeResume`, ADR 0014). The lock, the snapshot load, the explicit-gate-id
@@ -2927,8 +2937,10 @@ ledger — so the summary never under-counts silently.
   existing Parse/Validate (+ planned-node field dispositions). Owns the tool
   ceiling policy (`Plan.ToolPolicies`). Never runs the graph itself.
 - **GateController (interface, v1.1)** — answers approve/reject/pause for a gate
-  node. `PauseController` for fresh runs, `RecordedController` (snapshot-backed)
-  for `resume`; chosen at the CLI boundary, invisible to the Scheduler.
+  node. `PauseController` for a fresh run with nothing pre-approved (and for
+  `auto`, which cannot reach a gate), `RecordedController` for `resume`
+  (snapshot-backed) and for `run --auto-approve` (argv-backed, #285); chosen at
+  the CLI boundary, invisible to the Scheduler.
 - **RunState (v1.1)** — owns `state.json`: the resumable snapshot (graph, inputs,
   flags, tool policies, per-node completion incl. session id, gate decisions).
   Written atomically after every node. The Scheduler talks to a `Recorder`
