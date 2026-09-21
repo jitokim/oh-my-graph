@@ -257,10 +257,13 @@ has no open issue behind it.
   [#171](https://github.com/jitokim/oh-my-graph/issues/171) and answering
   [#222](https://github.com/jitokim/oh-my-graph/issues/222)). Detection is prose
   on both runtimes, so a reworded message on either degrades to exactly the
-  v0.13.0 behaviour described above. The reset time each CLI prints is carried
-  into the hint on both runtimes, as that CLI's own prose and never as a parsed
-  clock — neither `resets 5:20pm` nor `try again at Sep 13th, 2026 10:04 PM`
-  names a timezone.
+  v0.13.0 behaviour described above. The reset time a CLI prints, when it
+  prints one, is carried into the hint as that CLI's own prose and never as a
+  parsed clock — neither `resets 5:20pm` nor `try again at Sep 13th, 2026
+  10:04 PM` names a timezone. Claude's per-model limit (`You've reached your
+  Fable limit. Switch to another model, …`, the second Claude sentence matched
+  since [#283](https://github.com/jitokim/oh-my-graph/issues/283)) names no
+  time at all, so that hint carries the CLI's sentence instead of a reset time.
 - **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
   approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
   cannot pre-approve one: every gate stops the run with a resumable snapshot and

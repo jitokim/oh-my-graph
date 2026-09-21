@@ -195,6 +195,62 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   `auto` nobody is reading the plan screen either, so the drop was cheap only
   for a reader who was not there.
 
+- **A Claude per-model usage limit is now a pause, not a failure — and a limit
+  that lands after the node has spent is named for what it costs.** ADR 0009
+  matched one Claude sentence, `hit your session limit`. Claude has a second
+  limit condition with its own sentence: one model's allowance runs out while
+  the account's session is fine, and the same `is_error` envelope reads
+  `You've reached your Fable limit. Switch to another model, …`. The matcher
+  did not know it, so the pause never fired and the run took the degraded path
+  ADR 0009's mitigation 2 predicted — for the first time on Claude, and not for
+  free. Run `20260921-071606.434336000-1` (2026-09-21,
+  [#283](https://github.com/jitokim/oh-my-graph/issues/283)) reported, before:
+
+  ```
+  ✗ lane-edit-dev  FAILED: node "lane-edit-dev" failed success_check exit_zero: exit code 1: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+  ```
+
+  with a ledger row `FAIL 4.6529`, exit code 1, no resume hint, and halt-on-fail
+  cancelling its in-flight siblings. After:
+
+  ```
+  ⏸ lane-edit-dev  session limit reached — pausing run
+
+  Session limit reached: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+  Resume with:
+    oh-my-graph resume 20260921-071606.434336000-1 --retry-failed
+  ```
+
+  exit code 2, in-flight siblings drained, and the node recorded nowhere.
+
+  The pattern added is `(?i)reached your .{1,40}? limit\W+switch to another
+  model` — a SECOND Claude-side pattern in `internal/runner/sessionlimit.go`,
+  deliberately not folded into the session-limit one: two sentences for two
+  conditions, each pinned by its own narrow test against the real message, so a
+  rewording of one cannot silently widen or narrow the other (the same reason
+  the Codex pattern stands apart). The model name is a bounded wildcard, like
+  Codex's plan name; the URL and the credits clause are left out. The trailing
+  "Switch to another model" clause is KEPT on purpose: on a non-zero exit the
+  cause the matcher sees can be the node's own stderr tail, and a lazier
+  `reached your … limit` would pause a healthy run whose node merely quoted the
+  wording and then failed for its own reason — that false positive is pinned as
+  a negative. This sentence names no reset time, so the hint's no-time branch
+  now prints the CLI's own sentence instead of a bare "Resume with": the old
+  line dropped the only actionable advice and sent the operator straight back
+  into the same standing limit.
+
+  Stated plainly: this fix DROPS the 4.6529 from the ledger, `state.json` and
+  every node event. ADR 0009's no-record rule was written against a limit that
+  fires before the prompt runs; this one fired after the prompt had run and
+  spent, and the degraded FAIL path was the one that recorded the money. What
+  stays observable is the session id on that node's `node_started` event and
+  the transcript under `~/.claude/projects`; nothing sums it, and
+  `resume --retry-failed` re-launches the node from scratch and pays again. The
+  drop is pinned by `TestScheduler_ModelLimitAfterSpendPausesAndDropsItsCost`
+  so a change to the accounting is deliberate; whether a post-spend limit needs
+  its own accounting note is recorded for the operator in ADR 0009's
+  2026-09-21 amendment, not decided here.
+
 ### Documented
 
 - **DESIGN.md stopped denying two behaviours from this same release.** Both

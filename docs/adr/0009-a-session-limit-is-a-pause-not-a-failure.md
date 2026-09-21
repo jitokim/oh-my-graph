@@ -7,6 +7,13 @@
   the Decision moved — what changed is one condition on
   `NodeOutcome.SessionLimited`, not one line of the pause it triggers. See
   "Amendment — 2026-09-02" at the end of Scope.
+- **Amended in place a second time on 2026-09-21 (#283): Claude's per-model
+  limit is the same pause, and the Context's premise that "its prompt never
+  ran" is FALSE for it.** Again one more condition on
+  `NodeOutcome.SessionLimited`, not one line of the pause it triggers — but the
+  limit that made it necessary landed AFTER the node had spent 4.65 USD, and
+  the pause's no-record rule drops that spend. See "Amendment — 2026-09-21",
+  directly after the first.
 
 ## Context
 
@@ -201,6 +208,118 @@ mitigation list below exists to survive matching prose.
 > `docs/LIMITATIONS.md` were corrected with this amendment;
 > `internal/schedule/errors.go`'s `LimitPausedError` docstring, which called the
 > subprocess a claude one, followed with the disclosure.
+
+> **Amendment — 2026-09-21, closing #283: Claude's per-model limit is the same
+> pause, and the Context's premise that "its prompt never ran" is false for
+> it.**
+>
+> Left as written, as the 2026-09-02 amendment was (the convention ADR 0007
+> states). Nothing in the Decision's mechanism moved: what changed is one more
+> condition on `NodeOutcome.SessionLimited`, not one line of the pause it
+> triggers, and every bullet below now runs against three scripted limit shapes
+> in `internal/schedule/sessionlimit_test.go` and end to end against a shell
+> stub `claude` in `cmd/oh-my-graph/sessionlimit_test.go`. What moved is a
+> premise, and the money it hid.
+>
+> **(a) Mitigation 2's predicted degradation came true, for the first time on
+> Claude, and it was not free.** Run `20260921-071606.434336000-1`
+> (2026-09-21): the `is_error` envelope's `result` read, verbatim, `You've
+> reached your Fable limit. Switch to another model, or manage usage credits at
+> claude.ai/settings/usage?from=cc_cli_limit_message, to continue.` Claude has
+> a SECOND limit condition — one model's allowance is spent while the account's
+> session is fine — with a sentence `(?i)hit your session limit` does not
+> match. So the node took exactly the path mitigation 2 specifies: `FAIL` with
+> the message in its detail, ledger row `FAIL 4.6529`, exit code 1, no resume
+> hint, and — the graph ran halt-on-fail — any in-flight sibling cancelled.
+> Mitigation 2 says the brittleness "costs convenience, never correctness". It
+> cost 4.65 USD of work reported as a failure, whatever the cancelled siblings
+> had earned, and the one sentence that told the operator what to do was the
+> one the FAIL row buried under `exit code 1:`.
+>
+> **(b) What is matched now.** `(?i)reached your .{1,40}? limit\W+switch to
+> another model`, substring, against `NodeOutcome.FailureCause`, in
+> `internal/runner/sessionlimit.go` as a second Claude pattern
+> (`claudeModelLimitPattern`); `claudeProtocol.isLimitCause` answers true for
+> either of Claude's two sentences. It is deliberately NOT folded into
+> `sessionLimitPattern`, for the reason the Codex pattern gives, applied within
+> one runtime: the two Claude sentences are two conditions, each pinned by its
+> own narrow contract test, so a rewording of one cannot silently widen or
+> narrow the other — `isSessionLimitCause` is exactly as narrow as it was, and
+> its negative test now carries the new sentence. The model name is a bounded
+> wildcard, left out like Codex's plan name; the URL (a tracking parameter that
+> will churn) and the credits clause (billing prose) are left out. The trailing
+> "Switch to another model" clause is KEPT against the every-extra-word rule:
+> "reached your X limit" is ordinary English a node's own tool output produces,
+> and on a non-zero exit that stderr tail IS the cause this pattern is asked
+> about, so a lazier pattern would pause a healthy run whose node merely quoted
+> the wording and then failed for its own reason. That false positive is pinned
+> as a negative in `TestClaudeModelLimitCause_DoesNotMatchOtherFailures`. One
+> matcher file, one call site, still — the scheduler names no runtime and no
+> sentence.
+>
+> **(c) The premise that moved.** The Context above says *"The node did
+> nothing wrong — its prompt never ran"*, and the Decision below says *"the
+> node is un-run, not FAILED"*. For this class the second half of each is
+> FALSE: 4.6529 USD is not a refused request. The prompt ran and spent before
+> the limit landed; the CLI then refused to continue. And `resume
+> --retry-failed` does not resume that work — the limited node has no record,
+> so it is in neither the completed nor the settled seed set, the new leg
+> builds a fresh invocation under a new session id (cross-run session reuse is
+> rejected, ADR 0036), and it re-pays from scratch. There is no `--model` on
+> `resume`; unless the operator changes the model in their settings first, the
+> pasted command runs straight into the same standing limit. The "did nothing
+> wrong" half still holds — the CLI stopped, not the node — which is why the
+> pause is still the right verdict and a FAIL row is still the wrong one. But
+> "un-run" described the only shape then observed, not a property of the
+> pause, and the rejected alternative *"Mark the node FAILED but exit 2"* was
+> rejected on that premise: its "a FAIL record … would be false" is still
+> right, for a different reason than the one written.
+>
+> **(d) The honest accounting.** The no-record rule DROPS that spend. The
+> scheduler's `SessionLimited` branch returns its signal before any write, and
+> the signal carries no cost, so the 4.6529 the envelope reported is in neither
+> the ledger total, the ledger table, `state.json`, nor any node event — the
+> degraded FAIL path was the one that recorded the money, and Consequence 1's
+> "everything already earned persisted" was written for a limit that fires at
+> zero spend (every scripted limit before #283 carried `total_cost_usd: 0`).
+> `TestScheduler_ModelLimitAfterSpendPausesAndDropsItsCost` pins the drop —
+> the ledger total is the drained sibling's 0.02 and nothing else — so a change
+> to the accounting must rewrite that assertion deliberately. What remains
+> observable: the session id on that node's `node_started` event (Claude mints
+> it before spawn), and the transcript for that id under `~/.claude/projects`.
+> Nothing sums it, and no record says whether the node left edits in its
+> working directory. Whether a post-spend limit needs its own accounting note —
+> a cost-bearing record that is not a verdict — is a decision RECORDED HERE FOR
+> THE OPERATOR, not made by this amendment. This is also why this is an
+> amendment and not a superseding ADR: the mechanism is unchanged, and a
+> superseding record would have to carry a decision nobody has taken.
+>
+> **(e) The hint.** `SessionLimitReset` returns `""` for this sentence — it
+> carries neither `resets` nor `try again at` — and no clock time is invented,
+> as the Decision already requires. The no-time branch used to print `Session
+> limit reached. Resume with: …`, which dropped the CLI's only actionable
+> advice and sent the operator straight back into the same standing limit. It
+> now prints the captured cause in the CLI's own words:
+>
+> ```
+> Session limit reached: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+> Resume with:
+>   oh-my-graph resume <run-id> --retry-failed
+> ```
+>
+> The with-time branch is byte-identical to before, and an empty cause keeps
+> the old line. The noun "session limit" — on that line, the `⏸` progress line,
+> the `run_finished` detail and `LimitPausedError`'s string — is left alone:
+> this is one model's allowance, not the account's session, and renaming it
+> touches four surfaces at once. Recorded, not done.
+>
+> `DESIGN.md` (the resume passage and the package table) and
+> `docs/LIMITATIONS.md` were corrected with this amendment, only where this
+> change made a sentence false. Still saying one Claude wording or "never
+> really ran", and left as found: the pre-run disclosure in
+> `cmd/oh-my-graph/main.go`, the `SessionLimited` docstring in
+> `internal/runner/runner.go`, and the comments in `internal/schedule/errors.go`,
+> `internal/schedule/scheduler.go` and `cmd/oh-my-graph/resume.go`.
 
 - **The runner classifies.** `CLIRunner.Run` sets
   `NodeOutcome.SessionLimited` when the captured `FailureCause` (envelope
