@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,6 +18,13 @@ import (
 // this constant is the contract: if the CLI rewords the message, this test is
 // where the one-line fix lands.
 const realLimitMessage = "You've hit your session limit · resets 5:20pm"
+
+// realModelLimitMessage pins Claude's OTHER limit sentence, byte for byte —
+// URL and trailing clause included, nothing elided — as the is_error envelope's
+// result read on run 20260921-071606.434336000-1 (2026-09-21, issue #283) when
+// one model's allowance ran out while the account's session was fine. Same
+// contract as realLimitMessage: a rewording lands here as a failing test.
+const realModelLimitMessage = "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
 
 func TestSessionLimitCause_PinsTheRealMessageShape(t *testing.T) {
 	if !isSessionLimitCause(realLimitMessage) {
@@ -36,9 +44,87 @@ func TestSessionLimitCause_DoesNotMatchOtherFailures(t *testing.T) {
 		"Reached maximum budget ($0.001)",
 		"node output error: claude produced no output",
 		"You've hit your rate limit",
+		// The per-model sentence is the OTHER Claude pattern's contract
+		// (claudeModelLimitPattern). This one stays exactly as narrow as it
+		// was: the two are OR'd in claudeProtocol.isLimitCause, never folded,
+		// so neither covers the other and a rewording of one cannot move the
+		// other's edge.
+		realModelLimitMessage,
 	} {
 		if isSessionLimitCause(cause) {
 			t.Errorf("cause %q must not read as a session limit", cause)
+		}
+	}
+}
+
+func TestClaudeModelLimitCause_PinsTheRealMessageShape(t *testing.T) {
+	if !isClaudeModelLimitCause(realModelLimitMessage) {
+		t.Fatalf("the matcher must recognize the real CLI message %q", realModelLimitMessage)
+	}
+	// Substring on purpose, like sessionLimitPattern: the cause may arrive
+	// with the CLI's own prefix, or already flattened into the exit_zero
+	// detail the scheduler builds ("exit code N: " + FailureCause).
+	for _, wrapped := range []string{
+		"API Error: 429 " + realModelLimitMessage,
+		"exit code 1: " + realModelLimitMessage,
+	} {
+		if !isClaudeModelLimitCause(wrapped) {
+			t.Errorf("the matcher must recognize the message inside a wrapped cause: %q", wrapped)
+		}
+	}
+	// The question CLIRunner.Run actually asks: the claude protocol answers
+	// true for EITHER of its two sentences.
+	protocol := NewCLIRunner(RuntimeClaude).protocol
+	for _, cause := range []string{realLimitMessage, realModelLimitMessage} {
+		if !protocol.isLimitCause(cause) {
+			t.Errorf("claude protocol isLimitCause(%q) = false, want true", cause)
+		}
+	}
+}
+
+// TestClaudeModelLimitCause_DoesNotMatchOtherFailures is the narrow-contract
+// test for claudeModelLimitPattern. Every case is a FailureCause shape that
+// really reaches the matcher: on a non-zero exit with no envelope cause, the
+// node's flattened stderr tail IS the cause (cli.go), so a node whose tools or
+// docs merely mention a limit must not turn its own failure into a pause. The
+// last cases would have matched a lazier pattern — named per case — and each
+// lazier pattern is compiled here and shown to match, so the comment cannot rot
+// into a claim.
+func TestClaudeModelLimitCause_DoesNotMatchOtherFailures(t *testing.T) {
+	lazyNoClause := regexp.MustCompile(`(?i)reached your .{1,40}? limit`)
+	lazyOneWord := regexp.MustCompile(`(?i)reached your \w+ limit`)
+	lazyBare := regexp.MustCompile(`(?i)limit`)
+	for _, tc := range []struct {
+		cause string
+		lazy  *regexp.Regexp // a pattern that WOULD have matched; nil when none is claimed
+	}{
+		{"", nil},
+		{"exit code 1", nil},
+		{"Reached maximum budget ($0.001)", nil},
+		{"node output error: claude produced no output", nil},
+		{"You've hit your rate limit", lazyBare},
+		// The OTHER Claude sentence: sessionLimitPattern's contract, not this one's.
+		{realLimitMessage, lazyBare},
+		// Codex's sentence, asked under Claude, stays false here too.
+		{codexLimitCause(t), lazyBare},
+		// Ordinary English a rate limiter prints; `reached your \w+ limit` takes it.
+		{"You've reached your rate limit", lazyOneWord},
+		// A tool's own quota message; the one-word pattern and a bare `limit` take it.
+		{"You've reached your daily limit of 100 requests. Try again tomorrow.", lazyOneWord},
+		// gh's quota, in a node's stderr tail; a bare `limit` takes it.
+		{"gh: API rate limit exceeded for user", lazyBare},
+		// THE false positive this pattern is shaped against: a node's flattened
+		// stderr quoting the head of the sentence (a doc naming the wording),
+		// then failing for its own reason. `reached your .{1,40}? limit` — the
+		// memo's pattern minus the "Switch to another model" clause — pauses the
+		// run on this; keeping the clause is what rejects it.
+		{"warning: docs/LIMITATIONS.md still names the wording as 'reached your Fable limit' / exit 1", lazyNoClause},
+	} {
+		if isClaudeModelLimitCause(tc.cause) {
+			t.Errorf("cause %q must not read as a model limit", tc.cause)
+		}
+		if tc.lazy != nil && !tc.lazy.MatchString(tc.cause) {
+			t.Errorf("the lazier pattern %q was claimed to match %q and does not; the case is not the contract it says it is", tc.lazy, tc.cause)
 		}
 	}
 }
@@ -50,6 +136,9 @@ func TestSessionLimitReset_BestEffort(t *testing.T) {
 		"Your limit will reset at 4pm (Asia/Seoul)":             "4pm",
 		"hit your session limit · resets 10:00am · retry later": "10:00am",
 		"exit code 1": "",
+		// The per-model sentence names no reset time at all ("settings" and
+		// "usage" do not contain "reset"); the hint prints without one.
+		realModelLimitMessage: "",
 	}
 	for cause, want := range cases {
 		if got := SessionLimitReset(cause); got != want {
@@ -82,6 +171,39 @@ exit 1
 	}
 	if got := SessionLimitReset(outcome.FailureCause); got != "5:20pm" {
 		t.Errorf("reset hint from the captured cause = %q, want 5:20pm", got)
+	}
+}
+
+// TestRun_ClassifiesModelLimitFromEnvelope mirrors
+// TestRun_ClassifiesSessionLimitFromEnvelope for Claude's per-model sentence,
+// with the one thing that run showed and the session-limit fixture never did:
+// the envelope carried a real spend. The runner must classify it as a limit AND
+// keep the cost on the outcome — whatever drops the 4.6529 from the ledger is
+// downstream of here (the scheduler's SessionLimited branch), pinned there, not
+// hidden by a runner that zeroed it.
+func TestRun_ClassifiesModelLimitFromEnvelope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shebang script; this pins the unix path")
+	}
+	stub := writeStub(t, "#!/bin/sh\ncat <<'JSON'\n"+
+		`{"session_id":"s-model-limit","result":"`+realModelLimitMessage+`","total_cost_usd":4.6529,"is_error":true}`+
+		"\nJSON\nexit 1\n")
+	r := NewCLIRunner(RuntimeClaude, WithBinary(stub))
+	outcome, err := r.Run(context.Background(), NodeInvocation{Prompt: testPrompt, PermissionMode: "dontAsk"})
+	if err != nil {
+		t.Fatalf("a limit-killed run with a parseable envelope is an outcome, not a Run error: %v", err)
+	}
+	if !outcome.SessionLimited {
+		t.Fatalf("SessionLimited = false, want true (FailureCause %q)", outcome.FailureCause)
+	}
+	if outcome.FailureCause != realModelLimitMessage {
+		t.Errorf("FailureCause = %q, want the CLI's sentence untouched", outcome.FailureCause)
+	}
+	if outcome.TotalCostUSD != 4.6529 {
+		t.Errorf("TotalCostUSD = %v, want 4.6529: the runner preserves the spend a limited node made", outcome.TotalCostUSD)
+	}
+	if got := SessionLimitReset(outcome.FailureCause); got != "" {
+		t.Errorf("reset hint from a sentence that names no time = %q, want \"\"", got)
 	}
 }
 
@@ -177,7 +299,10 @@ func TestLimitCause_MatchesEachRuntimesOwnWordingOnly(t *testing.T) {
 		{"codex: no failure at all", RuntimeCodex, "", false},
 		{"claude: the recorded session limit still matches", RuntimeClaude, realLimitMessage, true},
 		{"claude: a rate limit is still not a session limit", RuntimeClaude, "You've hit your rate limit", false},
+		{"claude: the recorded per-model limit is a limit too", RuntimeClaude, realModelLimitMessage, true},
+		{"claude: the per-model limit flattened into a wider report", RuntimeClaude, "API Error: 429 " + realModelLimitMessage, true},
 		{"claude's wording does not match under codex", RuntimeCodex, realLimitMessage, false},
+		{"claude's per-model wording does not match under codex", RuntimeCodex, realModelLimitMessage, false},
 		{"codex's wording does not match under claude", RuntimeClaude, codexCause, false},
 		// A runtime no protocol claims cannot reach here from the CLI —
 		// ParseRuntime rejects it — and NewCLIRunner falls back to the claude
