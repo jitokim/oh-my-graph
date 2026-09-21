@@ -607,9 +607,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// omitted here is a field the first settling node ERASES. ADR 0030 §2.6
 		// declines to re-gate a resume precisely because "the snapshot the
 		// resume loads records it" — that sentence is only true while this line
-		// exists, and without it a gate-paused or limit-paused `auto`, which is
-		// exactly the interactive class a human declared over, finishes looking
-		// like an accident and drops out of all four strata of §8(a).
+		// exists, and without it a limit-paused `auto` (the only pause an auto
+		// run can reach: coordinator.validatePlannedNodes refuses a planned gate
+		// node, so no auto run is ever gate-paused), which is exactly the
+		// interactive class a human declared over, finishes looking like an
+		// accident and drops out of all four strata of §8(a).
 		// Carrying it forward adds no trust surface: the block is inert by
 		// construction (marker filenames, nothing executable, nothing reads it
 		// to decide behaviour — ADR 0030 §2.5a), so this is transcription, not
