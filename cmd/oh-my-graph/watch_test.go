@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -458,6 +459,288 @@ func TestFormatEvent_RunBoundaryShowsPlannerAccounting(t *testing.T) {
 		got := formatEvent(event)
 		if !strings.Contains(got, "cost unknown") || !strings.Contains(got, "tokens 19/5/8/4") {
 			t.Errorf("formatEvent(%s) = %q, want planner accounting", event.Type, got)
+		}
+	}
+}
+
+// signalWriter is the writer double the heartbeat tests wait on: a
+// mutex-guarded buffer whose every Write does a non-blocking send on wrote,
+// so a test can block until a line it expects has landed instead of sleeping
+// (the pattern watch_test.go:115 is NOT to be copied into these).
+type signalWriter struct {
+	mu    sync.Mutex
+	buf   strings.Builder
+	wrote chan struct{}
+}
+
+func newSignalWriter() *signalWriter {
+	return &signalWriter{wrote: make(chan struct{}, 1)}
+}
+
+func (s *signalWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	n, err := s.buf.Write(p)
+	s.mu.Unlock()
+	select {
+	case s.wrote <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+func (s *signalWriter) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// waitFor blocks until the writer holds want, returning the whole output at
+// that moment. The only clock in it is a failsafe that fires when the feature
+// is broken; a passing test never waits on it.
+func (s *signalWriter) waitFor(t *testing.T, want string) string {
+	t.Helper()
+	for {
+		if got := s.String(); strings.Contains(got, want) {
+			return got
+		}
+		select {
+		case <-s.wrote:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("output never contained %q:\n%s", want, s.String())
+		}
+	}
+}
+
+// injectedHeartbeat is the test's side of watchHeartbeat: the tick channel it
+// owns and a clock that answers now. The interval is irrelevant because the
+// ticker is the test's channel, but it is set anyway so the production
+// default is provably not what ticks.
+func injectedHeartbeat(ticks <-chan time.Time, now time.Time) watchHeartbeat {
+	return watchHeartbeat{
+		Interval:  time.Hour,
+		NewTicker: func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} },
+		Now:       func() time.Time { return now },
+	}
+}
+
+// TestWatchRun_Heartbeat_MidRunStartReportsElapsedSinceNodeStarted pins the
+// half of #284 that belongs to `watch`: a node that has started and not
+// settled gets one still-running line per tick, and its elapsed is measured
+// from the node's own node_started ts against the injected now — 12 minutes
+// here, although this watch opened milliseconds ago — so a watch started
+// mid-run reports how long the node has really been running.
+func TestWatchRun_Heartbeat_MidRunStartReportsElapsedSinceNodeStarted(t *testing.T) {
+	dir := t.TempDir()
+	writeWatchEvents(t, dir, "20260921-000101",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "alpha"},
+	)
+	// After the write, so now minus the event's ts is at least 12 minutes.
+	now := time.Now().Add(12 * time.Minute)
+	ticks := make(chan time.Time, 1)
+
+	out := newSignalWriter()
+	var warn strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		done <- watchRunWith(context.Background(), out, &warn, dir, "20260921-000101", testPoll, injectedHeartbeat(ticks, now))
+	}()
+
+	// The ▶ line is written in the same critical section that opens alpha's
+	// turn, so once it is visible the tick below cannot miss the node.
+	out.waitFor(t, "▶ alpha  running…")
+	ticks <- time.Time{}
+	got := out.waitFor(t, "… alpha  still running (12m)")
+	if strings.Contains(got, "<1m") {
+		t.Errorf("elapsed must be measured from the node's ts, not from when watch began:\n%s", got)
+	}
+
+	writeWatchEvents(t, dir, "20260921-000101",
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "alpha", Verdict: runfeed.VerdictPass, CostUSD: 0.5},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("watchRunWith returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watchRunWith did not stop after the appended run_finished")
+	}
+
+	got = out.String()
+	beat := strings.Index(got, "… alpha  still running (12m)")
+	pass := strings.Index(got, "✓ alpha  PASS  $0.5000")
+	if beat < 0 || pass < 0 || beat > pass {
+		t.Errorf("the heartbeat must precede the verdict (heartbeat at %d, verdict at %d):\n%s", beat, pass, got)
+	}
+	if n := strings.Count(got, "still running"); n != 1 {
+		t.Errorf("one tick must print exactly one line, got %d:\n%s", n, got)
+	}
+	// The heartbeat is joined, not just signalled, when Follow returns: a tick
+	// after run_finished has nobody to read it and adds nothing.
+	ticks <- time.Time{}
+	if after := out.String(); after != got {
+		t.Errorf("a tick after run_finished must add nothing:\n%s", after)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("clean stream must not warn, got: %q", warn.String())
+	}
+}
+
+// TestWatchRun_Heartbeat_SettledBeforeAnyTickPrintsNoExtraLine pins that the
+// heartbeat is invisible on a run that never sits inside a node long enough
+// to tick: the output is exactly today's lines, the ones
+// TestWatchRun_FollowsAppendedEvents already names, and a tick arriving after
+// the tail has closed adds nothing.
+func TestWatchRun_Heartbeat_SettledBeforeAnyTickPrintsNoExtraLine(t *testing.T) {
+	dir := t.TempDir()
+	writeWatchEvents(t, dir, "20260921-000202",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "alpha"},
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "alpha", Verdict: runfeed.VerdictPass, CostUSD: 0.5},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+	ticks := make(chan time.Time, 1)
+
+	var out, warn strings.Builder
+	if err := watchRunWith(context.Background(), &out, &warn, dir, "20260921-000202", testPoll, injectedHeartbeat(ticks, time.Now().Add(time.Hour))); err != nil {
+		t.Fatalf("watchRunWith returned error: %v", err)
+	}
+	got := out.String()
+	ticks <- time.Time{}
+	if after := out.String(); after != got {
+		t.Errorf("a tick after the tail closed must add nothing:\n%s", after)
+	}
+
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "run 20260921-000202 is ") {
+		t.Fatalf("the first line must be the status line, got:\n%s", got)
+	}
+	want := []string{
+		"▶ run started",
+		"▶ alpha  running…",
+		"✓ alpha  PASS  $0.5000",
+		"■ run finished: passed",
+	}
+	if rest := lines[1:]; strings.Join(rest, "\n") != strings.Join(want, "\n") {
+		t.Errorf("a run settled before any tick must print exactly today's lines:\n got %q\nwant %q", rest, want)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("clean stream must not warn, got: %q", warn.String())
+	}
+}
+
+// TestWatchRun_Heartbeat_ATickAfterTheTerminalLineNamesOnlyNodesInFlight pins
+// the ordering rule: a node leaves the in-flight set in the same critical
+// section that prints its terminal line, so a tick after alpha's verdict
+// names beta (still running) and never alpha. beta's line is also the proof
+// the tick was processed rather than lost.
+func TestWatchRun_Heartbeat_ATickAfterTheTerminalLineNamesOnlyNodesInFlight(t *testing.T) {
+	dir := t.TempDir()
+	writeWatchEvents(t, dir, "20260921-000303",
+		runfeed.Event{Type: runfeed.EventRunStarted},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "alpha"},
+		runfeed.Event{Type: runfeed.EventNodeStarted, NodeID: "beta"},
+	)
+	now := time.Now().Add(3 * time.Minute)
+	ticks := make(chan time.Time, 1)
+
+	out := newSignalWriter()
+	var warn strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		done <- watchRunWith(context.Background(), out, &warn, dir, "20260921-000303", testPoll, injectedHeartbeat(ticks, now))
+	}()
+	out.waitFor(t, "▶ beta  running…")
+
+	writeWatchEvents(t, dir, "20260921-000303",
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "alpha", Verdict: runfeed.VerdictPass, CostUSD: 0.5},
+	)
+	out.waitFor(t, "✓ alpha  PASS  $0.5000")
+	ticks <- time.Time{}
+	got := out.waitFor(t, "… beta  still running (3m)")
+	if strings.Contains(got, "… alpha  still running") {
+		t.Errorf("a tick after alpha's terminal line must not name alpha:\n%s", got)
+	}
+
+	writeWatchEvents(t, dir, "20260921-000303",
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "beta", Verdict: runfeed.VerdictPass, CostUSD: 0.5},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePassed},
+	)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("watchRunWith returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watchRunWith did not stop after the appended run_finished")
+	}
+	if got := out.String(); strings.Contains(got, "… alpha  still running") {
+		t.Errorf("alpha must never tick after its verdict:\n%s", got)
+	}
+}
+
+// TestWatchRun_Heartbeat_MissingTimestampPrintsNoElapsed pins the rule for a
+// stream whose events carry no ts (the shape TestWatchRun_NewerSchemaWarnsOnce
+// writes): the node is still tracked and ticks, but the line carries no
+// elapsed, because inventing a start would be a claim the stream does not
+// support.
+func TestWatchRun_Heartbeat_MissingTimestampPrintsNoElapsed(t *testing.T) {
+	dir := t.TempDir()
+	bare := `{"schema":3,"run_id":"r","event":"run_started"}` + "\n" +
+		`{"schema":3,"run_id":"r","event":"node_started","node_id":"alpha"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, runfeed.FileName), []byte(bare), 0o644); err != nil {
+		t.Fatalf("write ts-less stream: %v", err)
+	}
+	ticks := make(chan time.Time, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := newSignalWriter()
+	var warn strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		done <- watchRunWith(ctx, out, &warn, dir, "r", testPoll, injectedHeartbeat(ticks, time.Now().Add(time.Hour)))
+	}()
+	out.waitFor(t, "▶ alpha  running…")
+	ticks <- time.Time{}
+	got := out.waitFor(t, "… alpha  still running")
+	if line := lineContaining(t, got, "still running"); line != "… alpha  still running" {
+		t.Errorf("a node with no ts must tick without an elapsed, got %q", line)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled watch must return nil, got: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watchRunWith did not stop on context cancellation")
+	}
+}
+
+// TestFormatWatchElapsed pins the elapsed table `watch` prints, which must be
+// the scheduler's (internal/schedule/heartbeat.go): floored, so the line is
+// true at the moment it prints.
+func TestFormatWatchElapsed(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "<1m"},
+		{59 * time.Second, "<1m"},
+		{-5 * time.Second, "<1m"},
+		{time.Minute, "1m"},
+		{12*time.Minute + 59*time.Second, "12m"},
+		{59*time.Minute + 59*time.Second, "59m"},
+		{time.Hour, "1h00m"},
+		{time.Hour + 5*time.Minute, "1h05m"},
+		{3*time.Hour + 7*time.Minute + 30*time.Second, "3h07m"},
+	} {
+		if got := formatWatchElapsed(tc.in); got != tc.want {
+			t.Errorf("formatWatchElapsed(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

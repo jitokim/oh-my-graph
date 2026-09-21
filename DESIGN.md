@@ -2021,8 +2021,12 @@ but on the same footing as an out-of-repo consumer — reading `state.json`
 for structure and tailing `events.jsonl` for progress through the same
 readers `runs list` and `watch` use (`runfeed.InFlight`, `runfeed.Follow` —
 serve via its `FollowWait` wait-for-create variant, since a viewer may
-connect before the stream exists). That is also why the contract is
-documented and versioned rather than treated as an internal detail: the
+connect before the stream exists). The periodic still-running line `watch`
+prints (#284) is derived from that tail alone — its own clock minus the open
+attempt's `ts`, on a local 60-second ticker — which is how the card ticks its
+elapsed in the browser too; the stream carries no heartbeat event. That is
+also why the contract is documented and versioned rather than treated as an
+internal detail: the
 in-repo views hold themselves to it, so any other reader of a run directory
 gets the same guarantees. A stream schema newer than the
 binary takes `watch`'s posture, not `runs list`'s: one non-terminal
@@ -2171,8 +2175,17 @@ one, and it answers 409 like any other view that cannot resume.
   exactly that leg's duration, prints the URL as `serve` does, and opens it
   through the injected `ExecOpener`; `--no-web` opts out, a non-terminal
   stdout (scripts, CI) gets no server, no browser, and byte-identical
-  output. A resumed leg's view reads the same run directory the first leg's
-  did, so it shows the whole run's history, not just this leg's. A chat
+  output. That promise binds the server/browser wiring — the URL line
+  `serveRun` prints on stdout and the live-view notes beside it — and not
+  the progress feed, which is a different stream: the scheduler's
+  `ProgressWriter`, left by every CLI call site at its `os.Stderr` default,
+  is where `▶ <node-id>  running…` and the settlement lines go, and since
+  #284 it also carries `… <node-id>  still running (<elapsed>)` for every
+  in-flight node every 60 seconds (`schedule.DefaultHeartbeat`), on every
+  stdout kind and regardless of whether stderr is a terminal — a redirected
+  or CI log gets that line too. A resumed leg's view reads the same run
+  directory the first leg's did, so it shows the whole run's history, not
+  just this leg's. A chat
   graph turn stays un-wired (ADR 0006). The standalone `serve` subcommand
   takes the SAME gate: it prints the URL and, when stdout is a terminal and
   `--no-open` was not passed, hands it to the injected `ExecOpener` —
@@ -2935,7 +2948,10 @@ ledger — so the summary never under-counts silently.
 - **RunFeed** — owns `events.jsonl`: the append-only, schema-versioned stream of
   node lifecycle events (run_started/node_started/node_passed/node_failed/
   node_retried/gate_paused/gate_approved/gate_rejected/run_finished), one JSON
-  line per transition, fsynced per line.
+  line per transition, fsynced per line. There is deliberately no heartbeat
+  event (#284): the `… still running` line the scheduler and `watch` print
+  every 60 seconds is a local timer over the open attempt's start, not a
+  transition, and docs/RUN-FEED.md says why under its event-types table.
   Emitted from the same scheduler hook points as the progress line and the
   snapshot, via an `EventSink` interface defaulting to a no-op — the third
   destination next to `Recorder`, same seam pattern. `node_started` and

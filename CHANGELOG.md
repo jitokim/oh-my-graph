@@ -88,6 +88,54 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   sentence was reworded away fails instead of passing on nothing. Nothing a
   user runs changes.
 
+- **A node that runs longer than a minute now says so, once a minute, on the
+  progress feed.** Between `▶ <node-id>  running…` and that node's settlement
+  line the feed printed nothing for as long as the node ran, so a thirty-minute
+  node left the terminal indistinguishable from a wedged one
+  ([#284](https://github.com/jitokim/oh-my-graph/issues/284)). `run`, `auto`
+  and `resume` now print
+
+  ```
+  … <node-id>  still running (<elapsed>)
+  ```
+
+  for every in-flight node every 60 seconds (`schedule.DefaultHeartbeat`; no
+  flag and no env var in this change), elapsed floored so the line is true
+  the moment it prints (`<1m`, `12m`, `1h05m`) and measured from the node's
+  own `▶` on the same clock the `✓` duration prints from. `watch <run-id>`
+  prints the identical line, at the same interval, for every node its tail
+  has seen started and not settled, elapsed taken from that node's own
+  `node_started`/`node_retried` `ts` — so a watch opened mid-run reports how
+  long the node has really been running, not how long the watch has been open,
+  and a node whose event carries no `ts` gets the line with no elapsed rather
+  than an invented one. The `…` glyph is the one the verifying line already
+  uses for "in flight, not settled". A gate never ticks — waiting on a human
+  is not running — and an `auto` run's planner call, which is not a node,
+  stays silent. No heartbeat line can follow its node's settlement line:
+  every writer of a verdict, retry, session-limit pause or feedback re-arm
+  stops and joins that node's ticker before it writes, in both commands.
+
+  The line is **not** TTY-gated. It goes where every other lifecycle line
+  goes — the progress feed on stderr — whether or not stderr is a terminal,
+  so a redirected or CI log gains one bounded line per minute per in-flight
+  node (35 lines for a 35-minute node; a 60-minute tail with three nodes in
+  flight, about 180) as the sign of life it otherwise lacked. The bound is
+  wall-clock time times concurrency, never what the node does, so nothing
+  bursts. The live view's promise that a non-terminal stdout gets
+  byte-identical output binds the server and browser wiring — the URL line
+  on stdout and the notes beside it — and still holds; DESIGN.md's "Web live
+  view" now says so in those words.
+
+  No run-feed event was added and the stream `schema` stays at 3. The
+  event-type set is closed per schema, the stream records intent rather than
+  process liveness, and a still-running event would carry no transition — it
+  would bump `schema` for every consumer to say something each of them can
+  already compute, because elapsed for an open attempt is the consumer's own
+  clock minus that attempt's `ts`. That derivation is exactly what `serve`'s
+  card and `watch` both do, and docs/RUN-FEED.md now states it under the
+  event-types table so a third consumer tailing `events.jsonl` has the same
+  recipe.
+
 ### Changed
 
 - **A planned check node is now told where a caveat goes.** `oh-my-graph auto`
