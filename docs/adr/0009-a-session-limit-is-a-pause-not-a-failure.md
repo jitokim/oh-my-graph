@@ -301,7 +301,7 @@ mitigation list below exists to survive matching prose.
 > advice and sent the operator straight back into the same standing limit. It
 > now prints the captured cause in the CLI's own words:
 >
-> ```
+> ```text
 > Session limit reached: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
 > Resume with:
 >   oh-my-graph resume <run-id> --retry-failed

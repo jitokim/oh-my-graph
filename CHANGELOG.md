@@ -206,14 +206,14 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   free. Run `20260921-071606.434336000-1` (2026-09-21,
   [#283](https://github.com/jitokim/oh-my-graph/issues/283)) reported, before:
 
-  ```
+  ```text
   ✗ lane-edit-dev  FAILED: node "lane-edit-dev" failed success_check exit_zero: exit code 1: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
   ```
 
   with a ledger row `FAIL 4.6529`, exit code 1, no resume hint, and halt-on-fail
   cancelling its in-flight siblings. After:
 
-  ```
+  ```text
   ⏸ lane-edit-dev  session limit reached — pausing run
 
   Session limit reached: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
@@ -221,7 +221,9 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
     oh-my-graph resume 20260921-071606.434336000-1 --retry-failed
   ```
 
-  exit code 2, in-flight siblings drained, and the node recorded nowhere.
+  exit code 2, in-flight siblings drained, and the node given no ledger row,
+  snapshot record or terminal node event (its `node_started` event and
+  transcript remain — see below).
 
   The pattern added is `(?i)reached your .{1,40}? limit\W+switch to another
   model` — a SECOND Claude-side pattern in `internal/runner/sessionlimit.go`,

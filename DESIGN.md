@@ -1779,9 +1779,12 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   "Scope" and its 2026-09-02 amendment, closing #171 and answering #222). The
   scheduler then
   stops launching new work but drains in-flight siblings (which may
-  themselves limit and join the paused set), records the limited node
-  NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
-  event), and returns `*LimitPausedError` → exit code 2 with a
+  themselves limit and join the paused set), gives the limited node no
+  ledger row, snapshot record, or terminal node event (not FAILED — its
+  `node_started` event and the transcript under that session id may remain
+  when the limit landed after the prompt ran and spent, #283, and
+  `resume --retry-failed` re-launches it as a fresh invocation), and
+  returns `*LimitPausedError` → exit code 2 with a
   best-effort-parsed "resume after <reset time> with: `resume <run-id>
   --retry-failed`" hint (when the CLI's sentence names no time, as Claude's
   per-model limit does not, the hint carries that sentence itself instead —
