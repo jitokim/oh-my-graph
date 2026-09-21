@@ -164,7 +164,10 @@ Top-level fields: `schema`, `run_id`, `runtime` (`"claude"` or `"codex"`),
 `planning_cost_usd`, `planning_cost_unknown`, `planning_usage`,
 `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
-`continue_on_fail`, `tool_policies` (auto runs only — see below), `goal` (iterated auto
+`continue_on_fail`, `auto_approve` (a `run --auto-approve` launch only: the gate
+ids the operator pre-approved at launch, in argv order; the approvals
+themselves sit in `gate.decisions` like any other, and the `gate_approved`
+event's `ts` says when), `tool_policies` (auto runs only — see below), `goal` (iterated auto
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
 — see below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`

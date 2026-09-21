@@ -26,10 +26,15 @@ import (
 // fragment drift smell) go to warnW through the same warnAdvisories /
 // warnFragmentAdvisories helpers `lint` uses, and never affect the exit code.
 func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
-	return dryRunGraphForRuntime(w, warnW, path, inputs, runner.RuntimeClaude)
+	return dryRunGraphForRuntime(w, warnW, path, inputs, nil, runner.RuntimeClaude)
 }
 
-func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]string, runtime runner.Runtime) error {
+// autoApprove is the invocation's `--auto-approve` list (#285): a dry run
+// validates it exactly as a real run would — same helper, same message, same
+// exit 1 — and prints the resulting pre-approved gate list as part of the
+// plan, so a reader checking what a run WILL do sees which gates it will
+// walk straight through.
+func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]string, autoApprove []string, runtime runner.Runtime) error {
 	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
@@ -41,6 +46,11 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	}
 
 	g := loaded.Graph
+	// Same position as in runGraphWithRuntime: after the graph's own verdicts,
+	// before the runtime one.
+	if err := checkAutoApprove(g, autoApprove); err != nil {
+		return err
+	}
 	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
 	warnRuntimePreflight(warnW, path, runtimeWarnings)
 	if err != nil {
@@ -55,6 +65,7 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	// contradicting itself, the same way the advisory channel above was.
 	printFragmentResolutions(w, loaded.Resolutions)
 	printResolvedPlan(w, g)
+	printAutoApproved(w, autoApprove)
 	noteCodexRuntimePolicy(w, runtime, g, handWrittenNodes)
 
 	if issues := inputIssues(g, inputs); len(issues) > 0 {
@@ -76,6 +87,17 @@ func printResolvedPlan(w io.Writer, g *graph.Graph) {
 		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+// printAutoApproved states which gates the invocation pre-approved (#285), in
+// argv order and after the plan's node list, so the two read together: these
+// nodes, and of them these gates will not pause. Silent with no flag — the
+// plan of a run that will pause at every gate looks exactly as it did before.
+func printAutoApproved(w io.Writer, autoApprove []string) {
+	if len(autoApprove) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "Pre-approved gates (--auto-approve): %s\n", strings.Join(autoApprove, ", "))
 }
 
 // inputIssues proves every {{ inputs.<name> }} reference in the graph's

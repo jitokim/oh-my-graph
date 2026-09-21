@@ -170,7 +170,7 @@ func TestDryRunForRuntime_SurfacesBudgetWarning(t *testing.T) {
 	path := writeGraphFile(t, budgetedCodexGraph)
 
 	var out, warn strings.Builder
-	if err := dryRunGraphForRuntime(&out, &warn, path, map[string]string{}, runner.RuntimeCodex); err != nil {
+	if err := dryRunGraphForRuntime(&out, &warn, path, map[string]string{}, nil, runner.RuntimeCodex); err != nil {
 		t.Fatalf("dry run of a budgeted graph under codex: %v", err)
 	}
 	if got := warn.String(); !strings.Contains(got, budgetWarningMarker) || !strings.Contains(got, "timeout") {

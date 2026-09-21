@@ -466,6 +466,24 @@ type Snapshot struct {
 	// It changes what a node failure means (prune a subtree vs. halt), so a resume
 	// must honor the same choice the first leg ran under, not a fresh default.
 	ContinueOnFail bool `json:"continue_on_fail,omitempty"`
+	// AutoApprove is the `run --auto-approve` list as the run was launched with
+	// it (#285): the gate node ids whose approval the operator registered at
+	// launch, in argv order. The approvals themselves are recorded exactly as any
+	// other — Gate.Decisions[id] = approve, plus the gate_approved event whose
+	// timestamp in events.jsonl says WHEN — and this list is what says the
+	// decision was made at launch by the operator who typed the flag, not on a
+	// later resume. A resumed leg also seeds its gate controller from it, so a
+	// named gate the first leg never reached (the run paused at an unnamed one
+	// first) still approves on the leg that reaches it — the launch choice holds
+	// for the whole run, as Inputs and ContinueOnFail do. Carried across legs
+	// for both reasons: the resume recorder rewrites the whole snapshot, and a
+	// field it omitted would be erased by the first settling node.
+	//
+	// Additive and optional, so Schema stays 3: Load decodes with a plain
+	// json.Unmarshal (no DisallowUnknownFields), so an older binary reading a
+	// newer snapshot ignores the key, and there is nothing it could misinterpret
+	// by doing so.
+	AutoApprove []string `json:"auto_approve,omitempty"`
 	// DefaultPermissionMode is the permission mode this run's nodes fall back to
 	// when they declare none — schedule's default as it stood when the run was
 	// launched. Persisted for the same reason ContinueOnFail is: a resumed leg
