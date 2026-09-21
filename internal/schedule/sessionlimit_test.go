@@ -55,6 +55,30 @@ func limitShapes() []limitShape {
 	return []limitShape{
 		{"claude session limit", limitedOutcome(), "resets 5:20pm"},
 		{"codex usage limit", codexLimitedOutcome(), "hit your usage limit"},
+		{"claude per-model limit after spend", modelLimitedOutcome(), "Switch to another model"},
+	}
+}
+
+// modelLimitCauseMsg is Claude's OTHER limit sentence, byte for byte as the
+// CLI printed it on run 20260921-071606 (#283): one model's allowance, not the
+// account's session, and — unlike every other scripted limit in this tree — it
+// arrived AFTER the prompt had run and spent.
+const modelLimitCauseMsg = "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+
+// modelLimitedCostUSD is the total_cost_usd that run's envelope carried
+// alongside the sentence. It is the fact the accounting test below pins.
+const modelLimitedCostUSD = 4.6529
+
+// modelLimitedOutcome is the scripted NodeOutcome for that message, exactly as
+// CLIRunner classifies it (internal/runner/sessionlimit_test.go,
+// TestRun_ClassifiesModelLimitFromEnvelope): SessionLimited, the sentence
+// untouched, and the spend the envelope reported.
+func modelLimitedOutcome() runner.NodeOutcome {
+	return runner.NodeOutcome{
+		ExitCode:       1,
+		FailureCause:   modelLimitCauseMsg,
+		SessionLimited: true,
+		TotalCostUSD:   modelLimitedCostUSD,
 	}
 }
 
@@ -289,5 +313,99 @@ nodes:
 				t.Error("the limited node must still not get a ledger row")
 			}
 		})
+	}
+}
+
+// TestScheduler_ModelLimitAfterSpendPausesAndDropsItsCost is #283's scheduler
+// half. A Claude per-model limit is classified SessionLimited like the session
+// limit, so it takes the same path: Run returns *LimitPausedError naming the
+// node with the CLI's sentence untouched, the sibling in flight drains to a
+// real PASS (not cancelled), and the limited node gets no ledger row and no
+// snapshot record.
+//
+// The last assertion is the accounting fact, pinned on purpose. The
+// SessionLimited branch in runNode returns its limitSignal BEFORE any write —
+// no recordFail, no recordPass, no node event — and the signal carries no
+// cost; so the 4.6529 this node's envelope reported is in neither the ledger
+// total nor the snapshot. That drop is a consequence of ADR 0009's no-record
+// rule ("un-run, not FAILED", written against a limit that fires before the
+// prompt runs and so costs nothing) meeting a limit that fired AFTER spend.
+// It is pinned here so a future accounting change has to rewrite this
+// assertion deliberately rather than shift the total by accident. Whether a
+// post-spend limit needs its own accounting note is a decision recorded for
+// the operator (the memo for #283 points at ADR 0009's Consequence 1); it is
+// not made here. What remains observable of that spend is the session id on
+// the node_started event and the transcript under ~/.claude/projects.
+func TestScheduler_ModelLimitAfterSpendPausesAndDropsItsCost(t *testing.T) {
+	g := mustGraph(t, `
+name: model-limit-drain
+nodes:
+  - { id: limit, prompt: limit }
+  - { id: slow, prompt: slow }
+`)
+	r := &limitDrainRunner{limited: modelLimitedOutcome(), started: make(chan struct{}), release: make(chan struct{})}
+	fr := newFakeRecorder()
+	feed, path := newEventStream(t, "model-limit-drain")
+	s, h, led := newHarness(t, r, Options{Concurrency: 2, Recorder: fr, EventSink: feed})
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(context.Background(), g, h, led) }()
+
+	select {
+	case <-r.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the independent sibling never started")
+	}
+	close(r.release)
+
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after the sibling was released")
+	}
+
+	// The limited flag path, not merely a non-nil error: a run that failed
+	// some other way returns no *LimitPausedError and would stop here.
+	var limited *LimitPausedError
+	if !errors.As(runErr, &limited) {
+		t.Fatalf("expected *LimitPausedError, got %T: %v", runErr, runErr)
+	}
+	if len(limited.NodeIDs) != 1 || limited.NodeIDs[0] != "limit" {
+		t.Fatalf("limited nodes = %v, want [limit]", limited.NodeIDs)
+	}
+	if limited.Cause != modelLimitCauseMsg {
+		t.Fatalf("the error must carry the CLI's sentence byte for byte:\n got %q\nwant %q", limited.Cause, modelLimitCauseMsg)
+	}
+
+	slowRec, ok := findRecord(led, "slow")
+	if !ok {
+		t.Fatal("the drained sibling was never recorded in the ledger")
+	}
+	if slowRec.Verdict != ledger.VerdictPass || slowRec.SessionID != "s-slow" {
+		t.Fatalf("the drained sibling must complete as a real PASS, not be cancelled, got %+v", slowRec)
+	}
+	if _, ok := findRecord(led, "limit"); ok {
+		t.Error("a limited node must not get a ledger row — un-run, not FAILED (ADR 0009)")
+	}
+	if _, ok := fr.recordFor("limit"); ok {
+		t.Error("a limited node must not reach the snapshot — resume must see it as never run")
+	}
+
+	// The pinned accounting fact: the total is the drained sibling's 0.02 and
+	// nothing else. 4.6529 was reported, and is dropped.
+	if got := led.TotalCost(); got != 0.02 {
+		t.Fatalf("ledger total = %v, want 0.02 — the limited node's %v is dropped by the no-record rule; if this changed on purpose, rewrite this assertion and record the accounting decision", got, modelLimitedCostUSD)
+	}
+
+	events := readEventStream(t, path)
+	for _, e := range events {
+		if e.Type == runfeed.EventNodeFailed {
+			t.Fatalf("no node may be recorded FAILED on a limit pause, got %+v", e)
+		}
+	}
+	last := events[len(events)-1]
+	if last.Type != runfeed.EventRunFinished || last.Outcome != runfeed.OutcomePaused {
+		t.Fatalf("the leg must close with outcome paused, got %+v", last)
 	}
 }
