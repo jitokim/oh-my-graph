@@ -2237,7 +2237,16 @@ func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinat
 			reset, reset, runID, resupply, note)
 		return
 	}
-	fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
+	if limited.Cause == "" {
+		fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
+		return
+	}
+	// No reset time to offer, so the CLI's own sentence is the only guidance
+	// there is: Claude's per-model limit says "Switch to another model" and
+	// names no time (#283), and printing "Resume with" alone would send the
+	// operator straight back into the same standing limit. The sentence is
+	// carried as the CLI worded it, exactly as the reset prose is above.
+	fmt.Fprintf(w, "\nSession limit reached: %s\nResume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", limited.Cause, runID, resupply, note)
 }
 
 // graphSpawnsRuntime reports whether any node of this graph would launch the
