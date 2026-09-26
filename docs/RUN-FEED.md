@@ -164,7 +164,10 @@ Top-level fields: `schema`, `run_id`, `runtime` (`"claude"` or `"codex"`),
 `planning_cost_usd`, `planning_cost_unknown`, `planning_usage`,
 `graph_source_path`, `graph_sha256`,
 `graph` (the normalized DAG as re-parseable JSON), `inputs`,
-`continue_on_fail`, `tool_policies` (auto runs only — see below), `goal` (iterated auto
+`continue_on_fail`, `auto_approve` (a `run --auto-approve` launch only: the gate
+ids the operator pre-approved at launch, in argv order; the approvals
+themselves sit in `gate.decisions` like any other, and the `gate_approved`
+event's `ts` says when), `tool_policies` (auto runs only — see below), `goal` (iterated auto
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
 — see below), `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
@@ -420,7 +423,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
-| `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied (a resumed leg replaying `--approve`); the gate's terminal `node_passed` follows. |
+| `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied — a resumed leg replaying `--approve`, or any leg reaching a gate `run --auto-approve` pre-approved at launch; the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
 **There is deliberately no heartbeat event.** A node that runs for half an

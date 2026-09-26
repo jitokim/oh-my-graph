@@ -9,9 +9,11 @@ import (
 
 // --- PauseController ---------------------------------------------------------
 
-// TestPauseController_AlwaysPauses proves the run/auto default: no matter which
-// node it is asked about, a fresh run can never carry a prior approval, so it
-// always answers DecisionPause.
+// TestPauseController_AlwaysPauses proves the controller a fresh `run` with no
+// `--auto-approve` (and `auto`) injects: with nothing registered at launch
+// there is no approval to carry forward, so no matter which node it is asked
+// about it always answers DecisionPause. A fresh `run --auto-approve` is the
+// RecordedController case below, not this one.
 func TestPauseController_AlwaysPauses(t *testing.T) {
 	c := NewPauseController()
 	for _, id := range []string{"approve", "ship-review", ""} {

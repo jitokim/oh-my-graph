@@ -6,10 +6,14 @@
 // should approve past the gate, reject its subtree, or pause the whole run to
 // be continued later by `oh-my-graph resume` (see DESIGN.md, "Gate nodes and
 // resume", and ADR 0003). Which controller answers is chosen once, at the CLI
-// boundary, from the invocation: PauseController for a fresh `run`/`auto`
-// (which can never carry an approval decided outside it), RecordedController
-// for `resume` (which replays the snapshot's decisions). The Scheduler asks
-// the same question either way and never learns which one it is talking to.
+// boundary, from the invocation: PauseController for a fresh `run` with no
+// `--auto-approve` and for `auto` (whose planned graphs can never contain a
+// gate — the coordinator refuses one at plan time), RecordedController for
+// `resume` (which replays the snapshot's decisions) and for a fresh `run
+// --auto-approve <gate-id>` (which replays the approvals the operator
+// registered on the command line; every gate not named still pauses, #285).
+// The Scheduler asks the same question either way and never learns which one
+// it is talking to.
 package gate
 
 import (
@@ -43,11 +47,13 @@ type GateController interface {
 	Evaluate(ctx context.Context, node graph.Node) (Decision, error)
 }
 
-// PauseController is the GateController a fresh `run`/`auto` invocation
-// injects. Every gate always pauses: a fresh run has no prior decision to
-// carry forward, so the only honest answer is "stop here and let a human
-// decide" (DESIGN.md, "PauseController — injected by run/auto. Always
-// DecisionPause: a fresh run cannot carry an approval.").
+// PauseController is the GateController a fresh `run` with no `--auto-approve`
+// injects, and the one `auto` injects (a planned graph holds no gate for it to
+// answer). It is also the Scheduler's default for a nil Options.Gate. Every
+// gate always pauses: with no decision registered at launch there is nothing
+// to carry forward, so the only honest answer is "stop here and let a human
+// decide" (DESIGN.md, "PauseController"). A fresh run that DOES carry
+// approvals — `run --auto-approve` — injects a RecordedController instead.
 type PauseController struct{}
 
 // NewPauseController returns the always-pause GateController.
@@ -58,20 +64,24 @@ func (PauseController) Evaluate(_ context.Context, _ graph.Node) (Decision, erro
 	return DecisionPause, nil
 }
 
-// RecordedController is the GateController `oh-my-graph resume` injects. It
-// answers from a snapshot-backed decision map (gate node id -> Decision): a
-// gate already decided replays that decision, and a gate with no entry pauses
-// again, so a resume can never silently run past an approval it was not given
-// (DESIGN.md, "RecordedController (snapshot-backed) for resume").
+// RecordedController is the GateController `oh-my-graph resume` injects, and
+// the one a fresh `run --auto-approve` injects. It answers from a decision map
+// (gate node id -> Decision) — the snapshot's decisions on resume, the
+// operator's launch-time approvals on run — and the mechanism is the same
+// either way: a gate already decided replays that decision, and a gate with no
+// entry pauses, so neither a resume nor a pre-approved run can silently run
+// past an approval it was not given (DESIGN.md, "RecordedController").
 type RecordedController struct {
 	decisions map[string]Decision
 }
 
 // NewRecordedController builds a RecordedController over decisions, keyed by
-// gate node id. The map is read-only to the controller; it is the resume
-// command's job to have already merged the newly supplied --approve/--reject
-// into it before construction. A nil map behaves like an empty one — every
-// gate pauses.
+// gate node id. The map is read-only to the controller; it is the caller's job
+// to have built it before construction — `run` maps each --auto-approve id to
+// DecisionApprove, `resume` merges its newly supplied --approve/--reject into
+// the snapshot's map and adds the same launch-time approvals for any named
+// gate not reached yet. A nil map behaves like an empty one — every gate
+// pauses.
 func NewRecordedController(decisions map[string]Decision) *RecordedController {
 	return &RecordedController{decisions: decisions}
 }

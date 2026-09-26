@@ -264,11 +264,20 @@ has no open issue behind it.
   Fable limit. Switch to another model, …`, the second Claude sentence matched
   since [#283](https://github.com/jitokim/oh-my-graph/issues/283)) names no
   time at all, so that hint carries the CLI's sentence instead of a reset time.
-- **A `gate` always pauses a fresh run.** Gate nodes are implemented (pause /
-  approve / reject, continued by `oh-my-graph resume`), but a fresh `run`/`auto`
-  cannot pre-approve one: every gate stops the run with a resumable snapshot and
-  exit code 2, and decisions are only supplied on resume.
-  ([#9](https://github.com/jitokim/oh-my-graph/issues/9))
+- **A fresh run pauses at every `gate` it was not told about.** Gate nodes are
+  implemented (pause / approve / reject, continued by `oh-my-graph resume`),
+  and `run --auto-approve <gate-id>` pre-registers approval for the named gates
+  on `run` only: repeatable, one exact gate node id per use, validated against
+  the loaded graph before the run directory exists or any node runs, so a
+  misspelt id fails the load with exit 1 and the graph's real gate ids in the
+  message. Every gate not named still stops the run with a resumable snapshot
+  and exit code 2, to be decided by `resume --approve` one gate per leg. `auto`
+  cannot carry a gate at all, named or not: `validatePlannedNodes` in
+  `internal/coordinator/coordinator.go` refuses any planned `type: gate` node
+  ("planned node %q is a gate node, which auto mode cannot run"), so a planned
+  graph never reaches a gate for a flag to answer and `auto` has no
+  `--auto-approve`.
+  ([#285](https://github.com/jitokim/oh-my-graph/issues/285))
 - **Auto mode's tool ceiling is a reduction, not a sandbox — and parts of it are
   unverified.** The isolation and scoped-Bash layers were measured against a
   real `claude` 2.1.220 and hold (see [SECURITY.md](../SECURITY.md)). MCP closure

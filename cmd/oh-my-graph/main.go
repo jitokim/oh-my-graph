@@ -11,7 +11,7 @@
 // dispatch switch and every subcommand's FlagSet, so neither can drift):
 //
 //	oh-my-graph init [dir]
-//	oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+//	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -58,7 +58,6 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
-	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
@@ -180,7 +179,7 @@ func exitCodeForError(err error) int {
 // registered flag hides a feature. The continuation indent aligns each line
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
-       oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+       oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -346,7 +345,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return err
 	}
 	if flags.dryRun {
-		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, runtime)
+		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, flags.autoApprove, runtime)
 	}
 
 	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
@@ -360,6 +359,15 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return err
 	}
 	g := loaded.Graph
+	// Every --auto-approve id must name a gate node in THIS graph (#285), and
+	// the check sits here, on the graph verdicts and before the runtime one:
+	// a misspelt gate id is a fact about the graph the operator wrote, so it is
+	// reported next to a cycle or a dangling edge, not after the machine has
+	// been checked for a CLI — and long before executeGraph opens the run leg,
+	// so a typo leaves no run directory behind.
+	if err := checkAutoApprove(g, flags.autoApprove); err != nil {
+		return err
+	}
 	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
 	// Part of the pre-run disclosure, so it prints where the rest of the Codex
 	// policy prints and not on a stream the reader may not be watching. The
@@ -1020,7 +1028,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:           flags.concurrency,
 		ContinueOnFail:        flags.continueOnFail,
-		Gate:                  gate.NewPauseController(),
+		Gate:                  gateControllerFor(flags.autoApprove),
 		Verifier:              verify.NewShellVerifier(),
 		Worktrees:             worktrees,
 		ToolPolicies:          toolPolicies,
@@ -1105,6 +1113,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Graph:           graphJSON,
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
+		AutoApprove:     []string(flags.autoApprove),
 		// Recorded, not defaulted: a later `resume` must be able to put this run
 		// back under the mode it was launched in even if the binary's default has
 		// changed underneath it (see runstate.Snapshot.DefaultPermissionMode).
