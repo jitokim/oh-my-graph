@@ -46,6 +46,17 @@ type commonRunFlags struct {
 	// which means os.Stderr — nil must never mean silence, or the one path that
 	// forgets to set it drops the warning.
 	runtimeWarnW io.Writer
+	// autoApprove is the `run --auto-approve <gate-id>` list (#285): the gate
+	// nodes whose approval the operator registered at launch, in argv order.
+	// A commonRunFlags member so it reaches executeGraph — the one place the
+	// GateController is chosen — without a signature change, but deliberately
+	// NOT registered by register below: only newRunFlags registers it, so
+	// `auto` and `chat` leave it nil. It is dead on both by construction, not by
+	// policy — the coordinator refuses any planned gate node
+	// (coordinator.validatePlannedNodes), so a planned graph never reaches a
+	// gate for the flag to answer. Validated against the loaded graph
+	// (checkAutoApprove) before anything is written or spawned.
+	autoApprove gateIDFlag
 }
 
 func (c *commonRunFlags) register(set *flag.FlagSet) {
@@ -74,6 +85,7 @@ func newRunFlags() *runFlags {
 	f := &runFlags{set: flag.NewFlagSet("run", flag.ContinueOnError)}
 	f.register(f.set)
 	f.set.BoolVar(&f.dryRun, "dry-run", false, "validate the graph and print the resolved plan, then exit without running any node")
+	f.set.Var(&f.autoApprove, "auto-approve", "pre-register approval for the named gate before the run starts (an exact gate node id, validated against the graph at load; repeatable, one gate per use); any gate not named still pauses the run, to be answered later by `resume --approve`")
 	return f
 }
 
@@ -308,7 +320,7 @@ type resumeFlags struct {
 // copied across (ADR 0016 §4, #198).
 func newResumeFlags() *resumeFlags {
 	f := &resumeFlags{set: flag.NewFlagSet("resume", flag.ContinueOnError)}
-	f.set.StringVar(&f.approveGate, "approve", "", "approve the named gate and continue past it")
+	f.set.StringVar(&f.approveGate, "approve", "", "approve the gate the run is paused at and continue past it (one gate per leg: a pause is a whole-run stop, so each later gate takes its own resume; a gate the operator had already decided at launch with `run --auto-approve` never paused and needs none)")
 	f.set.StringVar(&f.rejectGate, "reject", "", "reject the named gate, pruning its subtree")
 	f.set.BoolVar(&f.retryFailed, "retry-failed", false, "re-execute a failed run's failed and cancelled nodes, or finish a session-limit-paused run's unfinished nodes; every passed node's result is kept")
 	f.set.IntVar(&f.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")

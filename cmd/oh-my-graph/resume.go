@@ -588,6 +588,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:               snap.Graph,
 		Inputs:              snap.Inputs,
 		ContinueOnFail:      snap.ContinueOnFail,
+		// The launch-time pre-approval list (runstate.Snapshot.AutoApprove)
+		// rides along for the record's sake and for the next leg's controller,
+		// which seeds itself from it exactly as this leg's does below.
+		AutoApprove: snap.AutoApprove,
 		// This recorder rewrites the WHOLE snapshot on every RecordNode, so a
 		// field omitted here is a field the first settling node ERASES — which
 		// for this one would silently move the run's remaining nodes onto the
@@ -603,9 +607,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// omitted here is a field the first settling node ERASES. ADR 0030 §2.6
 		// declines to re-gate a resume precisely because "the snapshot the
 		// resume loads records it" — that sentence is only true while this line
-		// exists, and without it a gate-paused or limit-paused `auto`, which is
-		// exactly the interactive class a human declared over, finishes looking
-		// like an accident and drops out of all four strata of §8(a).
+		// exists, and without it a limit-paused `auto` (the only pause an auto
+		// run can reach: coordinator.validatePlannedNodes refuses a planned gate
+		// node, so no auto run is ever gate-paused), which is exactly the
+		// interactive class a human declared over, finishes looking like an
+		// accident and drops out of all four strata of §8(a).
 		// Carrying it forward adds no trust surface: the block is inert by
 		// construction (marker filenames, nothing executable, nothing reads it
 		// to decide behaviour — ADR 0030 §2.5a), so this is transcription, not
@@ -658,11 +664,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// dontAsk finishes under dontAsk, however many upgrades happen between
 		// its legs.
 		DefaultPermissionMode: defaultPermissionMode,
-		Gate:                  gate.NewRecordedController(toGateDecisions(decisions)),
-		Verifier:              verify.NewShellVerifier(),
-		Worktrees:             worktrees,
-		ToolPolicies:          policies,
-		Model:                 plannedModel,
+		// The recorded decisions, plus DecisionApprove for every gate the run
+		// was launched with `--auto-approve` for and has not reached yet
+		// (withLaunchApprovals, #285): a launch-time approval holds for the
+		// whole run, not for the first leg only.
+		Gate:         gate.NewRecordedController(withLaunchApprovals(toGateDecisions(decisions), snap.AutoApprove)),
+		Verifier:     verify.NewShellVerifier(),
+		Worktrees:    worktrees,
+		ToolPolicies: policies,
+		Model:        plannedModel,
 		// An injected evidence command runs one at a time on a resumed leg for
 		// the same load-bearing reason it does on a fresh one (ADR 0016 §2): two
 		// concurrent builds of one directory can each fail on the other's

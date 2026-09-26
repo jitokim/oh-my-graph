@@ -1616,16 +1616,26 @@ type GateController interface {
 	Evaluate(ctx context.Context, node graph.Node) (Decision, error)
 }
 ```
-- `PauseController` — injected by `run`/`auto`. Always `DecisionPause`: a fresh
-  run cannot carry an approval.
+- `PauseController` — injected by a fresh `run` with no `--auto-approve`, and
+  by `auto` (whose planned graphs cannot contain a gate: `validatePlannedNodes`
+  in `internal/coordinator/coordinator.go` refuses one at plan time, so `auto`
+  has no `--auto-approve` to give). Always `DecisionPause`: with nothing
+  registered at launch there is no approval to carry.
 - `RecordedController` — injected by `resume`, wrapping the snapshot's decision
-  map. Returns the recorded decision for a gate already decided, `DecisionPause`
-  for the next undecided one.
+  map, and by `run --auto-approve <gate-id>` (#285), wrapping the named gates'
+  approvals built from argv. Returns the recorded decision for a gate already
+  decided, `DecisionPause` for the next undecided one. A resumed leg adds the
+  snapshot's `auto_approve` list to its map for any named gate the earlier legs
+  never reached, so a launch-time approval holds for the whole run.
 
 The scheduler asks the same question either way and never branches on "am I
 resuming"; which controller answers is chosen once, at the CLI boundary, from
-the invocation. Adding a future `--auto-approve` policy or an interactive TTY
-controller is another implementation, not a scheduler change.
+the invocation. `--auto-approve` shipped as exactly that: the existing
+`RecordedController` fed from the command line, validated against the loaded
+graph (an exact gate id, so a typo fails the load with the real gate ids in
+the message; a pattern could not be validated and would silently never match),
+and not a scheduler change. An interactive TTY controller would be another
+implementation in the same seam.
 
 **What the snapshot must hold** — `~/.oh-my-graph/runs/<run-id>/state.json`,
 written temp-file + `rename` (atomic), with a `schema` version so an
@@ -1646,7 +1656,14 @@ incompatible snapshot is refused rather than misread:
   resume under another after an upgrade. **Absent means `dontAsk`** — every
   snapshot written before ADR 0034 ran that mode — and a resumed leg writes the
   resolved value back, so the question is open exactly once per run. Optional and
-  additive: the schema stays at 3.
+  additive: the schema stays at 3. `auto_approve` (#285) is the same class: the
+  `run --auto-approve` list as launched, in argv order, so a resumed leg can seed
+  its `RecordedController` with the same approvals for any named gate the
+  earlier legs never reached, and so the record says the decision was the
+  operator's at launch rather than on a later resume. The approvals themselves
+  are not in this list but in the gate decisions below, written by the same
+  `recordGateApprove` path every approval takes. Optional and additive too:
+  absent on every flag-less `run` and on every `auto`, schema still 3.
 - **per-node completion records**: verdict, **session id**, cost, duration,
   artifact path. The session id is the one thing resume needs that today exists
   only in `Handoff.sessions` in memory — without it a `handoff: session` child
@@ -1698,8 +1715,10 @@ rather than silently swallowed; a snapshot write failure **at a gate pause is
 fatal**, because a pause whose state was not persisted is an unrecoverable
 stop, and reporting it as a clean pause would lie.
 
-**Two front-ends, one resume.** A gate decision reaches the run through
-`executeResume` and nothing else. `oh-my-graph resume` parses it from flags;
+**Two front-ends, one resume.** A gate decision on a paused run reaches it
+through `executeResume` and nothing else (the only decision that does not go
+through `resume` is the one `run --auto-approve` registered before the run
+started, and that one never pauses). `oh-my-graph resume` parses it from flags;
 the web live view POSTs it from the browser (`POST /api/gate/approve`
 |`/reject` → `serve.GateResumer` → `cliGateResumer` → the same
 `executeResume`, ADR 0014). The lock, the snapshot load, the explicit-gate-id
@@ -1738,8 +1757,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   reported, one step downstream. Supplied where the flag has nothing to attach
   to — a hand-written graph — it is an error even when the leg would have been a
   no-op, rather than being accepted and ignored.
-- Multiple gates ⇒ multiple resumes: a resumed run advances to the next gate and
-  pauses again. The decision map makes batch approval a later, additive change.
+- Multiple gates ⇒ multiple resumes, for the gates `run --auto-approve` did not
+  name: a resumed run advances to the next such gate and pauses again. A gate
+  named at launch is already in the decision map and is passed through, so only
+  the gates not covered by a launch-time approval cost one resume each.
 - `--retry-failed` salvages a failed run instead of deciding a gate; combining
   it with `--approve`/`--reject` is a flag error (a retry leg replays prior
   gate decisions unchanged and must never sneak a new one in). It keeps every
@@ -2931,8 +2952,10 @@ ledger — so the summary never under-counts silently.
   existing Parse/Validate (+ planned-node field dispositions). Owns the tool
   ceiling policy (`Plan.ToolPolicies`). Never runs the graph itself.
 - **GateController (interface, v1.1)** — answers approve/reject/pause for a gate
-  node. `PauseController` for fresh runs, `RecordedController` (snapshot-backed)
-  for `resume`; chosen at the CLI boundary, invisible to the Scheduler.
+  node. `PauseController` for a fresh run with nothing pre-approved (and for
+  `auto`, which cannot reach a gate), `RecordedController` for `resume`
+  (snapshot-backed) and for `run --auto-approve` (argv-backed, #285); chosen at
+  the CLI boundary, invisible to the Scheduler.
 - **RunState (v1.1)** — owns `state.json`: the resumable snapshot (graph, inputs,
   flags, tool policies, per-node completion incl. session id, gate decisions).
   Written atomically after every node. The Scheduler talks to a `Recorder`

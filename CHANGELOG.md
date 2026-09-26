@@ -12,6 +12,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **`run --auto-approve <gate-id>` pre-registers approval for the named gates
+  before the run starts.** Repeatable, one exact gate node id per use; every
+  gate not named still pauses the run with exit 2, to be answered by `resume
+  --approve` as before. The ids are validated against the loaded graph before
+  the run directory exists or any node spends: an id that is missing or is not
+  a `gate` fails the load with exit 1 and the graph's real gate ids in the
+  message, on `run` and `run --dry-run` alike (a dry run prints the
+  pre-approved list with its plan). The approval is recorded exactly as any
+  other — `gate.decisions[id] = approve` in `state.json` plus a `gate_approved`
+  event — and the snapshot's new optional `auto_approve` field states that it
+  was made at launch; a resumed leg honours the same list for any named gate
+  the earlier legs never reached. `auto` gets no such flag: a planned graph
+  cannot contain a gate. `run`-only, `resume --approve` unchanged. (#285)
 - **A planner-emitted graph now meets the lint sweeps, and is refused outright
   for an artifact reference that cannot resolve.** Until now the advisory sweeps
   ran under `lint` and `run --dry-run` only, and `auto` reaches neither: it
