@@ -1221,6 +1221,32 @@ branch-assertion check node (`coordinator.plannedVerdictPattern`, where a
 planned node may not set `verify` and the pattern is the whole gate); a new
 verdict token joins it.
 
+#### A CLEAN-only gate need not converge (#288)
+
+A review narrowed to accept only `CLEAN` and wired to a `feedback:` arc (the
+gating pair `gated-lane` ships) is a loop that ends when a reviewer finds
+nothing. With a **fresh-session reviewer** that loop has **no convergence
+guarantee, whatever `max` is.** Each round's reviewer is a new session reading
+a reworked diff: a reviewer that cannot see its own earlier findings cannot
+tell "closed" from "never raised", so it judges the diff as a stranger, and a
+stranger reviewing any non-trivial diff finds *something* — a new minor nit
+per round, on code the previous round already passed. Raising `max` only buys
+more rounds of that; it is a spend bound, never a convergence argument, and an
+exhausted loop's FAIL then reports a lane whose real findings were all fixed.
+
+The engine's answer is to give the reviewer its memory, not to stop asking:
+`{{ self.previous }}` (see "Handoff") hands a re-run node its own reply from
+the previous round, and the shipped `review-style`/`review-security` fragments
+quote it with an instruction to check those findings first and raise a new one
+only where the rework changed the code or missing it was a real mistake. That
+narrows the drift; it does not remove it — the verdict is still a model's
+judgment, and a gate whose only passing value is "nothing at all to say"
+still has no severity floor. A graph that needs a guarantee must bound the
+loop by something other than the reviewer's silence. A verdict with a third
+value — `MINOR:` findings that pass and ride along, so only a blocking finding
+fires the arc — is the structural fix, and is deliberately left as a
+follow-up to #288 rather than taken here.
+
 #### Where the verdict may sit — measured, not assumed
 
 That rule is not a guess. Every `result_matches` failure this project has on
