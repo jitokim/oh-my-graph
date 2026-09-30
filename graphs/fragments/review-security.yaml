@@ -18,6 +18,16 @@ node:
   prompt: |
     Review {{ with.diff }} for security issues (injection, secrets, unsafe
     shell, unsafe exec, authz gaps). The e2e verdict was: {{ with.evidence }}.
+
+    Your own reply from the previous review round of this diff follows — it
+    is empty on the first pass. If present, the diff was reworked to answer
+    it: first check each of those findings and re-raise only the ones still
+    open. Raise a NEW finding only where the rework changed the code, or
+    where missing it last round was a real mistake — not an issue you could
+    have raised then and did not. If every earlier finding is closed and
+    nothing new meets that bar, the verdict is CLEAN.
+    {{ self.previous }}
+
     Finish the review BEFORE you reply. Your FINAL reply IS the verdict: this
     node's turn ends the moment you reply, so a part of the diff you promise
     to look at afterwards is never looked at. Never end on "I'll continue" —
@@ -29,15 +39,6 @@ node:
     Anything you need to qualify goes AFTER the token, never before it: a
     line of context ahead of it fails this node even when the review is
     finished.
-
-    Your own reply from the previous review round of this diff follows — it
-    is empty on the first pass. If present, the diff was reworked to answer
-    it: first check each of those findings and re-raise only the ones still
-    open. Raise a NEW finding only where the rework changed the code, or
-    where missing it last round was a real mistake — not an issue you could
-    have raised then and did not. If every earlier finding is closed and
-    nothing new meets that bar, the verdict is CLEAN.
-    {{ self.previous }}
   allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: plan
   handoff: artifact

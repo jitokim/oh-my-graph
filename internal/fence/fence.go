@@ -9,18 +9,19 @@
 // random nonce in BOTH markers is what removes that prediction: the nonce is
 // minted after the text is already fixed, so no material can contain it.
 //
-// Four call sites share Nonce: assess.go's engine-recorded material — node
+// Five call sites share Nonce: assess.go's engine-recorded material — node
 // details, artifact excerpts and the previous cycle's `remaining` — which is
 // raw model output by design
 // (ADR 0011 §2), plus coordinator.go's continuation quote of that same
 // `remaining` into the next cycle's planner prompt, repair.go's quote of the
-// validator's refusals into a re-plan prompt, and retryfeedback.go's quote of a
-// node's own rejected attempt into the prompt that retries it (ADR 0020). The
-// refusals one is the least obvious and no less necessary: a refusal is an
-// engine-authored sentence, but it interpolates model-authored fragments — a
-// placeholder token, a node id — and at least one validator does so without
-// escaping them, so the planner can place newlines and forged marker lines
-// inside the text being quoted back. A fifth caller, ADR 0012's inlining of a
+// validator's refusals into a re-plan prompt, retryfeedback.go's quote of a
+// node's own rejected attempt into the prompt that retries it (ADR 0020), and
+// internal/handoff's {{ self.previous }}, a feedback re-run's quote of its own
+// reply from the round before (#288). The refusals one is the least obvious
+// and no less necessary: a refusal is an engine-authored sentence, but it
+// interpolates model-authored fragments — a placeholder token, a node id — and
+// at least one validator does so without escaping them, so the planner can
+// place newlines and forged marker lines inside the text being quoted back. A former caller, ADR 0012's inlining of a
 // SKILL.md body into a planned node's prompt, is gone: ADR 0017 replaced it
 // with the CLI's own skill activation over a staged plugin directory, so no
 // skill text is quoted into a prompt any more and nothing needs fencing.
@@ -63,6 +64,23 @@ func Nonce(purpose string) (string, error) {
 	}
 	return hex.EncodeToString(buf), nil
 }
+
+// MaxPriorReplyInPrompt bounds a node's own earlier reply quoted back into a
+// prompt, in bytes. A reply is model output with no length of its own:
+// failed/<node-id>.out already caps what reaches DISK at 256 KiB, which is the
+// right order for a file a human reads once, and the wrong order entirely for
+// text re-sent on every attempt or round. This is the prompt's own bound —
+// roughly 2k tokens, four times what the assessor allows one artifact
+// (maxAssessArtifactExcerpt) because each quote is exactly one reply where an
+// assessment quotes the whole run.
+//
+// Two callers quote such a reply and both cut it here with Excerpt, so the
+// node is never handed a truncated reply as though it were whole:
+// internal/schedule's retry of a rejected attempt (ADR 0020) and
+// internal/handoff's {{ self.previous }}, a feedback re-run's own reply from
+// the round before (#288). It lives here, not with either, because it is one
+// promise about one kind of text; two copies would be two promises.
+const MaxPriorReplyInPrompt = 8000
 
 // ExcerptMarker marks the cut Excerpt makes in the middle of over-long
 // material. It is exported so a test can assert that a cut was ANNOUNCED

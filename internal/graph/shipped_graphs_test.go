@@ -556,8 +556,11 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 // findings were closed — it reviews the reworked diff as a stranger, finds new
 // nits, and a CLEAN-only gate never converges however large `max` is. The
 // token lives in the fragments, so this asserts it survives resolution into
-// every such node rather than grepping the fragment files.
+// every such node rather than grepping the fragment files — and, in every
+// shipped review prompt that quotes it, that the quote precedes the
+// verdict-format rule.
 func TestAGatingReviewSeesItsOwnPreviousRound(t *testing.T) {
+	const verdictFormatRule = "START the reply with exactly one of"
 	looped := 0
 	for _, name := range shippedTemplateNames(t) {
 		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
@@ -569,11 +572,22 @@ func TestAGatingReviewSeesItsOwnPreviousRound(t *testing.T) {
 				continue // multi-node: see TestAGatingReviewCarriesItsRecoveryArc's second limit
 			}
 			node, ok := loaded.Graph.byID[res.NodeID]
-			if !ok || node.Feedback == nil {
+			if !ok {
+				continue
+			}
+			// Wherever the quote is, it must come BEFORE the verdict-format
+			// rule: the reviewer's own earlier FINDINGS are model output, and a
+			// prompt that ends on them no longer ends on the rule the gate's
+			// result_matches enforces.
+			quote := strings.Index(node.Prompt, "{{ self.previous }}")
+			if format := strings.Index(node.Prompt, verdictFormatRule); quote >= 0 && (format < 0 || quote > format) {
+				t.Errorf("%s: review node %q quotes {{ self.previous }} at byte %d, after the verdict-format rule (at %d) — the rule must be the last thing the reviewer reads", name, res.NodeID, quote, format)
+			}
+			if node.Feedback == nil {
 				continue
 			}
 			looped++
-			if !strings.Contains(node.Prompt, "{{ self.previous }}") {
+			if quote < 0 {
 				t.Errorf("%s: review node %q re-runs under a feedback arc but its prompt never quotes {{ self.previous }} — each round's reviewer is a stranger to its own findings (#288)", name, res.NodeID)
 			}
 		}

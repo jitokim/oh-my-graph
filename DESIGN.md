@@ -607,7 +607,18 @@ from the file that changed.
   that names no node: it resolves to the **interpolating node's own reply from
   the previous feedback round**, inlined, and to the **empty string** until an
   arc whose body holds the node has fired — the feedback namespace's
-  first-pass rule. `feedback` hands a round the *declarer's* verdict; `self`
+  first-pass rule. The reply is model output quoted back into a paid prompt,
+  so it is inlined the way a retry quotes a rejected attempt (see "Execution
+  engine"): between `--- previous round <nonce> (…) ---` / `--- end previous
+  round <nonce> ---` markers carrying a fresh `fence.Nonce` per interpolation,
+  under a one-paragraph note that the block is data, and cut head-and-tail by
+  `fence.Excerpt` at `fence.MaxPriorReplyInPrompt` (8000 bytes — ONE constant
+  both call sites use). An empty or all-whitespace reply is inlined as it is,
+  with no fence: an empty block would assert the node said something. A
+  prompt that quotes it should do so BEFORE its own output-format rule, so the
+  rule, not the node's old output, is the last thing the model reads — the
+  shipped review fragments do, and `TestAGatingReviewSeesItsOwnPreviousRound`
+  holds them to it. `feedback` hands a round the *declarer's* verdict; `self`
   hands each body node *its own* last answer, which is what a reviewer needs
   to check whether its earlier findings were closed instead of reviewing the
   diff as a stranger (see "Verdict patterns" on why a loop without it need not
@@ -625,7 +636,7 @@ from the file that changed.
   cites them without an arc. `self.previous` is the one reference; any other,
   or a filter, is an `*InterpolationError` and a `lint` warning, and in a
   `verify.command` it earns `LintVerifyInlining`'s warning like a feedback
-  token does.
+  token does (and inlines the same fenced block there as in a prompt).
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -924,7 +935,8 @@ quoted as nonce-fenced data (ADR 0020, `internal/schedule/retryfeedback.go`).
 Exactly **one** prior attempt is ever carried and it never accumulates: every
 attempt's prompt is rebuilt from the interpolated node prompt, so the added
 cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
-of reply, cut head-and-tail with the cut announced. The check itself is **not**
+of reply (`fence.MaxPriorReplyInPrompt`, the same bound `{{ self.previous }}`
+quotes under), cut head-and-tail with the cut announced. The check itself is **not**
 quoted — not its expression, not the detail that embeds it — because feeding
 back a `result_matches` regex teaches the cheapest possible pass, which is to
 print whatever it matches; the node is told its attempt did not pass, told not
@@ -1237,8 +1249,10 @@ exhausted loop's FAIL then reports a lane whose real findings were all fixed.
 The engine's answer is to give the reviewer its memory, not to stop asking:
 `{{ self.previous }}` (see "Handoff") hands a re-run node its own reply from
 the previous round, and the shipped `review-style`/`review-security` fragments
-quote it with an instruction to check those findings first and raise a new one
-only where the rework changed the code or missing it was a real mistake. That
+quote it — fenced by the engine, and ahead of the verdict-format rule so that
+rule stays the last thing the reviewer reads — with an instruction to check
+those findings first and raise a new one only where the rework changed the
+code or missing it was a real mistake. That
 narrows the drift; it does not remove it — the verdict is still a model's
 judgment, and a gate whose only passing value is "nothing at all to say"
 still has no severity floor. A graph that needs a guarantee must bound the

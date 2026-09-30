@@ -19,15 +19,19 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   stranger and found a new minor nit every round until `max` ran out. The new
   token resolves to the interpolating node's own reply from the round a fired
   arc just closed — empty on the first round, and on any node outside a loop,
-  so a fragment can quote it with no id and no binding. The engine archives
-  every body node's reply when an arc fires (`<run-dir>/previous/<id>.out`,
-  internal, re-seeded on a mid-loop resume). `review-style` and
-  `review-security` now quote it: a re-run reviewer first checks which of its
-  findings were closed and raises a new one only where the rework changed the
-  code or missing it was a real mistake. DESIGN.md "Verdict patterns" now
-  states that a CLEAN-only verdict with a fresh-session reviewer has no
-  convergence guarantee regardless of `max`; a three-valued verdict (minor
-  findings pass) is left as follow-up.
+  so a fragment can quote it with no id and no binding. The reply is inlined
+  the way a retry quotes a rejected attempt: fenced by markers carrying a
+  per-call nonce and cut head-and-tail at 8000 bytes, the retry quote's bound
+  (now one shared constant, `fence.MaxPriorReplyInPrompt`); an empty reply
+  inlines nothing. The engine archives every body node's reply when an arc
+  fires (`<run-dir>/previous/<id>.out`, internal, re-seeded on a mid-loop
+  resume). `review-style` and `review-security` now quote it, ahead of the
+  verdict-format rule so that rule is still the last thing the reviewer reads:
+  a re-run reviewer first checks which of its findings were closed and raises
+  a new one only where the rework changed the code or missing it was a real
+  mistake. DESIGN.md "Verdict patterns" now states that a CLEAN-only verdict
+  with a fresh-session reviewer has no convergence guarantee regardless of
+  `max`; a three-valued verdict (minor findings pass) is left as follow-up.
   ([#288](https://github.com/jitokim/oh-my-graph/issues/288))
 - **`run --auto-approve <gate-id>` pre-registers approval for the named gates
   before the run starts.** Repeatable, one exact gate node id per use; every
