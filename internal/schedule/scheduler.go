@@ -486,7 +486,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		toolPolicies:          opts.ToolPolicies,
 		model:                 opts.Model,
 		conventions:           opts.Conventions,
-		completedNodes:       opts.CompletedNodes,
+		completedNodes:        opts.CompletedNodes,
 		settledNodes:          opts.SettledNodes,
 		nodeRounds:            opts.NodeRounds,
 		opening:               opts.OpeningAccounting,

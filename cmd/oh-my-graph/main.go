@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list [--show-skipped] [--exit-in-flight]
@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/conventions"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
@@ -180,7 +181,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list [--show-skipped] [--exit-in-flight]
@@ -467,6 +468,18 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	}
 	flags.runtime = runtime
 
+	// The conventions are read and validated first, before the planner call and
+	// before any run directory exists, so a refusal costs nothing (ADR 0041
+	// §2.1). Loaded once per invocation: every goal-loop cycle prefixes the
+	// same bytes, and editing a source file after launch changes nothing.
+	if len(flags.conventionPaths) > 0 {
+		set, err := conventions.Load(flags.conventionPaths)
+		if err != nil {
+			return err
+		}
+		flags.conventions = set
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -725,7 +738,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 	}
 
 	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence)
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.conventions)
 	}
 
 	if !committed {
@@ -743,7 +756,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence)
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, conventionsDisclosure{set: flags.conventions})
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -764,12 +777,16 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // finished), not RUNNING, not ABANDONED (its process left on purpose), and it
 // has no verdict about work, because there was no work. So it mints no run id
 // at any point, its planner call included.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome) error {
+//
+// conv is the launch's conventions set, nil for none. The preview states that
+// it does NOT carry into the saved graph, because `run <graph.json>` is the
+// preview's natural next step and would not prefix it (ADR 0041 §2.4).
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv *conventions.Set) error {
 	specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
 	if err != nil {
 		return err
 	}
-	printPlanForRuntime(out, plan, specPath, runtime, evidence)
+	printPlanForRuntime(out, plan, specPath, runtime, evidence, conventionsDisclosure{set: conv, notCarried: true})
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
@@ -794,7 +811,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 // A failure to save the declined spec is reported and swallowed: losing the
 // artifact must not turn a decline into an error.
 func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, confirm func() (bool, error)) (bool, error) {
-	printPlanForRuntime(out, plan, "", runtime, evidence)
+	// No conventions: `chat` registers no --conventions (ADR 0041 §2.6).
+	printPlanForRuntime(out, plan, "", runtime, evidence, conventionsDisclosure{})
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -866,6 +884,15 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	flags.plannedModel = plan.Model
 	if plan.ModelWarning != "" {
 		fmt.Fprintln(os.Stderr, plan.ModelWarning)
+	}
+	// The operator's conventions are staged into THIS run's directory, the
+	// pattern skills and agents use above (ADR 0041 §2.1), and before the
+	// snapshot records their hash: `resume` prefixes from the staged copy and
+	// never from a source path. Every goal-loop cycle stages its own copy.
+	if flags.conventions != nil {
+		if err := flags.conventions.Stage(runDirFor(runID)); err != nil {
+			return err
+		}
 	}
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
@@ -1033,6 +1060,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		Worktrees:             worktrees,
 		ToolPolicies:          toolPolicies,
 		Model:                 flags.plannedModel,
+		Conventions:           conventionsPrefix(flags.conventions),
 		SerializedVerifyNodes: serializedVerify,
 		Recorder:              recorder,
 		EventSink:             leg.feed,
@@ -1121,6 +1149,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		ToolPolicies:          toNodeToolPolicies(toolPolicies),
 		Goal:                  goal,
 		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
+		Conventions:           conventionsRecord(flags.conventions),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
@@ -1208,10 +1237,12 @@ func formatUsage(usage runner.TokenUsage) string {
 // screen assertion does not have to name a runtime and an evidence record it is
 // not about.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
-	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil)
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, conventionsDisclosure{})
 }
 
-func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome) {
+// conv is what the screen says about the operator's `--conventions` (ADR
+// 0041 §2.4); its zero value prints nothing.
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv conventionsDisclosure) {
 	g := plan.Graph
 	if specPath == "" {
 		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
@@ -1257,6 +1288,9 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 			noteCeiling(w, anyAgentMapped(g))
 		}
 	}
+	// Right after the ceiling it does not move, on either runtime: the prompt
+	// prefix is runtime-neutral (ADR 0041 §2.7).
+	noteConventions(w, conv)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteMissingBuildEvidence(w, evidence)
 	noteReplan(w, plan.Repaired)
