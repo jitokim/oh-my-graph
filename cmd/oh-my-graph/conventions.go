@@ -92,7 +92,8 @@ func groupThousands(n int) string {
 
 // conventionsRecord is the state.json half of a set: the staged hash `resume`
 // checks and the sources the screen reprints. nil for no set, which keeps the
-// snapshot at schema 3 (runstate.SchemaWithConventions).
+// snapshot at schema 3 (runstate.Schema); a record moves the stamp to
+// runstate.SchemaWithConventions.
 func conventionsRecord(set *conventions.Set) *runstate.Conventions {
 	if set == nil {
 		return nil

@@ -57,9 +57,12 @@ func TestWrite_ConventionsStampSchema4(t *testing.T) {
 	}
 	// An older binary compared strictly against its own Schema, which was 3:
 	// the stamp must differ from it or that binary would resume the run
-	// without the conventions.
-	if SchemaWithConventions == Schema {
-		t.Fatal("the conventions stamp must differ from the plain schema an older reader accepts")
+	// without the conventions. It must also stay ABOVE it: a future bump of
+	// Schema to 5 that left this stamp at 4 would stamp new-format runs with a
+	// version this build accepts, so it would misread them without refusing.
+	if SchemaWithConventions <= Schema {
+		t.Fatalf("the conventions stamp (%d) must be above the plain schema (%d): a Schema bump must also move or retire SchemaWithConventions",
+			SchemaWithConventions, Schema)
 	}
 
 	for _, path := range []string{plain, withConv} {

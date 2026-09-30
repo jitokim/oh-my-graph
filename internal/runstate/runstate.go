@@ -60,7 +60,10 @@ import (
 // unreported USD cost as a known $0, so this is not safely additive.
 //
 // Schema is still what every snapshot WITHOUT a conventions record is stamped
-// with. SchemaWithConventions is the first conditional stamp; see there.
+// with. SchemaWithConventions is the first conditional stamp; see there. A
+// future bump of Schema must also move or retire SchemaWithConventions — left
+// at 4, it would stamp new-format runs with a version this build accepts, and
+// TestWrite_ConventionsStampSchema4 fails unless it stays above Schema.
 const Schema = 3
 
 // SchemaWithConventions is stamped instead of Schema on a snapshot that
