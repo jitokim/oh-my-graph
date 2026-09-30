@@ -656,21 +656,28 @@ func (s Snapshot) SettledNodes() map[string]bool {
 	return settled
 }
 
-// SchemaMismatchError is returned by Load when a snapshot's Schema does not match
-// the running binary's Schema constant. It names the path and both versions so
-// the CLI can tell the user exactly why an old run cannot be resumed by a newer
-// (or older) build, instead of failing on a confusing downstream decode error.
+// SchemaMismatchError is returned by Load when a snapshot's Schema is not one
+// the running binary accepts. It names the path and the versions so the CLI can
+// tell the user exactly why an old run cannot be resumed by a newer (or older)
+// build, instead of failing on a confusing downstream decode error. Want is the
+// Schema constant; WantAlso, when non-zero, is the other version this build
+// accepts (SchemaWithConventions), so the message never claims Want is the only one.
 type SchemaMismatchError struct {
-	Path  string
-	Found int
-	Want  int
+	Path     string
+	Found    int
+	Want     int
+	WantAlso int
 }
 
 func (e *SchemaMismatchError) Error() string {
+	want := fmt.Sprintf("version %d", e.Want)
+	if e.WantAlso != 0 {
+		want = fmt.Sprintf("versions %d and %d", e.Want, e.WantAlso)
+	}
 	return fmt.Sprintf(
-		"snapshot %q has schema version %d, but this build understands version %d; "+
+		"snapshot %q has schema version %d, but this build understands %s; "+
 			"it was written by an incompatible version of oh-my-graph and cannot be resumed",
-		e.Path, e.Found, e.Want,
+		e.Path, e.Found, want,
 	)
 }
 
@@ -756,7 +763,7 @@ func Load(path string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("decode snapshot %q: %w", path, err)
 	}
 	if s.Schema != Schema && s.Schema != SchemaWithConventions {
-		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema}
+		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema, WantAlso: SchemaWithConventions}
 	}
 	return s, nil
 }

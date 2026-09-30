@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,12 @@ func TestLoad_SchemaBeyondConventionsIsRefused(t *testing.T) {
 	var mErr *SchemaMismatchError
 	if !errors.As(err, &mErr) || mErr.Found != 5 {
 		t.Fatalf("want a SchemaMismatchError naming 5, got %T: %v", err, err)
+	}
+	// The refusal names BOTH accepted versions, not just Schema.
+	if mErr.Want != Schema || mErr.WantAlso != SchemaWithConventions {
+		t.Errorf("mismatch carried want %d/%d, want %d/%d", mErr.Want, mErr.WantAlso, Schema, SchemaWithConventions)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "understands versions 3 and 4") {
+		t.Errorf("message does not name both accepted versions: %s", msg)
 	}
 }
