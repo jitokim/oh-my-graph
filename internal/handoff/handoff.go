@@ -11,10 +11,11 @@
 //     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
 //     contract), each body node's reply from the round a fired arc just
 //     closed to previous/<node-id>.out so its re-run can read its own earlier
-//     answer (#288 — internal too), and a FAILED node's own reply to failed/<node-id>.out so the
-//     work a failed node already paid for survives it — and, from that same
-//     file, hand the reply back to a later leg's retry of the node that wrote
-//     it (SeedPriorReply/TakePriorReply, ADR 0020);
+//     answer (#288 — internal too), and a FAILED node's own reply to
+//     failed/<node-id>.out so the work a failed node already paid for
+//     survives it — and, from that same file, hand the reply back to a later
+//     leg's retry of the node that wrote it (SeedPriorReply/TakePriorReply,
+//     ADR 0020);
 //   - resolve which claude session a session-handoff node resumes.
 //
 // It is safe for concurrent use: parallel nodes interpolate and persist at the
