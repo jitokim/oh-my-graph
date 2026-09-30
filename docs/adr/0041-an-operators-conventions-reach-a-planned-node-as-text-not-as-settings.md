@@ -264,26 +264,43 @@ cases:
 
 | input | outcome |
 | --- | --- |
-| each file readable, regular, valid UTF-8, non-blank; total ≤ 128 KiB | staged and prefixed |
+| each file readable, regular, valid UTF-8, non-blank; rendered prefix ≤ 96 KiB | staged and prefixed |
 | any path absent or unreadable | **refused** |
 | any path a directory, or another non-regular file | **refused** |
 | any file blank after whitespace trim | **refused**. A flag the operator typed that delivers nothing is a typo, not a choice. |
 | any file whose every non-blank line is an `@` import | **refused**. The message lists the import targets and says to pass them as `--conventions` instead (§2.1). |
-| the same file named twice (same resolved path) | **refused**, as a typo |
-| total across all files > 128 KiB | **refused**, with each file's size, the total and the cap. **Nothing is ever truncated.** |
+| the same file named twice (the same file by `os.SameFile` — directly, through a symlink, or through a hard link) | **refused**, as a typo |
+| the files' own total > 96 KiB | **refused from their sizes, before any is read**, with each file's size, the total and the cap. **Nothing is ever truncated.** |
+| the rendered prefix (header, a heading per file, the files, the separator) > 96 KiB | **refused**, with the rendered size, the files' total, each file's size and the cap. **Nothing is ever truncated.** |
 | any file not valid UTF-8 | **refused** |
 | flag not given | nothing read, nothing staged. argv, prompts, screens and `state.json` are byte-identical to `5d665d5`. |
 
-**The cap is on the total, and it is 128 KiB.** The cap exists to put a
-readable ceiling on a bill that every fresh spawn pays. It is set from the only
+**The cap is on the rendered prefix, and it is 96 KiB.** Two limits size it,
+and the harder one is the transport. A node's whole prompt, prefix included,
+reaches the CLI as **one argv element** (`-p <prompt>` for `claude`, the
+positional prompt for `codex exec`), and Linux refuses any single argv string
+longer than `MAX_ARG_STRLEN` — 32 pages, 131072 bytes — with `E2BIG` at
+`execve`. macOS has only the ~1 MiB total `ARG_MAX`, so a Mac never shows it.
+The cap is therefore on `len(Staged)`, the bytes that actually travel, not on
+the source files, and 96 KiB leaves 32 KiB of that argv string for the node's
+own prompt. The first implementation capped the *source total* at 128 KiB
+(§8, finding 8): an accepted set at the cap, plus the header, headings, separator and
+node prompt, failed every fresh spawn on Linux — after the planner call had
+been paid for, which is the cost §2.1's launch-time refusal exists to avoid.
+
+The other limit is the bill every fresh spawn pays. It is set from the only
 measurement available, which is #282's corpus. Five docs of about 17k tokens is
-roughly 68 KiB, and 128 KiB is about 1.9× that, or about 32k tokens. That
-headroom lets a conventions set grow without every growth becoming a refusal.
-It still keeps the prefix to about a sixth of a 200k-token context. A per-file
-cap would add no protection that the total does not give, and would refuse the
-legitimate case of one long style guide. The first draft's 32 KiB could not hold
-the corpus that motivated the ADR (§1.4), which is the failure this number is
-corrected against. §7(4) states what would move it again.
+roughly 68 KiB, and 96 KiB is about 1.4× that, or about 24k tokens — about an
+eighth of a 200k-token context. A per-file cap would add no protection that the
+total does not give, and would refuse the legitimate case of one long style
+guide. The first draft's 32 KiB could not hold the corpus that motivated the
+ADR (§1.4), which is the failure this number is corrected against. §7(4) states
+what would move it again.
+
+The whole list is **stat-ed before any file is read**, so a set whose sizes are
+already over the cap — a multi-GB file named by mistake — is refused without
+being read into memory, and each read is bounded to one byte past the cap in
+case a file grows between the stat and the read.
 
 **No truncation** is the row that needs an argument. The fence package's
 head+tail bound is correct for *evidence*, where the ends carry the signal. It
@@ -420,14 +437,14 @@ of which are decisive:
    the notice into `graph.json` by re-encoding (`:935-943`). A design whose
    correctness depends on every future post-plan step's ordering is a design
    that has already broken once.
-3. **The graph stops being reviewable.** Up to 128 KiB copied into every node's
+3. **The graph stops being reviewable.** Up to 96 KiB copied into every node's
    `Prompt` makes `graph.json` mostly conventions text. The graph is the artifact a
    human approves, and burying each node's actual instruction under the same
    boilerplate is a cost to the thing the plan screen exists for.
 4. **The retry rule is only moved, not removed.** A `handoff: session` node
    would carry the conventions a second time on its first turn, because the
    parent's turn already held them. That costs tokens, not correctness, but it
-   is 17k–32k tokens per session child.
+   is 17k–24k tokens per session child.
 
 What this alternative gets right is kept: resume consistency. It is delivered
 by the staged copy and the hash check (§2.6), which is ADR 0017's and ADR 0022's
@@ -536,12 +553,15 @@ Unit tests use `FakeRunner`, with no real spawn.
    #282's corpus) are accepted, staged in order and prefixed.
 9. **Refusals.** One case each for: a missing path, a directory, a blank file,
    an import-only file (the message names the import targets), the same file
-   twice, a total of 128 KiB + 1 byte split across two files (the message names
-   each size and the total), and invalid UTF-8 in the second of two files. Each
-   refuses before the planner is called (the fake planner records zero calls).
-   No message contains any file's content.
-10. **Exactly at the cap is accepted.** A total of exactly 128 KiB is accepted
-    and staged.
+   twice (directly, through a symlink, and through a hard link), a file total
+   of 96 KiB + 1 byte split across two files (the message names each size and
+   the total), a rendered prefix of 96 KiB + 1 byte, a 4 GiB sparse file
+   (refused from its size, never read), and invalid UTF-8 in the second of two
+   files. Each refuses before the planner is called (the fake planner records
+   zero calls). No message contains any file's content.
+10. **Exactly at the cap is accepted.** A rendered prefix of exactly 96 KiB is
+    accepted and staged, and that largest accepted prefix plus 32 KiB of node
+    prompt stays within Linux's 131072-byte `MAX_ARG_STRLEN`.
 11. **The staged copy is authoritative.** Editing a source file after launch
     does not change what later nodes receive.
 12. **Resume.** A matching staged copy is prefixed and the lines are reprinted.
@@ -571,9 +591,22 @@ Unit tests use `FakeRunner`, with no real spawn.
   imports is still accepted, and the plan screen's `@-import lines not
   followed` suffix is the only signal. That residue is documented in
   LIMITATIONS.
-- **A corpus that outgrows 128 KiB.** It is refused whole and never truncated.
-  The operator shortens or splits it on purpose. §7(4) is what would move the
-  cap.
+- **A corpus that outgrows 96 KiB rendered.** It is refused whole and never
+  truncated. The operator shortens or splits it on purpose. §7(4) is what would
+  move the cap.
+- **A node prompt over its 32 KiB share of the argv string.** The cap leaves
+  32 KiB of Linux's 131072-byte per-argv-string limit for the node's own
+  prompt, and an `| inline` of large upstream artifacts can exceed it. That
+  node's spawn fails with `E2BIG` partway through a run. This is **not new**:
+  the same prompt alone over 128 KiB fails the same way without the flag, and
+  the fix for both is the stdin transport SECURITY.md already records as
+  unmeasured. The flag narrows the headroom, so LIMITATIONS says so.
+- **The conventions are in every fresh node's argv.** The staged copy is 0600,
+  but at rest only: while a node runs, its argv — prefix included — is readable
+  from the process table (`ps auxww`; on Linux, world-readable
+  `/proc/<pid>/cmdline`). SECURITY.md's *What is exposed while a node runs*
+  names conventions alongside inputs and inlined artifacts, and the flag's help
+  text says it.
 - **The operator reads the flag as "my `CLAUDE.md` works now".** Their hooks,
   MCP servers, grants and `@` imports still do not arrive. The plan-screen line
   says *text only* for this reason, and LIMITATIONS says it again where the
@@ -588,7 +621,7 @@ Unit tests use `FakeRunner`, with no real spawn.
   plan screen prints the path and hash before any node spends. It is
   documented, not refused: refusing paths under the cwd would also refuse the
   legitimate case of a project's own checked-in style guide.
-- **Token cost.** Up to about 32k tokens on every fresh spawn, retries
+- **Token cost.** Up to about 24k tokens on every fresh spawn, retries
   included. The cap bounds it, and the byte count on the plan screen shows it.
 - **Positional weight.** Prompt text may be weighted below a system prompt.
   This is accepted in §2.7, and §7(1) is the falsifier.
@@ -634,19 +667,27 @@ Unit tests use `FakeRunner`, with no real spawn.
 3. **A request for per-node conventions, or for conventions under `run`, that
    §4 cannot answer** would show that whole-`auto`-run granularity is the wrong
    unit.
-4. **A second measured corpus above 128 KiB from an operator whose conventions
+4. **A second measured corpus above 96 KiB from an operator whose conventions
    cannot reasonably be shortened.** The cap was set from one corpus, #282's.
    A second data point above it is what would move the number, and the move
-   goes through this section, not through a quiet constant change.
+   goes through this section, not through a quiet constant change. It cannot
+   move to or past Linux's 128 KiB per-argv-string limit while the prompt
+   travels in argv; that move needs the stdin transport first.
 
 ## 8. Review findings and where each is answered
 
 | # | finding | answer |
 | --- | --- | --- |
-| 1 | Critical: the design does not fit #282's five docs, ~17k tokens behind `@` imports | Incorporated. Repeatable flag (§2.1), total cap of 128 KiB sized from the corpus (§2.5), import-only refusal (§2.5), a failure-mode entry (§6) and test 8. |
+| 1 | Critical: the design does not fit #282's five docs, ~17k tokens behind `@` imports | Incorporated. Repeatable flag (§2.1), a cap sized from the corpus (§2.5; first 128 KiB on the source total, moved by finding 8), import-only refusal (§2.5), a failure-mode entry (§6) and test 8. |
 | 2 | High: retries never resume, so the prefix rule dropped conventions on a cold retry | Incorporated. The prefix keys on `ResumeSession == ""` at the `s.runner.Run` call, after `startCold` (§2.2). Tests 4, 5 and 6. |
 | 3 | High: the plan-time prompt edit (`skillstage.go:898`) was not weighed | Weighed and rejected, with its gains stated (§4.1). The template, lint and validate collision, and the `run` double delivery, decide it. |
 | 4 | Medium: `--plan-only` promised a prefix `run` does not deliver | Incorporated. The preview prints a *NOT in the saved graph* line instead (§2.4). Test 15. |
 | 5 | Medium: other directions in the issue were not weighed | Incorporated. Lifting the #268 deny, `skills:` preload, a checklist skill, and the planner-inlining "grants nothing" point are each answered (§4.2). |
 | 6 | Low: an older binary resumes a newer run without conventions | Incorporated as a block, not a gap. The snapshot is stamped `schema: 4` only when it carries conventions (§6). Test 13. |
 | 7 | Low: the header's contents were unspecified | Incorporated. Ordinal and basename only, with no path and no hash in the node prompt. Paths and hashes appear on the operator's screen only (§2.4). Test 2. |
+| 8 | Critical (implementation review): the 128 KiB cap counted only the source files, while the prompt travels as one argv string that Linux caps at 131072 bytes, so an accepted set failed every fresh spawn with `E2BIG` | Incorporated. The cap is on the rendered prefix and is 96 KiB, leaving the node prompt 32 KiB (§2.5); the residual node-prompt overflow is a stated failure mode (§6). Tests 9 and 10. |
+| 9 | Warning: 0600 staging does not make conventions private while they sit in argv | Incorporated. SECURITY.md's argv-exposure section names conventions, the `--conventions` help text says so, and §6 records it. |
+| 10 | Warning: a file was read whole before the cap was checked | Incorporated. The list is stat-ed first and refused from sizes; reads are bounded (§2.5). Test 9's sparse-file case. |
+| 11 | Info: the schema refusal said "want 3" although 4 is accepted | Incorporated. `SchemaMismatchError` names both accepted versions. |
+| 12 | Info: a hard link passed the duplicate check | Incorporated. Duplicates are `os.SameFile` (§2.5). Test 9. |
+| 13 | Info: `Stage` failing inside `executePlan`, and `LoadStaged`'s non-ENOENT read error, were untested | Incorporated. The run settles FAIL with its lock released; the read error is wrapped, never a hash mismatch. |

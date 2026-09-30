@@ -24,8 +24,10 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   activation are unchanged and `graph.json` is byte-identical with and without
   the flag. Refused at launch: a missing, directory, blank, non-UTF-8 or
   duplicate file, a file that is only `@` imports (the message lists the
-  files to pass instead — imports are never followed), and a total over
-  128 KiB, which is never truncated. `resume` re-uses the staged copy and
+  files to pass instead — imports are never followed), and a rendered prefix
+  over 96 KiB, which is never truncated (the prompt is one argv string, which
+  Linux caps at 128 KiB). Like the rest of a prompt, the text is in each
+  node's argv while it runs. `resume` re-uses the staged copy and
   refuses a missing or altered one naming both hashes; a snapshot carrying
   conventions is written as `schema: 4` so an older binary refuses it rather
   than resuming without them. `--plan-only` says the conventions are not in

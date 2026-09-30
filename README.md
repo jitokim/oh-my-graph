@@ -230,8 +230,10 @@ planned node that does not resume a session — on either runtime
 No setting, grant, hook or MCP server comes with the text, so the ceiling,
 agent mapping and skill activation are exactly what they are without the flag.
 `@` imports are not followed — name the imported files instead, and a file that
-is only imports is refused with the list to pass. The total is capped at
-128 KiB and never truncated. The plan screen prints each path and hash;
+is only imports is refused with the list to pass. The rendered prefix is capped
+at 96 KiB — under Linux's 128 KiB limit on one argv string, which the prompt
+is — and never truncated. Like the rest of a prompt, the text is readable from
+the process table while a node runs (SECURITY.md). The plan screen prints each path and hash;
 `--plan-only` says the conventions are not in the saved graph, because
 `run <graph.json>` does not carry them.
 

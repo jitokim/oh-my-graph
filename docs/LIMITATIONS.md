@@ -345,11 +345,24 @@ has no open issue behind it.
   with imports is accepted, the node sees the import lines literally, and the
   only signal is the plan screen's `(N @-import lines not followed)` suffix on
   that file's line. Name the imported files directly.
-  <br>**Carry more than 128 KiB.** The cap is on the total across all files
-  (#282's five-doc corpus is about 68 KiB), and an oversize set is refused
-  whole, never truncated — dropping the middle of a style guide would change
-  what you told the node. Up to about 32k tokens is paid on every fresh spawn,
-  retries included.
+  <br>**Carry more than 96 KiB.** The cap is on the rendered prefix — the
+  files plus the header, a heading per file and the separator (#282's
+  five-doc corpus is about 68 KiB) — and an oversize set is refused whole,
+  never truncated: dropping the middle of a style guide would change what you
+  told the node. Up to about 24k tokens is paid on every fresh spawn, retries
+  included.
+  <br>**Lift the argv limit.** A node's whole prompt, prefix included, is one
+  argv string, and Linux refuses any single argv string over 131072 bytes
+  (`MAX_ARG_STRLEN`) with `E2BIG`; macOS does not, so a Mac will not show it.
+  The 96 KiB cap leaves a node's own prompt 32 KiB of that string. A node
+  whose prompt is larger — typically `| inline` of big upstream artifacts —
+  fails to spawn on Linux partway through the run. Without the flag the same
+  happens at 128 KiB; the flag only narrows the headroom.
+  <br>**Keep the text private while a node runs.** `conventions.md` is staged
+  owner-only, but the same bytes are in every fresh node's argv, readable from
+  the process table for that node's lifetime (see SECURITY.md, *What is
+  exposed while a node runs*). Do not name a file you would not put in a
+  prompt on a shared machine.
   <br>**Keep your file names private.** The node's prompt carries each file's
   ordinal and **basename** (never the path or a hash), so a basename reaches
   every session transcript under `~/.claude/projects` (or Codex's session
