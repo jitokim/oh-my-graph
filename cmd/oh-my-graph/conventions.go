@@ -13,7 +13,7 @@ import (
 // conventionsFlag is `auto --conventions <path>`, repeatable, in command-line
 // order — which is the order the files appear in every node's prompt
 // (ADR 0041 §2.1). Registered on `auto` alone: `run` nodes load the operator's
-// CLAUDE.md natively, `chat` must not change an unattended run behind a [y/N],
+// CLI configuration natively, `chat` must not change an unattended run behind a [y/N],
 // and `resume` inherits the staged copy rather than re-pointing it (§2.6).
 type conventionsFlag []string
 

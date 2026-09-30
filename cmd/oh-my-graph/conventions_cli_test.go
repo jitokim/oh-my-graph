@@ -530,7 +530,7 @@ func TestResumeFlags_RegisterNoConventions(t *testing.T) {
 		t.Error("`resume` parsed --conventions")
 	}
 	if newRunFlags().set.Lookup("conventions") != nil {
-		t.Error("`run` registers --conventions; a hand-written node loads CLAUDE.md natively (§2.6)")
+		t.Error("`run` registers --conventions; a hand-written node loads the CLI's configuration natively (§2.6)")
 	}
 	if err := newChatFlags().parse([]string{"--conventions", "x.md"}); err == nil {
 		t.Error("`chat` parsed --conventions (§2.6)")
