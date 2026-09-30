@@ -149,7 +149,7 @@ files answer complementary questions:
 | Answers | "where is the run *now*?" (resume reads this) | "what *happened*, in order, live?" |
 | Write discipline | temp file + fsync + rename after every node | one `write` + fsync per line |
 | Reader pattern | re-read the whole file | `tail -f` / seek to last offset |
-| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **3**) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **3**) |
+| Version field | top-level `schema` (source of truth: `internal/runstate.Schema`, currently **3**; **4** — `runstate.SchemaWithConventions` — on a run launched with `auto --conventions`) | per-event `schema` (source of truth: `internal/runfeed.Schema`, currently **3**) |
 
 The two files version independently — a snapshot format change does not bump
 the event schema, and vice versa.
@@ -169,7 +169,8 @@ ids the operator pre-approved at launch, in argv order; the approvals
 themselves sit in `gate.decisions` like any other, and the `gate_approved`
 event's `ts` says when), `tool_policies` (auto runs only — see below), `goal` (iterated auto
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
-— see below), `nodes` (map of node id →
+— see below), `conventions` (`auto --conventions` launches only — see below),
+`nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
 `reasoning_output_tokens`), `budget_usd`, `duration`
@@ -218,6 +219,20 @@ is executable. Read `declared` and `disclosed` separately and never summed: one
 keystroke covering two questions is weaker evidence of choice than a flag typed
 at one. No event carries any of this; the stream is unchanged and there is no
 feed schema bump.
+
+`conventions` records the operator's `auto --conventions` files (ADR 0041):
+`staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the
+exact prefix every fresh planned spawn received, which `resume` re-checks and
+refuses to continue on a mismatch — and `sources`, one entry per named file in
+command-line order with `path` (absolute), `bytes`, `sha256` and
+`import_lines` (how many `@`-import lines were not followed; omitted when 0).
+It is absent on every run without the flag. **A snapshot carrying it is stamped
+`schema: 4`**, the first conditional stamp: the record alone would be additive,
+and an older binary would then resume the run with its remaining nodes told
+nothing while their siblings were told the conventions, so the bump makes that
+binary refuse it by name instead. Every other snapshot keeps `schema: 3`, and
+this build reads both. No event carries any of this; the feed schema is
+unchanged.
 
 `runtime` is the run-wide model CLI (ADR 0025). **Every snapshot written by this
 build carries it**, and that is now a property of the format rather than of one

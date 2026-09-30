@@ -1,7 +1,11 @@
 # ADR 0041 — An operator's conventions reach a planned node as text, not as settings
 
-**Status:** Accepted. Written before its code; §5 lists the tests the
-implementation owes. The flag it names does not parse yet.
+**Status:** Accepted and implemented. Written before its code; §5 lists the
+tests the implementation owes, and each is in the same PR
+(`internal/conventions`, `internal/schedule/conventions_test.go`,
+`internal/runstate/conventions_test.go`,
+`cmd/oh-my-graph/conventions_cli_test.go`, and
+`TestBuildCmd_ScrubIsUnchangedByAConventionsPrefix` for test 16).
 
 **Revision.** The first draft was reviewed before any code existed. The review
 found that the draft did not fit the case #282 describes (§1.4). It also found

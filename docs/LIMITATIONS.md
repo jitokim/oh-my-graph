@@ -333,6 +333,43 @@ has no open issue behind it.
   <br>A run that types nothing is byte-for-byte the run that shipped in
   v0.10.0 — same argv, same screens, same `state.json`.
   ([ADR 0032](adr/0032-a-planned-node-may-carry-the-operators-configuration.md))
+- **`--conventions` delivers your conventions as prompt text — only the text,
+  only what you name, and only under `auto`.** Since ADR 0041 `auto
+  --conventions <path>` (repeatable) prefixes the named files to every planned
+  node's prompt that does not resume a session, agent-mapped nodes included,
+  on either runtime. What it does not do:
+  <br>**Make your `CLAUDE.md` work.** Your hooks, MCP servers and standing
+  grants still do not arrive, and neither does anything the file `@`-imports:
+  imports are **not followed**. A file that is nothing but import lines is
+  refused with the list of targets to pass instead; a file that *mixes* text
+  with imports is accepted, the node sees the import lines literally, and the
+  only signal is the plan screen's `(N @-import lines not followed)` suffix on
+  that file's line. Name the imported files directly.
+  <br>**Carry more than 128 KiB.** The cap is on the total across all files
+  (#282's five-doc corpus is about 68 KiB), and an oversize set is refused
+  whole, never truncated — dropping the middle of a style guide would change
+  what you told the node. Up to about 32k tokens is paid on every fresh spawn,
+  retries included.
+  <br>**Keep your file names private.** The node's prompt carries each file's
+  ordinal and **basename** (never the path or a hash), so a basename reaches
+  every session transcript under `~/.claude/projects` (or Codex's session
+  store). Absolute paths and hashes appear only on your own terminal and in
+  `state.json`.
+  <br>**Vet what you name.** Naming a repository's own `./CLAUDE.md` lets that
+  repository's author write into every node's prompt. It is not refused — a
+  project's checked-in style guide is a legitimate target — but the path and
+  hash are printed before any node spends.
+  <br>**Reach `run`, `chat`, or a `--plan-only` graph.** Only `auto` registers
+  the flag. The graph `--plan-only` saves does not hold the conventions, the
+  preview says so, and `run <graph.json>` does not prefix them (a hand-written
+  `run` node loads your `CLAUDE.md` natively anyway). A resumed leg reuses the
+  staged copy and refuses to continue if it is missing or altered; `resume`
+  registers no `--conventions` to change them. An older binary refuses such a
+  run's `state.json` (schema 4) rather than resuming it without them.
+  <br>**Weigh like a system prompt.** The text sits at the head of the prompt,
+  not in `--append-system-prompt`; whether that is followed as reliably as a
+  natively loaded `CLAUDE.md` is unmeasured (ADR 0041 §7(1)).
+  ([ADR 0041](adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not
   reconcile that subagent's own `tools:` with the node's `allowed_tools` — the

@@ -12,6 +12,25 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ### Added
 
+- **`auto --conventions <path>` carries your coding conventions into every
+  planned node as text.** Repeatable, in order: each named file is read and
+  validated at launch — before the planner call, so a refusal costs nothing —
+  staged into the run directory as `conventions.md`, and prefixed to the
+  prompt of every spawn that resumes no session (a cold retry of a
+  `handoff: session` node included), on Claude and Codex alike. The node sees
+  each file under its ordinal and basename only; the plan screen shows the
+  full paths, sizes and SHA-256s. Text only: no setting, grant, hook or MCP
+  server comes with it, so the tool ceiling, agent mapping and skill
+  activation are unchanged and `graph.json` is byte-identical with and without
+  the flag. Refused at launch: a missing, directory, blank, non-UTF-8 or
+  duplicate file, a file that is only `@` imports (the message lists the
+  files to pass instead — imports are never followed), and a total over
+  128 KiB, which is never truncated. `resume` re-uses the staged copy and
+  refuses a missing or altered one naming both hashes; a snapshot carrying
+  conventions is written as `schema: 4` so an older binary refuses it rather
+  than resuming without them. `--plan-only` says the conventions are not in
+  the saved graph. `run`, `chat` and `resume` register no such flag.
+  ([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md), #282)
 - **`run --auto-approve <gate-id>` pre-registers approval for the named gates
   before the run starts.** Repeatable, one exact gate node id per use; every
   gate not named still pauses the run with exit 2, to be answered by `resume

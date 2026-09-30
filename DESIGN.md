@@ -2598,6 +2598,20 @@ ceiling really is untouched is a test, not a claim:
 a model against one that did not. An agent-mapped node gets no `--model`,
 because its staged definition declares one and that is the more specific choice.
 
+The one other thing that crosses beside `model` is not a settings key at all:
+the operator's **conventions text**, named with `auto --conventions <path>`
+(ADR 0041). It is on neither this table nor `ToolPolicy` and not even on the
+graph — the CLI validates the files at launch, stages their rendered prefix as
+the run directory's `conventions.md`, and the scheduler puts it in front of
+the prompt handed to `NodeRunner.Run` whenever that spawn resumes no session
+(`Options.Conventions`, applied after `startCold`/`prepareRetry`, so a cold
+retry gets it once and `basePrompt` never holds it). It fails ADR 0037's
+"loads no file into the context" clause on purpose and keeps the rest: it adds
+no tool, grants no path, runs no hook, and the planner cannot select it. That
+the ceiling does not move is a test, not a claim:
+`TestAutoConventions_TheCeilingAndTheGraphDoNotMove` diffs every planned node's
+whole argv, and `graph.json`, with and without the flag.
+
 **The permission mode is a separate axis from the table, and ADR 0034 moved it.**
 The default is now `auto` where it was `dontAsk`, and that changes exactly one
 layer's reach: layers 0, 1, 3, 4 and 5 bind precisely as before, layer 2's argv
@@ -3056,6 +3070,7 @@ internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
+internal/conventions/conventions.go + _test   `auto --conventions` (ADR 0041): read and validate the operator's named files whole or refuse them, render the ordinal+basename prefix, stage it as the run directory's conventions.md, and re-check that copy's SHA-256 for `resume`. Spawns nothing; the scheduler applies the prefix (Options.Conventions)
 internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`, `run --dry-run` and the plan screen print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
