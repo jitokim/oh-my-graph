@@ -204,3 +204,26 @@ func TestInterpolate_SelfRefusals(t *testing.T) {
 		t.Error("Interpolate (no node) resolved a self token; want an error")
 	}
 }
+
+// TestSelfTokenRefused pins the one statement of the self-token validity rule
+// that interpolation and both lints judge by: only {{ self.previous }},
+// unfiltered, is valid; a wrong reference is refused before a filter is.
+func TestSelfTokenRefused(t *testing.T) {
+	cases := []struct {
+		name, ref, filter, want string
+	}{
+		{"previous unfiltered is valid", SelfPrevious, "", ""},
+		{"unknown reference", "prior", "", selfRefusedReference},
+		{"empty reference", "", "", selfRefusedReference},
+		{"reference differs only in case", "Previous", "", selfRefusedReference},
+		{"filtered previous", SelfPrevious, "inline", selfRefusedFilter},
+		{"unknown reference and a filter reports the reference", "prior", "inline", selfRefusedReference},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selfTokenRefused(tc.ref, tc.filter); got != tc.want {
+				t.Errorf("selfTokenRefused(%q, %q) = %q, want %q", tc.ref, tc.filter, got, tc.want)
+			}
+		})
+	}
+}

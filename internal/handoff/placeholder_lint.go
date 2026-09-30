@@ -231,10 +231,10 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		// is simply always empty, which a fragment quoting it must be able to
 		// rely on (#288) — so only a reference or filter the runtime refuses is
 		// a finding.
-		if ref != SelfPrevious {
+		switch selfTokenRefused(ref, filter) {
+		case selfRefusedReference:
 			return fmt.Sprintf("%s names %q, but the self namespace has one reference, {{ self.previous }} — the node fails at interpolation", token, ref), false
-		}
-		if filter != "" {
+		case selfRefusedFilter:
 			return fmt.Sprintf("%s takes no filter — {{ self.previous }} always inlines — so the node fails at interpolation", token), false
 		}
 		return "", false

@@ -87,6 +87,28 @@ var placeholderPattern = regexp.MustCompile(
 // feedback round.
 const SelfPrevious = "previous"
 
+// The reasons selfTokenRefused returns — named so each caller can tell them
+// apart and word its own report (the runtime's error, the placeholder lint's
+// warning) without restating the rule.
+const (
+	selfRefusedReference = "the self namespace has one reference, {{ self.previous }}"
+	selfRefusedFilter    = "a self placeholder takes no filter — {{ self.previous }} always inlines the node's previous-round reply"
+)
+
+// selfTokenRefused is the one statement of which {{ self.<ref> | <filter> }}
+// tokens the runtime refuses: it returns the refusal reason, or "" when the
+// token is valid. Interpolation, the placeholder lint and the verify-inlining
+// lint all judge a self token by it, so they cannot drift apart.
+func selfTokenRefused(ref, filter string) string {
+	switch {
+	case ref != SelfPrevious:
+		return selfRefusedReference
+	case filter != "":
+		return selfRefusedFilter
+	}
+	return ""
+}
+
 // selfPreviousTemplate is what {{ self.previous }} resolves to once a round
 // has fired. %[1]s is the nonce (in both markers), %[2]s the bounded reply.
 //
@@ -240,15 +262,11 @@ func (h *Handoff) resolveLocked(nodeID, kind, ref, filter string) (string, error
 	}
 
 	if kind == "self" {
-		switch {
-		case ref != SelfPrevious:
-			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "the self namespace has one reference, {{ self.previous }}" + quotingHint}
-		case filter != "":
-			return "", &InterpolationError{
-				Kind:      kind,
-				Reference: ref,
-				Reason:    "a self placeholder takes no filter — {{ self.previous }} always inlines the node's previous-round reply",
-			}
+		switch reason := selfTokenRefused(ref, filter); {
+		case reason == selfRefusedReference:
+			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: reason + quotingHint}
+		case reason != "":
+			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: reason}
 		case nodeID == "":
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no node is being interpolated, so there is no self to resolve"}
 		}

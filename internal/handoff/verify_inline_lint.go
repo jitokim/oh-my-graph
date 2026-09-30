@@ -94,7 +94,7 @@ func LintVerifyInlining(g *graph.Graph) []Warning {
 			if kind == "artifacts" && !canEverSubstitute(g, node.ID, ref) {
 				continue // LintPlaceholders' finding, and nothing this one could say is true of it
 			}
-			if kind == "self" && (ref != SelfPrevious || filter != "") {
+			if kind == "self" && selfTokenRefused(ref, filter) != "" {
 				continue // refused at interpolation — LintPlaceholders' finding, for the same reason
 			}
 			detail := judgeInlinedToken(token, kind, ref, filter)
