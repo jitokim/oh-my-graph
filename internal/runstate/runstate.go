@@ -41,7 +41,8 @@ import (
 
 // Schema is the current state.json format version. Bump it whenever a change to
 // the types below alters the on-disk bytes in a way an older reader could
-// misinterpret; Load refuses any snapshot whose Schema does not equal this.
+// misinterpret; Load refuses any snapshot whose Schema is neither this nor
+// SchemaWithConventions.
 //
 // Schema 2 added NodeRecord.BudgetUSD and NodeRecord.Detail —
 // the gate/resume wiring PR that NodeRecord's original doc comment deferred
@@ -57,7 +58,20 @@ import (
 // Schema 3 adds Snapshot.Runtime plus NodeRecord.CostUnknown and Usage. An old
 // reader would otherwise resume a Codex run with Claude and render an
 // unreported USD cost as a known $0, so this is not safely additive.
+//
+// Schema is still what every snapshot WITHOUT a conventions record is stamped
+// with. SchemaWithConventions is the first conditional stamp; see there.
 const Schema = 3
+
+// SchemaWithConventions is stamped instead of Schema on a snapshot that
+// carries a Conventions record (ADR 0041 §6). The record alone is additive,
+// and that is the problem: an older binary would ignore the key and resume the
+// run with its nodes told nothing, while their siblings were told the
+// operator's conventions — the outcome §2.6 refuses on this binary. An older
+// reader's strict equality check refuses 4 by name instead. A run without the
+// flag keeps writing 3, so the bump costs nothing to anyone who does not use
+// it. Load accepts both.
+const SchemaWithConventions = 4
 
 // Verdict is a node's terminal judgement as persisted in the snapshot. The
 // string values match ledger.Verdict so the resume path can carry a record
@@ -522,6 +536,11 @@ type Snapshot struct {
 	// that predates this field, or a `run` of a hand-written graph, which never
 	// asks the question. See BuildEvidence.
 	BuildEvidence *BuildEvidence `json:"build_evidence,omitempty"`
+	// Conventions records the operator's `auto --conventions` files and the
+	// hash of the staged copy every node was prefixed with (ADR 0041). nil —
+	// and absent, with the snapshot stamped Schema — on every run without the
+	// flag. Present, it stamps SchemaWithConventions. See Conventions.
+	Conventions *Conventions `json:"conventions,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
@@ -531,6 +550,24 @@ type Snapshot struct {
 	// Gate is the run's gate progress: decisions so far and the gate it is paused
 	// at, if any.
 	Gate GateState `json:"gate"`
+}
+
+// Conventions is what an `auto --conventions` launch staged (ADR 0041 §2.1).
+// StagedSHA256 is the hash of the run directory's conventions.md, which
+// `resume` re-checks before prefixing a single node; Sources are the files it
+// was rendered from, in command-line order, for the operator's screen.
+type Conventions struct {
+	StagedSHA256 string              `json:"staged_sha256"`
+	Sources      []ConventionsSource `json:"sources"`
+}
+
+// ConventionsSource is one named file: its absolute path, size, SHA-256, and
+// how many @-import lines it holds that were not followed.
+type ConventionsSource struct {
+	Path        string `json:"path"`
+	Bytes       int    `json:"bytes"`
+	SHA256      string `json:"sha256"`
+	ImportLines int    `json:"import_lines,omitempty"`
 }
 
 // MarshalJSON encodes the snapshot with Runtime canonicalized: an empty value
@@ -662,6 +699,9 @@ func (e *SchemaMismatchError) Error() string {
 // text is in its argv (SECURITY.md, "What is exposed while a node runs").
 func Write(path string, s Snapshot) error {
 	s.Schema = Schema
+	if s.Conventions != nil {
+		s.Schema = SchemaWithConventions
+	}
 
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -701,7 +741,7 @@ func Write(path string, s Snapshot) error {
 }
 
 // Load reads and decodes the snapshot at path. It refuses a snapshot whose Schema
-// does not match this build's Schema constant with a *SchemaMismatchError, so an
+// is neither Schema nor SchemaWithConventions with a *SchemaMismatchError, so an
 // incompatible format is a clear, named failure rather than a misread. A missing
 // file or malformed JSON is returned wrapped, never as a zero Snapshot with a nil
 // error.
@@ -715,7 +755,7 @@ func Load(path string) (Snapshot, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return Snapshot{}, fmt.Errorf("decode snapshot %q: %w", path, err)
 	}
-	if s.Schema != Schema {
+	if s.Schema != Schema && s.Schema != SchemaWithConventions {
 		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema}
 	}
 	return s, nil
