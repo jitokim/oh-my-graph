@@ -5,6 +5,13 @@
 # Per-graph spans stay declared: `diff` (which diff this graph reviews) and
 # `focus` (the extra focus paragraph a graph adds — repo invariants, a
 # subsystem to stare at; bind "" when there is none).
+#
+# The prompt quotes {{ self.previous }} — this reviewer's own reply from the
+# previous feedback round — because a re-run reviewer is a fresh session: without
+# its earlier findings it judges the reworked diff as a stranger, finds new nits
+# every round, and a CLEAN-gated loop never converges (#288). It needs no
+# binding and names no id, so it is empty wherever the citing graph declares no
+# arc — every advisory lane.
 fragment: review-style
 description: read-only style/naming/simplicity review of a diff, with the test-double discipline check
 substitutions: [diff, focus]
@@ -28,6 +35,15 @@ node:
     Anything you need to qualify goes AFTER the token, never before it: a
     line of context ahead of it fails this node even when the review is
     finished.
+
+    Your own reply from the previous review round of this diff follows — it
+    is empty on the first pass. If present, the diff was reworked to answer
+    it: first check each of those findings and re-raise only the ones still
+    open. Raise a NEW finding only where the rework changed the code, or
+    where missing it last round was a real mistake — not a nit you could
+    have raised then and did not. If every earlier finding is closed and
+    nothing new meets that bar, the verdict is CLEAN.
+    {{ self.previous }}
   allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: plan
   handoff: artifact
