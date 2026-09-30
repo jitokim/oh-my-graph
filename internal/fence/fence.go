@@ -21,10 +21,11 @@
 // and no less necessary: a refusal is an engine-authored sentence, but it
 // interpolates model-authored fragments — a placeholder token, a node id — and
 // at least one validator does so without escaping them, so the planner can
-// place newlines and forged marker lines inside the text being quoted back. A former caller, ADR 0012's inlining of a
-// SKILL.md body into a planned node's prompt, is gone: ADR 0017 replaced it
-// with the CLI's own skill activation over a staged plugin directory, so no
-// skill text is quoted into a prompt any more and nothing needs fencing.
+// place newlines and forged marker lines inside the text being quoted back. A
+// former caller, ADR 0012's inlining of a SKILL.md body into a planned node's
+// prompt, is gone: ADR 0017 replaced it with the CLI's own skill activation
+// over a staged plugin directory, so no skill text is quoted into a prompt
+// any more and nothing needs fencing.
 //
 // The BOUND half has one caller that is not quoting into a prompt at all:
 // internal/handoff cuts a failed node's reply down to what a run directory may

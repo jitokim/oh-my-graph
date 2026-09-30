@@ -936,11 +936,11 @@ Exactly **one** prior attempt is ever carried and it never accumulates: every
 attempt's prompt is rebuilt from the interpolated node prompt, so the added
 cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
 of reply (`fence.MaxPriorReplyInPrompt`, the same bound `{{ self.previous }}`
-quotes under), cut head-and-tail with the cut announced. The check itself is **not**
-quoted — not its expression, not the detail that embeds it — because feeding
-back a `result_matches` regex teaches the cheapest possible pass, which is to
-print whatever it matches; the node is told its attempt did not pass, told not
-to argue the verdict, and pointed back at its own instructions. Causes that
+quotes under), cut head-and-tail with the cut announced. The check itself is
+**not** quoted — not its expression, not the detail that embeds it — because
+feeding back a `result_matches` regex teaches the cheapest possible pass, which
+is to print whatever it matches; the node is told its attempt did not pass, told
+not to argue the verdict, and pointed back at its own instructions. Causes that
 rendered no verdict on the reply carry nothing: a spawn error, an interpolation
 error, `budget_exceeded`, and a verification that could not be *completed*, the
 same `isJudgmentFailure` split a feedback arc uses. A `handoff: session` retry
