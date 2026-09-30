@@ -168,20 +168,15 @@ func Load(paths []string) (*Set, error) {
 			return nil, err
 		}
 	}
-	staged := render(files)
-	if len(staged) > MaxStagedBytes {
-		total := 0
-		for _, f := range files {
-			total += f.source.Bytes
-		}
+	set := &Set{Sources: make([]Source, len(files)), Staged: render(files)}
+	for i, f := range files {
+		set.Sources[i] = f.source
+	}
+	if len(set.Staged) > MaxStagedBytes {
 		return nil, &RefusalError{Reason: fmt.Sprintf(
 			"the rendered conventions are %d bytes — the files' %d plus the header, a heading per file and the separator — "+
 				"over the %d-byte cap (%s); nothing is truncated, so shorten the set on purpose",
-			len(staged), total, MaxStagedBytes, listSizes(files, func(f readFile) int64 { return int64(f.source.Bytes) }))}
-	}
-	set := &Set{Sources: make([]Source, len(files)), Staged: staged}
-	for i, f := range files {
-		set.Sources[i] = f.source
+			len(set.Staged), set.TotalBytes(), MaxStagedBytes, listSizes(files, func(f readFile) int64 { return int64(f.source.Bytes) }))}
 	}
 	return set, nil
 }
@@ -202,7 +197,7 @@ func statOne(path string) (readFile, error) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return readFile{}, &RefusalError{Path: path, Reason: "cannot be read: " + describeStatError(err)}
+		return readFile{}, &RefusalError{Path: path, Reason: "cannot be read: " + withoutPath(err)}
 	}
 	if info.IsDir() {
 		return readFile{}, &RefusalError{Path: path, Reason: "is a directory; name each file"}
@@ -218,12 +213,12 @@ func statOne(path string) (readFile, error) {
 func (f *readFile) read() error {
 	fh, err := os.Open(f.source.Path)
 	if err != nil {
-		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + describeStatError(err)}
+		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + withoutPath(err)}
 	}
 	defer fh.Close()
 	content, err := io.ReadAll(io.LimitReader(fh, MaxStagedBytes+1))
 	if err != nil {
-		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + describeStatError(err)}
+		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + withoutPath(err)}
 	}
 	if len(content) > MaxStagedBytes {
 		return &RefusalError{Path: f.arg, Reason: fmt.Sprintf("is over the %d-byte cap on its own; nothing is truncated, so shorten the set on purpose", MaxStagedBytes)}
@@ -247,9 +242,9 @@ func (f *readFile) read() error {
 	return nil
 }
 
-// describeStatError drops the path os already prefixed to err, since the
-// RefusalError names it once.
-func describeStatError(err error) string {
+// withoutPath drops the path os already prefixed to a stat, open or read
+// error, since the RefusalError names it once.
+func withoutPath(err error) string {
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
 		return pathErr.Err.Error()
@@ -258,16 +253,26 @@ func describeStatError(err error) string {
 }
 
 // importLines returns the targets of every CLAUDE.md-style `@path` import line
-// in content, and whether every non-blank line is one. An import line is a
-// trimmed line that starts with `@` and holds a single whitespace-free token.
+// in content, and whether every non-blank line is one. It is a heuristic, not
+// CLAUDE.md's parser: an import line is a trimmed line outside a fenced code
+// block that starts with `@` and holds a single whitespace-free token that
+// looks like a path (it contains `/` or `.`), so an `@Override` or `@param`
+// line in a code example is text, not an import.
 func importLines(content []byte) (targets []string, onlyImports bool) {
 	onlyImports = true
+	inFence := false
 	for _, line := range strings.Split(string(content), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		if len(trimmed) > 1 && trimmed[0] == '@' && !strings.ContainsAny(trimmed, " \t") {
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			onlyImports = false
+			continue
+		}
+		if !inFence && len(trimmed) > 1 && trimmed[0] == '@' && !strings.ContainsAny(trimmed, " \t") &&
+			strings.ContainsAny(trimmed[1:], "/.") {
 			targets = append(targets, trimmed[1:])
 			continue
 		}

@@ -245,6 +245,31 @@ func TestLoad_MixedFileCountsItsImportLines(t *testing.T) {
 	}
 }
 
+// TestLoad_AnnotationsAreNotImports: an `@Override`-style line, or a
+// path-like one inside a fenced code example, is text — it is not counted,
+// and a file made only of annotations is not refused as import-only.
+func TestLoad_AnnotationsAreNotImports(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name, content string
+	}{
+		{"bare annotations", "@Override\n@Transactional\n"},
+		{"fenced example", "```java\n@Override\n@docs/style.md\n```\n"},
+		{"tilde fence", "~~~\n@param\n~~~\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := Load([]string{writeFile(t, dir, strings.ReplaceAll(tc.name, " ", "-")+".md", tc.content)})
+			if err != nil {
+				t.Fatalf("an annotation-only file must be accepted: %v", err)
+			}
+			if got := set.Sources[0].ImportLines; got != 0 {
+				t.Errorf("ImportLines = %d, want 0", got)
+			}
+		})
+	}
+}
+
 // TestLoad_TemplateSyntaxStaysLiteral: the prefix is never interpolated, so a
 // style guide that documents {{ }} keeps it byte for byte (test 3's unit half).
 func TestLoad_TemplateSyntaxStaysLiteral(t *testing.T) {

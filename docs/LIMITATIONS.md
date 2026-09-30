@@ -344,7 +344,9 @@ has no open issue behind it.
   refused with the list of targets to pass instead; a file that *mixes* text
   with imports is accepted, the node sees the import lines literally, and the
   only signal is the plan screen's `(N @-import lines not followed)` suffix on
-  that file's line. Name the imported files directly.
+  that file's line. Name the imported files directly. The import check is a
+  heuristic: a lone `@` token counts only outside a fenced code block and only
+  if it looks like a path (contains `/` or `.`), so `@Override` is text.
   <br>**Carry more than 96 KiB.** The cap is on the rendered prefix — the
   files plus the header, a heading per file and the separator (#282's
   five-doc corpus is about 68 KiB) — and an oversize set is refused whole,
@@ -375,7 +377,7 @@ has no open issue behind it.
   <br>**Reach `run`, `chat`, or a `--plan-only` graph.** Only `auto` registers
   the flag. The graph `--plan-only` saves does not hold the conventions, the
   preview says so, and `run <graph.json>` does not prefix them (a hand-written
-  `run` node loads your `CLAUDE.md` natively anyway). A resumed leg reuses the
+  `run` node loads your CLI configuration natively anyway). A resumed leg reuses the
   staged copy and refuses to continue if it is missing or altered; `resume`
   registers no `--conventions` to change them. An older binary refuses such a
   run's `state.json` (schema 4) rather than resuming it without them.
