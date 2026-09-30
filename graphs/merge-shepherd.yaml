@@ -31,9 +31,14 @@
 # node via Bash, not the engine's `worktree:` seam, which branches from the
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
-# Honest note on the two waits: ready-and-wait and recheck are POLLS under a
-# timeout, not event subscriptions — `sleep 30` loops between `gh pr view`
-# reads, in the FOREGROUND, bounded by each node's own timeout. A node's final
+# Honest note on the two waits: ready-and-wait and recheck are waits under a
+# timeout, not event subscriptions — `gh pr view` reads around gh's own
+# blocking `gh pr checks <pr> --watch --interval 30`, in the FOREGROUND,
+# re-issued if it dies on a network error, bounded by each node's own timeout.
+# They used to be `sleep 30` loops, and the CLI now refuses a foreground
+# `sleep`, so each wait silently degraded to a single read (#295); the watch
+# blocks inside `gh` instead, and covers status contexts such as CodeRabbit's
+# as well as check runs. A node's final
 # reply is its verdict, so nothing may be backgrounded: a node that kicks off a
 # polling loop and reports "will follow up" has already ended its turn, and
 # success_check sees the interim report instead of the verdict. The two waits
@@ -135,10 +140,18 @@ nodes:
     prompt: |
       You are in the repo at {{ inputs.repo }}; its working tree is clean and
       must stay untouched. Verify that PR #{{ inputs.pr }} passes the local
-      suite, in a throwaway checkout:
+      suite, in a throwaway checkout.
+      Run every command below EXACTLY as written, one command per Bash call.
+      This node runs under dontAsk, and a command only runs when it plainly
+      matches the grant — so NO compound shell: no `cd <dir> && …`, no `;`,
+      `&&`, `||` or pipe, no `2>/dev/null`, no `|| true`. To act in another
+      directory, use `git -C <dir> …` or `make -C <dir> …`. A compound form of
+      step 0 is what got it DENIED in a real run (#295).
         0. Clear any leftover from an earlier attempt so a retry cannot
            collide: `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
-           (ignore the error if there is nothing to remove).
+           — bare, as written. It errors when there is nothing to remove;
+           that error is expected, so read it and move on rather than
+           wrapping the command to silence it.
         1. `gh pr view {{ inputs.pr }}` and `gh pr diff {{ inputs.pr }}` to
            see what the PR is.
         2. `git fetch origin pull/{{ inputs.pr }}/head`
@@ -199,12 +212,23 @@ nodes:
       phrase, not the head of the comment: the bot's notice sits ten lines
       under a walkthrough image, and the head of the body is that image.
 
-      Read it, then `sleep 30`, then run it again — one loop iteration per
-      tool call, blocking each time, in the FOREGROUND. NEVER background
-      anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
-      polling and report back". Your FINAL reply IS the verdict, so you cannot
-      reply until the poll has actually reached one — an interim report ends
-      the node and fails it.
+      Read it and classify it by the rules below FIRST: a latch is answered
+      at once, before any wait. Only when everything outstanding is
+      self-resolving do you wait, and you wait with gh's own blocking watch —
+      NEVER `sleep`, which this CLI refuses in the foreground:
+        gh pr checks {{ inputs.pr }} --watch --interval 30
+      It blocks until every rollup entry — check runs AND status contexts,
+      CodeRabbit's included — has finished. Give that Bash call a 5-minute
+      timeout (300000 ms). Its exit code is NOT the verdict: whenever it
+      returns, for whatever reason, make the read above again and classify
+      THAT. If the watch died on a network error, or ran out its 5 minutes
+      with entries still pending, re-issue it. If it returns at once with
+      nothing pending while the review is still missing, re-read instead —
+      that is the not-moving case below. Run all of it in the FOREGROUND,
+      blocking. NEVER background anything: no `&`, no `nohup`, no
+      run_in_background, no "I'll keep polling and report back". Your FINAL
+      reply IS the verdict, so you cannot reply until the wait has actually
+      reached one — an interim report ends the node and fails it.
 
       READY means BOTH hold:
         - EVERY entry of `checks` is finished and good — `status` COMPLETED
@@ -290,10 +314,12 @@ nodes:
       caveat, a note — goes AFTER the verdict, never before it: a line of
       context ahead of the token fails this node even when both conditions
       hold.
-      You have 15 minutes: as that timeout comes near (after ~20 loops), stop
-      polling and answer from the state you actually have. NEVER reply READY
-      early.
-    allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]
+      You have 15 minutes: after TWO watches that ran out their 5 minutes, or
+      ~20 reads in all, whichever comes first, stop waiting and answer from
+      the state you actually have. NEVER reply READY early.
+    # `Bash(gh *)` already covers `gh pr checks --watch`; there is no `sleep`
+    # grant, because nothing here sleeps (#295).
+    allowed_tools: ["Bash(gh *)"]
     permission_mode: dontAsk
     timeout: 15m
     handoff: artifact
@@ -629,21 +655,32 @@ nodes:
       review will be re-requested — there is nothing to re-wait for, and
       polling would spend the whole timeout on a state that cannot change.
 
-      Otherwise poll SYNCHRONOUSLY, in the foreground: run the command, read
-      it, then `sleep 30`, then run it again — one loop iteration per tool
-      call, blocking each time. NEVER background anything: no `&`, no
-      `nohup`, no run_in_background, no "I'll keep polling and report back".
-      Your FINAL reply IS the verdict, so you cannot reply until the poll has
-      actually reached one — an interim report ends the node and fails it.
+      Otherwise — and only once that read found no latch, because a latch is
+      answered at once, before any wait — wait SYNCHRONOUSLY, in the
+      foreground, with gh's own blocking watch. NEVER
+      `sleep`, which this CLI refuses in the foreground:
+        gh pr checks {{ inputs.pr }} --watch --interval 30
+      It blocks until every rollup entry — check runs AND status contexts,
+      CodeRabbit's included — has finished. Give that Bash call a 5-minute
+      timeout (300000 ms). Its exit code is NOT the verdict: whenever it
+      returns, for whatever reason, make the read above again and classify
+      THAT. If the watch died on a network error, or ran out its 5 minutes
+      with entries still pending, re-issue it. If it returns at once with
+      nothing pending while no coderabbitai review is on `head`, re-read
+      instead — that is the not-moving case above. NEVER background
+      anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
+      polling and report back". Your FINAL reply IS the verdict, so you
+      cannot reply until the wait has actually reached one — an interim
+      report ends the node and fails it.
       Judge the head SHA of your LAST read, not your first: if someone pushes
-      while you poll, the final SHA moved and the checks you were watching
+      while you wait, the final SHA moved and the checks you were watching
       belong to a commit nobody is merging. Start the judgment over on the
       new head.
 
-      You have 20 minutes, and a loop is a `gh` read plus `sleep 30` plus your
-      own turn — call it ~40 seconds, so ~25 loops is about seventeen. When you
-      reach either bound, stop polling and answer from the state you actually
-      have. Running out the node's timeout instead is the one thing worse than
+      You have 20 minutes: after THREE watches that ran out their 5 minutes
+      — about fifteen — or ~25 reads in all, whichever comes first, stop
+      waiting and answer from the state you actually have. Running out the
+      node's timeout instead is the one thing worse than
       an honest UNSETTLED: it kills the node mid-turn, so there is no verdict
       at all and the whole run is discarded — the exact outcome UNSETTLED
       exists to prevent.
@@ -691,12 +728,14 @@ nodes:
     # of what reading check state takes — the rollup, the head SHA and every
     # review's commit come out of one invocation of it. There is no mutating
     # form of `gh pr view` to be narrowed away from (`--jq` runs inside it, so
-    # the projection needs no second grant). `sleep` is the poll.
-    allowed_tools: ["Bash(gh pr view *)", "Bash(sleep *)"]
+    # the projection needs no second grant). `gh pr checks` is the wait, and
+    # it has no mutating form either. It replaced `sleep`, which the CLI
+    # refuses in the foreground, so the grant for it is gone (#295).
+    allowed_tools: ["Bash(gh pr view *)", "Bash(gh pr checks *)"]
     permission_mode: dontAsk
     # 20m, not ready-and-wait's 15m, and the extra five are not padding: the
-    # prompt's own budget is ~25 loops at roughly 40s each, which is ~17
-    # minutes, so a 15m timeout would kill the node BEFORE it reached the
+    # prompt's own budget is three 5-minute watches plus the reads around
+    # them, ~16 minutes, so a 15m timeout would kill the node BEFORE it reached the
     # honest answer its instructions ask for. At ready-and-wait that mismatch
     # is harmless — overshoot and the honest answer both fail there. Here the
     # honest answer PASSES and the overshoot discards the run, which is

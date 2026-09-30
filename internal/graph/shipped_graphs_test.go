@@ -225,21 +225,22 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 		t.Errorf("approve-merge depends on %v, want [recheck] — a gate reached without the re-wait is the defect this node fixes", gate.DependsOn)
 	}
 
-	// The narrowest grant that can read check state: `gh pr view` has no
-	// mutating form, and nothing else is needed to read a rollup, a head SHA
-	// or a review's commit.
-	wantTools := []string{"Bash(gh pr view *)", "Bash(sleep *)"}
+	// The narrowest grant that can read check state and wait on it: `gh pr
+	// view` and `gh pr checks` have no mutating form, and nothing else is
+	// needed to read a rollup, a head SHA or a review's commit, or to block
+	// until the rollup finishes. No `sleep`: the CLI refuses it (#295).
+	wantTools := []string{"Bash(gh pr view *)", "Bash(gh pr checks *)"}
 	if !reflect.DeepEqual(recheck.AllowedTools, wantTools) {
-		t.Errorf("recheck's grant is %v, want %v — it only reads check state and sleeps between reads", recheck.AllowedTools, wantTools)
+		t.Errorf("recheck's grant is %v, want %v — it only reads check state and waits on gh's own watch between reads", recheck.AllowedTools, wantTools)
 	}
 
-	// The timeout has to outlast the loop budget the prompt hands the node
-	// (~25 loops at roughly 40s ≈ 17 minutes). A node killed by its own
+	// The timeout has to outlast the wait budget the prompt hands the node
+	// (three 5-minute watches plus reads ≈ 16 minutes). A node killed by its own
 	// timeout produces no verdict at all and discards the run — which is the
 	// outcome UNSETTLED was invented to prevent, so a timeout that fires
 	// before the honest answer is due defeats the node's whole design.
 	if got := recheck.TimeoutDuration(); got < 20*time.Minute {
-		t.Errorf("recheck's timeout is %s, want at least 20m — its prompt budgets ~17 minutes of polling, and a timeout inside that kills the node before UNSETTLED is due", got)
+		t.Errorf("recheck's timeout is %s, want at least 20m — its prompt budgets ~16 minutes of waiting, and a timeout inside that kills the node before UNSETTLED is due", got)
 	}
 
 	pattern := recheck.SuccessCheck.ResultMatches
@@ -438,6 +439,118 @@ func TestBothWaitsSeparateLatchesFromTimeouts(t *testing.T) {
 	if !strings.Contains(merge.Prompt, "REVIEW_REQUIRED") {
 		t.Error("merge admits --admin over any mechanical state, REVIEW_REQUIRED included — that is a merge past a required approval, which ADR 0021 §3 claims the graph does not do")
 	}
+}
+
+// TestBothWaitsBlockOnGhWatchNotSleep pins the wait itself (#295). Both waits
+// were `sleep 30` loops, and the CLI now refuses a foreground `sleep`, so each
+// wait silently degraded to a single read — a READY or UNSETTLED judged from
+// one snapshot. The wait is gh's own blocking `gh pr checks --watch`, which
+// covers status contexts such as CodeRabbit's as well as check runs, and the
+// latch classification still comes BEFORE it: a latch is answered at once.
+func TestBothWaitsBlockOnGhWatchNotSleep(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	const watch = "gh pr checks {{ inputs.pr }} --watch --interval 30"
+	const beforeAnyWait = "a latch is answered at once, before any wait"
+	seen := 0
+	for _, n := range g.Graph.Nodes {
+		if n.ID != "ready-and-wait" && n.ID != "recheck" {
+			continue
+		}
+		seen++
+		if !strings.Contains(n.Prompt, watch) {
+			t.Errorf("%s's prompt never names %q — without gh's blocking watch the wait is one read", n.ID, watch)
+		}
+		if strings.Contains(n.Prompt, "`sleep 30`") {
+			t.Errorf("%s's prompt still polls with `sleep 30`, which the CLI refuses in the foreground", n.ID)
+		}
+		for _, tool := range n.AllowedTools {
+			if strings.HasPrefix(tool, "Bash(sleep") {
+				t.Errorf("%s still grants %s — nothing sleeps any more, and a dead grant reads as a live poll", n.ID, tool)
+			}
+		}
+		if !grantAdmits(n.AllowedTools, watch) {
+			t.Errorf("%s's grant %v does not admit %q — under dontAsk the wait would be denied", n.ID, n.AllowedTools, watch)
+		}
+		flat := strings.Join(strings.Fields(n.Prompt), " ")
+		latch, wait := strings.Index(flat, beforeAnyWait), strings.Index(flat, watch)
+		if latch < 0 || latch > wait {
+			t.Errorf("%s does not say %q ahead of the watch — waiting out a latch spends the whole timeout to learn nothing (ADR 0021)", n.ID, beforeAnyWait)
+		}
+		if !strings.Contains(n.Prompt, "network error") {
+			t.Errorf("%s never says to re-issue a watch that died on a network error — one dropped connection would end the wait early", n.ID)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("merge-shepherd has %d of its two waiting nodes", seen)
+	}
+
+	// The negative half, so grantAdmits is not trivially true.
+	if grantAdmits([]string{"Bash(gh pr view *)"}, watch) {
+		t.Error("grantAdmits admits `gh pr checks` under a `gh pr view` grant")
+	}
+}
+
+// TestVerifyStepsAreSingleGrantedCommands pins the other half of #295: verify
+// runs under dontAsk, and its step 0 was DENIED in a real run because the node
+// wrote it as a compound command (`… || true`, `cd … && …`) that no longer
+// plainly matched `Bash(git *)`. Every command the steps quote must be one
+// command that its own grant admits as written.
+func TestVerifyStepsAreSingleGrantedCommands(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	var verify *Node
+	for i, n := range g.Graph.Nodes {
+		if n.ID == "verify" {
+			verify = &g.Graph.Nodes[i]
+		}
+	}
+	if verify == nil {
+		t.Fatal("merge-shepherd has no verify node")
+	}
+	start := strings.Index(verify.Prompt, "0. ")
+	if start < 0 {
+		t.Fatal("verify's prompt has no numbered steps")
+	}
+	commands := regexp.MustCompile("`([a-z][^`]*)`").FindAllStringSubmatch(verify.Prompt[start:], -1)
+	if len(commands) < 6 {
+		t.Fatalf("found %d quoted commands in verify's steps, want at least 6: %v", len(commands), commands)
+	}
+	for _, m := range commands {
+		command := m[1]
+		if strings.ContainsAny(command, ";|&><") || strings.Contains(command, "$(") {
+			t.Errorf("verify's step quotes a compound command %q — under dontAsk it does not plainly match a grant", command)
+		}
+		if strings.HasPrefix(command, "cd ") {
+			t.Errorf("verify's step quotes %q — use `git -C <dir>` / `make -C <dir>` instead", command)
+		}
+		if !grantAdmits(verify.AllowedTools, command) {
+			t.Errorf("verify's grant %v does not admit %q", verify.AllowedTools, command)
+		}
+	}
+	if !strings.Contains(verify.Prompt, "git -C <dir>") {
+		t.Error("verify never names `git -C <dir>` as the way to act in another directory, so `cd <dir> && …` is what a node reaches for")
+	}
+}
+
+// grantAdmits reports whether any `Bash(<prefix> *)` grant covers command by
+// plain prefix — the reading dontAsk gives a single, non-compound command.
+func grantAdmits(tools []string, command string) bool {
+	for _, tool := range tools {
+		inner, ok := strings.CutPrefix(tool, "Bash(")
+		if !ok {
+			continue
+		}
+		prefix, ok := strings.CutSuffix(strings.TrimSuffix(inner, ")"), " *")
+		if ok && strings.HasPrefix(command, prefix+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // findingsVerdict is the reply a review fragment makes when it found a real
