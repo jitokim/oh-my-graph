@@ -69,13 +69,97 @@ func TestLoad_MotivatingCorpusFits(t *testing.T) {
 	}
 }
 
-// TestLoad_ExactlyAtTheCapIsAccepted is test 10.
-func TestLoad_ExactlyAtTheCapIsAccepted(t *testing.T) {
+// linuxMaxArgStrlen is Linux's MAX_ARG_STRLEN, 32 pages of 4 KiB: execve
+// refuses any single argv string longer than this with E2BIG, and a node's
+// whole prompt — prefix included — is one argv string.
+const linuxMaxArgStrlen = 32 * 4096
+
+// atCapPair writes a.md and b.md into a fresh dir sized so that their
+// rendered prefix is exactly MaxStagedBytes+extra bytes.
+func atCapPair(t *testing.T, extra int) []string {
+	t.Helper()
+	probeDir := t.TempDir()
+	probe, err := Load([]string{writeFile(t, probeDir, "a.md", "a"), writeFile(t, probeDir, "b.md", "b")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overhead := len(probe.Staged) - 2
+	body := MaxStagedBytes + extra - overhead
 	dir := t.TempDir()
-	a := writeFile(t, dir, "a.md", strings.Repeat("a", MaxTotalBytes/2))
-	b := writeFile(t, dir, "b.md", strings.Repeat("b", MaxTotalBytes/2))
-	if _, err := Load([]string{a, b}); err != nil {
-		t.Fatalf("exactly %d bytes must be accepted: %v", MaxTotalBytes, err)
+	return []string{
+		writeFile(t, dir, "a.md", strings.Repeat("a", body/2)),
+		writeFile(t, dir, "b.md", strings.Repeat("b", body-body/2)),
+	}
+}
+
+// TestLoad_ExactlyAtTheCapIsAccepted is test 10: the cap is on the rendered
+// prefix, so a prefix of exactly MaxStagedBytes is accepted.
+func TestLoad_ExactlyAtTheCapIsAccepted(t *testing.T) {
+	set, err := Load(atCapPair(t, 0))
+	if err != nil {
+		t.Fatalf("a rendered prefix of exactly %d bytes must be accepted: %v", MaxStagedBytes, err)
+	}
+	if len(set.Staged) != MaxStagedBytes {
+		t.Fatalf("len(Staged) = %d, want %d", len(set.Staged), MaxStagedBytes)
+	}
+}
+
+// TestLoad_LargestAcceptedPrefixFitsOneArgvString: the largest prefix Load
+// accepts must leave the node's own prompt room inside Linux's per-argv-string
+// limit — a cap on the source files alone let an accepted set fail every
+// spawn with E2BIG.
+func TestLoad_LargestAcceptedPrefixFitsOneArgvString(t *testing.T) {
+	set, err := Load(atCapPair(t, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const nodePromptHeadroom = 32 * 1024
+	if len(set.Staged)+nodePromptHeadroom > linuxMaxArgStrlen {
+		t.Errorf("largest accepted prefix is %d bytes; with %d bytes for the node's prompt it passes the %d-byte argv string limit",
+			len(set.Staged), nodePromptHeadroom, linuxMaxArgStrlen)
+	}
+}
+
+// TestLoad_RenderedPrefixOverTheCapIsRefused: files whose own total fits but
+// whose rendered prefix — header, headings, separator — does not are refused.
+func TestLoad_RenderedPrefixOverTheCapIsRefused(t *testing.T) {
+	paths := atCapPair(t, 1)
+	_, err := Load(paths)
+	var refusal *RefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("want *RefusalError, got %T: %v", err, err)
+	}
+	for _, part := range []string{"rendered conventions are 98305 bytes", "98304-byte cap", "nothing is truncated"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("message lacks %q: %v", part, err)
+		}
+	}
+}
+
+// TestLoad_OversizedFileIsRefusedWithoutBeingRead: a multi-GB file named by
+// mistake is refused from its stat size. The file is sparse, so reading it
+// whole would allocate 4 GiB; the test finishing at all is half the assertion.
+func TestLoad_OversizedFileIsRefusedWithoutBeingRead(t *testing.T) {
+	dir := t.TempDir()
+	huge := filepath.Join(dir, "huge.md")
+	f, err := os.Create(huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(4 << 30); err != nil {
+		f.Close()
+		t.Skipf("cannot make a sparse file here: %v", err)
+	}
+	f.Close()
+	small := writeFile(t, dir, "small.md", "use tabs\n")
+
+	_, err = Load([]string{small, huge})
+	var refusal *RefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("want *RefusalError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "huge.md 4294967296 bytes") || !strings.Contains(err.Error(), "98304-byte cap") {
+		t.Errorf("message does not name the file's size and the cap: %v", err)
 	}
 }
 
@@ -88,11 +172,15 @@ func TestLoad_Refusals(t *testing.T) {
 	blank := writeFile(t, dir, "blank.md", "  \n\t\n")
 	importOnly := writeFile(t, dir, "CLAUDE.md", "@docs/style.md\n\n  @docs/testing.md\n")
 	badUTF8 := writeFile(t, dir, "bad.md", secret+"\xff\xfe")
-	half := MaxTotalBytes/2 + 1
+	half := MaxStagedBytes/2 + 1
 	big1 := writeFile(t, dir, "big1.md", strings.Repeat("s", half))
-	big2 := writeFile(t, dir, "big2.md", strings.Repeat("s", MaxTotalBytes+1-half))
+	big2 := writeFile(t, dir, "big2.md", strings.Repeat("s", MaxStagedBytes+1-half))
 	link := filepath.Join(dir, "link.md")
 	if err := os.Symlink(good, link); err != nil {
+		t.Fatal(err)
+	}
+	hard := filepath.Join(dir, "hard.md")
+	if err := os.Link(good, hard); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,8 +198,9 @@ func TestLoad_Refusals(t *testing.T) {
 			wantParts: []string{"@-import", "--conventions docs/style.md --conventions docs/testing.md"}},
 		{name: "same file twice", paths: []string{good, good}, wantPath: "good.md", wantParts: []string{"same file"}},
 		{name: "same file through a symlink", paths: []string{good, link}, wantPath: "link.md", wantParts: []string{"same file"}},
+		{name: "same file through a hard link", paths: []string{good, hard}, wantPath: "hard.md", wantParts: []string{"same file as " + good}},
 		{name: "over the cap by one byte", paths: []string{big1, big2},
-			wantParts: []string{"131073 bytes", "131072-byte cap", "big1.md 65537 bytes", "big2.md 65536 bytes", "nothing is truncated"}},
+			wantParts: []string{"98305 bytes", "98304-byte cap", "big1.md 49153 bytes", "big2.md 49152 bytes", "nothing is truncated"}},
 		{name: "invalid UTF-8 in the second file", paths: []string{good, badUTF8}, wantPath: "bad.md", wantParts: []string{"not valid UTF-8"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,4 +314,36 @@ func TestStage_AndLoadStaged(t *testing.T) {
 			t.Errorf("the refusal must name the recorded hash and say missing: %v", err)
 		}
 	})
+	// A staged path that exists but cannot be read is an I/O failure, not a
+	// tampered copy: it is returned wrapped, never as a StagedMismatchError.
+	t.Run("unreadable", func(t *testing.T) {
+		if err := os.Mkdir(filepath.Join(runDir, StagedFileName), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadStaged(runDir, set.Sources, set.SHA256())
+		if err == nil {
+			t.Fatal("want an error reading a directory as the staged copy")
+		}
+		var mismatch *StagedMismatchError
+		if errors.As(err, &mismatch) {
+			t.Fatalf("an unreadable staged copy reported as a hash mismatch: %v", err)
+		}
+		if !strings.Contains(err.Error(), "read staged conventions") {
+			t.Errorf("the error is not wrapped with its context: %v", err)
+		}
+	})
+}
+
+// TestStage_UnwritableRunDirFails: Stage reports, rather than swallows, a run
+// directory it cannot write into.
+func TestStage_UnwritableRunDirFails(t *testing.T) {
+	dir := t.TempDir()
+	set, err := Load([]string{writeFile(t, dir, "style.md", "use tabs\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := writeFile(t, dir, "run", "a file where the run dir should be")
+	if err := set.Stage(blocker); err == nil || !strings.Contains(err.Error(), "stage conventions") {
+		t.Fatalf("want a stage conventions error, got %v", err)
+	}
 }

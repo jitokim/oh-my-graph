@@ -14,6 +14,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/conventions"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
@@ -252,9 +253,9 @@ func TestAutoConventions_RefusesBeforeThePlannerCall(t *testing.T) {
 	badUTF8 := filepath.Join(dir, "bad.md")
 	writeFileTree(t, badUTF8, secret+"\xff")
 	big1 := filepath.Join(dir, "big1.md")
-	writeFileTree(t, big1, strings.Repeat("a", conventions.MaxTotalBytes/2+1))
+	writeFileTree(t, big1, strings.Repeat("a", conventions.MaxStagedBytes/2+1))
 	big2 := filepath.Join(dir, "big2.md")
-	writeFileTree(t, big2, strings.Repeat("b", conventions.MaxTotalBytes/2))
+	writeFileTree(t, big2, strings.Repeat("b", conventions.MaxStagedBytes/2))
 
 	for _, tc := range []struct {
 		name  string
@@ -266,7 +267,7 @@ func TestAutoConventions_RefusesBeforeThePlannerCall(t *testing.T) {
 		{"blank file", []string{blank}, []string{"blank.md", "is blank"}},
 		{"import-only file", []string{importOnly}, []string{"imports.md", "--conventions docs/style.md --conventions docs/testing.md"}},
 		{"same file twice", []string{good, good}, []string{"good.md", "same file"}},
-		{"one byte over the cap", []string{big1, big2}, []string{"131073 bytes", "131072-byte cap", "big1.md 65537 bytes", "big2.md 65536 bytes"}},
+		{"one byte over the cap", []string{big1, big2}, []string{"98305 bytes", "98304-byte cap", "big1.md 49153 bytes", "big2.md 49152 bytes"}},
 		{"invalid UTF-8 in the second file", []string{good, badUTF8}, []string{"bad.md", "not valid UTF-8"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,6 +300,50 @@ func TestAutoConventions_RefusesBeforeThePlannerCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAutoConventions_AStageFailureSettlesTheRunAsFailed: a run directory the
+// conventions cannot be staged into fails the run after the planner call and
+// before any node spawns — and the leg is closed on the way out, so the run
+// reads FAIL with its lock released, never in-flight or abandoned.
+func TestAutoConventions_AStageFailureSettlesTheRunAsFailed(t *testing.T) {
+	conventionsHome(t)
+	style, mixed := conventionFiles(t)
+	// Inside the planner call the run directory exists; a DIRECTORY where
+	// conventions.md goes makes the staging write fail.
+	fake := newConventionsFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.04},
+	}, func() {
+		if err := os.MkdirAll(filepath.Join(soleRunDir(t), conventions.StagedFileName), 0o700); err != nil {
+			t.Fatalf("plant the obstacle: %v", err)
+		}
+	})
+
+	var runErr error
+	captureStdout(t, func() {
+		runErr = runAutoWith([]string{"tidy the docs", "--conventions", style, "--conventions", mixed, "--accept-no-build-evidence"},
+			fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if runErr == nil || !strings.Contains(runErr.Error(), "stage conventions") {
+		t.Fatalf("want a stage conventions error, got %v", runErr)
+	}
+	if nodes := nodeInvocations(fake); len(nodes) != 0 {
+		t.Errorf("%d node(s) spawned after staging failed", len(nodes))
+	}
+
+	dir := soleRunDir(t)
+	status, err := runstatus.Of(dir)
+	if err != nil {
+		t.Fatalf("runstatus.Of: %v", err)
+	}
+	if status != runstatus.Fail {
+		t.Errorf("the run reads %v, want %v — the planning leg must be closed on the stream", status, runstatus.Fail)
+	}
+	release, err := acquireRunLock(filepath.Join(dir, lockFileName))
+	if err != nil {
+		t.Fatalf("the run lock is still held after the run returned: %v", err)
+	}
+	release()
 }
 
 func TestAutoFlags_ConventionsRejectsABlankPath(t *testing.T) {

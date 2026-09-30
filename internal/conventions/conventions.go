@@ -12,7 +12,8 @@
 // The package does three things and spawns nothing:
 //
 //   - Load reads and validates the operator's list, whole or not at all
-//     (ADR 0041 §2.5). Every refusal names a path and a reason, never content.
+//     (ADR 0041 §2.5), and caps the rendered prefix below the per-argv-string
+//     limit. Every refusal names a path and a reason, never content.
 //   - Set.Stage writes the rendered prefix into a run directory as
 //     conventions.md; the staged bytes are exactly what every node receives.
 //   - LoadStaged re-reads a staged copy for `resume` and refuses one whose
@@ -25,17 +26,24 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
 
-// MaxTotalBytes is the cap on the TOTAL size of the named files, sized from
-// #282's measured corpus: five docs of about 17k tokens, roughly 68 KiB, and
-// 128 KiB is about 1.9× that (ADR 0041 §2.5). It bounds a bill every fresh
-// spawn pays. A move goes through ADR 0041 §7(4), not a quiet constant change.
-const MaxTotalBytes = 128 * 1024
+// MaxStagedBytes is the cap on the RENDERED prefix — the header, one heading
+// per file, the files' text and the separator — not on the files alone
+// (ADR 0041 §2.5). Two things size it. The prefix reaches a node inside ONE
+// argv element (`-p <prompt>` for claude, the positional prompt for codex),
+// and Linux refuses any single argv string longer than MAX_ARG_STRLEN, 32
+// pages = 131072 bytes, with E2BIG at execve; 96 KiB leaves the node's own
+// prompt 32 KiB of that element. And it bounds a bill every fresh spawn pays:
+// #282's measured corpus, about 68 KiB, fits at about 1.4×. A move goes
+// through ADR 0041 §7(4), not a quiet constant change — and never above the
+// argv limit.
+const MaxStagedBytes = 96 * 1024
 
 // StagedFileName is the staged copy's name inside a run directory.
 const StagedFileName = "conventions.md"
@@ -71,8 +79,8 @@ func (s *Set) SHA256() string {
 	return sha256Hex(s.Staged)
 }
 
-// TotalBytes is the summed size of the source files, the figure the cap is
-// on and the one the plan screen prints.
+// TotalBytes is the summed size of the source files, the figure the plan
+// screen prints. The cap is on len(Staged), which is always larger.
 func (s *Set) TotalBytes() int {
 	total := 0
 	for _, src := range s.Sources {
@@ -114,54 +122,80 @@ func (e *StagedMismatchError) Error() string {
 }
 
 type readFile struct {
-	source   Source
-	resolved string
-	content  []byte
+	arg     string // the path as the operator typed it, for refusals
+	info    os.FileInfo
+	source  Source
+	content []byte
 }
 
-// Load reads every named file in order, validates each and the list as a
-// whole, and renders the prefix. An empty list is a caller bug, not a flag
-// the operator typed, and is refused so it can never render a header with no
-// conventions under it.
+// Load validates every named file in order, the list as a whole, and the
+// rendered prefix, and returns the set. It stats the whole list before it
+// reads any of it, so a set whose files are already over the cap — a
+// multi-GB file named by mistake — is refused without being read. An empty
+// list is a caller bug, not a flag the operator typed, and is refused so it
+// can never render a header with no conventions under it.
 func Load(paths []string) (*Set, error) {
 	if len(paths) == 0 {
 		return nil, &RefusalError{Reason: "no file named"}
 	}
 	files := make([]readFile, 0, len(paths))
-	seen := map[string]string{}
 	for _, path := range paths {
-		file, err := readOne(path)
+		file, err := statOne(path)
 		if err != nil {
 			return nil, err
 		}
-		if first, dup := seen[file.resolved]; dup {
-			return nil, &RefusalError{Path: path, Reason: fmt.Sprintf("names the same file as %s; each file is listed once", first)}
+		// os.SameFile on two os.Stat results catches a symlink AND a hard
+		// link to a file already listed; resolving symlinks alone misses the
+		// second.
+		for _, prior := range files {
+			if os.SameFile(prior.info, file.info) {
+				return nil, &RefusalError{Path: path, Reason: fmt.Sprintf("names the same file as %s; each file is listed once", prior.arg)}
+			}
 		}
-		seen[file.resolved] = path
 		files = append(files, file)
 	}
-	total := 0
+	var statTotal int64
 	for _, f := range files {
-		total += f.source.Bytes
+		statTotal += f.info.Size()
 	}
-	if total > MaxTotalBytes {
-		sizes := make([]string, len(files))
-		for i, f := range files {
-			sizes[i] = fmt.Sprintf("%s %d bytes", f.source.Path, f.source.Bytes)
-		}
+	if statTotal > MaxStagedBytes {
 		return nil, &RefusalError{Reason: fmt.Sprintf(
 			"the named files total %d bytes, over the %d-byte cap (%s); nothing is truncated, so shorten the set on purpose",
-			total, MaxTotalBytes, strings.Join(sizes, ", "))}
+			statTotal, MaxStagedBytes, listSizes(files, func(f readFile) int64 { return f.info.Size() }))}
 	}
-	set := &Set{Sources: make([]Source, len(files))}
+	for i := range files {
+		if err := files[i].read(); err != nil {
+			return nil, err
+		}
+	}
+	staged := render(files)
+	if len(staged) > MaxStagedBytes {
+		total := 0
+		for _, f := range files {
+			total += f.source.Bytes
+		}
+		return nil, &RefusalError{Reason: fmt.Sprintf(
+			"the rendered conventions are %d bytes — the files' %d plus the header, a heading per file and the separator — "+
+				"over the %d-byte cap (%s); nothing is truncated, so shorten the set on purpose",
+			len(staged), total, MaxStagedBytes, listSizes(files, func(f readFile) int64 { return int64(f.source.Bytes) }))}
+	}
+	set := &Set{Sources: make([]Source, len(files)), Staged: staged}
 	for i, f := range files {
 		set.Sources[i] = f.source
 	}
-	set.Staged = render(files)
 	return set, nil
 }
 
-func readOne(path string) (readFile, error) {
+func listSizes(files []readFile, size func(readFile) int64) string {
+	sizes := make([]string, len(files))
+	for i, f := range files {
+		sizes[i] = fmt.Sprintf("%s %d bytes", f.source.Path, size(f))
+	}
+	return strings.Join(sizes, ", ")
+}
+
+// statOne resolves and stats one named path without reading it.
+func statOne(path string) (readFile, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return readFile{}, &RefusalError{Path: path, Reason: fmt.Sprintf("cannot resolve the path: %v", err)}
@@ -176,31 +210,41 @@ func readOne(path string) (readFile, error) {
 	if !info.Mode().IsRegular() {
 		return readFile{}, &RefusalError{Path: path, Reason: "is not a regular file"}
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	return readFile{arg: path, info: info, source: Source{Path: abs}}, nil
+}
+
+// read reads the file, never more than one byte past the cap — a file that
+// grew after statOne is refused, not read whole — and validates its content.
+func (f *readFile) read() error {
+	fh, err := os.Open(f.source.Path)
 	if err != nil {
-		return readFile{}, &RefusalError{Path: path, Reason: "cannot be read: " + describeStatError(err)}
+		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + describeStatError(err)}
 	}
-	content, err := os.ReadFile(abs)
+	defer fh.Close()
+	content, err := io.ReadAll(io.LimitReader(fh, MaxStagedBytes+1))
 	if err != nil {
-		return readFile{}, &RefusalError{Path: path, Reason: "cannot be read: " + describeStatError(err)}
+		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + describeStatError(err)}
+	}
+	if len(content) > MaxStagedBytes {
+		return &RefusalError{Path: f.arg, Reason: fmt.Sprintf("is over the %d-byte cap on its own; nothing is truncated, so shorten the set on purpose", MaxStagedBytes)}
 	}
 	if !utf8.Valid(content) {
-		return readFile{}, &RefusalError{Path: path, Reason: "is not valid UTF-8"}
+		return &RefusalError{Path: f.arg, Reason: "is not valid UTF-8"}
 	}
 	if strings.TrimSpace(string(content)) == "" {
-		return readFile{}, &RefusalError{Path: path, Reason: "is blank; a flag that delivers nothing is a typo"}
+		return &RefusalError{Path: f.arg, Reason: "is blank; a flag that delivers nothing is a typo"}
 	}
 	targets, onlyImports := importLines(content)
 	if onlyImports {
-		return readFile{}, &RefusalError{Path: path, Reason: fmt.Sprintf(
+		return &RefusalError{Path: f.arg, Reason: fmt.Sprintf(
 			"holds nothing but @-import lines, which are not followed; pass the imported files instead: --conventions %s",
 			strings.Join(targets, " --conventions "))}
 	}
-	return readFile{
-		source:   Source{Path: abs, Bytes: len(content), SHA256: sha256Hex(content), ImportLines: len(targets)},
-		resolved: resolved,
-		content:  content,
-	}, nil
+	f.source.Bytes = len(content)
+	f.source.SHA256 = sha256Hex(content)
+	f.source.ImportLines = len(targets)
+	f.content = content
+	return nil
 }
 
 // describeStatError drops the path os already prefixed to err, since the
@@ -250,7 +294,10 @@ func render(files []readFile) []byte {
 }
 
 // Stage writes the prefix into runDir as conventions.md, owner-only like
-// every other run artifact that can hold the operator's private text.
+// every other run artifact that can hold the operator's private text. That is
+// at rest ONLY: the same bytes are in the argv of every fresh node spawn while
+// it runs, readable from the process table (SECURITY.md, "What is exposed
+// while a node runs").
 func (s *Set) Stage(runDir string) error {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return fmt.Errorf("stage conventions: %w", err)
