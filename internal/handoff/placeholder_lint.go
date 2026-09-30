@@ -48,6 +48,7 @@ var placeholderKinds = map[string]bool{
 	"inputs":    true,
 	"artifacts": true,
 	"feedback":  true,
+	"self":      true,
 	"input":     true,
 	"artifact":  true,
 	"feedbacks": true,
@@ -220,11 +221,24 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		if leading != strings.ToLower(leading) {
 			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token), false
 		}
-		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline) or {{ feedback.<id> }} — it will reach the prompt verbatim", token), false
+		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline), {{ feedback.<id> }} or {{ self.previous }} — it will reach the prompt verbatim", token), false
 	}
 
 	groups := placeholderPattern.FindStringSubmatch(token)
-	kind, ref := groups[1], groups[2]
+	kind, ref, filter := groups[1], groups[2], groups[3]
+	if kind == "self" {
+		// {{ self.previous }} is legal on any node — outside a feedback body it
+		// is simply always empty, which a fragment quoting it must be able to
+		// rely on (#288) — so only a reference or filter the runtime refuses is
+		// a finding.
+		if ref != SelfPrevious {
+			return fmt.Sprintf("%s names %q, but the self namespace has one reference, {{ self.previous }} — the node fails at interpolation", token, ref), false
+		}
+		if filter != "" {
+			return fmt.Sprintf("%s takes no filter — {{ self.previous }} always inlines — so the node fails at interpolation", token), false
+		}
+		return "", false
+	}
 	if kind == "inputs" {
 		if !declared[ref] {
 			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token), false

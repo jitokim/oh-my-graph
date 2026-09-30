@@ -2,13 +2,16 @@
 // delegates to it, so the Scheduler never touches the filesystem or string
 // templates itself:
 //
-//   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }} and
-//     {{ feedback.<id> }} into a node's prompt and cwd before it runs;
+//   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }},
+//     {{ feedback.<id> }} and {{ self.previous }} into a node's prompt and cwd
+//     before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
 //     so dependents can read it (the artifact-default handoff), a feedback
 //     declarer's failing payload to feedback/<node-id>.out so a feedback
 //     re-run can read it (ADR 0010 — an INTERNAL file, not a consumer
-//     contract), and a FAILED node's own reply to failed/<node-id>.out so the
+//     contract), each body node's reply from the round a fired arc just
+//     closed to previous/<node-id>.out so its re-run can read its own earlier
+//     answer (#288 — internal too), and a FAILED node's own reply to failed/<node-id>.out so the
 //     work a failed node already paid for survives it — and, from that same
 //     file, hand the reply back to a later leg's retry of the node that wrote
 //     it (SeedPriorReply/TakePriorReply, ADR 0020);
@@ -35,7 +38,7 @@ import (
 // type (not a bare fmt error) so the Scheduler can tell a template problem from
 // a run failure and report the exact reference at fault.
 type InterpolationError struct {
-	Kind      string // the placeholder kind at fault: "inputs", "artifacts" or "feedback"
+	Kind      string // the placeholder kind at fault: "inputs", "artifacts", "feedback" or "self"
 	Reference string // the name/id that could not be resolved
 	Reason    string
 }
@@ -58,12 +61,16 @@ const quotingHint = "\nnote: every {{ ... }} in a prompt is resolved, including 
 	"instead of writing it in the prompt"
 
 // placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} /
-// {{ feedback.id }} with an optional `| inline` filter. Group 1 = kind,
-// group 2 = reference, group 3 = filter (empty or "inline"). Whitespace
-// around each token is tolerated. The filter is only meaningful on
-// artifacts; a feedback placeholder always inlines and resolveLocked rejects
-// a filter on it loudly (graph.Validate already refuses it at load for any
-// graph that came through Parse).
+// {{ feedback.id }} / {{ self.previous }} with an optional `| inline` filter.
+// Group 1 = kind, group 2 = reference, group 3 = filter (empty or "inline").
+// Whitespace around each token is tolerated. The filter is only meaningful on
+// artifacts; a feedback or self placeholder always inlines and resolveLocked
+// rejects a filter on it loudly (graph.Validate already refuses it at load
+// for a feedback token in any graph that came through Parse).
+//
+// `self` names no node: its one reference, `previous`, is always about the
+// node being interpolated, which is what lets a FRAGMENT quote it — a
+// fragment body does not know the id its using node will carry (#288).
 //
 // '/' is in the reference class because a multi-node fragment splices
 // namespaced ids (ADR 0027): a spliced prompt contains
@@ -72,8 +79,13 @@ const quotingHint = "\nnote: every {{ ... }} in a prompt is resolved, including 
 // literal placeholder. graph.feedbackTokenPattern carries the same class for
 // the same reason and must move with it.
 var placeholderPattern = regexp.MustCompile(
-	`\{\{\s*(inputs|artifacts|feedback)\.([A-Za-z0-9._/-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
+	`\{\{\s*(inputs|artifacts|feedback|self)\.([A-Za-z0-9._/-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
+
+// SelfPrevious is the one reference the `self` namespace resolves:
+// {{ self.previous }}, the interpolating node's own reply from the previous
+// feedback round.
+const SelfPrevious = "previous"
 
 // ContainsPlaceholder reports whether s holds any sequence Interpolate would
 // treat as a live placeholder. It exists for code that must guarantee text is
@@ -93,6 +105,7 @@ type Handoff struct {
 	artifactPaths map[string]string // node id -> persisted .out path
 	sessions      map[string]string // node id -> claude session id
 	feedback      map[string]string // declarer id -> latest feedback payload (ADR 0010)
+	previous      map[string]string // body node id -> its own reply from the previous feedback round (#288)
 	priorReplies  map[string]string // node id -> a PREVIOUS LEG's failed reply, to hand back once (ADR 0020)
 }
 
@@ -109,6 +122,7 @@ func New(runDir string, inputs map[string]string) *Handoff {
 		artifactPaths: make(map[string]string),
 		sessions:      make(map[string]string),
 		feedback:      make(map[string]string),
+		previous:      make(map[string]string),
 		priorReplies:  make(map[string]string),
 	}
 }
@@ -130,7 +144,22 @@ func New(runDir string, inputs map[string]string) *Handoff {
 // *InterpolationError — never a silent empty substitution. The feedback
 // namespace's empty default is deliberately NOT that: it is a documented
 // value, confined to the one place it can mean something.
+//
+// Interpolate has no node to be "self", so a {{ self.previous }} in tmpl is an
+// *InterpolationError; a node's own templates go through InterpolateFor.
 func (h *Handoff) Interpolate(tmpl string) (string, error) {
+	return h.InterpolateFor("", tmpl)
+}
+
+// InterpolateFor is Interpolate on behalf of node nodeID, which is what
+// {{ self.previous }} resolves against: that node's own reply from the
+// previous feedback round (ArchiveRound), inlined — and the EMPTY string until
+// an arc whose body holds the node has fired, exactly like the feedback
+// namespace's first pass (#288). Unlike a feedback token it is legal on ANY
+// node: a fragment quoting it cannot know whether the graph citing it wraps
+// the node in a loop, and outside one the node simply never has a previous
+// round.
+func (h *Handoff) InterpolateFor(nodeID, tmpl string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -139,7 +168,7 @@ func (h *Handoff) Interpolate(tmpl string) (string, error) {
 		groups := placeholderPattern.FindStringSubmatch(match)
 		kind, ref, filter := groups[1], groups[2], groups[3]
 
-		value, err := h.resolveLocked(kind, ref, filter)
+		value, err := h.resolveLocked(nodeID, kind, ref, filter)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -151,8 +180,9 @@ func (h *Handoff) Interpolate(tmpl string) (string, error) {
 	return out, nil
 }
 
-// resolveLocked resolves one placeholder. Caller must hold h.mu.
-func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
+// resolveLocked resolves one placeholder for node nodeID ("" when there is no
+// node — see Interpolate). Caller must hold h.mu.
+func (h *Handoff) resolveLocked(nodeID, kind, ref, filter string) (string, error) {
 	if kind == "inputs" {
 		value, ok := h.inputs[ref]
 		if !ok {
@@ -172,6 +202,23 @@ func (h *Handoff) resolveLocked(kind, ref, filter string) (string, error) {
 		// Empty while no round has fired: the documented first-pass default,
 		// never an error (see Interpolate).
 		return h.feedback[ref], nil
+	}
+
+	if kind == "self" {
+		switch {
+		case ref != SelfPrevious:
+			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "the self namespace has one reference, {{ self.previous }}" + quotingHint}
+		case filter != "":
+			return "", &InterpolationError{
+				Kind:      kind,
+				Reference: ref,
+				Reason:    "a self placeholder takes no filter — {{ self.previous }} always inlines the node's previous-round reply",
+			}
+		case nodeID == "":
+			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no node is being interpolated, so there is no self to resolve"}
+		}
+		// Empty until a round has fired: the documented first-pass default.
+		return h.previous[nodeID], nil
 	}
 
 	// kind == "artifacts"
@@ -352,6 +399,69 @@ func (h *Handoff) SeedFeedback(nodeID string) error {
 // artifact at node "x"'s payload path.
 func (h *Handoff) feedbackPath(nodeID string) string {
 	return filepath.Join(h.runDir, "feedback", SanitizeNodeID(nodeID)+".out")
+}
+
+// ArchiveRound records, for every node in a fired arc's body, the reply it
+// gave in the round that just closed, so the node's re-run resolves
+// {{ self.previous }} to its OWN earlier answer (#288). The declarer failed,
+// so it has no artifact for this round and its reply is passed in; every
+// other body node passed — the body settles before the declarer can fail —
+// and its reply is the artifact PersistOutput wrote, which the re-run has not
+// yet overwritten. A body node with no artifact archives nothing.
+//
+// Each reply is persisted to <run-dir>/previous/<node-id>.out with the same
+// temp+rename discipline as a feedback payload, and for the same reason: an
+// INTERNAL file, not a consumer contract, that exists so a run stopped
+// mid-loop can re-seed it (SeedPrevious). It is kept apart from the artifact
+// for the reason feedback/ is: a `.out` in the run directory means "a passed
+// node's result", and the declarer's archived reply did not pass.
+func (h *Handoff) ArchiveRound(declarerID, declarerReply string, body []string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, id := range body {
+		reply := declarerReply
+		if id != declarerID {
+			path, ok := h.artifactPaths[id]
+			if !ok {
+				continue
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("re-read artifact of body node %q to archive its round: %w", id, err)
+			}
+			reply = string(content)
+		}
+		if err := writeUnderRunDir(h.previousPath(id), reply, "previous-round reply", id); err != nil {
+			return err
+		}
+		h.previous[id] = reply
+	}
+	return nil
+}
+
+// SeedPrevious rehydrates one body node's previous-round reply for a resumed
+// run from the previous/<id>.out file ArchiveRound persisted — the analogue of
+// SeedFeedback, with the same contract: a missing file is a clean no-op (no
+// round had fired, and the token's empty default is the right degraded
+// behaviour), any other read failure is returned.
+func (h *Handoff) SeedPrevious(nodeID string) error {
+	reply, err := os.ReadFile(h.previousPath(nodeID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("re-read previous-round reply for node %q: %w", nodeID, err)
+	}
+	h.mu.Lock()
+	h.previous[nodeID] = string(reply)
+	h.mu.Unlock()
+	return nil
+}
+
+// previousPath is the on-disk location of a body node's archived
+// previous-round reply, in its own directory for feedbackPath's reason.
+func (h *Handoff) previousPath(nodeID string) string {
+	return filepath.Join(h.runDir, "previous", SanitizeNodeID(nodeID)+".out")
 }
 
 // failedDir holds one file per FAILED node, holding that node's own reply. It

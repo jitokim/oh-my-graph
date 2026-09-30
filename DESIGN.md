@@ -603,6 +603,29 @@ from the file that changed.
   either, which is why the one class of finding that KILLS a planned run — an
   `{{ artifacts.<id> }}` that cannot resolve — is a plan refusal rather than a
   line of output (#244; see "Planned-node fields are deny-by-default").
+- **self (`{{ self.previous }}`, #288):** a fourth namespace, and the only one
+  that names no node: it resolves to the **interpolating node's own reply from
+  the previous feedback round**, inlined, and to the **empty string** until an
+  arc whose body holds the node has fired — the feedback namespace's
+  first-pass rule. `feedback` hands a round the *declarer's* verdict; `self`
+  hands each body node *its own* last answer, which is what a reviewer needs
+  to check whether its earlier findings were closed instead of reviewing the
+  diff as a stranger (see "Verdict patterns" on why a loop without it need not
+  converge). When an arc fires, the engine archives every body node's reply
+  from the round now closing (`Handoff.ArchiveRound`): the declarer's raw
+  reply — never the feedback payload, which for a failed verification is the
+  evidence the fixer needs, not what the declarer said — and every other body
+  node's artifact, which the re-run has not yet overwritten. Each lands in
+  `<run-dir>/previous/<id>.out`, an **internal** file beside `feedback/`, for
+  the same reason and so a mid-loop resume re-seeds it (`SeedPrevious`).
+  Because it names no node, a **fragment can quote it** (a fragment does not
+  know the id its using node will carry), and so — unlike a feedback token —
+  it is legal on ANY node: outside a feedback body it is simply always empty,
+  which is exactly what the shipped review fragments rely on when a graph
+  cites them without an arc. `self.previous` is the one reference; any other,
+  or a filter, is an `*InterpolationError` and a `lint` warning, and in a
+  `verify.command` it earns `LintVerifyInlining`'s warning like a feedback
+  token does.
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code

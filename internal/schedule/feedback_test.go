@@ -680,3 +680,43 @@ func TestScheduler_ResumedRoundsCountAgainstMax(t *testing.T) {
 		t.Errorf("impl ran %d times, want 1 — no third round exists to fire", got)
 	}
 }
+
+// TestScheduler_SelfPreviousHandsEachBodyNodeItsOwnLastRound is #288's loop:
+// both body nodes quote {{ self.previous }}, which is empty on the first pass
+// and, on the re-run, the node's OWN reply from the round the arc closed — the
+// reviewer re-reads its findings (so it can check they were closed rather than
+// judge the diff as a stranger), the implementer its draft. As with every test
+// here, the scripted keys ARE the assertion: a wrong or missing previous reply
+// resolves to a prompt no outcome was scripted for.
+func TestScheduler_SelfPreviousHandsEachBodyNodeItsOwnLastRound(t *testing.T) {
+	g := mustGraph(t, `
+name: loop
+nodes:
+  - { id: impl, prompt: "impl: {{ feedback.review }} | mine: {{ self.previous }}" }
+  - id: review
+    prompt: "review: {{ artifacts.impl | inline }} | mine: {{ self.previous }}"
+    depends_on: [impl]
+    success_check: { result_matches: "^CLEAN" }
+    feedback: { rerun: impl, max: 2 }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"impl:  | mine: ":                             result("draft-v1", 0),
+		"review: draft-v1 | mine: ":                   result("FINDINGS: rename x", 0),
+		"impl: FINDINGS: rename x | mine: draft-v1":   result("draft-v2", 0),
+		"review: draft-v2 | mine: FINDINGS: rename x": result("CLEAN", 0),
+	})
+	s, h, led := newHarness(t, fake, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	want := []string{
+		"impl:  | mine: ",
+		"review: draft-v1 | mine: ",
+		"impl: FINDINGS: rename x | mine: draft-v1",
+		"review: draft-v2 | mine: FINDINGS: rename x",
+	}
+	if got := fake.Calls(); !equalStrings(got, want) {
+		t.Fatalf("call order = %v, want %v", got, want)
+	}
+}
