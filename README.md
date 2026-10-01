@@ -222,6 +222,23 @@ The node's capability ceiling is unchanged by it: a model name grants no tool,
 loads no file and runs no hook. Nothing else in that file is read, and under
 `--runtime codex` nothing is.
 
+Your coding conventions can cross it too, as **text**, when you name them:
+`auto --conventions <path>` (repeatable) reads each file at launch, stages the
+concatenation into the run directory, and prefixes it to the prompt of every
+planned node that does not resume a session — on either runtime
+([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md)).
+No setting, grant, hook or MCP server comes with the text, so the ceiling,
+agent mapping and skill activation are exactly what they are without the flag.
+`@` imports are not followed — name the imported files instead, and a file that
+is only imports is refused with the list to pass. The rendered prefix is capped
+at 96 KiB — under Linux's 128 KiB limit on one argv string, which the prompt
+is — and never truncated. A full-size prefix leaves a node's own prompt about
+32 KiB of that limit; a larger one (a big `| inline` artifact) fails to spawn on
+Linux with `E2BIG` mid-run, not at launch. Like the rest of a prompt, the text is readable from
+the process table while a node runs (SECURITY.md). The plan screen prints each path and hash;
+`--plan-only` says the conventions are not in the saved graph, because
+`run <graph.json>` does not carry them.
+
 One thing inside that ceiling changed recently and is worth knowing before you
 read the layers. A node that declares no `permission_mode` runs under
 `--permission-mode auto`, where it used to run `dontAsk`: a tool call matching

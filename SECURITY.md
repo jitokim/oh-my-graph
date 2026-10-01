@@ -722,7 +722,13 @@ Any process running as you can read it on any platform.
 This is not an incidental leak of a short string. A prompt carries its
 `{{ inputs.* }}` values, and because `| inline` is used pervasively across the
 shipped graphs and fragments, it carries the **inlined content of upstream
-artifacts** — that is, the text of earlier nodes' replies.
+artifacts** — that is, the text of earlier nodes' replies. Under `auto
+--conventions` (ADR 0041) it also carries the **full text of every file you
+named as conventions**, up to 96 KiB, on every fresh spawn of every planned
+node. The staged `conventions.md` is `0600`, but that is at rest only: for
+the life of each node the same bytes are in its argv. Do not name a file —
+an internal policy doc, say — that you would not show the other local users
+of the machine.
 
 **Known, and not currently fixed.** The fix would be to feed the prompt on
 stdin, and that is a change to the most lifecycle-sensitive seam in the repo:
