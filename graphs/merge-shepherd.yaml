@@ -40,7 +40,7 @@
 # blocks inside `gh` instead, and covers status contexts such as CodeRabbit's
 # as well as check runs. A node's final
 # reply is its verdict, so nothing may be backgrounded: a node that kicks off a
-# polling loop and reports "will follow up" has already ended its turn, and
+# wait loop and reports "will follow up" has already ended its turn, and
 # success_check sees the interim report instead of the verdict. The two waits
 # differ only in what an unfinished wait means. ready-and-wait waits BEFORE any
 # fix exists, so not-yet-concluded is a plain failure — it reports the actual
@@ -48,7 +48,7 @@
 # waits AFTER triage may have pushed, where the whole run is already paid for,
 # so its timeout is a third verdict rather than a failure; see its own comment.
 #
-# A poll is only honest over a SELF-RESOLVING condition — one a machine that is
+# A wait is only honest over a SELF-RESOLVING condition — one a machine that is
 # already working will clear with nobody doing anything: a check run
 # IN_PROGRESS, a status context PENDING with a reporter behind it, a
 # mergeability GitHub has not finished computing. The other kind is LATCHED:
@@ -57,8 +57,8 @@
 # approval, a required context nobody reports, a branch that conflicts with its
 # base, a bot that will not review again until it is asked. Waiting out a latch
 # spends the whole timeout to learn nothing and then reports the latch as if it
-# were slowness. So both waits CLASSIFY before they poll, and a latch gets a
-# verdict that names the act rather than a polling budget: the token is
+# were slowness. So both waits CLASSIFY before they wait, and a latch gets a
+# verdict that names the act rather than a waiting budget: the token is
 # `LATCHED` at both nodes, it carries `unblock:` and the act, and it FAILS, so
 # the run halts and the operator reads what to do in the node's own artifact
 # (`<run-id>/failed/<node>.out`). ADR 0021 is the rule. `gh pr ready` in
@@ -190,7 +190,7 @@ nodes:
       One read gives you everything, and it is the same read `recheck` makes
       later. Project it down to the fields the rules below use — the raw
       `reviews` and `comments` arrays carry every body, which is kilobytes of
-      text per poll that no rule reads:
+      text per read that no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
           --jq '{now: (now | todate),
@@ -247,13 +247,13 @@ nodes:
         - coderabbitai has a COMPLETED review on the PR (a submitted review
           in `reviews`; a "review in progress" placeholder comment is not one).
 
-      Before you poll, and again on EVERY read, classify what is missing.
-      A condition is SELF-RESOLVING — poll it — when a machine already at work
+      Before you wait, and again on EVERY read, classify what is missing.
+      A condition is SELF-RESOLVING — wait it out — when a machine already at work
       will clear it with nobody doing anything: a check run IN_PROGRESS, a
       status context PENDING, `merge_state` UNKNOWN (GitHub computes
       mergeability asynchronously), a "review in progress" placeholder.
       A condition is LATCHED when the clock will never clear it, because what
-      clears it is an ACT by a person. Do not poll a latch; answer at once:
+      clears it is an ACT by a person. Do not wait on a latch; answer at once:
         - a `checks` entry finished and BAD (COMPLETED with FAILURE,
           CANCELLED, TIMED_OUT, STARTUP_FAILURE or STALE; or `state` FAILURE
           or ERROR) → read that job's log, fix and push.
@@ -523,7 +523,7 @@ nodes:
       One read gives you everything, and it is the same read ready-and-wait
       made earlier. Project it down to the fields the rules below actually use
       — the raw `reviews` and `comments` arrays carry every body, which is
-      kilobytes per poll of text no rule reads:
+      kilobytes per read of text no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
           --jq '{now: (now | todate),
@@ -614,14 +614,14 @@ nodes:
       for an approval nobody has given, and `merge` refuses `--admin` over it.
       Report the field and it decides correctly; omit it and it cannot.
 
-      Now the part that decides whether you POLL AT ALL. Not everything
+      Now the part that decides whether you WAIT AT ALL. Not everything
       unfinished is slow. A condition is SELF-RESOLVING when a machine already
       at work will clear it with nobody doing anything: a check run
       IN_PROGRESS, a status context PENDING, `merge_state` UNKNOWN, a "review
-      in progress" placeholder. Those are what a poll is FOR.
+      in progress" placeholder. Those are what a wait is FOR.
       A condition is LATCHED when the clock will never clear it, because what
-      clears it is an ACT by a person. Polling one spends the whole timeout to
-      learn nothing. Answer LATCHED at once — zero polls — for any of:
+      clears it is an ACT by a person. Waiting on one spends the whole timeout to
+      learn nothing. Answer LATCHED at once — zero waits — for any of:
         - a `checks` entry finished and BAD → read that job's log; fix and
           push. That is a fresh run of this graph, not a wait.
         - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
@@ -684,7 +684,7 @@ nodes:
       is `TRIAGED 0`, however it is decorated) and that read is already green,
       answer immediately: nothing was pushed, so no check will restart and no
       review will be re-requested — there is nothing to re-wait for, and
-      polling would spend the whole timeout on a state that cannot change.
+      waiting would spend the whole timeout on a state that cannot change.
 
       Otherwise — and only once that read found no latch, because a latch is
       answered at once, before any wait — wait SYNCHRONOUSLY, in the
@@ -750,8 +750,8 @@ nodes:
       worse than useless: it costs twenty minutes, passes, and hands the
       operator a gate over a PR nothing will ever unstick.
       "Still polling" is not a fourth verdict, and neither is a plan to keep
-      going: this node's turn ends the moment you reply, so a poll you promise
-      to continue is a poll nobody runs. UNSETTLED asserts that the waiting is
+      going: this node's turn ends the moment you reply, so a wait you promise
+      to continue is a wait nobody runs. UNSETTLED asserts that the waiting is
       OVER and the checks did not conclude, which is an outcome. It is not a
       way to say "not yet" and keep the node open, and it is not a cheaper
       RECHECKED: the operator reads it, and the merge that follows a gate
@@ -797,7 +797,7 @@ nodes:
     # `internal/graph/shipped_graphs_test.go` instead, and it is the honest
     # limit of "the convention is two halves" for any halting verdict.
     # Anchored and markdown-tolerant, narrow separator class (a false FAIL here
-    # costs one re-run of a read-only poll, so it buys no dashes — see
+    # costs one re-run of a read-only wait, so it buys no dashes — see
     # DESIGN.md "Verdict patterns"). The separator is `+`, not `*`: a SHA fused
     # to its token (`RECHECKEDc80872c`) is not a verdict anyone writes, and a
     # `*` there admits it. The hex class takes both cases because `gh` prints
@@ -854,7 +854,7 @@ nodes:
       Recheck is the node that waited out the whole check rollup and CodeRabbit
       on the FINAL SHA, so you do not wait for anything and you do not re-judge
       them. If recheck's verdict begins with UNSETTLED, its wait ran out with
-      a check still pending on that SHA: do NOT merge, do NOT poll for it
+      a check still pending on that SHA: do NOT merge, do NOT wait for it
       yourself, and answer WITHHELD naming the SHA and the check recheck left
       pending. If it begins with RECHECKED, the checks concluded green on the
       SHA named there and you may merge.
