@@ -741,6 +741,43 @@ func TestBuildCmd_ScrubIsUnchangedByTheConfigOptIn(t *testing.T) {
 	}
 }
 
+// TestBuildCmd_ScrubIsUnchangedByAConventionsPrefix is ADR 0041 §5 test 16:
+// `auto --conventions` changes a planned node's PROMPT and nothing else, so a
+// spawn carrying the prefix still scrubs all four provider variables, on both
+// runtimes, under the isolated ceiling. A diff under internal/childenv/ would
+// mean the implementation took a wrong turn; this is what would notice.
+func TestBuildCmd_ScrubIsUnchangedByAConventionsPrefix(t *testing.T) {
+	parentEnv := []string{
+		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",
+		"ANTHROPIC_AUTH_TOKEN=tok-should-be-scrubbed",
+		"OPENAI_API_KEY=sk-openai-should-be-scrubbed",
+		"CODEX_API_KEY=sk-codex-should-be-scrubbed",
+		"PATH=/usr/bin",
+		"HOME=/home/dev",
+	}
+	none := ""
+	isolated := ToolPolicy{AllowedTools: []string{"Read"}, Tools: []string{"Read"}, SettingSources: &none, StrictMCPConfig: true}
+	prefixed := "The person who launched this run gave these conventions for every node. Follow them.\n\n" +
+		"## Conventions 1/1: style.md\nuse tabs\n\n---\n\n" + testPrompt
+
+	for _, rt := range []Runtime{RuntimeClaude, RuntimeCodex} {
+		t.Run(string(rt), func(t *testing.T) {
+			r := NewCLIRunner(rt, withEnviron(func() []string { return parentEnv }))
+			cmd := r.buildCmd(context.Background(), NodeInvocation{Prompt: prefixed, PermissionMode: "dontAsk", Policy: isolated})
+
+			for _, kv := range cmd.Env {
+				switch key, _, _ := strings.Cut(kv, "="); key {
+				case "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY":
+					t.Errorf("a provider API variable leaked into a child carrying conventions: %q", kv)
+				}
+			}
+			if !containsEnv(cmd.Env, "PATH=/usr/bin") || !containsEnv(cmd.Env, "HOME=/home/dev") {
+				t.Errorf("the child env is not a scrub but a wipe: %q", cmd.Env)
+			}
+		})
+	}
+}
+
 // hasFlagValue reports whether args contains flag immediately followed by
 // value. Needed because the values under test include the EMPTY string, which
 // a naive strings.Contains over a space-joined argv cannot distinguish from

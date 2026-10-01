@@ -406,6 +406,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	if err != nil {
 		return fmt.Errorf("resume run %q: %w", runID, err)
 	}
+	// The first leg's conventions, from the staged copy and never from a source
+	// path, re-checked against the hash state.json recorded (ADR 0041 §2.6).
+	// A missing or altered copy refuses here, before anything spawns: this leg's
+	// nodes would otherwise be told something different from their siblings.
+	// `resume` registers no --conventions, so it can neither re-point nor drop
+	// them.
+	conv, err := resumedConventions(runDir, snap.Conventions)
+	if err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
 	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
 	// A resumed leg re-surfaces these for the same reason it re-warns about
 	// bypassPermissions below: the terminal that saw the first leg's copy may
@@ -556,6 +566,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		}
 		noteLoadedUserConfig(os.Stdout, runtime)
 	}
+	// Inheritance said out loud, like the line above: the terminal that showed
+	// these paths and hashes the first time may be long gone.
+	noteConventions(os.Stdout, conventionsDisclosure{set: conv})
 
 	// A resumed PLANNED leg reads the operator's model choice again (ADR 0037).
 	// Its nodes are isolated exactly as the first leg's were, so without this
@@ -623,7 +636,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// to decide behaviour — ADR 0030 §2.5a), so this is transcription, not
 		// a run directory deciding anything.
 		BuildEvidence: snap.BuildEvidence,
-		Nodes:         records,
+		// Carried for the same reason: dropping it would erase the hash the
+		// next leg checks and silently re-stamp the snapshot schema 3.
+		Conventions: snap.Conventions,
+		Nodes:       records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
@@ -679,6 +695,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Worktrees:    worktrees,
 		ToolPolicies: policies,
 		Model:        plannedModel,
+		Conventions:  conventionsPrefix(conv),
 		// An injected evidence command runs one at a time on a resumed leg for
 		// the same load-bearing reason it does on a fresh one (ADR 0016 §2): two
 		// concurrent builds of one directory can each fail on the other's

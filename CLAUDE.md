@@ -103,6 +103,7 @@ internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, Fake
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
 internal/childenv/     the shared child-env scrub policy (used by all four spawners)
+internal/conventions/  `auto --conventions` (ADR 0041): validate the operator's named files, render + stage the prompt prefix, re-check the staged copy on resume
 internal/fence/        the shared data fence: a per-call crypto/rand nonce in BOTH markers of any quote of untrusted text into a prompt, plus the head+tail bound on it
 internal/invariants/   test-only: asserts exactly four spawner objects — only their seams' files import os/exec
 internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent mapping — scanned from ~/.claude/agents only, with the matched definition staged so a mapped node keeps ceiling layer 1 (ADR 0022) — and skill activation (ADR 0017, superseding ADR 0012's plan-time inlining); the goal loop

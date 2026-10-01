@@ -254,6 +254,18 @@ type Options struct {
 	// loads no file and runs no hook. It sits beside ToolPolicies here for the
 	// same reason NodeInvocation.Model sits outside ToolPolicy.
 	Model string
+	// Conventions is the operator's staged conventions prefix (ADR 0041), put
+	// in front of the prompt of every spawn that resumes nothing. Empty is the
+	// default and prefixes nothing, so a run without `auto --conventions` is
+	// byte-identical to one before the field existed.
+	//
+	// It is applied at the s.runner.Run call and never enters basePrompt, so a
+	// retry — which always starts cold — gets it once and a session-resuming
+	// first attempt, whose parent's turn already held it, does not (§2.2). It is
+	// added after Interpolate, so the operator's text is never
+	// template-processed. Like Model, it is not part of the ceiling: it grants
+	// no tool, path, hook or server.
+	Conventions string
 	// CompletedNodes is the set of node ids an earlier leg already completed
 	// successfully — nil (the zero value) for a fresh `run`/`auto`, where
 	// nothing has completed yet. `resume` passes runstate.Snapshot.CompletedNodes()
@@ -376,6 +388,9 @@ type Scheduler struct {
 	// model is the run-wide model choice, empty for a hand-written run — see
 	// Options.Model.
 	model string
+	// conventions is the run-wide conventions prefix, empty for none — see
+	// Options.Conventions.
+	conventions string
 	// completedNodes is the set of node ids an earlier leg already finished —
 	// see Options.CompletedNodes.
 	completedNodes map[string]bool
@@ -470,6 +485,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		events:                eventSink,
 		toolPolicies:          opts.ToolPolicies,
 		model:                 opts.Model,
+		conventions:           opts.Conventions,
 		completedNodes:        opts.CompletedNodes,
 		settledNodes:          opts.SettledNodes,
 		nodeRounds:            opts.NodeRounds,
@@ -883,7 +899,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		invocation.SessionStarted = func(sessionID string) {
 			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
 		}
-		outcome, runErr := s.runner.Run(ctx, invocation)
+		outcome, runErr := s.runner.Run(ctx, s.withConventions(invocation))
 		if runErr != nil {
 			// A context kill (the node's own timeout, a halt's cancellation,
 			// Ctrl-C) ends the subprocess before it prints the JSON envelope
@@ -1223,6 +1239,21 @@ func (s *Scheduler) prepareRetry(invocation *runner.NodeInvocation, node graph.N
 func (s *Scheduler) startCold(invocation *runner.NodeInvocation, node graph.Node, basePrompt, priorReply string) {
 	s.quotePriorAttempt(invocation, node, basePrompt, priorReply)
 	invocation.ResumeSession = ""
+}
+
+// withConventions returns the copy of invocation this spawn is handed: with
+// the operator's conventions in front of its prompt when it resumes nothing,
+// and unchanged otherwise (ADR 0041 §2.2). The decision is read AFTER any
+// startCold or prepareRetry has run, so it keys on whether this subprocess
+// inherits a conversation, not on the node's handoff mode. The caller's
+// invocation is never modified, which is what keeps basePrompt — and every
+// retry rebuilt from it — conventions-free and the prefix from stacking.
+func (s *Scheduler) withConventions(invocation runner.NodeInvocation) runner.NodeInvocation {
+	if s.conventions == "" || invocation.ResumeSession != "" {
+		return invocation
+	}
+	invocation.Prompt = s.conventions + invocation.Prompt
+	return invocation
 }
 
 // quotePriorAttempt sets invocation.Prompt to basePrompt plus the fenced quote
