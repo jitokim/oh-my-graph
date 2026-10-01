@@ -222,6 +222,23 @@ rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
 `--ignore-user-config`가 `~/.codex/config.toml`을 막으므로 planned node가 `codex`
 자체의 기본 모델로 답합니다 ([docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 
+당신의 코딩 컨벤션도 이름을 밝히면 **텍스트로서** 그 선을 넘을 수 있습니다.
+`auto --conventions <path>`(반복 가능)는 실행 시점에 각 파일을 읽어 그 연결본을
+run 디렉토리에 stage하고, session을 resume하지 않는 모든 planned node의 prompt
+앞에 붙입니다 — 두 런타임 모두에서
+([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md)).
+텍스트와 함께 따라오는 setting, grant, hook, MCP server는 없으므로 ceiling, agent
+매핑, skill 활성화는 플래그가 없을 때와 정확히 같습니다. `@` import는 따라가지
+않습니다 — import된 파일을 직접 지정하세요. import만으로 이뤄진 파일은 넘겨야 할
+파일 목록과 함께 거부됩니다. 렌더된 prefix는 96 KiB로 제한됩니다 — prompt는 argv
+문자열 하나이고 Linux는 그 하나를 128 KiB로 제한하기 때문입니다 — 그리고 절대
+잘리지 않습니다. 최대 크기의 prefix는 node 자신의 prompt에 그 한도 중 약 32 KiB만
+남기며, 그보다 큰 prompt(큰 `| inline` artifact)는 Linux에서 실행 시점이 아니라
+run 도중에 `E2BIG`으로 spawn에 실패합니다. prompt의 나머지와 마찬가지로 이
+텍스트는 node가 실행되는 동안 프로세스 테이블에서 읽을 수 있습니다(SECURITY.md).
+plan 화면은 각 경로와 hash를 출력합니다. `run <graph.json>`은 컨벤션을 가져가지
+않으므로 `--plan-only`는 컨벤션이 저장된 그래프에 들어 있지 않다고 알려줍니다.
+
 그 ceiling 안에서 최근에 바뀐 것이 하나 있고, 계층을 읽기 전에 알아둘 값어치가
 있습니다. `permission_mode`를 선언하지 않은 노드는 이제 `--permission-mode auto`로
 실행됩니다 — 이전에는 `dontAsk`였습니다. 노드의 allow 규칙 중 어느 것과도 매칭되지
