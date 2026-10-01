@@ -25,9 +25,12 @@ purpose. `--conventions` hands every planned node your coding conventions as
 **text**. No setting, grant, hook or MCP server comes with it, so the tool
 ceiling is exactly what it was without the flag
 ([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md)).
-`{{ self.previous }}` lets a re-run reviewer see its own previous findings,
-which is what the shipped review fragments needed in order to converge instead
-of finding a fresh nit every round until `max` ran out.
+`{{ self.previous }}` lets a re-run reviewer see its own previous findings, so
+the shipped review fragments now check those first instead of re-reviewing
+the rework as a stranger. Whether that makes a CLEAN-gated loop converge has
+not been measured yet, and #288 stays open until it is. `merge-shepherd`'s two
+waits also stopped depending on a foreground `sleep`, which current Claude Code
+blocks; they now wait on `gh pr checks --watch` (#295).
 
 Two changes are worth knowing before you upgrade. A planned graph that quotes
 an `{{ artifacts.<id> }}` the engine cannot resolve is now refused at plan
@@ -267,6 +270,28 @@ words.
   itself is unchanged, and so is every shipped graph.
 
 ### Fixed
+
+- **`merge-shepherd`'s two waits wait again.** `ready-and-wait` and `recheck`
+  polled with `sleep 30` between `gh pr view` reads, and current Claude Code
+  refuses a foreground `sleep` — so each wait silently degraded to a single
+  read, and a verdict meant to follow minutes of waiting was judged from one
+  snapshot. Both nodes now block on gh's own
+  `gh pr checks <pr> --watch --interval 30`, which covers status contexts such
+  as CodeRabbit's as well as check runs; a watch that dies on a network error
+  is re-issued, each call carries a 5-minute tool timeout, and the whole wait
+  stays bounded by the node's timeout. Latch detection still runs BEFORE any
+  wait, and the verdict grammar is unchanged: `LATCHED` / `NOT READY` /
+  `READY` at `ready-and-wait`, `RECHECKED` / `UNSETTLED` / `LATCHED` at
+  `recheck`. `Bash(sleep *)` is gone from both grants; `recheck`'s narrow grant
+  gains `Bash(gh pr checks *)`, which has no mutating form. Separately,
+  `verify`'s step 0 (`git worktree remove --force /tmp/shepherd-<pr>`) was
+  DENIED under `permission_mode: dontAsk` in a real run: written as a compound
+  command, it no longer plainly matched `Bash(git *)`. Its prompt now requires
+  every command exactly as written, one per Bash call — `git -C <dir>` /
+  `make -C <dir>` rather than `cd <dir> && …`, and no `|| true` to silence
+  step 0's expected error — and a test pins that every command the steps quote
+  is a single command its own grant admits.
+  ([#295](https://github.com/jitokim/oh-my-graph/issues/295))
 
 - **A `verify` failure now names the provider key the engine deleted.** Every
   child oh-my-graph spawns has `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
