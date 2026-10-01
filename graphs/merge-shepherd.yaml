@@ -31,19 +31,24 @@
 # node via Bash, not the engine's `worktree:` seam, which branches from the
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
-# Honest note on the two waits: ready-and-wait and recheck are POLLS under a
-# timeout, not event subscriptions — `sleep 30` loops between `gh pr view`
-# reads, in the FOREGROUND, bounded by each node's own timeout. A node's final
-# reply is its verdict, so nothing may be backgrounded: a node that kicks off a
-# polling loop and reports "will follow up" has already ended its turn, and
-# success_check sees the interim report instead of the verdict. The two waits
-# differ only in what an unfinished wait means. ready-and-wait waits BEFORE any
-# fix exists, so not-yet-concluded is a plain failure — it reports the actual
-# state as NOT READY, fails its READY check, and the operator decides. recheck
-# waits AFTER triage may have pushed, where the whole run is already paid for,
-# so its timeout is a third verdict rather than a failure; see its own comment.
+# Honest note on the two waits: ready-and-wait and recheck are waits under a
+# timeout, not event subscriptions — `gh pr view` reads around gh's own blocking
+# `gh pr checks <pr> --watch --interval 30`, in the FOREGROUND, re-issued if it
+# dies on a network error, bounded by each node's own timeout. They used to be
+# `sleep 30` loops, and the CLI now refuses a foreground `sleep`, so each wait
+# silently degraded to a single read (#295); the watch blocks inside `gh`
+# instead, and covers status contexts such as CodeRabbit's as well as check
+# runs. A node's final reply is its verdict, so nothing may be backgrounded: a
+# node that kicks off a wait loop and reports "will follow up" has already ended
+# its turn, and success_check sees the interim report instead of the verdict.
+# The two waits differ only in what an unfinished wait means. ready-and-wait
+# waits BEFORE any fix exists, so not-yet-concluded is a plain failure — it
+# reports the actual state as NOT READY, fails its READY check, and the operator
+# decides. recheck waits AFTER triage may have pushed, where the whole run is
+# already paid for, so its timeout is a third verdict rather than a failure; see
+# its own comment.
 #
-# A poll is only honest over a SELF-RESOLVING condition — one a machine that is
+# A wait is only honest over a SELF-RESOLVING condition — one a machine that is
 # already working will clear with nobody doing anything: a check run
 # IN_PROGRESS, a status context PENDING with a reporter behind it, a
 # mergeability GitHub has not finished computing. The other kind is LATCHED:
@@ -52,8 +57,8 @@
 # approval, a required context nobody reports, a branch that conflicts with its
 # base, a bot that will not review again until it is asked. Waiting out a latch
 # spends the whole timeout to learn nothing and then reports the latch as if it
-# were slowness. So both waits CLASSIFY before they poll, and a latch gets a
-# verdict that names the act rather than a polling budget: the token is
+# were slowness. So both waits CLASSIFY before they wait, and a latch gets a
+# verdict that names the act rather than a waiting budget: the token is
 # `LATCHED` at both nodes, it carries `unblock:` and the act, and it FAILS, so
 # the run halts and the operator reads what to do in the node's own artifact
 # (`<run-id>/failed/<node>.out`). ADR 0021 is the rule. `gh pr ready` in
@@ -135,10 +140,18 @@ nodes:
     prompt: |
       You are in the repo at {{ inputs.repo }}; its working tree is clean and
       must stay untouched. Verify that PR #{{ inputs.pr }} passes the local
-      suite, in a throwaway checkout:
+      suite, in a throwaway checkout.
+      Run every command below EXACTLY as written, one command per Bash call.
+      This node runs under dontAsk, and a command only runs when it plainly
+      matches the grant — so NO compound shell: no `cd <dir> && …`, no `;`,
+      `&&`, `||` or pipe, no `2>/dev/null`, no `|| true`. To act in another
+      directory, use `git -C <dir> …` or `make -C <dir> …`. A compound form of
+      step 0 is what got it DENIED in a real run (#295).
         0. Clear any leftover from an earlier attempt so a retry cannot
            collide: `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
-           (ignore the error if there is nothing to remove).
+           — bare, as written. It errors when there is nothing to remove;
+           that error is expected, so read it and move on rather than
+           wrapping the command to silence it.
         1. `gh pr view {{ inputs.pr }}` and `gh pr diff {{ inputs.pr }}` to
            see what the PR is.
         2. `git fetch origin pull/{{ inputs.pr }}/head`
@@ -177,10 +190,11 @@ nodes:
       One read gives you everything, and it is the same read `recheck` makes
       later. Project it down to the fields the rules below use — the raw
       `reviews` and `comments` arrays carry every body, which is kilobytes of
-      text per poll that no rule reads:
+      text per read that no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
-          --jq '{head: .headRefOid,
+          --jq '{now: (now | todate),
+                 head: .headRefOid,
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
@@ -198,13 +212,30 @@ nodes:
       projection names `who`. The `excerpt` is the region AROUND the rate-limit
       phrase, not the head of the comment: the bot's notice sits ten lines
       under a walkthrough image, and the head of the body is that image.
+      `now` is the moment of the read itself. It is the clock every wait
+      budget below is measured on, and nothing else in your grant tells the
+      time.
 
-      Read it, then `sleep 30`, then run it again — one loop iteration per
-      tool call, blocking each time, in the FOREGROUND. NEVER background
-      anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
-      polling and report back". Your FINAL reply IS the verdict, so you cannot
-      reply until the poll has actually reached one — an interim report ends
-      the node and fails it.
+      Read it and classify it by the rules below FIRST: a latch is answered
+      at once, before any wait. Only when everything outstanding is
+      self-resolving do you wait, and you wait with gh's own blocking watch —
+      NEVER `sleep`, which this CLI refuses in the foreground:
+        gh pr checks {{ inputs.pr }} --watch --interval 30
+      It blocks until every rollup entry — check runs AND status contexts,
+      CodeRabbit's included — has finished. Give that Bash call a 5-minute
+      timeout (300000 ms). Its exit code is NOT the verdict: whenever it
+      returns, for whatever reason, make the read above again and classify
+      THAT. If the watch died on a network error, or ran out its 5 minutes
+      with entries still pending, re-issue it. If it returns at once with
+      nothing pending while the review is still missing, nothing in your
+      grant blocks on that path: the watch has nothing to wait on and there
+      is no `sleep`, so each re-read follows the last within seconds. Re-read
+      anyway, and count that wait on `now`, never in reads; it is the
+      not-moving case below. Run all of it in the FOREGROUND,
+      blocking. NEVER background anything: no `&`, no `nohup`, no
+      run_in_background, no "I'll keep polling and report back". Your FINAL
+      reply IS the verdict, so you cannot reply until the wait has actually
+      reached one — an interim report ends the node and fails it.
 
       READY means BOTH hold:
         - EVERY entry of `checks` is finished and good — `status` COMPLETED
@@ -216,13 +247,13 @@ nodes:
         - coderabbitai has a COMPLETED review on the PR (a submitted review
           in `reviews`; a "review in progress" placeholder comment is not one).
 
-      Before you poll, and again on EVERY read, classify what is missing.
-      A condition is SELF-RESOLVING — poll it — when a machine already at work
-      will clear it with nobody doing anything: a check run IN_PROGRESS, a
+      Before you wait, and again on EVERY read, classify what is missing.
+      A condition is SELF-RESOLVING — wait it out — when a machine already at
+      work will clear it with nobody doing anything: a check run IN_PROGRESS, a
       status context PENDING, `merge_state` UNKNOWN (GitHub computes
       mergeability asynchronously), a "review in progress" placeholder.
       A condition is LATCHED when the clock will never clear it, because what
-      clears it is an ACT by a person. Do not poll a latch; answer at once:
+      clears it is an ACT by a person. Do not wait on a latch; answer at once:
         - a `checks` entry finished and BAD (COMPLETED with FAILURE,
           CANCELLED, TIMED_OUT, STARTUP_FAILURE or STALE; or `state` FAILURE
           or ERROR) → read that job's log, fix and push.
@@ -266,8 +297,15 @@ nodes:
       precondition.
       Two conditions are only distinguishable by not moving — a `checks` entry
       stuck at QUEUED (a fork or first-contributor run awaiting approval) and
-      no coderabbitai review at all. Poll those; if the budget runs out with
-      them exactly as they started, they are LATCHED, not slow.
+      no coderabbitai review at all. Each has its own bound, and neither is a
+      count of reads. A QUEUED entry is pending, so the watch blocks on it: if
+      it is exactly as it started after TWO watches that ran out their 5
+      minutes, it is LATCHED, not slow. A missing review with nothing pending
+      is the path nothing blocks on: once `now` on your read is 5 minutes
+      past `now` on the first read that found it that way, with still no
+      review and still nothing pending, it is LATCHED, not slow. If the
+      bot's own status turns up PENDING in the meantime, the watch has
+      something to block on again and that 5-minute bound no longer applies.
 
       Your reply must START with exactly one of these three verdicts — the
       token as the very FIRST characters, with no markdown emphasis
@@ -290,11 +328,19 @@ nodes:
       caveat, a note — goes AFTER the verdict, never before it: a line of
       context ahead of the token fails this node even when both conditions
       hold.
-      You have 15 minutes: as that timeout comes near (after ~20 loops), stop
-      polling and answer from the state you actually have. NEVER reply READY
-      early.
-    allowed_tools: ["Bash(gh *)", "Bash(sleep *)"]
+      You have 15 minutes, and you count them on `now`, never in reads: a
+      read costs seconds, so a count of them measures nothing. Start no watch
+      once `now` is 8 minutes past your first read, because a watch started
+      then can run to minute 13. Answer once `now` is 13 minutes past your
+      first read, from the state you actually have. That leaves the last read
+      and your reply inside the node's timeout. NEVER reply READY early.
+    # `Bash(gh *)` already covers `gh pr checks --watch`; there is no `sleep`
+    # grant, because nothing here sleeps (#295).
+    allowed_tools: ["Bash(gh *)"]
     permission_mode: dontAsk
+    # The prompt starts no watch past minute 8 on its own `now` clock and
+    # answers at minute 13, so its last read and reply land inside 15m. Clock
+    # time, not a read count: a read costs seconds (#297).
     timeout: 15m
     handoff: artifact
     # Same shape as verify's: anchored, but tolerant of leading emphasis.
@@ -477,10 +523,11 @@ nodes:
       One read gives you everything, and it is the same read ready-and-wait
       made earlier. Project it down to the fields the rules below actually use
       — the raw `reviews` and `comments` arrays carry every body, which is
-      kilobytes per poll of text no rule reads:
+      kilobytes per read of text no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
-          --jq '{head: .headRefOid,
+          --jq '{now: (now | todate),
+                 head: .headRefOid,
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
@@ -498,7 +545,9 @@ nodes:
       else is asking for changes" are both comparisons you can make, not
       guesses you have to take. The `excerpt` is the region AROUND the
       rate-limit phrase rather than the head of the comment, because the bot's
-      notice sits ten lines under a walkthrough image.
+      notice sits ten lines under a walkthrough image. `now` is the moment of
+      the read itself. It is the clock every wait budget below is measured
+      on, and nothing else in your grant tells the time.
 
       `reviews` covers EVERY reviewer, not just the bot. Filtering it down to
       `coderabbitai` is what let a human's CHANGES_REQUESTED reach `merge`
@@ -565,14 +614,14 @@ nodes:
       for an approval nobody has given, and `merge` refuses `--admin` over it.
       Report the field and it decides correctly; omit it and it cannot.
 
-      Now the part that decides whether you POLL AT ALL. Not everything
+      Now the part that decides whether you WAIT AT ALL. Not everything
       unfinished is slow. A condition is SELF-RESOLVING when a machine already
-      at work will clear it with nobody doing anything: a check run
-      IN_PROGRESS, a status context PENDING, `merge_state` UNKNOWN, a "review
-      in progress" placeholder. Those are what a poll is FOR.
+      at work will clear it with nobody doing anything: a check run IN_PROGRESS,
+      a status context PENDING, `merge_state` UNKNOWN, a "review in progress"
+      placeholder. Those are what a wait is FOR.
       A condition is LATCHED when the clock will never clear it, because what
-      clears it is an ACT by a person. Polling one spends the whole timeout to
-      learn nothing. Answer LATCHED at once — zero polls — for any of:
+      clears it is an ACT by a person. Waiting on one spends the whole timeout
+      to learn nothing. Answer LATCHED at once — zero waits — for any of:
         - a `checks` entry finished and BAD → read that job's log; fix and
           push. That is a fresh run of this graph, not a wait.
         - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
@@ -616,10 +665,18 @@ nodes:
       MOVING: a `checks` entry stuck at QUEUED or EXPECTED (a run awaiting a
       maintainer's approval, or a required context with no reporter behind it
       at all), and no coderabbitai review on `head` (the bot was never
-      re-invoked — a force-push does that). Poll those. If your budget runs out
-      with them byte-for-byte as they started, they are LATCHED, not slow: say
-      LATCHED and name the act — approve the run in the Actions tab, drop the
-      dead required context, or post `@coderabbitai review`.
+      re-invoked — a force-push does that). Each has its own bound, and
+      neither is a count of reads. A QUEUED or EXPECTED entry is pending, so
+      the watch blocks on it: if it is byte-for-byte as it started after
+      THREE watches that ran out their 5 minutes, it is LATCHED, not slow. A
+      missing review with nothing pending is the path nothing blocks on:
+      once `now` on your read is 5 minutes past `now` on the first read that
+      found it that way, with still no review on `head` and still nothing
+      pending, it is LATCHED, not slow. If the bot's own status turns up
+      PENDING in the meantime, the watch has something to block on again and
+      that 5-minute bound no longer applies. Either way, say LATCHED and name
+      the act: approve the run in the Actions tab, drop the dead required
+      context, or post `@coderabbitai review`.
       A latch DOMINATES: if anything is latched, the answer is LATCHED even
       when other entries are still legitimately in flight.
 
@@ -627,26 +684,43 @@ nodes:
       is `TRIAGED 0`, however it is decorated) and that read is already green,
       answer immediately: nothing was pushed, so no check will restart and no
       review will be re-requested — there is nothing to re-wait for, and
-      polling would spend the whole timeout on a state that cannot change.
+      waiting would spend the whole timeout on a state that cannot change.
 
-      Otherwise poll SYNCHRONOUSLY, in the foreground: run the command, read
-      it, then `sleep 30`, then run it again — one loop iteration per tool
-      call, blocking each time. NEVER background anything: no `&`, no
-      `nohup`, no run_in_background, no "I'll keep polling and report back".
-      Your FINAL reply IS the verdict, so you cannot reply until the poll has
-      actually reached one — an interim report ends the node and fails it.
+      Otherwise — and only once that read found no latch, because a latch is
+      answered at once, before any wait — wait SYNCHRONOUSLY, in the foreground,
+      with gh's own blocking watch. NEVER `sleep`, which this CLI refuses in the
+      foreground:
+        gh pr checks {{ inputs.pr }} --watch --interval 30
+      It blocks until every rollup entry — check runs AND status contexts,
+      CodeRabbit's included — has finished. Give that Bash call a 5-minute
+      timeout (300000 ms). Its exit code is NOT the verdict: whenever it
+      returns, for whatever reason, make the read above again and classify
+      THAT. If the watch died on a network error, or ran out its 5 minutes
+      with entries still pending, re-issue it. If it returns at once with
+      nothing pending while no coderabbitai review is on `head`, nothing in
+      your grant blocks on that path. That includes exiting at once with "no
+      checks reported", which is what it does before a new head has any
+      checks. The watch has nothing to wait on and there is no `sleep`, so
+      each re-read follows the last within seconds. Re-read anyway, and count
+      that wait on `now`, never in reads; it is the not-moving case above.
+      An immediate return is not a network error. NEVER background
+      anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
+      polling and report back". Your FINAL reply IS the verdict, so you
+      cannot reply until the wait has actually reached one — an interim
+      report ends the node and fails it.
       Judge the head SHA of your LAST read, not your first: if someone pushes
-      while you poll, the final SHA moved and the checks you were watching
+      while you wait, the final SHA moved and the checks you were watching
       belong to a commit nobody is merging. Start the judgment over on the
       new head.
 
-      You have 20 minutes, and a loop is a `gh` read plus `sleep 30` plus your
-      own turn — call it ~40 seconds, so ~25 loops is about seventeen. When you
-      reach either bound, stop polling and answer from the state you actually
-      have. Running out the node's timeout instead is the one thing worse than
-      an honest UNSETTLED: it kills the node mid-turn, so there is no verdict
-      at all and the whole run is discarded — the exact outcome UNSETTLED
-      exists to prevent.
+      You have 20 minutes, and you count them on `now`, never in reads: a read
+      costs seconds, so a count of them measures nothing. Start no watch once
+      `now` is 13 minutes past your first read, because a watch started then can
+      run to minute 18. Answer once `now` is 18 minutes past your first read,
+      from the state you actually have. Running out the node's timeout instead
+      is the one thing worse than an honest UNSETTLED: it kills the node
+      mid-turn, so there is no verdict at all and the whole run is discarded —
+      the exact outcome UNSETTLED exists to prevent.
 
       Your reply must START with exactly one of these three verdicts — the
       token as the very FIRST characters, with no markdown emphasis
@@ -676,8 +750,8 @@ nodes:
       worse than useless: it costs twenty minutes, passes, and hands the
       operator a gate over a PR nothing will ever unstick.
       "Still polling" is not a fourth verdict, and neither is a plan to keep
-      going: this node's turn ends the moment you reply, so a poll you promise
-      to continue is a poll nobody runs. UNSETTLED asserts that the waiting is
+      going: this node's turn ends the moment you reply, so a wait you promise
+      to continue is a wait nobody runs. UNSETTLED asserts that the waiting is
       OVER and the checks did not conclude, which is an outcome. It is not a
       way to say "not yet" and keep the node open, and it is not a cheaper
       RECHECKED: the operator reads it, and the merge that follows a gate
@@ -691,16 +765,20 @@ nodes:
     # of what reading check state takes — the rollup, the head SHA and every
     # review's commit come out of one invocation of it. There is no mutating
     # form of `gh pr view` to be narrowed away from (`--jq` runs inside it, so
-    # the projection needs no second grant). `sleep` is the poll.
-    allowed_tools: ["Bash(gh pr view *)", "Bash(sleep *)"]
+    # the projection needs no second grant). `gh pr checks` is the wait, and
+    # it has no mutating form either. It replaced `sleep`, which the CLI
+    # refuses in the foreground, so the grant for it is gone (#295).
+    allowed_tools: ["Bash(gh pr view *)", "Bash(gh pr checks *)"]
     permission_mode: dontAsk
     # 20m, not ready-and-wait's 15m, and the extra five are not padding: the
-    # prompt's own budget is ~25 loops at roughly 40s each, which is ~17
-    # minutes, so a 15m timeout would kill the node BEFORE it reached the
-    # honest answer its instructions ask for. At ready-and-wait that mismatch
-    # is harmless — overshoot and the honest answer both fail there. Here the
+    # prompt starts no watch past minute 13 on its own `now` clock and answers
+    # at minute 18, so a 15m timeout would kill the node BEFORE it reached the
+    # honest answer its instructions ask for. The budget is clock time, not a
+    # read count, because a read costs seconds: the path where the watch returns
+    # at once has nothing to block on (#297). At ready-and-wait that mismatch is
+    # harmless — overshoot and the honest answer both fail there. Here the
     # honest answer PASSES and the overshoot discards the run, which is
-    # backwards, so the timeout has to outlast the loop budget.
+    # backwards, so the timeout has to outlast the wait budget.
     timeout: 20m
     handoff: artifact
     # Two of the three verdicts pass, so this is an anchored alternation like
@@ -719,7 +797,7 @@ nodes:
     # `internal/graph/shipped_graphs_test.go` instead, and it is the honest
     # limit of "the convention is two halves" for any halting verdict.
     # Anchored and markdown-tolerant, narrow separator class (a false FAIL here
-    # costs one re-run of a read-only poll, so it buys no dashes — see
+    # costs one re-run of a read-only wait, so it buys no dashes — see
     # DESIGN.md "Verdict patterns"). The separator is `+`, not `*`: a SHA fused
     # to its token (`RECHECKEDc80872c`) is not a verdict anyone writes, and a
     # `*` there admits it. The hex class takes both cases because `gh` prints
@@ -776,7 +854,7 @@ nodes:
       Recheck is the node that waited out the whole check rollup and CodeRabbit
       on the FINAL SHA, so you do not wait for anything and you do not re-judge
       them. If recheck's verdict begins with UNSETTLED, its wait ran out with
-      a check still pending on that SHA: do NOT merge, do NOT poll for it
+      a check still pending on that SHA: do NOT merge, do NOT wait for it
       yourself, and answer WITHHELD naming the SHA and the check recheck left
       pending. If it begins with RECHECKED, the checks concluded green on the
       SHA named there and you may merge.
