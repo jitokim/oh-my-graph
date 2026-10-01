@@ -223,7 +223,7 @@ rules/AGENTS 파일, hook, MCP server를 그대로 유지하며,
 자체의 기본 모델로 답합니다 ([docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 
 당신의 코딩 컨벤션도 이름을 밝히면 **텍스트로서** 그 선을 넘을 수 있습니다.
-`auto --conventions <path>`(반복 가능)는 실행 시점에 각 파일을 읽어 그 연결본을
+`auto --conventions <path>`(반복 가능)는 시작 시점에 각 파일을 읽어 그 연결본을
 run 디렉토리에 stage하고, session을 resume하지 않는 모든 planned node의 prompt
 앞에 붙입니다 — 두 런타임 모두에서
 ([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md)).
@@ -233,7 +233,7 @@ run 디렉토리에 stage하고, session을 resume하지 않는 모든 planned n
 파일 목록과 함께 거부됩니다. 렌더된 prefix는 96 KiB로 제한됩니다 — prompt는 argv
 문자열 하나이고 Linux는 그 하나를 128 KiB로 제한하기 때문입니다 — 그리고 절대
 잘리지 않습니다. 최대 크기의 prefix는 node 자신의 prompt에 그 한도 중 약 32 KiB만
-남기며, 그보다 큰 prompt(큰 `| inline` artifact)는 Linux에서 실행 시점이 아니라
+남기며, 그보다 큰 prompt(큰 `| inline` artifact)는 Linux에서 시작 시점이 아니라
 run 도중에 `E2BIG`으로 spawn에 실패합니다. prompt의 나머지와 마찬가지로 이
 텍스트는 node가 실행되는 동안 프로세스 테이블에서 읽을 수 있습니다(SECURITY.md).
 plan 화면은 각 경로와 hash를 출력합니다. `run <graph.json>`은 컨벤션을 가져가지
