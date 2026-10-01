@@ -10,12 +10,20 @@ import (
 // — an error envelope whose result reads "You've hit your session limit ·
 // resets 5:20pm" (HTTP 429 underneath; observed on claude 2.1.220) — with no
 // structured subtype the way a --max-budget-usd abort has
-// (error_max_budget_usd). String matching is brittle by nature: a wording
-// change in the CLI silently downgrades the limit back to an ordinary node
-// failure. That degradation is deliberate and safe — a missed match means
-// FAILED-not-paused, which `resume --retry-failed` still salvages — and
-// keeping the pattern here, pinned by sessionlimit_test.go against the real
-// message, is what makes a wording change a one-line fix instead of a hunt.
+// (error_max_budget_usd). Claude has a SECOND limit condition with its own
+// sentence: one model's allowance runs out while the account's session is
+// fine, and the same is_error envelope then reads "You've reached your Fable
+// limit. Switch to another model, or manage usage credits at …, to continue."
+// (observed 2026-09-21 on run 20260921-071606.434336000-1, issue #283;
+// realModelLimitMessage in sessionlimit_test.go carries it byte for byte).
+// Both are a pause for the same reason — the CLI refused the work and will
+// take it again later, or on another model. String matching is brittle by
+// nature: a wording change in the CLI silently downgrades the limit back to an
+// ordinary node failure. That degradation is deliberate and safe — a missed
+// match means FAILED-not-paused, which `resume --retry-failed` still salvages
+// — and keeping the patterns here, pinned by sessionlimit_test.go against the
+// real messages, is what makes a wording change a one-line fix instead of a
+// hunt.
 //
 // Codex reports its own limit as prose too (observed 2026-09-02 on run
 // 20260901-171816.016378000-1; the message is in
@@ -47,13 +55,15 @@ func isSessionLimitCause(cause string) bool {
 }
 
 // isLimitCause answers, for the claude protocol's OWN output, whether the
-// captured cause is that runtime's subscription limit. It is one half of the
-// cliProtocol method CLIRunner.Run calls exactly once (ADR 0009: one matcher,
-// one call site) — the classification asks the protocol rather than switching
-// on a Runtime, so no code outside this file has to know which prose belongs to
-// which CLI, and the scheduler downstream sees only NodeOutcome.SessionLimited.
+// captured cause is that runtime's subscription limit — either of Claude's two
+// conditions, the account-wide session limit or one model's allowance. It
+// is one half of the cliProtocol method CLIRunner.Run calls exactly once (ADR
+// 0009: one matcher, one call site) — the classification asks the protocol
+// rather than switching on a Runtime, so no code outside this file has to know
+// which prose belongs to which CLI, or that Claude has two, and the scheduler
+// downstream sees only NodeOutcome.SessionLimited.
 func (claudeProtocol) isLimitCause(cause string) bool {
-	return isSessionLimitCause(cause)
+	return isSessionLimitCause(cause) || isClaudeModelLimitCause(cause)
 }
 
 // codexUsageLimitPattern recognizes Codex's wording for the same condition.
@@ -65,6 +75,39 @@ func (claudeProtocol) isLimitCause(cause string) bool {
 // per account, and every extra word is another way a reworded message stops
 // matching.
 var codexUsageLimitPattern = regexp.MustCompile(`(?i)hit your usage limit`)
+
+// claudeModelLimitPattern recognizes Claude's OTHER limit sentence: one model's
+// allowance is spent ("You've reached your Fable limit. Switch to another
+// model, …"). Deliberately NOT folded into sessionLimitPattern either, and for
+// the same reason the Codex pattern above gives, applied within one
+// runtime: the account-wide session limit and one model's allowance are different
+// sentences for different conditions, each pinned by its own narrow contract
+// test (TestSessionLimitCause_DoesNotMatchOtherFailures,
+// TestClaudeModelLimitCause_DoesNotMatchOtherFailures), so a rewording of one
+// must not silently widen or narrow the other. isSessionLimitCause stays
+// exactly as narrow as it was; only claudeProtocol.isLimitCause knows there
+// are two.
+//
+// The model name (Fable, Opus, Sonnet, a versioned family name with a space or
+// a dot in it) is a bounded wildcard, left out on purpose like Codex's plan
+// name: it varies per invocation, and the bound keeps it from spanning a whole
+// flattened report. The trailing "Switch to another model" clause is KEPT,
+// against the every-extra-word rule, because it is what makes the sentence
+// this CLI's and not anyone's: "reached your X limit" is ordinary English that
+// a node's own tool output produces (`gh`'s quota, a rate limiter, a doc that
+// quotes the wording), and on a non-zero exit that stderr tail becomes the
+// FailureCause this pattern is asked about (cli.go). A lazier
+// `reached your .{1,40}? limit` would pause a healthy run on a node that merely
+// mentioned the limit and then failed for its own reason. The URL and the
+// credits clause are left out: the URL carries a tracking parameter that will
+// churn, and the credits wording is billing prose.
+var claudeModelLimitPattern = regexp.MustCompile(`(?i)reached your .{1,40}? limit\W+switch to another model`)
+
+// isClaudeModelLimitCause reports whether a NodeOutcome.FailureCause is one
+// Claude model's allowance running out. An empty cause never matches.
+func isClaudeModelLimitCause(cause string) bool {
+	return claudeModelLimitPattern.MatchString(cause)
+}
 
 // isLimitCause is the codex half of the same method. A protocol answers only
 // for the stream it decodes: codex's pattern is never asked about claude's

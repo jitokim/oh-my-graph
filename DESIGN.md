@@ -1779,8 +1779,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   both runtimes.** The
   runner classifies the CLI's limit message (`NodeOutcome.SessionLimited`,
   matchers pinned in `internal/runner/sessionlimit.go` against each CLI's own
-  prose — Claude's "hit your session limit" and Codex's "hit your usage limit",
-  kept as two patterns so a rewording on one cannot widen the other), and
+  prose — Claude's "hit your session limit" and, since #283, Claude's
+  per-model "reached your … limit. Switch to another model", beside Codex's
+  "hit your usage limit" — kept as three patterns so a rewording on one cannot
+  widen or narrow another), and
   `cliProtocol.isLimitCause` asks the protocol that decoded the output, so
   `CLIRunner.Run` stays the single classification site and names no runtime.
   A `--runtime codex` run therefore reaches the SAME pause, and the engine
@@ -1798,11 +1800,16 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   "Scope" and its 2026-09-02 amendment, closing #171 and answering #222). The
   scheduler then
   stops launching new work but drains in-flight siblings (which may
-  themselves limit and join the paused set), records the limited node
-  NOWHERE (un-run, not FAILED — no ledger row, snapshot record, or terminal
-  event), and returns `*LimitPausedError` → exit code 2 with a
+  themselves limit and join the paused set), gives the limited node no
+  ledger row, snapshot record, or terminal node event (not FAILED — its
+  `node_started` event and the transcript under that session id may remain
+  when the limit landed after the prompt ran and spent, #283, and
+  `resume --retry-failed` re-launches it as a fresh invocation), and
+  returns `*LimitPausedError` → exit code 2 with a
   best-effort-parsed "resume after <reset time> with: `resume <run-id>
-  --retry-failed`" hint — carrying `--verify-cmd '<the command>'` when this
+  --retry-failed`" hint (when the CLI's sentence names no time, as Claude's
+  per-model limit does not, the hint carries that sentence itself instead —
+  #283) — carrying `--verify-cmd '<the command>'` when this
   run's sinks hold one (POSIX-quoted, so a command containing a quote pastes as
   itself, plus `--verify-timeout D` when the bound is not the default), since a
   resumed leg re-supplies it rather than reading it back off disk. A gate pause outranks a limit; a limit outranks
@@ -3049,7 +3056,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
-internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, one pattern per runtime, asked through cliProtocol.isLimitCause) + FakeRunner
+internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, one pattern per limit sentence: two for Claude, one for Codex, asked through cliProtocol.isLimitCause) + FakeRunner
 internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
