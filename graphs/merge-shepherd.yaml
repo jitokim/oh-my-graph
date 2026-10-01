@@ -32,21 +32,21 @@
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
 # Honest note on the two waits: ready-and-wait and recheck are waits under a
-# timeout, not event subscriptions — `gh pr view` reads around gh's own
-# blocking `gh pr checks <pr> --watch --interval 30`, in the FOREGROUND,
-# re-issued if it dies on a network error, bounded by each node's own timeout.
-# They used to be `sleep 30` loops, and the CLI now refuses a foreground
-# `sleep`, so each wait silently degraded to a single read (#295); the watch
-# blocks inside `gh` instead, and covers status contexts such as CodeRabbit's
-# as well as check runs. A node's final
-# reply is its verdict, so nothing may be backgrounded: a node that kicks off a
-# wait loop and reports "will follow up" has already ended its turn, and
-# success_check sees the interim report instead of the verdict. The two waits
-# differ only in what an unfinished wait means. ready-and-wait waits BEFORE any
-# fix exists, so not-yet-concluded is a plain failure — it reports the actual
-# state as NOT READY, fails its READY check, and the operator decides. recheck
-# waits AFTER triage may have pushed, where the whole run is already paid for,
-# so its timeout is a third verdict rather than a failure; see its own comment.
+# timeout, not event subscriptions — `gh pr view` reads around gh's own blocking
+# `gh pr checks <pr> --watch --interval 30`, in the FOREGROUND, re-issued if it
+# dies on a network error, bounded by each node's own timeout. They used to be
+# `sleep 30` loops, and the CLI now refuses a foreground `sleep`, so each wait
+# silently degraded to a single read (#295); the watch blocks inside `gh`
+# instead, and covers status contexts such as CodeRabbit's as well as check
+# runs. A node's final reply is its verdict, so nothing may be backgrounded: a
+# node that kicks off a wait loop and reports "will follow up" has already ended
+# its turn, and success_check sees the interim report instead of the verdict.
+# The two waits differ only in what an unfinished wait means. ready-and-wait
+# waits BEFORE any fix exists, so not-yet-concluded is a plain failure — it
+# reports the actual state as NOT READY, fails its READY check, and the operator
+# decides. recheck waits AFTER triage may have pushed, where the whole run is
+# already paid for, so its timeout is a third verdict rather than a failure; see
+# its own comment.
 #
 # A wait is only honest over a SELF-RESOLVING condition — one a machine that is
 # already working will clear with nobody doing anything: a check run
@@ -248,8 +248,8 @@ nodes:
           in `reviews`; a "review in progress" placeholder comment is not one).
 
       Before you wait, and again on EVERY read, classify what is missing.
-      A condition is SELF-RESOLVING — wait it out — when a machine already at work
-      will clear it with nobody doing anything: a check run IN_PROGRESS, a
+      A condition is SELF-RESOLVING — wait it out — when a machine already at
+      work will clear it with nobody doing anything: a check run IN_PROGRESS, a
       status context PENDING, `merge_state` UNKNOWN (GitHub computes
       mergeability asynchronously), a "review in progress" placeholder.
       A condition is LATCHED when the clock will never clear it, because what
@@ -616,12 +616,12 @@ nodes:
 
       Now the part that decides whether you WAIT AT ALL. Not everything
       unfinished is slow. A condition is SELF-RESOLVING when a machine already
-      at work will clear it with nobody doing anything: a check run
-      IN_PROGRESS, a status context PENDING, `merge_state` UNKNOWN, a "review
-      in progress" placeholder. Those are what a wait is FOR.
+      at work will clear it with nobody doing anything: a check run IN_PROGRESS,
+      a status context PENDING, `merge_state` UNKNOWN, a "review in progress"
+      placeholder. Those are what a wait is FOR.
       A condition is LATCHED when the clock will never clear it, because what
-      clears it is an ACT by a person. Waiting on one spends the whole timeout to
-      learn nothing. Answer LATCHED at once — zero waits — for any of:
+      clears it is an ACT by a person. Waiting on one spends the whole timeout
+      to learn nothing. Answer LATCHED at once — zero waits — for any of:
         - a `checks` entry finished and BAD → read that job's log; fix and
           push. That is a fresh run of this graph, not a wait.
         - a `checks` entry whose `conclusion` is ACTION_REQUIRED → approve the
@@ -687,9 +687,9 @@ nodes:
       waiting would spend the whole timeout on a state that cannot change.
 
       Otherwise — and only once that read found no latch, because a latch is
-      answered at once, before any wait — wait SYNCHRONOUSLY, in the
-      foreground, with gh's own blocking watch. NEVER
-      `sleep`, which this CLI refuses in the foreground:
+      answered at once, before any wait — wait SYNCHRONOUSLY, in the foreground,
+      with gh's own blocking watch. NEVER `sleep`, which this CLI refuses in the
+      foreground:
         gh pr checks {{ inputs.pr }} --watch --interval 30
       It blocks until every rollup entry — check runs AND status contexts,
       CodeRabbit's included — has finished. Give that Bash call a 5-minute
@@ -713,14 +713,14 @@ nodes:
       belong to a commit nobody is merging. Start the judgment over on the
       new head.
 
-      You have 20 minutes, and you count them on `now`, never in reads: a
-      read costs seconds, so a count of them measures nothing. Start no watch
-      once `now` is 13 minutes past your first read, because a watch started
-      then can run to minute 18. Answer once `now` is 18 minutes past your
-      first read, from the state you actually have. Running out the node's
-      timeout instead is the one thing worse than an honest UNSETTLED: it
-      kills the node mid-turn, so there is no verdict at all and the whole
-      run is discarded — the exact outcome UNSETTLED exists to prevent.
+      You have 20 minutes, and you count them on `now`, never in reads: a read
+      costs seconds, so a count of them measures nothing. Start no watch once
+      `now` is 13 minutes past your first read, because a watch started then can
+      run to minute 18. Answer once `now` is 18 minutes past your first read,
+      from the state you actually have. Running out the node's timeout instead
+      is the one thing worse than an honest UNSETTLED: it kills the node
+      mid-turn, so there is no verdict at all and the whole run is discarded —
+      the exact outcome UNSETTLED exists to prevent.
 
       Your reply must START with exactly one of these three verdicts — the
       token as the very FIRST characters, with no markdown emphasis
@@ -774,11 +774,11 @@ nodes:
     # prompt starts no watch past minute 13 on its own `now` clock and answers
     # at minute 18, so a 15m timeout would kill the node BEFORE it reached the
     # honest answer its instructions ask for. The budget is clock time, not a
-    # read count, because a read costs seconds: the path where the watch
-    # returns at once has nothing to block on (#297). At ready-and-wait that
-    # mismatch is harmless — overshoot and the honest answer both fail there.
-    # Here the honest answer PASSES and the overshoot discards the run, which
-    # is backwards, so the timeout has to outlast the wait budget.
+    # read count, because a read costs seconds: the path where the watch returns
+    # at once has nothing to block on (#297). At ready-and-wait that mismatch is
+    # harmless — overshoot and the honest answer both fail there. Here the
+    # honest answer PASSES and the overshoot discards the run, which is
+    # backwards, so the timeout has to outlast the wait budget.
     timeout: 20m
     handoff: artifact
     # Two of the three verdicts pass, so this is an anchored alternation like
