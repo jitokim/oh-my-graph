@@ -193,7 +193,8 @@ nodes:
       text per poll that no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
-          --jq '{head: .headRefOid,
+          --jq '{now: (now | todate),
+                 head: .headRefOid,
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
@@ -211,6 +212,9 @@ nodes:
       projection names `who`. The `excerpt` is the region AROUND the rate-limit
       phrase, not the head of the comment: the bot's notice sits ten lines
       under a walkthrough image, and the head of the body is that image.
+      `now` is the moment of the read itself. It is the clock every wait
+      budget below is measured on, and nothing else in your grant tells the
+      time.
 
       Read it and classify it by the rules below FIRST: a latch is answered
       at once, before any wait. Only when everything outstanding is
@@ -223,8 +227,11 @@ nodes:
       returns, for whatever reason, make the read above again and classify
       THAT. If the watch died on a network error, or ran out its 5 minutes
       with entries still pending, re-issue it. If it returns at once with
-      nothing pending while the review is still missing, re-read instead —
-      that is the not-moving case below. Run all of it in the FOREGROUND,
+      nothing pending while the review is still missing, nothing in your
+      grant blocks on that path: the watch has nothing to wait on and there
+      is no `sleep`, so each re-read follows the last within seconds. Re-read
+      anyway, and count that wait on `now`, never in reads; it is the
+      not-moving case below. Run all of it in the FOREGROUND,
       blocking. NEVER background anything: no `&`, no `nohup`, no
       run_in_background, no "I'll keep polling and report back". Your FINAL
       reply IS the verdict, so you cannot reply until the wait has actually
@@ -290,8 +297,15 @@ nodes:
       precondition.
       Two conditions are only distinguishable by not moving — a `checks` entry
       stuck at QUEUED (a fork or first-contributor run awaiting approval) and
-      no coderabbitai review at all. Poll those; if the budget runs out with
-      them exactly as they started, they are LATCHED, not slow.
+      no coderabbitai review at all. Each has its own bound, and neither is a
+      count of reads. A QUEUED entry is pending, so the watch blocks on it: if
+      it is exactly as it started after TWO watches that ran out their 5
+      minutes, it is LATCHED, not slow. A missing review with nothing pending
+      is the path nothing blocks on: once `now` on your read is 5 minutes
+      past `now` on the first read that found it that way, with still no
+      review and still nothing pending, it is LATCHED, not slow. If the
+      bot's own status turns up PENDING in the meantime, the watch has
+      something to block on again and that 5-minute bound no longer applies.
 
       Your reply must START with exactly one of these three verdicts — the
       token as the very FIRST characters, with no markdown emphasis
@@ -314,13 +328,19 @@ nodes:
       caveat, a note — goes AFTER the verdict, never before it: a line of
       context ahead of the token fails this node even when both conditions
       hold.
-      You have 15 minutes: after TWO watches that ran out their 5 minutes, or
-      ~20 reads in all, whichever comes first, stop waiting and answer from
-      the state you actually have. NEVER reply READY early.
+      You have 15 minutes, and you count them on `now`, never in reads: a
+      read costs seconds, so a count of them measures nothing. Start no watch
+      once `now` is 8 minutes past your first read, because a watch started
+      then can run to minute 13. Answer once `now` is 13 minutes past your
+      first read, from the state you actually have. That leaves the last read
+      and your reply inside the node's timeout. NEVER reply READY early.
     # `Bash(gh *)` already covers `gh pr checks --watch`; there is no `sleep`
     # grant, because nothing here sleeps (#295).
     allowed_tools: ["Bash(gh *)"]
     permission_mode: dontAsk
+    # The prompt starts no watch past minute 8 on its own `now` clock and
+    # answers at minute 13, so its last read and reply land inside 15m. Clock
+    # time, not a read count: a read costs seconds (#297).
     timeout: 15m
     handoff: artifact
     # Same shape as verify's: anchored, but tolerant of leading emphasis.
@@ -506,7 +526,8 @@ nodes:
       kilobytes per poll of text no rule reads:
         gh pr view {{ inputs.pr }} \
           --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,reviews,comments \
-          --jq '{head: .headRefOid,
+          --jq '{now: (now | todate),
+                 head: .headRefOid,
                  review_decision: .reviewDecision,
                  merge_state: .mergeStateStatus,
                  checks: [.statusCheckRollup[] | {name: (.name // .context), status, conclusion, state}],
@@ -524,7 +545,9 @@ nodes:
       else is asking for changes" are both comparisons you can make, not
       guesses you have to take. The `excerpt` is the region AROUND the
       rate-limit phrase rather than the head of the comment, because the bot's
-      notice sits ten lines under a walkthrough image.
+      notice sits ten lines under a walkthrough image. `now` is the moment of
+      the read itself. It is the clock every wait budget below is measured
+      on, and nothing else in your grant tells the time.
 
       `reviews` covers EVERY reviewer, not just the bot. Filtering it down to
       `coderabbitai` is what let a human's CHANGES_REQUESTED reach `merge`
@@ -642,10 +665,18 @@ nodes:
       MOVING: a `checks` entry stuck at QUEUED or EXPECTED (a run awaiting a
       maintainer's approval, or a required context with no reporter behind it
       at all), and no coderabbitai review on `head` (the bot was never
-      re-invoked — a force-push does that). Poll those. If your budget runs out
-      with them byte-for-byte as they started, they are LATCHED, not slow: say
-      LATCHED and name the act — approve the run in the Actions tab, drop the
-      dead required context, or post `@coderabbitai review`.
+      re-invoked — a force-push does that). Each has its own bound, and
+      neither is a count of reads. A QUEUED or EXPECTED entry is pending, so
+      the watch blocks on it: if it is byte-for-byte as it started after
+      THREE watches that ran out their 5 minutes, it is LATCHED, not slow. A
+      missing review with nothing pending is the path nothing blocks on:
+      once `now` on your read is 5 minutes past `now` on the first read that
+      found it that way, with still no review on `head` and still nothing
+      pending, it is LATCHED, not slow. If the bot's own status turns up
+      PENDING in the meantime, the watch has something to block on again and
+      that 5-minute bound no longer applies. Either way, say LATCHED and name
+      the act: approve the run in the Actions tab, drop the dead required
+      context, or post `@coderabbitai review`.
       A latch DOMINATES: if anything is latched, the answer is LATCHED even
       when other entries are still legitimately in flight.
 
@@ -666,8 +697,13 @@ nodes:
       returns, for whatever reason, make the read above again and classify
       THAT. If the watch died on a network error, or ran out its 5 minutes
       with entries still pending, re-issue it. If it returns at once with
-      nothing pending while no coderabbitai review is on `head`, re-read
-      instead — that is the not-moving case above. NEVER background
+      nothing pending while no coderabbitai review is on `head`, nothing in
+      your grant blocks on that path. That includes exiting at once with "no
+      checks reported", which is what it does before a new head has any
+      checks. The watch has nothing to wait on and there is no `sleep`, so
+      each re-read follows the last within seconds. Re-read anyway, and count
+      that wait on `now`, never in reads; it is the not-moving case above.
+      An immediate return is not a network error. NEVER background
       anything: no `&`, no `nohup`, no run_in_background, no "I'll keep
       polling and report back". Your FINAL reply IS the verdict, so you
       cannot reply until the wait has actually reached one — an interim
@@ -677,13 +713,14 @@ nodes:
       belong to a commit nobody is merging. Start the judgment over on the
       new head.
 
-      You have 20 minutes: after THREE watches that ran out their 5 minutes
-      — about fifteen — or ~25 reads in all, whichever comes first, stop
-      waiting and answer from the state you actually have. Running out the
-      node's timeout instead is the one thing worse than
-      an honest UNSETTLED: it kills the node mid-turn, so there is no verdict
-      at all and the whole run is discarded — the exact outcome UNSETTLED
-      exists to prevent.
+      You have 20 minutes, and you count them on `now`, never in reads: a
+      read costs seconds, so a count of them measures nothing. Start no watch
+      once `now` is 13 minutes past your first read, because a watch started
+      then can run to minute 18. Answer once `now` is 18 minutes past your
+      first read, from the state you actually have. Running out the node's
+      timeout instead is the one thing worse than an honest UNSETTLED: it
+      kills the node mid-turn, so there is no verdict at all and the whole
+      run is discarded — the exact outcome UNSETTLED exists to prevent.
 
       Your reply must START with exactly one of these three verdicts — the
       token as the very FIRST characters, with no markdown emphasis
@@ -734,12 +771,14 @@ nodes:
     allowed_tools: ["Bash(gh pr view *)", "Bash(gh pr checks *)"]
     permission_mode: dontAsk
     # 20m, not ready-and-wait's 15m, and the extra five are not padding: the
-    # prompt's own budget is three 5-minute watches plus the reads around
-    # them, ~16 minutes, so a 15m timeout would kill the node BEFORE it reached the
-    # honest answer its instructions ask for. At ready-and-wait that mismatch
-    # is harmless — overshoot and the honest answer both fail there. Here the
-    # honest answer PASSES and the overshoot discards the run, which is
-    # backwards, so the timeout has to outlast the loop budget.
+    # prompt starts no watch past minute 13 on its own `now` clock and answers
+    # at minute 18, so a 15m timeout would kill the node BEFORE it reached the
+    # honest answer its instructions ask for. The budget is clock time, not a
+    # read count, because a read costs seconds: the path where the watch
+    # returns at once has nothing to block on (#297). At ready-and-wait that
+    # mismatch is harmless — overshoot and the honest answer both fail there.
+    # Here the honest answer PASSES and the overshoot discards the run, which
+    # is backwards, so the timeout has to outlast the wait budget.
     timeout: 20m
     handoff: artifact
     # Two of the three verdicts pass, so this is an anchored alternation like

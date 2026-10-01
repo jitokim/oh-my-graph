@@ -235,12 +235,13 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	}
 
 	// The timeout has to outlast the wait budget the prompt hands the node
-	// (three 5-minute watches plus reads ≈ 16 minutes). A node killed by its own
+	// (answer at minute 18 on its `now` clock; pinned against this timeout in
+	// TestBothWaitsBoundTheirWaitByTheClock). A node killed by its own
 	// timeout produces no verdict at all and discards the run — which is the
 	// outcome UNSETTLED was invented to prevent, so a timeout that fires
 	// before the honest answer is due defeats the node's whole design.
 	if got := recheck.TimeoutDuration(); got < 20*time.Minute {
-		t.Errorf("recheck's timeout is %s, want at least 20m — its prompt budgets ~16 minutes of waiting, and a timeout inside that kills the node before UNSETTLED is due", got)
+		t.Errorf("recheck's timeout is %s, want at least 20m — its prompt answers at minute 18 of waiting, and a timeout inside that kills the node before UNSETTLED is due", got)
 	}
 
 	pattern := recheck.SuccessCheck.ResultMatches
@@ -490,6 +491,76 @@ func TestBothWaitsBlockOnGhWatchNotSleep(t *testing.T) {
 	// The negative half, so grantAdmits is not trivially true.
 	if grantAdmits([]string{"Bash(gh pr view *)"}, watch) {
 		t.Error("grantAdmits admits `gh pr checks` under a `gh pr view` grant")
+	}
+}
+
+// TestBothWaitsBoundTheirWaitByTheClock pins the wait budget to time (#297).
+// Both budgets were read counts ("~20 reads in all", "~25 reads") sized for a
+// `sleep 30` between reads. With the sleep gone, the path where the watch
+// returns at once (nothing pending, review still missing) has nothing that
+// blocks, so a read costs seconds and a read count runs out in a couple of
+// minutes. The node then reports a review that was merely slow as LATCHED.
+// So each read carries `now`, every bound is stated on that clock, the
+// prompt says outright that nothing blocks on that path, and the minute
+// marks have to fit inside the node's own timeout.
+func TestBothWaitsBoundTheirWaitByTheClock(t *testing.T) {
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	const watchMinutes = 5
+	startMark := regexp.MustCompile("Start no watch once `now` is (\\d+) minutes past your first read")
+	answerMark := regexp.MustCompile("Answer once `now` is (\\d+) minutes past your first read")
+	notMoving := regexp.MustCompile("once `now` on your read is (\\d+) minutes past `now` on the first read that found it that way")
+	readCount := regexp.MustCompile(`\d+ reads`)
+	minutes := func(id string, re *regexp.Regexp, flat string) int {
+		m := re.FindStringSubmatch(flat)
+		if m == nil {
+			t.Errorf("%s's prompt never states %q — without it the bound is not on the clock", id, re)
+			return -1
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	seen := 0
+	for _, n := range g.Graph.Nodes {
+		if n.ID != "ready-and-wait" && n.ID != "recheck" {
+			continue
+		}
+		seen++
+		flat := strings.Join(strings.Fields(n.Prompt), " ")
+		if !strings.Contains(flat, "now: (now | todate)") {
+			t.Errorf("%s's read does not project `now` — nothing else in its grant tells the time, so a clock budget cannot be kept", n.ID)
+		}
+		if !strings.Contains(flat, "nothing in your grant blocks on that path") {
+			t.Errorf("%s never says that nothing blocks when the watch returns at once — the prompt implies a wait that does not happen", n.ID)
+		}
+		if !strings.Contains(flat, "count that wait on `now`, never in reads") {
+			t.Errorf("%s never says the unblocked wait is counted on `now` rather than in reads", n.ID)
+		}
+		// Guards the read-count budget against coming back. It is paired with
+		// the clock phrases above, so it cannot be the only thing passing.
+		if m := readCount.FindString(flat); m != "" {
+			t.Errorf("%s still budgets its wait as %q — a read costs seconds once nothing sleeps, so a count of them runs out long before the review is due", n.ID, m)
+		}
+		start := minutes(n.ID, startMark, flat)
+		answer := minutes(n.ID, answerMark, flat)
+		window := minutes(n.ID, notMoving, flat)
+		if start < 0 || answer < 0 || window < 0 {
+			continue
+		}
+		if start+watchMinutes > answer {
+			t.Errorf("%s starts watches until minute %d but answers at minute %d — a %d-minute watch started at the mark outruns the answer", n.ID, start, answer, watchMinutes)
+		}
+		if timeout := int(n.TimeoutDuration() / time.Minute); answer >= timeout {
+			t.Errorf("%s answers at minute %d but its timeout is %dm — the node is killed before its verdict", n.ID, answer, timeout)
+		}
+		if window <= 0 || window >= answer {
+			t.Errorf("%s's not-moving window is %d minutes against an answer at minute %d — it must be positive and fit before the answer", n.ID, window, answer)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("merge-shepherd has %d of its two waiting nodes", seen)
 	}
 }
 
