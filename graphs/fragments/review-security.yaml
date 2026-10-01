@@ -6,6 +6,10 @@
 # {{ artifacts.<id> | inline }} survives resolution and interpolates at run
 # time as always). The shape itself — read-only plan mode, git-diff/log
 # grants, a findings-list reply — is the fragment's.
+#
+# The prompt quotes {{ self.previous }} — this reviewer's own reply from the
+# previous feedback round, empty wherever the citing graph declares no arc —
+# for the reason review-style.yaml gives (#288).
 fragment: review-security
 description: read-only security review of a diff — injection, secrets, unsafe shell/exec — grounded in the gate's verdict
 substitutions: [diff, evidence]
@@ -14,6 +18,16 @@ node:
   prompt: |
     Review {{ with.diff }} for security issues (injection, secrets, unsafe
     shell, unsafe exec, authz gaps). The e2e verdict was: {{ with.evidence }}.
+
+    Your own reply from the previous review round of this diff follows — it
+    is empty on the first pass. If present, the diff was reworked to answer
+    it: first check each of those findings and re-raise only the ones still
+    open. Raise a NEW finding only where the rework changed the code, or
+    where missing it last round was a real mistake — not an issue you could
+    have raised then and did not. If every earlier finding is closed and
+    nothing new meets that bar, the verdict is CLEAN.
+    {{ self.previous }}
+
     Finish the review BEFORE you reply. Your FINAL reply IS the verdict: this
     node's turn ends the moment you reply, so a part of the diff you promise
     to look at afterwards is never looked at. Never end on "I'll continue" —

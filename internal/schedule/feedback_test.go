@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -678,5 +679,60 @@ func TestScheduler_ResumedRoundsCountAgainstMax(t *testing.T) {
 	}
 	if got := fake.InvocationCount("impl: needs work"); got != 1 {
 		t.Errorf("impl ran %d times, want 1 — no third round exists to fire", got)
+	}
+}
+
+// TestScheduler_SelfPreviousHandsEachBodyNodeItsOwnLastRound is #288's loop:
+// both body nodes quote {{ self.previous }}, which is empty on the first pass
+// and, on the re-run, the node's OWN reply from the round the arc closed — the
+// reviewer re-reads its findings (so it can check they were closed rather than
+// judge the diff as a stranger), the implementer its draft. The re-run's quote
+// is fenced by a per-call nonce, so the prompts are recorded rather than
+// scripted as keys: the first pass must be byte-identical to a prompt with no
+// quote at all, and each re-run must carry its own reply inside the fence.
+func TestScheduler_SelfPreviousHandsEachBodyNodeItsOwnLastRound(t *testing.T) {
+	g := mustGraph(t, `
+name: loop
+nodes:
+  - { id: impl, prompt: "impl: {{ feedback.review }} | mine: {{ self.previous }}" }
+  - id: review
+    prompt: "review: {{ artifacts.impl | inline }} | mine: {{ self.previous }}"
+    depends_on: [impl]
+    success_check: { result_matches: "^CLEAN" }
+    feedback: { rerun: impl, max: 2 }
+`)
+	rec := &recordingSequenceRunner{outcomes: []runner.NodeOutcome{
+		result("draft-v1", 0), result("FINDINGS: rename x", 0),
+		result("draft-v2", 0), result("CLEAN", 0),
+	}}
+	s, h, led := newHarness(t, rec, Options{})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(rec.prompts) != 4 {
+		t.Fatalf("ran %d node calls, want 4 (two rounds of impl→review): %q", len(rec.prompts), rec.prompts)
+	}
+	for i, want := range []string{"impl:  | mine: ", "review: draft-v1 | mine: "} {
+		if rec.prompts[i] != want {
+			t.Errorf("first-pass call %d = %q, want %q — an absent previous reply quotes nothing", i, rec.prompts[i], want)
+		}
+	}
+	for i, tc := range []struct{ prefix, mine string }{
+		{"impl: FINDINGS: rename x | mine: ", "draft-v1"},
+		{"review: draft-v2 | mine: ", "FINDINGS: rename x"},
+	} {
+		got := rec.prompts[2+i]
+		if !strings.HasPrefix(got, tc.prefix) {
+			t.Errorf("re-run call %d = %q, want prefix %q", 2+i, got, tc.prefix)
+		}
+		nonce := regexp.MustCompile(`--- previous round ([0-9a-f]+) \(`).FindStringSubmatch(got)
+		if nonce == nil {
+			t.Fatalf("re-run call %d carries no fenced previous round:\n%s", 2+i, got)
+		}
+		fenced := "\n" + tc.mine + "\n--- end previous round " + nonce[1] + " ---"
+		if !strings.HasSuffix(got, fenced) {
+			t.Errorf("re-run call %d does not fence its OWN reply %q under nonce %s:\n%s", 2+i, tc.mine, nonce[1], got)
+		}
 	}
 }

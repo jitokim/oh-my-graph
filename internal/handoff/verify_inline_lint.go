@@ -14,7 +14,7 @@ import (
 // `schedule.resolveVerification` calls the same `Handoff.Interpolate` — and the
 // result is then handed to `verify.ShellVerifier`, the second exec seam, which
 // runs it as `sh -c <command>` (`cmd /c` on Windows) under the user's own
-// shell. Two token shapes carry model-written text into that string:
+// shell. Three token shapes carry model-written text into that string:
 //
 //   - `{{ artifacts.<id> | inline }}` — the node's own reply. The DEFAULT is
 //     not this: with no filter an artifacts token resolves to the persisted
@@ -26,7 +26,10 @@ import (
 //     result text when the failing execution produced one (ADR 0010). This one
 //     ALWAYS inlines and takes no filter — `graph.Validate` refuses one — so
 //     there is no default to fall back to, and its message says something
-//     different: the payload belongs in a prompt.
+//     different: the payload belongs in a prompt;
+//   - `{{ self.previous }}` — the node's own reply from the previous feedback
+//     round (#288). It inlines like a feedback payload, for the same reason
+//     and with the same advice.
 //
 // A token LintPlaceholders condemns as UNRESOLVABLE is skipped here — an
 // artifacts token naming the referencing node itself, or a node that is not in
@@ -91,6 +94,9 @@ func LintVerifyInlining(g *graph.Graph) []Warning {
 			if kind == "artifacts" && !canEverSubstitute(g, node.ID, ref) {
 				continue // LintPlaceholders' finding, and nothing this one could say is true of it
 			}
+			if kind == "self" && selfTokenRefused(ref, filter) != "" {
+				continue // refused at interpolation — LintPlaceholders' finding, for the same reason
+			}
 			detail := judgeInlinedToken(token, kind, ref, filter)
 			if detail == "" {
 				continue
@@ -133,6 +139,10 @@ func judgeInlinedToken(token, kind, ref, filter string) string {
 		return fmt.Sprintf(
 			"%s splices node %q's feedback payload — its own reply text — into a command line the engine runs through your shell. A feedback placeholder always inlines and has no path form to fall back on: quote the payload in the node's PROMPT, and let the verify command observe the tree instead",
 			token, ref)
+	case kind == "self":
+		return fmt.Sprintf(
+			"%s splices this node's own previous-round reply into a command line the engine runs through your shell. A self placeholder always inlines and has no path form to fall back on: quote it in the node's PROMPT, and let the verify command observe the tree instead",
+			token)
 	}
 	return ""
 }

@@ -136,6 +136,12 @@ func (st *feedbackState) fire(declarer string) int {
 	return round
 }
 
+// bodyOf returns declarer's body ids in declared graph order — the
+// precomputed slice, so callers must not mutate it.
+func (st *feedbackState) bodyOf(declarer string) []string {
+	return st.bodies[declarer]
+}
+
 // bodyInDegrees returns declarer's re-arming in-degrees — the precomputed
 // map, so callers must not mutate it.
 func (st *feedbackState) bodyInDegrees(declarer string) map[string]int {
@@ -234,6 +240,16 @@ func (s *Scheduler) judgeFeedback(node graph.Node, outcome runner.NodeOutcome, h
 
 	payload := feedbackPayload(outcome, cause)
 	if err := h.SetFeedback(node.ID, payload); err != nil {
+		return nil, fmt.Errorf("feedback arc could not fire: %w", err)
+	}
+	// Every body node's reply from the round now closing becomes its
+	// {{ self.previous }} for the next (#288): a re-run reviewer can then check
+	// its own earlier findings instead of judging the diff as a stranger. The
+	// declarer's reply is its raw result, never the payload — a failed
+	// verification's evidence is what the FIXER needs, not what the declarer
+	// said. A failed archive fails the arc like a failed payload: the re-run
+	// would otherwise silently start from nothing.
+	if err := h.ArchiveRound(node.ID, outcome.Result, s.feedback.bodyOf(node.ID)); err != nil {
 		return nil, fmt.Errorf("feedback arc could not fire: %w", err)
 	}
 

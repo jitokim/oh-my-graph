@@ -93,6 +93,40 @@ nodes:
 	}
 }
 
+// TestLintVerifyInlining_SelfPreviousIsAReplyToo: {{ self.previous }} inlines
+// the node's own previous-round reply (#288), so in a verify command it is a
+// model's text on a shell line exactly like a feedback payload — while a self
+// token the runtime refuses splices nothing and is left to LintPlaceholders.
+func TestLintVerifyInlining_SelfPreviousIsAReplyToo(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		warns   bool
+	}{
+		{command: "test -n '{{ self.previous }}'", warns: true},
+		{command: "test -n '{{ self.last }}'", warns: false},
+	} {
+		g := parseGraph(t, `
+name: verify-self
+nodes:
+  - id: check
+    prompt: check the work
+    success_check:
+      exit_zero: true
+      verify: { command: "`+tc.command+`" }
+`)
+		warnings := LintVerifyInlining(g)
+		if !tc.warns {
+			if len(warnings) != 0 {
+				t.Errorf("%q: expected no inlining warning, got %v", tc.command, warnings)
+			}
+			continue
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0].Detail, "previous-round reply") || !strings.Contains(warnings[0].Detail, "PROMPT") {
+			t.Errorf("%q: warnings = %v, want one naming the previous-round reply and the prompt as its place", tc.command, warnings)
+		}
+	}
+}
+
 // TestLintVerifyInlining_TheDefaultFilterIsAPath is the assertion the whole
 // message rests on, checked against Interpolate itself rather than against the
 // docstring: a filterless artifacts token resolves to the persisted file path,

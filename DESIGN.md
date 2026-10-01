@@ -603,6 +603,40 @@ from the file that changed.
   either, which is why the one class of finding that KILLS a planned run — an
   `{{ artifacts.<id> }}` that cannot resolve — is a plan refusal rather than a
   line of output (#244; see "Planned-node fields are deny-by-default").
+- **self (`{{ self.previous }}`, #288):** a fourth namespace, and the only one
+  that names no node: it resolves to the **interpolating node's own reply from
+  the previous feedback round**, inlined, and to the **empty string** until an
+  arc whose body holds the node has fired — the feedback namespace's
+  first-pass rule. The reply is model output quoted back into a paid prompt,
+  so it is inlined the way a retry quotes a rejected attempt (see "Execution
+  engine"): between `--- previous round <nonce> (…) ---` / `--- end previous
+  round <nonce> ---` markers carrying a fresh `fence.Nonce` per interpolation,
+  under a one-paragraph note that the block is data, and cut head-and-tail by
+  `fence.Excerpt` at `fence.MaxPriorReplyInPrompt` (8000 bytes — ONE constant
+  both call sites use). An empty or all-whitespace reply is inlined as it is,
+  with no fence: an empty block would assert the node said something. A
+  prompt that quotes it should do so BEFORE its own output-format rule, so the
+  rule, not the node's old output, is the last thing the model reads — the
+  shipped review fragments do, and `TestAGatingReviewSeesItsOwnPreviousRound`
+  holds them to it. `feedback` hands a round the *declarer's* verdict; `self`
+  hands each body node *its own* last answer, which is what a reviewer needs
+  to check whether its earlier findings were closed instead of reviewing the
+  diff as a stranger (see "Verdict patterns" on why a loop without it need not
+  converge). When an arc fires, the engine archives every body node's reply
+  from the round now closing (`Handoff.ArchiveRound`): the declarer's raw
+  reply — never the feedback payload, which for a failed verification is the
+  evidence the fixer needs, not what the declarer said — and every other body
+  node's artifact, which the re-run has not yet overwritten. Each lands in
+  `<run-dir>/previous/<id>.out`, an **internal** file beside `feedback/`, for
+  the same reason and so a mid-loop resume re-seeds it (`SeedPrevious`).
+  Because it names no node, a **fragment can quote it** (a fragment does not
+  know the id its using node will carry), and so — unlike a feedback token —
+  it is legal on ANY node: outside a feedback body it is simply always empty,
+  which is exactly what the shipped review fragments rely on when a graph
+  cites them without an arc. `self.previous` is the one reference; any other,
+  or a filter, is an `*InterpolationError` and a `lint` warning, and in a
+  `verify.command` it earns `LintVerifyInlining`'s warning like a feedback
+  token does (and inlines the same fenced block there as in a prompt).
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -901,11 +935,12 @@ quoted as nonce-fenced data (ADR 0020, `internal/schedule/retryfeedback.go`).
 Exactly **one** prior attempt is ever carried and it never accumulates: every
 attempt's prompt is rebuilt from the interpolated node prompt, so the added
 cost is flat in the attempt index rather than triangular, bounded at 8000 bytes
-of reply, cut head-and-tail with the cut announced. The check itself is **not**
-quoted — not its expression, not the detail that embeds it — because feeding
-back a `result_matches` regex teaches the cheapest possible pass, which is to
-print whatever it matches; the node is told its attempt did not pass, told not
-to argue the verdict, and pointed back at its own instructions. Causes that
+of reply (`fence.MaxPriorReplyInPrompt`, the same bound `{{ self.previous }}`
+quotes under), cut head-and-tail with the cut announced. The check itself is
+**not** quoted — not its expression, not the detail that embeds it — because
+feeding back a `result_matches` regex teaches the cheapest possible pass, which
+is to print whatever it matches; the node is told its attempt did not pass, told
+not to argue the verdict, and pointed back at its own instructions. Causes that
 rendered no verdict on the reply carry nothing: a spawn error, an interpolation
 error, `budget_exceeded`, and a verification that could not be *completed*, the
 same `isJudgmentFailure` split a feedback arc uses. A `handoff: session` retry
@@ -1197,6 +1232,34 @@ follows this shape, and so does the pattern the auto-mode planner hands its
 branch-assertion check node (`coordinator.plannedVerdictPattern`, where a
 planned node may not set `verify` and the pattern is the whole gate); a new
 verdict token joins it.
+
+#### A CLEAN-only gate need not converge (#288)
+
+A review narrowed to accept only `CLEAN` and wired to a `feedback:` arc (the
+gating pair `gated-lane` ships) is a loop that ends when a reviewer finds
+nothing. With a **fresh-session reviewer** that loop has **no convergence
+guarantee, whatever `max` is.** Each round's reviewer is a new session reading
+a reworked diff: a reviewer that cannot see its own earlier findings cannot
+tell "closed" from "never raised", so it judges the diff as a stranger, and a
+stranger reviewing any non-trivial diff finds *something* — a new minor nit
+per round, on code the previous round already passed. Raising `max` only buys
+more rounds of that; it is a spend bound, never a convergence argument, and an
+exhausted loop's FAIL then reports a lane whose real findings were all fixed.
+
+The engine's answer is to give the reviewer its memory, not to stop asking:
+`{{ self.previous }}` (see "Handoff") hands a re-run node its own reply from
+the previous round, and the shipped `review-style`/`review-security` fragments
+quote it — fenced by the engine, and ahead of the verdict-format rule so that
+rule stays the last thing the reviewer reads — with an instruction to check
+those findings first and raise a new one only where the rework changed the
+code or missing it was a real mistake. That
+narrows the drift; it does not remove it — the verdict is still a model's
+judgment, and a gate whose only passing value is "nothing at all to say"
+still has no severity floor. A graph that needs a guarantee must bound the
+loop by something other than the reviewer's silence. A verdict with a third
+value — `MINOR:` findings that pass and ride along, so only a blocking finding
+fires the arc — is the structural fix, and is deliberately left as a
+follow-up to #288 rather than taken here.
 
 #### Where the verdict may sit — measured, not assumed
 

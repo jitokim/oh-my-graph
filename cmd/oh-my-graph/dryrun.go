@@ -125,7 +125,7 @@ func inputIssues(g *graph.Graph, inputs map[string]string) []error {
 			templates = append(templates, v.Command, v.Cwd)
 		}
 		for _, tmpl := range templates {
-			if _, err := h.Interpolate(tmpl); err != nil && !isArtifactSide(err) {
+			if _, err := h.InterpolateFor(node.ID, tmpl); err != nil && !isArtifactSide(err) {
 				issues = append(issues, fmt.Errorf("node %q: %w", node.ID, err))
 			}
 		}
