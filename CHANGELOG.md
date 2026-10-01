@@ -10,6 +10,35 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
+## [v0.15.0] - 2026-10-01
+
+**Minor, and the through-line is a run you can leave alone for longer.** Three
+things that used to need someone at the terminal no longer do. A node that runs
+for half an hour now says it is still running once a minute, instead of looking
+exactly like a wedged one. A gate you already know you will approve can be
+approved at launch with `run --auto-approve`, and every gate you did not name
+still pauses. And a Claude per-model usage limit now pauses the run for
+`resume`, where it used to fail the node and cancel its in-flight siblings.
+
+Two additions widen what an `auto` run can carry, and both are bounded on
+purpose. `--conventions` hands every planned node your coding conventions as
+**text**. No setting, grant, hook or MCP server comes with it, so the tool
+ceiling is exactly what it was without the flag
+([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md)).
+`{{ self.previous }}` lets a re-run reviewer see its own previous findings, so
+the shipped review fragments now check those first instead of re-reviewing
+the rework as a stranger. Whether that makes a CLEAN-gated loop converge has
+not been measured yet, and #288 stays open until it is. `merge-shepherd`'s two
+waits also stopped depending on a foreground `sleep`, which current Claude Code
+blocks; they now wait on `gh pr checks --watch` (#295).
+
+Two changes are worth knowing before you upgrade. A planned graph that quotes
+an `{{ artifacts.<id> }}` the engine cannot resolve is now refused at plan
+time, before any node spends, rather than failing at run time. And a
+post-spend per-model limit, being a pause, no longer records what the node had
+already spent: the ledger drops it, and the entry below says so in as many
+words.
+
 ### Added
 
 - **`auto --conventions <path>` carries your coding conventions into every
@@ -5170,7 +5199,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.15.0...HEAD
+[v0.15.0]: https://github.com/jitokim/oh-my-graph/compare/v0.14.0...v0.15.0
 [v0.14.0]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...v0.14.0
 [v0.13.0]: https://github.com/jitokim/oh-my-graph/compare/v0.12.0...v0.13.0
 [v0.12.0]: https://github.com/jitokim/oh-my-graph/compare/v0.11.0...v0.12.0
