@@ -464,8 +464,8 @@ func TestBothWaitsBlockOnGhWatchNotSleep(t *testing.T) {
 		if !strings.Contains(n.Prompt, watch) {
 			t.Errorf("%s's prompt never names %q — without gh's blocking watch the wait is one read", n.ID, watch)
 		}
-		if strings.Contains(n.Prompt, "`sleep 30`") {
-			t.Errorf("%s's prompt still polls with `sleep 30`, which the CLI refuses in the foreground", n.ID)
+		if strings.Contains(n.Prompt, "`sleep ") {
+			t.Errorf("%s's prompt still waits on a backticked `sleep <duration>`, which the CLI refuses in the foreground", n.ID)
 		}
 		for _, tool := range n.AllowedTools {
 			if strings.HasPrefix(tool, "Bash(sleep") {
