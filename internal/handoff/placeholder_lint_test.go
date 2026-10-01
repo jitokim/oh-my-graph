@@ -82,7 +82,29 @@ func TestLintPlaceholders_Warnings(t *testing.T) {
 			prompt:     "read {{ artifacts.c }}",
 			wantDetail: "not an ancestor",
 		},
+		{
+			name:       "self names a reference other than previous",
+			prompt:     "recall {{ self.last }}",
+			wantDetail: "one reference, {{ self.previous }}",
+		},
+		{
+			name:       "self takes no filter",
+			prompt:     "recall {{ self.previous | inline }}",
+			wantDetail: "takes no filter",
+		},
+		{
+			name:       "case-variant self kind warns with a lowercase hint",
+			prompt:     "recall {{ Self.previous }}",
+			wantDetail: "did you mean lowercase?",
+		},
 		// --- silent cases ----------------------------------------------------
+		{
+			// Legal on any node, loop or not (#288): outside a feedback body it
+			// is simply always empty, which a fragment must be able to rely on.
+			name:       "self.previous stays silent outside any loop",
+			prompt:     "recall {{ self.previous }}",
+			wantDetail: "",
+		},
 		{
 			name:       "deliberate literal braces stay silent",
 			prompt:     "explain what {{ mustache.templates }} and {{ x }} mean",

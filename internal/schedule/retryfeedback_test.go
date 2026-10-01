@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -166,12 +167,12 @@ func TestRetry_BoundsTheQuotedReply(t *testing.T) {
 	// ADR 0020 §3 and the CHANGELOG all publish 8000 bytes as a cost promise,
 	// and every other assertion here derives BOTH its input and its ceiling
 	// from the constant, so raising it could never fail one of them.
-	if maxPriorReplyInPrompt != 8000 {
-		t.Fatalf("maxPriorReplyInPrompt = %d, want 8000 — the bound is published as a per-attempt cost "+
+	if fence.MaxPriorReplyInPrompt != 8000 {
+		t.Fatalf("fence.MaxPriorReplyInPrompt = %d, want 8000 — the bound is published as a per-attempt cost "+
 			"promise; moving it means moving DESIGN.md, ADR 0020 §3 and the CHANGELOG with it",
-			maxPriorReplyInPrompt)
+			fence.MaxPriorReplyInPrompt)
 	}
-	huge := strings.Repeat("x", maxPriorReplyInPrompt*3)
+	huge := strings.Repeat("x", fence.MaxPriorReplyInPrompt*3)
 	g := mustGraph(t, `
 name: retry-bound-bytes
 nodes:
@@ -187,9 +188,9 @@ nodes:
 		t.Fatal("expected the run to fail")
 	}
 	second := rec.prompts[1]
-	if len(second) > len("do the work")+len(retryFeedbackTemplate)+maxPriorReplyInPrompt+64 {
-		t.Errorf("retry prompt is %d bytes; the quoted reply is not bounded by maxPriorReplyInPrompt (%d)",
-			len(second), maxPriorReplyInPrompt)
+	if len(second) > len("do the work")+len(retryFeedbackTemplate)+fence.MaxPriorReplyInPrompt+64 {
+		t.Errorf("retry prompt is %d bytes; the quoted reply is not bounded by fence.MaxPriorReplyInPrompt (%d)",
+			len(second), fence.MaxPriorReplyInPrompt)
 	}
 	if !strings.Contains(second, "excerpted") {
 		// Bounded by len(second), not by 200: a mutation that empties the quote

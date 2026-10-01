@@ -5,6 +5,15 @@
 # Per-graph spans stay declared: `diff` (which diff this graph reviews) and
 # `focus` (the extra focus paragraph a graph adds — repo invariants, a
 # subsystem to stare at; bind "" when there is none).
+#
+# The prompt quotes {{ self.previous }} — this reviewer's own reply from the
+# previous feedback round — because a re-run reviewer is a fresh session: without
+# its earlier findings it judges the reworked diff as a stranger, finds new nits
+# every round, and a CLEAN-gated loop never converges (#288). It needs no
+# binding and names no id, so it is empty wherever the citing graph declares no
+# arc — every advisory lane. The engine fences and bounds the quote like a
+# retry's (DESIGN.md "Handoff"), and it sits BEFORE the verdict-format rule so
+# that rule, not the reviewer's own old output, is the last thing it reads.
 fragment: review-style
 description: read-only style/naming/simplicity review of a diff, with the test-double discipline check
 substitutions: [diff, focus]
@@ -17,6 +26,16 @@ node:
     every synchronization field is actually wired (no dead channels, no
     wall-clock fallback arms) and no assertion is satisfiable by a record or
     node simply being absent.
+
+    Your own reply from the previous review round of this diff follows — it
+    is empty on the first pass. If present, the diff was reworked to answer
+    it: first check each of those findings and re-raise only the ones still
+    open. Raise a NEW finding only where the rework changed the code, or
+    where missing it last round was a real mistake — not a nit you could
+    have raised then and did not. If every earlier finding is closed and
+    nothing new meets that bar, the verdict is CLEAN.
+    {{ self.previous }}
+
     Finish the review BEFORE you reply. Your FINAL reply IS the verdict: this
     node's turn ends the moment you reply, so a part of the diff you promise
     to look at afterwards is never looked at. Never end on "I'll continue" —

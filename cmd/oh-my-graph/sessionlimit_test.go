@@ -30,6 +30,12 @@ const limitCauseMsg = "You've hit your session limit · resets 5:20pm"
 // really carries no time.
 const codexLimitCauseMsg = "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Sep 13th, 2026 10:04 PM."
 
+// modelLimitCauseMsg is Claude's OTHER limit sentence, byte for byte as the
+// CLI printed it on run 20260921-071606 (#283): one model's allowance rather
+// than the account's session, and carrying no reset time at all — so it is the
+// one real sentence that drives the hint's no-time branch.
+const modelLimitCauseMsg = "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+
 // codexLimitStream is the same fixture as a stub `codex exec --json` transcript:
 // the thread.started the parser requires, then the turn.failed carrying the
 // limit sentence. Used to drive the REAL CLIRunner and the REAL matcher; it
@@ -77,8 +83,9 @@ func (r *limitRunner) count(prompt string) int {
 // story end to end: the first leg hits the limit, exits with the reset-time
 // hint, records the limited node nowhere; `resume --retry-failed` then runs
 // the unfinished nodes to completion, bracketed as its own leg on the stream.
-// It runs for both runtimes' limit wording: the operator story is the same
-// story, and the pause has to reach `--retry-failed` from either one.
+// It runs for both runtimes' limit wording, and for Claude's per-model
+// sentence: the operator story is the same story, and the pause has to reach
+// `--retry-failed` from any of them.
 func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -89,6 +96,9 @@ func TestRun_SessionLimitPausesThenRetryFailedFinishes(t *testing.T) {
 	}{
 		{"claude session limit", limitCauseMsg, "resets 5:20pm"},
 		{"codex usage limit", codexLimitCauseMsg, "resets Sep 13th, 2026 10:04 PM"},
+		// No reset time in this sentence, so the hint carries the CLI's own
+		// advice instead of one it invented (#283).
+		{"claude per-model limit", modelLimitCauseMsg, "Switch to another model"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
@@ -186,6 +196,100 @@ func TestMainExitCode_SessionLimitMapsToExitCode2(t *testing.T) {
 	}
 }
 
+// TestMainExitCode_ModelLimitPausesAndExits2 is #283 end to end through the
+// REAL `run` subcommand, the real CLIRunner and the real matcher, against a
+// stub `claude` that prints exactly the envelope that run's CLI printed —
+// the per-model sentence, is_error, and a total_cost_usd of 4.6529 — and
+// exits 1. Before #283 this envelope was an ordinary FAIL at exit 1; a
+// regression to that would fail the first assertion, so the test cannot pass
+// by the run breaking some other way.
+//
+// It pins, in order: the resumable exit code; the scheduler's pausing line on
+// the progress feed; the exit hint on stdout, byte for byte, carrying the
+// CLI's own advice and the exact resume command; and the accounting — the
+// printed ledger total is $0.0000, the node has no snapshot record, and the
+// stream carries node_started with the session id but no node_failed. The
+// spend the envelope reported is dropped from the ledger and the snapshot
+// (ADR 0009's no-record rule meeting a post-spend limit; pinned deliberately
+// in internal/schedule/sessionlimit_test.go), and what stays findable is the
+// session id on node_started and the transcript under ~/.claude/projects.
+func TestMainExitCode_ModelLimitPausesAndExits2(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub claude is a shebang script; this pins the unix path")
+	}
+	isolateRunHome(t)
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\ncat <<'JSON'\n" +
+		`{"session_id":"s-model-limit","result":"` + modelLimitCauseMsg + `","total_cost_usd":4.6529,"is_error":true}` +
+		"\nJSON\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub claude: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	graphPath := filepath.Join(dir, "limit.yaml")
+	if err := os.WriteFile(graphPath, []byte("name: limit\nnodes:\n  - { id: a, prompt: a }\n"), 0o644); err != nil {
+		t.Fatalf("write graph file: %v", err)
+	}
+
+	var code int
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr, _ = captureStderr(t, func() error {
+			code = mainExitCode([]string{"run", graphPath})
+			return nil
+		})
+	})
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 for a per-model limit pause\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "⏸ a  session limit reached — pausing run") {
+		t.Fatalf("the scheduler must announce the pause on the progress feed:\n%s", stderr)
+	}
+
+	runID := soleRunID(t)
+	// Before #283 the no-time branch printed "Session limit reached. Resume
+	// with:" and nothing about WHY — an operator who pasted the command
+	// re-launched into the same standing limit. The CLI's own sentence now
+	// rides the first line, untouched.
+	wantHint := "\nSession limit reached: " + modelLimitCauseMsg + "\nResume with:\n  oh-my-graph resume " + runID + " --retry-failed\n"
+	if !strings.Contains(stdout, wantHint) {
+		t.Fatalf("the exit hint must read exactly %q:\n%s", wantHint, stdout)
+	}
+	if strings.Contains(stdout, "resets") {
+		t.Fatalf("this sentence names no reset time; the hint must not invent one:\n%s", stdout)
+	}
+
+	// The accounting, as the operator sees it and as resume reads it.
+	if !strings.Contains(stdout, "TOTAL COST: $0.0000\n") || strings.Contains(stdout, "4.6529") {
+		t.Fatalf("the ledger must not carry the limited node's 4.6529 — it has no row:\n%s", stdout)
+	}
+	if _, ok := loadSnapshot(t, runID).Nodes["a"]; ok {
+		t.Fatal("the limited node must have no snapshot record — resume must see it as never run")
+	}
+	events := readRunEvents(t, runID)
+	if eventSeen(events, runfeed.EventNodeFailed, "a") {
+		t.Error("the limited node must never appear as node_failed on the stream")
+	}
+	started := false
+	for _, e := range events {
+		if e.Type == runfeed.EventNodeStarted && e.NodeID == "a" {
+			started = true
+			if e.SessionID == "" {
+				t.Error("node_started must carry the session id — it is the only pointer left to the spend")
+			}
+		}
+	}
+	if !started {
+		t.Fatal("node_started for a was never emitted")
+	}
+	last := events[len(events)-1]
+	if last.Type != runfeed.EventRunFinished || last.Outcome != runfeed.OutcomePaused {
+		t.Fatalf("the leg must close with outcome paused, got %+v", last)
+	}
+}
+
 // TestMainExitCode_CodexUsageLimitMapsToTheSameExitCode2 is the Codex mirror,
 // and the one test that runs the whole chain the gate change opened: the real
 // `--runtime codex run`, the real CLIRunner, the codex protocol's own decoding
@@ -237,6 +341,17 @@ func TestPrintPauseHint_SessionLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "oh-my-graph resume run-9 --retry-failed") {
 		t.Fatalf("the hint must still carry the exact resume command:\n%s", out)
+	}
+
+	// Claude's per-model sentence is the real cause that carries no time. The
+	// no-time branch prints it whole on the first line — the only guidance the
+	// operator gets, since "Switch to another model" is the CLI's own advice
+	// and this hint offers no wait — and the with-time branch is untouched.
+	// Pinned byte for byte (#283).
+	buf.Reset()
+	printPauseHint(&buf, "run-9", &schedule.LimitPausedError{NodeIDs: []string{"a"}, Cause: modelLimitCauseMsg}, coordinator.VerifyCommand{})
+	if want := "\nSession limit reached: " + modelLimitCauseMsg + "\nResume with:\n  oh-my-graph resume run-9 --retry-failed\n"; buf.String() != want {
+		t.Fatalf("the no-time hint must carry the CLI's sentence verbatim and nothing invented:\n got %q\nwant %q", buf.String(), want)
 	}
 
 	// The Codex cause takes the FIRST branch, and its time is carried as prose

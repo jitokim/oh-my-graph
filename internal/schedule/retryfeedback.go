@@ -35,40 +35,30 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/fence"
 )
 
-const (
-	// priorAttemptsInPrompt is how many earlier attempts one retry prompt may
-	// carry: exactly the last one.
-	//
-	// The alternative — appending each attempt to the one before — makes a
-	// node's quoted material triangular in the attempt index (k attempts carry
-	// k(k+1)/2 replies) where this is flat (k). At the cap below and
-	// retry: {max: 3}, that is ~80 KB of quoted model output across a node's
-	// attempts against ~32 KB, paid on every leg, forever. Retry exists to
-	// absorb a failure cheaply; a retry policy whose cost grows quadratically in
-	// its own bound is not that.
-	//
-	// It also loses nothing worth carrying. Attempt N-1 is the one the check
-	// actually rejected last and the one that already had N-2 in front of it;
-	// older attempts are the model's superseded drafts, and each extra fenced
-	// block is one more untrusted region a reader has to keep straight — the
-	// fence's guarantee is per block, so more blocks is more room to be confused
-	// by, not less.
-	priorAttemptsInPrompt = 1
-
-	// maxPriorReplyInPrompt bounds the quoted reply itself, in bytes. A reply is
-	// model output with no length of its own: failed/<node-id>.out already caps
-	// what reaches DISK at 256 KiB, which is the right order for a file a human
-	// reads once, and the wrong order entirely for text re-sent on every retry
-	// attempt of every leg. This is the prompt's own bound — roughly 2k tokens,
-	// four times what the assessor allows one artifact (maxAssessArtifactExcerpt)
-	// because a retry quotes exactly one thing where an assessment quotes the
-	// whole run. The cut keeps head and tail and says so, so the node is never
-	// handed a truncated reply as though it were whole.
-	maxPriorReplyInPrompt = 8000
-)
+// priorAttemptsInPrompt is how many earlier attempts one retry prompt may
+// carry: exactly the last one.
+//
+// The alternative — appending each attempt to the one before — makes a
+// node's quoted material triangular in the attempt index (k attempts carry
+// k(k+1)/2 replies) where this is flat (k). At fence.MaxPriorReplyInPrompt
+// and retry: {max: 3}, that is ~80 KB of quoted model output across a node's
+// attempts against ~32 KB, paid on every leg, forever. Retry exists to absorb
+// a failure cheaply; a retry policy whose cost grows quadratically in its own
+// bound is not that.
+//
+// It also loses nothing worth carrying. Attempt N-1 is the one the check
+// actually rejected last and the one that already had N-2 in front of it;
+// older attempts are the model's superseded drafts, and each extra fenced
+// block is one more untrusted region a reader has to keep straight — the
+// fence's guarantee is per block, so more blocks is more room to be confused
+// by, not less.
+const priorAttemptsInPrompt = 1
 
 // retryPrompt returns base with the previous attempt's reply appended as fenced
-// data, ready to be the next attempt's prompt. An empty or all-whitespace reply
+// data, ready to be the next attempt's prompt. The reply is cut at
+// fence.MaxPriorReplyInPrompt, the one bound shared with {{ self.previous }}'s
+// quote of a feedback re-run's own previous-round reply (internal/handoff):
+// head and tail kept, and the cut announced. An empty or all-whitespace reply
 // appends nothing and returns base unchanged: the file's-existence rule applies
 // here too — quoting an empty block would assert the node said something when it
 // said nothing.
@@ -85,7 +75,7 @@ func retryPrompt(base, priorReply string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return base + fmt.Sprintf(retryFeedbackTemplate, nonce, fence.Excerpt(priorReply, maxPriorReplyInPrompt)), nil
+	return base + fmt.Sprintf(retryFeedbackTemplate, nonce, fence.Excerpt(priorReply, fence.MaxPriorReplyInPrompt)), nil
 }
 
 // RetryQuoteHeader is the seam between a node's own prompt and everything this

@@ -485,7 +485,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// (so max − k rounds remain and events/snapshot records stamp the right
 	// round), and the declarer's persisted feedback payload is re-read so the
 	// re-run cannot silently run without it (a failure to re-read is fatal
-	// for the same reason).
+	// for the same reason), as is every body node's archived previous-round
+	// reply.
 	nodeRounds := make(map[string]int)
 	superseded := make(map[string]bool)
 	for _, n := range g.Nodes {
@@ -500,6 +501,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 			return fmt.Errorf("resume run %q mid-loop: %w", runID, err)
 		}
 		for _, member := range g.FeedbackBody(n.ID) {
+			// Each member's own reply from the round the marker closed — its
+			// {{ self.previous }} (#288) — is re-read for the same reason.
+			if err := h.SeedPrevious(member); err != nil {
+				return fmt.Errorf("resume run %q mid-loop: %w", runID, err)
+			}
 			nodeRounds[member] = marker.Round
 			if rec, carried := records[member]; carried && rec.Round < marker.Round {
 				superseded[member] = true

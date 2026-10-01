@@ -33,6 +33,27 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   than resuming without them. `--plan-only` says the conventions are not in
   the saved graph. `run`, `chat` and `resume` register no such flag.
   ([ADR 0041](docs/adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md), #282)
+- **`{{ self.previous }}` gives a feedback re-run its own previous-round
+  reply, and the shipped review fragments use it.** A CLEAN-gated review loop
+  did not converge: each round's reviewer was a fresh session that could not
+  see its own earlier findings, so it re-reviewed the reworked diff as a
+  stranger and found a new minor nit every round until `max` ran out. The new
+  token resolves to the interpolating node's own reply from the round a fired
+  arc just closed — empty on the first round, and on any node outside a loop,
+  so a fragment can quote it with no id and no binding. The reply is inlined
+  the way a retry quotes a rejected attempt: fenced by markers carrying a
+  per-call nonce and cut head-and-tail at 8000 bytes, the retry quote's bound
+  (now one shared constant, `fence.MaxPriorReplyInPrompt`); an empty reply
+  inlines nothing. The engine archives every body node's reply when an arc
+  fires (`<run-dir>/previous/<id>.out`, internal, re-seeded on a mid-loop
+  resume). `review-style` and `review-security` now quote it, ahead of the
+  verdict-format rule so that rule is still the last thing the reviewer reads:
+  a re-run reviewer first checks which of its findings were closed and raises
+  a new one only where the rework changed the code or missing it was a real
+  mistake. DESIGN.md "Verdict patterns" now states that a CLEAN-only verdict
+  with a fresh-session reviewer has no convergence guarantee regardless of
+  `max`; a three-valued verdict (minor findings pass) is left as follow-up.
+  ([#288](https://github.com/jitokim/oh-my-graph/issues/288))
 - **`run --auto-approve <gate-id>` pre-registers approval for the named gates
   before the run starts.** Repeatable, one exact gate node id per use; every
   gate not named still pauses the run with exit 2, to be answered by `resume
@@ -276,6 +297,64 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   time" — but a plan refused for that class never reaches run time, and under
   `auto` nobody is reading the plan screen either, so the drop was cheap only
   for a reader who was not there.
+
+- **A Claude per-model usage limit is now a pause, not a failure — and a limit
+  that lands after the node has spent is named for what it costs.** ADR 0009
+  matched one Claude sentence, `hit your session limit`. Claude has a second
+  limit condition with its own sentence: one model's allowance runs out while
+  the account's session is fine, and the same `is_error` envelope reads
+  `You've reached your Fable limit. Switch to another model, …`. The matcher
+  did not know it, so the pause never fired and the run took the degraded path
+  ADR 0009's mitigation 2 predicted — for the first time on Claude, and not for
+  free. Run `20260921-071606.434336000-1` (2026-09-21,
+  [#283](https://github.com/jitokim/oh-my-graph/issues/283)) reported, before:
+
+  ```text
+  ✗ lane-edit-dev  FAILED: node "lane-edit-dev" failed success_check exit_zero: exit code 1: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+  ```
+
+  with a ledger row `FAIL 4.6529`, exit code 1, no resume hint, and halt-on-fail
+  cancelling its in-flight siblings. After:
+
+  ```text
+  ⏸ lane-edit-dev  session limit reached — pausing run
+
+  Session limit reached: You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+  Resume with:
+    oh-my-graph resume 20260921-071606.434336000-1 --retry-failed
+  ```
+
+  exit code 2, in-flight siblings drained, and the node given no ledger row,
+  snapshot record or terminal node event (its `node_started` event and
+  transcript remain — see below).
+
+  The pattern added is `(?i)reached your .{1,40}? limit\W+switch to another
+  model` — a SECOND Claude-side pattern in `internal/runner/sessionlimit.go`,
+  deliberately not folded into the session-limit one: two sentences for two
+  conditions, each pinned by its own narrow test against the real message, so a
+  rewording of one cannot silently widen or narrow the other (the same reason
+  the Codex pattern stands apart). The model name is a bounded wildcard, like
+  Codex's plan name; the URL and the credits clause are left out. The trailing
+  "Switch to another model" clause is KEPT on purpose: on a non-zero exit the
+  cause the matcher sees can be the node's own stderr tail, and a lazier
+  `reached your … limit` would pause a healthy run whose node merely quoted the
+  wording and then failed for its own reason — that false positive is pinned as
+  a negative. This sentence names no reset time, so the hint's no-time branch
+  now prints the CLI's own sentence instead of a bare "Resume with": the old
+  line dropped the only actionable advice and sent the operator straight back
+  into the same standing limit.
+
+  Stated plainly: this fix DROPS the 4.6529 from the ledger, `state.json` and
+  every node event. ADR 0009's no-record rule was written against a limit that
+  fires before the prompt runs; this one fired after the prompt had run and
+  spent, and the degraded FAIL path was the one that recorded the money. What
+  stays observable is the session id on that node's `node_started` event and
+  the transcript under `~/.claude/projects`; nothing sums it, and
+  `resume --retry-failed` re-launches the node from scratch and pays again. The
+  drop is pinned by `TestScheduler_ModelLimitAfterSpendPausesAndDropsItsCost`
+  so a change to the accounting is deliberate; whether a post-spend limit needs
+  its own accounting note is recorded for the operator in ADR 0009's
+  2026-09-21 amendment, not decided here.
 
 ### Documented
 

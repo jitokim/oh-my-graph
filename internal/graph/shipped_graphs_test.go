@@ -550,6 +550,53 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 	}
 }
 
+// TestAGatingReviewSeesItsOwnPreviousRound pins #288's fix where it bites: a
+// review fragment that gates behind a feedback arc re-runs as a fresh session,
+// and unless its prompt carries {{ self.previous }} it cannot tell its earlier
+// findings were closed — it reviews the reworked diff as a stranger, finds new
+// nits, and a CLEAN-only gate never converges however large `max` is. The
+// token lives in the fragments, so this asserts it survives resolution into
+// every such node rather than grepping the fragment files — and, in every
+// shipped review prompt that quotes it, that the quote precedes the
+// verdict-format rule.
+func TestAGatingReviewSeesItsOwnPreviousRound(t *testing.T) {
+	const verdictFormatRule = "START the reply with exactly one of"
+	looped := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		for _, res := range loaded.Resolutions {
+			if !strings.HasPrefix(res.Fragment, "review-") || len(res.Spliced) > 0 {
+				continue // multi-node: see TestAGatingReviewCarriesItsRecoveryArc's second limit
+			}
+			node, ok := loaded.Graph.byID[res.NodeID]
+			if !ok {
+				continue
+			}
+			// Wherever the quote is, it must come BEFORE the verdict-format
+			// rule: the reviewer's own earlier FINDINGS are model output, and a
+			// prompt that ends on them no longer ends on the rule the gate's
+			// result_matches enforces.
+			quote := strings.Index(node.Prompt, "{{ self.previous }}")
+			if format := strings.Index(node.Prompt, verdictFormatRule); quote >= 0 && (format < 0 || quote > format) {
+				t.Errorf("%s: review node %q quotes {{ self.previous }} at byte %d, after the verdict-format rule (at %d) — the rule must be the last thing the reviewer reads", name, res.NodeID, quote, format)
+			}
+			if node.Feedback == nil {
+				continue
+			}
+			looped++
+			if quote < 0 {
+				t.Errorf("%s: review node %q re-runs under a feedback arc but its prompt never quotes {{ self.previous }} — each round's reviewer is a stranger to its own findings (#288)", name, res.NodeID)
+			}
+		}
+	}
+	if looped == 0 {
+		t.Error("no shipped graph re-runs a review fragment under a feedback arc any more — this test now asserts nothing")
+	}
+}
+
 // TestNestingHasAShippedAdopter is ADR 0029's own falsification condition,
 // turned into a test rather than left as a paragraph. ADR 0027 shipped the
 // multi-node fragment with no adopter, and the number that was supposed to

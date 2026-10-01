@@ -1438,11 +1438,11 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 // attach the node's tool policy. It takes the run context because acquiring a
 // worktree may spawn git (behind the injected worktree.Provider).
 func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
-	prompt, err := h.Interpolate(node.Prompt)
+	prompt, err := h.InterpolateFor(node.ID, node.Prompt)
 	if err != nil {
 		return runner.NodeInvocation{}, err
 	}
-	cwd, err := h.Interpolate(node.Cwd)
+	cwd, err := h.InterpolateFor(node.ID, node.Cwd)
 	if err != nil {
 		return runner.NodeInvocation{}, err
 	}
@@ -1542,7 +1542,7 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 		return nil
 	}
 
-	request, err := resolveVerification(*verification, h, nodeCwd)
+	request, err := resolveVerification(node.ID, *verification, h, nodeCwd)
 	if err != nil {
 		return verifyFault(node.ID, err.Error())
 	}
@@ -1566,14 +1566,14 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 // resolveVerification turns a declared verification into a runnable request:
 // command and cwd interpolate like a prompt, and an undeclared cwd inherits the
 // node's own.
-func resolveVerification(v graph.Verification, h *handoff.Handoff, nodeCwd string) (verify.Request, error) {
-	command, err := h.Interpolate(v.Command)
+func resolveVerification(nodeID string, v graph.Verification, h *handoff.Handoff, nodeCwd string) (verify.Request, error) {
+	command, err := h.InterpolateFor(nodeID, v.Command)
 	if err != nil {
 		return verify.Request{}, fmt.Errorf("could not resolve command %q: %w", v.Command, err)
 	}
 	cwd := nodeCwd
 	if v.Cwd != "" {
-		if cwd, err = h.Interpolate(v.Cwd); err != nil {
+		if cwd, err = h.InterpolateFor(nodeID, v.Cwd); err != nil {
 			return verify.Request{}, fmt.Errorf("could not resolve cwd %q: %w", v.Cwd, err)
 		}
 	}
