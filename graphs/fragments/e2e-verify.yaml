@@ -35,8 +35,8 @@ node:
   prompt: |
     Continue the work — or, on a retried attempt, start from the branch's
     committed state — and {{ with.checks }}
-    The REQUIRED check is the supplied one above — the engine re-runs that
-    checks command itself as evidence — so run it FIRST. A stress run
+    The REQUIRED check is `{{ with.verify_command }}` — the engine re-runs
+    that command itself as evidence — so run it FIRST. A stress run
     (repeating tests under the race detector) is OPTIONAL extra evidence
     and never replaces it. This node is killed at 20 minutes unless its
     graph declares another `timeout:`, and a node killed by its own

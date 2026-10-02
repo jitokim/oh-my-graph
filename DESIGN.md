@@ -1045,16 +1045,18 @@ A node that sizes its own work has to know that bound, and today it learns it
 only from its prompt (#292): an `e2e-verify` gate copied `go test -race
 -count=300` out of its bound checks and was killed at 20 minutes with no
 verdict. The fragment now states the runner's default in its prompt, caps
-the optional stress step well inside it, and names the supplied checks command
-as the required check; `TestE2EVerifyStressFitsItsTimeout` holds that quoted
+the optional stress step well inside it, and names the bound `verify_command`
+— the command the engine runs as evidence — as the required check; `TestE2EVerifyStressFitsItsTimeout` holds that quoted
 number against every citer's effective timeout. That is correct only while
 the number is restated by hand. The **generic option — the engine tells a node
 its remaining timeout** (an interpolation beside `{{ self.previous }}`, or a
 deadline line the runner derives from the node's own `context.WithTimeout`,
 so the number a prompt budgets against is the bound actually in force) — is **proposed
 and deferred**: it is an engine feature, and the prompt-side bound closes the
-reported failure. Revisit when a citer of `e2e-verify` declares a `timeout:`
-of its own, or a second shipped prompt has to quote one.
+reported failure. `localrun` (adr-driven-dev) also quotes a timeout, but its
+own declared `timeout:`, which its test reads from the graph rather than
+restating. Revisit when a citer of `e2e-verify` declares a `timeout:` of its
+own, or another shipped prompt has to quote the runner's undeclared default.
 
 A **turn-denominated budget** (`budget_turns:` → `claude -p --max-turns N`) was
 proposed as a supplement to `budget_usd` — dollars are a hard cost ceiling but

@@ -15,8 +15,8 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 - **`e2e-verify`'s optional stress step now has to fit inside the node's
   timeout.** An e2e node once picked `go test -race -count=300` on its own,
   ran past its 20-minute timeout and was killed with no verdict, though the
-  code was fine. The fragment now says the supplied checks command is the
-  required evidence and runs first, caps stress at a quarter of the timeout
+  code was fine. The fragment now names the bound `verify_command` — the
+  command the engine runs as evidence — as the required check that runs first, caps stress at a quarter of the timeout
   (5 of the default 20 minutes) in one `go test` call bounded by
   `-timeout 10m`, treats a named repetition count as a ceiling, and lets the
   node skip stress when the required check already used the time.

@@ -1354,7 +1354,15 @@ func TestE2EVerifyStressFitsItsTimeout(t *testing.T) {
 			if !strings.Contains(flowed, stated) {
 				t.Errorf("%s: node %q never says %q — a node that cannot see its bound cannot size a stress run inside it", name, n.ID, stated)
 			}
-			for _, phrase := range []string{"REQUIRED check is the supplied one", "OPTIONAL", "CEILING, not a target", "at most a quarter"} {
+			// The required check is the command the ENGINE runs as evidence, not
+			// the `checks` prose: self-dev's checks bundle `make local` with
+			// `-count=300` stress, and only the former is the verdict.
+			if n.SuccessCheck.Verify == nil {
+				t.Errorf("%s: node %q cites %s but has no success_check.verify — there is no engine-run command for its prompt to name as the required check", name, n.ID, coldSafeGateFragment)
+			} else if want := "REQUIRED check is `" + strings.Join(strings.Fields(n.SuccessCheck.Verify.Command), " ") + "`"; !strings.Contains(flowed, want) {
+				t.Errorf("%s: node %q never says %q — the prompt must name the command the engine verifies with as the required check, or a stress run asked for in `checks` can take its place", name, n.ID, want)
+			}
+			for _, phrase := range []string{"OPTIONAL", "CEILING, not a target", "at most a quarter"} {
 				if !strings.Contains(flowed, phrase) {
 					t.Errorf("%s: node %q lost %q from %s's stress bound — the checks it is handed still say `-count=300`, and nothing else in the prompt tells it that count is optional and capped", name, n.ID, phrase, coldSafeGateFragment)
 				}
@@ -1372,6 +1380,9 @@ func TestE2EVerifyStressFitsItsTimeout(t *testing.T) {
 				}
 				if shown <= stress || shown >= runnerDefaultTimeout {
 					t.Errorf("%s: node %q works `-timeout %s`, outside the window (%s, %s) — at or below the stress budget it kills a run the node budgeted for; at or above the node's bound it never fires before the node is killed", name, n.ID, shown, stress, runnerDefaultTimeout)
+				}
+				if ceiling := runnerDefaultTimeout / 2; shown > ceiling {
+					t.Errorf("%s: node %q works `-timeout %s`, above the %s ceiling — the prompt promises a cap \"well below the node's own bound\", and one that fires moments before the node is killed leaves no time for a verdict", name, n.ID, shown, ceiling)
 				}
 			}
 		}
