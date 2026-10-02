@@ -13,6 +13,10 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
+// maxEvidenceRunes mirrors internal/schedule's bound on the verify output a
+// feedback re-run is handed (it keeps the tail); move both together.
+const maxEvidenceRunes = 4000
+
 // TestSelfDevVerdictCommandJudgesTheReviewArtifacts runs graphs/self-dev.yaml's
 // review-verdict `verify` command — the engine's own reading of the two review
 // artifacts, which is what keeps a model's CLEAN from being taken on its word
@@ -36,6 +40,11 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 
 	const securityFindings = "**FINDINGS:**\n\n- verify.command splices a model's reply into sh -c\n"
 	const styleFindings = "FINDINGS:\n- the helper name says nothing about what it returns\n"
+	// Long enough that the two reviews together overflow the engine's
+	// evidence bound — the case where a plain `cat` of both lost the head of
+	// the first one, and with it the worst finding.
+	longSecurity := securityFindings + strings.Repeat("- one more security finding, lower down the list\n", 120)
+	longStyle := styleFindings + strings.Repeat("- one more style nit, lower down the list\n", 120)
 	cases := []struct {
 		name      string
 		security  string
@@ -55,6 +64,8 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean only mentioned, not the verdict", security: "Still reviewing; CLEAN so far.\n", style: "CLEAN\n", wantExit: 1,
 			wantOut: []string{"Still reviewing"}},
 		{name: "empty review", security: "", style: "CLEAN\n", wantExit: 1},
+		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
+			wantOut: []string{"splices a model's reply", "helper name"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +93,12 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 			}
 			if result.ExitCode != tc.wantExit {
 				t.Errorf("exit %d, want %d; output:\n%s", result.ExitCode, tc.wantExit, result.Output)
+			}
+			// The engine hands dev only the tail of this output, so
+			// anything within the bound reaches dev whole and every wantOut
+			// below is a finding dev actually reads.
+			if n := len([]rune(strings.TrimSpace(result.Output))); n > maxEvidenceRunes {
+				t.Errorf("output is %d runes, over the engine's %d-rune evidence bound — the head of the first review, its worst finding, would be cut before dev reads it", n, maxEvidenceRunes)
 			}
 			for _, want := range tc.wantOut {
 				if !strings.Contains(result.Output, want) {
