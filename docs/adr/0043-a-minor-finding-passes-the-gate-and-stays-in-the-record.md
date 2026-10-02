@@ -365,9 +365,9 @@ It is the follow-up if §7's second clause fires.
 every `^…CLEAN\b` gate and every `grep '^CLEAN'` written against the old
 grammar passes it with no edit. The most compatible option, and rejected for
 that reason: it makes every user's gate **more lenient without their
-consent**. An author who narrowed to `CLEAN` chose "nothing worth changing"; this
-spelling would silently start passing work with items in it, and `CLEAN` would
-mean two things in every artifact, PR body and `grep` that reads it.
+consent**. An author who narrowed to `CLEAN` chose "nothing worth changing";
+this spelling would silently start passing work with items in it, and `CLEAN`
+would mean two things in every artifact, PR body and `grep` that reads it.
 
 This ADR does **not** keep every old gate exactly as strict as it was. §6 rows
 (ii) and (v) are silently stricter, because a borderline item that used to pass
@@ -379,8 +379,8 @@ items only, and gives them a one-line migration that the changelog leads with
 (§4 step 8). A gate that has gone stricter costs rounds and spend. Nothing in
 the run explains why, but the reply that fired it starts with `MINOR:` in
 `feedback/` and `failed/` (`docs/LIMITATIONS.md:141-147`). A gate that has
-gone more lenient costs a merged item that nobody was shown as blocking. Of the two, the stricter drift is the
-one an author can see and undo.
+gone more lenient costs a merged item that nobody was shown as blocking. Of
+the two, the stricter drift is the one an author can see and undo.
 
 ### 3.3 Count findings instead of grading them
 

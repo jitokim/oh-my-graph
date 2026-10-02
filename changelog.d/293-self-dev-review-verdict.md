@@ -4,14 +4,16 @@
   Its two parallel reviews passed on `CLEAN` and on `FINDINGS:` alike, and
   `pr` depended on them directly, so a finding from either reviewer was
   quoted into a draft PR instead of being fixed. The reviews now fan in to a
-  new `review-verdict` node. It accepts only `CLEAN`, and it declares
+  new `review-verdict` node. It fails on a blocking finding (it passes
+  `CLEAN`, and `MINOR:` since
+  [#288](https://github.com/jitokim/oh-my-graph/issues/288)), and it declares
   `feedback: { rerun: dev, max: 2 }`, so a finding re-runs
   dev → e2e → both reviews with the findings quoted in dev's prompt. Only an
   exhausted loop fails the run, and then no PR opens. When the verdict
   replies `FINDINGS:`, dev's payload is that reply, which carries the
-  findings verbatim. A `CLEAN` is not taken on the model's word: its `verify`
-  reads both review artifacts itself, and if either did not come back clean
-  it fails the verdict and prints the head of each open review, which then
+  findings verbatim. A pass is not taken on the model's word: its `verify`
+  reads both review artifacts itself, and if either did not come back
+  `CLEAN` or `MINOR:` it fails the verdict and prints the head of each open review, which then
   becomes dev's payload instead. The
   reviews are inside the loop, so a re-run reviewer gets its own previous
   findings through `{{ self.previous }}`. The node has to sit at the fan-in
