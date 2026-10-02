@@ -61,7 +61,10 @@ var migratedTemplates = map[string]map[string][]string{
 		// the pre-migration one: back then the node reported in prose under a
 		// bare `{ exit_zero: true }`, so both fields diverge from the frozen
 		// file for the reason divergedSinceMigration records below.
-		"pr": {"prompt", "success_check.result_matches"},
+		// depends_on is #293's: `pr` now waits on `review-verdict` (see
+		// addedSinceMigration) instead of on the two reviews directly, so a
+		// FINDINGS: re-runs dev rather than reaching the PR.
+		"pr": {"prompt", "success_check.result_matches", "depends_on"},
 	},
 	"dev-review-pr.yaml": {
 		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
@@ -103,6 +106,36 @@ var divergedSinceMigration = map[string]map[string][]string{
 	},
 }
 
+// addedSinceMigration are whole nodes a migrated template has gained since
+// the migration — removed from the RESOLVED graph before the comparison, so
+// every node the migration did convert stays byte-frozen around them. A
+// listed node that is missing fails, like a mask naming a missing node.
+//
+// `review-verdict` is #293's gate: the fan-in node that narrows to CLEAN and
+// carries self-dev's `feedback:` arc back to dev. It is inline, not a fragment,
+// so it adds no resolution and leaves the mask-size derivation below intact.
+var addedSinceMigration = map[string][]string{
+	"self-dev.yaml": {"review-verdict"},
+}
+
+// dropAddedNodes removes exactly the named nodes from g, failing when one is
+// absent so the claim cannot be satisfied by the node never having been added.
+func dropAddedNodes(t *testing.T, g *Graph, ids []string) {
+	t.Helper()
+	for _, id := range ids {
+		kept := g.Nodes[:0:0]
+		for _, n := range g.Nodes {
+			if n.ID != id {
+				kept = append(kept, n)
+			}
+		}
+		if len(kept) == len(g.Nodes) {
+			t.Fatalf("addedSinceMigration names node %q, which the graph does not contain", id)
+		}
+		g.Nodes = kept
+	}
+}
+
 // maskConvergedFields zeroes exactly the converged fields on exactly the
 // named nodes — failing, not passing, when a named node is missing, so the
 // equivalence claim cannot be satisfied by a node's absence.
@@ -123,6 +156,8 @@ func maskConvergedFields(t *testing.T, g *Graph, masks map[string][]string) {
 					g.Nodes[i].AllowedTools = nil
 				case "budget_usd":
 					g.Nodes[i].BudgetUSD = 0
+				case "depends_on":
+					g.Nodes[i].DependsOn = nil
 				// Subfield-granular on purpose: the verdict pattern is the one
 				// part of success_check this project has had to change after the
 				// migration, and masking the whole struct would stop freezing
@@ -175,6 +210,9 @@ func TestMigratedTemplates_ByteIdenticalOutsideConvergedFields(t *testing.T) {
 			if diverged, ok := divergedSinceMigration[name]; ok {
 				maskConvergedFields(t, pre, diverged)
 				maskConvergedFields(t, post.Graph, diverged)
+			}
+			if added, ok := addedSinceMigration[name]; ok {
+				dropAddedNodes(t, post.Graph, added)
 			}
 			preJSON, err := json.MarshalIndent(pre, "", "  ")
 			if err != nil {

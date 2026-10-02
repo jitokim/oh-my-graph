@@ -190,8 +190,9 @@ session persistence **on**. Claude nodes remain ordinary sessions in
 
 Dogfooding here is not a demo: this repository is built by the tool it contains.
 Features, fixes, docs and releases are authored by its own graphs — a claude
-node implements on a branch, sibling nodes run the checks and the reviews, and a
-final node opens the draft PR. The templates in [`graphs/`](graphs/) are not
+node implements on a branch, sibling nodes run the checks and the reviews, a
+review finding sends the work back to the implementer, and a final node opens
+the draft PR. The templates in [`graphs/`](graphs/) are not
 samples; `self-dev.yaml`, `adr-driven-dev.yaml` and `apply-flags.yaml` are those
 pipelines. Don't take that on trust: the commit trailers that make it
 countable, the one-line audit command, and its denominator are in
