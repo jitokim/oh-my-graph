@@ -350,6 +350,53 @@ func TestChangelogGateExemptsTheReadme(t *testing.T) {
 	})
 }
 
+// TestChangelogGateRefusesAnEditThatBreaksAFragment is the M-status path: an
+// existing, well-formed fragment edited into a malformed one is judged whole at
+// HEAD and named, exactly as an added one is.
+func TestChangelogGateRefusesAnEditThatBreaksAFragment(t *testing.T) {
+	r := newScriptRepo(t)
+	r.write("changelog.d/304-x.md", fixedFragment)
+	r.commit("fragment")
+	r.branch()
+	r.write("changelog.d/304-x.md", fixedFragment+"\n### Added\n\n- **A novel second section.**\n")
+	r.commit("break it")
+	if status := r.git("diff", "--name-status", "main...HEAD"); !strings.HasPrefix(status, "M") {
+		t.Fatalf("test setup: want an M-status edit, got %q", status)
+	}
+	r.wantGate(1, "changelog.d/304-x.md", "exactly one heading")
+}
+
+// TestChangelogGateAReleasedHeadingEditIsNotACut: editing a released heading
+// (its date, a typo) re-adds a `## [` line for a version the base already had.
+// That is not a cut — it neither counts as the entry nor trips rule 2's exit 2
+// over the fragments that sit in changelog.d/ between releases. It is judged
+// like any other edit, so `no-changelog` (exit 1) or a fragment settles it.
+func TestChangelogGateAReleasedHeadingEditIsNotACut(t *testing.T) {
+	setup := func(t *testing.T) *scriptRepo {
+		r := newScriptRepo(t)
+		r.write("changelog.d/298-pending.md", fixedFragment)
+		r.commit("an entry waiting for the next release")
+		r.branch()
+		r.write("CHANGELOG.md", strings.Replace(baseChangelog, "## [v1.0.0] - 2026-01-01", "## [v1.0.0] - 2026-01-02", 1))
+		r.write("main.go", "package main\n")
+		return r
+	}
+	t.Run("alone", func(t *testing.T) {
+		r := setup(t)
+		r.commit("fix the release date")
+		stderr := r.wantGate(1, "nothing in this diff is a changelog entry")
+		if strings.Contains(stderr, "release section was cut") {
+			t.Errorf("a heading edit is not a cut:\n%s", stderr)
+		}
+	})
+	t.Run("beside a fragment", func(t *testing.T) {
+		r := setup(t)
+		r.write("changelog.d/310-date.md", "### Documented\n\n- **v1.0.0's date is corrected.**\n")
+		r.commit("fix the release date")
+		r.wantGate(0)
+	})
+}
+
 func TestChangelogGateDeletionIsNotAnEntry(t *testing.T) {
 	r := newScriptRepo(t)
 	r.write("changelog.d/304-x.md", fixedFragment)
@@ -527,6 +574,84 @@ func TestChangelogCollectGroupsAndOrders(t *testing.T) {
 	}
 }
 
+// TestChangelogCollectTakesACRLFFragment: a CRLF fragment with a leading blank
+// line is a fragment to the checker, so the extractor must read it the same
+// way — a "\r" line is blank, not a heading — or it is deleted unwritten. The
+// other fragment beside it is what kept the empty-section guard from catching
+// the drop.
+func TestChangelogCollectTakesACRLFFragment(t *testing.T) {
+	r := newScriptRepo(t)
+	r.write("changelog.d/1-a.md", "\r\n### Fixed\r\n\r\n- **Fix 1**, written\r\n  on Windows.\r\n\r\n")
+	r.write("changelog.d/2-b.md", addedFragment)
+	r.commit("fragments")
+	if code, out, stderr := r.run("changelog-collect.sh", "v9.9.9", "2026-10-02"); code != 0 {
+		t.Fatalf("collect: exit %d\n%s%s", code, out, stderr)
+	}
+	want := strings.Replace(baseChangelog, "## [v1.0.0] - 2026-01-01",
+		"## [v9.9.9] - 2026-10-02\n\n### Added\n\n- **A feature.**\n\n### Fixed\n\n- **Fix 1**, written\n  on Windows.\n\n## [v1.0.0] - 2026-01-01", 1)
+	if got := r.read("CHANGELOG.md"); got != want {
+		t.Fatalf("CHANGELOG.md:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// TestChangelogCollectReadsOnlyWhatGitTracks: a .DS_Store, an editor's swap
+// file and a fragment nobody committed are not entries. The collector neither
+// refuses the release over them nor collects (and deletes) them.
+func TestChangelogCollectReadsOnlyWhatGitTracks(t *testing.T) {
+	r := newScriptRepo(t)
+	r.write(".gitignore", ".DS_Store\n")
+	r.write("changelog.d/304-x.md", fixedFragment)
+	r.commit("fragment")
+	r.write("changelog.d/.DS_Store", "\x00\x01binary")
+	r.write("changelog.d/.304-x.md.swp", "swap")
+	r.write("changelog.d/304-x.md~", "backup")
+	r.write("changelog.d/999-stray.md", "### Added\n\n- **Never committed.**\n")
+
+	code, out, stderr := r.run("changelog-collect.sh", "v9.9.9", "2026-10-02")
+	if code != 0 {
+		t.Fatalf("collect: exit %d\n%s%s", code, out, stderr)
+	}
+	if !strings.Contains(out, "collected 1 fragment(s)") {
+		t.Errorf("want exactly the tracked fragment collected:\n%s", out)
+	}
+	got := r.read("CHANGELOG.md")
+	if !strings.Contains(got, "- **A fix.**") || strings.Contains(got, "Never committed") {
+		t.Errorf("want the tracked fragment and not the stray one in CHANGELOG.md:\n%s", got)
+	}
+	for _, f := range []string{".DS_Store", ".304-x.md.swp", "304-x.md~", "999-stray.md"} {
+		if !r.exists("changelog.d/" + f) {
+			t.Errorf("changelog.d/%s is not tracked, and was deleted", f)
+		}
+	}
+	if r.exists("changelog.d/304-x.md") {
+		t.Error("changelog.d/304-x.md was collected but not deleted")
+	}
+}
+
+// TestChangelogCollectRefusesWhenTheExtractorDisagrees breaks the checker on
+// purpose — it passes everything — so a fragment the extractor cannot place
+// reaches the postcondition. It must refuse there, with nothing written and
+// nothing deleted, rather than delete an entry it never wrote.
+func TestChangelogCollectRefusesWhenTheExtractorDisagrees(t *testing.T) {
+	r := newScriptRepo(t)
+	r.write("scripts/changelog-fragment-check.sh", "exit 0\n")
+	r.write("changelog.d/304-ok.md", fixedFragment)
+	r.write("changelog.d/305-misc.md", "### Misc\n\n- **No such section.**\n")
+	r.commit("a checker that disagrees")
+	before := r.read("CHANGELOG.md")
+
+	code, _, stderr := r.run("changelog-collect.sh", "v9.9.9", "2026-10-02")
+	if code != 1 || !strings.Contains(stderr, "changelog.d/305-misc.md") || strings.Contains(stderr, "changelog.d/304-ok.md") {
+		t.Fatalf("exit %d, stderr:\n%s\nwant 1 naming 305-misc.md alone", code, stderr)
+	}
+	if r.read("CHANGELOG.md") != before {
+		t.Error("CHANGELOG.md changed on a refusal")
+	}
+	if status := r.git("status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Errorf("the tree changed on a refusal:\n%s", status)
+	}
+}
+
 func TestChangelogCollectWhenUnreleasedIsTheLastSection(t *testing.T) {
 	r := newScriptRepo(t)
 	r.write("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n[Unreleased]: https://example.com/compare/HEAD\n")
@@ -562,6 +687,13 @@ func TestChangelogCollectRefusalsWriteNothing(t *testing.T) {
 		},
 		"no fragments": {
 			args: []string{"v9.9.9", "2026-10-02"}, code: 1, says: "no fragments",
+		},
+		"no Unreleased heading": {
+			files: map[string]string{
+				"changelog.d/304-ok.md": fixedFragment,
+				"CHANGELOG.md":          strings.Replace(baseChangelog, "## [Unreleased]\n\nUnreleased entries live in changelog.d/ until a release collects them.\n\n", "", 1),
+			},
+			args: []string{"v9.9.9", "2026-10-02"}, code: 1, says: "no ## [Unreleased] heading",
 		},
 		"the version is already there": {
 			files: map[string]string{"changelog.d/304-ok.md": fixedFragment},

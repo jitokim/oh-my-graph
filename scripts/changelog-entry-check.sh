@@ -18,8 +18,11 @@
 #      reindented bullet or a renamed fragment buys nothing. Diffs are read with
 #      rename detection OFF: a fragment renamed and edited in one PR is then a
 #      deletion plus an addition, and the new path is judged whole.
-#   2. A release cut is still the entry: an added `## [` line in CHANGELOG.md.
-#      But a cut is REFUSED (exit 2) while changelog.d/ at HEAD still holds a
+#   2. A release cut is still the entry: an added `## [vX.Y.Z]` heading in
+#      CHANGELOG.md for a version the base did not have. An edited released
+#      heading (its date, a typo) names a version the base had, so it is not a
+#      cut and is judged by rules 1 and 4 like any other edit.
+#      A cut is REFUSED (exit 2) while changelog.d/ at HEAD still holds a
 #      fragment. HEAD's tree, not the diff, on purpose: a fragment merged to
 #      main after the collector ran reaches the release PR through
 #      Update branch, which moves the merge-base past it, so it is never in
@@ -74,7 +77,22 @@ added=$(git diff --unified=0 "$base"...HEAD -- "$file" | awk '
 ')
 
 # --- rule 2: a release cut ----------------------------------------------------
-if printf '%s\n' "$added" | grep -q '^[0-9][0-9]*	## \['; then
+# A cut is an added `## [vX.Y.Z]` heading whose version CHANGELOG.md at the base
+# did not already have. Editing a released heading — a date, a typo — re-adds a
+# version that is already there: that is not a cut, and falls through to rules
+# 1 and 4 like any other edit, where `no-changelog` can excuse it.
+git show "$base:$file" 2>/dev/null | awk '
+	/^## \[v?[0-9]+\.[0-9]+\.[0-9]+\]/ { v = $0; sub(/^## \[/, "", v); sub(/\].*/, "", v); print v }
+' >"$tmp/released"
+cut=$(printf '%s\n' "$added" | awk -v released="$tmp/released" '
+	BEGIN { while ((getline v < released) > 0) old[v] = 1 }
+	{ line = $0; sub(/^[0-9]+\t/, "", line) }
+	line ~ /^## \[v?[0-9]+\.[0-9]+\.[0-9]+\]/ {
+		v = line; sub(/^## \[/, "", v); sub(/\].*/, "", v)
+		if (!(v in old)) print v
+	}
+')
+if [ -n "$cut" ]; then
 	left=$(git ls-tree -r --name-only HEAD -- "$dir/" | grep -vxF "$dir/README.md" || true)
 	if [ -n "$left" ]; then
 		echo "::error::a release section was cut, but $dir/ at HEAD still holds:" >&2
@@ -84,7 +102,8 @@ if printf '%s\n' "$added" | grep -q '^[0-9][0-9]*	## \['; then
 		echo "'no-changelog' does not excuse this (ADR 0042)." >&2
 		exit 2
 	fi
-	echo "a release section was cut — that is the entry"
+	# shellcheck disable=SC2086
+	echo "a release section was cut:" $cut "— that is the entry"
 	exit 0
 fi
 

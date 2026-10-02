@@ -79,8 +79,9 @@ func TestChangelogSectionHasSubstance(t *testing.T) {
 // `## [Unreleased]` is skipped: Keep a Changelog's staging heading names no
 // version, so it is not the RELEASE heading this test pins against. Skipping
 // it costs the guard nothing — the first real `## [vX.Y.Z]` below it is still
-// checked, so a release PR that bumps the constant without promoting the
-// Unreleased entries into a version heading still fails here.
+// checked, so a release PR that bumps the constant without writing the version
+// heading — by running scripts/changelog-collect.sh, which collects
+// changelog.d/'s fragments under it (ADR 0042) — still fails here.
 func TestVersionMatchesChangelog(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {

@@ -18,8 +18,12 @@
 # Every refusal comes before the first write, so a refusal leaves CHANGELOG.md
 # and changelog.d/ byte-identical:
 #
-#   - a file under changelog.d/ (other than README.md) that is not a
-#     well-formed fragment — named, by scripts/changelog-fragment-check.sh
+#   - a file git tracks under changelog.d/ (other than README.md) that is not
+#     a well-formed fragment — named, by scripts/changelog-fragment-check.sh,
+#     or as nested below changelog.d/. Untracked and ignored files (a
+#     .DS_Store, an editor's swap file) are not entries and are left alone
+#   - a fragment the checker passed that the section did not take exactly once:
+#     the checker and the extractor disagree, and deleting it would drop it
 #   - no fragments at all: a release with nothing to collect is the empty body
 #     TestChangelogSectionHasSubstance exists to stop
 #   - a `## [vX.Y.Z]` heading already in CHANGELOG.md, so a second run cannot
@@ -55,14 +59,17 @@ if [ ! -d "$dir" ]; then
 	exit 1
 fi
 
-# Every entry but README.md, as names relative to changelog.d/. A directory or
-# a misnamed file is not skipped: skipping it is how an entry would be dropped
-# from a release without anyone being told.
-names=$(cd "$dir" && for f in * .[!.]*; do
-	[ -e "$f" ] || continue
-	[ "$f" != README.md ] || continue
-	printf '%s\n' "$f"
-done)
+# Every file git tracks there but README.md, as names relative to changelog.d/.
+# Tracked, because that is what the per-PR gate judged and what the release
+# commit ships: a .DS_Store or an editor's swap file is local noise, not an
+# entry, and a fragment nobody committed was never in a pull request. A
+# misnamed or nested tracked file is not skipped: skipping it is how an entry
+# would be dropped from a release without anyone being told.
+if ! tracked=$(git -C "$root" ls-files -- changelog.d/); then
+	echo "$0: cannot list changelog.d/ with git ls-files; nothing was written" >&2
+	exit 1
+fi
+names=$(printf '%s\n' "$tracked" | sed -n 's|^changelog\.d/||p' | grep -vxF README.md || true)
 
 if [ -z "$names" ]; then
 	echo "$0: changelog.d/ holds no fragments — a release with nothing to collect has no body" >&2
@@ -76,6 +83,12 @@ names=$(printf '%s\n' "$names" | LC_ALL=C sort -t- -k1,1n -k2)
 # One argument per name. Fragment names carry no whitespace or glob characters
 # (the name rule forbids them), and anything else is refused by the checker
 # under its own name either way.
+nested=$(printf '%s\n' "$names" | grep / || true)
+if [ -n "$nested" ]; then
+	printf '%s\n' "$nested" | sed 's|^|changelog.d/|; s|$|: a fragment lives directly in changelog.d/, not below it|' >&2
+	echo "$0: refused — every file in changelog.d/ but README.md must be a fragment (see changelog.d/README.md); nothing was written" >&2
+	exit 1
+fi
 set -f
 # shellcheck disable=SC2086
 if ! (cd "$dir" && sh "$root/scripts/changelog-fragment-check.sh" $names); then
@@ -99,23 +112,30 @@ trap 'rm -rf "$tmp"' EXIT
 
 # The section, built whole before CHANGELOG.md is touched. Each fragment's
 # entry is everything after its heading, with blank lines trimmed at both ends.
+# A line's trailing \r is dropped first and \r counts as whitespace, as it does
+# to the checker, so a CRLF fragment's blank lines are blank here too and
+# CHANGELOG.md gains no \r. Each fragment whose heading matched is recorded in
+# $tmp/emitted, for the postcondition below.
+: >"$tmp/emitted"
 {
 	printf '## [%s] - %s\n' "$tag" "$date"
 	for section in Added Changed Deprecated Removed Fixed Security Documented Repository "Known limits"; do
 		body=$(printf '%s\n' "$names" | while IFS= read -r name; do
-			awk -v want="### $section" '
-				!headed && /[^ \t]/ {
+			awk -v want="### $section" -v name="$name" -v emitted="$tmp/emitted" '
+				{ sub(/\r+$/, "") }
+				!headed && /[^ \t\r]/ {
 					headed = 1
 					line = $0
 					sub(/[ \t\r]+$/, "", line)
 					if (line != want) exit
+					print name >>emitted
 					next
 				}
 				headed { body[++n] = $0 }
 				END {
 					first = 1; last = n
-					while (first <= n && body[first] !~ /[^ \t]/) first++
-					while (last >= first && body[last] !~ /[^ \t]/) last--
+					while (first <= n && body[first] !~ /[^ \t\r]/) first++
+					while (last >= first && body[last] !~ /[^ \t\r]/) last--
 					for (i = first; i <= last; i++) print body[i]
 				}
 			' "$dir/$name"
@@ -124,6 +144,20 @@ trap 'rm -rf "$tmp"' EXIT
 		printf '\n### %s\n\n%s\n' "$section" "$body"
 	done
 } >"$tmp/section"
+
+# Every fragment the checker passed was written exactly once. The checker and
+# the extractor above are two readings of one shape; if they ever disagree, a
+# fragment would be deleted below without reaching the section, so a mismatch
+# refuses, loudly, before anything is written.
+printf '%s\n' "$names" | LC_ALL=C sort >"$tmp/want"
+LC_ALL=C sort "$tmp/emitted" >"$tmp/got"
+if ! cmp -s "$tmp/want" "$tmp/got"; then
+	echo "$0: refused — these fragments passed the checker but were not each collected exactly once:" >&2
+	cat "$tmp/want" "$tmp/got" | LC_ALL=C sort | uniq -u | sed 's|^|  changelog.d/|' >&2
+	LC_ALL=C sort "$tmp/got" | uniq -d | sed 's|^|  changelog.d/|' >&2
+	echo "This is a bug in scripts/changelog-collect.sh, not in the fragment; nothing was written." >&2
+	exit 1
+fi
 
 # Spliced in directly under the Unreleased block: before the first `## [`
 # heading after it, or before the link footnotes if Unreleased is the last
