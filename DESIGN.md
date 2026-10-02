@@ -880,23 +880,27 @@ timeout/budget/tool ceiling; the ledger prices
 every execution with a `feedback round k/N` note.
 
 **A review gates only when its caller pairs a narrowed check with an arc
-(issue #151).** The shipped review fragments pass on *both* their verdicts
-(`CLEAN` and `FINDINGS:`) — judging, not being clean, is the job — and nothing
+(issue #151).** The shipped review fragments pass on *all three* of their
+verdicts (`CLEAN`, `MINOR:` and `FINDINGS:` — ADR 0043, "Verdict patterns"
+below) — judging, not being clean, is the job — and nothing
 else in the engine reads a verdict: `depends_on` is a success edge, and
 `retry`, `feedback` and `on_fail` all hang off failure. So a passing
 `FINDINGS:` gates nothing and every node below the review runs anyway, a `pr`
 node included. *Stopping* on findings is therefore one shape, and it is a
 **pair**: the using
-node narrows `success_check.result_matches` to the clean verdict *and*
-declares `feedback: { rerun: <implementing node>, max: N }`. The narrowing
+node narrows `success_check.result_matches` to the gating pattern — `CLEAN`
+and `MINOR:` pass, only a blocking `FINDINGS:` fails — *and* declares
+`feedback: { rerun: <implementing node>, max: N }`. The narrowing
 alone would make the run where the reviewer did its job the run that reports
 FAIL with nothing repaired; the arc turns that same failure into a repair
 round carrying the findings in `{{ feedback.<id> }}`, so only an exhausted loop
 is final. Both keys belong to the calling graph — ADR 0013 forbids a fragment
 from declaring `feedback`, so a fragment cannot gate on its caller's behalf —
 and `internal/graph`'s `TestAGatingReviewCarriesItsRecoveryArc` holds the
-shipped graphs to the pair by matching a real `FINDINGS:` reply against each
-review node's *effective* pattern rather than reading how it was spelled.
+shipped graphs to the pair by matching real `CLEAN`, `MINOR:` and `FINDINGS:`
+replies against each review node's *effective* pattern rather than reading how
+it was spelled — and refuses a gate that rejects `MINOR:`, which re-runs the
+implementer over a nit (#288).
 `backlog-batch`'s lane A gates (`rerun: dev-a, max: 1`, body of 3, so 6 body
 runs over its 2 rounds — and 8 executions worst case, because `e2e-a` inherits
 `retry: { max: 1 }` from `e2e-verify` and a retry is charged on top of its
@@ -904,9 +908,10 @@ round: 2 `dev-a`, 4 `e2e-a`, 2 `review-a`). `self-dev` gates its parallel
 review fan-out (#293), where neither review can carry the pair itself: an arc
 on one review trips rule 3's side-exit refusal, because its sibling depends on
 `e2e` from outside that arc's body, and two arcs that both re-run `dev` break
-rule 6's disjoint bodies. So the reviews keep the fragments' either-verdict
+rule 6's disjoint bodies. So the reviews keep the fragments' advisory
 check and fan in to a third node, `review-verdict`. That node narrows to
-`CLEAN`, grounds that verdict in a `verify` that reads both review artifacts,
+the gating pattern, grounds that verdict in a `verify` that reads both review
+artifacts (each must start with `CLEAN` or `MINOR:`),
 and declares `rerun: dev, max: 2` over a body of all five nodes, so 15 runs,
 or 18 counting `e2e`'s retry. Lane B and `dev-review-pr` stay advisory by
 recorded choice. *Repairing* findings has
@@ -1296,10 +1301,48 @@ code or missing it was a real mistake. That
 narrows the drift; it does not remove it — the verdict is still a model's
 judgment, and a gate whose only passing value is "nothing at all to say"
 still has no severity floor. A graph that needs a guarantee must bound the
-loop by something other than the reviewer's silence. A verdict with a third
-value — `MINOR:` findings that pass and ride along, so only a blocking finding
-fires the arc — is the structural fix, and is deliberately left as a
-follow-up to #288 rather than taken here.
+loop by something other than the reviewer's silence.
+
+The severity floor shipped second (ADR 0043): the review fragments answer in
+three values, below, and the shipped gates (`gated-lane`'s `review`,
+`self-dev`'s `review-verdict`) accept `MINOR:` and fail only `FINDINGS:`, so
+a nit rides into the PR body and only a blocking finding fires the arc. A
+re-run reviewer is also told that an item it rated minor stays minor unless
+the rework changed the code it is about, so a nit cannot be promoted into a
+new round over code nobody touched. Neither half is a convergence proof —
+whether #288's first half, `{{ self.previous }}`, made the shipped loops
+converge is still unmeasured, and #288 stays open for that measurement and
+for the ledger, which does not tell a `MINOR:` pass from a `CLEAN` one.
+
+#### The review grammar — three values, two patterns (ADR 0043)
+
+`review-style` and `review-security` offer exactly three tokens, graded by
+whether the reviewer **would merge with the item unfixed**, not by how small
+its fix is; a reply's verdict is its worst item:
+
+- `CLEAN` — nothing worth changing (or, for security, no security issues);
+- `MINOR:` — something worth changing, nothing that blocks a merge;
+- `FINDINGS:` — at least one blocking item; minor items may follow under a
+  `Minor:` line.
+
+Each disposition has one spelling, both in the decoration class above:
+
+| disposition | pattern | `CLEAN` | `MINOR:` | `FINDINGS:` | anything else |
+| --- | --- | --- | --- | --- | --- |
+| advisory (the fragments' default) | ``'^[*_`\s]*(FINDINGS[*_`\s]*:\|MINOR[*_`\s]*:\|CLEAN\b)'`` | pass | pass | pass | fail |
+| gating (with a `feedback:` arc) | ``'^[*_`\s]*(MINOR[*_`\s]*:\|CLEAN\b)'`` | pass | pass | fail → arc | fail |
+
+`MINOR` carries its colon like `FINDINGS`, with the class on both sides, so
+`**MINOR:**` and `**MINOR**:` match while `MINOR -`, `Minor:` and `MINORITY:`
+do not. A gate still narrowed to ``'^[*_`\s]*CLEAN\b'`` is **stricter** than
+before, not unchanged: a borderline item that once passed as `CLEAN` can now
+arrive as `MINOR:` and fire the arc — widen it to the gating pattern. The
+two-valued grammar is not deprecated: `repair-round` and `adr-driven-dev`'s
+reviews keep `CLEAN` / `FINDINGS:`, because every consumer of theirs
+addresses every item and no gate reads them. A `MINOR:` is recorded where any
+passing reply is, the node's `<run-id>/<node>.out`, and surfaced in the PR
+body every shipped citer already writes; the ledger row is `PASS` either way
+(docs/LIMITATIONS.md, "A PASS row does not say which outcome passed").
 
 #### Where the verdict may sit — measured, not assumed
 

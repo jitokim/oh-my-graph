@@ -779,12 +779,38 @@ func TestPRPublishPassesItsBodyThroughAGrantedFile(t *testing.T) {
 // adds unbidden, so a pattern is judged here the way a real reply judges it.
 const findingsVerdict = "**FINDINGS:**\n\n- the persisting branch returns without refreshing the projection\n"
 
+// rejectedMinorReply returns the first spelling of a MINOR: reply (ADR 0043's
+// third token) that pattern rejects, and false when it accepts every one. It
+// probes the whole of minorReplies rather than one dressing, because a pattern
+// that accepts `**MINOR:**` but not `**MINOR**:` passes a single probe and
+// still fails a real nit — #288's loop again, for that spelling only.
+func rejectedMinorReply(pattern *regexp.Regexp) (string, bool) {
+	for _, reply := range minorReplies {
+		if !pattern.MatchString(reply) {
+			return reply, true
+		}
+	}
+	return "", false
+}
+
+// cleanVerdict is the reply of a review that found nothing worth changing.
+const cleanVerdict = "**CLEAN** — nothing worth changing.\n"
+
 // TestAGatingReviewCarriesItsRecoveryArc pins the pair, not the instance
-// (issue #151). A review fragment passes on BOTH its verdicts, so `FINDINGS:`
+// (issue #151). A review fragment passes on ALL its verdicts, so `FINDINGS:`
 // reaches none of the engine's three "the reviewer rejected the work"
 // mechanisms — `retry`, `feedback` and `on_fail` all hang off FAILURE — and a
 // graph that wants findings to stop it has exactly one spelling available:
 // narrow the review's success_check until `FINDINGS:` fails.
+//
+// Since ADR 0043 the three replies — `CLEAN`, `MINOR:`, `FINDINGS:` — must
+// fall into exactly one of two dispositions, and no other: ADVISORY (all
+// three pass, no arc) or GATING (`CLEAN` and `MINOR:` pass, `FINDINGS:` fails,
+// arc present). Two partitions are refused by name: a gating check that also
+// rejects `MINOR:`, which re-runs the implementer over a nit — #288's loop —
+// and an advisory check that rejects `MINOR:`, a reviewer offered a token its
+// own check refuses. A check that rejects `CLEAN` is refused too: no run could
+// pass it.
 //
 // The moment a shipped graph does that, it owes the other half. A narrowed
 // check ALONE means the run that most deserves to be believed — the one where
@@ -861,26 +887,63 @@ func TestAGatingReviewCarriesItsRecoveryArc(t *testing.T) {
 			// Validate compiled this pattern already, so MustCompile cannot
 			// fire here — and the match is a SEARCH, the same call the
 			// scheduler makes (internal/schedule).
-			if regexp.MustCompile(node.SuccessCheck.ResultMatches).MatchString(findingsVerdict) {
+			pattern := regexp.MustCompile(node.SuccessCheck.ResultMatches)
+			if !pattern.MatchString(cleanVerdict) {
+				t.Errorf("%s: node %q splices a review fragment but its pattern %q rejects a CLEAN reply — no review could ever pass it",
+					name, res.NodeID, node.SuccessCheck.ResultMatches)
+				continue
+			}
+			rejectedMinor, minorRejected := rejectedMinorReply(pattern)
+			if pattern.MatchString(findingsVerdict) {
+				if minorRejected {
+					t.Errorf("%s: node %q accepts FINDINGS: but its pattern %q rejects the MINOR: reply %q — the reviewer is offered a token its own check refuses, so a nit FAILs the node; use the fragment's advisory pattern (ADR 0043)",
+						name, res.NodeID, node.SuccessCheck.ResultMatches, rejectedMinor)
+				}
 				// Advisory: findings pass, nothing downstream is gated — a
 				// decision a lane is entitled to make, and backlog-batch's lane
 				// B makes it on purpose. What it may not do is make it while
 				// carrying an arc.
 				if node.Feedback != nil {
-					t.Errorf("%s: node %q declares a feedback arc but its pattern %q still ACCEPTS a FINDINGS: reply — the arc cannot be reached by the verdict it was written for, so a real finding rides into the PR body while the graph reads as a lane that gates; narrow the success_check to the clean verdict, or drop the arc and advise deliberately",
+					t.Errorf("%s: node %q declares a feedback arc but its pattern %q still ACCEPTS a FINDINGS: reply — the arc cannot be reached by the verdict it was written for, so a real finding rides into the PR body while the graph reads as a lane that gates; narrow the success_check to the gating pattern, or drop the arc and advise deliberately",
 						name, res.NodeID, node.SuccessCheck.ResultMatches)
 				}
 				continue
 			}
 			gating++
+			if minorRejected {
+				t.Errorf("%s: node %q gates with a pattern %q that rejects the MINOR: reply %q — every nit re-runs the implementer, and a fresh reviewer finds one per round, so the loop need not converge (#288); narrow to the gating pattern '^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)' instead (ADR 0043)",
+					name, res.NodeID, node.SuccessCheck.ResultMatches, rejectedMinor)
+			}
 			if node.Feedback == nil {
-				t.Errorf("%s: node %q gates on findings (its pattern %q rejects a FINDINGS: reply) but declares no feedback arc — a review that did its job would fail the run instead of buying a repair round; add feedback: { rerun: <implementing node>, max: 1 } or restore the fragment's either-verdict check",
+				t.Errorf("%s: node %q gates on findings (its pattern %q rejects a FINDINGS: reply) but declares no feedback arc — a review that did its job would fail the run instead of buying a repair round; add feedback: { rerun: <implementing node>, max: 1 } or restore the fragment's advisory check, which accepts all three verdicts (ADR 0043)",
 					name, res.NodeID, node.SuccessCheck.ResultMatches)
 			}
 		}
 	}
 	if gating == 0 {
 		t.Error("no shipped graph gates on review findings any more — this test now asserts nothing; either a lane lost its narrowed success_check, or the gating shape is no longer demonstrated anywhere in graphs/")
+	}
+}
+
+// TestTheMinorProbeCatchesEverySpelling pins the probe the gating sweep above
+// relies on. Its shipped nodes are covered spelling by spelling elsewhere
+// (assertPartition), so what this guards is a future or user-copied pattern:
+// one that leaves the decoration class out between `MINOR` and the colon passes
+// `**MINOR:**` and fails `**MINOR**:`, and a single-spelling probe would wave
+// it through.
+func TestTheMinorProbeCatchesEverySpelling(t *testing.T) {
+	undecoratedColon := regexp.MustCompile("^[*_`\\s]*(MINOR:|CLEAN\\b)")
+	reply, rejected := rejectedMinorReply(undecoratedColon)
+	if !rejected {
+		t.Fatalf("the probe accepts %q, which rejects `**MINOR**:` — a gating node spelled that way re-runs its implementer over a nit (#288)", undecoratedColon)
+	}
+	if !strings.Contains(reply, "**MINOR**:") {
+		t.Errorf("the probe flagged %q, want the `**MINOR**:` spelling — the one the pattern actually refuses", reply)
+	}
+
+	gating := regexp.MustCompile("^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)")
+	if reply, rejected := rejectedMinorReply(gating); rejected {
+		t.Errorf("the probe flags ADR 0043's own gating pattern on %q — it would refuse every correctly gated node", reply)
 	}
 }
 
@@ -956,6 +1019,12 @@ func TestSelfDevGatesOnBothReviews(t *testing.T) {
 	}
 	if !pattern.MatchString("**CLEAN** — both reviews came back clean.\n") {
 		t.Errorf("review-verdict's pattern %q rejects a CLEAN reply — no run could ever reach the PR", verdict.SuccessCheck.ResultMatches)
+	}
+	if !pattern.MatchString("**MINOR:**\n\nStyle:\n- the helper's name says what it does, not what it returns\n") {
+		t.Errorf("review-verdict's pattern %q rejects a MINOR: reply — a nit re-runs dev, which is #288's loop (ADR 0043)", verdict.SuccessCheck.ResultMatches)
+	}
+	if !strings.Contains(verdict.Prompt, "MINOR:") {
+		t.Error("review-verdict's prompt never offers MINOR: — its pattern accepts a token the model is never told it may answer")
 	}
 	if verdict.SuccessCheck.Verify == nil {
 		t.Error("review-verdict declares no verify — a model's CLEAN would be taken on its word over a review that found something")

@@ -75,9 +75,12 @@ nodes:
       the current state, so this lane stops instead of shipping half a task.
 
       Review findings from the previous round follow — they are empty on the
-      first pass. If present, fix every one before anything else, and note
-      that this lane's branch already carries the previous round's commits:
-      amend the work, do not restart it.
+      first pass. If present, fix every blocking finding before anything
+      else, and note that this lane's branch already carries the previous
+      round's commits: amend the work, do not restart it. Items under a
+      `Minor:` line are not this round's to fix: leave them unless a blocking
+      fix rewrites the same code anyway — they reach the PR body through the
+      review.
       {{ feedback.review }}
     # Bound by the citing graph, because the verbs an implementer needs are
     # the thing lanes vary most: a Go lane wants `Bash(go *)`, a docs lane
@@ -102,12 +105,15 @@ nodes:
       checks: "{{ with.checks }}"
       verify_command: "{{ with.verify_command }}"
 
-  # The gating half of the pair. The narrowing states which verdict this lane
-  # ACCEPTS rather than restating which verdicts the reviewer may emit — the
-  # two do not drift together — and it is announced in the run's disclosure
-  # line, so a lane that gates says so at every run. The reviewer's PROMPT is
-  # deliberately left alone: a reviewer told that findings will fail it is a
-  # reviewer biased toward CLEAN.
+  # The gating half of the pair. The narrowing states which verdicts this lane
+  # ACCEPTS — `CLEAN` and `MINOR:` — rather than restating which verdicts
+  # the reviewer may emit; the two do not drift together. Only a blocking
+  # `FINDINGS:` fails it (ADR 0043): a `MINOR:` passes, so a nit rides into the
+  # PR body through `pr` below instead of buying a repair round over code
+  # nobody needs changed (#288). The narrowing is announced in the run's
+  # disclosure line, so a lane that gates says so at every run. The reviewer's
+  # PROMPT is deliberately left alone: a reviewer told that findings will fail
+  # it is a reviewer biased toward CLEAN — and toward MINOR: over FINDINGS:.
   #
   # No `retry:` here, and that is a decision rather than an omission: the same
   # bias has a second door. A retried attempt is handed its own reply under
@@ -123,13 +129,13 @@ nodes:
       focus: |-
         {{ with.focus }}
         The e2e verdict was: {{ artifacts.e2e | inline }}
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*CLEAN\b' }
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)' }
     # The other half, without which the narrowing would be a lie about what
-    # happened: findings fail this node, the failure re-runs dev → e2e → review
-    # with the findings in {{ feedback.review }}, and a second round that comes
-    # back CLEAN ends the lane green with the defect FIXED instead of merely
-    # quoted in the PR body. Only an exhausted loop FAILs, and that report is
-    # honest — a finding nobody repaired.
+    # happened: blocking findings fail this node, the failure re-runs
+    # dev → e2e → review with the findings in {{ feedback.review }}, and a
+    # second round that comes back CLEAN or MINOR: ends the lane green with the
+    # defect FIXED instead of merely quoted in the PR body. Only an exhausted
+    # loop FAILs, and that report is honest — a finding nobody repaired.
     #
     # `max: 1`, not 2: an unattended batch buys one repair round; a second
     # belongs to a human who has read the first. Price of the arc: the body is

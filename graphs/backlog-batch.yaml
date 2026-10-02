@@ -84,25 +84,27 @@
 #      warning owes a measured noise rate, which n=1 across everything this
 #      repo ships cannot supply.
 #   6. A review is ADVISORY unless the lane says otherwise. The `review-style`
-#      fragment passes on BOTH its verdicts — `CLEAN` and `FINDINGS:` —
-#      because a review's job is to judge, not to be clean. Nothing else reads
-#      a verdict: `depends_on` is a success edge, and `retry`, `feedback` and
-#      `on_fail` all hang off FAILURE, so a passing `FINDINGS:` reaches none
-#      of them and the lane opens its PR regardless. A lane that wants
-#      findings to stop it therefore has exactly one spelling, and it is a
-#      PAIR: narrow the review's `success_check` to the clean verdict, and
-#      give that same node a `feedback:` arc saying what to do about the
-#      failure. Ship both or neither — a narrowed check with no arc turns a
-#      reviewer that did its job into a failed run, and an arc with no
-#      narrowing never fires at all.
+#      fragment passes on ALL its verdicts — `CLEAN`, `MINOR:` and
+#      `FINDINGS:` (ADR 0043) — because a review's job is to judge, not to be
+#      clean. Nothing else reads a verdict: `depends_on` is a success edge,
+#      and `retry`, `feedback` and `on_fail` all hang off FAILURE, so a
+#      passing `FINDINGS:` reaches none of them and the lane opens its PR
+#      regardless. A lane that wants blocking findings to stop it therefore
+#      has exactly one spelling, and it is a PAIR: narrow the review's
+#      `success_check` to the gating pattern — it accepts `CLEAN` and
+#      `MINOR:` and rejects `FINDINGS:` — and give that same node a
+#      `feedback:` arc saying what to do about the failure. Ship both or
+#      neither — a narrowed check with no arc turns a reviewer that did its
+#      job into a failed run, and an arc with no narrowing never fires at all.
 #      CHECKED on both halves, symmetrically, and it REFUSES:
 #      `TestAGatingReviewCarriesItsRecoveryArc` reads every node that splices
 #      a `review-*` fragment and fails the build on either half alone — a
 #      check narrowed past `FINDINGS:` carrying no arc, and an arc on a node
 #      whose check still ACCEPTS `FINDINGS:`, which the failing verdict can
-#      therefore never reach. What the test cannot judge is which disposition
-#      a lane should have chosen; it judges only that the choice is spelled
-#      whole.
+#      therefore never reach — and on a check that rejects `MINOR:`, which
+#      re-runs the implementer over a nit (#288). What the test cannot judge
+#      is which disposition a lane should have chosen; it judges only that
+#      the choice is spelled whole.
 #      Lane A gates and lane B advises, and the two are now spelled
 #      DIFFERENTLY, which is the point of rule 7. Lane A's whole shape — the
 #      pair included — is the `gated-lane` fragment; lane B stays written out,
@@ -263,7 +265,7 @@ nodes:
         scope: docs files only — flag anything that strays into code another
         lane could own. The e2e verdict was: {{ artifacts.e2e-b | inline }}
     # Rule 6, lane B's half: this lane ADVISES. Left exactly as the fragment
-    # ships — either verdict passes — but as a decision rather than an
+    # ships — every verdict passes — but as a decision rather than an
     # unexamined default: the findings reach the draft PR's body, which is
     # where a human reads a docs review anyway, and a wording flag does not
     # earn a second dev round. So `pr-b` opens on `FINDINGS:`, deliberately,
