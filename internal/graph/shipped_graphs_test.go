@@ -1240,6 +1240,83 @@ func TestLocalrunStressBudgetMatchesItsTimeout(t *testing.T) {
 	}
 }
 
+// runnerDefaultTimeout mirrors internal/runner's defaultTimeout — the bound a
+// node that declares no `timeout:` is killed at. internal/graph cannot import
+// the runner (the runner imports the graph), so the number is restated here
+// and DESIGN.md ("default 20m") states it a third time.
+const runnerDefaultTimeout = 20 * time.Minute
+
+// TestE2EVerifyStressFitsItsTimeout is TestLocalrunStressBudgetMatchesItsTimeout
+// for the `e2e-verify` fragment (#292). Its citers' `checks` ask for
+// `-count=300` stress, and an e2e node took that literally and was killed by
+// its 20m timeout with no verdict. The fragment now bounds any stress step in
+// its own prompt, after the bound checks — and it quotes a number it does not
+// declare: the fragment has no `timeout:` (graphs/backlog-batch.yaml, rule 2),
+// so every citer inherits the runner's default. This holds the quoted number,
+// the stress budget and the `-timeout` literal against each citer's real bound,
+// the same window localrun's test checks.
+func TestE2EVerifyStressFitsItsTimeout(t *testing.T) {
+	citers := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		fragmentOf := make(map[string]string, len(loaded.Resolutions))
+		for _, res := range loaded.Resolutions {
+			if len(res.Spliced) == 0 {
+				fragmentOf[res.NodeID] = res.Fragment
+			}
+		}
+		for _, n := range loaded.Graph.Nodes {
+			if fragmentOf[n.ID] != coldSafeGateFragment {
+				continue
+			}
+			citers++
+
+			// A longer declared bound only makes the quoted budget conservative;
+			// a shorter one makes the prompt size its stress against a life the
+			// node does not have.
+			bound := n.TimeoutDuration()
+			if bound == 0 {
+				bound = runnerDefaultTimeout
+			}
+			if bound < runnerDefaultTimeout {
+				t.Errorf("%s: node %q cites %s but is killed at %s, inside the %s its prompt budgets stress against — it is killed mid-run with no verdict", name, n.ID, coldSafeGateFragment, bound, runnerDefaultTimeout)
+			}
+
+			flowed := strings.Join(strings.Fields(n.Prompt), " ")
+			stated := fmt.Sprintf("killed at %d minutes", int(runnerDefaultTimeout.Minutes()))
+			if !strings.Contains(flowed, stated) {
+				t.Errorf("%s: node %q never says %q — a node that cannot see its bound cannot size a stress run inside it", name, n.ID, stated)
+			}
+			for _, phrase := range []string{"REQUIRED check is the supplied one", "OPTIONAL", "CEILING, not a target", "at most a quarter"} {
+				if !strings.Contains(flowed, phrase) {
+					t.Errorf("%s: node %q lost %q from %s's stress bound — the checks it is handed still say `-count=300`, and nothing else in the prompt tells it that count is optional and capped", name, n.ID, phrase, coldSafeGateFragment)
+				}
+			}
+
+			stress := runnerDefaultTimeout / 4 // "at most a quarter of the timeout"
+			literals := regexp.MustCompile(`-timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindAllStringSubmatch(flowed, -1)
+			if len(literals) == 0 {
+				t.Errorf("%s: node %q shows no `-timeout <duration>` literal — a stress run with no wall-clock cap is the one that outlived the node in #292", name, n.ID)
+			}
+			for _, m := range literals {
+				shown, err := time.ParseDuration(m[1])
+				if err != nil {
+					t.Fatalf("%s: node %q works `-timeout %s`, not a duration go test would accept: %v", name, n.ID, m[1], err)
+				}
+				if shown <= stress || shown >= runnerDefaultTimeout {
+					t.Errorf("%s: node %q works `-timeout %s`, outside the window (%s, %s) — at or below the stress budget it kills a run the node budgeted for; at or above the node's bound it never fires before the node is killed", name, n.ID, shown, stress, runnerDefaultTimeout)
+				}
+			}
+		}
+	}
+	if citers == 0 {
+		t.Errorf("no shipped graph cites %s any more — this test now asserts nothing", coldSafeGateFragment)
+	}
+}
+
 // anyTemplateCitesAFragment reports whether any unpacked template resolved at
 // least one `use:`, which is what makes the payload's fragments/ directory
 // load-bearing.
