@@ -116,10 +116,36 @@ const otherLookback = 24
 
 // historyExcluded are the repo's historical records, matched as path prefixes.
 // They state what was true when they were written and must never be rewritten
-// to match today's code — see this file's doc comment.
+// to match today's code — see this file's doc comment. changelog.d/ holds
+// CHANGELOG entries not yet collected into a release (ADR 0042): a fragment
+// records what a change claimed when it landed, exactly as the changelog does.
 var historyExcluded = []string{
 	"docs/adr/",
 	"CHANGELOG.md",
+	"changelog.d/",
+}
+
+// TestChangelogFragmentsAreHistory pins changelog.d/ to the history half of
+// the exclusions: an unreleased entry is changelog text that has not been
+// placed yet, and is excluded for the reason CHANGELOG.md is.
+func TestChangelogFragmentsAreHistory(t *testing.T) {
+	for _, tc := range []struct {
+		rel   string
+		isDir bool
+		want  bool
+	}{
+		{"changelog.d", true, true},
+		{"changelog.d/304-changelog-fragments.md", false, true},
+		{"changelog.d/README.md", false, true},
+		{"CHANGELOG.md", false, true},
+		{"changelog.md", false, false},
+		{"changelog.data/x.md", false, false},
+		{"docs/changelog.d/x.md", false, false},
+	} {
+		if got := excludedFromProseScan(tc.rel, tc.isDir); got != tc.want {
+			t.Errorf("excludedFromProseScan(%q, %v) = %v, want %v", tc.rel, tc.isDir, got, tc.want)
+		}
+	}
 }
 
 // scanExcluded are paths skipped for reasons other than history: build output,

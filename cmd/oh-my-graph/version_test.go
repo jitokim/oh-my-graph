@@ -79,8 +79,9 @@ func TestChangelogSectionHasSubstance(t *testing.T) {
 // `## [Unreleased]` is skipped: Keep a Changelog's staging heading names no
 // version, so it is not the RELEASE heading this test pins against. Skipping
 // it costs the guard nothing — the first real `## [vX.Y.Z]` below it is still
-// checked, so a release PR that bumps the constant without promoting the
-// Unreleased entries into a version heading still fails here.
+// checked, so a release PR that bumps the constant without writing the version
+// heading — by running scripts/changelog-collect.sh, which collects
+// changelog.d/'s fragments under it (ADR 0042) — still fails here.
 func TestVersionMatchesChangelog(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
@@ -208,46 +209,66 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 	}
 }
 
-// TestUnreleasedSectionHasNoDuplicateHeadings refuses a second `### Added` (or
-// `### Fixed`, or any name already present) inside `## [Unreleased]`.
+// TestChangelogSectionsHaveNoDuplicateHeadings refuses a second `### Added` (or
+// `### Fixed`, or any name already present) inside `## [Unreleased]` and inside
+// the current release's `## [v<Version>]` section.
 //
 // It exists because cutting v0.14.0 needed a dedicated graph node whose only
 // job was to merge eleven subheadings back into four: `### Added` x4,
 // `### Changed` x3, `### Fixed` x2 and `### Documented` x2, because every pull
 // request appended its own subsection instead of joining the one already there.
-// That is not a formatting nicety. Cutting a release renames this block to
-// `## [vX.Y.Z]`, and `scripts/release-notes.sh` extracts that heading's section
-// verbatim on the tag push (`awk -v want="## [v$version]"`, release-notes.sh:56,
-// the version from the tag in .github/workflows/release.yml:44) — so whatever
-// the Unreleased block looks like
-// at the cut IS the release body, and shipping it unmerged publishes a body
-// that names each heading several times. A tag is public the moment it lands;
-// a red PR is not. This fails the pull request that adds the second heading,
-// where the fix is one line, instead of at the release, where it costs a node.
+// That is not a formatting nicety. `scripts/release-notes.sh` extracts the
+// `## [vX.Y.Z]` section verbatim on the tag push (`awk -v want="## [v$version]"`,
+// release-notes.sh:56, the version from the tag in
+// .github/workflows/release.yml:44), so a repeated heading there ships in the
+// release body, naming each heading several times. A tag is public the moment
+// it lands; a red PR is not.
 //
-// SCOPE IS DELIBERATE: only `## [Unreleased]` is checked. It is the one block
-// still accumulating entries; released sections are settled history, so a
-// duplicate below it would be a fact about a shipped release, not a defect a
-// contributor can act on.
+// SCOPE FOLLOWS THE BODY IT PROTECTS (ADR 0042, §2.5). The release body used
+// to be whatever the Unreleased block looked like at the cut, so Unreleased was
+// the one block checked. Since ADR 0042 entries are fragments in changelog.d/
+// and scripts/changelog-collect.sh writes the version section directly, each
+// heading once by construction — so what this catches there is a maintainer's
+// hand edit of the collected section, in the release PR that is reviewing it.
+// The Unreleased half stays: it is trivially green while
+// TestUnreleasedSectionHoldsNoEntries holds, and still correct. Released
+// sections below the current one are settled history, so a duplicate there
+// would be a fact about a shipped release, not a defect anyone can act on.
 //
-// The block starts at the `## [Unreleased]` heading and ends at the next line
-// beginning `## [`. Scanning the whole file instead would fold every past
-// release's headings together and report duplicates that are simply the next
-// release's `### Added`.
+// A block starts at its heading and ends at the next line beginning `## [`.
+// Scanning the whole file instead would fold every past release's headings
+// together and report duplicates that are simply the next release's `### Added`.
 //
 // Fenced blocks are skipped, for the same reason release-notes.sh tracks them:
 // this changelog quotes headings constantly, so a ```-fenced `### Added` is an
 // example of a heading, not a second one. Counting it would redden CI over an
 // entry that has no duplicate at all.
-func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
+func TestChangelogSectionsHaveNoDuplicateHeadings(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("read CHANGELOG.md: %v", err)
 	}
-	const heading = "## [Unreleased]"
+	for _, heading := range []string{"## [Unreleased]", "## [v" + Version + "]"} {
+		dups, found := duplicateHeadings(string(data), heading)
+		if !found {
+			t.Fatalf("CHANGELOG.md has no %s section", heading)
+		}
+		for _, name := range dups {
+			t.Errorf("CHANGELOG.md's %s section has more than one %q heading.\n"+
+				"Move the entries under the %q that is already there and delete the duplicate heading — do not append a second one.\n"+
+				"scripts/release-notes.sh publishes a release's section verbatim, so a repeated heading ships in the release body.", heading, name, name)
+		}
+	}
+}
+
+// duplicateHeadings returns each `### ` heading that appears more than once in
+// the block text opens with heading, outside fences, and whether that block
+// exists at all.
+func duplicateHeadings(text, heading string) ([]string, bool) {
 	var found, collecting, fenced bool
+	var dups []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(line, "```") {
 			fenced = !fenced
 			continue
@@ -263,14 +284,45 @@ func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
 			// are the same subsection to a reader and to the release body.
 			name := strings.TrimSpace(line)
 			if seen[name] {
-				t.Errorf("CHANGELOG.md's %s section has more than one %q heading.\n"+
-					"Move your entry under the %q that is already there and delete the duplicate heading — do not append a second one.\n"+
-					"Cutting a release renames this block to ## [vX.Y.Z] and scripts/release-notes.sh publishes that section verbatim, so a repeated heading ships in the release body.", heading, name, name)
+				dups = append(dups, name)
 			}
 			seen[name] = true
 		}
 	}
-	if !found {
-		t.Fatalf("CHANGELOG.md has no %s section — new entries have nowhere to land", heading)
+	return dups, found
+}
+
+func TestDuplicateHeadings(t *testing.T) {
+	const doc = "## [Unreleased]\n\nSee changelog.d/.\n\n"
+	for _, tc := range []struct {
+		name, text, heading string
+		want                []string
+		found               bool
+	}{
+		{name: "two Fixed in the current release", heading: "## [v9.9.9]",
+			text: doc + "## [v9.9.9] - 2026-10-02\n\n### Fixed\n\n- a\n\n### Fixed\n\n- b\n",
+			want: []string{"### Fixed"}, found: true},
+		{name: "a trailing space is the same heading", heading: "## [v9.9.9]",
+			text: "## [v9.9.9]\n\n### Added\n- a\n### Added \n- b\n",
+			want: []string{"### Added"}, found: true},
+		{name: "a fenced heading is an example", heading: "## [v9.9.9]",
+			text:  "## [v9.9.9]\n\n### Fixed\n\n- quotes:\n\n```\n### Fixed\n```\n",
+			found: true},
+		{name: "the section below is settled history", heading: "## [v9.9.9]",
+			text:  "## [v9.9.9]\n\n### Fixed\n- a\n\n## [v9.9.8]\n\n### Fixed\n- b\n### Fixed\n- c\n",
+			found: true},
+		{name: "each heading once", heading: "## [v9.9.9]",
+			text: "## [v9.9.9]\n\n### Added\n- a\n### Fixed\n- b\n", found: true},
+		{name: "two Fixed under Unreleased", heading: "## [Unreleased]",
+			text: "## [Unreleased]\n\n### Fixed\n- a\n### Fixed\n- b\n\n## [v9.9.9]\n",
+			want: []string{"### Fixed"}, found: true},
+		{name: "no such section", heading: "## [v9.9.9]", text: doc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := duplicateHeadings(tc.text, tc.heading)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") || found != tc.found {
+				t.Fatalf("duplicateHeadings(%s) = %q, %v; want %q, %v", tc.heading, got, found, tc.want, tc.found)
+			}
+		})
 	}
 }

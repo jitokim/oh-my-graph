@@ -18,6 +18,9 @@
 #      at PR time and can silently undo each other. Dedupe file ownership at
 #      authoring time — or, if two tasks genuinely overlap, serialize them
 #      into one lane (make dev-b depend on lane-a/pr) instead of parallelizing.
+#      A file EVERY lane must edit (a changelog, a registry) is not an overlap
+#      to serialize but a design to fix: give each lane its own file, as this
+#      repo's changelog.d/ does (ADR 0042) — the rule has no exceptions.
 #      PROSE, and not for want of trying: which files a lane owns arrives at
 #      run time in `--input task_a`/`task_b`, so the graph a checker reads
 #      never contains the thing this rule judges. The lexical stand-in was
