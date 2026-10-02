@@ -471,6 +471,23 @@ has no open issue behind it.
   baseline *for*
   ([the record](measurements/0018-unisolated-compliance-baseline.md)).
   ([#103](https://github.com/jitokim/oh-my-graph/issues/103))
+- **The retry for a CLI caught mid auto-update is short, and covers one
+  failure only.** When `claude` or `codex` does not resolve on PATH
+  (`exec.ErrNotFound`), a node spawn and the preflight "command exists" check
+  each try 5 times, 1 second apart, before they fail as they did before. What
+  that does not cover:
+  <br>**An update that takes longer than about 4 seconds.** The node then fails
+  to spawn and the run halts, exactly as before the retry existed.
+  <br>**A binary that resolves and then breaks before it starts.** If the
+  lookup finds the file and it is removed, or still half-written, by the time
+  the process starts, the failure is "no such file", "exec format error" or
+  "text file busy" from the start itself, not `exec.ErrNotFound`. Those are not
+  retried, because at that point they look the same as a CLI that really is
+  broken.
+  <br>**A CLI that is really not installed** now takes about 4 seconds to be
+  refused at preflight instead of failing at once. The refusal itself is
+  unchanged.
+  ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 
