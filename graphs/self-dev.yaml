@@ -121,8 +121,8 @@ nodes:
 
   # The gate (#293). Gating is a PAIR — a success_check narrowed to the gating
   # pattern, which accepts `CLEAN` and `MINOR:` and rejects only `FINDINGS:`
-  # (ADR 0043), AND a `feedback:` arc back to the implementer (DESIGN.md "A review
-  # gates only when its caller pairs a narrowed check with an arc";
+  # (ADR 0043), AND a `feedback:` arc back to the implementer (DESIGN.md "A
+  # review gates only when its caller pairs a narrowed check with an arc";
   # graphs/fragments/gated-lane.yaml) — and here the pair cannot sit on either
   # review, for two load rules (ADR 0010):
   #   - rule 3, no side exit: an arc on one review has `e2e` in its body, and
@@ -137,11 +137,11 @@ nodes:
   # reading the two review artifacts itself (the filterless {{ artifacts.<id> }}
   # is the file's path, never its text): a passing reply over a review that
   # starts with neither CLEAN nor MINOR: fails here, and the command prints only
-  # that open review — never a passing one — which is then
-  # the payload `dev` reads (ADR 0016 §2). That is the ONLY round whose payload
-  # is the command's output: a FINDINGS: reply fails result_matches before
-  # `verify` runs, and then the payload is the reply itself — which is why the
-  # prompt makes the reply carry the findings verbatim. The engine keeps only
+  # that open review — never a passing one — which is then the payload `dev`
+  # reads (ADR 0016 §2). That is the ONLY round whose payload is the command's
+  # output: a FINDINGS: reply fails result_matches before `verify` runs, and
+  # then the payload is the reply itself — which is why the prompt makes the
+  # reply carry the findings verbatim. The engine keeps only
   # the TAIL of verify output (4000 runes, internal/schedule maxEvidenceRunes),
   # so each review prints at most its first 1900 bytes: two long reviews both
   # survive the cut, each with its worst-first head intact. Its test is

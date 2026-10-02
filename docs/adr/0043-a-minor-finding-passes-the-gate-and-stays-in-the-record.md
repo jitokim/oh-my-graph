@@ -506,14 +506,17 @@ emphasis on either side of the colon, and after leading blank lines.
 2. **`gated-lane`'s gating pattern**: `CLEAN` and every `MINOR:` spelling
    pass; every `FINDINGS:` spelling fails; the same malformed set fails.
 3. **`TestAGatingReviewCarriesItsRecoveryArc` grows a third reply.** Beside
-   `findingsVerdict`, a `minorVerdict` (`**MINOR:**\n\n- …`). Every node that
-   splices a `review-*` fragment must partition the three replies into one of
-   the two dispositions of §2.3 and no other: advisory (all three pass, no
-   arc) or gating (`CLEAN` and `MINOR:` pass, `FINDINGS:` fails, arc
-   present). A gating node that fails `MINOR:` is refused with a message
-   naming #288 — it re-runs the implementer over a nit — and an advisory node
-   that fails `MINOR:` is refused as a reviewer offered a token its check
-   rejects.
+   `findingsVerdict`, the `rejectedMinorReply` helper probes every spelling
+   in `minorReplies` (the test 1 set), not one sample: a pattern that
+   accepts `**MINOR:**` but not `**MINOR**:` passes a single probe and still
+   loops on a real nit. `TestTheMinorProbeCatchesEverySpelling` pins that
+   probe. Every node that splices a `review-*` fragment must partition the
+   three replies into one of the two dispositions of §2.3 and no other:
+   advisory (all three pass, no arc) or gating (`CLEAN` and `MINOR:` pass,
+   `FINDINGS:` fails, arc present). A gating node that fails any `MINOR:`
+   spelling is refused with a message naming #288 — it re-runs the
+   implementer over a nit — and an advisory node that fails one is refused
+   as a reviewer offered a token its check rejects.
 4. **`TestSelfDevGatesOnBothReviews`**: the pattern accepts `CLEAN` and
    `MINOR:` and rejects `FINDINGS:`.
 5. **`TestSelfDevVerdictCommandJudgesTheReviewArtifacts`**, through the real

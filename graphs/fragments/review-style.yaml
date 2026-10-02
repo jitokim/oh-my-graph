@@ -77,11 +77,12 @@ node:
   # node to the GATING pattern, which accepts `CLEAN` and `MINOR:` and rejects
   # only `FINDINGS:` (`success_check: { exit_zero: true, result_matches:
   # '^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)' }`, announced in the run's disclosure
-  # line) AND gives that node a `feedback:` arc back to the implementing node —
-  # which no fragment may declare, ADR 0013 counting feedback as graph-local
-  # wiring. Do not narrow to `CLEAN` alone: that re-runs the implementer over a
-  # nit, which is #288's loop. Ship the pair or neither: a narrowed check with
-  # no arc makes a reviewer that did its job report a broken run.
+  # line) AND gives that node a `feedback:` arc back to the implementing
+  # node — which no fragment may declare, ADR 0013 counting feedback as
+  # graph-local wiring. Do not narrow to `CLEAN` alone: that re-runs the
+  # implementer over a nit, which is #288's loop. Ship the pair or neither: a
+  # narrowed check with no arc makes a reviewer that did its job report a
+  # broken run.
   # `backlog-batch` shows both dispositions — lane A gates, lane B keeps this
   # default deliberately.
   success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|MINOR[*_`\s]*:|CLEAN\b)' }

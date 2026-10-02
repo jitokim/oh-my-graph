@@ -106,8 +106,8 @@ nodes:
       verify_command: "{{ with.verify_command }}"
 
   # The gating half of the pair. The narrowing states which verdicts this lane
-  # ACCEPTS — `CLEAN` and `MINOR:` — rather than restating which verdicts the
-  # reviewer may emit; the two do not drift together. Only a blocking
+  # ACCEPTS — `CLEAN` and `MINOR:` — rather than restating which verdicts
+  # the reviewer may emit; the two do not drift together. Only a blocking
   # `FINDINGS:` fails it (ADR 0043): a `MINOR:` passes, so a nit rides into the
   # PR body through `pr` below instead of buying a repair round over code
   # nobody needs changed (#288). The narrowing is announced in the run's

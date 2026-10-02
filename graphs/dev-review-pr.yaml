@@ -91,8 +91,9 @@ nodes:
   # `e2e` from outside it (ADR 0010's side-exit rule), and two arcs that both
   # re-run `dev` overlap (its disjoint-bodies rule). So the reviews fan in to a
   # `review-verdict` node that narrows to the gating pattern (`CLEAN` or
-  # `MINOR:` passes, `FINDINGS:` fails — ADR 0043) and carries the arc — read it
-  # in graphs/self-dev.yaml, and copy it from there to gate this pipeline.
+  # `MINOR:` passes, `FINDINGS:` fails — ADR 0043) and carries the arc —
+  # read it in graphs/self-dev.yaml, and copy it from there to gate this
+  # pipeline.
   # It is not here because this is the everyday template you copy into a repo
   # it knows nothing about: it opens a pull request that a human reads before
   # merging, with both reviews in the body. A finding therefore still reaches
