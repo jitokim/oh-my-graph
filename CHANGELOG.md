@@ -10,82 +10,12 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
 
 ## [Unreleased]
 
-### Fixed
-
-- **`e2e-verify`'s optional stress step now has to fit inside the node's
-  timeout.** An e2e node once picked `go test -race -count=300` on its own,
-  ran past its 20-minute timeout and was killed with no verdict, though the
-  code was fine. The fragment now names the bound `verify_command` — the
-  command the engine runs as evidence — as the required check that runs first, caps stress at a quarter of the timeout
-  (5 of the default 20 minutes) in one `go test` call bounded by
-  `-timeout 10m`, treats a named repetition count as a ceiling, and lets the
-  node skip stress when the required check already used the time.
-  `TestE2EVerifyStressFitsItsTimeout` holds those numbers against every
-  graph that splices the fragment.
-  ([#292](https://github.com/jitokim/oh-my-graph/issues/292))
-- **`self-dev` no longer opens its PR over a review that found something.**
-  Its two parallel reviews passed on `CLEAN` and on `FINDINGS:` alike, and
-  `pr` depended on them directly, so a finding from either reviewer was
-  quoted into a draft PR instead of being fixed. The reviews now fan in to a
-  new `review-verdict` node. It accepts only `CLEAN`, and it declares
-  `feedback: { rerun: dev, max: 2 }`, so a finding re-runs
-  dev → e2e → both reviews with the findings quoted in dev's prompt. Only an
-  exhausted loop fails the run, and then no PR opens. When the verdict
-  replies `FINDINGS:`, dev's payload is that reply, which carries the
-  findings verbatim. A `CLEAN` is not taken on the model's word: its `verify`
-  reads both review artifacts itself, and if either did not come back clean
-  it fails the verdict and prints the head of each open review, which then
-  becomes dev's payload instead. The
-  reviews are inside the loop, so a re-run reviewer gets its own previous
-  findings through `{{ self.previous }}`. The node has to sit at the fan-in
-  because ADR 0010 refuses an arc on either review: an arc on one has a side
-  exit through its sibling, and two arcs that both re-run `dev` overlap.
-  Worst case is 15 runs per task, or 18 counting `e2e`'s own retry. A run
-  that comes back clean first time pays for one extra node.
-  `dev-review-pr` keeps the advisory review on purpose and says why in its
-  header: it is the everyday template, and its ready PR puts both reviews in
-  front of the human who decides the merge.
-  ([#293](https://github.com/jitokim/oh-my-graph/issues/293))
-- **A CLI caught mid auto-update no longer halts the run.** While `claude` or
-  `codex` updates itself it can be missing from PATH for a moment, and a node
-  spawned then failed with `exec: "claude": executable file not found in $PATH`,
-  which halted the run. `runner.CLIRunner` now retries that one error
-  (`exec.ErrNotFound` on the runtime binary) up to 5 times, 1 second apart,
-  before reporting it as it did before. The preflight "command exists" check
-  waits for the same window, so a run started during an update is not refused
-  either. Nothing else is retried: a non-zero exit, an unparseable reply, a
-  timeout, and any other start failure still fail on the first try. Cancelling
-  during a wait stops the retry at once. The env scrub is unchanged and no new
-  process-starting code was added. A CLI that really is not installed now takes
-  about 4 seconds to be refused; docs/LIMITATIONS.md lists what the retry
-  does not cover.
-  ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
-- **The two shipped `dontAsk` fragments now tell their node which commands it
-  holds.** Under `dontAsk` a call outside the grant is denied, not asked about.
-  A node that did not know its grant gave up at the first denial instead of
-  using a command it held. `repair-round`'s apply never tried `make`.
-  `pr-publish`'s node found no permitted way to pass a PR body. Both prompts
-  now state the grant and the exact command for the job. The apply runs
-  `make` and is told to run its own evidence command (`verify_command`), so
-  bind that to a `make` target. Commits use one-line `-m` flags. Every call is
-  one program, `git -C`/`make -C` replaces `cd`, and a denied call is
-  re-issued in a permitted form. The pr node writes the body to
-  `.omg-pr-body.md` and runs
-  `gh pr create --title '…' --body-file .omg-pr-body.md`. It is told never to
-  commit that file. **`pr-publish`'s grant gains one rule**,
-  `Edit(./.omg-pr-body.md)`, which permits writing that one path and nothing
-  else. Without it no body could get through: an inline multi-line `--body`
-  is denied even under a matching `gh` grant, a heredoc or `$(…)` is
-  compound, and `.git/` is a file in a linked worktree. The rule's spelling
-  follows Claude Code's documented syntax and has not been measured here. It
-  reaches every `pr-publish` user: `self-dev`, `dev-review-pr` and
-  `backlog-batch` ×2. Once the PR is open the node deletes the body file with
-  `git clean -f -- .omg-pr-body.md`. If the file were left untracked,
-  `git worktree remove` would refuse at run end, and every published
-  `backlog-batch` lane would stay on disk as if it held uncommitted work.
-  DESIGN.md records why the engine does not
-  append a node's grant to its prompt generically.
-  ([#294](https://github.com/jitokim/oh-my-graph/issues/294))
+Unreleased entries are not written here. Each pull request writes its entry
+as its own file in [`changelog.d/`](changelog.d/), and the release PR collects
+them into the version's section with `scripts/changelog-collect.sh`, so two
+pull requests never edit a common file
+([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
+has landed since the last release is the list of files in that directory.
 
 ## [v0.15.0] - 2026-10-01
 
