@@ -303,6 +303,32 @@ func TestChangelogGateDoesNotCountUnreleased(t *testing.T) {
 	})
 }
 
+// TestChangelogGatePassesTheMigration is ADR 0042's own PR under its own gate
+// (§2.2): entries move out of Unreleased into fragments, the README and this
+// change's own fragment are added, and Unreleased becomes the pointer
+// paragraph. It passes without `no-changelog`, and warns about Unreleased.
+func TestChangelogGatePassesTheMigration(t *testing.T) {
+	r := newScriptRepo(t)
+	old := strings.Replace(baseChangelog,
+		"Unreleased entries live in changelog.d/ until a release collects them.\n",
+		"### Fixed\n\n- **Fix 293.**\n- **Fix 298.**\n", 1)
+	r.write("CHANGELOG.md", old)
+	r.git("rm", "-q", "-r", "changelog.d")
+	r.commit("before ADR 0042")
+	r.branch()
+	r.write("CHANGELOG.md", baseChangelog)
+	r.write("changelog.d/README.md", fragmentReadme)
+	r.write("changelog.d/293-a.md", "### Fixed\n\n- **Fix 293.**\n")
+	r.write("changelog.d/298-b.md", "### Fixed\n\n- **Fix 298.**\n")
+	r.write("changelog.d/304-changelog-fragments.md", "### Repository\n\n- **Entries are files.**\n")
+	r.write("main.go", "package main\n")
+	r.commit("ADR 0042")
+	stderr := r.wantGate(0, "::warning::")
+	if strings.Contains(stderr, "::error::") {
+		t.Errorf("the migration must pass its own gate:\n%s", stderr)
+	}
+}
+
 func TestChangelogGateExemptsTheReadme(t *testing.T) {
 	t.Run("beside a fragment", func(t *testing.T) {
 		r := newScriptRepo(t)
