@@ -781,6 +781,70 @@ func TestAGatingReviewSeesItsOwnPreviousRound(t *testing.T) {
 	}
 }
 
+// TestSelfDevGatesOnBothReviews pins #293: self-dev opened its PR on a
+// FINDINGS: from either reviewer, because both reviews passed on either verdict
+// and nothing between them and `pr` read one. The fix is a fan-in declarer,
+// `review-verdict`, and each assertion below is a way it could quietly stop
+// gating — a pattern that accepts findings again, an arc that no longer reaches
+// back to dev, a review outside the body (then it never re-runs, and its
+// {{ self.previous }} is empty forever), a `pr` wired around the verdict, or a
+// dev prompt that never reads the findings it is re-run to fix.
+func TestSelfDevGatesOnBothReviews(t *testing.T) {
+	loaded, err := LoadFile(filepath.Join("..", "..", "graphs", "self-dev.yaml"))
+	if err != nil {
+		t.Fatalf("load self-dev.yaml: %v", err)
+	}
+	g := loaded.Graph
+	verdict, ok := g.byID["review-verdict"]
+	if !ok {
+		t.Fatal("self-dev has no review-verdict node — nothing gates its PR on the reviews (#293)")
+	}
+
+	pattern := regexp.MustCompile(verdict.SuccessCheck.ResultMatches)
+	if pattern.MatchString(findingsVerdict) {
+		t.Errorf("review-verdict's pattern %q accepts a FINDINGS: reply — the PR opens on findings again", verdict.SuccessCheck.ResultMatches)
+	}
+	if !pattern.MatchString("**CLEAN** — both reviews came back clean.\n") {
+		t.Errorf("review-verdict's pattern %q rejects a CLEAN reply — no run could ever reach the PR", verdict.SuccessCheck.ResultMatches)
+	}
+	if verdict.SuccessCheck.Verify == nil {
+		t.Error("review-verdict declares no verify — a model's CLEAN would be taken on its word over a review that found something")
+	} else {
+		for _, review := range []string{"review-security", "review-style"} {
+			// Filterless: the file's path. `| inline` would splice a model's
+			// text into the shell command line the engine runs.
+			if token := "{{ artifacts." + review + " }}"; !strings.Contains(verdict.SuccessCheck.Verify.Command, token) {
+				t.Errorf("review-verdict's verify does not read %s (want %q in %q)", review, token, verdict.SuccessCheck.Verify.Command)
+			}
+		}
+	}
+
+	if verdict.Feedback == nil || verdict.Feedback.Rerun != "dev" || verdict.Feedback.Max != 2 {
+		t.Fatalf("review-verdict's feedback = %+v, want { rerun: dev, max: 2 }", verdict.Feedback)
+	}
+	body := map[string]bool{}
+	for _, id := range g.FeedbackBody("review-verdict") {
+		body[id] = true
+	}
+	for _, id := range []string{"dev", "e2e", "review-security", "review-style", "review-verdict"} {
+		if !body[id] {
+			t.Errorf("node %q is outside review-verdict's feedback body %v — it would not re-run on a repair round", id, g.FeedbackBody("review-verdict"))
+		}
+	}
+	for _, review := range []string{"review-security", "review-style"} {
+		if !strings.Contains(g.byID[review].Prompt, "{{ self.previous }}") {
+			t.Errorf("%s re-runs under the arc but never quotes {{ self.previous }} — each round's reviewer is a stranger to its own findings (#288)", review)
+		}
+	}
+
+	if pr := g.byID["pr"]; len(pr.DependsOn) != 1 || pr.DependsOn[0] != "review-verdict" {
+		t.Errorf("pr depends_on %v, want [review-verdict] — any other parent is a path to the PR the verdict does not gate", pr.DependsOn)
+	}
+	if !strings.Contains(g.byID["dev"].Prompt, "{{ feedback.review-verdict }}") {
+		t.Error("dev never quotes {{ feedback.review-verdict }} — a repair round re-runs the prompt it already ran (ADR 0028)")
+	}
+}
+
 // TestNestingHasAShippedAdopter is ADR 0029's own falsification condition,
 // turned into a test rather than left as a paragraph. ADR 0027 shipped the
 // multi-node fragment with no adopter, and the number that was supposed to

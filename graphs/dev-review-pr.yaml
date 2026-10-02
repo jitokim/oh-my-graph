@@ -83,15 +83,22 @@ nodes:
   # `<run-id>/review-style.out` (docs/LIMITATIONS.md, "A PASS row does not say
   # which outcome passed").
   #
-  # To gate instead: narrow the review's `success_check` to the clean verdict
-  # AND declare a `feedback:` arc on the same node — the pair, never the first
-  # alone. `backlog-batch`'s lane A is the worked example. It cannot be done in
-  # THIS shape without restructuring: the two reviews fan out of `e2e`, so any
-  # arc's body contains `e2e` while the sibling review sits outside it, and
-  # ADR 0010's side-exit rule refuses the graph at load ("review-security
-  # depends on body node e2e but is outside the loop"). Serializing the reviews
-  # to make room for one arc would spend the parallel fan-in this template
-  # exists to demonstrate and would still leave the other review ungated.
+  # self-dev made the opposite choice for the same shape (#293), and this one
+  # stays advisory on purpose. Gating this fan-out takes a third node: neither
+  # review can carry the pair (narrowed check + `feedback:` arc) itself, because
+  # an arc on one has `e2e` in its body while the sibling review depends on
+  # `e2e` from outside it (ADR 0010's side-exit rule), and two arcs that both
+  # re-run `dev` overlap (its disjoint-bodies rule). So the reviews fan in to a
+  # `review-verdict` node that narrows to CLEAN and carries the arc — read it
+  # in graphs/self-dev.yaml, and copy it from there to gate this pipeline.
+  # It is not here because this is the everyday template you copy into a repo
+  # it knows nothing about: it opens a pull request that a human reads before
+  # merging, with both reviews in the body. A finding therefore still reaches
+  # that human before anything merges. Gating would make every routine change
+  # pay for one more node, and up to three times its spend when a reviewer
+  # raises a nit. self-dev pays that because it is this repo's own dogfood
+  # loop, where a finding should be repaired before anyone is asked to look
+  # at the draft.
   - id: review-security
     use: review-security
     depends_on: [e2e]
