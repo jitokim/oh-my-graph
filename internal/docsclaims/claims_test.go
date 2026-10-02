@@ -145,6 +145,7 @@ var expectedRoots = []string{
 	"SECURITY.md",
 	"CONTRIBUTING.md",
 	"CHANGELOG.md",
+	"changelog.d/README.md",
 	"docs/EXAMPLES.md",
 	"docs/LIMITATIONS.md",
 	"docs/INSTALL.md",
@@ -156,8 +157,11 @@ var expectedRoots = []string{
 }
 
 // walkedSubtrees is the scope, not a file list: every Markdown file at the
-// repository root, and every Markdown file anywhere under these.
-var walkedSubtrees = []string{"docs", "plugin"}
+// repository root, and every Markdown file anywhere under these. changelog.d
+// holds CHANGELOG entries not yet collected into a release (ADR 0042); since
+// CHANGELOG.md is scanned, a claim must not escape the scan by being written
+// before the release instead of after it.
+var walkedSubtrees = []string{"docs", "plugin", "changelog.d"}
 
 type finding struct {
 	line  int
