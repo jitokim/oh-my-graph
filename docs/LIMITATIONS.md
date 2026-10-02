@@ -125,18 +125,24 @@ has no open issue behind it.
   one would mean the engine parsing verdict semantics out of a regex it
   deliberately treats as opaque.
   The review fragments are the asymmetric case of the same gap, and worth
-  naming separately: `review-style` and `review-security` answer `CLEAN` or
-  `FINDINGS:`, both PASS, and unlike `WITHHELD` — where refusing to merge *is*
-  the graph working — a `FINDINGS:` is the one signal in a run saying the diff
-  has a defect. `dev-review-pr` and `self-dev` open a pull request downstream
-  of exactly that, on purpose: the findings are interpolated into the PR body,
-  which is where the human deciding the merge will read them. So a green run
-  of either is not evidence the diff was clean, and their review nodes now say
-  so at the node. What is *not* a limitation is the choice: a graph that wants
-  findings to stop its pipeline narrows the review's `success_check` to the
-  clean verdict and declares a `feedback:` arc on the same node, so the
-  rejection re-runs the implementation with the findings instead of reading as
-  a broken run (`backlog-batch`'s lane A does this; lane B advises).
+  naming separately: `review-style` and `review-security` answer `CLEAN`,
+  `MINOR:` or `FINDINGS:` (ADR 0043), all three PASS, and unlike `WITHHELD` —
+  where refusing to merge *is* the graph working — a `FINDINGS:` is the one
+  signal in a run saying the diff has a defect. `dev-review-pr` is advisory and
+  opens a pull request downstream of exactly that, on purpose: the findings are
+  interpolated into the PR body, which is where the human deciding the merge
+  will read them. So a green run of it is not evidence the diff was clean, and
+  its review nodes say so at the node. `self-dev` gates instead (#293): a
+  `FINDINGS:` re-runs `dev`, and no PR opens on one. What is *not* a limitation
+  is the choice: a graph that wants blocking findings to stop its pipeline
+  narrows the review's `success_check` to the gating pattern (`CLEAN` and
+  `MINOR:` pass, `FINDINGS:` fails) and declares a `feedback:` arc on the same
+  node, so the rejection re-runs the implementation with the findings instead
+  of reading as a broken run (`backlog-batch`'s lane A does this; lane B
+  advises). The gap reaches gating reviews too: on one, a PASS means `CLEAN`
+  **or** `MINOR:`, and only the artifact (and the PR body that quotes it) says
+  which — so the minor items a gate let through are in `<run-id>/<node>.out`,
+  never in the ledger. That is the half of #288's proposal (b) not delivered.
   The ledger still prints PASS for the advisory case, for the reason above —
   and note that "read the node's artifact" is the advisory remedy only: a
   gating review that found something FAILS, and a failed node writes no
