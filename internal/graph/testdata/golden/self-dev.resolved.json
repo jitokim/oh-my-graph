@@ -11,7 +11,7 @@
     {
       "id": "dev",
       "type": "claude-run",
-      "prompt": "You are on a feature branch of the oh-my-graph Go repo. Implement this task,\nkeeping the diff focused and matching the existing style (DESIGN.md is the\nspec; English-only):\n  {{ inputs.task }}\nos/exec belongs to the FOUR exec seams only — runner.ClaudeCLIRunner,\nverify.ShellVerifier, worktree.GitManager, browser.ExecOpener — and a fifth\nspawner needs an ADR before it lands; internal/invariants enforces this.\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go: a node timeout must never lose finished work.\nStage ONLY the files you created or modified for this task, by explicit\npath (`git add \u003cpath\u003e ...`). Never `git add -A`, `git add .`, or\n`git add -u`: the working tree may hold untracked files that are not part\nof this task (assets someone dropped in, scratch output), and sweeping\nthem into your commit is a bug.\nEnd every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this node's turn ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state.\n",
+      "prompt": "You are on a feature branch of the oh-my-graph Go repo. Implement this task,\nkeeping the diff focused and matching the existing style (DESIGN.md is the\nspec; English-only):\n  {{ inputs.task }}\nos/exec belongs to the FOUR exec seams only — runner.ClaudeCLIRunner,\nverify.ShellVerifier, worktree.GitManager, browser.ExecOpener — and a fifth\nspawner needs an ADR before it lands; internal/invariants enforces this.\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go: a node timeout must never lose finished work.\nStage ONLY the files you created or modified for this task, by explicit\npath (`git add \u003cpath\u003e ...`). Never `git add -A`, `git add .`, or\n`git add -u`: the working tree may hold untracked files that are not part\nof this task (assets someone dropped in, scratch output), and sweeping\nthem into your commit is a bug.\nEnd every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this node's turn ends the moment you\nreply, so work you promise to do afterwards never happens. Never end on\na plan to continue — report the state that is TRUE AS YOU REPLY. When\nthe change is committed, START your reply with the bare word DONE —\nthose four characters FIRST, no markdown emphasis (`**DONE**` is WRONG),\nno heading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state.\n\nReview findings from the previous round follow — they are empty on the\nfirst pass. If present, fix every one before anything else, and note\nthat the branch already carries the previous round's commits: amend the\nwork, do not restart it.\n{{ feedback.review-verdict }}\n",
       "cwd": "{{ inputs.repo }}",
       "allowed_tools": [
         "Read",
@@ -106,11 +106,37 @@
       }
     },
     {
-      "id": "pr",
+      "id": "review-verdict",
       "type": "claude-run",
       "depends_on": [
         "review-security",
         "review-style"
+      ],
+      "prompt": "Two reviews of the current branch's diff follow. Do not review the diff\nyourself and do not add findings of your own: your only job is to say\nwhether both reviewers came back clean.\n  Security review: {{ artifacts.review-security | inline }}\n  Style review:    {{ artifacts.review-style | inline }}\n\nYour FINAL reply IS the verdict. START it with exactly one of these two\nbare tokens, as the very FIRST characters, with no markdown emphasis\n(`**CLEAN**` is WRONG), no heading, no preamble:\n  - CLEAN — BOTH reviews start with CLEAN.\n  - FINDINGS: — either review starts with FINDINGS:. Follow the token\n    with every finding from every review that raised one, verbatim,\n    under a `Security:` or `Style:` label, worst first.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*CLEAN\\b",
+        "verify": {
+          "command": "rc=0; for f in \"{{ artifacts.review-security }}\" \"{{ artifacts.review-style }}\"; do if ! head -c 256 \"$f\" | tr -d '*_` \\t\\r\\n' | grep -q '^CLEAN'; then cat \"$f\"; echo; rc=1; fi; done; exit $rc",
+          "timeout": "1m"
+        }
+      },
+      "feedback": {
+        "rerun": "dev",
+        "max": 2
+      }
+    },
+    {
+      "id": "pr",
+      "type": "claude-run",
+      "depends_on": [
+        "review-verdict"
       ],
       "prompt": "Push the current branch and open a DRAFT pull request with `gh pr create --draft`.\nPut both reviews in the PR body:\n  Security review: {{ artifacts.review-security | inline }}\n  Style review:    {{ artifacts.review-style | inline }}\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
       "cwd": "{{ inputs.repo }}",
