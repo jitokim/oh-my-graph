@@ -34,7 +34,8 @@ say `no-changelog` in its body. The gate exists because the question is
 answerable *before* the merge, by the person who knows what changed
 (`test.yml:34-45`).
 
-Put together: **every lane of every batch edits `CHANGELOG.md`**, and always
+Put together: **every lane of every batch run on this repo edits
+`CHANGELOG.md`**, and always
 the same dozen lines of it. Rule 1 is violated by construction, and its remedy
 — serialize the overlapping lanes — serializes the whole batch, which is the
 one thing the graph exists not to do.
@@ -83,14 +84,35 @@ One file per entry, at `changelog.d/<issue>-<slug>.md`:
   then a kebab-case slug. The issue number makes two lanes' names disjoint in
   the ordinary case; two PRs for one issue pick different slugs. Two PRs that
   pick the *same* name have an add/add conflict, which is a real rule-1
-  collision and is loud, as it should be.
+  collision and is loud, as it should be. The number is the one this repo's
+  commit subjects already carry (`(#304)`); a change with no issue opens one
+  first, as the larger changes here already do.
 - **Shape.** The first non-blank line is exactly one `### <Section>` heading,
-  where `<Section>` is one of the names this changelog already uses, in this
-  canonical order: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`,
-  `Security`, `Documented`, `Repository`. Then at least one prose line (a
-  non-blank line that is not a heading). No other `#`-heading line outside a
-  fenced block. A PR whose change is both an addition and a fix writes two
-  fragments.
+  where `<Section>` is one of a fixed list, in this canonical order: `Added`,
+  `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, `Documented`,
+  `Repository`, `Known limits`. Then at least one prose line (a non-blank line
+  that is not a heading). No other `#`-heading line outside a fenced block. A
+  PR whose change is both an addition and a fix writes two fragments.
+- **Why that list, against the names actually used.** The released sections
+  hold 13 distinct `###` names. The list keeps every name used more than once
+  in the current spelling, folds one on purpose, adds one, and leaves the rest
+  to the maintainer:
+  - **`Documentation` folds into `Documented`.** `Documentation` is the more
+    frequent (10 against 4), but it is the older habit: every use is in
+    v0.3.0–v0.6.0, and every release from v0.9.0 on says `Documented`. The
+    list follows the current name. A fragment headed `### Documentation` is
+    refused with a message that names `Documented`, so the old habit meets
+    an instruction rather than a bare "unknown section".
+  - **`Known limits` is added**, last, so a known-issues note has a home.
+    It is the one name of the single-use set that describes a recurring kind
+    of entry (v0.7.0 used it).
+  - **The other single-use headings stay out**: `Deferred (tracked, not in
+    v0.1)`, `Consumer contract (docs/RUN-FEED.md)`, `Not fixed, and not
+    claimed`, `Not automated, deliberately — merge-shepherd`. Each was one
+    release's own framing prose, not a kind of change. Writing one is the
+    maintainer's edit to the collected section at the cut (§2.3), where the
+    release's opening prose is already written by hand. They are not part of
+    a PR's entry.
 - **Body.** Exactly what would have gone under that heading in Unreleased
   before: the bullet, the bold lead, the issue link. Nothing about the prose
   convention changes.
@@ -101,28 +123,70 @@ One file per entry, at `changelog.d/<issue>-<slug>.md`:
 ### 2.2 The per-PR gate asks about fragments
 
 `scripts/changelog-entry-check.sh <base-sha>` keeps its contract — exit 0 an
-entry was added, 1 nothing a reader would find — and its local-run usage. Its
+entry was added, 1 nothing a reader would find — and its local-run usage, and
+gains one code: exit 2, a refusal no PR body excuses (rule 2 below). Its
 question becomes:
 
 1. **An entry** is a file under `changelog.d/` that the diff adds (or an
    existing fragment that gains a novel non-blank line, the #208 reflow rule
    applied per file), whose name matches §2.1, and which has a prose line.
-2. **The release-cut exemption is unchanged**: an added `## [` line in
-   `CHANGELOG.md` is the entry (`changelog-entry-check.sh:62-67`). A cut adds
-   the version heading and deletes the fragments, so it still passes.
-3. **A line added under `## [Unreleased]` is no longer an entry.** It fails
-   with a message that names `changelog.d/` and this ADR, so the habit of the
-   old rule meets an instruction, not a bare red.
+   "Adds" is read with rename detection **off** (`git diff --no-renames`):
+   `git diff` detects renames by default, and a fragment renamed to fix its
+   name *and* edited in the same PR would otherwise show as `R`, matching
+   neither "added" nor "existing fragment" cleanly. With renames off it is a
+   deletion of the old path plus an addition of the new one, so the new path
+   is judged whole, by its own name and shape. The reflow rule then compares
+   the added file's lines against the fragments the same diff deletes, so a
+   pure rename adds nothing novel and is not an entry, while a rename that
+   also adds a novel line is.
+2. **The release-cut exemption keeps its trigger and gains one refusal.** An
+   added `## [` line in `CHANGELOG.md` is still the entry
+   (`changelog-entry-check.sh:62-67`). A cut adds the version heading and
+   deletes the fragments, so it still passes. But the cut is now refused
+   (exit 2) if `changelog.d/` **at HEAD** still holds any file other than
+   `README.md`, naming each. The check reads HEAD's tree, not the diff, on
+   purpose: a fragment merged to `main` *after* the maintainer ran the
+   collector reaches the release PR through *Update branch*, which moves the
+   merge-base past it, so it never appears in `base...HEAD`. It does appear in
+   HEAD's tree. *Update branch* re-runs CI, and `main` requires the branch to
+   be up to date (CONTRIBUTING.md:92), so the late fragment cannot reach the
+   tag silently: the release PR turns red and the maintainer re-runs the
+   collector. See §6 for the failure this closes.
+3. **A line added under `## [Unreleased]` is not counted, and draws a hint.**
+   Not counted means it neither makes an entry nor refuses one: the verdict
+   is decided by rules 1, 2 and 4 alone, so a PR with a valid fragment that
+   also edits the Unreleased pointer paragraph (§2.4) — as this ADR's own PR
+   does — exits 0. When Unreleased gained lines the script prints a warning
+   that names `changelog.d/` and this ADR, so the habit of the old rule meets
+   an instruction either way; if nothing else counted, that warning sits
+   beside the ordinary exit 1. Keeping entries *out* of Unreleased is
+   enforced in one place, `TestUnreleasedSectionHoldsNoEntries` (§2.4), which
+   reads the result rather than the diff and so also covers a `no-changelog`
+   PR the gate excused.
 4. **A misnamed file under `changelog.d/`** (`304_foo.md`, `foo.txt`) fails
    by name. The collector skips anything that is not a fragment, so a misnamed
    file is an entry that would be silently dropped at release; refusing it at
-   the PR is the only place that is cheap.
+   the PR is the only place that is cheap. **`changelog.d/README.md` is
+   exempt by name in the gate**, exactly as in §2.1 and §2.3: adding or
+   editing it is neither an entry nor a refusal.
 
-The workflow step (`test.yml:65-86`) changes in two places only: the
+The workflow step (`test.yml:65-86`) changes in three places only: the
 "nothing outside the changelog changed" short-circuit (`test.yml:72`) treats
-`changelog.d/` like `CHANGELOG.md`, and the error text names `changelog.d/`
-instead of `## [Unreleased]`. `no-changelog` in the PR body still excuses, and
-still loudly.
+`changelog.d/` like `CHANGELOG.md`; the error text names `changelog.d/`
+instead of `## [Unreleased]`; and the `no-changelog` excuse (`test.yml:79`)
+applies to exit 1 only, so an exit 2 fails the step whatever the body says.
+`no-changelog` otherwise still excuses, and still loudly. A release PR has no
+reason to carry `no-changelog` (the cut *is* its entry), and an excuse must
+not open a path for a late fragment to reach the tag. The short-circuit
+cannot skip rule 2 on a real cut: a cut bumps the version in
+`cmd/oh-my-graph` (`TestVersionMatchesChangelog`), which is outside the
+changelog.
+
+**This PR under its own gate.** It adds `changelog.d/README.md` (exempt,
+rule 4), moves three entries and adds its own as fragments (entries, rule 1),
+and rewrites Unreleased into the pointer paragraph (not counted, a warning,
+rule 3). Exit 0, without `no-changelog`; a later edit to the pointer
+paragraph that ships with a fragment passes the same way.
 
 ### 2.3 The release cut collects
 
@@ -194,14 +258,31 @@ or excludes it for the same reason:
   `CHANGELOG.md` is scanned; a claim must not escape the scan by being written
   before the release instead of after it.
 
-### 2.7 `backlog-batch` rule 1 gains no exception
+### 2.7 `backlog-batch` rule 1 gains no exception, and its prompts stay generic
 
-Rule 1's text stays exceptionless and gains one sentence of explanation: the
-changelog entry is a per-lane fragment under `changelog.d/` named by the
-lane's own issue, so every lane writes a changelog entry and no two lanes
-share the file. Both lanes' dev prompts are told to write the entry as a
-fragment, since a lane that follows the old habit fails the gate (§2.2, 3).
-The golden `*.resolved.json` files move with any prompt edit.
+`graphs/backlog-batch.yaml` is an embedded example graph that runs against
+**any** repo (`--input repo="$PWD"`), and no shipped graph mentions a
+changelog today. So the fragment convention does not go into it:
+
+- **Its prompts are not changed**, and neither are the golden
+  `*.resolved.json` files. Telling both lanes to write
+  `changelog.d/<issue>-<slug>.md` would have every user's lane create this
+  repo's directory in a repo with no such convention — and with no issue
+  number to put in the name, because a lane's input is free text
+  (`--input task_a="implement <feature>"`).
+- **The instruction lives where this repo's conventions already live**:
+  CONTRIBUTING.md's merge-rule row and `changelog.d/README.md` (§6,
+  Compatibility). A lane's dev reads those like any other repo rule when the
+  graph runs here, and the gate's own message (§2.2) names `changelog.d/` if
+  it does not.
+- **Rule 1's comment stays exceptionless and gains one generic sentence**: a
+  file every lane must edit needs a per-lane design, like this repo's
+  `changelog.d/` (ADR 0042). That is true in any repo, and it is the shape
+  rule 1's own remedy lacked — not "serialize", but "give each lane its own
+  file". Rule 1 is a YAML comment, so the edit moves no golden file.
+
+Issue #304 asks for rule 1 to be updated "accordingly"; that is satisfied by
+the comment, not by making the shipped prompts oh-my-graph-specific.
 
 ## 3. What does not change
 
@@ -214,6 +295,9 @@ The golden `*.resolved.json` files move with any prompt edit.
   `no-changelog`.
 - **No engine code.** Nothing under `internal/` changes except the two scan
   lists in §2.6. No exec seam, no `childenv`, no graph schema.
+- **No shipped graph's behaviour.** `backlog-batch`'s prompts and every golden
+  `*.resolved.json` are untouched; only rule 1's comment gains a sentence
+  (§2.7).
 
 ## 4. Alternatives considered
 
@@ -227,12 +311,14 @@ needs no collector.
 
 It loses, on four counts:
 
-1. **It resolves only where a local git runs it.** The conflict in §1.2 is
-   met on GitHub, at *Update branch* and at merge, and whether GitHub's
-   server-side merge honours `.gitattributes` merge drivers is unmeasured in
-   this repository. The design would be correct only on the path that does not
-   need it, and every second PR would still be checked out, rebased locally
-   and force-pushed — the step the issue asks to remove.
+1. **It may resolve only where a local git runs it — unverified.** The
+   conflict in §1.2 is met on GitHub, at *Update branch* and at merge, and
+   whether GitHub's server-side merge honours `.gitattributes` merge drivers
+   has not been measured in this repository. If it does not, every second PR
+   would still be checked out, rebased locally and force-pushed — the step
+   the issue asks to remove. This count is a risk, not a finding, and the
+   rejection does not rest on it: counts 2 and 3 reject (a) on their own,
+   whichever way the measurement falls (§7, 1).
 2. **Union is not correct, only mechanical.** It concatenates the two sides of
    a hunk without reading them. After a release cut leaves Unreleased empty,
    two PRs that each add `### Fixed` produce two `### Fixed` headings, and the
@@ -248,7 +334,9 @@ It loses, on four counts:
    the next "except".
 4. **Fragments make the conflict impossible rather than resolvable.** With
    (b), *Update branch* succeeds on GitHub with no checkout at all, because
-   there is nothing to merge.
+   there is nothing to merge. That silence has one place it would be wrong —
+   the release PR, where today's conflict is what tells the maintainer a PR
+   merged after the cut — and §2.2's rule 2 puts a refusal there instead.
 
 What (a) gets right — one file, readable Unreleased — is the cost (b) pays,
 and §6 states it.
@@ -261,9 +349,16 @@ and §6 states it.
   the gate's whole reason (`test.yml:43-45`): the entry would be written after
   the merge, by someone not looking at the change. That is the shape that cost
   five round trips in v0.9.0.
-- **Generate entries from commit subjects or PR bodies.** Loses on v0.8.0's
-  lesson (`release-notes.sh:5-9`): a commit list cannot say why a change
-  matters. Fragments keep the prose hand-written.
+- **Generate entries from commit subjects.** Loses on v0.8.0's lesson
+  (`release-notes.sh:5-9`): a commit list cannot say why a change matters.
+- **Generate entries from a changelog section of each PR body.** That prose
+  is still hand-written, so v0.8.0's lesson does not apply. It loses on two
+  other counts. The release cut would need the network, to fetch every
+  merged PR's body from GitHub, where today it reads only the tree. And the
+  entry would not be in the diff: a PR body is edited outside review, after
+  approval, with no check re-run, so the text that ships is not the text that
+  was reviewed. A fragment is a file, so it is reviewed in the diff and
+  collected offline.
 - **`towncrier` or another fragment tool.** Same idea, but a Python toolchain
   in a Go repo's release path and CI, a config format, and its own section
   vocabulary — for a collector that is one `awk` pass. The house scripts are
@@ -289,31 +384,46 @@ cases run in `make test` with no network.
 2. **Gate: a blank or heading-only fragment is not.** Exits 1.
 3. **Gate: a reflow of an existing fragment is not.** Re-indenting a bullet
    in an existing fragment exits 1; adding a novel line to it exits 0.
-4. **Gate: a line under Unreleased is not an entry.** Exits 1, and stderr
-   names `changelog.d/`.
+   **Renames:** a fragment renamed with no other change exits 1 (nothing
+   novel); renamed *and* given a novel line exits 0.
+4. **Gate: a line under Unreleased is not counted.** Alone, it exits 1 and
+   stderr names `changelog.d/`. **With a well-formed fragment in the same
+   diff**, an edit to the Unreleased paragraph exits 0 and still prints the
+   warning.
 5. **Gate: a misnamed file is refused by name.** `changelog.d/304_x.md` exits
-   1 and is named.
+   1 and is named. A well-formed fragment renamed to `304_x.md` is refused by
+   its new name the same way. **`README.md` is exempt**: adding
+   `changelog.d/README.md` beside a fragment exits 0, and alone exits 1
+   without naming it as misnamed.
 6. **Gate: the release cut still passes.** A diff that adds `## [v9.9.9]` and
    deletes every fragment exits 0.
-7. **Collector: grouping and order.** Three fragments — two `Fixed`, one
+7. **Gate: a cut with a fragment left at HEAD is refused.** The same cut,
+   with a fragment committed on `main` after it and merged in (so it is in
+   HEAD's tree but not in `base...HEAD`), exits **2**, not 1, and names the
+   fragment. Exit 2 is what keeps `no-changelog` from excusing it; that the
+   workflow excuses exit 1 only is a one-line `test.yml` change, checked in
+   review like the rest of that file.
+8. **Collector: grouping and order.** Three fragments — two `Fixed`, one
    `Added`, issue numbers out of order — produce one `### Added` then one
    `### Fixed`, fragments in numeric issue order, under `## [vX] - <date>`
    placed directly below the Unreleased block; the fragments are deleted.
-8. **Collector: refusals write nothing.** A malformed fragment, no fragments,
+9. **Collector: refusals write nothing.** A malformed fragment, no fragments,
    and an already-present version heading each exit non-zero with
    `CHANGELOG.md` and `changelog.d/` byte-identical.
-9. **Collector output feeds `release-notes.sh` unchanged.** On test 7's
-   result, `release-notes.sh vX` prints the collected section (the credit
-   half is skipped: no previous tag).
-10. **`TestChangelogFragmentsAreWellFormed`** over the real `changelog.d/`:
+10. **Collector output feeds `release-notes.sh` unchanged.** On test 8's
+    result, `release-notes.sh vX` prints the collected section (the credit
+    half is skipped: no previous tag).
+11. **`TestChangelogFragmentsAreWellFormed`** over the real `changelog.d/`:
     every file but `README.md` matches §2.1's name and shape, with a known
-    section name. Its own failure cases are table-driven.
-11. **`TestUnreleasedSectionHoldsNoEntries`**, with a failing case for a
+    section name. Its own failure cases are table-driven, and include
+    `### Documentation` refused with a message naming `Documented`, and
+    `### Known limits` accepted.
+12. **`TestUnreleasedSectionHoldsNoEntries`**, with a failing case for a
     `### ` heading and for a `- ` item, and a fenced example that passes.
-12. **The widened duplicate-heading guard** fails on a `## [v<Version>]`
+13. **The widened duplicate-heading guard** fails on a `## [v<Version>]`
     section with two `### Fixed`, still ignores fenced headings, and still
     ignores sections below the current one.
-13. **The two scan lists**: `changelog.d/` is in `historyExcluded` and is
+14. **The two scan lists**: `changelog.d/` is in `historyExcluded` and is
     reached by the `docsclaims` walk.
 
 ## 6. Failure modes and compatibility
@@ -333,10 +443,20 @@ cases run in `make test` with no network.
 - **The maintainer forgets to run the collector.** The version heading is
   missing, so `TestVersionMatchesChangelog` and
   `TestChangelogSectionHasSubstance` fail the release PR — the same failure as
-  forgetting to promote Unreleased today. Fragments left behind after a manual
-  cut would be collected again into the next release; the collector deletes
-  what it collects so the normal path cannot do that, and the checklist names
-  the script so the normal path is the one taken.
+  forgetting to promote Unreleased today.
+- **A fragment is left in `changelog.d/` at the cut** — a manual cut that
+  skipped the collector, or a fragment that merged to `main` after the
+  collector ran and before the release PR merged. Unguarded, the tag would
+  ship that PR's code while its fragment waited in `changelog.d/`, to be
+  collected into the *next* release's notes, describing a change that had
+  already shipped. Today the second case is loud by accident: *Update
+  branch* on the release PR conflicts on Unreleased. Fragments remove that
+  conflict, so §2.2's rule 2 replaces it on purpose: a cut whose HEAD still
+  holds a fragment exits 2, *Update branch* re-runs the check, and `main`'s
+  up-to-date rule means the release PR cannot merge without it. The
+  collector refuses a second write of the section (§2.3, 3), so the fix is
+  to move the late fragment's body into the section by hand and delete the
+  fragment, or to remove the section and collect again.
 - **Two PRs pick the same fragment name.** An add/add conflict, loud at
   *Update branch*. It is a genuine rule-1 collision and rename is the fix.
 - **A PR edits another PR's unreleased fragment** (a follow-up fix to an
@@ -354,9 +474,12 @@ cases run in `make test` with no network.
   `changelog.d/304-changelog-fragments.md`; it is what satisfies the gate for
   this PR under the rule it introduces, independent of the moved three.
 - **Contributors**: CONTRIBUTING.md's merge-rule row and its release checklist
-  change in the same PR — the row names `changelog.d/` and the local gate
-  command; the checklist gains "run `scripts/changelog-collect.sh vX.Y.Z`
-  first, then write the section's opening prose".
+  change in the same PR — the row names `changelog.d/`, the fragment name and
+  shape (pointing to `changelog.d/README.md`), and the local gate command; the
+  checklist gains "run `scripts/changelog-collect.sh vX.Y.Z` first, then
+  write the section's opening prose". These two files are the only place the
+  convention is taught, so they are also what a `backlog-batch` lane's dev
+  reads when the graph runs on this repo (§2.7).
 - **DESIGN.md**'s repo layout gains `changelog.d/`.
 - **Users of oh-my-graph**: nothing. The binary, the graph schema, and the
   release page are unchanged.
@@ -365,7 +488,7 @@ cases run in `make test` with no network.
 
 1. **GitHub's server-side merge is shown to honour `merge=union`, and a
    release cycle shows no stranded or contradictory entries under it.** Then
-   §4.1's first count falls and its second becomes the whole argument; the
+   §4.1's first count falls and counts 2 and 3 are the whole argument; the
    trade would be worth re-weighing against the reader cost in §6.
 2. **Fragment conflicts are observed between ordinary PRs** (not same-issue
    lanes). Then the naming scheme does not make names disjoint, and it, not
