@@ -171,9 +171,10 @@ question becomes:
    reads the result rather than the diff and so also covers a `no-changelog`
    PR the gate excused.
 4. **A misnamed file under `changelog.d/`** (`304_foo.md`, `foo.txt`) fails
-   by name. The collector skips anything that is not a fragment, so a misnamed
-   file is an entry that would be silently dropped at release; refusing it at
-   the PR is the only place that is cheap. **`changelog.d/README.md` is
+   by name. The collector refuses the whole release over a tracked file that
+   is not a fragment (§2.3, item 1), so a misnamed file merged today is a
+   blocked release later; refusing it at the PR that adds it is where it is
+   cheap. **`changelog.d/README.md` is
    exempt by name in the gate**, exactly as in §2.1 and §2.3: adding or
    editing it is neither an entry nor a refusal.
 
@@ -236,7 +237,7 @@ the release PR that section exists in `CHANGELOG.md` exactly as before.
 ### 2.4 `## [Unreleased]` keeps its heading and loses its entries
 
 The heading stays: Keep a Changelog readers look for it,
-`TestUnreleasedSectionHasNoDuplicateHeadings` fails without it, and the
+the duplicate-heading guard (§2.5) fails without it, and the
 `[Unreleased]:` compare footnote needs it. Under it sits one fixed paragraph
 pointing to `changelog.d/`.
 
@@ -261,7 +262,9 @@ guard's scope **widens** to also cover the `## [v<Version>]` section — the one
 review in the release PR. Its Unreleased half stays (trivially green under
 §2.4, and still correct). The collector emits each heading once by
 construction; the widened guard is what catches a maintainer's hand edit of
-the collected section that re-adds one, before the tag. Released sections
+the collected section that re-adds one, before the tag. With its scope no
+longer Unreleased alone, it is renamed
+`TestChangelogSectionsHaveNoDuplicateHeadings`. Released sections
 below the current one stay out of scope, for the reason the guard already
 gives: they are settled history.
 

@@ -209,7 +209,7 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 	}
 }
 
-// TestUnreleasedSectionHasNoDuplicateHeadings refuses a second `### Added` (or
+// TestChangelogSectionsHaveNoDuplicateHeadings refuses a second `### Added` (or
 // `### Fixed`, or any name already present) inside `## [Unreleased]` and inside
 // the current release's `## [v<Version>]` section.
 //
@@ -243,7 +243,7 @@ func TestLimitationsStampMatchesVersion(t *testing.T) {
 // this changelog quotes headings constantly, so a ```-fenced `### Added` is an
 // example of a heading, not a second one. Counting it would redden CI over an
 // entry that has no duplicate at all.
-func TestUnreleasedSectionHasNoDuplicateHeadings(t *testing.T) {
+func TestChangelogSectionsHaveNoDuplicateHeadings(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("read CHANGELOG.md: %v", err)

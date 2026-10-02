@@ -316,8 +316,8 @@ Maintainer checklist for cutting a release:
   release if it is missing, so there is no auto-generated fallback to fall back
   on. `TestChangelogSectionHasSubstance` catches an empty one in the PR, where
   it is still cheap; a tag is public the moment it lands. A heading repeated by
-  a hand edit fails `TestUnreleasedSectionHasNoDuplicateHeadings`, which also
-  reads the current version's section. The Contributors line
+  a hand edit fails `TestChangelogSectionsHaveNoDuplicateHeadings`, which reads
+  the current version's section as well as Unreleased. The Contributors line
   is computed from `git log`, so it needs nothing from you.
 - **`make smoke` and `make smoke-codex` before tagging.** Run both real-CLI
   smokes locally as the last gate — neither runs in CI.
