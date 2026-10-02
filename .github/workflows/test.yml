@@ -51,6 +51,11 @@ jobs:
   # released heading (#208). The script is a file rather than an inline block so
   # that it can be run on a branch before pushing — a guard nobody can run
   # outside CI is a guard nobody falsifies.
+  #
+  # Since ADR 0042 (#304) an entry is a fragment file, changelog.d/<issue>-<slug>.md,
+  # so two PRs open at once no longer conflict on one shared section. The script
+  # exits 2 for the one refusal no PR body excuses — a release cut that leaves a
+  # fragment behind — so `no-changelog` excuses exit 1 only.
   changelog:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -69,18 +74,24 @@ jobs:
           merge_base=$(git merge-base "$base" HEAD)
           changed=$(git diff --name-only "$merge_base"...HEAD)
           echo "$changed" | sed 's/^/  /'
-          outside=$(echo "$changed" | grep -v '^CHANGELOG\.md$' || true)
+          outside=$(echo "$changed" | grep -v -e '^CHANGELOG\.md$' -e '^changelog\.d/' || true)
           if [ -z "$outside" ]; then
-            echo "nothing outside CHANGELOG.md changed"; exit 0
+            echo "nothing outside CHANGELOG.md and changelog.d/ changed"; exit 0
           fi
-          if sh scripts/changelog-entry-check.sh "$merge_base"; then
+          rc=0
+          sh scripts/changelog-entry-check.sh "$merge_base" || rc=$?
+          if [ "$rc" -eq 0 ]; then
             exit 0
           fi
-          if printf '%s' "$BODY" | grep -qi 'no-changelog'; then
+          if [ "$rc" -eq 1 ] && printf '%s' "$BODY" | grep -qi 'no-changelog'; then
             echo "excused by the PR body"; exit 0
           fi
-          echo "::error::this PR changes files but adds no CHANGELOG.md entry." >&2
-          echo "Write one under ## [Unreleased], or put 'no-changelog' in the PR body with a reason." >&2
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::refused (exit $rc) — see above; 'no-changelog' does not excuse this." >&2
+            exit 1
+          fi
+          echo "::error::this PR changes files but adds no changelog entry." >&2
+          echo "Write one as changelog.d/<issue>-<slug>.md (see changelog.d/README.md), or put 'no-changelog' in the PR body with a reason." >&2
           exit 1
         env:
           BODY: ${{ github.event.pull_request.body }}
