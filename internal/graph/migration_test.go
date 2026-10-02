@@ -61,13 +61,16 @@ var migratedTemplates = map[string]map[string][]string{
 		// the pre-migration one: back then the node reported in prose under a
 		// bare `{ exit_zero: true }`, so both fields diverge from the frozen
 		// file for the reason divergedSinceMigration records below.
-		"pr": {"prompt", "success_check.result_matches"},
+		// allowed_tools joined later (#294): the grant gained a write to
+		// exactly one path, the PR body file, because under dontAsk the
+		// node had no permitted way to pass a body.
+		"pr": {"prompt", "allowed_tools", "success_check.result_matches"},
 	},
 	"dev-review-pr.yaml": {
 		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
 		"review-security": {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
 		"review-style":    {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
-		"pr":              {"prompt", "success_check.result_matches"},                  // onto pr-publish, resolved byte-identical — see self-dev's note
+		"pr":              {"prompt", "allowed_tools", "success_check.result_matches"}, // onto pr-publish; gains the PR-body-file write (#294) — see self-dev's note
 	},
 }
 

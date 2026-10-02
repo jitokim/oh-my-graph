@@ -18,7 +18,10 @@
 #
 # Everything else is the proven shape: the turn-ends-at-the-reply discipline,
 # the URL as the payload that makes the token an assertion, and a grant that
-# lets this node publish but never fix — no Edit, no Write. A node that also
+# lets this node publish but never fix — no write to the tree, only to one
+# untracked file, the PR body — stated in the prompt word for word, because under
+# dontAsk a node that does not know its grant gives up at the first denial
+# (#294). A node that also
 # has to CHANGE the tree before it opens the PR is a different shape and says
 # so honestly by staying inline; `adr-driven-dev`'s `finalize` is the one in
 # this repo (it applies the last review's remaining flags, and gates on an
@@ -30,6 +33,21 @@ node:
   type: claude-run
   prompt: |
     {{ with.publish }}
+    Your grant is exactly this: `git`, `gh`, Read, and writing ONE file,
+    `.omg-pr-body.md` in your working directory. Any other call is denied,
+    not asked about. A body passed inline is denied even though it starts
+    with `gh`: a multi-line `--body '…'`, a heredoc and a `$(…)` are all
+    refused. So the body goes through that file, in this order:
+      1. Write the whole body to `.omg-pr-body.md` with the Write tool (if
+         an earlier run left one there, Read it first, then overwrite it).
+      2. Run `gh pr create --title '<one line>' --body-file .omg-pr-body.md`,
+         plus any other flag asked for above (such as `--draft`).
+      3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the
+         change.
+    Every Bash call is ONE program: no `cd`, `&&`, `;`, `|`, redirect or
+    heredoc. To act in another directory, use `git -C <dir>`. A denied call
+    means the FORM was wrong, not the goal: re-issue it in the form above
+    before you give up on it.
     Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
     promise to open afterwards is never opened. START your reply with the
     bare token PR followed immediately by the pull request's URL
@@ -39,10 +57,20 @@ node:
     line of context ahead of the token fails this node even when the PR
     is open.
   # Publish, never fix: `gh` and `git` to push and open, `Read` to write a body
-  # that describes the diff. No Edit/Write — a node that reaches the end of a
-  # pipeline and starts editing is re-opening work every review upstream has
-  # already judged, and nothing downstream would review the result.
-  allowed_tools: [Read, "Bash(git *)", "Bash(gh *)"]
+  # that describes the diff. No unscoped Edit/Write — a node that reaches the
+  # end of a pipeline and starts editing is re-opening work every review
+  # upstream has already judged, and nothing downstream would review the result.
+  #
+  # The one write it holds is the body file, and only that path (#294). Under
+  # dontAsk the body had no permitted route at all: an inline multi-line
+  # `--body` was denied under a matching `gh` grant 9 times in one real run
+  # (docs/measurements/0213b, class C), a heredoc or `$(cat …)` is compound,
+  # and `--body-file` needs a file this node could not create. `.git/` is no
+  # home for it either, since `.git` is a FILE in a linked worktree. Claude
+  # Code's `Edit(<path>)` rule is the one that covers the Write tool, and `./`
+  # anchors it to the node's working directory. That spelling follows the
+  # CLI's documented rule syntax and has not been measured here.
+  allowed_tools: [Read, "Bash(git *)", "Bash(gh *)", "Edit(./.omg-pr-body.md)"]
   permission_mode: dontAsk
   handoff: artifact
   # The URL is the payload that makes this an assertion: `gh` prints one only

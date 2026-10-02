@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -622,6 +623,145 @@ func grantAdmits(tools []string, command string) bool {
 		}
 	}
 	return false
+}
+
+// splicedNodes returns every runtime node, across every shipped template, that
+// a `use:` of fragment produced: the single-node form's own NodeID, or the
+// multi-node form's spliced ids whose local segment is local. Nested citations
+// count, since each has a resolution of its own (ADR 0029).
+func splicedNodes(t *testing.T, fragment, local string) []Node {
+	t.Helper()
+	var nodes []Node
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		for _, res := range loaded.Resolutions {
+			if res.Fragment != fragment {
+				continue
+			}
+			ids := []string{res.NodeID}
+			if len(res.Spliced) > 0 {
+				ids = nil
+				for _, id := range res.Spliced {
+					if strings.HasSuffix(id, "/"+local) {
+						ids = append(ids, id)
+					}
+				}
+			}
+			for _, id := range ids {
+				n, ok := loaded.Graph.NodeByID(id)
+				if !ok {
+					t.Fatalf("%s: resolution names %q, which the graph does not contain", name, id)
+				}
+				nodes = append(nodes, n)
+			}
+		}
+	}
+	return nodes
+}
+
+// assertPromptStatesBashGrant fails unless every program n's `Bash(<p> *)`
+// grants admit is named in n's prompt as `p`, and the prompt says what to do
+// after a denial. That is #294's rule for a dontAsk node: an unmatched call is
+// denied rather than asked about, so a node that does not know which commands
+// it holds stops at its first denial instead of reaching for one it does hold.
+func assertPromptStatesBashGrant(t *testing.T, n Node) {
+	t.Helper()
+	if n.PermissionMode != PermissionDontAsk {
+		t.Errorf("%s runs %q, not dontAsk — this test's premise moved; re-argue it rather than delete the check", n.ID, n.PermissionMode)
+	}
+	for _, tool := range n.AllowedTools {
+		inner, ok := strings.CutPrefix(tool, "Bash(")
+		if !ok {
+			continue
+		}
+		program, _, _ := strings.Cut(strings.TrimSuffix(inner, ")"), " ")
+		if !strings.Contains(n.Prompt, "`"+program+"`") {
+			t.Errorf("%s holds %s but its prompt never names `%s` — under dontAsk it cannot guess which command survives", n.ID, tool, program)
+		}
+	}
+	flat := strings.Join(strings.Fields(n.Prompt), " ")
+	if !strings.Contains(flat, "denied call means the FORM was wrong") {
+		t.Errorf("%s never says a denied call is to be re-issued in a permitted form — the give-up #294 recorded", n.ID)
+	}
+}
+
+// TestRepairRoundApplyIsToldTheGrantItHolds pins #294's first half: a
+// repair-round apply never tried `make` after a denied test run, because its
+// prompt said "run the tests" and never which command its grant admits. The
+// prompt now states the grant, and names the engine's own evidence command as
+// the one to run — which only helps if the grant admits it, so every shipped
+// citer's verify_command is held against the grant here.
+func TestRepairRoundApplyIsToldTheGrantItHolds(t *testing.T) {
+	applies := splicedNodes(t, "repair-round", "apply")
+	if len(applies) == 0 {
+		t.Fatal("no shipped template splices repair-round's apply — this test asserts nothing")
+	}
+	for _, n := range applies {
+		assertPromptStatesBashGrant(t, n)
+		if n.SuccessCheck.Verify == nil {
+			t.Errorf("%s declares no verify — the evidence command the prompt names is gone", n.ID)
+			continue
+		}
+		command := n.SuccessCheck.Verify.Command
+		if !grantAdmits(n.AllowedTools, command) {
+			t.Errorf("%s is judged by %q, which its grant %v does not admit — the apply cannot run its own evidence", n.ID, command, n.AllowedTools)
+		}
+		if !strings.Contains(n.Prompt, "`"+command+"`") {
+			t.Errorf("%s's prompt never names its evidence command `%s` as the test run", n.ID, command)
+		}
+		if !strings.Contains(n.Prompt, "make -C <dir>") {
+			t.Errorf("%s never names `make -C <dir>`, so `cd <dir> && make` is what it reaches for", n.ID)
+		}
+	}
+
+	// The negative half: a non-make evidence command must fail the grant check,
+	// or the check above is satisfiable by any binding.
+	if grantAdmits(applies[0].AllowedTools, "go test ./...") {
+		t.Errorf("grantAdmits admits `go test` under the apply's grant %v", applies[0].AllowedTools)
+	}
+}
+
+// prBodyFile is the one path pr-publish's node may write: the PR body.
+const prBodyFile = ".omg-pr-body.md"
+
+// TestPRPublishPassesItsBodyThroughAGrantedFile pins #294's second half: the
+// pr node had no permitted way to pass a body under dontAsk. An inline
+// multi-line `--body` was denied under a matching `gh` grant
+// (docs/measurements/0213b, class C), a heredoc and `$(…)` are compound, and
+// `--body-file` needed a file the node could not write. So the grant gains a
+// write to exactly one path, the prompt names that path and the `gh` command
+// that reads it, and the grant stays publish-never-fix: no unscoped Edit or
+// Write.
+func TestPRPublishPassesItsBodyThroughAGrantedFile(t *testing.T) {
+	prs := splicedNodes(t, "pr-publish", "")
+	if len(prs) == 0 {
+		t.Fatal("no shipped template cites pr-publish — this test asserts nothing")
+	}
+	const create = "gh pr create --title '<one line>' --body-file " + prBodyFile
+	for _, n := range prs {
+		assertPromptStatesBashGrant(t, n)
+		bodyGrant := "Edit(./" + prBodyFile + ")"
+		if !slices.Contains(n.AllowedTools, bodyGrant) {
+			t.Errorf("%s's grant %v has no %s — the body file it is told to write would be denied", n.ID, n.AllowedTools, bodyGrant)
+		}
+		for _, tool := range n.AllowedTools {
+			if tool == "Edit" || tool == "Write" || tool == "Edit(*)" || tool == "Write(*)" {
+				t.Errorf("%s holds unscoped %s — a publish node writes its body file and nothing else", n.ID, tool)
+			}
+		}
+		if !strings.Contains(n.Prompt, "`"+create+"`") {
+			t.Errorf("%s's prompt never names `%s` — the one body-passing form its grant admits", n.ID, create)
+		}
+		if !grantAdmits(n.AllowedTools, create) {
+			t.Errorf("%s's grant %v does not admit %q", n.ID, n.AllowedTools, create)
+		}
+		if !strings.Contains(strings.Join(strings.Fields(n.Prompt), " "), "Never `git add` or commit `"+prBodyFile+"`") {
+			t.Errorf("%s never says to keep %s out of the commit — a body file pushed with the branch is a change nobody reviewed", n.ID, prBodyFile)
+		}
+	}
 }
 
 // findingsVerdict is the reply a review fragment makes when it found a real
