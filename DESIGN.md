@@ -155,7 +155,10 @@ subscription session limit, say) instead of only "exit code 1".
   is the minimum that gives a body a route at all: an inline multi-line
   `--body` was denied under a matching grant
   (`docs/measurements/0213b-compound-commands-defeat-grants.md`, class C), and
-  a heredoc or `$(…)` is compound.
+  a heredoc or `$(…)` is compound. Once the PR is open, the node deletes the
+  file with `git clean -f -- .omg-pr-body.md`, which `Bash(git *)` already
+  admits. If it were left untracked, run-end `git worktree remove` (which
+  never passes `--force`) would refuse and keep a published lane's worktree.
   `TestRepairRoundApplyIsToldTheGrantItHolds` and
   `TestPRPublishPassesItsBodyThroughAGrantedFile` pin both.
   **Considered and not done: the engine appending each node's `Bash(...)`

@@ -44,6 +44,9 @@ node:
          plus any other flag asked for above (such as `--draft`).
       3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the
          change.
+      4. Once the PR is open, delete the file with
+         `git clean -f -- .omg-pr-body.md`: a stray untracked file stops the
+         run's worktree from being removed.
     Every Bash call is ONE program: no `cd`, `&&`, `;`, `|`, redirect or
     heredoc. To act in another directory, use `git -C <dir>`. A denied call
     means the FORM was wrong, not the goal: re-issue it in the form above

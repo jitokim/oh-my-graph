@@ -45,8 +45,11 @@ oh-my-graph is **alpha software**. The graph YAML schema, the CLI, and the
   compound, and `.git/` is a file in a linked worktree. The rule's spelling
   follows Claude Code's documented syntax and has not been measured here. It
   reaches every `pr-publish` user: `self-dev`, `dev-review-pr` and
-  `backlog-batch` ×2. The body file stays in the working tree, untracked, after
-  the PR opens. DESIGN.md records why the engine does not
+  `backlog-batch` ×2. Once the PR is open the node deletes the body file with
+  `git clean -f -- .omg-pr-body.md`. If the file were left untracked,
+  `git worktree remove` would refuse at run end, and every published
+  `backlog-batch` lane would stay on disk as if it held uncommitted work.
+  DESIGN.md records why the engine does not
   append a node's grant to its prompt generically.
   ([#294](https://github.com/jitokim/oh-my-graph/issues/294))
 

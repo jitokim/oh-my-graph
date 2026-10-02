@@ -761,6 +761,16 @@ func TestPRPublishPassesItsBodyThroughAGrantedFile(t *testing.T) {
 		if !strings.Contains(strings.Join(strings.Fields(n.Prompt), " "), "Never `git add` or commit `"+prBodyFile+"`") {
 			t.Errorf("%s never says to keep %s out of the commit — a body file pushed with the branch is a change nobody reviewed", n.ID, prBodyFile)
 		}
+		// Left untracked, the body file makes `git worktree remove` (no
+		// --force) refuse, so a published backlog-batch lane is kept on disk
+		// as if it held uncommitted work.
+		const clean = "git clean -f -- " + prBodyFile
+		if !strings.Contains(n.Prompt, "`"+clean+"`") {
+			t.Errorf("%s's prompt never names `%s` — the body file outlives the PR and blocks worktree cleanup", n.ID, clean)
+		}
+		if !grantAdmits(n.AllowedTools, clean) {
+			t.Errorf("%s's grant %v does not admit %q", n.ID, n.AllowedTools, clean)
+		}
 	}
 }
 
