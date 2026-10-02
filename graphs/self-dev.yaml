@@ -8,7 +8,8 @@
 # already carries the task context). Opens a DRAFT PR so nothing lands unreviewed.
 #
 # It GATES on its reviews (#293): a FINDINGS: from either reviewer sends the
-# work back to `dev` with the findings, instead of riding into the PR body. The
+# work back to `dev` with the blocking findings, instead of riding into the PR
+# body; a MINOR: passes, and its items ride into the PR body (ADR 0043). The
 # gate is one fan-in node, `review-verdict`, because it has to be — see the
 # comment above it. Price of the arc, legible from the file: the body is all
 # five nodes up to and including `review-verdict`, so (1 + max) × 5 = 15 runs
@@ -60,9 +61,11 @@ nodes:
       the current state.
 
       Review findings from the previous round follow — they are empty on the
-      first pass. If present, fix every one before anything else, and note
-      that the branch already carries the previous round's commits: amend the
-      work, do not restart it.
+      first pass. If present, fix every blocking finding before anything
+      else, and note that the branch already carries the previous round's
+      commits: amend the work, do not restart it. Items under a `Minor:` line
+      are not this round's to fix: leave them unless a blocking fix rewrites
+      the same code anyway — they reach the PR body through the review.
       {{ feedback.review-verdict }}
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
     permission_mode: dontAsk
@@ -93,7 +96,7 @@ nodes:
         single run; determinism is the claim under test.
       verify_command: make local
 
-  # The two reviews keep the fragments' either-verdict check: each one's job is
+  # The two reviews keep the fragments' advisory check: each one's job is
   # to judge, and `review-verdict` below is what gates on the judgment. They
   # still re-run every round — both sit inside the arc's body — and on a re-run
   # each fragment's prompt quotes {{ self.previous }}, the reviewer's own reply
@@ -116,8 +119,9 @@ nodes:
       diff: the current branch's diff vs main
       focus: Also check adherence to DESIGN.md's invariants (the four exec seams, env scrub, no Agent SDK).
 
-  # The gate (#293). Gating is a PAIR — a success_check narrowed to the clean
-  # verdict AND a `feedback:` arc back to the implementer (DESIGN.md "A review
+  # The gate (#293). Gating is a PAIR — a success_check narrowed to the gating
+  # pattern, which accepts `CLEAN` and `MINOR:` and rejects only `FINDINGS:`
+  # (ADR 0043), AND a `feedback:` arc back to the implementer (DESIGN.md "A review
   # gates only when its caller pairs a narrowed check with an arc";
   # graphs/fragments/gated-lane.yaml) — and here the pair cannot sit on either
   # review, for two load rules (ADR 0010):
@@ -129,10 +133,11 @@ nodes:
   # on a path from `dev` to here. Its reply is the payload `dev` reads through
   # {{ feedback.review-verdict }}.
   #
-  # The model's CLEAN is not taken on its word. `verify` is the engine reading
-  # the two review artifacts itself (the filterless {{ artifacts.<id> }} is the
-  # file's path, never its text): a reply that says CLEAN over a review that
-  # did not fails here, and the command prints the open review, which is then
+  # The model's CLEAN or MINOR: is not taken on its word. `verify` is the engine
+  # reading the two review artifacts itself (the filterless {{ artifacts.<id> }}
+  # is the file's path, never its text): a passing reply over a review that
+  # starts with neither CLEAN nor MINOR: fails here, and the command prints only
+  # that open review — never a passing one — which is then
   # the payload `dev` reads (ADR 0016 §2). That is the ONLY round whose payload
   # is the command's output: a FINDINGS: reply fails result_matches before
   # `verify` runs, and then the payload is the reply itself — which is why the
@@ -153,28 +158,33 @@ nodes:
     cwd: "{{ inputs.repo }}"
     prompt: |
       Two reviews of the current branch's diff follow. Do not review the diff
-      yourself and do not add findings of your own: your only job is to say
-      whether both reviewers came back clean.
+      yourself and do not add findings of your own: your only job is to
+      combine the two reviewers' verdicts into one.
         Security review: {{ artifacts.review-security | inline }}
         Style review:    {{ artifacts.review-style | inline }}
 
-      Your FINAL reply IS the verdict. START it with exactly one of these two
+      Your FINAL reply IS the verdict. START it with exactly one of these three
       bare tokens, as the very FIRST characters, with no markdown emphasis
       (`**CLEAN**` is WRONG), no heading, no preamble:
         - CLEAN — BOTH reviews start with CLEAN.
+        - MINOR: — neither review starts with FINDINGS: and at least one
+          starts with MINOR:. Follow the token with every minor item from
+          every review that raised one, verbatim, under a `Security:` or
+          `Style:` label.
         - FINDINGS: — either review starts with FINDINGS:. Follow the token
-          with every finding from every review that raised one, verbatim,
-          under a `Security:` or `Style:` label, worst first.
+          with every blocking finding from every review that raised one,
+          verbatim, under a `Security:` or `Style:` label, worst first — not
+          the items a review lists under its `Minor:` line.
     allowed_tools: [Read]
     permission_mode: plan
     handoff: artifact
     success_check:
       exit_zero: true
-      result_matches: '^[*_`\s]*CLEAN\b'
+      result_matches: '^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)'
       verify:
         command: >-
           rc=0; for f in "{{ artifacts.review-security }}" "{{ artifacts.review-style }}";
-          do if ! head -c 256 "$f" | tr -d '*_` \t\r\n' | grep -q '^CLEAN'; then
+          do if ! head -c 256 "$f" | tr -d '*_` \t\r\n' | grep -Eq '^(CLEAN|MINOR:)'; then
           head -c 1900 "$f"; echo; rc=1; fi; done; exit $rc
         timeout: 1m
     feedback: { rerun: dev, max: 2 }

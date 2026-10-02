@@ -24,38 +24,52 @@ node:
     it: first check each of those findings and re-raise only the ones still
     open. Raise a NEW finding only where the rework changed the code, or
     where missing it last round was a real mistake — not an issue you could
-    have raised then and did not. If every earlier finding is closed and
-    nothing new meets that bar, the verdict is CLEAN.
+    have raised then and did not. An item you rated minor last round stays
+    minor unless the rework changed the code it is about; a blocking item
+    stays blocking while it is open. If every earlier finding is closed and
+    nothing new meets that bar, the verdict is CLEAN, or MINOR: if only
+    minor items remain open.
     {{ self.previous }}
 
     Finish the review BEFORE you reply. Your FINAL reply IS the verdict: this
     node's turn ends the moment you reply, so a part of the diff you promise
     to look at afterwards is never looked at. Never end on "I'll continue" —
-    report what you have actually judged. START the reply with exactly one of
-    these two bare tokens, as the very FIRST characters, with no markdown
+    report what you have actually judged. Judge each item by whether you
+    would merge with it unfixed, not by how small the fix is: an exploitable
+    issue is blocking; hardening with no concrete path to exploit is minor.
+    A reply's verdict is its worst item. START the reply with exactly one of
+    these three bare tokens, as the very FIRST characters, with no markdown
     emphasis (`**CLEAN**` is WRONG), no heading, no preamble:
       - CLEAN — you reviewed the whole diff and found no security issues.
-      - FINDINGS: — followed by a short bulleted list, worst first.
+      - MINOR: — you found something worth changing, but nothing you raise
+        blocks a merge; followed by a short bulleted list, worst first.
+      - FINDINGS: — at least one item you would not merge without fixing;
+        followed by the blocking items as a short bulleted list, worst first,
+        then any minor items under a `Minor:` line.
     Anything you need to qualify goes AFTER the token, never before it: a
     line of context ahead of it fails this node even when the review is
     finished.
   allowed_tools: [Read, "Bash(git diff*)", "Bash(git log*)"]
   permission_mode: plan
   handoff: artifact
-  # Either verdict passes — a review's job is to judge, not to be clean — but
-  # a reply that is neither (an interim "still reviewing") fails. Anchored,
-  # and tolerant of emphasis on either side of the colon, `**FINDINGS:**` and
-  # `**FINDINGS**:` alike (DESIGN.md "Verdict patterns").
+  # Every verdict passes — `CLEAN`, `MINOR:` and `FINDINGS:` (ADR 0043); a
+  # review's job is to judge, not to be clean — but a reply that is none of
+  # them (an interim "still reviewing") fails. Anchored, and tolerant of
+  # emphasis on either side of a colon, `**MINOR:**` and `**MINOR**:` alike
+  # (DESIGN.md "Verdict patterns").
   #
   # So this fragment is ADVISORY, and the consequence belongs to the caller: a
   # passing `FINDINGS:` reaches none of the engine's three "the reviewer
   # rejected the work" mechanisms — `retry`, `feedback` and `on_fail` all hang
   # off FAILURE — so everything downstream of a using node runs regardless,
-  # including a PR node. A graph that wants findings to stop its pipeline
-  # narrows this check on its own node (`result_matches: '^[*_`\s]*CLEAN\b'`,
-  # announced in the run's disclosure line) AND declares a `feedback:` arc on
-  # that node, which no fragment may carry (ADR 0013: feedback is graph-local
-  # wiring). Both or neither — a narrowed check with no arc turns a reviewer
+  # including a PR node. A graph that wants blocking findings to stop its
+  # pipeline narrows this check on its own node to the GATING pattern, which
+  # accepts `CLEAN` and `MINOR:` and rejects only `FINDINGS:`
+  # (`result_matches: '^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)'`, announced in the
+  # run's disclosure line) AND declares a `feedback:` arc on that node, which
+  # no fragment may carry (ADR 0013: feedback is graph-local wiring). Not to
+  # `CLEAN` alone — that re-runs the implementer over a hardening note, #288's
+  # loop. Both or neither — a narrowed check with no arc turns a reviewer
   # that did its job into a failed run. See `backlog-batch`'s two lanes, which
   # make the choice in opposite directions and say why.
-  success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|CLEAN\b)' }
+  success_check: { exit_zero: true, result_matches: '^[*_`\s]*(FINDINGS[*_`\s]*:|MINOR[*_`\s]*:|CLEAN\b)' }

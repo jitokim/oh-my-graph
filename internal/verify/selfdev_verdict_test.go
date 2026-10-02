@@ -40,6 +40,8 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 
 	const securityFindings = "**FINDINGS:**\n\n- verify.command splices a model's reply into sh -c\n"
 	const styleFindings = "FINDINGS:\n- the helper name says nothing about what it returns\n"
+	const securityMinor = "MINOR:\n- the default branch could also refuse an empty path\n"
+	const styleMinor = "**MINOR:**\n\n- the default branch reads oddly\n"
 	// Long enough that the two reviews together overflow the engine's
 	// evidence bound — the case where a plain `cat` of both lost the head of
 	// the first one, and with it the worst finding.
@@ -66,6 +68,20 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "empty review", security: "", style: "CLEAN\n", wantExit: 1},
 		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
 			wantOut: []string{"splices a model's reply", "helper name"}},
+		// ADR 0043: a MINOR: review passes the gate like a CLEAN one, so only
+		// a blocking review is ever dev's payload.
+		{name: "clean and minor", security: "CLEAN\n", style: styleMinor, wantExit: 0},
+		{name: "both minor", security: securityMinor, style: styleMinor, wantExit: 0},
+		{name: "minor with emphasis after leading blank lines", security: "\n\n  **MINOR**:\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
+		{name: "findings beside minor", security: securityFindings, style: styleMinor, wantExit: 1,
+			wantOut: []string{"splices a model's reply"}, forbidOut: []string{"default branch"}},
+		{name: "minor without its colon", security: "MINOR - a header could be set\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"MINOR - a header"}},
+		{name: "minor in the wrong case", security: "CLEAN\n", style: "Minor: the default branch reads oddly\n", wantExit: 1,
+			wantOut: []string{"Minor: the default branch"}},
+		{name: "minor only mentioned, not the verdict", security: "Still reviewing; MINOR: so far.\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"Still reviewing"}},
+		{name: "empty review beside minor", security: "", style: styleMinor, wantExit: 1, forbidOut: []string{"default branch"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
