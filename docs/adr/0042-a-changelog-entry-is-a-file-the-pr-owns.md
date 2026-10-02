@@ -157,8 +157,9 @@ question becomes:
    merge-base past it, so it never appears in `base...HEAD`. It does appear in
    HEAD's tree. *Update branch* re-runs CI, and `main` requires the branch to
    be up to date (CONTRIBUTING.md:92), so the late fragment cannot reach the
-   tag silently: the release PR turns red and the maintainer re-runs the
-   collector. See §6 for the failure this closes.
+   tag silently: the release PR turns red, and the maintainer moves the late
+   fragment's entry into the section by hand and deletes the fragment. See §6
+   for the failure this closes.
 3. **A line added under `## [Unreleased]` is not counted, and draws a hint.**
    Not counted means it neither makes an entry nor refuses one: the verdict
    is decided by rules 1, 2 and 4 alone, so a PR with a valid fragment that
