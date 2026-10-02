@@ -59,14 +59,29 @@ if [ ! -d "$dir" ]; then
 	exit 1
 fi
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
 # Every file git tracks there but README.md, as names relative to changelog.d/.
 # Tracked, because that is what the per-PR gate judged and what the release
 # commit ships: a .DS_Store or an editor's swap file is local noise, not an
 # entry, and a fragment nobody committed was never in a pull request. A
 # misnamed or nested tracked file is not skipped: skipping it is how an entry
 # would be dropped from a release without anyone being told.
-if ! tracked=$(git -C "$root" ls-files -- changelog.d/); then
+#
+# Listed with -z, so git quotes no name: without it a non-ASCII or control
+# character comes out as "changelog.d/304-caf\303\251.md", which no longer
+# starts with changelog.d/ and would vanish below. NULs become newlines; every
+# entry the pathspec matched starts with changelog.d/, so a line that does not
+# is the tail of a name holding a newline, and is refused rather than dropped.
+if ! git -C "$root" ls-files -z -- changelog.d/ >"$tmp/tracked"; then
 	echo "$0: cannot list changelog.d/ with git ls-files; nothing was written" >&2
+	exit 1
+fi
+tracked=$(tr '\0' '\n' <"$tmp/tracked")
+if [ -n "$tracked" ] && printf '%s\n' "$tracked" | LC_ALL=C grep -qv '^changelog\.d/'; then
+	echo "changelog.d/: a tracked name holds a newline; a fragment name is <issue>-<slug>.md" >&2
+	echo "$0: refused — every file in changelog.d/ but README.md must be a fragment (see changelog.d/README.md); nothing was written" >&2
 	exit 1
 fi
 names=$(printf '%s\n' "$tracked" | sed -n 's|^changelog\.d/||p' | grep -vxF README.md || true)
@@ -80,22 +95,28 @@ fi
 # fragment sorts anywhere; it is refused below before the order matters.
 names=$(printf '%s\n' "$names" | LC_ALL=C sort -t- -k1,1n -k2)
 
-# One argument per name. Fragment names carry no whitespace or glob characters
-# (the name rule forbids them), and anything else is refused by the checker
-# under its own name either way.
 nested=$(printf '%s\n' "$names" | grep / || true)
 if [ -n "$nested" ]; then
 	printf '%s\n' "$nested" | sed 's|^|changelog.d/|; s|$|: a fragment lives directly in changelog.d/, not below it|' >&2
 	echo "$0: refused — every file in changelog.d/ but README.md must be a fragment (see changelog.d/README.md); nothing was written" >&2
 	exit 1
 fi
+# One argument per name, as its path from the repo root: split on newlines only
+# and never globbed, so a tracked `changelog.d/304 x.md` reaches the checker
+# whole and is refused under its own full name, not as `304` and `x.md`.
+paths=$(printf '%s\n' "$names" | sed 's|^|changelog.d/|')
 set -f
+oldifs=$IFS
+IFS='
+'
 # shellcheck disable=SC2086
-if ! (cd "$dir" && sh "$root/scripts/changelog-fragment-check.sh" $names); then
+if ! (cd "$root" && sh "$root/scripts/changelog-fragment-check.sh" $paths); then
+	IFS=$oldifs
 	set +f
 	echo "$0: refused — every file in changelog.d/ but README.md must be a fragment (see changelog.d/README.md); nothing was written" >&2
 	exit 1
 fi
+IFS=$oldifs
 set +f
 
 if awk -v want="## [$tag]" 'index($0, want) == 1 { found = 1 } END { exit !found }' "$changelog"; then
@@ -106,9 +127,6 @@ if ! grep -q '^## \[Unreleased\]' "$changelog"; then
 	echo "$0: CHANGELOG.md has no ## [Unreleased] heading to write the section under; nothing was written" >&2
 	exit 1
 fi
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 
 # The section, built whole before CHANGELOG.md is touched. Each fragment's
 # entry is everything after its heading, with blank lines trimmed at both ends.

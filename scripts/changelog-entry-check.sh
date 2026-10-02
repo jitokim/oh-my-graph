@@ -108,12 +108,14 @@ if [ -n "$cut" ]; then
 fi
 
 # --- rule 3: Unreleased is not counted, only pointed away from ---------------
-if [ -f "$file" ]; then
+# The bounds come from CHANGELOG.md at HEAD, the file $added is numbered
+# against — not the working tree, which an uncommitted edit would shift.
+if git show "HEAD:$file" >"$tmp/head-changelog" 2>/dev/null; then
 	bounds=$(awk '
 		/^## \[Unreleased\]/ { start = NR; next }
 		start && !end && /^## / { end = NR - 1 }
 		END { if (start) print start "\t" (end ? end : NR) }
-	' "$file")
+	' "$tmp/head-changelog")
 	if [ -n "$bounds" ]; then
 		start=$(printf '%s' "$bounds" | cut -f1)
 		end=$(printf '%s' "$bounds" | cut -f2)

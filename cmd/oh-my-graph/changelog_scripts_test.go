@@ -301,6 +301,18 @@ func TestChangelogGateDoesNotCountUnreleased(t *testing.T) {
 			t.Errorf("an Unreleased line must not refuse a PR that has an entry:\n%s", stderr)
 		}
 	})
+	// The added lines are numbered against HEAD, so Unreleased's bounds must be
+	// too: an uncommitted edit that shifts the working tree's copy down must not
+	// move the section away from the committed line.
+	t.Run("with an uncommitted edit above it", func(t *testing.T) {
+		r := newScriptRepo(t)
+		r.branch()
+		r.write("CHANGELOG.md", strings.Replace(baseChangelog, "until a release collects them.", "until a release collects them; see changelog.d/README.md.", 1))
+		r.write("changelog.d/304-x.md", fixedFragment)
+		r.commit("pointer edit")
+		r.write("CHANGELOG.md", "\n\n\n\n\n"+r.read("CHANGELOG.md"))
+		r.wantGate(0, "::warning::")
+	})
 }
 
 // TestChangelogGatePassesTheMigration is ADR 0042's own PR under its own gate
@@ -680,6 +692,21 @@ func TestChangelogCollectRefusalsWriteNothing(t *testing.T) {
 		"a misnamed file": {
 			files: map[string]string{"changelog.d/304-ok.md": fixedFragment, "changelog.d/notes.txt": fixedFragment},
 			args:  []string{"v9.9.9", "2026-10-02"}, code: 1, says: "notes.txt",
+		},
+		// git quotes a non-ASCII name unless asked not to; quoted, it stopped
+		// starting with changelog.d/ and was neither refused nor collected.
+		"a name git would quote": {
+			files: map[string]string{"changelog.d/304-ok.md": fixedFragment, "changelog.d/305-café.md": fixedFragment},
+			args:  []string{"v9.9.9", "2026-10-02"}, code: 1, says: "changelog.d/305-café.md: not a fragment name",
+		},
+		// Refused whole and by its full path, not as `305` and `x.md`.
+		"a name with a space": {
+			files: map[string]string{"changelog.d/304-ok.md": fixedFragment, "changelog.d/305 x.md": fixedFragment},
+			args:  []string{"v9.9.9", "2026-10-02"}, code: 1, says: "changelog.d/305 x.md: not a fragment name",
+		},
+		"a name with a newline": {
+			files: map[string]string{"changelog.d/304-ok.md": fixedFragment, "changelog.d/305-x\n.md": fixedFragment},
+			args:  []string{"v9.9.9", "2026-10-02"}, code: 1, says: "holds a newline",
 		},
 		"a directory": {
 			files: map[string]string{"changelog.d/304-ok.md": fixedFragment, "changelog.d/sub/305-x.md": fixedFragment},
