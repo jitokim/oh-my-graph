@@ -108,7 +108,7 @@ func TestCheckCLIAvailableReportsAMissingBinaryNarrowly(t *testing.T) {
 	}
 	defer func() { lookPath = restore }()
 
-	err := NewCLIRunner(RuntimeClaude).CheckCLIAvailable()
+	err := NewCLIRunner(RuntimeClaude, withSpawnPause(noPause)).CheckCLIAvailable()
 	var notFound *CLINotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("CheckCLIAvailable() = %v, want *CLINotFoundError", err)
@@ -133,7 +133,7 @@ func TestCheckCLIAvailableReportsAMissingBinaryNarrowly(t *testing.T) {
 		}
 	}
 	// The suggestion must never offer the CLI that was just found missing.
-	codex := NewCLIRunner(RuntimeCodex).CheckCLIAvailable()
+	codex := NewCLIRunner(RuntimeCodex, withSpawnPause(noPause)).CheckCLIAvailable()
 	if !strings.Contains(codex.Error(), "--runtime claude") {
 		t.Errorf("codex message = %q, want it to suggest the claude runtime", codex)
 	}
