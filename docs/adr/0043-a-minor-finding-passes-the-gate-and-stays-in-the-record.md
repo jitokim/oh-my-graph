@@ -94,9 +94,37 @@ The grammar has been copied, inside this repo and outside it:
   `review-verdict` and its `grep -q '^CLEAN'`; (vi) read a review artifact
   downstream with a prompt or command that branches on `FINDINGS:`.
 
+Shape (ii) is not hypothetical. It is the shape the fragments' own comments
+tell a caller to write, and it is #288's own reproducer: `poc-lab-loop`, with
+`use: review-style`, `'^CLEAN\b'` and `feedback: { max: 2 }`. §6 shows that
+this shape gets **no** benefit from this ADR without an edit, and a stricter
+gate if no edit is made.
+
 Auto mode is not on this list: no planned node can cite a review fragment
 today (ADR 0038's admitted set is empty, and names `review-style` as one of the
 fragments that fails its precondition, `0038-…md:229-233`).
+
+### 1.5 What #288 (b) asked for, and where this ADR departs from it
+
+The issue's proposal (b) reads: "`MINOR:` 는 통과시키되 **ledger 와** run
+디렉터리에 남긴다". In other words, MINOR passes, and it stays in the
+**ledger** and in the run directory.
+
+This ADR delivers the passing half and the run-directory half. It does **not**
+deliver the ledger half. A `MINOR:` pass is a `PASS` row with nothing to tell
+it apart from a `CLEAN` pass (§2.6). The reason is §1.3: the ledger can only
+tell `MINOR:` apart if the engine recognizes a verdict word, and
+`docs/LIMITATIONS.md:124-126` already declined that as a decision. §3.1 names
+the general form that would not reverse that decision (a schema field), and
+why it is not taken here.
+
+This is a deviation from the issue as written, and it is named here rather
+than left for a reader to find. The implementing PR therefore
+**references #288 and does not close it**: #288 stays open for the ledger
+half, alongside the convergence measurement it is already open for (§7). The
+changelog fragment says the same (§4 step 8). So "this completes (b)" is not
+a claim this ADR or its PR may make. "This ships (b) except its ledger half"
+is.
 
 ## 2. Decision
 
@@ -106,7 +134,8 @@ not by how small its fix is. A gating node accepts `CLEAN` and `MINOR:` and
 fails only `FINDINGS:`, so only a blocking finding fires the arc. `MINOR:` is
 recorded where every passing reply already is — the node's artifact in the run
 directory — and surfaced where the shipped graphs already surface a review: the
-PR body. The engine, the ledger and the run feed are not changed.**
+PR body. The engine, the ledger and the run feed are not changed, so the
+ledger half of #288 (b) is not delivered (§1.5).**
 
 ### 2.1 The grammar
 
@@ -114,9 +143,11 @@ Both `review-style` and `review-security` offer exactly three tokens, as the
 very first characters of the reply, with the existing "no emphasis, no
 heading, no preamble; anything else goes AFTER the token" contract:
 
-- **`CLEAN`** — you reviewed the whole diff and have nothing at all to raise.
-- **`MINOR:`** — nothing you raise blocks a merge; followed by the items, worst
-  first.
+- **`CLEAN`** — **today's wording, unchanged**: "you reviewed the whole diff
+  and found nothing worth changing" (`review-style`), or "… and found no
+  security issues" (`review-security`).
+- **`MINOR:`** — you found something worth changing, but nothing you raise
+  blocks a merge; followed by the items, worst first.
 - **`FINDINGS:`** — at least one item you would not merge without fixing;
   followed by the blocking items, worst first. Minor items may follow them
   under a `Minor:` line.
@@ -130,6 +161,25 @@ no concrete path to exploit is minor.
 
 The verdict of a mixed reply is its worst item. There is no fourth token and no
 "minor-only FINDINGS".
+
+**Why CLEAN keeps its old wording, and what that does not buy.** An earlier
+draft of this ADR redefined `CLEAN` as "nothing at all to raise". That moved
+CLEAN's threshold. Today, a reviewer may let a trivial nit, or a hardening note
+with no exploit path, through as `CLEAN`. The draft wording would have sent
+both to `MINOR:`, and every un-migrated `^CLEAN` gate would then have failed on
+them. Keeping the old sentence means `CLEAN` keeps the meaning it has in every
+artifact, PR body and `grep` written so far. The prompt adds a token **below**
+FINDINGS; it does not take one away from CLEAN.
+
+What the wording cannot do is pin the reviewer's calibration. A model offered a
+third token has a natural home for the borderline item it would once have
+waved through as `CLEAN`, and the `review-security` anchor ("hardening with no
+concrete path to exploit is minor") names exactly such an item. So, in
+practice, some replies that were `CLEAN` before will be `MINOR:` after. That is
+the right answer for a gate that reads the gating pattern. It is a **stricter
+gate** for one that still reads `^CLEAN` (§6 rows (ii) and (v)). This ADR keeps
+the wording to make that drift as small as it can be, and does not claim it is
+zero.
 
 **The prompt still says nothing about the gate.** `gated-lane.yaml:105-110`
 is the standing rule — "a reviewer told that findings will fail it is a
@@ -179,9 +229,10 @@ names its cost (`shipped_graphs_test.go:804-809`).
 ### 2.4 The three gating places
 
 **`gated-lane`'s `review`** narrows to the gating pattern instead of
-`^…CLEAN\b`. Nothing else in the fragment changes: its `pr` node already quotes
-`{{ artifacts.review | inline }}` into the PR body (`gated-lane.yaml:146-148`),
-so a lane that passes on `MINOR:` opens its PR with the minor items in it.
+`^…CLEAN\b`. Its `pr` node already quotes `{{ artifacts.review | inline }}`
+into the PR body (`gated-lane.yaml:146-148`), so a lane that passes on
+`MINOR:` opens its PR with the minor items in it. **`gated-lane`'s `dev`**
+changes too (below).
 
 **`self-dev`'s `review-verdict`** becomes three-valued itself, and its two
 halves move together:
@@ -199,14 +250,34 @@ halves move together:
   first — a false repair round is still possible from the model's side, never
   a false pass.
 
-**The arc carries what fires it.** A `FINDINGS:` reply carries the blocking
-items only; minor items are not the repair round's business and are not added
-to `dev`'s payload. They are not lost: they remain in each review's artifact,
-and the reviewer's own `{{ self.previous }}` carries them into its next round,
-where the ratchet (§2.2) keeps them minor. When `verify` is what fails, the
-payload is its output, which prints the head of each open review — and that
-head may include a `Minor:` tail. Accepted: a few extra lines in a payload
-`dev` was going to read anyway.
+**Minor items are not the repair round's business — said by the payload where
+it can be, and by `dev`'s prompt where it cannot.** The payload is not the same
+in the two places:
+
+- In `self-dev`, `review-verdict` exists, and its `FINDINGS:` reply carries the
+  blocking items only. Minor items never reach `dev` through it. The exception
+  is the round where `verify` is what fails: the payload is then the command's
+  output, the head of each open review, and that head may end in a `Minor:`
+  tail.
+- In `gated-lane`, there is no verdict node. The payload in
+  `{{ feedback.review }}` is the review's raw `FINDINGS:` reply, `Minor:` tail
+  included, and `dev` is told to "fix every one" (`gated-lane.yaml:77-81`).
+
+Left like that, the two gating places would disagree about whether minor items
+get repaired. In `gated-lane` that disagreement has a cost. Fixing the minor
+items widens the rework, and touching their code releases the ratchet (§2.2)
+for them, all inside a `max: 1` budget. So **both `dev` prompts change**
+(`gated-lane.yaml:77-81`, `self-dev.yaml:62-66`). "Fix every one" becomes "fix
+every blocking finding". Items under a `Minor:` line are **not** this round's
+to fix: leave them unless a blocking fix rewrites the same code anyway, because
+they reach the PR body through the review. This is the implementer's prompt,
+not the reviewer's, so `gated-lane.yaml:105-110`'s rule (do not tell the
+reviewer what the gate does) is untouched. The result is one rule in both
+places: a repair round repairs what blocked it.
+
+A minor item left unfixed survives only if the reviewer's next round
+re-raises it. §2.6 sets out what that does to the record, and §6 names the
+case where the reviewer does not re-raise it.
 
 **`repair-round` is not a gating place**, although #288 lists it beside the
 other two, and it stays two-valued. Its review passes both verdicts
@@ -239,10 +310,21 @@ both fragments that tell a caller how to gate (`review-style.yaml:53-71`,
   record is the reviews' own artifacts, the restatement a convenience — a
   verdict model that answers `CLEAN` over a `MINOR:` review passes, and the
   items are then in `review-*.out` and the PR body only.
+- **Scope of "stays in the record": the items of a *passing* round.** A minor
+  item raised in a round that failed on `FINDINGS:` is in no `.out`, because
+  that round wrote none. It reaches the final artifact only if the next round's
+  reviewer re-raises it, and that depends on the reviewer obeying §2.2 ("…or
+  `MINOR:` if only minor items remain open"). If that reviewer answers `CLEAN`
+  anyway, the item is left only in `previous/<id>.out`, an internal file
+  (DESIGN.md:665). It is not in a consumer `.out` and not in the PR body. The
+  record therefore holds for passing rounds by construction, and for failing
+  rounds only through the reviewer's compliance. §6 names this failure mode,
+  and §7.2 is where it would surface.
 - **Surfaced: the PR body**, in every shipped graph that cites a review
   fragment (§2.4, §2.5), because every one of them ends in a PR node that
   inlines the review.
-- **Not surfaced: the ledger.** The row is `PASS`, as it is for an advisory
+- **Not surfaced: the ledger** — which is the half of #288 (b) this ADR does
+  not deliver (§1.5). The row is `PASS`, as it is for an advisory
   `FINDINGS:` today. The gap in `docs/LIMITATIONS.md` "A PASS row does not say
   which outcome passed" is widened to say so for gating reviews too: on a
   gating review a PASS now means `CLEAN` **or** `MINOR:`, and only the
@@ -283,11 +365,22 @@ It is the follow-up if §7's second clause fires.
 every `^…CLEAN\b` gate and every `grep '^CLEAN'` written against the old
 grammar passes it with no edit. The most compatible option, and rejected for
 that reason: it makes every user's gate **more lenient without their
-consent**. An author who narrowed to `CLEAN` chose "nothing at all"; this
+consent**. An author who narrowed to `CLEAN` chose "nothing worth changing"; this
 spelling would silently start passing work with items in it, and `CLEAN` would
-mean two things in every artifact, PR body and `grep` that reads it. §6 keeps
-every old gate exactly as strict as it was; this would loosen them all at
-once, invisibly.
+mean two things in every artifact, PR body and `grep` that reads it.
+
+This ADR does **not** keep every old gate exactly as strict as it was. §6 rows
+(ii) and (v) are silently stricter, because a borderline item that used to pass
+as `CLEAN` can now arrive as `MINOR:` (§2.1). So the choice is not "compatible
+versus strict". Both options drift silently, in opposite directions. 3.2 would
+loosen every old gate, by an amount nobody bounded, and would blur what `CLEAN`
+means everywhere it is read. This ADR tightens two shapes, at their borderline
+items only, and gives them a one-line migration that the changelog leads with
+(§4 step 8). A gate that has gone stricter costs rounds and spend. Nothing in
+the run explains why, but the reply that fired it starts with `MINOR:` in
+`feedback/` and `failed/` (`docs/LIMITATIONS.md:141-147`). A gate that has
+gone more lenient costs a merged item that nobody was shown as blocking. Of the two, the stricter drift is the
+one an author can see and undo.
 
 ### 3.3 Count findings instead of grading them
 
@@ -328,6 +421,25 @@ item it would itself merge. The second is a property of the two-valued
 grammar, not of memory, and DESIGN.md already names it as the structural fix.
 Measuring (a) stays owed either way (§7).
 
+### 3.8 Redefine CLEAN as "nothing at all to raise"
+
+This was the earlier draft's wording. It gives the cleanest three-way split,
+because every raised item is then `MINOR:` or `FINDINGS:`. Rejected, because
+it moves CLEAN's threshold for every reader of the token, and it turns the
+§6 (ii)/(v) drift from a side effect of a new option into something the prompt
+asks for. §2.1 keeps today's sentence instead.
+
+### 3.9 Have `review-verdict` restate the open minor items on `FINDINGS:`
+
+This would keep a failing round's minor items visible in `self-dev` (§2.6).
+Rejected, because it does not reach the record it is meant to protect. A
+`FINDINGS:` verdict fails, so its restatement lands in `feedback/` and
+`failed/`, not in a `.out` or the PR body. Its only reader would be `dev`,
+and §2.4 now tells `dev` to leave those items alone. It would also do nothing
+for `gated-lane`, which has no verdict node to restate them. The item's way
+into the record stays the reviewer re-raising it under §2.2. Where that fails,
+§6 names it and §7.2 is the place it would show up.
+
 ## 4. Implementation outline
 
 Owned by the same PR, in this order:
@@ -335,10 +447,30 @@ Owned by the same PR, in this order:
 1. `graphs/fragments/review-style.yaml`, `review-security.yaml`: the
    three-token prompt (§2.1), the ratchet (§2.2), the advisory pattern (§2.3),
    the caller comments (§2.5).
-2. `graphs/fragments/gated-lane.yaml`: `review`'s gating pattern and comment.
+2. `graphs/fragments/gated-lane.yaml`: `review`'s gating pattern and comment;
+   `dev`'s feedback paragraph (`:77-81`): "fix every blocking finding; leave
+   items under a `Minor:` line" (§2.4).
 3. `graphs/self-dev.yaml`: `review-verdict`'s prompt, pattern and `verify`
-   command (§2.4); the header comment's "a FINDINGS: from either reviewer".
-4. `graphs/dev-review-pr.yaml`, `graphs/backlog-batch.yaml`: comments only.
+   command (§2.4); `dev`'s feedback paragraph (`:62-66`), with the same
+   sentence as step 2; the header comment's "a FINDINGS: from either reviewer".
+4. Comments only, in `graphs/dev-review-pr.yaml`, `graphs/backlog-batch.yaml`
+   and `internal/graph/shipped_graphs_test.go`. This covers more than the
+   "passes on `CLEAN` and `FINDINGS:`" lines of §2.5. It also covers the
+   gating text this change makes stale:
+   - `dev-review-pr.yaml:92`, "a `review-verdict` node that narrows to CLEAN",
+     becomes "narrows to the gating pattern".
+   - `dev-review-pr.yaml:97-99`, "up to three times its spend when a reviewer
+     raises a nit", becomes "…raises a blocking finding". After this ADR a nit
+     no longer fires the arc, which is the point of it.
+   - `backlog-batch.yaml:98-105` (rule 6), "narrow the review's
+     `success_check` to the clean verdict", becomes "to the gating pattern",
+     and gating is defined there as accepting `CLEAN` and `MINOR:` and
+     rejecting `FINDINGS:`.
+   - The doc comment of `TestAGatingReviewCarriesItsRecoveryArc`
+     (`shipped_graphs_test.go:799-814`). Today it defines gating by one reply
+     ("rejects `FINDINGS:`"). It is rewritten to the three-reply partition of
+     §5.3, and names the third case it now refuses: a check that rejects
+     `MINOR:` as well, which is #288's loop.
 5. The golden `internal/graph/testdata/golden/*.resolved.json` files that
    resolve the changed fragments (`dev-review-pr`, `self-dev`,
    `backlog-batch`) are regenerated; `adr-driven-dev`'s must **not** change
@@ -347,9 +479,19 @@ Owned by the same PR, in this order:
    patterns beside the existing examples; "A CLEAN-only gate need not
    converge" ends on what this ADR shipped instead of "left as a follow-up".
 7. `docs/LIMITATIONS.md` "A PASS row does not say which outcome passed":
-   the gating-review sentence of §2.6.
-8. `changelog.d/288-minor-verdict.md` (ADR 0042), under `### Changed`, naming
-   the compatibility cases of §6 that need an edit.
+   the gating-review sentence of §2.6. The same paragraph's
+   "`dev-review-pr` and `self-dev` open a pull request downstream of exactly
+   that" (`:131-132`) has been stale since #293, because `self-dev` gates and
+   opens no PR on `FINDINGS:`. That sentence is corrected in the same edit, to
+   name `dev-review-pr` (advisory) and `self-dev` (gating) apart.
+8. `changelog.d/288-minor-verdict.md` (ADR 0042), under `### Changed`. It
+   **leads with the one migration step**: "if you narrowed a review to
+   `^CLEAN` (or copied `self-dev`'s `grep -q '^CLEAN'`), widen it to the gating
+   pattern. Left as it is, it now gets stricter, because a borderline item can
+   arrive as `MINOR:` and fire your arc." Then it names the other §6 rows that
+   need an edit, (iii) and (vi). It ends by stating the deviation of §1.5: the
+   ledger does not tell a `MINOR:` pass from a `CLEAN` one, and #288 stays open
+   for that.
 
 ## 5. Tests the implementation owes
 
@@ -385,7 +527,13 @@ emphasis on either side of the colon, and after leading blank lines.
    `TestAGatingReviewSeesItsOwnPreviousRound`'s ordering assertion still holds
    (the `{{ self.previous }}` quote precedes "START the reply with exactly one
    of").
-7. **The two-valued places are untouched.** `repair-round`'s `review` and
+7. **Both gating `dev` prompts scope the repair round.** `gated-lane`'s `dev`
+   (resolved through a citing graph) and `self-dev`'s `dev` carry the "fix
+   every blocking finding" sentence and the `Minor:` exclusion of §2.4. Neither
+   carries "fix every one" any longer. `review-style`'s and `review-security`'s
+   resolved prompts carry no mention of the gate, the arc or `feedback`, which
+   pins `gated-lane.yaml:105-110`'s rule against this change.
+8. **The two-valued places are untouched.** `repair-round`'s `review` and
    `adr-driven-dev`'s `adr-review`/`round3` still reject a `MINOR:` reply and
    accept `CLEAN`/`FINDINGS:` — pinned, so a future sweep that "makes it
    uniform" has to change a test and say why.
@@ -422,24 +570,51 @@ No test spawns a model: patterns are judged by `regexp`, the command by
 - **A verdict model that says `CLEAN` over a `MINOR:` review** passes
   `self-dev`'s gate with `review-verdict.out` silent about the items (§2.6).
   They remain in the review artifacts and the PR body.
+- **A minor item from a failing round drops out of the visible record.** This
+  happens in both gating places. Round k fails on `FINDINGS:` with a minor
+  item beside the blocking ones. `dev` leaves the minor item alone (§2.4), and
+  round k+1's reviewer answers `CLEAN` without re-raising it, which disobeys
+  §2.2's "or `MINOR:` if only minor items remain open". The item is then only in
+  `previous/<review>.out`, an internal file (DESIGN.md:665), and in no `.out`
+  and no PR body. Its survival depends on the reviewer's compliance, and no
+  check enforces that. Cost: one non-blocking item that a human is not shown.
+  §3.9 explains why `review-verdict` does not restate it. §7.2 is how it would
+  be caught.
+- **Un-migrated `^CLEAN` gates fire more often.** These are §6 rows (ii) and
+  (v), below. A borderline item that passed as `CLEAN` before can now arrive as
+  `MINOR:`, so the gate gets more rounds, more spend and more exhausted loops.
+  That makes #288's failure worse for exactly the users who wrote the shape the
+  fragments' comments recommended. Nothing in the run says why. The changelog
+  leads with the fix.
 
 ### Compatibility, by the user graph shapes of §1.4
 
 | shape | after this ADR | direction |
 | --- | --- | --- |
 | (i) cites a fragment, default check | reviewer may answer `MINOR:`; it passes | same disposition (advisory) |
-| (ii) cites a fragment, narrowed to `^…CLEAN\b`, with an arc | `MINOR:` fails and fires the arc — exactly what the same item did as `FINDINGS:` before | **no regression, no benefit**; widen to the gating pattern to get (b) |
+| (ii) cites a fragment, narrowed to `^…CLEAN\b`, with an arc — the fragments' recommended shape and #288's own reproducer | `MINOR:` fails and fires the arc. That covers what the same item did as `FINDINGS:` before, **plus** borderline items that used to pass as `CLEAN` (§2.1) | **silent, toward strictness**: more rounds, more spend, more exhausted loops, and no benefit. Widen to the gating pattern to get (b). This is the changelog's lead |
 | (iii) cites a fragment, restates the old either-verdict pattern on the node | a `MINOR:` reply is a `result_mismatch` **FAIL** | **breaks, loudly**; drop the override or add ``MINOR[*_`\s]*:`` |
 | (iv) copied the two-valued prompt inline | unchanged: the prompt never offers `MINOR:` | none |
-| (v) copied `self-dev`'s `review-verdict` (`grep -q '^CLEAN'`) over the fragments | a `MINOR:` review fails `verify` and fires the arc — today's strictness | no regression, no benefit; copy the new command |
+| (v) copied `self-dev`'s `review-verdict` (`grep -q '^CLEAN'`) over the fragments | a `MINOR:` review fails `verify` and fires the arc, including a borderline item that used to pass as `CLEAN` | **silent, toward strictness**, as (ii). Copy the new command and pattern |
 | (vi) a downstream prompt or command branches on `FINDINGS:` in a review artifact | items that used to arrive as `FINDINGS:` may now arrive as `MINOR:` and miss the branch | **silent, toward leniency** |
 
-Every row but two moves toward strictness or not at all, and (iii) fails
-loudly on the first `MINOR:` it sees. **Row (vi) is the one silent change**,
-and nothing in the engine can detect it — the branch is prose in a user's
-prompt. It is named in the changelog fragment, with the fix (mention
-`MINOR:` in the branch). No shipped graph has that shape: every shipped
-consumer of a review artifact inlines it whole (§2.5).
+**Three rows change silently, and they go in opposite directions.**
+
+- **Rows (ii) and (v) get stricter.** This ADR does not keep old gates "exactly
+  as strict as they were", and an earlier draft wrongly said it did. Keeping
+  CLEAN's wording (§2.1) narrows the drift but does not remove it. Nothing in
+  the engine can tell an un-migrated `^CLEAN` gate from a deliberate one,
+  because both are the same regex. So the remedy is the changelog fragment,
+  which leads with the widening step (§4 step 8), and the fragments' caller
+  comments, which name the gating pattern from now on (§2.5).
+- **Row (vi) gets more lenient.** Nothing in the engine can detect it either,
+  because the branch is prose in a user's prompt. The changelog fragment names
+  it, with the fix: mention `MINOR:` in the branch. No shipped graph has that
+  shape, since every shipped consumer of a review artifact inlines it whole
+  (§2.5).
+
+Row (iii) fails loudly on the first `MINOR:` it sees. Rows (i) and (iv) do not
+move.
 
 No `lint` rule is added for (iii). Detecting it needs either regex inclusion
 between a fragment's pattern and an override — not computable for regexes in
@@ -455,6 +630,9 @@ change. That is the review surface for this ADR's grammar, not churn.
 
 ## 7. Falsification, and what #288 still owes
 
+#288 stays open after the implementing PR, for two things this ADR does not
+deliver: the ledger half of (b) (§1.5), and the measurement in item 1 below.
+
 1. **Convergence of (a) is still unmeasured, and (b) does not change that.**
    The measurement #288 is open for — gating runs of `self-dev`/`gated-lane`
    since v0.15.0, counted by rounds to a passing verdict and by exhausted
@@ -462,9 +640,14 @@ change. That is the review surface for this ADR's grammar, not churn.
    new items — stays owed. With (b) in, it can also be split: an exhausted
    loop whose last review was `FINDINGS:` with only re-graded minor items is
    the ratchet failing; one with fresh blocking items is (a) failing.
-2. **A minor item is found lost** — a `MINOR:` pass whose items reached no PR
-   body and no human, in a shipped graph. Then §3.1's annotating field is
-   owed, and "the artifact is the record" was not enough.
+2. **A minor item is found lost** in a shipped graph, either way it can
+   happen. One way is a `MINOR:` pass whose items reached no PR body and no
+   human. The other is a failing round's `Minor:` item that is in
+   `previous/<review>.out` but in neither the final `.out` nor the PR body
+   (§6). The first means §3.1's annotating field is owed and "the artifact is
+   the record" was not enough. The second means the reviewer's compliance
+   with §2.2 is not a strong enough carrier, and the fix belongs in the
+   ratchet's wording before it belongs in a new node.
 3. **Severity laundering is observed**: a merged PR whose review passed on
    `MINOR:` with an item a human later called blocking. Then the grading rule
    in §2.1 is the thing to change, before the grammar.
