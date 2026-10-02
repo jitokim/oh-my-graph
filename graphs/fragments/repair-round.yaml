@@ -15,7 +15,12 @@
 # bind "" for the runner's default), and the command the ENGINE runs as the
 # apply's evidence (`verify_command`). Bind that last one from an input or a
 # literal, never from an artifact: the engine runs it through `sh -c`, so an
-# artifact binding would hand a model's own output straight to a shell.
+# artifact binding would hand a model's own output straight to a shell. Bind
+# a `make` command too. The apply's prompt tells it to run that same command
+# itself, and its dontAsk grant runs `git` and `make` and nothing else, so
+# under any other binding the apply cannot run the suite it is judged by.
+# The binding can't be checked at load time. For the shipped citers it is
+# pinned by TestRepairRoundApplyIsToldTheGrantItHolds.
 #
 # What the fragment fixes, once, for every user: the one-direction discipline
 # (the review holds no write tool and runs permission_mode: plan; the apply
@@ -78,9 +83,21 @@ nodes:
       is wrong.
       {{ with.apply_scope }}
       This is an apply round: do NOT re-review.
-      Commit as you go, ending every commit message with the
-      trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the
-      attribution convention in CONTRIBUTING.md). Run the tests
+      Your grant is exactly this: Read, Grep, Glob, Edit, Write, and two
+      programs through Bash, `git` and `make`. Any other call is denied, not
+      asked about. So:
+        - run the tests with `make`. The command the engine runs as your
+          evidence is `{{ with.verify_command }}`, so run exactly that;
+        - commit with `git commit -m '<subject>' -m '<body>'`, adding the
+          trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+          as one more `-m` (the attribution convention in CONTRIBUTING.md),
+          and keep each `-m` on one line;
+        - every Bash call is ONE program: no `cd`, `&&`, `;`, `|`, redirect
+          or heredoc. To act in another directory, use `git -C <dir>` or
+          `make -C <dir>`;
+        - a denied call means the FORM was wrong, not the goal: re-issue it
+          in one of the forms above before you give up on it.
+      Commit as you go, every commit carrying that trailer. Run the tests
       SYNCHRONOUSLY and wait for them to finish — never in the background.
       Your FINAL reply is the verdict: never end the turn on an interim
       report. When tests are green, START the reply with the bare word PASS —
@@ -89,6 +106,10 @@ nodes:
       and what is broken. Anything you need to qualify goes AFTER the
       verdict, never before it: a line of context ahead of the token fails
       this node even when the tests are green.
+    # The prompt above says this grant word for word (#294). Under dontAsk an
+    # unmatched call is denied, not asked about, and an apply that did not
+    # know `make` was its way to run the tests never tried it after its first
+    # denial: it gave up. Change the two together.
     allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
     permission_mode: dontAsk
     timeout: 45m # hang guard — generous, so real work is never killed mid-flight
