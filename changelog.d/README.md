@@ -50,10 +50,11 @@ fragments.
   ```
 
   A line added under `## [Unreleased]` is not an entry; it draws a warning.
-- **`go test`**: `TestChangelogFragmentsAreWellFormed` holds every file here to
-  the name and shape above; `TestUnreleasedSectionHoldsNoEntries` keeps
-  `## [Unreleased]` free of entries.
+- **`go test`**: `TestChangelogFragmentsAreWellFormed` holds every file git
+  tracks here to the name and shape above; `TestUnreleasedSectionHoldsNoEntries`
+  keeps `## [Unreleased]` to its one pointer paragraph.
 - **The release PR** runs `scripts/changelog-collect.sh vX.Y.Z`, which writes
-  every fragment into a new `## [vX.Y.Z]` section of `CHANGELOG.md`, each
-  heading once, and deletes the fragments. This README is the one file it
-  leaves.
+  every fragment git tracks into a new `## [vX.Y.Z]` section of `CHANGELOG.md`,
+  each heading once, and deletes the fragments. This README is the one file it
+  leaves; an untracked or ignored file (a `.DS_Store`, an editor's swap file)
+  is not an entry, and it leaves those alone too.

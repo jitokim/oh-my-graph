@@ -13,7 +13,8 @@
   A line under `## [Unreleased]` no longer counts, and draws a warning. A
   release PR runs the new `scripts/changelog-collect.sh vX.Y.Z`, which writes
   every fragment into the version's section, each heading once, and deletes
-  them. A cut that still leaves a fragment in `changelog.d/` is refused with
+  them. A cut — a new version heading, not an edit to a released one — that
+  still leaves a fragment in `changelog.d/` is refused with
   exit 2, which `no-changelog` cannot excuse, so a PR merged after the
   collector ran cannot ship without its entry. `scripts/release-notes.sh` is
   unchanged. Two new tests guard the convention:

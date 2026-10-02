@@ -139,9 +139,16 @@ question becomes:
    the added file's lines against the fragments the same diff deletes, so a
    pure rename adds nothing novel and is not an entry, while a rename that
    also adds a novel line is.
-2. **The release-cut exemption keeps its trigger and gains one refusal.** An
-   added `## [` line in `CHANGELOG.md` is still the entry
-   (`changelog-entry-check.sh:62-67`). A cut adds the version heading and
+2. **The release-cut exemption narrows its trigger and gains one refusal.**
+   A cut is the entry, but a cut is now an added `## [vX.Y.Z]` heading for a
+   version `CHANGELOG.md` at the base did not have — not, as before, any
+   added `## [` line (`changelog-entry-check.sh:62-67`). Under the old trigger
+   an edit to a released heading (its date, a typo) was a free pass; with the
+   refusal below it would have become a hard exit 2 between releases, when
+   `changelog.d/` almost always holds fragments, with no excuse and the wrong
+   advice. Such an edit names a version the base already had, so it is not a
+   cut, and falls through to rules 1 and 4 like any other edit — a fragment
+   or `no-changelog` settles it. A cut adds the version heading and
    deletes the fragments, so it still passes. But the cut is now refused
    (exit 2) if `changelog.d/` **at HEAD** still holds any file other than
    `README.md`, naming each. The check reads HEAD's tree, not the diff, on
@@ -193,8 +200,12 @@ paragraph that ships with a fragment passes the same way.
 A new `scripts/changelog-collect.sh <vX.Y.Z> [<date>]`, run by the maintainer
 in the release PR:
 
-1. Refuses if any file under `changelog.d/` other than `README.md` is not a
-   well-formed fragment (§2.1), naming each one. Nothing is written.
+1. Refuses if any file git tracks under `changelog.d/` other than `README.md`
+   is not a well-formed fragment (§2.1), naming each one. Nothing is written.
+   Tracked, as the gate judges it and the release commit ships it: an
+   untracked or ignored file (a `.DS_Store`, an editor's swap file, a
+   fragment never committed) is not an entry, and is neither refused nor
+   collected. `TestChangelogFragmentsAreWellFormed` lists the same way.
 2. Refuses if there are no fragments: a release with nothing to collect is the
    empty body `TestChangelogSectionHasSubstance` exists to stop, and failing
    in the script says so one step earlier.
@@ -205,7 +216,12 @@ in the release PR:
    fragment body for that heading under it, fragments ordered by issue number
    (numeric) then slug.
 5. Deletes the collected fragments (plain `rm`; staging is the maintainer's,
-   like every other release-PR edit).
+   like every other release-PR edit) — but first checks that every fragment
+   the checker passed was written into the section exactly once, and refuses,
+   writing nothing, if not. The checker and the extractor are two readings of
+   one shape (a CRLF fragment once read as a fragment to the first and as
+   headless to the second); the postcondition makes any future disagreement
+   loud instead of a silently deleted entry.
 
 It writes no intro prose and no footnote. The release checklist already makes
 the section's opening prose the maintainer's job ("Write the release's
@@ -224,8 +240,11 @@ The heading stays: Keep a Changelog readers look for it,
 `[Unreleased]:` compare footnote needs it. Under it sits one fixed paragraph
 pointing to `changelog.d/`.
 
-A new guard, **`TestUnreleasedSectionHoldsNoEntries`**, refuses any `### `
-heading or any `- ` list item inside it (outside fences). Without it a
+A new guard, **`TestUnreleasedSectionHoldsNoEntries`**, refuses any line
+inside it other than that paragraph and blank lines — a heading of any depth,
+a list item of any marker, a fenced block, bare prose. Listing entry shapes to
+refuse would leave the unlisted ones (`+ `, `1. `, a paragraph) to be
+stranded; admitting the one fixed paragraph leaves none. Without it a
 `no-changelog` PR, or a hand edit, could still put an entry there, and the
 collector — which reads only `changelog.d/` — would leave it stranded under
 Unreleased at the cut, where it would never reach a release body. There must
@@ -414,17 +433,30 @@ cases run in `make test` with no network.
     result, `release-notes.sh vX` prints the collected section (the credit
     half is skipped: no previous tag).
 11. **`TestChangelogFragmentsAreWellFormed`** over the real `changelog.d/`:
-    every file but `README.md` matches §2.1's name and shape, with a known
+    every file git tracks there but `README.md` matches §2.1's name and shape, with a known
     section name. Its own failure cases are table-driven, and include
     `### Documentation` refused with a message naming `Documented`, and
     `### Known limits` accepted.
 12. **`TestUnreleasedSectionHoldsNoEntries`**, with a failing case for a
-    `### ` heading and for a `- ` item, and a fenced example that passes.
+    `### ` and a `#####` heading, a `- `, `+ ` and `1. ` item, a prose
+    paragraph, a fenced block and a reworded pointer; the pointer alone
+    passes.
 13. **The widened duplicate-heading guard** fails on a `## [v<Version>]`
     section with two `### Fixed`, still ignores fenced headings, and still
     ignores sections below the current one.
 14. **The two scan lists**: `changelog.d/` is in `historyExcluded` and is
     reached by the `docsclaims` walk.
+15. **Gate: an edited released heading is not a cut.** Changing a released
+    heading's date with a fragment pending in `changelog.d/` exits 1, not 2
+    (so `no-changelog` excuses it), and 0 beside a fragment of its own. An
+    edit that makes an existing fragment malformed (`M` status) exits 1 and
+    names it.
+16. **Collector: what it reads.** A CRLF fragment with a leading blank line
+    beside another fragment is collected, with no `\r` in `CHANGELOG.md`;
+    untracked and ignored files are neither refused nor collected nor
+    deleted; a checker that passes what the extractor cannot place is
+    refused by the postcondition, writing nothing; a `CHANGELOG.md` with no
+    `## [Unreleased]` heading is refused, writing nothing.
 
 ## 6. Failure modes and compatibility
 
