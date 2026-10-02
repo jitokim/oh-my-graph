@@ -228,6 +228,55 @@ func TestLoad_Refusals(t *testing.T) {
 	}
 }
 
+// TestRead_RegularFileIsAccepted: the handle read opens is the regular file
+// statOne validated, so the open-then-check path reads it as before (#296).
+func TestRead_RegularFileIsAccepted(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "style.md", "use tabs\n")
+	f, err := statOne(path)
+	if err != nil {
+		t.Fatalf("statOne: %v", err)
+	}
+	if err := f.read(); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(f.content) != "use tabs\n" {
+		t.Errorf("content = %q", f.content)
+	}
+}
+
+// TestRead_FileSwappedAfterStatIsRefused: a path renamed over by another
+// regular file between statOne and read is refused by os.SameFile on the
+// opened handle, not read as the file the launch validated (#296).
+func TestRead_FileSwappedAfterStatIsRefused(t *testing.T) {
+	const secret = "SECRET-CONTENT-MARKER"
+	dir := t.TempDir()
+	path := writeFile(t, dir, "style.md", "use tabs\n")
+	f, err := statOne(path)
+	if err != nil {
+		t.Fatalf("statOne: %v", err)
+	}
+	other := writeFile(t, dir, "other.md", secret+" swapped in\n")
+	if err := os.Rename(other, path); err != nil {
+		t.Fatal(err)
+	}
+
+	err = f.read()
+	var refusal *RefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("want *RefusalError, got %T: %v", err, err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "style.md") || !strings.Contains(msg, "replaced by another file between the check and the open") {
+		t.Errorf("message does not name the path and the swap: %s", msg)
+	}
+	if strings.Contains(msg, secret) {
+		t.Errorf("message quotes file content: %s", msg)
+	}
+	if f.content != nil {
+		t.Errorf("the swapped-in file was read: %q", f.content)
+	}
+}
+
 // TestLoad_MixedFileCountsItsImportLines: a file that mixes text with imports
 // is accepted, and the count is what the plan screen prints (§2.5).
 func TestLoad_MixedFileCountsItsImportLines(t *testing.T) {

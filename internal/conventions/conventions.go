@@ -208,14 +208,28 @@ func statOne(path string) (readFile, error) {
 	return readFile{arg: path, info: info, source: Source{Path: abs}}, nil
 }
 
-// read reads the file, never more than one byte past the cap — a file that
-// grew after statOne is refused, not read whole — and validates its content.
+// read opens the file, checks the OPENED handle is still the regular file
+// statOne validated, then reads it, never more than one byte past the cap — a
+// file that grew after statOne is refused, not read whole — and validates its
+// content. The open is non-blocking where the platform has O_NONBLOCK
+// (openFlags), so a path swapped for a FIFO between statOne and here is
+// refused instead of blocking the launch (#296).
 func (f *readFile) read() error {
-	fh, err := os.Open(f.source.Path)
+	fh, err := os.OpenFile(f.source.Path, openFlags, 0)
 	if err != nil {
 		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + withoutPath(err)}
 	}
 	defer fh.Close()
+	opened, err := fh.Stat()
+	if err != nil {
+		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + withoutPath(err)}
+	}
+	if !opened.Mode().IsRegular() {
+		return &RefusalError{Path: f.arg, Reason: "is no longer a regular file; it changed between the check and the open"}
+	}
+	if !os.SameFile(f.info, opened) {
+		return &RefusalError{Path: f.arg, Reason: "was replaced by another file between the check and the open; name a file that is not being changed"}
+	}
 	content, err := io.ReadAll(io.LimitReader(fh, MaxStagedBytes+1))
 	if err != nil {
 		return &RefusalError{Path: f.arg, Reason: "cannot be read: " + withoutPath(err)}
