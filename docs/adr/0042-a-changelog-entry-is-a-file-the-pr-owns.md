@@ -491,7 +491,10 @@ cases run in `make test` with no network.
   up-to-date rule means the release PR cannot merge without it. The
   collector refuses a second write of the section (§2.3, 3), so the fix is
   to move the late fragment's body into the section by hand and delete the
-  fragment, or to remove the section and collect again.
+  fragment. Removing the section and collecting again is *not* a fix: the
+  first run already deleted the fragments it collected, so the second would
+  write a section holding only the late one, and nothing would notice the
+  rest were gone.
 - **Two PRs pick the same fragment name.** An add/add conflict, loud at
   *Update branch*. It is a genuine rule-1 collision and rename is the fix.
 - **A PR edits another PR's unreleased fragment** (a follow-up fix to an

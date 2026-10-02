@@ -209,6 +209,8 @@ func TestChangelogGateRefusesAMalformedFragmentByName(t *testing.T) {
 		"old section":     {"changelog.d/304-x.md", "### Documentation\n\n- x\n", "Documented"},
 		"two sections":    {"changelog.d/304-x.md", fixedFragment + "\n" + addedFragment, "exactly one heading"},
 		"unknown section": {"changelog.d/304-x.md", "### Misc\n\n- x\n", "unknown section"},
+		// Quoted by git, it was refused as unreadable instead of by the rule.
+		"a name git would quote": {"changelog.d/304-café.md", fixedFragment, "changelog.d/304-café.md: not a fragment name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newScriptRepo(t)
@@ -221,6 +223,15 @@ func TestChangelogGateRefusesAMalformedFragmentByName(t *testing.T) {
 			r.wantGate(1, tc.path, tc.says)
 		})
 	}
+}
+
+func TestChangelogGateRefusesANameWithANewline(t *testing.T) {
+	r := newScriptRepo(t)
+	r.branch()
+	r.write("changelog.d/304-x\n.md", fixedFragment)
+	r.write("changelog.d/305-good.md", addedFragment)
+	r.commit("bad")
+	r.wantGate(1, "a name holding a newline")
 }
 
 func TestChangelogGateRefusesAFragmentRenamedToABadName(t *testing.T) {
@@ -460,7 +471,12 @@ func TestChangelogGateRefusesACutThatLeavesAFragment(t *testing.T) {
 	if diff := r.git("diff", "--name-only", r.git("merge-base", "main", "HEAD")+"...HEAD"); strings.Contains(diff, "310-late.md") {
 		t.Fatalf("test setup: the late fragment is in base...HEAD, so this does not test HEAD's tree:\n%s", diff)
 	}
-	r.wantGate(2, "changelog.d/310-late.md", "no-changelog")
+	stderr := r.wantGate(2, "changelog.d/310-late.md", "no-changelog", "by hand")
+	// Re-collecting would find only the late fragment — the first run deleted
+	// the rest — so the refusal must not steer the maintainer there.
+	if strings.Contains(stderr, "run scripts/changelog-collect.sh again") {
+		t.Errorf("the refusal advises re-collecting, which drops every fragment the first run took:\n%s", stderr)
+	}
 }
 
 func TestChangelogGateRefusesAManualCutThatSkippedTheCollector(t *testing.T) {

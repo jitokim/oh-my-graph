@@ -98,7 +98,7 @@ if [ -n "$cut" ]; then
 		echo "::error::a release section was cut, but $dir/ at HEAD still holds:" >&2
 		printf '%s\n' "$left" | sed 's/^/  /' >&2
 		echo "Each is an entry for a change this tag would ship, which would otherwise wait for the NEXT release's notes." >&2
-		echo "Move its text into the new section and delete it, or remove the section and run scripts/changelog-collect.sh again." >&2
+		echo "Move its text into the new section by hand and delete it. Do not remove the section and collect again: the first run already deleted the fragments it collected, so a second run would ship only the late one." >&2
 		echo "'no-changelog' does not excuse this (ADR 0042)." >&2
 		exit 2
 	fi
@@ -143,14 +143,21 @@ git diff --no-renames --unified=0 "$base"...HEAD -- "$dir/" ":(exclude)$dir/READ
 	}
 ' >"$tmp/removed"
 
-changes=$(git diff --no-renames --name-status "$base"...HEAD -- "$dir/")
+# Listed with -z, as the collector lists, so git quotes no name: quoted, a
+# non-ASCII name was refused as "unreadable at HEAD" instead of by the fragment
+# rule. A line not starting with $dir/ is the tail of a name holding a newline.
+git diff -z --no-renames --name-only --diff-filter=d "$base"...HEAD -- "$dir/" >"$tmp/changes"
+changes=$(tr '\0' '\n' <"$tmp/changes")
+if [ -n "$changes" ] && printf '%s\n' "$changes" | LC_ALL=C grep -qv "^$dir/"; then
+	echo "::error::$dir/ gained a name holding a newline; a fragment name is <issue>-<slug>.md (see $dir/README.md)." >&2
+	exit 1
+fi
 mkdir "$tmp/$dir"
 entries=""
 bad=""
-while IFS='	' read -r status path; do
+while IFS= read -r path; do
 	[ -n "$path" ] || continue
 	[ "$path" != "$dir/README.md" ] || continue
-	case $status in D*) continue ;; esac
 	case $path in
 	"$dir"/*/*)
 		echo "$path: a fragment lives directly in $dir/, not below it" >&2
