@@ -900,11 +900,16 @@ review node's *effective* pattern rather than reading how it was spelled.
 `backlog-batch`'s lane A gates (`rerun: dev-a, max: 1`, body of 3, so 6 body
 runs over its 2 rounds — and 8 executions worst case, because `e2e-a` inherits
 `retry: { max: 1 }` from `e2e-verify` and a retry is charged on top of its
-round: 2 `dev-a`, 4 `e2e-a`, 2 `review-a`); lane B, `dev-review-pr` and
-`self-dev` stay advisory by recorded
-choice — the last two also because their parallel review fan-out cannot hold
-an arc at all without tripping rule 3's side-exit refusal, each review's
-sibling sitting outside any body that contains `e2e`. *Repairing* findings has
+round: 2 `dev-a`, 4 `e2e-a`, 2 `review-a`). `self-dev` gates its parallel
+review fan-out (#293), where neither review can carry the pair itself: an arc
+on one review trips rule 3's side-exit refusal, because its sibling depends on
+`e2e` from outside that arc's body, and two arcs that both re-run `dev` break
+rule 6's disjoint bodies. So the reviews keep the fragments' either-verdict
+check and fan in to a third node, `review-verdict`. That node narrows to
+`CLEAN`, grounds that verdict in a `verify` that reads both review artifacts,
+and declares `rerun: dev, max: 2` over a body of all five nodes, so 15 runs,
+or 18 counting `e2e`'s retry. Lane B and `dev-review-pr` stay advisory by
+recorded choice. *Repairing* findings has
 a second shape that is not this one and does not stop anything:
 `adr-driven-dev`'s unconditional apply node after each review round, which
 fixes what the round found without a verdict ever failing — it costs a node on

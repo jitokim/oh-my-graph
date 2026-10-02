@@ -1,10 +1,20 @@
 # self-dev — dogfood graph for developing oh-my-graph with oh-my-graph.
 #
 #   dev ──▶ e2e ──▶ review-security ─┐
-#               └─▶ review-style ────┴─▶ pr
+#    ▲          └─▶ review-style ────┴─▶ review-verdict ──▶ pr
+#    └──────────── feedback (max 2) ──────────┘
 #
 # Takes an explicit `task` (unlike dev-review-pr.yaml, which assumes the branch
 # already carries the task context). Opens a DRAFT PR so nothing lands unreviewed.
+#
+# It GATES on its reviews (#293): a FINDINGS: from either reviewer sends the
+# work back to `dev` with the findings, instead of riding into the PR body. The
+# gate is one fan-in node, `review-verdict`, because it has to be — see the
+# comment above it. Price of the arc, legible from the file: the body is all
+# five nodes up to and including `review-verdict`, so (1 + max) × 5 = 15 runs
+# worst case, and 18 counting the retry `e2e` brings from its fragment (a retry
+# is charged on top of its round, DESIGN.md "Feedback edges"). A run where both
+# reviews come back CLEAN first time pays for exactly one extra node.
 #
 # Run (from a fresh feature branch):
 #   git checkout -b feat/my-thing
@@ -48,6 +58,12 @@ nodes:
       work is done.
       If it is not finished, do NOT write DONE: start with a bare BLOCKED and
       the current state.
+
+      Review findings from the previous round follow — they are empty on the
+      first pass. If present, fix every one before anything else, and note
+      that the branch already carries the previous round's commits: amend the
+      work, do not restart it.
+      {{ feedback.review-verdict }}
     allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)"]
     permission_mode: dontAsk
     timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
@@ -77,20 +93,13 @@ nodes:
         single run; determinism is the claim under test.
       verify_command: make local
 
-  # Both reviews are ADVISORY — chosen, not inherited. The fragment passes on
-  # `CLEAN` and on `FINDINGS:` alike, and nothing else in the engine reads a
-  # verdict, so `pr` opens on either; here that is what we want, because it
-  # opens a DRAFT carrying both reviews in its body, and a draft PR with the
-  # findings in it is exactly where a human should meet them. The PASS rows do
-  # not claim the diff was clean (docs/LIMITATIONS.md, "A PASS row does not say
-  # which outcome passed") — `<run-id>/review-style.out` does.
-  #
-  # Gating means narrowing this node's `success_check` to the clean verdict AND
-  # declaring a `feedback:` arc on it — the pair, never the first alone, or a
-  # working reviewer reads as a broken run. `backlog-batch`'s lane A is the
-  # worked example; this fan-out shape cannot carry an arc at all (ADR 0010's
-  # side-exit rule, since the sibling review sits outside any body containing
-  # `e2e`), which the loader refuses at load rather than at spend.
+  # The two reviews keep the fragments' either-verdict check: each one's job is
+  # to judge, and `review-verdict` below is what gates on the judgment. They
+  # still re-run every round — both sit inside the arc's body — and on a re-run
+  # each fragment's prompt quotes {{ self.previous }}, the reviewer's own reply
+  # from the round before, so it checks whether its earlier findings were
+  # closed instead of reviewing the reworked diff as a stranger (#288). Empty on
+  # the first pass; nothing to bind here.
   - id: review-security
     use: review-security
     depends_on: [e2e]
@@ -107,9 +116,72 @@ nodes:
       diff: the current branch's diff vs main
       focus: Also check adherence to DESIGN.md's invariants (the four exec seams, env scrub, no Agent SDK).
 
+  # The gate (#293). Gating is a PAIR — a success_check narrowed to the clean
+  # verdict AND a `feedback:` arc back to the implementer (DESIGN.md "A review
+  # gates only when its caller pairs a narrowed check with an arc";
+  # graphs/fragments/gated-lane.yaml) — and here the pair cannot sit on either
+  # review, for two load rules (ADR 0010):
+  #   - rule 3, no side exit: an arc on one review has `e2e` in its body, and
+  #     the sibling review depends on `e2e` from outside it;
+  #   - rule 6, disjoint bodies: two arcs that both re-run `dev` share
+  #     dev → e2e, so serializing the reviews does not help either.
+  # So the reviews fan in to ONE declarer whose body holds them both: every node
+  # on a path from `dev` to here. Its reply is the payload `dev` reads through
+  # {{ feedback.review-verdict }}.
+  #
+  # The model's CLEAN is not taken on its word. `verify` is the engine reading
+  # the two review artifacts itself (the filterless {{ artifacts.<id> }} is the
+  # file's path, never its text): a reply that says CLEAN over a review that
+  # did not fails here, and the command prints the open review, which is then
+  # the payload `dev` reads (ADR 0016 §2). That is the ONLY round whose payload
+  # is the command's output: a FINDINGS: reply fails result_matches before
+  # `verify` runs, and then the payload is the reply itself — which is why the
+  # prompt makes the reply carry the findings verbatim. The engine keeps only
+  # the TAIL of verify output (4000 runes, internal/schedule maxEvidenceRunes),
+  # so each review prints at most its first 1900 bytes: two long reviews both
+  # survive the cut, each with its worst-first head intact. Its test is
+  # TestSelfDevVerdictCommandJudgesTheReviewArtifacts.
+  #
+  # No `retry:` — a rejected verdict belongs to `dev` via the arc, never to a
+  # second opinion on the same reviews. `max: 2`: a dogfood run has an operator
+  # waiting on it, so it buys one more repair round than an unattended
+  # `backlog-batch` lane does; an exhausted loop FAILs the run with the findings
+  # nobody repaired, and no PR opens.
+  - id: review-verdict
+    type: claude-run
+    depends_on: [review-security, review-style]
+    cwd: "{{ inputs.repo }}"
+    prompt: |
+      Two reviews of the current branch's diff follow. Do not review the diff
+      yourself and do not add findings of your own: your only job is to say
+      whether both reviewers came back clean.
+        Security review: {{ artifacts.review-security | inline }}
+        Style review:    {{ artifacts.review-style | inline }}
+
+      Your FINAL reply IS the verdict. START it with exactly one of these two
+      bare tokens, as the very FIRST characters, with no markdown emphasis
+      (`**CLEAN**` is WRONG), no heading, no preamble:
+        - CLEAN — BOTH reviews start with CLEAN.
+        - FINDINGS: — either review starts with FINDINGS:. Follow the token
+          with every finding from every review that raised one, verbatim,
+          under a `Security:` or `Style:` label, worst first.
+    allowed_tools: [Read]
+    permission_mode: plan
+    handoff: artifact
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*CLEAN\b'
+      verify:
+        command: >-
+          rc=0; for f in "{{ artifacts.review-security }}" "{{ artifacts.review-style }}";
+          do if ! head -c 256 "$f" | tr -d '*_` \t\r\n' | grep -q '^CLEAN'; then
+          head -c 1900 "$f"; echo; rc=1; fi; done; exit $rc
+        timeout: 1m
+    feedback: { rerun: dev, max: 2 }
+
   - id: pr
     use: pr-publish
-    depends_on: [review-security, review-style]
+    depends_on: [review-verdict]
     cwd: "{{ inputs.repo }}"
     with:
       publish: |-
