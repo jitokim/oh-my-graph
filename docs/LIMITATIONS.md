@@ -387,10 +387,6 @@ has no open issue behind it.
   <br>**Weigh like a system prompt.** The text sits at the head of the prompt,
   not in `--append-system-prompt`; whether that is followed as reliably as a
   natively loaded `CLAUDE.md` is unmeasured (ADR 0041 §7(1)).
-  <br>**Guard the path between check and open.** Each conventions path is
-  validated and then opened, so a path swapped for a FIFO in that window can
-  block the run before any node starts; the risk is low because the path is
-  your own (#296).
   ([ADR 0041](adr/0041-an-operators-conventions-reach-a-planned-node-as-text-not-as-settings.md))
 - **`agent:` tool reconciliation is undefined and unmeasured for hand-written
   graphs.** When a hand-written node names a subagent, oh-my-graph does not
