@@ -93,9 +93,9 @@
 #      has exactly one spelling, and it is a PAIR: narrow the review's
 #      `success_check` to the gating pattern — it accepts `CLEAN` and
 #      `MINOR:` and rejects `FINDINGS:` — and give that same node a
-#      `feedback:` arc saying what to do about the failure. Ship both or neither — a narrowed check with no arc turns a
-#      reviewer that did its job into a failed run, and an arc with no
-#      narrowing never fires at all.
+#      `feedback:` arc saying what to do about the failure. Ship both or
+#      neither — a narrowed check with no arc turns a reviewer that did its
+#      job into a failed run, and an arc with no narrowing never fires at all.
 #      CHECKED on both halves, symmetrically, and it REFUSES:
 #      `TestAGatingReviewCarriesItsRecoveryArc` reads every node that splices
 #      a `review-*` fragment and fails the build on either half alone — a

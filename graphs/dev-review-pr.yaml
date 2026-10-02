@@ -75,8 +75,8 @@ nodes:
   # Both reviews are ADVISORY, and that is this graph's choice rather than the
   # fragment's default going unexamined. The fragment passes on `CLEAN`,
   # `MINOR:` and `FINDINGS:` alike — a review's job is to judge, not to be
-  # clean — and
-  # nothing else in the engine reads a verdict, so `pr` below opens on either.
+  # clean — and nothing else in the engine reads a verdict, so `pr` below
+  # opens on any of them.
   # That is right for this shape: the pipeline ends at a pull request, both
   # reviews are interpolated into its body, and a real defect is therefore
   # delivered to the human at the point the merge decision is made. What the
@@ -98,9 +98,9 @@ nodes:
   # merging, with both reviews in the body. A finding therefore still reaches
   # that human before anything merges. Gating would make every routine change
   # pay for one more node, and up to three times its spend when a reviewer
-  # raises a blocking finding. self-dev pays that because it is this repo's own dogfood
-  # loop, where a finding should be repaired before anyone is asked to look
-  # at the draft.
+  # raises a blocking finding. self-dev pays that because it is this repo's
+  # own dogfood loop, where a finding should be repaired before anyone is
+  # asked to look at the draft.
   - id: review-security
     use: review-security
     depends_on: [e2e]

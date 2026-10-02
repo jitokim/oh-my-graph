@@ -114,8 +114,9 @@ var divergedSinceMigration = map[string]map[string][]string{
 // every node the migration did convert stays byte-frozen around them. A
 // listed node that is missing fails, like a mask naming a missing node.
 //
-// `review-verdict` is #293's gate: the fan-in node that narrows to CLEAN and
-// carries self-dev's `feedback:` arc back to dev. It is inline, not a fragment,
+// `review-verdict` is #293's gate: the fan-in node that narrows to the gating
+// pattern (CLEAN or MINOR: passes, FINDINGS: fails — ADR 0043) and carries
+// self-dev's `feedback:` arc back to dev. It is inline, not a fragment,
 // so it adds no resolution and leaves the mask-size derivation below intact.
 var addedSinceMigration = map[string][]string{
 	"self-dev.yaml": {"review-verdict"},
