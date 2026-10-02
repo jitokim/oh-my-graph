@@ -27,6 +27,14 @@ const (
 	// here — restoring the old ceiling rather than inventing a tighter one.
 	maxStderrRetained = 32 << 10
 	waitDelay         = 2 * time.Second
+	// spawnAttempts and spawnRetryDelay bound the one retry this seam owns: the
+	// runtime binary not resolving on PATH (exec.ErrNotFound), which is what an
+	// auto-update looks like from outside while it swaps `claude` or `codex` in
+	// place (#298). Five lookups one second apart cover a ~4s window. A binary
+	// that is genuinely absent costs those four seconds before the same error
+	// surfaces as before, and preflight has normally said so already.
+	spawnAttempts   = 5
+	spawnRetryDelay = time.Second
 )
 
 // tailBuffer is an io.Writer that retains at most the last limit bytes written
@@ -215,6 +223,9 @@ type CLIRunner struct {
 	binary   string
 	timeout  time.Duration
 	environ  func() []string
+	// pause waits between missing-binary retries; a test swaps it for a hook
+	// that installs the binary or counts the waits.
+	pause func(context.Context, time.Duration) error
 }
 
 // CLIOption configures a CLIRunner.
@@ -234,6 +245,10 @@ func withEnviron(environ func() []string) CLIOption {
 	return func(r *CLIRunner) { r.environ = environ }
 }
 
+func withSpawnPause(pause func(context.Context, time.Duration) error) CLIOption {
+	return func(r *CLIRunner) { r.pause = pause }
+}
+
 // NewCLIRunner builds the production runner for one run-wide runtime.
 func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 	var protocol cliProtocol = claudeProtocol{}
@@ -245,6 +260,7 @@ func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 		binary:   protocol.binary(),
 		timeout:  defaultTimeout,
 		environ:  os.Environ,
+		pause:    sleepCtx,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -267,11 +283,55 @@ var lookPath = exec.LookPath
 // exit carrying the provider's own words, and no check short of running it tells
 // the two apart. CLINotFoundError's text is written to claim only the narrower
 // thing.
+//
+// A lookup that reports exec.ErrNotFound is retried on the same bound as a spawn
+// (retryMissingBinary), so a CLI caught mid auto-update does not refuse a run
+// that would have started a second later (#298).
 func (r *CLIRunner) CheckCLIAvailable() error {
-	if _, err := lookPath(r.binary); err != nil {
+	err := r.retryMissingBinary(context.Background(), func() error {
+		_, err := lookPath(r.binary)
+		return err
+	})
+	if err != nil {
 		return &CLINotFoundError{Runtime: r.protocol.runtime(), Binary: r.binary, Err: err}
 	}
 	return nil
+}
+
+// retryMissingBinary calls attempt until it returns anything other than
+// exec.ErrNotFound, or spawnAttempts calls in a row have all returned it, or ctx
+// ends during a pause. It returns attempt's last error unchanged.
+//
+// Only exec.ErrNotFound is retried, because it is the one failure that proves no
+// process ran: the name did not resolve on PATH, so nothing was started, nothing
+// was billed, and asking again asks for the first time. A non-zero exit, an
+// unparseable reply, a timeout or any other start failure (a binary that exists
+// but is not executable, a missing working directory) still fails on the first
+// try. The coordinator's own NodeSpawnError retry (runAssessorWithSpawnRetry)
+// sits on top of this one, so the two bounds multiply for a planner or assessor
+// call; both are finite.
+func (r *CLIRunner) retryMissingBinary(ctx context.Context, attempt func() error) error {
+	for n := 1; ; n++ {
+		err := attempt()
+		if !errors.Is(err, exec.ErrNotFound) || n >= spawnAttempts {
+			return err
+		}
+		if r.pause(ctx, spawnRetryDelay) != nil {
+			return err
+		}
+	}
+}
+
+// sleepCtx waits d, or until ctx ends, whichever comes first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (r *CLIRunner) buildCmd(ctx context.Context, spec NodeInvocation) *exec.Cmd {
@@ -313,12 +373,17 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 		reportSession(id)
 	}
 
-	cmd := r.buildCmd(runCtx, spec)
 	stdout := protocolOutput{protocol: r.protocol, report: reportSession}
 	stderr := newTailBuffer(maxStderrRetained)
-	cmd.Stdout = &stdout
-	cmd.Stderr = stderr
-	runErr := cmd.Run()
+	// A fresh Cmd per attempt: exec.Command resolves the binary when it is
+	// built, and a Cmd runs once. The writers are shared safely because a
+	// retried attempt never started a process, so it wrote nothing to them.
+	runErr := r.retryMissingBinary(runCtx, func() error {
+		cmd := r.buildCmd(runCtx, spec)
+		cmd.Stdout = &stdout
+		cmd.Stderr = stderr
+		return cmd.Run()
+	})
 	stdout.finish()
 
 	exitCode := 0
