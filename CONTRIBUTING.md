@@ -88,7 +88,7 @@ PR that wires one into a workflow.
 | rule | |
 |---|---|
 | `test` and `stress` must pass | both required; `stress` is the `-race -count=200` repeat over the concurrency-sensitive packages, and it reports green without repeating when the diff touches none of them |
-| a CHANGELOG entry, or a stated reason | the `changelog` job fails a PR that changes files and adds no line under `## [Unreleased]` — run `scripts/changelog-entry-check.sh "$(git merge-base main HEAD)"` before pushing; put `no-changelog` in the PR body to skip it |
+| a CHANGELOG entry, or a stated reason | the entry is its own file, `changelog.d/<issue>-<slug>.md`: one `### <Section>` heading from a fixed list, then the entry, as it would have read in `CHANGELOG.md` (name and shape: [`changelog.d/README.md`](changelog.d/README.md); [ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). Never a line under `## [Unreleased]` — two PRs editing one section conflict, and that line no longer counts. The `changelog` job fails a PR that changes files and adds no fragment, and refuses a misnamed or malformed one by name — run `scripts/changelog-entry-check.sh "$(git merge-base main HEAD)"` before pushing; put `no-changelog` in the PR body to skip it |
 | the branch must be up to date with `main` | so the checks that passed are the checks for the merged tree |
 | every conversation resolved | a review comment cannot be merged past by ignoring it |
 | **administrators included** | there is no bypass, for anyone |
@@ -284,9 +284,17 @@ without an explicit, discussed design change should not be merged:
 
 Maintainer checklist for cutting a release:
 
+- **Collect the fragments first.** Run `scripts/changelog-collect.sh vX.Y.Z`
+  (date defaults to today). It writes every `changelog.d/` fragment into a new
+  `## [vX.Y.Z] - <date>` section under `## [Unreleased]`, each heading once,
+  and deletes the fragments; it refuses, writing nothing, on a malformed
+  fragment, on no fragments, and on a version that already has a section. If a
+  PR merges after you ran it, the release PR's `changelog` job fails (exit 2,
+  which `no-changelog` does not excuse) naming the late fragment: move its
+  entry into the section by hand and delete it.
 - **Version bump lands with the CHANGELOG heading.** Bump
-  `cmd/oh-my-graph/version.go` and add the `## [x.y.z]` entry to
-  `CHANGELOG.md` in the same commit — CI has guarded this pairing since
+  `cmd/oh-my-graph/version.go` in the same commit as the collected
+  `## [vX.Y.Z]` section — CI has guarded this pairing since
   v0.3.0 (`TestVersionMatchesChangelog` fails if they drift).
 - **Bump the plugin manifests to the same version.**
   `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
@@ -299,11 +307,17 @@ Maintainer checklist for cutting a release:
   fold any `README.md` changes since the last release into `README.ko.md`
   (English is the source of truth; the ko file carries the precedence
   notice). Nothing in CI guards this — the checklist does.
-- **Write the release's CHANGELOG section as prose.** The release body IS that
+- **Then write the release's CHANGELOG section as prose.** What the collector
+  wrote is a draft, not the release body: add the opening prose above its
+  first heading, reorder or edit the entries, add the `[vX.Y.Z]:` link
+  footnote and point `[Unreleased]:` at the new tag
+  (`TestChangelogHasFootnoteForThisVersion`). The release body IS that
   section — `scripts/release-notes.sh` extracts it and the workflow fails the
   release if it is missing, so there is no auto-generated fallback to fall back
   on. `TestChangelogSectionHasSubstance` catches an empty one in the PR, where
-  it is still cheap; a tag is public the moment it lands. The Contributors line
+  it is still cheap; a tag is public the moment it lands. A heading repeated by
+  a hand edit fails `TestUnreleasedSectionHasNoDuplicateHeadings`, which also
+  reads the current version's section. The Contributors line
   is computed from `git log`, so it needs nothing from you.
 - **`make smoke` and `make smoke-codex` before tagging.** Run both real-CLI
   smokes locally as the last gate — neither runs in CI.
