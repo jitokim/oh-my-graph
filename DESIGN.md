@@ -141,6 +141,38 @@ subscription session limit, say) instead of only "exit code 1".
   `--strict-mcp-config` or `--disallowedTools`: they are the user's own reviewed
   artifact and are *meant* to run under the user's own settings, hooks and MCP.
   `bypassPermissions` opt-in per node only, loud warning at load, never a graph default.
+- **A `dontAsk` node is told its grant by its graph, not by the engine
+  (#294).** Under `dontAsk` an unmatched call is denied, not asked about, and a
+  node that did not know which commands it held gave up at the first denial.
+  `repair-round`'s apply never tried `make` after a denied test run. In
+  `pr-publish`'s node every call was a `gh` call it held, yet it found no
+  permitted way to pass a PR body. So the two shipped `dontAsk` fragments state
+  their grant in the prompt, with the exact form each job takes: the apply
+  runs its own evidence command, which must be a `make` target. The pr node
+  writes the body to one file and passes it with `--body-file`. That file is
+  the one path its grant may write: `Edit(./.omg-pr-body.md)`, the CLI's rule
+  for the Write tool, spelled from the documented syntax and not measured. It
+  is the minimum that gives a body a route at all: an inline multi-line
+  `--body` was denied under a matching grant
+  (`docs/measurements/0213b-compound-commands-defeat-grants.md`, class C), and
+  a heredoc or `$(…)` is compound.
+  `TestRepairRoundApplyIsToldTheGrantItHolds` and
+  `TestPRPublishPassesItsBodyThroughAGrantedFile` pin both.
+  **Considered and not done: the engine appending each node's `Bash(...)`
+  patterns to its prompt.** There are four reasons. (1) For a hand-written graph
+  the argv is not the whole grant: the user's settings are another rule source
+  (above). A generated "you may run exactly these" is false wherever a standing
+  `Bash(*)` exists, and incomplete wherever any other allow rule does. Only a
+  planned node under `--setting-sources ""` has its argv as its only allow
+  source. (2) Under `auto`, the default, an unmatched call goes to the
+  classifier rather than being denied, so the list would read as a ceiling
+  that is not there. (3) A pattern list does not say the *form*. The pr node
+  held `Bash(gh *)` and still had no route. What it lacked was a body file and
+  the grant to write it, which only the node's author can know. (4) It would
+  rewrite the resolved prompt of every node in every graph to repeat what the
+  author can say once in a fragment. The mechanical half that *would* pay is
+  an advisory lint: warn when a `dontAsk` node holds `Bash(<p> *)` and its
+  prompt never names `<p>`. It is not implemented.
 
 ### Codex
 
