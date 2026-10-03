@@ -17,6 +17,167 @@ pull requests never edit a common file
 ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
 has landed since the last release is the list of files in that directory.
 
+## [v0.16.0] - 2026-10-03
+
+**Minor, and the through-line is what a review's verdict is allowed to do.**
+The shipped review fragments now answer `CLEAN`, `MINOR:` or `FINDINGS:`, and
+a gate fails only on `FINDINGS:`, so a review that found only nits no longer
+sends the work round again; the nits reach the PR body instead. `self-dev`
+now acts on its reviews where it used to only quote them: a blocking finding
+re-runs `dev` rather than landing in the draft PR it opens. What this release
+does **not** claim is that the gated review loops now converge. Nobody has
+measured whether the three-valued verdict, with v0.15.0's
+`{{ self.previous }}`, gets them there, and the ledger cannot yet tell a
+`MINOR:` pass from a `CLEAN` one, so
+[#288](https://github.com/jitokim/oh-my-graph/issues/288) stays open for both.
+
+Three fixes remove a way for a run to stop on something it could have got
+past. A `claude` or `codex` binary missing from PATH for a moment while it
+updates itself is retried for a few seconds instead of halting the run. A
+`--conventions` path swapped for a FIFO after validation is refused instead of
+hanging the launch. And the two shipped `dontAsk` fragments now tell their
+node which commands it holds, so it uses them instead of giving up at the
+first denial.
+
+Worth knowing before you upgrade. A review gate you narrowed to `^CLEAN`, or
+a copy of `self-dev`'s old `grep -q '^CLEAN'`, gets **stricter**, not looser:
+widen it as the Changed entry below shows. `pr-publish`'s grant gains one
+rule, `Edit(./.omg-pr-body.md)`, whose spelling follows Claude Code's
+documented syntax and has not been measured here. A CLI that really is not
+installed now takes about 4 seconds to be refused. And for contributors, a
+changelog entry is now a file the pull request owns, in `changelog.d/`
+([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)); this
+section is the first one collected from those files.
+
+### Changed
+
+- **A review that only found nits no longer fails a gate: the review
+  fragments answer `CLEAN`, `MINOR:` or `FINDINGS:`, and a gate fails only
+  `FINDINGS:`.** If you narrowed a review to `^CLEAN` (or copied `self-dev`'s
+  `grep -q '^CLEAN'`), widen it to the gating pattern
+  ``'^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)'`` (and `grep -Eq '^(CLEAN|MINOR:)'`).
+  Left as it is, it now gets **stricter**, because a borderline item can
+  arrive as `MINOR:` and fire your arc. `review-style` and `review-security`
+  grade each item by whether the reviewer would merge with it unfixed, and a
+  re-run reviewer keeps a minor item minor unless the rework changed its code,
+  so a nit cannot be promoted into another round. `gated-lane`'s `review` and
+  `self-dev`'s `review-verdict` accept `MINOR:`, and both implementers now fix
+  the blocking findings only; the minor items pass, stay in the review's
+  `<run-id>/<node>.out`, and reach the PR body. Two other shapes need an edit:
+  a node that restates the old either-verdict pattern now FAILs on `MINOR:`
+  (drop the override, or add ``MINOR[*_`\s]*:``), and a downstream prompt or
+  command that branches on `FINDINGS:` in a review artifact misses items that
+  now arrive as `MINOR:` (mention `MINOR:` in the branch). `repair-round` and
+  `adr-driven-dev` keep the two-valued grammar, which stays valid. The ledger
+  does **not** tell a `MINOR:` pass from a `CLEAN` one — that half of
+  proposal (b) is not delivered, so #288 stays open for it, and for measuring
+  whether `{{ self.previous }}` made the gated loops converge. (ADR 0043,
+  [#288](https://github.com/jitokim/oh-my-graph/issues/288))
+
+### Fixed
+
+- **`self-dev` no longer opens its PR over a review that found something.**
+  Its two parallel reviews passed on `CLEAN` and on `FINDINGS:` alike, and
+  `pr` depended on them directly, so a finding from either reviewer was
+  quoted into a draft PR instead of being fixed. The reviews now fan in to a
+  new `review-verdict` node. It fails on a blocking finding (it passes
+  `CLEAN`, and `MINOR:` since
+  [#288](https://github.com/jitokim/oh-my-graph/issues/288)), and it declares
+  `feedback: { rerun: dev, max: 2 }`, so a finding re-runs
+  dev → e2e → both reviews with the findings quoted in dev's prompt. Only an
+  exhausted loop fails the run, and then no PR opens. When the verdict
+  replies `FINDINGS:`, dev's payload is that reply, which carries the
+  findings verbatim. A pass is not taken on the model's word: its `verify`
+  reads both review artifacts itself, and if either did not come back
+  `CLEAN` or `MINOR:` it fails the verdict and prints the head of each open review, which then
+  becomes dev's payload instead. The
+  reviews are inside the loop, so a re-run reviewer gets its own previous
+  findings through `{{ self.previous }}`. The node has to sit at the fan-in
+  because ADR 0010 refuses an arc on either review: an arc on one has a side
+  exit through its sibling, and two arcs that both re-run `dev` overlap.
+  Worst case is 15 runs per task, or 18 counting `e2e`'s own retry. A run
+  that comes back clean first time pays for one extra node.
+  `dev-review-pr` keeps the advisory review on purpose and says why in its
+  header: it is the everyday template, and its ready PR puts both reviews in
+  front of the human who decides the merge.
+  ([#293](https://github.com/jitokim/oh-my-graph/issues/293))
+- **The two shipped `dontAsk` fragments now tell their node which commands it
+  holds.** Under `dontAsk` a call outside the grant is denied, not asked about.
+  A node that did not know its grant gave up at the first denial instead of
+  using a command it held. `repair-round`'s apply never tried `make`.
+  `pr-publish`'s node found no permitted way to pass a PR body. Both prompts
+  now state the grant and the exact command for the job. The apply runs
+  `make` and is told to run its own evidence command (`verify_command`), so
+  bind that to a `make` target. Commits use one-line `-m` flags. Every call is
+  one program, `git -C`/`make -C` replaces `cd`, and a denied call is
+  re-issued in a permitted form. The pr node writes the body to
+  `.omg-pr-body.md` and runs
+  `gh pr create --title '…' --body-file .omg-pr-body.md`. It is told never to
+  commit that file. **`pr-publish`'s grant gains one rule**,
+  `Edit(./.omg-pr-body.md)`, which permits writing that one path and nothing
+  else. Without it no body could get through: an inline multi-line `--body`
+  is denied even under a matching `gh` grant, a heredoc or `$(…)` is
+  compound, and `.git/` is a file in a linked worktree. The rule's spelling
+  follows Claude Code's documented syntax and has not been measured here. It
+  reaches every `pr-publish` user: `self-dev`, `dev-review-pr` and
+  `backlog-batch` ×2. Once the PR is open the node deletes the body file with
+  `git clean -f -- .omg-pr-body.md`. If the file were left untracked,
+  `git worktree remove` would refuse at run end, and every published
+  `backlog-batch` lane would stay on disk as if it held uncommitted work.
+  DESIGN.md records why the engine does not
+  append a node's grant to its prompt generically.
+  ([#294](https://github.com/jitokim/oh-my-graph/issues/294))
+- **A `--conventions` path swapped for a FIFO no longer blocks the launch.**
+  Each path was validated and then opened, so a path replaced by a FIFO in
+  between left `auto` waiting on an open no writer would ever satisfy, before
+  any node started. After that validation, the file is now opened
+  non-blocking where the platform has `O_NONBLOCK`, so opening a FIFO cannot
+  hang, and the opened handle is checked again: it must be a regular file and
+  the same file the launch validated, or the path is refused with the reason. The limit is gone from
+  docs/LIMITATIONS.md. No new process-starting code was added.
+  ([#296](https://github.com/jitokim/oh-my-graph/issues/296))
+- **A CLI caught mid auto-update no longer halts the run.** While `claude` or
+  `codex` updates itself it can be missing from PATH for a moment, and a node
+  spawned then failed with `exec: "claude": executable file not found in $PATH`,
+  which halted the run. `runner.CLIRunner` now retries that one error
+  (`exec.ErrNotFound` on the runtime binary) up to 5 times, 1 second apart,
+  before reporting it as it did before. The preflight "command exists" check
+  waits for the same window, so a run started during an update is not refused
+  either. Nothing else is retried: a non-zero exit, an unparseable reply, a
+  timeout, and any other start failure still fail on the first try. Cancelling
+  during a wait stops the retry at once. The env scrub is unchanged and no new
+  process-starting code was added. A CLI that really is not installed now takes
+  about 4 seconds to be refused; docs/LIMITATIONS.md lists what the retry
+  does not cover.
+  ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
+
+### Repository
+
+- **A changelog entry is now a file the pull request owns, so two open PRs no
+  longer conflict on `CHANGELOG.md`.** Every PR used to append to the one
+  `## [Unreleased]` section, so the second of any two PRs open at once hit a
+  merge conflict that *Update branch* could not resolve, and every lane of a
+  `backlog-batch` run edited the same file — breaking the graph's own rule 1,
+  that lanes share no files. An entry is now `changelog.d/<issue>-<slug>.md`:
+  one `### <Section>` heading from a fixed list, then the entry
+  (`changelog.d/README.md` has the name and shape). The `changelog` CI job
+  (`scripts/changelog-entry-check.sh`) counts a fragment the PR adds, or a
+  novel line in one it edits, and refuses a misnamed or malformed file by name.
+  A line under `## [Unreleased]` no longer counts, and draws a warning. A
+  release PR runs the new `scripts/changelog-collect.sh vX.Y.Z`, which writes
+  every fragment into the version's section, each heading once, and deletes
+  them. A cut — a new version heading, not an edit to a released one — that
+  still leaves a fragment in `changelog.d/` is refused with
+  exit 2, which `no-changelog` cannot excuse, so a PR merged after the
+  collector ran cannot ship without its entry. `scripts/release-notes.sh` is
+  unchanged. Two new tests guard the convention:
+  `TestUnreleasedSectionHoldsNoEntries` keeps entries out of Unreleased, and
+  `TestChangelogFragmentsAreWellFormed` checks every fragment. The duplicate-heading guard now also covers the
+  current release's section. `backlog-batch` rule 1 gains no exception; its
+  comment now says a file every lane must edit needs a per-lane design.
+  ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md),
+  [#304](https://github.com/jitokim/oh-my-graph/issues/304))
+
 ## [v0.15.0] - 2026-10-01
 
 **Minor, and the through-line is a run you can leave alone for longer.** Three
@@ -5206,7 +5367,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.16.0...HEAD
+[v0.16.0]: https://github.com/jitokim/oh-my-graph/compare/v0.15.0...v0.16.0
 [v0.15.0]: https://github.com/jitokim/oh-my-graph/compare/v0.14.0...v0.15.0
 [v0.14.0]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...v0.14.0
 [v0.13.0]: https://github.com/jitokim/oh-my-graph/compare/v0.12.0...v0.13.0
