@@ -188,8 +188,8 @@ session persistence가 **켜진** 채 실행됩니다. Claude 노드는
 
 여기서의 dogfooding은 데모가 아닙니다: 이 저장소는 그 안에 담긴 도구가 만듭니다.
 기능, 수정, 문서, 릴리스가 자기 자신의 그래프로 작성됩니다 — claude 노드가
-브랜치에서 구현하고, 형제 노드들이 체크와 리뷰를 돌리고, 마지막 노드가 draft PR을
-엽니다. [`graphs/`](graphs/)의 템플릿은 샘플이 아닙니다. `self-dev.yaml`,
+브랜치에서 구현하고, 형제 노드들이 체크와 리뷰를 돌리고, 리뷰가 찾아낸 문제는 작업을
+구현자에게 되돌려 보내며, 마지막 노드가 draft PR을 엽니다. [`graphs/`](graphs/)의 템플릿은 샘플이 아닙니다. `self-dev.yaml`,
 `adr-driven-dev.yaml`, `apply-flags.yaml`이 바로 그 파이프라인입니다. 그대로 믿지
 마세요: 이 주장을 셀 수 있게 만드는 커밋 trailer와 한 줄짜리 감사 명령, 그리고 그
 분모는 [CONTRIBUTING.md § Attribution](CONTRIBUTING.md#attribution)에 있고, 전체
