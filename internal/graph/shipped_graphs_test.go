@@ -1572,12 +1572,18 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 			if !strings.Contains(flowed, "at most half") {
 				t.Errorf("%s: %q no longer budgets stress at \"at most half\" of %s — the -timeout window below is derived from that phrase", name, n.ID, bound)
 			}
-			if regexp.MustCompile(`-count[= ][0-9]{2,}`).MatchString(flowed) {
-				t.Errorf("%s: %q hands down a fixed stress count — a count belongs to a repository, and `-count=300` is how this node was killed; derive it from the budget instead:\n%s", name, n.ID, flowed)
+			// Any numeric count but `-count=1`, the timing run step 2 asks for.
+			for _, c := range regexp.MustCompile(`-count[= ]([0-9]+)`).FindAllStringSubmatch(flowed, -1) {
+				if c[1] != "1" {
+					t.Errorf("%s: %q hands down a fixed stress count — a count belongs to a repository, and `-count=300` is how this node was killed; derive it from the budget instead:\n%s", name, n.ID, flowed)
+					break
+				}
 			}
-			m := regexp.MustCompile(`-timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
+			// The worked stress command's -timeout, not the first one in the
+			// prompt: the graph's own checks are spliced in ahead of it.
+			m := regexp.MustCompile(`-count=<n> -timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
 			if m == nil {
-				t.Errorf("%s: %q shows no `-timeout <duration>` literal — go test kills a package at 10 minutes by default and calls it FAIL", name, n.ID)
+				t.Errorf("%s: %q shows no worked `-count=<n> -timeout <duration>` stress command — go test kills a package at 10 minutes by default and calls it FAIL", name, n.ID)
 				continue
 			}
 			shown, err := time.ParseDuration(m[1])
