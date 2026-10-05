@@ -1523,6 +1523,69 @@ func TestLocalrunStressBudgetMatchesItsTimeout(t *testing.T) {
 	}
 }
 
+// TestE2EVerifyStressBudgetMatchesItsTimeout is localrun's test above, held to
+// every shipped node that splices e2e-verify (#292). The fragment's gate is
+// asked to stress concurrency diffs, and with no bound in sight a node picked
+// `go test -race -count=300` on its own, ran into go test's 10-minute killer,
+// re-ran in chunks and was killed at its 20m node timeout with no verdict. So
+// the fragment states its own bound and a stress budget derived from it, and
+// this test reads both off the RESOLVED node — a using node that overrides
+// `timeout:` without the prompt moving with it fails here — and keeps a fixed
+// count out of the checks a graph splices in.
+func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
+	gates := 0
+	for _, name := range shippedTemplateNames(t) {
+		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		// Single-node resolutions only, as in
+		// TestASessionGateCitesTheColdSafeFragment.
+		fragmentOf := make(map[string]string, len(loaded.Resolutions))
+		for _, res := range loaded.Resolutions {
+			if len(res.Spliced) == 0 {
+				fragmentOf[res.NodeID] = res.Fragment
+			}
+		}
+		for _, n := range loaded.Graph.Nodes {
+			if fragmentOf[n.ID] != coldSafeGateFragment {
+				continue
+			}
+			gates++
+			bound := n.TimeoutDuration()
+			if bound == 0 {
+				t.Errorf("%s: %q declares no timeout: — its prompt quotes a stress budget derived from a bound the graph does not state", name, n.ID)
+				continue
+			}
+			flowed := strings.Join(strings.Fields(n.Prompt), " ")
+			if stated := fmt.Sprintf("killed at %d minutes", int(bound.Minutes())); !strings.Contains(flowed, stated) {
+				t.Errorf("%s: %q times out at %s but its prompt never says %q — the node sizes its stress run against the wrong bound and is killed mid-run, with no verdict", name, n.ID, bound, stated)
+			}
+			if !strings.Contains(flowed, "at most half") {
+				t.Errorf("%s: %q no longer budgets stress at \"at most half\" of %s — the -timeout window below is derived from that phrase", name, n.ID, bound)
+			}
+			if regexp.MustCompile(`-count=[0-9]{2,}`).MatchString(flowed) {
+				t.Errorf("%s: %q hands down a fixed stress count — a count belongs to a repository, and `-count=300` is how this node was killed; derive it from the budget instead:\n%s", name, n.ID, flowed)
+			}
+			m := regexp.MustCompile(`-timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
+			if m == nil {
+				t.Errorf("%s: %q shows no `-timeout <duration>` literal — go test kills a package at 10 minutes by default and calls it FAIL", name, n.ID)
+				continue
+			}
+			shown, err := time.ParseDuration(m[1])
+			if err != nil {
+				t.Fatalf("%s: %q works `-timeout %s`, not a duration go test would accept: %v", name, n.ID, m[1], err)
+			}
+			if shown <= bound/2 || shown >= bound {
+				t.Errorf("%s: %q works `-timeout %s` against a %s stress budget and a %s node — it must sit strictly between the two, or go test kills a budgeted run or the node kills a wedged one first", name, n.ID, shown, bound/2, bound)
+			}
+		}
+	}
+	if gates == 0 {
+		t.Errorf("no shipped graph splices %s any more — this test now asserts nothing", coldSafeGateFragment)
+	}
+}
+
 // anyTemplateCitesAFragment reports whether any unpacked template resolved at
 // least one `use:`, which is what makes the payload's fragments/ directory
 // load-bearing.

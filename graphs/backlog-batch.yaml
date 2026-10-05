@@ -45,8 +45,8 @@
 #      predicate family this repo already measured and rejected at 110 noise
 #      in 114 hits (docs/measurements/0213-tool-grant-predicate.md). The
 #      mechanical-looking second half is false the moment you write it down:
-#      `e2e-verify` declares `budget_usd` and no `timeout:`, correctly, and
-#      argues for it in its own header.
+#      `e2e-verify` declares `budget_usd`, correctly, and argues for it in
+#      its own header.
 #   3. Cold-safe session prompts. An e2e node that resumes its dev session
 #      AND declares retry starts cold on the retried attempt — so every
 #      session prompt here opens with the continue-or-start-from-committed-
@@ -65,7 +65,8 @@
 #      start is a reading, and no predicate performs it.
 #   4. Stress runs for concurrency diffs. A lane whose diff touches
 #      concurrency-sensitive code must stress the affected tests
-#      (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
+#      under the race detector (or your stack's equivalent), sized to the
+#      stress budget `e2e-verify` states rather than a fixed count (#292) —
 #      a flaky test passes a single run; determinism is the claim under test.
 #      PROSE: the subject of the rule is the lane's DIFF, which does not exist
 #      when the graph is loaded and is never read at run time either, leaving
@@ -186,9 +187,8 @@ nodes:
       tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
       checks: |-
         run the project's full checks (build + test + lint). If the diff
-        touches concurrency-sensitive code, ALSO stress the affected tests
-        (`go test <pkgs> -race -count=300`, or your stack's equivalent) —
-        rule 4 in this graph's header.
+        touches concurrency-sensitive code, ALSO stress the affected tests,
+        sized to the budget below — rule 4 in this graph's header.
       verify_command: "{{ inputs.checks_command }}"
       focus: |-
         Judge correctness as well, and scope: the diff must serve only this

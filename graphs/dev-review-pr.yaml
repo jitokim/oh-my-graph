@@ -66,10 +66,9 @@ nodes:
     with:
       checks: |-
         run the end-to-end checks (make local). If the
-        diff touches concurrency-sensitive code, also stress its tests (e.g.
-        `go test <affected packages> -race -count=300`, or your stack's
-        equivalent) — a flaky test passes a single run, and determinism is
-        the claim under test.
+        diff touches concurrency-sensitive code, also stress its tests under
+        the race detector, sized to the budget below — a flaky test passes a
+        single run, and determinism is the claim under test.
       verify_command: make local
 
   # Both reviews are ADVISORY, and that is this graph's choice rather than the
