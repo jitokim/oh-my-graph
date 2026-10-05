@@ -141,7 +141,10 @@ nodes:
   # fails too (#309): the command drops `*` and backtick emphasis and folds line
   # breaks into spaces, but keeps the space that ends the first word. It keeps
   # `_` too, because `_` is a word character to \b: `CLEAN_` is not CLEAN, so
-  # underscore emphasis passes only as a pair (`_CLEAN_`, `__CLEAN__`). It reads the
+  # underscore emphasis passes only as a pair (`_CLEAN_`, `__CLEAN__`). The word
+  # class is spelled in ASCII under LC_ALL=C, because Go's \b is ASCII: a
+  # locale's [[:alnum:]] would count `é` as a letter and judge `CLEANé`
+  # differently from result_matches. It reads the
   # whole review: a byte cap could cut CLEANUP to CLEAN at its edge. The command
   # prints only that open review — never a passing one — which is the payload `dev`
   # reads (ADR 0016 §2). That is the ONLY round whose payload is the command's
@@ -190,7 +193,7 @@ nodes:
       verify:
         command: >-
           rc=0; for f in "{{ artifacts.review-security }}" "{{ artifacts.review-style }}";
-          do if ! cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^[:alnum:]_]|$)|_{0,2}MINOR_{0,2} *:)'; then
+          do if ! cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | LC_ALL=C grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^A-Za-z0-9_]|$)|_{0,2}MINOR_{0,2} *:)'; then
           head -c 1900 "$f"; echo; rc=1; fi; done; exit $rc
         timeout: 1m
     feedback: { rerun: dev, max: 2 }

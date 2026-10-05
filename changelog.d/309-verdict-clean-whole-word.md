@@ -11,6 +11,8 @@
   word early. It keeps `_`, a word character to `\b`, so `CLEAN_` is not
   `CLEAN` and underscore emphasis passes only as a pair (`_CLEAN_`,
   `__CLEAN__`):
-  ``cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^[:alnum:]_]|$)|_{0,2}MINOR_{0,2} *:)'``.
+  ``cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | LC_ALL=C grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^A-Za-z0-9_]|$)|_{0,2}MINOR_{0,2} *:)'``.
+  The word class is ASCII under `LC_ALL=C`, as Go's `\b` is, so the shell's
+  locale cannot judge a non-ASCII letter after `CLEAN` differently.
   If you copied the v0.16.0 command quoted under **Changed**, copy this one.
   ([#309](https://github.com/jitokim/oh-my-graph/issues/309))
