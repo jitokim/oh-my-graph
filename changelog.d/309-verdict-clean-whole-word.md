@@ -5,9 +5,12 @@
   `verify` command deleted every space before matching, so it could not see
   where the first word ended, and `grep -Eq '^(CLEAN|MINOR:)'` passed any
   review whose first word merely started with `CLEAN` — unlike the node's own
-  `result_matches`, which reads `CLEAN\b`. It now drops markdown emphasis,
-  folds line breaks into spaces and matches the first word whole, over the
-  whole review rather than its first 256 bytes, so no cut can end a word early:
-  ``cat "$f" | tr -d '*_`\r' | tr '\t\n' '  ' | grep -Eq '^ *(CLEAN([^[:alnum:]]|$)|MINOR *:)'``.
+  `result_matches`, which reads `CLEAN\b`. It now drops `*` and backtick
+  emphasis, folds line breaks into spaces and matches the first word whole,
+  over the whole review rather than its first 256 bytes, so no cut can end a
+  word early. It keeps `_`, a word character to `\b`, so `CLEAN_` is not
+  `CLEAN` and underscore emphasis passes only as a pair (`_CLEAN_`,
+  `__CLEAN__`):
+  ``cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^[:alnum:]_]|$)|_{0,2}MINOR_{0,2} *:)'``.
   If you copied the v0.16.0 command quoted under **Changed**, copy this one.
   ([#309](https://github.com/jitokim/oh-my-graph/issues/309))

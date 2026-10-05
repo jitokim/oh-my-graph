@@ -74,6 +74,12 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 			wantOut: []string{"helper name"}},
 		{name: "clean with no trailing newline", security: "CLEAN", style: "**CLEAN**", wantExit: 0},
 		{name: "clean then punctuation", security: "CLEAN.\n", style: "CLEAN: nothing to change\n", wantExit: 0},
+		// `_` is a word character to result_matches' CLEAN\b, so it is kept:
+		// CLEAN_ is not CLEAN, and underscore emphasis passes only as a pair.
+		{name: "clean then an underscore is not clean", security: "CLEAN_ the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
+		{name: "clean in underscore emphasis", security: "__CLEAN__\n", style: "_CLEAN_ nothing to change\n", wantExit: 0},
+		{name: "minor in underscore emphasis", security: "__MINOR__:\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
 		{name: "cleanup style beside clean security", security: "CLEAN\n", style: "CLEANUP: the helper name says nothing\n", wantExit: 1,
 			wantOut: []string{"helper name"}, forbidOut: []string{"CLEAN\n"}},
 		// A byte cap ahead of the match would cut this CLEANUP to CLEAN at
