@@ -91,9 +91,9 @@ nodes:
         run `make local` (build + test + vet).
         If the diff touches concurrency-sensitive code or its tests
         (internal/schedule, internal/runner, anything spawning goroutines or
-        using channels), ALSO stress those packages —
-        `go test <pkgs> -race -count=300` — because a flaky test passes a
-        single run; determinism is the claim under test.
+        using channels), ALSO stress those packages under the race
+        detector, sized to the budget below — a flaky test passes a single
+        run; determinism is the claim under test.
       verify_command: make local
 
   # The two reviews keep the fragments' advisory check: each one's job is
@@ -136,8 +136,17 @@ nodes:
   # The model's CLEAN or MINOR: is not taken on its word. `verify` is the engine
   # reading the two review artifacts itself (the filterless {{ artifacts.<id> }}
   # is the file's path, never its text): a passing reply over a review that
-  # starts with neither CLEAN nor MINOR: fails here, and the command prints only
-  # that open review — never a passing one — which is then the payload `dev`
+  # starts with neither CLEAN nor MINOR: fails here. CLEAN counts only as a whole
+  # word, as result_matches' CLEAN\b reads it, so a review that opens CLEANUP
+  # fails too (#309): the command drops `*` and backtick emphasis and folds line
+  # breaks into spaces, but keeps the space that ends the first word. It keeps
+  # `_` too, because `_` is a word character to \b: `CLEAN_` is not CLEAN, so
+  # underscore emphasis passes only as a pair (`_CLEAN_`, `__CLEAN__`). The word
+  # class is spelled in ASCII under LC_ALL=C, because Go's \b is ASCII: a
+  # locale's [[:alnum:]] would count `é` as a letter and judge `CLEANé`
+  # differently from result_matches. It reads the
+  # whole review: a byte cap could cut CLEANUP to CLEAN at its edge. The command
+  # prints only that open review — never a passing one — which is the payload `dev`
   # reads (ADR 0016 §2). That is the ONLY round whose payload is the command's
   # output: a FINDINGS: reply fails result_matches before `verify` runs, and
   # then the payload is the reply itself — which is why the prompt makes the
@@ -184,7 +193,7 @@ nodes:
       verify:
         command: >-
           rc=0; for f in "{{ artifacts.review-security }}" "{{ artifacts.review-style }}";
-          do if ! head -c 256 "$f" | tr -d '*_` \t\r\n' | grep -Eq '^(CLEAN|MINOR:)'; then
+          do if ! cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | LC_ALL=C grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^A-Za-z0-9_]|$)|_{0,2}MINOR_{0,2} *:)'; then
           head -c 1900 "$f"; echo; rc=1; fi; done; exit $rc
         timeout: 1m
     feedback: { rerun: dev, max: 2 }

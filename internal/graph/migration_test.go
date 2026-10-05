@@ -49,7 +49,10 @@ var migratedTemplates = map[string]map[string][]string{
 		// that replied `**PASS**`, so the fragment's pattern deliberately
 		// diverges from it. Everything else under success_check — exit_zero,
 		// the whole verify block — is still byte-frozen.
-		"e2e": {"prompt", "budget_usd", "allowed_tools", "success_check.result_matches"},
+		// timeout is #292's: the fragment now declares the runner's own 20m
+		// default, so the bound is unchanged, but it is stated, because the
+		// prompt quotes it as the node's stress budget.
+		"e2e": {"prompt", "budget_usd", "allowed_tools", "success_check.result_matches", "timeout"},
 		// The two reviews gained a verdict pattern of their own: a review that
 		// replies "still reading, I'll continue" is not a review, and under the
 		// frozen `{ exit_zero: true }` it passed as one.
@@ -70,7 +73,10 @@ var migratedTemplates = map[string]map[string][]string{
 		"pr": {"prompt", "allowed_tools", "success_check.result_matches", "depends_on"},
 	},
 	"dev-review-pr.yaml": {
-		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches"}, // Bash(go test *) reshaped into the fragment's narrowed check-gate grant; verdict pattern made markdown-tolerant
+		// e2e: Bash(go test *) reshaped into the fragment's narrowed check-gate
+		// grant; verdict pattern made markdown-tolerant; the default 20m
+		// timeout stated (#292) — see self-dev's note.
+		"e2e":             {"prompt", "allowed_tools", "success_check.result_matches", "timeout"},
 		"review-security": {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
 		"review-style":    {"prompt", "allowed_tools", "success_check.result_matches"}, // gains Bash(git log*); gains the FINDINGS:/CLEAN verdict
 		"pr":              {"prompt", "allowed_tools", "success_check.result_matches"}, // onto pr-publish; gains the PR-body-file write (#294) — see self-dev's note
@@ -162,6 +168,9 @@ func maskConvergedFields(t *testing.T, g *Graph, masks map[string][]string) {
 					g.Nodes[i].BudgetUSD = 0
 				case "depends_on":
 					g.Nodes[i].DependsOn = nil
+				case "timeout":
+					g.Nodes[i].Timeout = ""
+					g.Nodes[i].timeout = 0
 				// Subfield-granular on purpose: the verdict pattern is the one
 				// part of success_check this project has had to change after the
 				// migration, and masking the whole struct would stop freezing
