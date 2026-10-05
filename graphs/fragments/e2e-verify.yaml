@@ -36,8 +36,9 @@ node:
          its own timeout produces NO verdict at all. Spend at most half of
          that on stress, and leave the rest for the checks and the verdict.
       2. DERIVE. Time ONE repetition of each package first (`-count=1`),
-         then pick per-package counts whose runs TOGETHER fit step 1 — the
-         budget is shared across packages, not granted to each. A smaller
+         then pick per-package counts so the timing runs and the stress
+         runs TOGETHER fit step 1 — the budget is shared across packages,
+         not granted to each. A smaller
          count that finishes beats a larger one that is killed.
       3. RAISE THE PER-TEST TIMEOUT. `go test` kills a package after 10
          minutes BY DEFAULT and prints FAIL — a failure that never
