@@ -76,6 +76,10 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean then punctuation", security: "CLEAN.\n", style: "CLEAN: nothing to change\n", wantExit: 0},
 		{name: "cleanup style beside clean security", security: "CLEAN\n", style: "CLEANUP: the helper name says nothing\n", wantExit: 1,
 			wantOut: []string{"helper name"}, forbidOut: []string{"CLEAN\n"}},
+		// A byte cap ahead of the match would cut this CLEANUP to CLEAN at
+		// its edge, and the end-of-input arm would pass it.
+		{name: "cleanup past a byte cap is not clean", security: strings.Repeat(" ", 251) + "CLEANUP: the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
 		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
 			wantOut: []string{"splices a model's reply", "helper name"}},
 		// ADR 0043: a MINOR: review passes the gate like a CLEAN one, so only

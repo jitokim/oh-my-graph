@@ -139,7 +139,8 @@ nodes:
   # starts with neither CLEAN nor MINOR: fails here. CLEAN counts only as a whole
   # word, as result_matches' CLEAN\b reads it, so a review that opens CLEANUP
   # fails too (#309): the command drops markdown emphasis and folds line breaks
-  # into spaces, but keeps the space that ends the first word. The command
+  # into spaces, but keeps the space that ends the first word, and it reads the
+  # whole review: a byte cap could cut CLEANUP to CLEAN at its edge. The command
   # prints only that open review — never a passing one — which is the payload `dev`
   # reads (ADR 0016 §2). That is the ONLY round whose payload is the command's
   # output: a FINDINGS: reply fails result_matches before `verify` runs, and
@@ -187,7 +188,7 @@ nodes:
       verify:
         command: >-
           rc=0; for f in "{{ artifacts.review-security }}" "{{ artifacts.review-style }}";
-          do if ! head -c 256 "$f" | tr -d '*_`\r' | tr '\t\n' '  ' | grep -Eq '^ *(CLEAN([^[:alnum:]]|$)|MINOR *:)'; then
+          do if ! cat "$f" | tr -d '*_`\r' | tr '\t\n' '  ' | grep -Eq '^ *(CLEAN([^[:alnum:]]|$)|MINOR *:)'; then
           head -c 1900 "$f"; echo; rc=1; fi; done; exit $rc
         timeout: 1m
     feedback: { rerun: dev, max: 2 }
