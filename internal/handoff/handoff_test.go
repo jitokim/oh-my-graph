@@ -115,15 +115,19 @@ func assertQuotingHint(t *testing.T, err error) {
 	if err == nil {
 		t.Fatal("expected an interpolation error, got nil")
 	}
-	for _, want := range []string{
-		"every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained",
-		`break the two braces apart ("{ {")`,
-		"pass the text in as an input or artifact",
-	} {
+	for _, want := range quotingHintWords {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error is missing the quoting hint %q:\n%v", want, err)
 		}
 	}
+}
+
+// quotingHintWords are the rule and the remedy assertQuotingHint looks for —
+// shared so a test asserting the hint's ABSENCE checks the same words.
+var quotingHintWords = []string{
+	"every {{ ... }} in a prompt is resolved, including one that is only being quoted or explained",
+	`break the two braces apart ("{ {")`,
+	"pass the text in as an input or artifact",
 }
 
 // TestInterpolate_MentionedPlaceholderExplainsItself is the reported defect: a

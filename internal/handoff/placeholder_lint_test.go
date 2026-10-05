@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -312,6 +313,65 @@ nodes:
 	for _, unwanted := range []string{"{{ artifact.corpus }}", "does not declare in its inputs list"} {
 		if strings.Contains(joined, unwanted) {
 			t.Errorf("the subset swept in an advisory-only finding %q:\n%s", unwanted, joined)
+		}
+	}
+}
+
+// TestLintPlaceholders_QuotingHint pins that two lint warnings carry the
+// quoting hint — an undeclared input, an artifact of a node the graph does not
+// have — and that the other warnings checked here do not. The hint is asserted
+// by its words, through assertQuotingHint.
+func TestLintPlaceholders_QuotingHint(t *testing.T) {
+	g := parseGraph(t, `
+name: hint
+version: "1"
+inputs: [repo]
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: "{{ inputs.ghost }} {{ artifacts.nope }} {{ artifacts.c }} {{ Artifacts.a }}", depends_on: [a] }
+  - { id: c, prompt: c }
+`)
+	byToken := map[string]Warning{}
+	for _, w := range LintPlaceholders(g) {
+		byToken[w.Detail[:strings.Index(w.Detail, "}}")+2]] = w
+	}
+	if len(byToken) != 4 {
+		t.Fatalf("want one warning per token, got %v", byToken)
+	}
+
+	for _, token := range []string{"{{ inputs.ghost }}", "{{ artifacts.nope }}"} {
+		assertQuotingHint(t, errors.New(byToken[token].Detail))
+	}
+	for _, token := range []string{"{{ artifacts.c }}", "{{ Artifacts.a }}"} {
+		refuteQuotingHint(t, byToken[token].Detail)
+	}
+}
+
+// TestImpossibleArtifactFindings_CarriesNoQuotingHint pins the shared detail:
+// the coordinator's plan refusal quotes it inside a refusal that explains
+// quoting in its own words, so the hint must be added by LintPlaceholders
+// alone — never by judgeToken.
+func TestImpossibleArtifactFindings_CarriesNoQuotingHint(t *testing.T) {
+	g := parseGraph(t, `
+name: hint
+version: "1"
+nodes:
+  - { id: b, prompt: "read {{ artifacts.nope }}" }
+`)
+	findings := ImpossibleArtifactFindings(g)
+	if len(findings) != 1 || !strings.Contains(findings[0].Detail, "which is not a node in the graph") {
+		t.Fatalf("want the one missing-node finding, got %v", findings)
+	}
+	refuteQuotingHint(t, findings[0].Detail)
+}
+
+// refuteQuotingHint is assertQuotingHint's negative: none of the hint's words
+// may appear in detail.
+func refuteQuotingHint(t *testing.T, detail string) {
+	t.Helper()
+	for _, unwanted := range quotingHintWords {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("detail carries the quoting hint %q but must not:\n%s", unwanted, detail)
 		}
 	}
 }
