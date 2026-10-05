@@ -74,6 +74,8 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 			wantOut: []string{"helper name"}},
 		{name: "clean with no trailing newline", security: "CLEAN", style: "**CLEAN**", wantExit: 0},
 		{name: "clean then punctuation", security: "CLEAN.\n", style: "CLEAN: nothing to change\n", wantExit: 0},
+		{name: "cleanup style beside clean security", security: "CLEAN\n", style: "CLEANUP: the helper name says nothing\n", wantExit: 1,
+			wantOut: []string{"helper name"}, forbidOut: []string{"CLEAN\n"}},
 		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
 			wantOut: []string{"splices a model's reply", "helper name"}},
 		// ADR 0043: a MINOR: review passes the gate like a CLEAN one, so only
@@ -81,6 +83,7 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean and minor", security: "CLEAN\n", style: styleMinor, wantExit: 0},
 		{name: "both minor", security: securityMinor, style: styleMinor, wantExit: 0},
 		{name: "minor with emphasis after leading blank lines", security: "\n\n  **MINOR**:\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
+		{name: "minor with a space before its colon", security: "MINOR :\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
 		{name: "findings beside minor", security: securityFindings, style: styleMinor, wantExit: 1,
 			wantOut: []string{"splices a model's reply"}, forbidOut: []string{"default branch"}},
 		{name: "minor without its colon", security: "MINOR - a header could be set\n", style: "CLEAN\n", wantExit: 1,
