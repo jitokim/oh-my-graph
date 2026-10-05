@@ -73,6 +73,15 @@ node:
   # fragment never states. Move the two together —
   # TestE2EVerifyStressBudgetMatchesItsTimeout reads both off every shipped
   # node that splices this fragment.
+  #
+  # So a using node does NOT override `timeout:` alone. The prompt's "20
+  # minutes" and its worked `-timeout 12m` are literals; under a shorter
+  # override (10m, say) the worked -timeout outlives the node, and the node is
+  # killed with no verdict — the failure this bound exists to prevent. A graph
+  # that needs another bound overrides `prompt` with it, restating the budget
+  # for its own number; the override is announced in the run's disclosure line
+  # either way. No shipped graph overrides it, and the test above fails the
+  # build if one starts to.
   timeout: 20m
   handoff: session
   success_check:

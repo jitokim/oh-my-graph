@@ -1542,9 +1542,11 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 		// Single-node resolutions only, as in
 		// TestASessionGateCitesTheColdSafeFragment.
 		fragmentOf := make(map[string]string, len(loaded.Resolutions))
+		overrides := make(map[string][]string, len(loaded.Resolutions))
 		for _, res := range loaded.Resolutions {
 			if len(res.Spliced) == 0 {
 				fragmentOf[res.NodeID] = res.Fragment
+				overrides[res.NodeID] = res.Overridden
 			}
 		}
 		for _, n := range loaded.Graph.Nodes {
@@ -1552,6 +1554,12 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 				continue
 			}
 			gates++
+			// The prompt's bound and its worked -timeout are literals, so an
+			// override of `timeout:` alone leaves them stating another node's
+			// life (see the fragment's note on `timeout:`).
+			if slices.Contains(overrides[n.ID], "timeout") && !slices.Contains(overrides[n.ID], "prompt") {
+				t.Errorf("%s: %q overrides e2e-verify's timeout: without its prompt — the prompt still budgets stress against the fragment's own bound", name, n.ID)
+			}
 			bound := n.TimeoutDuration()
 			if bound == 0 {
 				t.Errorf("%s: %q declares no timeout: — its prompt quotes a stress budget derived from a bound the graph does not state", name, n.ID)
