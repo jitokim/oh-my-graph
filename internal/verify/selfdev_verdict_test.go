@@ -66,6 +66,30 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean only mentioned, not the verdict", security: "Still reviewing; CLEAN so far.\n", style: "CLEAN\n", wantExit: 1,
 			wantOut: []string{"Still reviewing"}},
 		{name: "empty review", security: "", style: "CLEAN\n", wantExit: 1},
+		// #309: CLEAN is a whole word, as result_matches' CLEAN\b reads it — a
+		// review whose first word only starts with CLEAN is not clean.
+		{name: "cleanup is not clean", security: "CLEANUP: the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
+		{name: "cleanly with emphasis is not clean", security: "CLEAN\n", style: "**CLEANLY** split, but the helper name says nothing\n", wantExit: 1,
+			wantOut: []string{"helper name"}},
+		{name: "clean with no trailing newline", security: "CLEAN", style: "**CLEAN**", wantExit: 0},
+		{name: "clean then punctuation", security: "CLEAN.\n", style: "CLEAN: nothing to change\n", wantExit: 0},
+		// `_` is a word character to result_matches' CLEAN\b, so it is kept:
+		// CLEAN_ is not CLEAN, and underscore emphasis passes only as a pair.
+		{name: "clean then an underscore is not clean", security: "CLEAN_ the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
+		{name: "clean in underscore emphasis", security: "__CLEAN__\n", style: "_CLEAN_ nothing to change\n", wantExit: 0},
+		// The boundary is Go's ASCII \b, whatever the shell's locale: `é` is
+		// not a word character to result_matches, so CLEANé reads as CLEAN
+		// there and must here too.
+		{name: "clean then a non-ASCII letter", security: "CLEANé\n", style: "CLEAN\n", wantExit: 0},
+		{name: "minor in underscore emphasis", security: "__MINOR__:\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
+		{name: "cleanup style beside clean security", security: "CLEAN\n", style: "CLEANUP: the helper name says nothing\n", wantExit: 1,
+			wantOut: []string{"helper name"}, forbidOut: []string{"CLEAN\n"}},
+		// A byte cap ahead of the match would cut this CLEANUP to CLEAN at
+		// its edge, and the end-of-input arm would pass it.
+		{name: "cleanup past a byte cap is not clean", security: strings.Repeat(" ", 251) + "CLEANUP: the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
 		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
 			wantOut: []string{"splices a model's reply", "helper name"}},
 		// ADR 0043: a MINOR: review passes the gate like a CLEAN one, so only
@@ -73,6 +97,7 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean and minor", security: "CLEAN\n", style: styleMinor, wantExit: 0},
 		{name: "both minor", security: securityMinor, style: styleMinor, wantExit: 0},
 		{name: "minor with emphasis after leading blank lines", security: "\n\n  **MINOR**:\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
+		{name: "minor with a space before its colon", security: "MINOR :\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
 		{name: "findings beside minor", security: securityFindings, style: styleMinor, wantExit: 1,
 			wantOut: []string{"splices a model's reply"}, forbidOut: []string{"default branch"}},
 		{name: "minor without its colon", security: "MINOR - a header could be set\n", style: "CLEAN\n", wantExit: 1,
