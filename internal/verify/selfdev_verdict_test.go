@@ -66,6 +66,14 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "clean only mentioned, not the verdict", security: "Still reviewing; CLEAN so far.\n", style: "CLEAN\n", wantExit: 1,
 			wantOut: []string{"Still reviewing"}},
 		{name: "empty review", security: "", style: "CLEAN\n", wantExit: 1},
+		// #309: CLEAN is a whole word, as result_matches' CLEAN\b reads it — a
+		// review whose first word only starts with CLEAN is not clean.
+		{name: "cleanup is not clean", security: "CLEANUP: the temp dir is never removed\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"temp dir is never removed"}},
+		{name: "cleanly with emphasis is not clean", security: "CLEAN\n", style: "**CLEANLY** split, but the helper name says nothing\n", wantExit: 1,
+			wantOut: []string{"helper name"}},
+		{name: "clean with no trailing newline", security: "CLEAN", style: "**CLEAN**", wantExit: 0},
+		{name: "clean then punctuation", security: "CLEAN.\n", style: "CLEAN: nothing to change\n", wantExit: 0},
 		{name: "both findings, both long", security: longSecurity, style: longStyle, wantExit: 1,
 			wantOut: []string{"splices a model's reply", "helper name"}},
 		// ADR 0043: a MINOR: review passes the gate like a CLEAN one, so only

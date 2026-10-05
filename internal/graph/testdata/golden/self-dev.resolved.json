@@ -123,7 +123,7 @@
         "exit_zero": true,
         "result_matches": "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)",
         "verify": {
-          "command": "rc=0; for f in \"{{ artifacts.review-security }}\" \"{{ artifacts.review-style }}\"; do if ! head -c 256 \"$f\" | tr -d '*_` \\t\\r\\n' | grep -Eq '^(CLEAN|MINOR:)'; then head -c 1900 \"$f\"; echo; rc=1; fi; done; exit $rc",
+          "command": "rc=0; for f in \"{{ artifacts.review-security }}\" \"{{ artifacts.review-style }}\"; do if ! head -c 256 \"$f\" | tr -d '*_`\\r' | tr '\\t\\n' '  ' | grep -Eq '^ *(CLEAN([^[:alnum:]]|$)|MINOR *:)'; then head -c 1900 \"$f\"; echo; rc=1; fi; done; exit $rc",
           "timeout": "1m"
         }
       },
