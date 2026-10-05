@@ -1564,7 +1564,7 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 			if !strings.Contains(flowed, "at most half") {
 				t.Errorf("%s: %q no longer budgets stress at \"at most half\" of %s — the -timeout window below is derived from that phrase", name, n.ID, bound)
 			}
-			if regexp.MustCompile(`-count=[0-9]{2,}`).MatchString(flowed) {
+			if regexp.MustCompile(`-count[= ][0-9]{2,}`).MatchString(flowed) {
 				t.Errorf("%s: %q hands down a fixed stress count — a count belongs to a repository, and `-count=300` is how this node was killed; derive it from the budget instead:\n%s", name, n.ID, flowed)
 			}
 			m := regexp.MustCompile(`-timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
