@@ -203,6 +203,9 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: " + runtimeUsage + "\ncommands:\n       " + usageLines)
 	}
+	if len(args) == 1 && isHelpToken(args[0]) {
+		return &usageRequest{}
+	}
 	switch args[0] {
 	case "init":
 		if runtimeSet {

@@ -61,6 +61,28 @@ func TestParseCommandLineRequiresRuntimeBeforeSubcommand(t *testing.T) {
 	}
 }
 
+func TestTopLevelHelp(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"--runtime", "codex", "--help"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var code int
+			out := captureStdout(t, func() { code = mainExitCode(args) })
+			if code != 0 {
+				t.Fatalf("mainExitCode(%q) = %d, want 0", args, code)
+			}
+			if !strings.Contains(out, "usage: "+runtimeUsage) || !strings.Contains(out, "oh-my-graph run <graph.yaml>") {
+				t.Errorf("top-level help is incomplete:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestUnknownTopLevelCommand(t *testing.T) {
+	err := run([]string{"bogus"})
+	if err == nil || !strings.Contains(err.Error(), `unknown command "bogus"`) {
+		t.Fatalf("run([bogus]) error = %v, want unknown-command error", err)
+	}
+}
+
 func TestExecuteGraphPersistsRunWideRuntime(t *testing.T) {
 	isolateRunHome(t)
 	g := mustParse(t, `{"name":"codex","nodes":[{"id":"work","prompt":"work"}]}`)

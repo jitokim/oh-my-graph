@@ -63,6 +63,9 @@ type usageRequest struct {
 // Error is the synopsis line the CLI already advertises for this subcommand, so
 // help and the usage errors quote one source and cannot drift.
 func (u *usageRequest) Error() string {
+	if u.subcommand == "" {
+		return "usage: " + runtimeUsage + "\ncommands:\n       " + usageLines
+	}
 	line, ok := usageSynopsisFor(u.subcommand)
 	if !ok {
 		return "usage: " + runtimeUsage
