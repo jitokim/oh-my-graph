@@ -82,6 +82,14 @@ func TestSelfDevVerdictCommandJudgesTheReviewArtifacts(t *testing.T) {
 		{name: "minor only mentioned, not the verdict", security: "Still reviewing; MINOR: so far.\n", style: "CLEAN\n", wantExit: 1,
 			wantOut: []string{"Still reviewing"}},
 		{name: "empty review beside minor", security: "", style: styleMinor, wantExit: 1, forbidOut: []string{"default branch"}},
+		// #309: the first token must be CLEAN itself, not a word it starts.
+		{name: "cleanup is not clean", security: "CLEANUP: renamed the helper\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"CLEANUP: renamed the helper"}},
+		{name: "cleanly with emphasis is not clean", security: "**CLEANLY** written, but the error path leaks the token\n", style: "CLEAN\n", wantExit: 1,
+			wantOut: []string{"leaks the token"}},
+		{name: "minor with a space before its colon", security: "MINOR :\n- a header could be set\n", style: "CLEAN\n", wantExit: 0},
+		{name: "cleanup style beside clean security", security: "CLEAN\n", style: "CLEANUP\n", wantExit: 1,
+			wantOut: []string{"CLEANUP"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
