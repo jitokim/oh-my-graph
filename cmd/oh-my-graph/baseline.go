@@ -109,7 +109,9 @@ func (e *BaselineRedError) Print(w io.Writer) {
 	fmt.Fprint(w,
 		"Nothing was planned, nothing was billed, and no run directory was created:\n"+
 			"every cycle's sinks would run this same command, so it must pass on the\n"+
-			"tree as it is first. Fix the tree (or the command) and re-run.\n\n")
+			"tree as it is first. Fix the tree (or the command) and re-run.\n"+
+			"If --verify-cmd is an acceptance test of the goal, red before the change\n"+
+			"on purpose, re-run with --no-baseline: the sinks still run it.\n\n")
 	tail := tailOutput(e.Output, baselineTailLines, baselineTailBytes)
 	switch {
 	case e.RunErr != nil && tail.text == "":

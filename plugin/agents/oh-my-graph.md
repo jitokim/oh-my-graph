@@ -29,7 +29,7 @@ Claude behaviour below carries over.
 oh-my-graph init [<dir>]
 oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-                          [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence]
+                          [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence]
                           [--accept-loaded-user-config]
                           [--max-cycles N] [--max-goal-budget-usd X]
                           [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping]
@@ -57,7 +57,7 @@ Six of those are worth knowing precisely:
   detects a build system and no `--verify-cmd` was given. See the rule below —
   this is the one refusal you must never resolve on your own initiative.
 - `auto --verify-cmd 'CMD'` runs CMD once on the starting tree before any
-  spend. If it is already red there (non-zero exit, could not run, or timed out), `auto` stops (exit 5, "baseline red") with the command's exit code or how long it ran before timing out, and the tail of its output — no model call, no run directory. Show the user that output; the tree (or the command, or its `--verify-timeout`) needs fixing before a run can pass.
+  spend. If it is already red there (non-zero exit, could not run, or timed out), `auto` stops (exit 5, "baseline red") with the command's exit code or how long it ran before timing out, and the tail of its output — no model call, no run directory. Show the user that output; the tree (or the command, or its `--verify-timeout`) needs fixing before a run can pass. Only when the command is an acceptance test of the goal, written to fail until the change exists, re-run with `--no-baseline`; the sinks still run it. Never use `--no-baseline` to get past a red build.
 - `resume --retry-failed` re-executes a failed run's failed and cancelled
   nodes (or finishes a session-limit-paused run's unfinished ones), keeping
   every passed node's result. It is the non-gate way to continue a run.

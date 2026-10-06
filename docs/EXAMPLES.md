@@ -287,6 +287,8 @@ auto: baseline red: --verify-cmd 'go test ./...' exited 1 on the starting tree.
 Nothing was planned, nothing was billed, and no run directory was created:
 every cycle's sinks would run this same command, so it must pass on the
 tree as it is first. Fix the tree (or the command) and re-run.
+If --verify-cmd is an acceptance test of the goal, red before the change
+on purpose, re-run with --no-baseline: the sinks still run it.
 
 Its output:
 
@@ -312,6 +314,13 @@ nothing changes, and `resume` and `design` do not run it. The baseline checks th
 invocation directory as it is, uncommitted and untracked files included — the
 same tree cycle 1's sink verify runs in, since a planned node can set neither
 `cwd` nor `worktree`.
+
+When `--verify-cmd` is an **acceptance test of the goal**, a script that checks
+the change exists and so fails before it does, pass `--no-baseline`. The
+baseline is then skipped with one line, `Baseline: skipped (--no-baseline);
+--verify-cmd 'CMD' still runs at every sink.`, and every sink still runs the
+command and judges its exit code. Nothing else changes. `--no-baseline` without
+`--verify-cmd` is refused.
 
 What `auto` can exit with:
 

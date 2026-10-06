@@ -541,3 +541,95 @@ func TestRunAuto_InterruptedBaselineIsNotRed(t *testing.T) {
 		})
 	}
 }
+
+// #325: --no-baseline skips the baseline and nothing else. With a --verify-cmd
+// that is red on the starting tree (an acceptance test of the goal), the run
+// reaches the planner, the verifier is never asked, the skip is printed once,
+// and the plan still shows the command at its sink — and --plan-only runs it
+// nowhere.
+func TestRunAuto_NoBaselineSkipsTheBaselineAndKeepsTheSinkCommand(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417}})
+	verifier := verify.NewFakeVerifier(map[string]verify.Result{baselineCmd: {ExitCode: 1, Output: "--- FAIL: the change is not there yet\n"}})
+
+	out, err := runBaselineAuto(t, fake, verifier, osStdin(), "add a README section", "--plan-only", "--no-baseline", "--verify-cmd", baselineCmd)
+
+	if err != nil {
+		t.Fatalf("--no-baseline with a red --verify-cmd must reach the planner: %v", err)
+	}
+	if calls := verifier.Calls(); len(calls) != 0 {
+		t.Errorf("--no-baseline still ran the baseline: %+v", calls)
+	}
+	want := "Baseline: skipped (--no-baseline); --verify-cmd '" + baselineCmd + "' still runs at every sink.\n"
+	if strings.Count(out, want) != 1 {
+		t.Errorf("want the skip line exactly once, got:\n%s", out)
+	}
+	if strings.Contains(out, "baseline red") || strings.Contains(out, "passed on the starting tree") {
+		t.Errorf("a skipped baseline reported a verdict:\n%s", out)
+	}
+	if len(plannerCalls(fake)) != 1 {
+		t.Errorf("planner calls = %d, want 1", len(plannerCalls(fake)))
+	}
+	for _, want := range []string{"build evidence", baselineCmd, "ENGINE runs this"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skipping the baseline dropped the sink command from the plan; output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// #325: skipping the baseline must not skip verification. A real command that
+// exits 1 still fails the run at its sink, although the baseline that would
+// have caught it at the start was skipped.
+func TestRunAuto_NoBaselineStillVerifiesAtTheSinks(t *testing.T) {
+	isolateRunHome(t)
+	script := writeVerifyScript(t, 1)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.10},
+		"work-1": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+	})
+	verifier := verify.NewFakeVerifier(map[string]verify.Result{script: {ExitCode: 1}})
+
+	out, err := runBaselineAuto(t, fake, verifier, osStdin(), "add a README section", "--no-baseline", "--verify-cmd", script)
+
+	if err == nil {
+		t.Fatalf("a sink whose command exits 1 must fail the run, --no-baseline or not:\n%s", out)
+	}
+	var red *BaselineRedError
+	if errors.As(err, &red) {
+		t.Fatalf("--no-baseline still refused on the baseline: %v", err)
+	}
+	if calls := verifier.Calls(); len(calls) != 0 {
+		t.Errorf("--no-baseline still ran the baseline: %+v", calls)
+	}
+	if !strings.Contains(out, "FAIL") || strings.Contains(out, "PASS (verified)") {
+		t.Errorf("the sink's failed verification is not in the ledger:\n%s", out)
+	}
+}
+
+// #325: --no-baseline names a command to skip, so without --verify-cmd it is
+// refused at parse — before any model call — instead of sitting in a script
+// doing nothing.
+func TestRunAuto_NoBaselineWithoutVerifyCmdIsRefused(t *testing.T) {
+	home := isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: cycleSpec}})
+	verifier := verify.NewFakeVerifier(nil)
+
+	_, err := runBaselineAuto(t, fake, verifier, osStdin(), "add a README section", "--plan-only", "--no-baseline", "--accept-no-build-evidence")
+
+	if err == nil || !strings.Contains(err.Error(), "--no-baseline") || !strings.Contains(err.Error(), "no --verify-cmd") {
+		t.Fatalf("err = %v, want the --no-baseline usage refusal", err)
+	}
+	assertNothingSpent(t, home, fake)
+	if calls := verifier.Calls(); len(calls) != 0 {
+		t.Errorf("the verifier was called: %+v", calls)
+	}
+}
+
+// #325: the red-baseline refusal tells an acceptance-test user the way out.
+func TestBaselineRedError_NamesNoBaseline(t *testing.T) {
+	var buf bytes.Buffer
+	(&BaselineRedError{Goal: "g", Command: baselineCmd, ExitCode: 1}).Print(&buf)
+	if !strings.Contains(buf.String(), "re-run with --no-baseline: the sinks still run it") {
+		t.Errorf("the refusal does not name --no-baseline:\n%s", buf.String())
+	}
+}
