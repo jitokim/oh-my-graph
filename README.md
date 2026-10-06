@@ -62,7 +62,8 @@ oh-my-graph init
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 
 # An implementation goal takes the other exit — the ENGINE runs your build
-# command at each sink of the plan and judges its exit code itself:
+# command at each sink of the plan and judges its exit code itself. It runs it
+# once on the starting tree first; already red there, it exits 5 (baseline red):
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
 # Let the planner hear what the goal left out: up to five questions on your

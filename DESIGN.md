@@ -1728,8 +1728,10 @@ by design, persists everything a second leg needs, and exits.
 4. `cmd/oh-my-graph` maps that to **exit code 2**. `0` = every node passed,
    `1` = the run failed, `2` = the run is paused and resumable, `3` = `auto`
    refused to start for want of build evidence (ADR 0030 — nothing ran, nothing
-   is resumable, nothing was billed, and no run directory exists). A pause is not
-   a failure and must not be reported as one; nor is a refusal.
+   is resumable, nothing was billed, and no run directory exists), `5` = `auto`'s
+   `--verify-cmd` was already red on the starting tree (#315 — the same: no model
+   call, no run directory). A pause is not a failure and must not be reported as
+   one; nor is a refusal.
 
 `--continue-on-fail` does not apply to gates: a pause always stops the whole
 run, because approving "part of" a paused run later is not a coherent operation.
@@ -2442,7 +2444,33 @@ accidental one. `run` (hand-written graphs) and `resume` are not gated; `chat`
 asks and never refuses, because it registers no verification flag a refusal could
 name (ADR 0030 §2.6). This amends ADR 0016 §3 in one direction only: a repository
 file may now cause the tool to *stop*; it may still never cause it to run, widen
-or attach anything. Planning a graph is ONE
+or attach anything.
+
+**A red `--verify-cmd` is learned before cycle 1, not at the end of it (#315).**
+With `--verify-cmd`, `auto` runs the command ONCE on the starting tree (`.`,
+through the same `verify.Verifier` seam and the same resolved `--verify-timeout`
+the sinks get) after the free refusals — build evidence, the runner CLI check,
+`--interview`'s no-terminal refusal — and before the interview's first question,
+the first planner call and the first run directory. Red — a non-zero exit, or no
+result at all (could not run, timed out) — stops there: `auto: baseline red:
+--verify-cmd 'CMD' exited N on the starting tree.` on stdout, the last 40 lines
+(at most 4096 bytes) of its output, a goal summary of 0 cycles and `$0.0000`
+reading `no cycle ran — baseline red`, and **exit 5**; no model call, no cycle,
+no run directory. A timeout reads `timed out after D on the starting tree` in
+place of `exited N`, and quotes what the command printed before it was killed
+under the same bound. An interrupt (Ctrl-C, SIGTERM) during the baseline is not
+red: it is checked before the verdict, since a killed command can also come back
+non-zero, and `auto` takes the generic error path every interrupted `auto` takes
+— exit 1, no `baseline red`, no goal summary. Green prints `Baseline: --verify-cmd 'CMD' passed on the
+starting tree (exit 0).` and everything proceeds as before. Every `auto` with
+`--verify-cmd` gets it, `--max-cycles 1` and `--plan-only` included (a preview
+refuses exactly as the run it previews, as with ADR 0030's refusal); none without
+it does, and `resume` and `design` are unchanged. The baseline checks the
+invocation directory as it is, uncommitted and untracked files included — the
+same tree cycle 1's sink verify runs in, since a planned node can set neither
+`cwd` nor `worktree` (`validatePlannedNodeCwd`, `validatePlannedNodeWorktree`).
+
+Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (CLIRunner:
 env scrub, read-only `plan` permission mode, never the Agent SDK) — the
 Coordinator makes exactly that one call per PLAN — per cycle, not per `auto`

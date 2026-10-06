@@ -43,7 +43,7 @@ read that persisted runtime; passing a different explicit value is an error.
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file as `wrote` or `kept`. Never overwrites — see [docs/INSTALL.md](INSTALL.md#what-oh-my-graph-init-unpacks). |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. `--interview` (off by default) asks you at most five questions on the terminal before the first planner call and hands your answers to the planner as fenced text — see [being asked first](#being-asked-first-auto---interview) (ADR 0044). |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). Before anything is spent, `auto` runs it once on the starting tree; if it is already red there, `auto` stops with no model call and no run directory (exit 5, "baseline red"). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. `--interview` (off by default) asks you at most five questions on the terminal before the first planner call and hands your answers to the planner as fenced text — see [being asked first](#being-asked-first-auto---interview) (ADR 0044). |
 | `design "<goal>" --out <file>` | The `--interview` questions, then one planner call, then the graph written to `<file>` as YAML and linted. **Never runs it** — review it, then `run` it. Refuses an existing `--out` and `--conventions` before any spend — see [ending in a file](#ending-in-a-file-design) (ADR 0044). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
@@ -268,6 +268,63 @@ again on every resumed leg** — `oh-my-graph resume <run-id> --retry-failed
 --verify-cmd './gradlew build'`, which is what the pause hint prints for you. A
 resume without it is refused rather than run with weaker checking than the leg
 it continues. [SECURITY.md](../SECURITY.md) has the standing such a command has.
+
+**`auto` runs the command once before it plans anything** (#315), on the starting
+tree, under the same `--verify-timeout` — after the free refusals above and
+before `--interview`'s first question, the first planner call and the first run
+directory. Green prints one line and everything proceeds as before:
+
+```
+Baseline: --verify-cmd 'go test ./...' passed on the starting tree (exit 0).
+```
+
+Red — a non-zero exit, or a command that could not run or timed out — stops
+there, because every cycle's sinks would fail on a cause the cycle never touched:
+
+```
+auto: baseline red: --verify-cmd 'go test ./...' exited 1 on the starting tree.
+
+Nothing was planned, nothing was billed, and no run directory was created:
+every cycle's sinks would run this same command, so it must pass on the
+tree as it is first. Fix the tree (or the command) and re-run.
+
+Its output:
+
+  | --- FAIL: TestB (0.00s)
+  |     b_test.go:9: want 1, got 2
+  | FAIL
+  | FAIL	pkg/b	0.02s
+
+GOAL SUMMARY — "fix the flaky test"
+  no cycle ran — baseline red
+GOAL TOTAL: $0.0000 across 0 cycle(s)
+```
+
+The quoted output is its last 40 lines, at most 4096 bytes of them. A baseline
+that times out is red the same way: its first line reads `timed out after 10m0s`
+(the `--verify-timeout` in force) in place of `exited 1`, and what the command
+printed before it was killed is quoted under the same bound. An interrupt
+(Ctrl-C, SIGTERM) during the baseline is not a red baseline: `auto` exits 1 as
+any interrupted `auto` does, with no "baseline red" and no goal summary. Every `auto`
+with `--verify-cmd` gets this check, `--max-cycles 1` and `--plan-only` included
+— a preview refuses exactly as the run it previews; without `--verify-cmd`
+nothing changes, and `resume` and `design` do not run it. The baseline checks the
+invocation directory as it is, uncommitted and untracked files included — the
+same tree cycle 1's sink verify runs in, since a planned node can set neither
+`cwd` nor `worktree`.
+
+What `auto` can exit with:
+
+| Exit | Meaning |
+|---|---|
+| `0` | the run (or every cycle of the goal loop) passed; `--plan-only` printed the plan |
+| `1` | the run failed, or `auto` stopped on an error or was interrupted (the baseline included) |
+| `2` | paused — at a gate or on a session limit — and resumable with `resume` |
+| `3` | refused: a build system was detected and no build evidence was given (ADR 0030) |
+| `5` | refused: baseline red — `--verify-cmd` already failed, could not run, or timed out on the starting tree |
+
+Exits 3 and 5 make no model call and leave no run directory. Exit `4` is not
+`auto`'s: only `runs list --exit-in-flight` returns it.
 
 ## Zero-config: auto mode (the headline)
 
