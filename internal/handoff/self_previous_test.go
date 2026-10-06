@@ -206,8 +206,8 @@ func TestInterpolate_SelfRefusals(t *testing.T) {
 }
 
 // TestSelfTokenRefused pins the one statement of the self-token validity rule
-// that interpolation and both lints judge by: only {{ self.previous }},
-// unfiltered, is valid; a wrong reference is refused before a filter is.
+// that interpolation and both lints judge by: only {{ self.previous }} and
+// {{ self.timeout }} (#292), unfiltered, are valid; a wrong reference is refused before a filter is.
 func TestSelfTokenRefused(t *testing.T) {
 	cases := []struct {
 		name, ref, filter, want string
@@ -217,6 +217,8 @@ func TestSelfTokenRefused(t *testing.T) {
 		{"empty reference", "", "", selfRefusedReference},
 		{"reference differs only in case", "Previous", "", selfRefusedReference},
 		{"filtered previous", SelfPrevious, "inline", selfRefusedFilter},
+		{"timeout unfiltered is valid (#292)", SelfTimeout, "", ""},
+		{"filtered timeout (#292)", SelfTimeout, "inline", selfRefusedFilter},
 		{"unknown reference and a filter reports the reference", "prior", "inline", selfRefusedReference},
 	}
 	for _, tc := range cases {

@@ -32,9 +32,10 @@ node:
     If you stress tests (repeated runs under the race detector, or your
     stack's equivalent), DERIVE the repetition count from this budget —
     never copy a fixed one:
-      1. BUDGET. This node is killed at 20 minutes, and a node killed by
-         its own timeout produces NO verdict at all. Spend at most half of
-         that on stress, and leave the rest for the checks and the verdict.
+      1. BUDGET. This node is killed at {{ self.timeout }}, and a node
+         killed by its own timeout produces NO verdict at all. Spend at
+         most half of that on stress, and leave the rest for the checks
+         and the verdict.
       2. DERIVE. Time ONE repetition of each package first (`-count=1`),
          then pick per-package counts so the timing runs and the stress
          runs TOGETHER fit step 1 — the budget is shared across packages,
@@ -43,7 +44,8 @@ node:
       3. RAISE THE PER-TEST TIMEOUT. `go test` kills a package after 10
          minutes BY DEFAULT and prints FAIL — a failure that never
          happened. Pass `-timeout` ABOVE your step-1 budget and BELOW this
-         node's bound (`go test <pkg> -race -count=<n> -timeout 12m`).
+         node's bound of {{ self.timeout }}
+         (`go test <pkg> -race -count=<n> -timeout <duration>`).
     Your FINAL reply is the verdict: never end the turn on an
     interim report. If everything succeeds, your reply is exactly the four
     bare characters PASS and nothing else — no markdown emphasis (`**PASS**`
@@ -69,21 +71,15 @@ node:
   # Keep this an order of magnitude above a plausible run. The hang guard
   # is `timeout:`, not the budget.
   budget_usd: 10.00
-  # Declared, not inherited, though it is the runner's own 20m default: the
-  # prompt above quotes this bound so the node can size its stress run
-  # against it (#292), and a prompt cannot be checked against a number the
-  # fragment never states. Move the two together —
-  # TestE2EVerifyStressBudgetMatchesItsTimeout reads both off every shipped
-  # node that splices this fragment.
-  #
-  # So a using node does NOT override `timeout:` alone. The prompt's "20
-  # minutes" and its worked `-timeout 12m` are literals; under a shorter
-  # override (10m, say) the worked -timeout outlives the node, and the node is
-  # killed with no verdict — the failure this bound exists to prevent. A graph
-  # that needs another bound overrides `prompt` with it, restating the budget
-  # for its own number; the override is announced in the run's disclosure line
-  # either way. No shipped graph overrides it, and the test above fails the
-  # build if one starts to.
+  # Declared, not inherited, though it is the runner's own 20m default, so a
+  # reader of this fragment sees the bound its stress budget is sized against
+  # (TestE2EVerifyFragmentDeclaresItsTimeout pins it).
+  # The prompt above never states it as a literal: it quotes
+  # {{ self.timeout }}, which renders the using node's EFFECTIVE per-attempt
+  # timeout (#292). A using node may therefore override `timeout:` alone —
+  # the budget, half the bound, and the -timeout window between the two move
+  # with it. TestE2EVerifyStressBudgetQuotesTheNodeTimeout pins that the
+  # prompt quotes the token and states no minute count of its own.
   timeout: 20m
   handoff: session
   success_check:

@@ -84,9 +84,15 @@ func TestLintPlaceholders_Warnings(t *testing.T) {
 			wantDetail: "not an ancestor",
 		},
 		{
-			name:       "self names a reference other than previous",
+			name:       "self names a reference other than previous or timeout",
 			prompt:     "recall {{ self.last }}",
-			wantDetail: "one reference, {{ self.previous }}",
+			wantDetail: "two references, {{ self.previous }} and {{ self.timeout }}",
+		},
+		{
+			// #292: a filter on self.timeout is refused like one on self.previous.
+			name:       "self.timeout takes no filter",
+			prompt:     "budget {{ self.timeout | inline }}",
+			wantDetail: "neither {{ self.previous }} nor {{ self.timeout }} does",
 		},
 		{
 			name:       "self takes no filter",
@@ -104,6 +110,13 @@ func TestLintPlaceholders_Warnings(t *testing.T) {
 			// is simply always empty, which a fragment must be able to rely on.
 			name:       "self.previous stays silent outside any loop",
 			prompt:     "recall {{ self.previous }}",
+			wantDetail: "",
+		},
+		{
+			// #292: every node has an effective timeout, so the token is
+			// legal anywhere.
+			name:       "self.timeout stays silent",
+			prompt:     "you have {{ self.timeout }} per attempt",
 			wantDetail: "",
 		},
 		{

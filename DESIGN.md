@@ -638,8 +638,9 @@ from the file that changed.
   either, which is why the one class of finding that KILLS a planned run — an
   `{{ artifacts.<id> }}` that cannot resolve — is a plan refusal rather than a
   line of output (#244; see "Planned-node fields are deny-by-default").
-- **self (`{{ self.previous }}`, #288):** a fourth namespace, and the only one
-  that names no node: it resolves to the **interpolating node's own reply from
+- **self (`{{ self.previous }}`, #288; `{{ self.timeout }}`, #292):** a fourth
+  namespace, and the only one that names no node: both its references are
+  about the **interpolating node**. `{{ self.previous }}` resolves to its **own reply from
   the previous feedback round**, inlined, and to the **empty string** until an
   arc whose body holds the node has fired — the feedback namespace's
   first-pass rule. The reply is model output quoted back into a paid prompt,
@@ -672,10 +673,25 @@ from the file that changed.
   know the id its using node will carry), and so — unlike a feedback token —
   it is legal on ANY node: outside a feedback body it is simply always empty,
   which is exactly what the shipped review fragments rely on when a graph
-  cites them without an arc. `self.previous` is the one reference; any other,
-  or a filter, is an `*InterpolationError` and a `lint` warning, and in a
-  `verify.command` it earns `LintVerifyInlining`'s warning like a feedback
-  token does (and inlines the same fenced block there as in a prompt).
+  cites them without an arc. In a `verify.command`, `{{ self.previous }}`
+  earns `LintVerifyInlining`'s warning like a feedback token does (and inlines
+  the same fenced block there as in a prompt).
+  `{{ self.timeout }}` is **opt-in** — nothing renders it unless a prompt,
+  `cwd` or `verify.command` quotes it — and resolves to the node's
+  **effective per-attempt timeout**: its own `timeout:`, else the runner's
+  applied default, read from ONE shared source (`runner.EffectiveTimeout`,
+  which the CLIRunner's kill also reads), so the bound a prompt quotes is the
+  bound the node is killed at. Every attempt — the first, each retry, each
+  feedback re-run — gets the **same full value**: it is the configured bound,
+  not the time remaining. It renders in Go's `time.Duration` `String()` form
+  (`20m0s`, `1h30m0s`), is engine-produced and so is not fenced, and draws no
+  `LintVerifyInlining` warning. It is what lets a fragment budget against its
+  using node's bound without restating a literal that an override of
+  `timeout:` would make false: `e2e-verify` sizes its stress run as at most
+  half of `{{ self.timeout }}` (#292).
+  `previous` and `timeout` are the only references, and neither takes a
+  filter: any other reference, or any filter, is an `*InterpolationError` and
+  a `lint` warning.
 
 ## Node-as-subagent (`agent:` — hand-written graphs, plus coordinator auto-mapping)
 A node may set `agent: <name>` to run as one of the user's OWN Claude Code
@@ -1083,7 +1099,8 @@ orthogonal to cost — and since ADR 0007 a node may replace the default with it
 own `timeout:` (a Go duration, validated at load like the verify timeout but
 with no ceiling: the node timeout IS the critical path, and raising it is the
 point of declaring it). An undeclared timeout keeps the 20m default, so no
-node is ever unbounded.
+node is ever unbounded. A prompt that needs the bound quotes `{{ self.timeout }}`
+(see "Handoff"), which renders the same effective value the kill uses.
 
 A **turn-denominated budget** (`budget_turns:` → `claude -p --max-turns N`) was
 proposed as a supplement to `budget_usd` — dollars are a hard cost ceiling but

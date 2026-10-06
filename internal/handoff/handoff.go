@@ -3,8 +3,8 @@
 // templates itself:
 //
 //   - interpolate {{ inputs.<name> }}, {{ artifacts.<id> }},
-//     {{ feedback.<id> }} and {{ self.previous }} into a node's prompt and cwd
-//     before it runs;
+//     {{ feedback.<id> }}, {{ self.previous }} and {{ self.timeout }} into a
+//     node's prompt and cwd before it runs;
 //   - persist each node's .result to ~/.oh-my-graph/runs/<run-id>/<node-id>.out
 //     so dependents can read it (the artifact-default handoff), a feedback
 //     declarer's failing payload to feedback/<node-id>.out so a feedback
@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -62,16 +63,18 @@ const quotingHint = "\nnote: every {{ ... }} in a prompt is resolved, including 
 	"instead of writing it in the prompt"
 
 // placeholderPattern matches {{ inputs.name }} / {{ artifacts.id }} /
-// {{ feedback.id }} / {{ self.previous }} with an optional `| inline` filter.
+// {{ feedback.id }} / {{ self.previous }} / {{ self.timeout }} with an optional
+// `| inline` filter.
 // Group 1 = kind, group 2 = reference, group 3 = filter (empty or "inline").
 // Whitespace around each token is tolerated. The filter is only meaningful on
 // artifacts; a feedback or self placeholder always inlines and resolveLocked
 // rejects a filter on it loudly (graph.Validate already refuses it at load
 // for a feedback token in any graph that came through Parse).
 //
-// `self` names no node: its one reference, `previous`, is always about the
-// node being interpolated, which is what lets a FRAGMENT quote it — a
-// fragment body does not know the id its using node will carry (#288).
+// `self` names no node: both its references, `previous` and `timeout`, are
+// always about the node being interpolated, which is what lets a FRAGMENT
+// quote them — a fragment body does not know the id its using node will carry
+// (#288, #292).
 //
 // '/' is in the reference class because a multi-node fragment splices
 // namespaced ids (ADR 0027): a spliced prompt contains
@@ -83,17 +86,22 @@ var placeholderPattern = regexp.MustCompile(
 	`\{\{\s*(inputs|artifacts|feedback|self)\.([A-Za-z0-9._/-]+)\s*(?:\|\s*(inline)\s*)?\}\}`,
 )
 
-// SelfPrevious is the one reference the `self` namespace resolves:
-// {{ self.previous }}, the interpolating node's own reply from the previous
-// feedback round.
-const SelfPrevious = "previous"
+// The two references the `self` namespace resolves.
+const (
+	// SelfPrevious is {{ self.previous }}: the interpolating node's own reply
+	// from the previous feedback round (#288).
+	SelfPrevious = "previous"
+	// SelfTimeout is {{ self.timeout }}: the interpolating node's effective
+	// per-attempt timeout, rendered in time.Duration's String form (#292).
+	SelfTimeout = "timeout"
+)
 
 // The reasons selfTokenRefused returns — named so each caller can tell them
 // apart and word its own report (the runtime's error, the placeholder lint's
 // warning) without restating the rule.
 const (
-	selfRefusedReference = "the self namespace has one reference, {{ self.previous }}"
-	selfRefusedFilter    = "a self placeholder takes no filter — {{ self.previous }} always inlines the node's previous-round reply"
+	selfRefusedReference = "the self namespace has two references, {{ self.previous }} and {{ self.timeout }}"
+	selfRefusedFilter    = "a self placeholder takes no filter — {{ self.previous }} always inlines the node's previous-round reply, and {{ self.timeout }} is always the node's per-attempt timeout"
 )
 
 // selfTokenRefused is the one statement of which {{ self.<ref> | <filter> }}
@@ -102,7 +110,7 @@ const (
 // lint all judge a self token by it, so they cannot drift apart.
 func selfTokenRefused(ref, filter string) string {
 	switch {
-	case ref != SelfPrevious:
+	case ref != SelfPrevious && ref != SelfTimeout:
 		return selfRefusedReference
 	case filter != "":
 		return selfRefusedFilter
@@ -202,14 +210,40 @@ func New(runDir string, inputs map[string]string) *Handoff {
 // namespace's empty default is deliberately NOT that: it is a documented
 // value, confined to the one place it can mean something.
 //
-// Interpolate has no node to be "self", so a {{ self.previous }} in tmpl is an
-// *InterpolationError; a node's own templates go through InterpolateFor.
+// Interpolate has no node to be "self", so a self token in tmpl is an
+// *InterpolationError; a node's own templates go through InterpolateAs.
 func (h *Handoff) Interpolate(tmpl string) (string, error) {
-	return h.InterpolateFor("", tmpl)
+	return h.InterpolateAs(Self{}, tmpl)
 }
 
-// InterpolateFor is Interpolate on behalf of node nodeID, which is what
-// {{ self.previous }} resolves against: that node's own reply from the
+// Self is the node a template is interpolated on behalf of — what the `self`
+// namespace resolves against.
+type Self struct {
+	// ID is the node's id; {{ self.previous }} resolves to its reply.
+	ID string
+	// Timeout is the node's EFFECTIVE per-attempt timeout — the bound the
+	// runner applies (runner.EffectiveTimeout), not merely the declared one —
+	// which {{ self.timeout }} renders (#292). The caller computes it so this
+	// package never learns the runner's default; zero means the caller
+	// supplied none, and a {{ self.timeout }} then fails rather than render a
+	// bound the runner does not apply.
+	Timeout time.Duration
+}
+
+// InterpolateFor is InterpolateAs for a node whose timeout is not supplied: a
+// {{ self.timeout }} in tmpl is then an *InterpolationError.
+func (h *Handoff) InterpolateFor(nodeID, tmpl string) (string, error) {
+	return h.InterpolateAs(Self{ID: nodeID}, tmpl)
+}
+
+// InterpolateAs is Interpolate on behalf of node self.
+//
+// {{ self.timeout }} resolves to self.Timeout in time.Duration's String form
+// (20m0s, 1h30m0s): the same full bound on every attempt, retry and feedback
+// round, because it is the configured bound and not the time remaining. It is
+// engine-produced, so — unlike {{ self.previous }} — it is not fenced (#292).
+//
+// {{ self.previous }} resolves against self.ID: that node's own reply from the
 // previous feedback round (ArchiveRound), inlined between nonce-fenced
 // markers and cut at fence.MaxPriorReplyInPrompt (quotePrevious) — and the
 // EMPTY string until an arc whose body holds the node has fired, exactly like
@@ -217,7 +251,7 @@ func (h *Handoff) Interpolate(tmpl string) (string, error) {
 // legal on ANY node: a fragment quoting it cannot know whether the graph
 // citing it wraps the node in a loop, and outside one the node simply never
 // has a previous round.
-func (h *Handoff) InterpolateFor(nodeID, tmpl string) (string, error) {
+func (h *Handoff) InterpolateAs(self Self, tmpl string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -226,7 +260,7 @@ func (h *Handoff) InterpolateFor(nodeID, tmpl string) (string, error) {
 		groups := placeholderPattern.FindStringSubmatch(match)
 		kind, ref, filter := groups[1], groups[2], groups[3]
 
-		value, err := h.resolveLocked(nodeID, kind, ref, filter)
+		value, err := h.resolveLocked(self, kind, ref, filter)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -238,9 +272,9 @@ func (h *Handoff) InterpolateFor(nodeID, tmpl string) (string, error) {
 	return out, nil
 }
 
-// resolveLocked resolves one placeholder for node nodeID ("" when there is no
-// node — see Interpolate). Caller must hold h.mu.
-func (h *Handoff) resolveLocked(nodeID, kind, ref, filter string) (string, error) {
+// resolveLocked resolves one placeholder for node self (a zero Self when there
+// is no node — see Interpolate). Caller must hold h.mu.
+func (h *Handoff) resolveLocked(self Self, kind, ref, filter string) (string, error) {
 	if kind == "inputs" {
 		value, ok := h.inputs[ref]
 		if !ok {
@@ -268,11 +302,17 @@ func (h *Handoff) resolveLocked(nodeID, kind, ref, filter string) (string, error
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: reason + quotingHint}
 		case reason != "":
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: reason}
-		case nodeID == "":
+		case self.ID == "":
 			return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no node is being interpolated, so there is no self to resolve"}
 		}
+		if ref == SelfTimeout {
+			if self.Timeout <= 0 {
+				return "", &InterpolationError{Kind: kind, Reference: ref, Reason: "no per-attempt timeout was supplied for this node"}
+			}
+			return self.Timeout.String(), nil
+		}
 		// Empty until a round has fired: the documented first-pass default.
-		return quotePrevious(h.previous[nodeID])
+		return quotePrevious(h.previous[self.ID])
 	}
 
 	// kind == "artifacts"

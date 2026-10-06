@@ -31,6 +31,9 @@ import (
 //     round (#288). It inlines like a feedback payload, for the same reason
 //     and with the same advice.
 //
+// `{{ self.timeout }}` is NOT warned about (#292): the engine renders it from
+// the node's own configured bound, so no model wrote any of it.
+//
 // A token LintPlaceholders condemns as UNRESOLVABLE is skipped here — an
 // artifacts token naming the referencing node itself, or a node that is not in
 // the graph. Nothing is spliced by a token that never substitutes, so the
@@ -128,7 +131,8 @@ func canEverSubstitute(g *graph.Graph, nodeID, ref string) bool {
 
 // judgeInlinedToken returns what to say about one already-well-formed token in
 // a verify command, or "" for a token that carries no model text — a
-// user-supplied input, or an artifacts token resolving to its file path.
+// user-supplied input, an artifacts token resolving to its file path, or the
+// engine-rendered {{ self.timeout }}.
 func judgeInlinedToken(token, kind, ref, filter string) string {
 	switch {
 	case kind == "artifacts" && filter == "inline":
@@ -139,7 +143,7 @@ func judgeInlinedToken(token, kind, ref, filter string) string {
 		return fmt.Sprintf(
 			"%s splices node %q's feedback payload — its own reply text — into a command line the engine runs through your shell. A feedback placeholder always inlines and has no path form to fall back on: quote the payload in the node's PROMPT, and let the verify command observe the tree instead",
 			token, ref)
-	case kind == "self":
+	case kind == "self" && ref == SelfPrevious:
 		return fmt.Sprintf(
 			"%s splices this node's own previous-round reply into a command line the engine runs through your shell. A self placeholder always inlines and has no path form to fall back on: quote it in the node's PROMPT, and let the verify command observe the tree instead",
 			token)

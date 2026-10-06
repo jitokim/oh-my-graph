@@ -970,7 +970,7 @@ printf '{"session_id":"%s","result":"PASS","total_cost_usd":0.01}' "$sid"
 
 // --- cancellation kills the child tree (real spawn) ---------------------------
 
-// TestRun_CancelledRunKillsTheChild proves defaultTimeout's promise — a wedged
+// TestRun_CancelledRunKillsTheChild proves DefaultTimeout's promise — a wedged
 // child can never hang the whole graph — actually holds through Run: cancelling
 // the context must kill the child's whole process tree, not just the direct
 // child, and Run must return promptly instead of blocking on a stdout pipe a

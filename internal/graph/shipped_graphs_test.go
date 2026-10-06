@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/graphs"
+	"gopkg.in/yaml.v3"
 )
 
 // shippedTemplateNames is the set of graph templates the binary carries, as
@@ -1523,16 +1524,24 @@ func TestLocalrunStressBudgetMatchesItsTimeout(t *testing.T) {
 	}
 }
 
-// TestE2EVerifyStressBudgetMatchesItsTimeout is localrun's test above, held to
-// every shipped node that splices e2e-verify (#292). The fragment's gate is
-// asked to stress concurrency diffs, and with no bound in sight a node picked
-// `go test -race -count=300` on its own, ran into go test's 10-minute killer,
-// re-ran in chunks and was killed at its 20m node timeout with no verdict. So
-// the fragment states its own bound and a stress budget derived from it, and
-// this test reads both off the RESOLVED node — a using node that overrides
-// `timeout:` without the prompt moving with it fails here — and keeps a fixed
-// count out of the checks a graph splices in.
-func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
+// TestE2EVerifyStressBudgetQuotesTheNodeTimeout pins e2e-verify's stress
+// budget to the node's own bound on every shipped node that splices it (#292).
+// The fragment's gate is asked to stress concurrency diffs, and with no bound
+// in sight a node picked `go test -race -count=300` on its own, ran into go
+// test's 10-minute killer, re-ran in chunks and was killed at its 20m node
+// timeout with no verdict. So the prompt budgets stress against the bound —
+// and quotes it as {{ self.timeout }}, the node's EFFECTIVE per-attempt
+// timeout, rather than a literal: a literal went stale the moment a using node
+// overrode `timeout:`. This test reads the RESOLVED node, so a graph that
+// overrides the prompt is held to the same contract: the token is quoted, no
+// minute count of its own is stated, no worked -timeout is hard-coded, and no
+// fixed stress count is handed down in the checks a graph splices in.
+func TestE2EVerifyStressBudgetQuotesTheNodeTimeout(t *testing.T) {
+	selfTimeout := regexp.MustCompile(`\{\{\s*self\.timeout\s*\}\}`)
+	// A minute count stated in prose ("20 minutes") or as a Go duration
+	// ("20m", "12m", "1h30m"). go test's own "10 minutes BY DEFAULT" is the
+	// one allowed: it is go test's default, not this node's bound.
+	literalBound := regexp.MustCompile(`\b[0-9]+(?:\.[0-9]+)?\s*minutes?\b|\b(?:[0-9]+h)?[0-9]+m(?:[0-9]+s)?\b`)
 	gates := 0
 	for _, name := range shippedTemplateNames(t) {
 		loaded, err := LoadFile(filepath.Join("..", "..", "graphs", name))
@@ -1542,11 +1551,9 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 		// Single-node resolutions only, as in
 		// TestASessionGateCitesTheColdSafeFragment.
 		fragmentOf := make(map[string]string, len(loaded.Resolutions))
-		overrides := make(map[string][]string, len(loaded.Resolutions))
 		for _, res := range loaded.Resolutions {
 			if len(res.Spliced) == 0 {
 				fragmentOf[res.NodeID] = res.Fragment
-				overrides[res.NodeID] = res.Overridden
 			}
 		}
 		for _, n := range loaded.Graph.Nodes {
@@ -1554,23 +1561,19 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 				continue
 			}
 			gates++
-			// The prompt's bound and its worked -timeout are literals, so an
-			// override of `timeout:` alone leaves them stating another node's
-			// life (see the fragment's note on `timeout:`).
-			if slices.Contains(overrides[n.ID], "timeout") && !slices.Contains(overrides[n.ID], "prompt") {
-				t.Errorf("%s: %q overrides e2e-verify's timeout: without its prompt — the prompt still budgets stress against the fragment's own bound", name, n.ID)
-			}
-			bound := n.TimeoutDuration()
-			if bound == 0 {
-				t.Errorf("%s: %q declares no timeout: — its prompt quotes a stress budget derived from a bound the graph does not state", name, n.ID)
-				continue
-			}
 			flowed := strings.Join(strings.Fields(n.Prompt), " ")
-			if stated := fmt.Sprintf("killed at %d minutes", int(bound.Minutes())); !strings.Contains(flowed, stated) {
-				t.Errorf("%s: %q times out at %s but its prompt never says %q — the node sizes its stress run against the wrong bound and is killed mid-run, with no verdict", name, n.ID, bound, stated)
+			if got := len(selfTimeout.FindAllString(flowed, -1)); got < 2 {
+				t.Errorf("%s: %q quotes {{ self.timeout }} %d time(s) — the stress budget (step 1) and the -timeout ceiling (step 3) must both name the node's own bound:\n%s", name, n.ID, got, flowed)
 			}
 			if !strings.Contains(flowed, "at most half") {
-				t.Errorf("%s: %q no longer budgets stress at \"at most half\" of %s — the -timeout window below is derived from that phrase", name, n.ID, bound)
+				t.Errorf("%s: %q no longer budgets stress at \"at most half\" of its timeout — the -timeout window is derived from that phrase", name, n.ID)
+			}
+			if !strings.Contains(flowed, "-count=<n> -timeout <duration>") {
+				t.Errorf("%s: %q shows no `-count=<n> -timeout <duration>` stress command — go test kills a package at 10 minutes by default and calls it FAIL", name, n.ID)
+			}
+			goDefault := strings.ReplaceAll(flowed, "after 10 minutes BY DEFAULT", "")
+			if lit := literalBound.FindString(goDefault); lit != "" {
+				t.Errorf("%s: %q states the literal bound %q — it is true for one timeout only; quote {{ self.timeout }} instead:\n%s", name, n.ID, lit, flowed)
 			}
 			// Any numeric count but `-count=1`, the timing run step 2 asks for.
 			for _, c := range regexp.MustCompile(`-count[= ]([0-9]+)`).FindAllStringSubmatch(flowed, -1) {
@@ -1579,24 +1582,34 @@ func TestE2EVerifyStressBudgetMatchesItsTimeout(t *testing.T) {
 					break
 				}
 			}
-			// The worked stress command's -timeout, not the first one in the
-			// prompt: the graph's own checks are spliced in ahead of it.
-			m := regexp.MustCompile(`-count=<n> -timeout ([0-9]+(?:\.[0-9]+)?[a-z]+)`).FindStringSubmatch(flowed)
-			if m == nil {
-				t.Errorf("%s: %q shows no worked `-count=<n> -timeout <duration>` stress command — go test kills a package at 10 minutes by default and calls it FAIL", name, n.ID)
-				continue
-			}
-			shown, err := time.ParseDuration(m[1])
-			if err != nil {
-				t.Fatalf("%s: %q works `-timeout %s`, not a duration go test would accept: %v", name, n.ID, m[1], err)
-			}
-			if shown <= bound/2 || shown >= bound {
-				t.Errorf("%s: %q works `-timeout %s` against a %s stress budget and a %s node — it must sit strictly between the two, or go test kills a budgeted run or the node kills a wedged one first", name, n.ID, shown, bound/2, bound)
-			}
 		}
 	}
 	if gates == 0 {
 		t.Errorf("no shipped graph splices %s any more — this test now asserts nothing", coldSafeGateFragment)
+	}
+}
+
+// TestE2EVerifyFragmentDeclaresItsTimeout pins the bound e2e-verify itself
+// declares (#292). The prompt no longer states it — it quotes
+// {{ self.timeout }} — and a using node may override `timeout:` alone, so this
+// is read off the fragment file, not off every resolved node. Dropping the key
+// would silently fall back to the runner's default; changing it changes the
+// stress budget of every graph that splices the gate without overriding it.
+func TestE2EVerifyFragmentDeclaresItsTimeout(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "graphs", "fragments", coldSafeGateFragment+".yaml"))
+	if err != nil {
+		t.Fatalf("read the %s fragment: %v", coldSafeGateFragment, err)
+	}
+	var frag struct {
+		Node struct {
+			Timeout string `yaml:"timeout"`
+		} `yaml:"node"`
+	}
+	if err := yaml.Unmarshal(data, &frag); err != nil {
+		t.Fatalf("parse the %s fragment: %v", coldSafeGateFragment, err)
+	}
+	if frag.Node.Timeout != "20m" {
+		t.Errorf("the %s fragment declares `timeout: %s`, want `timeout: 20m` — the bound its stress budget is sized against must be declared, not inherited", coldSafeGateFragment, frag.Node.Timeout)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
@@ -64,7 +65,7 @@ func TestValidateGraphForRuntimeAcceptsBudgetAndNamesTheSurvivingGuard(t *testin
 			t.Errorf("warning = %q, missing %q", warnings[0], want)
 		}
 	}
-	for _, want := range []string{"defaulted", "default timeout: " + defaultTimeout.String()} {
+	for _, want := range []string{"defaulted", "default timeout: " + DefaultTimeout.String()} {
 		if !strings.Contains(warnings[1], want) {
 			t.Errorf("warning = %q, missing %q", warnings[1], want)
 		}
@@ -178,4 +179,17 @@ type silentRunner struct{}
 
 func (silentRunner) Run(context.Context, NodeInvocation) (NodeOutcome, error) {
 	return NodeOutcome{}, nil
+}
+
+// TestEffectiveTimeout pins the one mapping from a node's configured timeout to
+// the applied one (#292): {{ self.timeout }}, the CLIRunner's kill and the
+// preflight guard message all read it, so it must keep a declared bound and
+// fall back to DefaultTimeout — never 0 — for a node that declares none.
+func TestEffectiveTimeout(t *testing.T) {
+	if got := EffectiveTimeout(7 * time.Minute); got != 7*time.Minute {
+		t.Errorf("EffectiveTimeout(7m) = %s, want 7m0s", got)
+	}
+	if got := EffectiveTimeout(0); got != DefaultTimeout || got <= 0 {
+		t.Errorf("EffectiveTimeout(0) = %s, want DefaultTimeout (%s)", got, DefaultTimeout)
+	}
 }

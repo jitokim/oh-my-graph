@@ -245,7 +245,7 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		if leading != strings.ToLower(leading) {
 			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token), false, false
 		}
-		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline), {{ feedback.<id> }} or {{ self.previous }} — it will reach the prompt verbatim", token), false, false
+		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline), {{ feedback.<id> }}, {{ self.previous }} or {{ self.timeout }} — it will reach the prompt verbatim", token), false, false
 	}
 
 	groups := placeholderPattern.FindStringSubmatch(token)
@@ -253,13 +253,14 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	if kind == "self" {
 		// {{ self.previous }} is legal on any node — outside a feedback body it
 		// is simply always empty, which a fragment quoting it must be able to
-		// rely on (#288) — so only a reference or filter the runtime refuses is
-		// a finding.
+		// rely on (#288) — and so is {{ self.timeout }}, which every node has
+		// (#292); so only a reference or filter the runtime refuses is a
+		// finding.
 		switch selfTokenRefused(ref, filter) {
 		case selfRefusedReference:
-			return fmt.Sprintf("%s names %q, but the self namespace has one reference, {{ self.previous }} — the node fails at interpolation", token, ref), false, false
+			return fmt.Sprintf("%s names %q, but the self namespace has two references, {{ self.previous }} and {{ self.timeout }} — the node fails at interpolation", token, ref), false, false
 		case selfRefusedFilter:
-			return fmt.Sprintf("%s takes no filter — {{ self.previous }} always inlines — so the node fails at interpolation", token), false, false
+			return fmt.Sprintf("%s takes no filter — neither {{ self.previous }} nor {{ self.timeout }} does — so the node fails at interpolation", token), false, false
 		}
 		return "", false, false
 	}
