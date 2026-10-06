@@ -124,8 +124,11 @@ func inputIssues(g *graph.Graph, inputs map[string]string) []error {
 		if v := node.SuccessCheck.Verify; v != nil {
 			templates = append(templates, v.Command, v.Cwd)
 		}
+		// The same Self the scheduler interpolates with, so a {{ self.timeout }}
+		// resolves here exactly as it will at run time (#292).
+		self := handoff.Self{ID: node.ID, Timeout: runner.EffectiveTimeout(node.TimeoutDuration())}
 		for _, tmpl := range templates {
-			if _, err := h.InterpolateFor(node.ID, tmpl); err != nil && !isArtifactSide(err) {
+			if _, err := h.InterpolateAs(self, tmpl); err != nil && !isArtifactSide(err) {
 				issues = append(issues, fmt.Errorf("node %q: %w", node.ID, err))
 			}
 		}

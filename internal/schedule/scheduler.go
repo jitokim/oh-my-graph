@@ -1437,12 +1437,17 @@ func (s *Scheduler) logProgress(format string, args ...any) {
 // resolve the session it resumes (if any), default the permission mode, and
 // attach the node's tool policy. It takes the run context because acquiring a
 // worktree may spawn git (behind the injected worktree.Provider).
+//
+// It runs once per execution — the first pass and every feedback re-run — and
+// each retry is rebuilt from the prompt it renders, so every attempt quotes the
+// same {{ self.timeout }} (#292).
 func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *handoff.Handoff) (runner.NodeInvocation, error) {
-	prompt, err := h.InterpolateFor(node.ID, node.Prompt)
+	self := selfOf(node)
+	prompt, err := h.InterpolateAs(self, node.Prompt)
 	if err != nil {
 		return runner.NodeInvocation{}, err
 	}
-	cwd, err := h.InterpolateFor(node.ID, node.Cwd)
+	cwd, err := h.InterpolateAs(self, node.Cwd)
 	if err != nil {
 		return runner.NodeInvocation{}, err
 	}
@@ -1488,6 +1493,14 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		Timeout:   node.TimeoutDuration(),
 		Policy:    policy,
 	}, nil
+}
+
+// selfOf is what the `self` namespace resolves against for node: its id, and
+// its effective per-attempt timeout from runner.EffectiveTimeout — the same
+// mapping the CLIRunner applies to the invocation's Timeout — so the bound
+// {{ self.timeout }} quotes is the bound the node is killed at (#292).
+func selfOf(node graph.Node) handoff.Self {
+	return handoff.Self{ID: node.ID, Timeout: runner.EffectiveTimeout(node.TimeoutDuration())}
 }
 
 // policyFor returns the node's complete tool policy.
@@ -1542,7 +1555,7 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 		return nil
 	}
 
-	request, err := resolveVerification(node.ID, *verification, h, nodeCwd)
+	request, err := resolveVerification(node, *verification, h, nodeCwd)
 	if err != nil {
 		return verifyFault(node.ID, err.Error())
 	}
@@ -1566,14 +1579,15 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 // resolveVerification turns a declared verification into a runnable request:
 // command and cwd interpolate like a prompt, and an undeclared cwd inherits the
 // node's own.
-func resolveVerification(nodeID string, v graph.Verification, h *handoff.Handoff, nodeCwd string) (verify.Request, error) {
-	command, err := h.InterpolateFor(nodeID, v.Command)
+func resolveVerification(node graph.Node, v graph.Verification, h *handoff.Handoff, nodeCwd string) (verify.Request, error) {
+	self := selfOf(node)
+	command, err := h.InterpolateAs(self, v.Command)
 	if err != nil {
 		return verify.Request{}, fmt.Errorf("could not resolve command %q: %w", v.Command, err)
 	}
 	cwd := nodeCwd
 	if v.Cwd != "" {
-		if cwd, err = h.InterpolateFor(nodeID, v.Cwd); err != nil {
+		if cwd, err = h.InterpolateAs(self, v.Cwd); err != nil {
 			return verify.Request{}, fmt.Errorf("could not resolve cwd %q: %w", v.Cwd, err)
 		}
 	}

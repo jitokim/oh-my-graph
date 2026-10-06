@@ -69,6 +69,21 @@ nodes:
 	}
 }
 
+// TestDryRunGraph_SelfTimeoutPasses (#292): {{ self.timeout }} resolves on
+// every node — declared timeout or not — so a dry run must not report it.
+func TestDryRunGraph_SelfTimeoutPasses(t *testing.T) {
+	path := writeGraphFile(t, `
+name: self-timeout
+nodes:
+  - { id: quick, prompt: "you have {{ self.timeout }}", timeout: 7m }
+  - { id: plain, prompt: "you have {{ self.timeout }}" }
+`)
+	var out strings.Builder
+	if err := dryRunGraph(&out, io.Discard, path, nil); err != nil {
+		t.Fatalf("a graph quoting {{ self.timeout }} must pass a dry run: %v\n%s", err, out.String())
+	}
+}
+
 func TestDryRunGraph_UnreadableFileFails(t *testing.T) {
 	var out strings.Builder
 	if err := dryRunGraph(&out, io.Discard, "no-such.yaml", nil); err == nil || !strings.Contains(err.Error(), "read graph file") {
