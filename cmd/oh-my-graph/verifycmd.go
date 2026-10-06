@@ -233,6 +233,17 @@ func noteMissingBuildEvidence(w io.Writer, evidence *coordinator.BuildEvidenceOu
 	}
 }
 
+// noteSkippedBaseline is the plan screen's line for `auto --no-baseline`
+// (#328), printed beside the build-evidence slot because the baseline is the
+// same --verify-cmd run once on the starting tree. false prints nothing, so a
+// screen without the flag is unchanged.
+func noteSkippedBaseline(w io.Writer, skipped bool) {
+	if !skipped {
+		return
+	}
+	fmt.Fprint(w, "  baseline: skipped (--no-baseline) — the starting tree was not checked against --verify-cmd\n")
+}
+
 // noteVerifyAdvice prints ADR 0016 §3's line when no --verify-cmd was given:
 // what this run will not check, and the one flag that would change it.
 //
