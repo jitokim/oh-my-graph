@@ -181,6 +181,14 @@ and takes no filter, does the same. Neither is malformed and nothing else says
 a word. The fix for the first is usually the default: with no filter the token
 is the artifact's *file path*, so write
 `grep -q '^PASS' "{{ artifacts.impl }}"` and let the command read the file.
+`{{ self.previous }}`, a node's own reply from the previous feedback round,
+earns the same warning. `{{ self.timeout }}` does not: it is the node's
+effective per-attempt timeout (its own `timeout:`, else the runner's default),
+produced by the engine rather than a model, the same full value on every
+attempt, taking no filter and rendered in Go's duration form — `20m0s`,
+`1h30m0s`. Quote it wherever a prompt or command needs the node's bound, so
+the text stays true when the `timeout:` changes; that is how the `e2e-verify`
+fragment sizes its stress budget.
 
 Last, two sweeps over a `feedback:` arc: a loop whose re-run path never quotes
 `{{ feedback.<declarer> }}`, so the re-run gets the prompt it already ran and
