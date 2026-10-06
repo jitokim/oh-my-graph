@@ -14,6 +14,7 @@
 //	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
 //	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
+//	oh-my-graph design "<goal>" --out <file>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list [--show-skipped] [--exit-in-flight]
 //	oh-my-graph show <run-id>
@@ -184,6 +185,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
        oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
+       oh-my-graph design "<goal>" --out <file>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list [--show-skipped] [--exit-in-flight]
        oh-my-graph show <run-id>
@@ -210,7 +212,7 @@ func run(args []string) error {
 	switch args[0] {
 	case "init":
 		if runtimeSet {
-			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+			return errors.New("--runtime applies to run, auto, lint, design, resume, serve, and chat")
 		}
 		return runInit(args[1:])
 	case "run":
@@ -219,21 +221,23 @@ func run(args []string) error {
 		return runAutoRuntime(runtime, args[1:])
 	case "lint":
 		return runLintRuntime(runtime, args[1:])
+	case "design":
+		return runDesignRuntime(runtime, args[1:])
 	case "resume":
 		return runResumeRuntime(runtime, runtimeSet, args[1:])
 	case "runs":
 		if runtimeSet {
-			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+			return errors.New("--runtime applies to run, auto, lint, design, resume, serve, and chat")
 		}
 		return runRuns(args[1:])
 	case "show":
 		if runtimeSet {
-			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+			return errors.New("--runtime applies to run, auto, lint, design, resume, serve, and chat")
 		}
 		return runShow(args[1:])
 	case "watch":
 		if runtimeSet {
-			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+			return errors.New("--runtime applies to run, auto, lint, design, resume, serve, and chat")
 		}
 		return runWatch(args[1:])
 	case "serve":
@@ -242,12 +246,12 @@ func run(args []string) error {
 		return runChatRuntime(runtime, args[1:])
 	case "version":
 		if runtimeSet {
-			return errors.New("--runtime applies to run, auto, lint, resume, serve, and chat")
+			return errors.New("--runtime applies to run, auto, lint, design, resume, serve, and chat")
 		}
 		printVersion(os.Stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, run, auto, lint, resume, runs, show, watch, serve, chat, or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, run, auto, lint, design, resume, runs, show, watch, serve, chat, or version)", args[0])
 	}
 }
 
