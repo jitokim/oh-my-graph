@@ -657,8 +657,11 @@ from the file that changed.
   hands each body node *its own* last answer, which is what a reviewer needs
   to check whether its earlier findings were closed instead of reviewing the
   diff as a stranger (see "Verdict patterns" on why a loop without it need not
-  converge). When an arc fires, the engine archives every body node's reply
-  from the round now closing (`Handoff.ArchiveRound`): the declarer's raw
+  converge). A **planned** loop gets the same: the planner prompt's
+  feedback-arc rule tells the reviewing node to quote `{{ self.previous }}`
+  and check its earlier findings first — guidance, not a refusal, so a
+  planned arc whose reviewer omits it still plans. When an arc fires, the
+  engine archives every body node's reply from the round now closing (`Handoff.ArchiveRound`): the declarer's raw
   reply — never the feedback payload, which for a failed verification is the
   evidence the fixer needs, not what the declarer said — and every other body
   node's artifact, which the re-run has not yet overwritten. Each lands in
@@ -1297,7 +1300,9 @@ the previous round, and the shipped `review-style`/`review-security` fragments
 quote it — fenced by the engine, and ahead of the verdict-format rule so that
 rule stays the last thing the reviewer reads — with an instruction to check
 those findings first and raise a new one only where the rework changed the
-code or missing it was a real mistake. That
+code or missing it was a real mistake. `auto` loops get it too: the planner
+prompt tells a planned arc's reviewer to quote the token with the same
+instruction, as guidance only — no validator refuses a reviewer without it. That
 narrows the drift; it does not remove it — the verdict is still a model's
 judgment, and a gate whose only passing value is "nothing at all to say"
 still has no severity floor. A graph that needs a guarantee must bound the
