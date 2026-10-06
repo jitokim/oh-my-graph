@@ -27,6 +27,19 @@ func WithInterviewPrefix(prefix string) Option {
 	return func(c *Coordinator) { c.interviewPrefix = prefix }
 }
 
+// plannerBase is plannerPromptFor with the interview prefix in front. The
+// prefix goes on the base, not on the first prompt alone: plan builds every
+// repair attempt and every cycle's continuation from what this returns, and
+// one that re-planned without the answers would be answering a different
+// question from the one refused (ADR 0044 §2.2).
+func (c *Coordinator) plannerBase(goal string, inputKeys []string, remaining string) (string, error) {
+	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
+	if err != nil {
+		return "", err
+	}
+	return c.interviewPrefix + base, nil
+}
+
 // Interviewer returns the asker internal/interview's Run calls once per
 // question (ADR 0044 §2.1(c), "Who asks"). Each call is a fresh, stateless
 // coordinatorInvocation: read-only permission mode, no tools, the deny list of

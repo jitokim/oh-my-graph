@@ -300,11 +300,7 @@ type Coordinator struct {
 	// WIDENS, and false — the ceiling — is the default it has to be asked out
 	// of. What it changes is toolPolicyFor's layers 1 and 4, and nothing else.
 	loadedUserConfig bool
-	// interviewPrefix is the rendered `auto --interview` text (ADR 0044 §2.2),
-	// set via WithInterviewPrefix and put in front of every planner prompt
-	// this Coordinator sends. Empty — no interview, or one with no answers —
-	// leaves every planner prompt byte-identical to a run without the flag.
-	interviewPrefix string
+	interviewPrefix  string // ADR 0044 §2.2 — see WithInterviewPrefix (interviewer.go)
 }
 
 // Option configures a Coordinator at construction.
@@ -509,16 +505,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		return Plan{}, err
 	}
 
-	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
+	base, err := c.plannerBase(goal, inputKeys, remaining)
 	if err != nil {
 		return Plan{}, err
 	}
-	// The interview prefix goes on base, not on the first prompt alone: every
-	// repair attempt and every cycle's continuation is built from base, and
-	// one that re-planned without the answers would be answering a different
-	// question from the one refused (ADR 0044 §2.2).
-	base = c.interviewPrefix + base
-
 	prompt := base
 	spent := callAccounting{}
 	var repaired *PlanRepair
