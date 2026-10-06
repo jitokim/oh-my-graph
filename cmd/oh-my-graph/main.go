@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
 //	oh-my-graph runs list [--show-skipped] [--exit-in-flight]
@@ -61,6 +61,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -181,7 +182,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
        oh-my-graph runs list [--show-skipped] [--exit-in-flight]
@@ -448,7 +449,7 @@ func runAutoRuntime(runtime runner.Runtime, args []string) error {
 	// One of the four sites (with runGraph, runResume and runServe) injecting
 	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
 	// ADR 0006).
-	return runAutoWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout)
+	return runAutoWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout, osStdin())
 }
 
 // runAutoWith is runAuto with its seams injectable, mirroring runGraphWith and
@@ -458,10 +459,14 @@ func runAutoRuntime(runtime runner.Runtime, args []string) error {
 // gates the live view (a non-terminal one leaves it off), so a test needs no
 // real spawn on that seam either.
 func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
-	return runAutoWithRuntime(runner.RuntimeClaude, args, nodeRunner, opener, stdout)
+	return runAutoWithRuntime(runner.RuntimeClaude, args, nodeRunner, opener, stdout, osStdin())
 }
 
-func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
+// stdin is the stdout parameter's counterpart for `--interview` (ADR 0044
+// §2.1(a)): the reader the answers come from and the terminal check that
+// gates it, injectable for the same reason — a test drives the interview with
+// a strings.Reader and a fixed answer, and no real terminal.
+func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File, stdin terminalInput) error {
 	flags := newAutoFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -520,11 +525,42 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		return err
 	}
 
+	// The interview's terminal check, the last free refusal: below every other
+	// one, so a launch that earns two is told about the one that does not
+	// depend on how it was started, and above the first model call and the
+	// first run directory, so a script or an agent that passed --interview by
+	// mistake is refused at no cost instead of waiting on a keyboard (ADR 0044
+	// §2.1(a)). /dev/null passes as a character device; its end of input
+	// before any answer is then refused by the interview itself.
+	if flags.interview && !stdin.isTerminal() {
+		return errInterviewNeedsTerminal
+	}
+	// Once per goal, before cycle 1, and never again: every later cycle's
+	// planner prompt gets the same prefix from memory through the coordinator
+	// option below (ADR 0044 §2.4). The interviewer is a coordinator-owned
+	// call with no option of its own, so a bare coordinator over the same
+	// runner asks it.
+	interviewPrefix := ""
+	if flags.interview {
+		result, prefix, err := runAutoInterview(ctx, os.Stdout, flags.goal, coordinator.New(nodeRunner).Interviewer(), stdin.r)
+		if err != nil {
+			return err
+		}
+		flags.commonRunFlags.interview = result
+		interviewPrefix = prefix
+	}
+
 	// Same live-view gate as `run` and `resume`. WithVerifyCommand is given to
 	// the COORDINATOR, not to a cycle: every cycle of a --max-cycles goal loop
 	// re-enters the same coordinator and plans afresh, so every cycle's sinks
 	// carry the command and every cycle's run is gated on it (ADR 0016 §2).
 	options := []coordinator.Option{coordinator.WithVerifyCommand(verifyCommand)}
+	// Text for the planner and nothing else, and the empty string — a prompt
+	// byte-identical to one without the flag — when the interview gathered no
+	// answer or was never asked.
+	if interviewPrefix != "" {
+		options = append(options, coordinator.WithInterviewPrefix(interviewPrefix))
+	}
 	// The one option here that widens, and given to the same COORDINATOR for
 	// the same reason: every cycle of a goal loop plans afresh, and the
 	// operator's statement is about the run, not about cycle 1 (ADR 0032).
@@ -736,12 +772,15 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
+	if planOnly {
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.conventions, flags.interview)
+	}
+	// The interview was bought for this plan, so its spend is this run's
+	// planning spend from here on (withInterviewCost). Not on the preview
+	// above, which names the two figures apart.
+	plan = withInterviewCost(plan, flags.interview)
 	if leg != nil {
 		leg.setPlanningAccounting(plan.CostUSD, plan.CostUnknown, plan.Usage)
-	}
-
-	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.conventions)
 	}
 
 	if !committed {
@@ -784,9 +823,18 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // conv is the launch's conventions set, nil for none. The preview states that
 // it does NOT carry into the saved graph, because `run <graph.json>` is the
 // preview's natural next step and would not prefix it (ADR 0041 §2.4).
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv *conventions.Set) error {
-	specPath, err := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+//
+// iv is the launch's interview, nil for none. Its staged answers go beside
+// the saved spec, under the same plans/<id>/ (ADR 0044 §2.1(a)): the plan has
+// already absorbed them, so `run <graph.json>` does not carry them, and they
+// are kept as the record of what the planner was told.
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv *conventions.Set, iv *interview.Result) error {
+	planDir := planDirFor(newRunID())
+	specPath, err := saveGeneratedSpec(planDir, plan.Spec)
 	if err != nil {
+		return err
+	}
+	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
 	printPlanForRuntime(out, plan, specPath, runtime, evidence, conventionsDisclosure{set: conv, notCarried: true})
@@ -796,6 +844,10 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 			"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
 			"about it. Run it with `oh-my-graph run %s`.\n",
 		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, specPath)
+	if iv != nil {
+		fmt.Fprintf(out, "The interview before it was paid for too (%s), and the answers the planner received are kept at %s.\n",
+			formatCost(iv.Cost.CostUSD, iv.Cost.CostUnknown), filepath.Join(planDir, interview.StagedFileName))
+	}
 	return nil
 }
 
@@ -897,11 +949,19 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 			return err
 		}
 	}
+	// The interview's prefix is staged beside them and for the same reason, so
+	// the snapshot's hash names a file that exists (ADR 0044 §2.2). Every
+	// goal-loop cycle stages the same bytes; only the planner ever read them.
+	interviewRecord, err := stageInterview(runDirFor(runID), flags.interview)
+	if err != nil {
+		return err
+	}
 	// false: a planned graph never resolved a fragment — the coordinator
 	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
 	// fragment-free by construction and stays reusable verbatim.
 	flags.planningCostUnknown = plan.CostUnknown
 	flags.planningUsage = plan.Usage
+	flags.interviewRecord = interviewRecord
 	return executeGraph(ctx, runID, plan.Graph, nodeRunner, flags, plan.ToolPolicies, plan.CostUSD, specPath, plan.Spec, false, web, goal, leg)
 }
 
@@ -1153,6 +1213,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Goal:                  goal,
 		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
 		Conventions:           conventionsRecord(flags.conventions),
+		Interview:             flags.interviewRecord,
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }

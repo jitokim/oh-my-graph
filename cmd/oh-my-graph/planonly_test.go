@@ -184,7 +184,7 @@ func TestRunAutoWith_CodexPlanPrintsSandboxNotGranularToolClaims(t *testing.T) {
 	var runErr error
 	out := captureStdout(t, func() {
 		runErr = runAutoWithRuntime(runner.RuntimeCodex,
-			[]string{"add a README section", "--plan-only"}, fake, browser.NewFakeOpener(), os.Stdout)
+			[]string{"add a README section", "--plan-only"}, fake, browser.NewFakeOpener(), os.Stdout, osStdin())
 	})
 	if runErr != nil {
 		t.Fatalf("Codex --plan-only returned error: %v", runErr)
