@@ -335,3 +335,72 @@ func TestExitCodeForError_BaselineRedIsFive(t *testing.T) {
 		t.Errorf("exitCodeForError(wrapped *BaselineRedError) = %d, want 5", code)
 	}
 }
+
+// #315, the multi-cycle case: the baseline refusal is not a single-cycle
+// feature. A goal loop (--max-cycles > 1, with or without the cross-cycle
+// budget) takes the same path to the same refusal — exit 5, a
+// *BaselineRedError, no planner call and nothing under OMG_HOME.
+func TestRunAuto_RedBaselineRefusesUnderMaxCycles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"max-cycles 2", []string{"--max-cycles", "2"}},
+		{"max-cycles 3 with a goal budget", []string{"--max-cycles", "3", "--max-goal-budget-usd", "5"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: cycleSpec}})
+			verifier := verify.NewFakeVerifier(map[string]verify.Result{baselineCmd: {ExitCode: 1, Output: "boom\n"}})
+			args := append([]string{"fix it", "--verify-cmd", baselineCmd}, tc.args...)
+
+			_, err := runBaselineAuto(t, fake, verifier, osStdin(), args...)
+
+			if code := exitCodeForError(err); code != 5 {
+				t.Fatalf("exit code = %d (err %v), want 5", code, err)
+			}
+			var red *BaselineRedError
+			if !errors.As(err, &red) {
+				t.Fatalf("err = %v, want *BaselineRedError", err)
+			}
+			assertNothingSpent(t, home, fake)
+			if n := len(verifier.Calls()); n != 1 {
+				t.Errorf("baseline ran %d times, want once", n)
+			}
+		})
+	}
+}
+
+// #315, the multi-cycle case end to end through mainExitCode — the same argv
+// path main takes, minus os.Exit. The verifier here is the real ShellVerifier
+// (it runs `sh -c`, nothing else), and `claude` on PATH is a stub that only
+// satisfies the PATH preflight: the baseline refuses before anything could
+// spawn it, and if a regression ever got that far the stub exits 1 and bills
+// nothing.
+func TestMainExitCode_RedBaselineUnderMaxCyclesExitsFive(t *testing.T) {
+	home := isolateRunHome(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Chdir(t.TempDir())
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = mainExitCode([]string{"auto", "fix it", "--max-cycles", "2", "--verify-cmd", "echo red && exit 7",
+			"--no-agent-mapping", "--no-skill-activation", "--no-web"})
+	})
+
+	if code != 5 {
+		t.Fatalf("mainExitCode = %d, want 5:\n%s", code, stdout)
+	}
+	for _, want := range []string{"exited 7 on the starting tree", "  | red", "no cycle ran — baseline red"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if entries, err := os.ReadDir(home); err == nil && len(entries) != 0 {
+		t.Errorf("a red baseline left artifacts under OMG_HOME: %v", entries)
+	}
+}
