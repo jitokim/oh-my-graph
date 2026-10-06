@@ -430,15 +430,19 @@ comparison applies this same rule, including the elimination, to both arms.
 This ADR adds no field for it.
 
 **The comparison.** Two arms on the same kind of goals: interview off (the
-baseline's shape) and `--interview` on, alternating by goal so that neither arm
-takes the easier work, and both with `--max-cycles 2`, as all 13 of the baseline's goal loops ran (`grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`).
+baseline's shape) and `--interview` on, both with `--max-cycles 2`, as all 13 of the baseline's goal loops ran (`grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`).
+The captain answers the interview arm, inside his real work. He already interviews in his own harness before he writes a DAG (§1.1).
+For this comparison he uses `oh-my-graph design` or `auto --interview` in place of that harness, on real goals, so the arm adds no extra experiments.
+The interview arm's target is at least 5 goals, collected opportunistically as his real work produces them.
+Answering costs him about 10 minutes per goal, an estimate and not a measurement — `<!-- 미측정 -->`
+The interview arm's model cost is not estimated in advance. It is read from each interview run's own records (the interview block in its `state.json`, §2.2), tied to that run's run id.
+Agents never fake a TTY to answer an interview. Agents run only the off arm.
+The off arm keeps the baseline's count: at least 13 goal loops (`grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`).
 For each goal record: cycles to goal met (1, 2, or not met within the cap);
-the verify fail rate per cycle by the rule above; the cost per goal met,
+the verify fail rate among cycles whose verify ran, by the rule above; the cost per goal met,
 interview calls included (§2.4); and, per interview, how it ended (`enough`,
 `cap`, `operator`, `repeat`, `malformed`, `eof`) and how many answers were
-recorded. The sample is at least 13 goal loops per arm, the baseline's count (`grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`),
-since a comparison with fewer goals than the baseline would be noisier than
-the baseline. The baseline is also confounded (different repositories, two
+recorded. The baseline is confounded (different repositories, two
 runtimes, 14 `claude` and 12 `codex` (`grep -v '^#' | cut -d' ' -f1 | while read i; do grep -o '"runtime": "[a-z]*"' ~/.oh-my-graph/runs/$i/state.json; done | sort | uniq -c`), and 5 rows with no recorded goal, `grep -c 'goal not recorded'`), so a pair of arms run now
 decides, and the numbers above are the reference they are read against.
 
@@ -583,10 +587,11 @@ File and function names only; no code lands with this ADR.
 ## 6. Falsification
 
 The captain keeps, changes or drops the feature on the §2.5 comparison.
+The Keep / Change / Drop test below is directional: it is a judgement aid, with no statistical significance at these sample sizes, and the captain's own reading of the graphs takes precedence over it.
 
-- **Keep** if, over at least 13 goal loops per arm at `--max-cycles 2` (the baseline's count, `grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`), all three hold against the off arm of the same comparison:
+- **Keep** if, over at least 5 goals in the interview arm (§2.5) and at least 13 goal loops in the off arm (the baseline's count, `grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`), both at `--max-cycles 2`, all three hold against the off arm of the same comparison:
   - the interview arm needs a second cycle on a smaller share of its goal loops (baseline 8 of 13, `grep -c '^[0-9.-]*-2 |'`, run ids 20261005-174039.129694000-2, 20261005-175609.054167000-2, 20261005-183911.261245000-2, 20261005-194338.550661000-2, 20261005-205711.011394000-2, 20261005-211849.181048000-2, 20261005-230922.472429000-2, 20261005-233354.068044000-2);
-  - its verify fail rate per cycle, read by the §2.5 rule, is lower (baseline 8 of 26, run ids 20261005-173231.808441000-1, 20261005-193759.110385000-1, 20261005-204449.000862000-1, 20261005-205711.011394000-2, 20261005-210007.410977000-1, 20261005-211717.221410000-1, 20261005-230005.700138000-1, 20261005-231953.292617000-1);
+  - its verify fail rate among cycles whose verify ran, read by the §2.5 rule, is lower (baseline 8 of 24, the 24 excluding run ids 20261005-174039.129694000-2 and 20261005-200252.888896000-1, failed run ids 20261005-173231.808441000-1, 20261005-193759.110385000-1, 20261005-204449.000862000-1, 20261005-205711.011394000-2, 20261005-210007.410977000-1, 20261005-211717.221410000-1, 20261005-230005.700138000-1, 20261005-231953.292617000-1);
   - its cost per goal met, interview calls included, is not higher.
 
   Both entry points then stay.
@@ -604,6 +609,6 @@ The captain keeps, changes or drops the feature on the §2.5 comparison.
   than the off arm's, whatever the figures say: the figures are a proxy for
   that judgement and it governs.
 - **This ADR's reading of the baseline is wrong** if any of the four verify failures §2.5 classifies by elimination proves to have failed on another predicate (run ids 20261005-210007.410977000-1, 20261005-211717.221410000-1, 20261005-230005.700138000-1, 20261005-231953.292617000-1).
-  The baseline rate then lies between 4 of 26 (run ids 20261005-173231.808441000-1, 20261005-193759.110385000-1, 20261005-204449.000862000-1, 20261005-205711.011394000-2) and 8 of 26, and the Keep test is read against the corrected figure.
+  The baseline rate then lies between 4 of 24 (run ids 20261005-173231.808441000-1, 20261005-193759.110385000-1, 20261005-204449.000862000-1, 20261005-205711.011394000-2) and 8 of 24, and the Keep test is read against the corrected figure.
   It is also wrong if a goal-loop row turns out to have run with a different `max_cycles` (`internal/runstate/runstate.go:347`; all 13 read `2`, `grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`): rework would then not be comparable across goals, and the arms must be read only against each other.
   Neither changes the decision rule: the arms are compared with each other, and the baseline is the reference they are read against.
