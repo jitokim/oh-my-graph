@@ -14,8 +14,31 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/childenv"
 )
 
+// DefaultTimeout is the per-attempt wall-clock bound the CLIRunner applies to a
+// node that declares no `timeout:`. Read it through EffectiveTimeout, the one
+// place a node's configured timeout becomes the applied one.
+const DefaultTimeout = 20 * time.Minute
+
+// EffectiveTimeout maps a node's configured per-attempt timeout to the bound
+// the runner applies: the configured value when there is one, DefaultTimeout
+// otherwise. It is the single source the CLIRunner's kill, the preflight's
+// runaway-guard message and {{ self.timeout }} (#292) all read, so the value a
+// prompt quotes and the time the node is killed cannot drift apart.
+func EffectiveTimeout(configured time.Duration) time.Duration {
+	return applyTimeout(configured, DefaultTimeout)
+}
+
+// applyTimeout is EffectiveTimeout with the fallback left open, for the one
+// caller that may hold a different one: a CLIRunner built WithTimeout (tests
+// only — production builds it without, so its fallback is DefaultTimeout).
+func applyTimeout(configured, fallback time.Duration) time.Duration {
+	if configured > 0 {
+		return configured
+	}
+	return fallback
+}
+
 const (
-	defaultTimeout   = 20 * time.Minute
 	maxStderrInError = 500
 	// maxStderrRetained bounds what one node's stderr may cost in memory. A
 	// node can stream progress to stderr for twenty minutes, so collecting it
@@ -258,7 +281,7 @@ func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 	r := &CLIRunner{
 		protocol: protocol,
 		binary:   protocol.binary(),
-		timeout:  defaultTimeout,
+		timeout:  DefaultTimeout,
 		environ:  os.Environ,
 		pause:    sleepCtx,
 	}
@@ -350,10 +373,7 @@ func (r *CLIRunner) buildArgs(spec NodeInvocation) []string {
 
 // Run executes and decodes one provider CLI invocation.
 func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error) {
-	timeout := r.timeout
-	if spec.Timeout > 0 {
-		timeout = spec.Timeout
-	}
+	timeout := applyTimeout(spec.Timeout, r.timeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

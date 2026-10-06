@@ -104,6 +104,8 @@ func TestLintVerifyInlining_SelfPreviousIsAReplyToo(t *testing.T) {
 	}{
 		{command: "test -n '{{ self.previous }}'", warns: true},
 		{command: "test -n '{{ self.last }}'", warns: false},
+		// #292: engine-rendered, so no model text reaches the shell line.
+		{command: "echo '{{ self.timeout }}'", warns: false},
 	} {
 		g := parseGraph(t, `
 name: verify-self

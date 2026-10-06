@@ -63,13 +63,13 @@ func ValidateGraphForRuntime(runtime Runtime, g *graph.Graph) ([]string, error) 
 // nodeTimeoutGuard names the wall-clock bound that survives a budget_usd the
 // runtime cannot evaluate, and says WHICH one it is: the node's declared
 // `timeout:` when it has one, otherwise the runner's own default, quoted from
-// the constant the CLIRunner actually applies (cli.go) so the message cannot
-// drift from the bound.
+// EffectiveTimeout — the source the CLIRunner applies (cli.go) — so the
+// message cannot drift from the bound.
 func nodeTimeoutGuard(node graph.Node) string {
 	if node.Timeout != "" {
 		return fmt.Sprintf("its explicit timeout: %s", node.Timeout)
 	}
-	return fmt.Sprintf("the runner's default timeout: %s", defaultTimeout)
+	return fmt.Sprintf("the runner's default timeout: %s", EffectiveTimeout(node.TimeoutDuration()))
 }
 
 // CLIAvailabilityChecker is the NodeRunner-side plumbing for the one question a
