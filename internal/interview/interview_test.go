@@ -586,3 +586,104 @@ func TestLoadStagedWrapsAReadFailure(t *testing.T) {
 		t.Fatalf("want a wrapped read error, got %T: %v", err, err)
 	}
 }
+
+// #322: a question is model output, so an escape sequence in it is stripped
+// once in parseReply and the cleaned form is what is stored, compared for
+// repeats and printed.
+func TestAQuestionWithEscapeSequencesIsKeptAndPrintedCleaned(t *testing.T) {
+	const dirty = "\x1b[31mWhich branch?\x1b[0m"
+	const cleaned = "[31mWhich branch?[0m"
+
+	hasControl := func(s string) bool {
+		for _, r := range s {
+			if r < 0x20 && r != '\t' && r != '\n' || r == 0x7f {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("stored and printed in the cleaned form", func(t *testing.T) {
+		asker := &fakeAsker{t: t, replies: []string{"QUESTION: " + dirty, "ENOUGH"}}
+		result, out, err := run(t, asker, "main\n")
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(result.Exchanges) != 1 {
+			t.Fatalf("exchanges = %+v, want one", result.Exchanges)
+		}
+		if got := result.Exchanges[0].Question; got != cleaned {
+			t.Errorf("stored question = %q, want %q", got, cleaned)
+		}
+		if strings.Contains(out, "\x1b") || hasControl(out) {
+			t.Errorf("printed output carries a control byte: %q", out)
+		}
+		if !strings.Contains(out, "Question 1/5: "+cleaned+"\n") || !strings.Contains(out, "Which branch?") {
+			t.Errorf("printed output lacks the visible question text: %q", out)
+		}
+		// The next call's transcript is built from the stored question.
+		if strings.Contains(asker.prompts[1], "\x1b") {
+			t.Errorf("the transcript sent to the interviewer carries an ESC byte: %q", asker.prompts[1])
+		}
+		prefix, err := result.Render()
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if strings.Contains(prefix, "\x1b") || !strings.Contains(prefix, "Which branch?") {
+			t.Errorf("the planner prefix must hold the cleaned question:\n%q", prefix)
+		}
+	})
+
+	t.Run("the same question with and without the escapes is a repeat", func(t *testing.T) {
+		asker := &fakeAsker{t: t, replies: []string{
+			"QUESTION: " + dirty,
+			"QUESTION: " + cleaned,
+			"QUESTION: never asked?",
+		}}
+		result, out, err := run(t, asker, "main\n")
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if result.Ending != EndRepeat {
+			t.Fatalf("ending = %q, want repeat", result.Ending)
+		}
+		if asker.calls() != 2 {
+			t.Errorf("interviewer called %d times, want 2: a repeat ends the interview with no further call", asker.calls())
+		}
+		if result.Asked != 1 || len(result.Exchanges) != 1 {
+			t.Errorf("asked %d, exchanges %d; the repeat must not be put to the operator", result.Asked, len(result.Exchanges))
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Errorf("printed output carries an ESC byte: %q", out)
+		}
+	})
+}
+
+// #322: a question left empty by cleaning is a malformed reply, not a blank
+// question put to the operator.
+func TestAQuestionOfOnlyControlCharactersIsMalformed(t *testing.T) {
+	for name, question := range map[string]string{
+		"escape, bell, NUL":     "\x1b\x07\x00",
+		"controls around space": "\x07 \x1b \x00",
+	} {
+		t.Run(name, func(t *testing.T) {
+			asker := &fakeAsker{t: t, replies: []string{"QUESTION: " + question, "QUESTION: never asked?"}}
+			result, out, err := run(t, asker, "an answer\n")
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if result.Ending != EndMalformed {
+				t.Fatalf("ending = %q, want malformed", result.Ending)
+			}
+			if asker.calls() != 1 {
+				t.Errorf("interviewer called %d times; a malformed reply is not retried", asker.calls())
+			}
+			if result.Asked != 0 || len(result.Exchanges) != 0 {
+				t.Errorf("asked %d, exchanges %d; nothing may be put to the operator", result.Asked, len(result.Exchanges))
+			}
+			if strings.Contains(out, "Question 1/") {
+				t.Errorf("a question was printed: %q", out)
+			}
+		})
+	}
+}

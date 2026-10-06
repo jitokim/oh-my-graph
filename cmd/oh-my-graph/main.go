@@ -771,7 +771,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		// given and diagnosed it, which is what a FAIL is. "paused" would make
 		// it print a resume command for a run with nothing to resume.
 		if leg != nil {
-			closeRejectedPlanning(leg, err)
+			closeRejectedPlanning(leg, err, flags.interview)
 			return noteRejectedPlan(out, runDirFor(runID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
