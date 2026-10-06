@@ -3089,7 +3089,8 @@ it. The reply grammar is `QUESTION: <one line>` or `ENOUGH` (whole word,
 case-sensitive); anything else ends the interview `malformed`, with no retry.
 It ends for exactly one reason — `enough`, `cap` (`MaxQuestions` = 5, no flag
 raises it), `operator` (`/done`), `repeat` (a question equal to an earlier one
-after lower-casing and dropping everything but letters and digits, caught
+after lower-casing, dropping everything but letters, digits and whitespace, and
+collapsing whitespace to single spaces, caught
 before it is shown or paid for again), `malformed`, or `eof` (end of input
 after at least one answer; before any answer it is `ErrNoAnswer` and the launch
 is abandoned). `/skip` counts against the cap. A blank answer is re-asked; an

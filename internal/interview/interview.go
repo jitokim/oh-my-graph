@@ -360,6 +360,10 @@ func parseReply(reply string) (replyKind, string) {
 	if question == "" || strings.ContainsAny(question, "\r\n") {
 		return replyMalformed, ""
 	}
+	question = strings.TrimSpace(forTerminal(question))
+	if question == "" {
+		return replyMalformed, ""
+	}
 	return replyQuestion, question
 }
 
