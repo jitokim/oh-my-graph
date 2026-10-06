@@ -661,10 +661,11 @@ from the file that changed.
   feedback-arc rule tells the reviewing node to quote `{{ self.previous }}`
   and check its earlier findings first — guidance, not a refusal, so a
   planned arc whose reviewer omits it still plans. When an arc fires, the
-  engine archives every body node's reply from the round now closing (`Handoff.ArchiveRound`): the declarer's raw
-  reply — never the feedback payload, which for a failed verification is the
-  evidence the fixer needs, not what the declarer said — and every other body
-  node's artifact, which the re-run has not yet overwritten. Each lands in
+  engine archives every body node's reply from the round now closing
+  (`Handoff.ArchiveRound`): the declarer's raw reply — never the feedback
+  payload, which for a failed verification is the evidence the fixer needs,
+  not what the declarer said — and every other body node's artifact, which
+  the re-run has not yet overwritten. Each lands in
   `<run-dir>/previous/<id>.out`, an **internal** file beside `feedback/`, for
   the same reason and so a mid-loop resume re-seeds it (`SeedPrevious`).
   Because it names no node, a **fragment can quote it** (a fragment does not
