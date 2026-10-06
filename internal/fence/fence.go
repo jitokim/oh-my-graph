@@ -9,16 +9,15 @@
 // random nonce in BOTH markers is what removes that prediction: the nonce is
 // minted after the text is already fixed, so no material can contain it.
 //
-// Five call sites share Nonce: assess.go's engine-recorded material — node
-// details, artifact excerpts and the previous cycle's `remaining` — which is
-// raw model output by design
-// (ADR 0011 §2), plus coordinator.go's continuation quote of that same
-// `remaining` into the next cycle's planner prompt, repair.go's quote of the
-// validator's refusals into a re-plan prompt, retryfeedback.go's quote of a
-// node's own rejected attempt into the prompt that retries it (ADR 0020), and
-// internal/handoff's {{ self.previous }}, a feedback re-run's quote of its own
-// reply from the round before (#288). internal/interview mints through it too,
-// by way of its mintNonce seam rather than a direct call, for its quote of the
+// Six callers share Nonce (five call sites call it directly; internal/interview
+// reaches it through its mintNonce seam): assess.go's engine-recorded material —
+// node details, artifact excerpts and the previous cycle's `remaining` — which is
+// raw model output by design (ADR 0011 §2), plus coordinator.go's continuation
+// quote of that same `remaining` into the next cycle's planner prompt, repair.go's
+// quote of the validator's refusals into a re-plan prompt, retryfeedback.go's
+// quote of a node's own rejected attempt into the prompt that retries it (ADR
+// 0020), internal/handoff's {{ self.previous }}, a feedback re-run's quote of its
+// own reply from the round before (#288), and internal/interview's quote of the
 // operator's interview answers into the planner prompt (ADR 0044 §2.2). The
 // refusals one is the least obvious
 // and no less necessary: a refusal is an engine-authored sentence, but it
