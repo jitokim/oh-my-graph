@@ -136,7 +136,7 @@ func TestPlannerPromptTellsTheReviewerToQuoteItsOwnPreviousRound(t *testing.T) {
 			t.Errorf("%s planner prompt: {{ self.previous }} at %d, outside the feedback-arc rule [%d, %d)", name, at, start, end)
 		}
 		rule := prompt[start:end]
-		for _, want := range []string{"its own reply from the previous round", "empty on the first", "still\n  open", "real mistake"} {
+		for _, want := range []string{"its own reply from the previous round", "empty on the first", "re-raise only the ones still", "real mistake"} {
 			if !strings.Contains(rule, want) {
 				t.Errorf("%s planner prompt: the feedback-arc rule lacks %q", name, want)
 			}
