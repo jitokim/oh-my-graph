@@ -142,6 +142,10 @@ type autoFlags struct {
 	maxGoalBudgetUSD float64
 	verifyCmd        string
 	verifyTimeout    time.Duration
+	// noBaseline skips #315's starting-tree baseline and nothing else: the
+	// sinks still run --verify-cmd. For an acceptance-test command that is red
+	// before the change by construction (#325).
+	noBaseline bool
 	// acceptNoBuildEvidence is ADR 0030's one opt-out. It is not a verification
 	// switch and its name says so: what the operator states by typing it is that
 	// THIS RUN CARRIES NO BUILD EVIDENCE, which is a true thing about the run,
@@ -215,6 +219,7 @@ func newAutoFlags() *autoFlags {
 	f.set.BoolVar(&f.acceptLoadedUserConfig, "accept-loaded-user-config", false, "state that this run's planned nodes load YOUR CLI configuration, and run anyway (ADR 0032): user/project/local settings on Claude, ~/.codex/config.toml plus repository rules and AGENTS.md on Codex, and with them your CLAUDE.md, your hooks and your MCP servers. This is not only a capability — your standing permission grants load too, so on Claude a node's declared scope like Bash(git *) stops being enforced and is a declaration again; each node's --tools set and deny list still bind, and enterprise/managed policy is unaffected and cannot be widened by this flag. Agent mapping and skill activation are turned OFF for the run, because a staged definition is shadowed by a same-named one your restored settings discover. The choice is printed with the plan and readable in this run's state.json")
 	f.set.Var(&f.conventionPaths, "conventions", "prefix this file's TEXT to every planned node's prompt, as your conventions (ADR 0041; repeatable, in order — name each file a CLAUDE.md @-import would have reached, since imports are not followed). Text only: no settings, grants, hooks or MCP servers come with it, so the tool ceiling, agent mapping and skill activation are unchanged. Every file is read and validated before the planner call — missing, blank, import-only, duplicate, non-UTF-8, or a rendered prefix over 96 KiB refuses the launch; nothing is truncated. A full-size prefix leaves a node's own prompt about 32 KiB of Linux's 128 KiB limit on one argv string, so a larger prompt (e.g. a big `| inline` artifact) fails to spawn there with E2BIG mid-run rather than at launch. Staged into the run directory (owner-only) and checked by `resume`; NOT carried into a `--plan-only` graph run with `run`. Like any prompt text, it is in each node's argv while the node runs, so other local users can read it from the process table (SECURITY.md)")
 	f.set.BoolVar(&f.interview, "interview", false, "before planning, ask you at most 5 questions on this terminal about what the goal leaves out, and give your answers to the PLANNER as fenced text (ADR 0044). Off by default; needs a terminal on stdin and refuses without one, before any model call. Each question is one paid read-only call, counted in cycle 1's planning cost and the goal's spend. Type /skip to skip a question or /done to stop; an answer over 2000 bytes is refused, never cut. Asked once per goal, not per cycle. The answers reach no planned node, and change no setting, grant or tool. Staged into each run directory (owner-only, hash in state.json, checked by `resume`); with --plan-only, kept beside the saved spec")
+	f.set.BoolVar(&f.noBaseline, "no-baseline", false, "skip the starting-tree baseline (#315, #325): by default `auto` runs --verify-cmd once on the tree as it is and stops (exit 5) when it is red. Pass this when --verify-cmd is an acceptance test of the goal that is red before the change on purpose. Only the baseline is skipped — every sink still runs the same command. Printed at launch. Requires --verify-cmd")
 	f.set.BoolVar(&f.acceptNoBuildEvidence, "accept-no-build-evidence", false, "state that this run carries no build evidence, and run anyway (ADR 0030). Without it, `auto` REFUSES to start in a directory where a build system is detected and no --verify-cmd was given — a planned node cannot carry a build command, so such a run's every judgement is the model's about its own work. This is not a verification switch: nothing is being skipped, because nothing was going to run. The choice is written to the run's state.json and printed with the plan, so a reader of that run later learns the absence was chosen. Accepted and inert where no build signal is detected")
 	return f
 }
@@ -292,6 +297,11 @@ func (f *autoFlags) parse(args []string) error {
 	// like the --plan-only/--max-cycles refusal above — and NOT in
 	// checkVerifyFlags, which `resume` also calls: the gate is auto-only, and
 	// sharing the helper would gate a resume by accident (ADR 0030 §2.3).
+	// --no-baseline only means something next to the command it skips; alone it
+	// would be a stray flag that silently does nothing (#325).
+	if f.noBaseline && !f.verifyCommand().Supplied() {
+		return fmt.Errorf("auto: --no-baseline skips the --verify-cmd baseline, but no --verify-cmd was given; drop --no-baseline")
+	}
 	if f.acceptNoBuildEvidence && f.verifyCommand().Supplied() {
 		return fmt.Errorf("auto: --accept-no-build-evidence says this run carries no build evidence, but --verify-cmd %q supplies some; pass one or the other", f.verifyCmd)
 	}

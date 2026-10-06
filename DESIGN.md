@@ -2421,7 +2421,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--interview] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--interview] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path.
 
@@ -2469,6 +2469,12 @@ it does, and `resume` and `design` are unchanged. The baseline checks the
 invocation directory as it is, uncommitted and untracked files included — the
 same tree cycle 1's sink verify runs in, since a planned node can set neither
 `cwd` nor `worktree` (`validatePlannedNodeCwd`, `validatePlannedNodeWorktree`).
+`--no-baseline` (#325) skips this one run and nothing else: it is for a
+`--verify-cmd` that is an acceptance test of the goal, red on the starting tree by
+construction. `auto` prints `Baseline: skipped (--no-baseline); --verify-cmd 'CMD'
+is still the command at every sink.` and the sinks carry the command exactly as before. It
+requires `--verify-cmd` (refused at parse otherwise, so a stray flag cannot sit
+in a script doing nothing), and the baseline-red refusal names it.
 
 Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (CLIRunner:

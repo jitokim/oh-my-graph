@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph design "<goal>" --out <file>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -207,7 +207,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
        oh-my-graph lint <graph.yaml>
        oh-my-graph design "<goal>" --out <file>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -566,7 +566,11 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// refusals because it is not free: it runs the user's build. Every auto
 	// with --verify-cmd gets it, --plan-only and --max-cycles 1 included; none
 	// without it does.
-	if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
+	// --no-baseline (#325) skips this one run and says so; the sinks below still
+	// carry the same command.
+	if flags.noBaseline {
+		fmt.Fprintf(os.Stdout, "Baseline: skipped (--no-baseline); --verify-cmd '%s' is still the command at every sink.\n", verifyCommand.Command)
+	} else if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
 		return err
 	}
 	// Once per goal, before cycle 1, and never again: every later cycle's

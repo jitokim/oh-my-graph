@@ -287,6 +287,8 @@ auto: baseline red: --verify-cmd 'go test ./...' exited 1 on the starting tree.
 Nothing was planned, nothing was billed, and no run directory was created:
 every cycle's sinks would run this same command, so it must pass on the
 tree as it is first. Fix the tree (or the command) and re-run.
+If --verify-cmd is an acceptance test of the goal, red before the change
+on purpose, re-run with --no-baseline: the sinks still run it.
 
 Its output:
 
@@ -306,12 +308,20 @@ that times out is red the same way: its first line reads `timed out after 10m0s`
 printed before it was killed is quoted under the same bound. An interrupt
 (Ctrl-C, SIGTERM) during the baseline is not a red baseline: `auto` exits 1 as
 any interrupted `auto` does, with no "baseline red" and no goal summary. Every `auto`
-with `--verify-cmd` gets this check, `--max-cycles 1` and `--plan-only` included
+with `--verify-cmd` gets this check by default, unless `--no-baseline` is supplied
+(below), `--max-cycles 1` and `--plan-only` included
 — a preview refuses exactly as the run it previews; without `--verify-cmd`
 nothing changes, and `resume` and `design` do not run it. The baseline checks the
 invocation directory as it is, uncommitted and untracked files included — the
 same tree cycle 1's sink verify runs in, since a planned node can set neither
 `cwd` nor `worktree`.
+
+When `--verify-cmd` is an **acceptance test of the goal**, a script that checks
+the change exists and so fails before it does, pass `--no-baseline`. The
+baseline is then skipped with one line, `Baseline: skipped (--no-baseline);
+--verify-cmd 'CMD' is still the command at every sink.`, and every sink still runs the
+command and judges its exit code. Nothing else changes. `--no-baseline` without
+`--verify-cmd` is refused.
 
 What `auto` can exit with:
 
