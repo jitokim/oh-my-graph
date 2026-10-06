@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -159,10 +160,16 @@ func (l *runLeg) setPlanningAccounting(costUSD float64, costUnknown bool, usage 
 	}
 }
 
-func closeRejectedPlanning(l *runLeg, err error) {
+// closeRejectedPlanning closes a leg whose planning was refused, recording what
+// planning spent. iv is the `--interview` this plan was asked for, nil for none
+// and for every cycle after the first: like an accepted plan's
+// (withInterviewCost), a refused plan's planning spend includes the interview
+// on cycle 1 and only there.
+func closeRejectedPlanning(l *runLeg, err error, iv *interview.Result) {
 	var rejection *coordinator.PlanRejection
 	if errors.As(err, &rejection) {
-		l.setPlanningAccounting(rejection.CostUSD, rejection.CostUnknown, rejection.Usage)
+		cost, unknown, usage := interviewAccounting(iv)
+		l.setPlanningAccounting(rejection.CostUSD+cost, rejection.CostUnknown || unknown, addTokenUsage(rejection.Usage, usage))
 	}
 	closeLeg(l, runfeed.OutcomeFailed)
 }

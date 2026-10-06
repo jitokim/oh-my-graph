@@ -15,7 +15,9 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/conventions"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/interview"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
@@ -593,4 +595,158 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// rejectedInterviewOutcomes is an interview costing 0.50 (220 input tokens)
+// followed by a plan refused twice, its two planner calls costing 0.05
+// together. plan-1 and plan-2 are the refusal; later keys extend it.
+func rejectedInterviewOutcomes(extra map[string]runner.NodeOutcome) map[string]runner.NodeOutcome {
+	outcomes := map[string]runner.NodeOutcome{
+		"ask-1":  {Result: interviewQuestion, TotalCostUSD: 0.25, Usage: runner.TokenUsage{InputTokens: 100, OutputTokens: 10}},
+		"ask-2":  {Result: "ENOUGH", TotalCostUSD: 0.25, Usage: runner.TokenUsage{InputTokens: 120, OutputTokens: 2}},
+		"plan-1": {Result: refusedCycleSpec, TotalCostUSD: 0.02, Usage: runner.TokenUsage{InputTokens: 3}},
+		"plan-2": {Result: refusedCycleSpec, TotalCostUSD: 0.03, Usage: runner.TokenUsage{InputTokens: 4}},
+	}
+	for k, v := range extra {
+		outcomes[k] = v
+	}
+	return outcomes
+}
+
+// runFinished is the last event of a run's stream, which must be its
+// run_finished: for a refused plan, the only record of what planning spent.
+func runFinished(t *testing.T, runID string) runfeed.Event {
+	t.Helper()
+	events := readStreamEvents(t, runDirFor(runID))
+	last := events[len(events)-1]
+	if last.Type != runfeed.EventRunFinished {
+		t.Fatalf("run %s's last event = %+v, want run_finished", runID, last)
+	}
+	return last
+}
+
+// #322: a refused plan's run records the interview it was planned with, as an
+// accepted plan's does — single-cycle `auto` (main.go) and cycle 1 of a goal
+// loop (goal.go) alike.
+func TestAutoInterview_ARejectedPlanRecordsTheInterviewCost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"single cycle", nil},
+		{"goal loop cycle 1", []string{"--max-cycles", "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conventionsHome(t)
+			fake := newInterviewFake(rejectedInterviewOutcomes(nil))
+			args := append([]string{"tidy the docs", "--interview"}, tc.args...)
+			out, err := runInterviewAuto(t, fake, terminalStdin(interviewAnswer+"\n", true), args...)
+			var rejection *coordinator.PlanRejection
+			if !errors.As(err, &rejection) {
+				t.Fatalf("want a *PlanRejection, got %T: %v", err, err)
+			}
+			finished := runFinished(t, soleRunID(t))
+			if math.Abs(finished.CostUSD-0.55) > 1e-9 || finished.CostUnknown {
+				t.Errorf("refused planning cost = %v (unknown %v), want 0.55 (planner 0.05 + interview 0.50)", finished.CostUSD, finished.CostUnknown)
+			}
+			if finished.Usage.InputTokens != 227 || finished.Usage.OutputTokens != 12 {
+				t.Errorf("refused planning usage = %+v, want planner 7 + interview 220 input, interview 12 output", finished.Usage)
+			}
+			// The goal summary already counted the interview on its own line
+			// when no cycle completed; the record must not make it count twice.
+			if len(tc.args) > 0 && !strings.Contains(out, "GOAL TOTAL: $0.5500 across 0 assessed cycle(s) + 1 incomplete cycle") {
+				t.Errorf("goal summary does not total the interview once:\n%s", out)
+			}
+		})
+	}
+}
+
+// #322: the interview is counted once per goal, in cycle 1. A cycle-2 plan
+// that is refused records its own planner calls only.
+func TestAutoInterview_ARejectedLaterCycleDoesNotRecountTheInterview(t *testing.T) {
+	conventionsHome(t)
+	fake := newInterviewFake(map[string]runner.NodeOutcome{
+		"ask-1":    {Result: interviewQuestion, TotalCostUSD: 0.25, Usage: runner.TokenUsage{InputTokens: 100, OutputTokens: 10}},
+		"ask-2":    {Result: "ENOUGH", TotalCostUSD: 0.25, Usage: runner.TokenUsage{InputTokens: 120, OutputTokens: 2}},
+		"plan-1":   {Result: cycleSpec, TotalCostUSD: 0.04},
+		"work-1":   {SessionID: "s1", Result: "PASS"},
+		"assess-1": {Result: cycleAssessNotMet, TotalCostUSD: 0.01},
+		"plan-2":   {Result: refusedCycleSpec, TotalCostUSD: 0.02, Usage: runner.TokenUsage{InputTokens: 3}},
+		"plan-3":   {Result: refusedCycleSpec, TotalCostUSD: 0.03, Usage: runner.TokenUsage{InputTokens: 4}},
+	})
+	out, err := runInterviewAuto(t, fake, terminalStdin(interviewAnswer+"\n", true), "tidy the docs", "--interview", "--max-cycles", "2")
+	var rejection *coordinator.PlanRejection
+	if !errors.As(err, &rejection) {
+		t.Fatalf("want a *PlanRejection, got %T: %v", err, err)
+	}
+	ids := runDirNames(t)
+	if len(ids) != 2 {
+		t.Fatalf("run directories = %v, want 2", ids)
+	}
+	if got := goalSnapshots(t)[0].PlanningCostUSD; math.Abs(got-0.54) > 1e-9 {
+		t.Errorf("cycle 1 planning cost = %v, want 0.54 (planner 0.04 + interview 0.50)", got)
+	}
+	finished := runFinished(t, ids[1])
+	if math.Abs(finished.CostUSD-0.05) > 1e-9 || finished.Usage.InputTokens != 7 {
+		t.Errorf("cycle 2 refused planning = cost %v usage %+v, want 0.05 and 7 input tokens: the interview belongs to cycle 1", finished.CostUSD, finished.Usage)
+	}
+	if !strings.Contains(out, "GOAL TOTAL: $0.6000 across 1 assessed cycle(s) + 1 incomplete cycle") {
+		t.Errorf("goal summary does not total the interview once:\n%s", out)
+	}
+}
+
+// #322: --plan-only never folds the interview into planning. A refused plan
+// still prints the planner's spend and the interview's apart, as before.
+func TestAutoInterview_PlanOnlyRejectionKeepsTheInterviewCostSeparate(t *testing.T) {
+	conventionsHome(t)
+	fake := newInterviewFake(rejectedInterviewOutcomes(nil))
+	out, err := runInterviewAuto(t, fake, terminalStdin(interviewAnswer+"\n", true), "tidy the docs", "--plan-only", "--interview")
+	var rejection *coordinator.PlanRejection
+	if !errors.As(err, &rejection) {
+		t.Fatalf("want a *PlanRejection, got %T: %v", err, err)
+	}
+	for _, needle := range []string{
+		"Interview ended (enough): 1 asked, 1 answered, 0 skipped; cost $0.5000",
+		"planning failed after spending $0.0500 — a planner call is paid for whether or not its graph loads.\n",
+		"planning tokens: input 7, cached 0, output 0, reasoning 0\n",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Errorf("plan-only output lacks %q:\n%s", needle, out)
+		}
+	}
+	if strings.Contains(out, "$0.5500") {
+		t.Errorf("plan-only folded the interview into the planning spend:\n%s", out)
+	}
+	if _, err := os.Stat(runsRoot()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("--plan-only created runs/ (stat err %v)", err)
+	}
+}
+
+// #322: without --interview a refused plan records its planner calls alone,
+// exactly as before.
+func TestAuto_ARejectedPlanWithoutInterviewRecordsThePlannerOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"single cycle", nil},
+		{"goal loop cycle 1", []string{"--max-cycles", "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conventionsHome(t)
+			fake := newInterviewFake(rejectedInterviewOutcomes(nil))
+			_, err := runInterviewAuto(t, fake, terminalStdin("", false), append([]string{"tidy the docs"}, tc.args...)...)
+			var rejection *coordinator.PlanRejection
+			if !errors.As(err, &rejection) {
+				t.Fatalf("want a *PlanRejection, got %T: %v", err, err)
+			}
+			if n := len(interviewerCalls(fake)); n != 0 {
+				t.Fatalf("interviewer calls = %d without --interview", n)
+			}
+			finished := runFinished(t, soleRunID(t))
+			if math.Abs(finished.CostUSD-0.05) > 1e-9 || finished.CostUnknown || finished.Usage.InputTokens != 7 {
+				t.Errorf("refused planning = cost %v unknown %v usage %+v, want 0.05 and 7 input tokens", finished.CostUSD, finished.CostUnknown, finished.Usage)
+			}
+		})
+	}
 }

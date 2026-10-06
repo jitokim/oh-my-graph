@@ -184,8 +184,16 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// The fallback is for an error that arrives before any cycle's hook ran
 		// (an invalid MaxCycles, a nil executor) — no run exists, so plans/ is
 		// the only honest home, exactly as for --plan-only.
+		//
+		// A refusal in cycle 1 — no cycle completed — is the plan the
+		// interview was bought for, so its record carries the interview's
+		// spend as cycle 1's accepted plan would; a later cycle's does not.
 		if cycleRunID != "" {
-			closeRejectedPlanning(leg, err)
+			var iv *interview.Result
+			if len(result.Cycles) == 0 {
+				iv = flags.interview
+			}
+			closeRejectedPlanning(leg, err, iv)
 			return noteRejectedPlan(out, runDirFor(cycleRunID), err)
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
