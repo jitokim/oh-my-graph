@@ -289,3 +289,13 @@ func buildEvidenceRecord(outcome *coordinator.BuildEvidenceOutcome) *runstate.Bu
 		Signals:    outcome.SignalFiles(),
 	}
 }
+
+// baselineRecord is `auto --no-baseline` as the snapshot stores it (#328).
+// false in, nil out: a run that took the baseline, or had none to take,
+// records nothing, so its snapshot is unchanged.
+func baselineRecord(skipped bool) *runstate.Baseline {
+	if !skipped {
+		return nil
+	}
+	return &runstate.Baseline{Skipped: true, DeclaredBy: "--no-baseline"}
+}

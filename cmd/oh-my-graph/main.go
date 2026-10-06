@@ -569,6 +569,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// --no-baseline (#325) skips this one run and says so; the sinks below still
 	// carry the same command.
 	if flags.noBaseline {
+		flags.baselineSkipped = true
 		fmt.Fprintf(os.Stdout, "Baseline: skipped (--no-baseline); --verify-cmd '%s' is still the command at every sink.\n", verifyCommand.Command)
 	} else if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
 		return err
@@ -1252,6 +1253,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
 		Conventions:           conventionsRecord(flags.conventions),
 		Interview:             flags.interviewRecord,
+		Baseline:              baselineRecord(flags.baselineSkipped),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }

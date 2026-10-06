@@ -76,6 +76,11 @@ type commonRunFlags struct {
 	// filled by executePlan once the prefix is staged into the run directory.
 	// nil whenever interview is.
 	interviewRecord *runstate.Interview
+	// baselineSkipped is `auto --no-baseline` as the snapshot records it
+	// (#328), carried here so every cycle's recorder writes it, not just
+	// cycle 1's. Not a flag: copied from autoFlags.noBaseline at launch, so
+	// `run`, `chat` and `resume` never set it.
+	baselineSkipped bool
 }
 
 func (c *commonRunFlags) register(set *flag.FlagSet) {
