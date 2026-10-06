@@ -17,7 +17,10 @@
 // validator's refusals into a re-plan prompt, retryfeedback.go's quote of a
 // node's own rejected attempt into the prompt that retries it (ADR 0020), and
 // internal/handoff's {{ self.previous }}, a feedback re-run's quote of its own
-// reply from the round before (#288). The refusals one is the least obvious
+// reply from the round before (#288). internal/interview mints through it too,
+// by way of its mintNonce seam rather than a direct call, for its quote of the
+// operator's interview answers into the planner prompt (ADR 0044 §2.2). The
+// refusals one is the least obvious
 // and no less necessary: a refusal is an engine-authored sentence, but it
 // interpolates model-authored fragments — a placeholder token, a node id — and
 // at least one validator does so without escaping them, so the planner can

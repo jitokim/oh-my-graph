@@ -263,6 +263,8 @@ bytes from memory (§2.4); it never re-reads a terminal.
 - *Ask again on resume.* A resume never plans, and re-asking would give the
   resumed leg a different premise from the leg it continues.
 
+The fence is a prompt-level mitigation. The enforced boundary is the same one the goal already has: the planner call's no-tool, read-only invocation, and the plan validator with the planned-node ceiling, which no answer can widen.
+
 ### 2.3 Ending the interview
 
 **Decision.** Four ways to end, all explicit, and all leave a record of why.
