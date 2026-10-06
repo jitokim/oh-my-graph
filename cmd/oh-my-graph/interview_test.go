@@ -360,6 +360,91 @@ func TestAutoInterview_TheGoalBudgetSeesTheInterview(t *testing.T) {
 	}
 }
 
+// ADR 0044 §5 test 13
+func TestResumeInterview_CarriesTheRecordAndRefusesAMissingOrAlteredCopy(t *testing.T) {
+	paused := func(t *testing.T) (*runner.FakeRunner, string, runstate.Interview) {
+		t.Helper()
+		conventionsHome(t)
+		fake := newInterviewFake(map[string]runner.NodeOutcome{
+			"ask-1":  {Result: interviewQuestion, TotalCostUSD: 0.01},
+			"ask-2":  {Result: "ENOUGH", TotalCostUSD: 0.01},
+			"plan-1": {Result: cycleSpec},
+			"work-1": {ExitCode: 1, FailureCause: limitCauseMsg, SessionLimited: true},
+			"work-2": {SessionID: "s-work", Result: "PASS"},
+		})
+		_, err := runInterviewAuto(t, fake, terminalStdin(interviewAnswer+"\n", true), "tidy the docs", "--interview")
+		if err == nil {
+			t.Fatal("the first leg should pause on the session limit")
+		}
+		runID := soleRunID(t)
+		snap, loadErr := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
+		if loadErr != nil || snap.Interview == nil {
+			t.Fatalf("the paused leg recorded no interview (err %v)", loadErr)
+		}
+		return fake, runID, *snap.Interview
+	}
+
+	t.Run("carried", func(t *testing.T) {
+		fake, runID, record := paused(t)
+		before := len(fake.Invocations())
+		var err error
+		captureStdout(t, func() {
+			err = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil)
+		})
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		spawned := fake.Invocations()[before:]
+		if len(spawned) != 1 || spawned[0].Prompt != "work" {
+			t.Fatalf("the resumed leg spawned %+v, want the one node with its own prompt", spawned)
+		}
+		for _, spec := range spawned {
+			if isInterviewerCall(spec.Prompt) || strings.Contains(spec.Prompt, "planning coordinator") {
+				t.Error("the resumed leg asked the interviewer or the planner")
+			}
+		}
+		snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snap.Interview == nil || *snap.Interview != record {
+			t.Errorf("after resume the record is %+v, want it unchanged: %+v", snap.Interview, record)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		tamper func(t *testing.T, path string)
+	}{
+		{"altered", func(t *testing.T, path string) { writeFileTree(t, path, "a different premise\n") }},
+		{"missing", func(t *testing.T, path string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, runID, record := paused(t)
+			tc.tamper(t, filepath.Join(runDirFor(runID), interview.StagedFileName))
+			before := len(fake.Invocations())
+			var err error
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{runID, "--retry-failed"}), fake, nil)
+			})
+			var mismatch *interview.StagedMismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("want *interview.StagedMismatchError, got %T: %v", err, err)
+			}
+			if !strings.Contains(err.Error(), record.StagedSHA256) {
+				t.Errorf("the refusal does not name the recorded hash: %v", err)
+			}
+			if n := len(fake.Invocations()) - before; n != 0 {
+				t.Errorf("a refused resume made %d call(s)", n)
+			}
+		})
+	}
+}
+
 // ADR 0044 §5 test 14
 func TestAutoInterview_WithConventionsEachPrefixReachesOnlyItsOwnCall(t *testing.T) {
 	conventionsHome(t)

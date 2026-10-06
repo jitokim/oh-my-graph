@@ -118,3 +118,16 @@ func stageInterview(runDir string, result *interview.Result) (*runstate.Intervie
 		},
 	}, nil
 }
+
+// resumedInterview re-checks a run's staged interview against the hash its
+// record holds (ADR 0044 §2.2), refusing a missing or altered copy rather
+// than carrying a record whose text no longer matches. A resumed leg never
+// plans, so it asks nothing and prefixes nothing: the check is the record's
+// integrity, not an input. nil for a run that had none.
+func resumedInterview(runDir string, record *runstate.Interview) error {
+	if record == nil {
+		return nil
+	}
+	_, err := interview.LoadStaged(runDir, record.StagedSHA256)
+	return err
+}
