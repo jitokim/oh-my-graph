@@ -57,10 +57,7 @@ Six of those are worth knowing precisely:
   detects a build system and no `--verify-cmd` was given. See the rule below —
   this is the one refusal you must never resolve on your own initiative.
 - `auto --verify-cmd 'CMD'` runs CMD once on the starting tree before any
-  spend. If it is already red there, `auto` stops (exit 5, "baseline red") with
-  the command's exit code and the tail of its output — no model call, no run
-  directory. Show the user that output; the tree (or the command) needs fixing
-  before a run can pass.
+  spend. If it is already red there (non-zero exit, could not run, or timed out), `auto` stops (exit 5, "baseline red") with the command's exit code or how long it ran before timing out, and the tail of its output — no model call, no run directory. Show the user that output; the tree (or the command, or its `--verify-timeout`) needs fixing before a run can pass.
 - `resume --retry-failed` re-executes a failed run's failed and cancelled
   nodes (or finishes a session-limit-paused run's unfinished ones), keeping
   every passed node's result. It is the non-gate way to continue a run.
@@ -76,7 +73,7 @@ was already red on the starting tree (baseline red — no model call, no run
 directory). On exit 2, surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below. On exit 5, show the user the quoted output; do
-not retry until the tree or the command is fixed.
+not retry until the tree, the command, or its `--verify-timeout` is fixed.
 A FAIL detailed `result did not match` may be a verdict-pattern miss rather than
 broken work — unlike `verify_failed`, read the node's reply before acting (#264).
 
