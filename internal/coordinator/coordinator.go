@@ -1970,7 +1970,13 @@ Rules:
   rejected outright, because the re-run would get the prompt it already ran
   and fail again for the same reason at twice the cost. Never make the work
   conditional on a feedback section appearing — on the first pass it never
-  does. Keep max small (2): every round
+  does. The reviewing node's prompt should quote {{ self.previous }},
+  introduced as its own reply from the previous round, empty on the first
+  pass: first check each of those findings and re-raise only the ones still
+  open; raise a NEW finding only where the rework changed the work or where
+  missing it last round was a real mistake. A re-run reviewer is a fresh
+  session, and without its earlier findings it finds new nits every round
+  until the rounds are spent. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a
