@@ -266,7 +266,7 @@ bytes from memory (§2.4); it never re-reads a terminal.
 - **Hard cap: five questions** (*chosen*; one named constant in `internal/interview`, not a flag like `--max-cycles`, `flags.go:193`).
   Each question is one paid call before the planner has produced anything; the
   cap makes the interview's worst case, five interviewer calls, a number printed up front, as `--max-cycles` prints the planner's (`flags.go:193`).
-  Five is also the bound the captain's deep-interview skill sets on its first phase ("최대 5개" questions under "Phase 1: 맥락 이해"), the part of it that matters here.
+  Five is also the bound the captain's deep-interview skill sets on its first phase ("at most five" questions under "Phase 1: understanding the context"), the part of it that matters here.
   After the fifth answer no sixth call is made; test 6 (§5) asserts exactly five calls.
   There is no flag to raise it: a knob that unbounds a paid loop needs its own
   ADR, the way `--max-cycles` needed one (ADR 0011).
