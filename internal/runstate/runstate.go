@@ -394,6 +394,33 @@ type BuildEvidence struct {
 	Signals []string `json:"signals,omitempty"`
 }
 
+// Baseline records that an `auto --no-baseline` launch skipped #315's
+// starting-tree baseline of --verify-cmd (#325). The choice is made once at
+// launch, like --accept-no-build-evidence, and until this record it was said
+// once on stdout and nowhere else — so a reader of a finished run could not
+// tell a red-before-the-change acceptance test that was waved through from a
+// baseline that ran green (#328).
+//
+// Present only when the baseline was skipped: a run that took the baseline,
+// or had no --verify-cmd to take it with, writes no key, so its snapshot is
+// byte for byte what it was before. A resumed leg carries it forward
+// unchanged; `resume` runs no baseline and has no flag that could change it.
+//
+// It is additive and does not move the stamp, by the rule
+// SchemaWithConventions states: the baseline ran before cycle 1's planner
+// call and never again, so an older binary that ignored the record would
+// resume the run exactly as this one does. Like BuildEvidence, nothing reads
+// it to decide behaviour.
+type Baseline struct {
+	// Skipped is always true on a written record; it is spelled out so the
+	// block reads as a statement rather than as a bare flag name.
+	Skipped bool `json:"skipped"`
+	// DeclaredBy is the exact spelling of what was typed: "--no-baseline".
+	// As with BuildEvidence.DeclaredBy, it records that something typed the
+	// flag, not that a human did.
+	DeclaredBy string `json:"declared_by"`
+}
+
 // GateState records the run's progress through its gates: what has been decided
 // and where, if anywhere, the run is currently parked.
 type GateState struct {
@@ -551,6 +578,11 @@ type Snapshot struct {
 	// snapshot is byte for byte what it was before. See Interview for why it
 	// does not move the schema stamp.
 	Interview *Interview `json:"interview,omitempty"`
+	// Baseline records an `auto --no-baseline` launch's skipped starting-tree
+	// baseline (#328). Written on every cycle of the goal loop and carried
+	// across resume. nil — and absent — on every run that did not skip it, so
+	// such a snapshot is byte for byte what it was before. See Baseline.
+	Baseline *Baseline `json:"baseline,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes

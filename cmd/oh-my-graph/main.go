@@ -569,6 +569,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// --no-baseline (#325) skips this one run and says so; the sinks below still
 	// carry the same command.
 	if flags.noBaseline {
+		flags.baselineSkipped = true
 		fmt.Fprintf(os.Stdout, "Baseline: skipped (--no-baseline); --verify-cmd '%s' is still the command at every sink.\n", verifyCommand.Command)
 	} else if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
 		return err
@@ -811,7 +812,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
 	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.conventions, flags.interview)
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.conventions, flags.interview)
 	}
 	// The interview was bought for this plan, so its spend is this run's
 	// planning spend from here on (withInterviewCost). Not on the preview
@@ -836,7 +837,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, conventionsDisclosure{set: flags.conventions})
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions})
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -866,7 +867,10 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // the saved spec, under the same plans/<id>/ (ADR 0044 §2.1(a)): the plan has
 // already absorbed them, so `run <graph.json>` does not carry them, and they
 // are kept as the record of what the planner was told.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv *conventions.Set, iv *interview.Result) error {
+//
+// baselineSkipped is `auto --no-baseline` (#328). A preview writes no
+// state.json, so the plan screen's line is its only record of the skip.
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv *conventions.Set, iv *interview.Result) error {
 	planDir := planDirFor(newRunID())
 	specPath, err := saveGeneratedSpec(planDir, plan.Spec)
 	if err != nil {
@@ -875,7 +879,7 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
-	printPlanForRuntime(out, plan, specPath, runtime, evidence, conventionsDisclosure{set: conv, notCarried: true})
+	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, conventionsDisclosure{set: conv, notCarried: true})
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
@@ -904,8 +908,9 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 // A failure to save the declined spec is reported and swallowed: losing the
 // artifact must not turn a decline into an error.
 func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, confirm func() (bool, error)) (bool, error) {
-	// No conventions: `chat` registers no --conventions (ADR 0041 §2.6).
-	printPlanForRuntime(out, plan, "", runtime, evidence, conventionsDisclosure{})
+	// No conventions: `chat` registers no --conventions (ADR 0041 §2.6). No
+	// skipped baseline either: `chat` has no --no-baseline (#328).
+	printPlanForRuntime(out, plan, "", runtime, evidence, false, conventionsDisclosure{})
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -1252,6 +1257,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		BuildEvidence:         buildEvidenceRecord(flags.buildEvidence),
 		Conventions:           conventionsRecord(flags.conventions),
 		Interview:             flags.interviewRecord,
+		Baseline:              baselineRecord(flags.baselineSkipped),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
@@ -1339,12 +1345,14 @@ func formatUsage(usage runner.TokenUsage) string {
 // screen assertion does not have to name a runtime and an evidence record it is
 // not about.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
-	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, conventionsDisclosure{})
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, false, conventionsDisclosure{})
 }
 
 // conv is what the screen says about the operator's `--conventions` (ADR
-// 0041 §2.4); its zero value prints nothing.
-func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, conv conventionsDisclosure) {
+// 0041 §2.4); its zero value prints nothing. baselineSkipped is `auto
+// --no-baseline` (#328); false, which every surface but auto passes, prints
+// nothing.
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv conventionsDisclosure) {
 	g := plan.Graph
 	if specPath == "" {
 		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
@@ -1395,6 +1403,7 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	noteConventions(w, conv)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteMissingBuildEvidence(w, evidence)
+	noteSkippedBaseline(w, baselineSkipped)
 	noteReplan(w, plan.Repaired)
 	// Last, and deliberately after the ceiling: that paragraph says planned
 	// nodes "run isolated", meaning settings and tools. This one narrows it —

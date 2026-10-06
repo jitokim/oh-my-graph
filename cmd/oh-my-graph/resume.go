@@ -649,7 +649,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// And the interview record, unchanged: omitted, the first settling
 		// node would erase the hash and the counts ADR 0044 §2.5 reads.
 		Interview: snap.Interview,
-		Nodes:     records,
+		// And the skipped-baseline record (#328), unchanged: resume runs no
+		// baseline and registers no --no-baseline, so the first leg's choice
+		// is the only one there is.
+		Baseline: snap.Baseline,
+		Nodes:    records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
