@@ -1,8 +1,12 @@
 # ADR 0044 — An interview before planning is opt-in text for the planner, and never a gate
 
-**Status:** Proposed. Decision record only — no flag, no subcommand, no schema
-key, no new seam, no behaviour change. The captain decides after review. If it
-is accepted, the implementation is a separate change that owes the tests in §5.
+**Status:** Accepted and implemented. Written before its code; §5 lists the
+tests the implementation owes, and each is in the same PR
+(`internal/interview/interview_test.go` for tests 3 and 6–10,
+`internal/coordinator/plannerprompt_golden_test.go` for test 1,
+`internal/coordinator/interviewer_test.go` for test 11,
+`cmd/oh-my-graph/interview_test.go` for tests 2, 4, 5, 12–14 and 16, and
+`cmd/oh-my-graph/design_test.go` for test 15).
 
 **Where the addresses point.** Written against `228ba1a`, the `main` this
 branch (`docs/adr-0044-interview`) left. Every `file:line` below was read at
