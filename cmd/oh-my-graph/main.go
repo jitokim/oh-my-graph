@@ -28,8 +28,10 @@
 // subscription's session limit was hit (ADR 0009), 3 `auto` refused to start
 // because the directory has a build system and the run would have checked none
 // of it (ADR 0030), 4 `runs list --exit-in-flight` found at least one listed run
-// still PLANNING or RUNNING. A pause is not a failure, and a refusal is neither:
-// nothing ran, nothing is resumable, nothing was billed. Nor is 4: nothing ran
+// still PLANNING or RUNNING, 5 `auto`'s --verify-cmd was already red on the
+// starting tree, before any planning (#315). A pause is not a failure, and a
+// refusal (3 or 5) is neither: no model ran, nothing is resumable, nothing was
+// billed. Nor is 4: nothing ran
 // there either — the command was asked a question about other runs and answered
 // it, which is why it gets a code a supervisor loop can wait on
 // (`until oh-my-graph runs list --exit-in-flight >/dev/null; do sleep 30; done`)
@@ -82,14 +84,16 @@ func main() {
 // a gate or on a session limit — and is resumable; the resume hint was
 // already printed to stdout by executeGraph/runResume, so this path prints
 // nothing further), 3 (`auto` refused for want of build evidence — printed
-// here, to stdout, by the error itself), or 4 (`runs list --exit-in-flight`
+// here, to stdout, by the error itself), 4 (`runs list --exit-in-flight`
 // found a run still in flight; it prints nothing beyond the table it already
-// printed, because the code is the answer). Separated from main so the exit path
+// printed, because the code is the answer), or 5 (`auto`'s --verify-cmd was
+// already red on the starting tree, #315 — printed here, to stdout, by the
+// error itself, like 3). Separated from main so the exit path
 // lives in exactly one place and the mapping itself is testable without calling
 // os.Exit.
 func mainExitCode(args []string) int {
 	err := run(args)
-	// A help request is not one of the three outcomes above: it answers on
+	// A help request is not one of the outcomes above: it answers on
 	// stdout, like every other report this CLI prints, and exits 0. It reaches
 	// here as an error only because that is the return path subcommands have
 	// (usageRequest, argslot.go).
@@ -106,6 +110,13 @@ func mainExitCode(args []string) int {
 	var missingEvidence *coordinator.MissingBuildEvidenceError
 	if errors.As(err, &missingEvidence) {
 		missingEvidence.Print(os.Stdout)
+		return exitCodeForError(err)
+	}
+	// The red-baseline refusal, for the same reason: it quotes the command's
+	// output and closes with a goal summary, all of it a report on STDOUT.
+	var red *BaselineRedError
+	if errors.As(err, &red) {
+		red.Print(os.Stdout)
 		return exitCodeForError(err)
 	}
 	code := exitCodeForError(err)
@@ -168,6 +179,19 @@ func exitCodeForError(err error) int {
 	var inFlight *runsInFlightError
 	if errors.As(err, &inFlight) {
 		return 4
+	}
+	// `auto`'s --verify-cmd was already red on the starting tree, before any
+	// work (#315). Like exit 3 it is a stop before anything spent: nothing was
+	// planned, nothing was billed, no run directory exists. It is its own code
+	// because a script must tell it apart from both neighbours — from a failed
+	// run (1), since the cure is to fix the starting tree, not to look at a run
+	// that does not exist, and from the missing-evidence refusal (3), since the
+	// cure there is to add a flag and here the flag was given and its command
+	// failed. Outside ADR 0023 §2.6's agreement for the same reason as 3: no
+	// run directory.
+	var baselineRed *BaselineRedError
+	if errors.As(err, &baselineRed) {
+		return 5
 	}
 	return 1
 }
@@ -453,24 +477,18 @@ func runAutoRuntime(runtime runner.Runtime, args []string) error {
 	// One of the four sites (with runGraph, runResume and runServe) injecting
 	// the real browser launcher (browser.ExecOpener, the fourth exec seam —
 	// ADR 0006).
-	return runAutoWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout, osStdin())
-}
-
-// runAutoWith is runAuto with its seams injectable, mirroring runGraphWith and
-// for the same reason: --plan-only's whole claim is that no node runs, and the
-// only way to prove that is through the real argv path with a FakeRunner that
-// must see the planner call and nothing else. The stdout parameter is what
-// gates the live view (a non-terminal one leaves it off), so a test needs no
-// real spawn on that seam either.
-func runAutoWith(args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File) error {
-	return runAutoWithRuntime(runner.RuntimeClaude, args, nodeRunner, opener, stdout, osStdin())
+	// verify.NewShellVerifier is the second exec seam here, for the starting-
+	// tree baseline of a --verify-cmd (#315) — the same seam the sinks use.
+	return runAutoWithRuntime(runtime, args, runner.NewCLIRunner(runtime), browser.NewExecOpener(), os.Stdout, osStdin(), verify.NewShellVerifier())
 }
 
 // stdin is the stdout parameter's counterpart for `--interview` (ADR 0044
 // §2.1(a)): the reader the answers come from and the terminal check that
 // gates it, injectable for the same reason — a test drives the interview with
-// a strings.Reader and a fixed answer, and no real terminal.
-func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File, stdin terminalInput) error {
+// a strings.Reader and a fixed answer, and no real terminal. verifier runs
+// the starting-tree baseline of a --verify-cmd (#315), injectable so a test
+// proves both a red refusal and a green pass with no real shell spawned.
+func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner.NodeRunner, opener browser.Opener, stdout *os.File, stdin terminalInput, verifier verify.Verifier) error {
 	flags := newAutoFlags()
 	if err := flags.parse(args); err != nil {
 		return err
@@ -529,15 +547,27 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		return err
 	}
 
-	// The interview's terminal check, the last free refusal: below every other
-	// one, so a launch that earns two is told about the one that does not
-	// depend on how it was started, and above the first model call and the
-	// first run directory, so a script or an agent that passed --interview by
-	// mistake is refused at no cost instead of waiting on a keyboard (ADR 0044
-	// §2.1(a)). /dev/null passes as a character device; its end of input
-	// before any answer is then refused by the interview itself.
+	// The interview's terminal check, the last free refusal that runs nothing:
+	// below every other one, so a launch that earns two is told about the one
+	// that does not depend on how it was started, and above the baseline, the
+	// first model call and the first run directory, so a script or an agent
+	// that passed --interview by mistake is refused at no cost instead of
+	// waiting on a keyboard (ADR 0044 §2.1(a)). /dev/null passes as a character
+	// device; its end of input before any answer is then refused by the
+	// interview itself.
 	if flags.interview && !stdin.isTerminal() {
 		return errInterviewNeedsTerminal
+	}
+	// The starting-tree baseline (#315), the last refusal before anything is
+	// spent: the --verify-cmd runs once on the tree as it is, and a red result
+	// stops here — before the interview's first question, the first planner
+	// call and the first run directory — instead of at the end of a paid cycle
+	// whose sinks fail on a cause the cycle never touched. Below the free
+	// refusals because it is not free: it runs the user's build. Every auto
+	// with --verify-cmd gets it, --plan-only and --max-cycles 1 included; none
+	// without it does.
+	if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
+		return err
 	}
 	// Once per goal, before cycle 1, and never again: every later cycle's
 	// planner prompt gets the same prefix from memory through the coordinator

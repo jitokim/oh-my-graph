@@ -79,7 +79,7 @@ func runInterviewAuto(t *testing.T, fake *runner.FakeRunner, stdin terminalInput
 	args = append(args, "--accept-no-build-evidence", "--no-agent-mapping", "--no-skill-activation")
 	var err error
 	out := captureStdout(t, func() {
-		err = runAutoWithRuntime(runner.RuntimeClaude, args, fake, browser.NewFakeOpener(), os.Stdout, stdin)
+		err = runAutoWithRuntime(runner.RuntimeClaude, args, fake, browser.NewFakeOpener(), os.Stdout, stdin, greenBaseline(args))
 	})
 	return out, err
 }

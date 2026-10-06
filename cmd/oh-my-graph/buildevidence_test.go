@@ -795,7 +795,7 @@ func TestRunAutoWithRuntime_CodexMeetsTheSameGate(t *testing.T) {
 	var err error
 	captureStdout(t, func() {
 		err = runAutoWithRuntime(runner.RuntimeCodex, []string{"add a README section",
-			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout, osStdin())
+			"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout, osStdin(), greenBaseline(nil))
 	})
 
 	var refusal *coordinator.MissingBuildEvidenceError

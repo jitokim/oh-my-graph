@@ -811,7 +811,7 @@ func TestResumeCodex_TheInheritedChoiceDecidesTheResumedArgv(t *testing.T) {
 			args := append([]string{"turn the issue into a codex proposal", "--accept-no-build-evidence"}, tc.autoArgs...)
 			var runErr error
 			captureStdout(t, func() {
-				runErr = runAutoWithRuntime(runner.RuntimeCodex, args, probe.runner(), browser.NewFakeOpener(), os.Stdout, osStdin())
+				runErr = runAutoWithRuntime(runner.RuntimeCodex, args, probe.runner(), browser.NewFakeOpener(), os.Stdout, osStdin(), greenBaseline(args))
 			})
 			if runErr == nil {
 				t.Fatal("precondition failed: the first leg was supposed to fail at the render node")
@@ -895,7 +895,7 @@ func TestResumeCodex_TheResumedDisclosureStandsAlone(t *testing.T) {
 
 			args := append([]string{"tidy the docs", "--accept-no-build-evidence"}, tc.autoArgs...)
 			captureStdout(t, func() {
-				if err := runAutoWithRuntime(runner.RuntimeCodex, args, fake, browser.NewFakeOpener(), os.Stdout, osStdin()); err == nil {
+				if err := runAutoWithRuntime(runner.RuntimeCodex, args, fake, browser.NewFakeOpener(), os.Stdout, osStdin(), greenBaseline(args)); err == nil {
 					t.Error("precondition failed: the first leg was supposed to fail at its only node")
 				}
 			})
