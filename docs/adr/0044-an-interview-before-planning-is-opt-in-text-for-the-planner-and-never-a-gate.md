@@ -432,8 +432,9 @@ This ADR adds no field for it.
 **The comparison.** Two arms on the same kind of goals: interview off (the
 baseline's shape) and `--interview` on, both with `--max-cycles 2`, as all 13 of the baseline's goal loops ran (`grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`).
 The captain answers the interview arm, inside his real work. He already interviews in his own harness before he writes a DAG (§1.1).
-For this comparison he uses `oh-my-graph design` or `auto --interview` in place of that harness, on real goals, so the arm adds no extra experiments.
-The interview arm's target is at least 5 goals, collected opportunistically as his real work produces them.
+For this comparison he uses `auto --interview` in place of that harness, on real goals, so the arm adds no extra experiments.
+Only `auto --interview` goals count toward the interview arm's target of at least 5 goals, collected opportunistically as his real work produces them.
+A goal taken through `oh-my-graph design` feeds only the captain's qualitative reading of the graphs, which §6 judges separately: `design` runs nothing, and the `run` its file then goes through has no goal loop and no assessor, so it records no cycles to goal met and no per-cycle verify rate.
 Answering costs him about 10 minutes per goal, an estimate and not a measurement — `<!-- 미측정 -->`
 The interview arm's model cost is not estimated in advance. It is read from each interview run's own records (the interview block in its `state.json`, §2.2), tied to that run's run id.
 Agents never fake a TTY to answer an interview. Agents run only the off arm.
@@ -589,7 +590,7 @@ File and function names only; no code lands with this ADR.
 The captain keeps, changes or drops the feature on the §2.5 comparison.
 The Keep / Change / Drop test below is directional: it is a judgement aid, with no statistical significance at these sample sizes, and the captain's own reading of the graphs takes precedence over it.
 
-- **Keep** if, over at least 5 goals in the interview arm (§2.5) and at least 13 goal loops in the off arm (the baseline's count, `grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`), both at `--max-cycles 2`, all three hold against the off arm of the same comparison:
+- **Keep** if, over at least 5 `auto --interview` goals in the interview arm (§2.5) and at least 13 goal loops in the off arm (the baseline's count, `grep -l '"max_cycles": 2' ~/.oh-my-graph/runs/20261005-*-1/state.json | wc -l`), both at `--max-cycles 2`, all three hold against the off arm of the same comparison:
   - the interview arm needs a second cycle on a smaller share of its goal loops (baseline 8 of 13, `grep -c '^[0-9.-]*-2 |'`, run ids 20261005-174039.129694000-2, 20261005-175609.054167000-2, 20261005-183911.261245000-2, 20261005-194338.550661000-2, 20261005-205711.011394000-2, 20261005-211849.181048000-2, 20261005-230922.472429000-2, 20261005-233354.068044000-2);
   - its verify fail rate among cycles whose verify ran, read by the §2.5 rule, is lower (baseline 8 of 24, the 24 excluding run ids 20261005-174039.129694000-2 and 20261005-200252.888896000-1, failed run ids 20261005-173231.808441000-1, 20261005-193759.110385000-1, 20261005-204449.000862000-1, 20261005-205711.011394000-2, 20261005-210007.410977000-1, 20261005-211717.221410000-1, 20261005-230005.700138000-1, 20261005-231953.292617000-1);
   - its cost per goal met, interview calls included, is not higher.
