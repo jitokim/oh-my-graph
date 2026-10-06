@@ -300,7 +300,12 @@ GOAL SUMMARY — "fix the flaky test"
 GOAL TOTAL: $0.0000 across 0 cycle(s)
 ```
 
-The quoted output is its last 40 lines, at most 4096 bytes of them. Every `auto`
+The quoted output is its last 40 lines, at most 4096 bytes of them. A baseline
+that times out is red the same way: its first line reads `timed out after 10m0s`
+(the `--verify-timeout` in force) in place of `exited 1`, and what the command
+printed before it was killed is quoted under the same bound. An interrupt
+(Ctrl-C, SIGTERM) during the baseline is not a red baseline: `auto` exits 1 as
+any interrupted `auto` does, with no "baseline red" and no goal summary. Every `auto`
 with `--verify-cmd` gets this check, `--max-cycles 1` and `--plan-only` included
 — a preview refuses exactly as the run it previews; without `--verify-cmd`
 nothing changes, and `resume` and `design` do not run it. The baseline checks the
@@ -313,10 +318,10 @@ What `auto` can exit with:
 | Exit | Meaning |
 |---|---|
 | `0` | the run (or every cycle of the goal loop) passed; `--plan-only` printed the plan |
-| `1` | the run failed, or `auto` stopped on an error |
+| `1` | the run failed, or `auto` stopped on an error or was interrupted (the baseline included) |
 | `2` | paused — at a gate or on a session limit — and resumable with `resume` |
 | `3` | refused: a build system was detected and no build evidence was given (ADR 0030) |
-| `5` | refused: baseline red — `--verify-cmd` already failed on the starting tree |
+| `5` | refused: baseline red — `--verify-cmd` already failed, could not run, or timed out on the starting tree |
 
 Exits 3 and 5 make no model call and leave no run directory. Exit `4` is not
 `auto`'s: only `runs list --exit-in-flight` returns it.

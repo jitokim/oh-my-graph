@@ -2456,7 +2456,12 @@ result at all (could not run, timed out) — stops there: `auto: baseline red:
 --verify-cmd 'CMD' exited N on the starting tree.` on stdout, the last 40 lines
 (at most 4096 bytes) of its output, a goal summary of 0 cycles and `$0.0000`
 reading `no cycle ran — baseline red`, and **exit 5**; no model call, no cycle,
-no run directory. Green prints `Baseline: --verify-cmd 'CMD' passed on the
+no run directory. A timeout reads `timed out after D on the starting tree` in
+place of `exited N`, and quotes what the command printed before it was killed
+under the same bound. An interrupt (Ctrl-C, SIGTERM) during the baseline is not
+red: it is checked before the verdict, since a killed command can also come back
+non-zero, and `auto` takes the generic error path every interrupted `auto` takes
+— exit 1, no `baseline red`, no goal summary. Green prints `Baseline: --verify-cmd 'CMD' passed on the
 starting tree (exit 0).` and everything proceeds as before. Every `auto` with
 `--verify-cmd` gets it, `--max-cycles 1` and `--plan-only` included (a preview
 refuses exactly as the run it previews, as with ADR 0030's refusal); none without
