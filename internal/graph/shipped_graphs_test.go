@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/graphs"
+	"gopkg.in/yaml.v3"
 )
 
 // shippedTemplateNames is the set of graph templates the binary carries, as
@@ -1585,6 +1586,30 @@ func TestE2EVerifyStressBudgetQuotesTheNodeTimeout(t *testing.T) {
 	}
 	if gates == 0 {
 		t.Errorf("no shipped graph splices %s any more — this test now asserts nothing", coldSafeGateFragment)
+	}
+}
+
+// TestE2EVerifyFragmentDeclaresItsTimeout pins the bound e2e-verify itself
+// declares (#292). The prompt no longer states it — it quotes
+// {{ self.timeout }} — and a using node may override `timeout:` alone, so this
+// is read off the fragment file, not off every resolved node. Dropping the key
+// would silently fall back to the runner's default; changing it changes the
+// stress budget of every graph that splices the gate without overriding it.
+func TestE2EVerifyFragmentDeclaresItsTimeout(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "graphs", "fragments", coldSafeGateFragment+".yaml"))
+	if err != nil {
+		t.Fatalf("read the %s fragment: %v", coldSafeGateFragment, err)
+	}
+	var frag struct {
+		Node struct {
+			Timeout string `yaml:"timeout"`
+		} `yaml:"node"`
+	}
+	if err := yaml.Unmarshal(data, &frag); err != nil {
+		t.Fatalf("parse the %s fragment: %v", coldSafeGateFragment, err)
+	}
+	if frag.Node.Timeout != "20m" {
+		t.Errorf("the %s fragment declares `timeout: %s`, want `timeout: 20m` — the bound its stress budget is sized against must be declared, not inherited", coldSafeGateFragment, frag.Node.Timeout)
 	}
 }
 

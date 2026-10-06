@@ -72,7 +72,8 @@ node:
   # is `timeout:`, not the budget.
   budget_usd: 10.00
   # Declared, not inherited, though it is the runner's own 20m default, so a
-  # reader of this fragment sees the bound its stress budget is sized against.
+  # reader of this fragment sees the bound its stress budget is sized against
+  # (TestE2EVerifyFragmentDeclaresItsTimeout pins it).
   # The prompt above never states it as a literal: it quotes
   # {{ self.timeout }}, which renders the using node's EFFECTIVE per-attempt
   # timeout (#292). A using node may therefore override `timeout:` alone —
