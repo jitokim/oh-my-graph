@@ -28,13 +28,13 @@ Walkthroughs, in order:
 ## The command surface
 
 ```text
-oh-my-graph [--runtime claude|codex] <init|run|auto|lint|chat|resume|runs|show|watch|serve|version> ...
+oh-my-graph [--runtime claude|codex] <init|run|auto|design|lint|chat|resume|runs|show|watch|serve|version> ...
 ```
 
 `--runtime` is a global, run-wide selector and must appear before the
 subcommand — `oh-my-graph run g.yaml --runtime codex` is a hard error (`flag
 provided but not defined: -runtime`), not a second spelling. It defaults to
-`claude`. It applies to `run`, `auto`, `lint`,
+`claude`. It applies to `run`, `auto`, `lint`, `design`,
 `chat`, `resume`, and `serve`; read-only history commands need no selector.
 Every fresh run persists the choice. `resume` and a live view's gate buttons
 read that persisted runtime; passing a different explicit value is an error.
@@ -43,7 +43,8 @@ read that persisted runtime; passing a different explicit value is an error.
 |---|---|
 | `init [dir]` | Write the example graphs embedded in the binary to `<dir>/graphs/` (`dir` defaults to `.`), including the `fragments/` subdirectory the templates cite with `use:`, listing each file as `wrote` or `kept`. Never overwrites — see [docs/INSTALL.md](INSTALL.md#what-oh-my-graph-init-unpacks). |
 | `run <graph.yaml>` | Execute a hand-written DAG — the precise-control path. `--dry-run` validates, resolves `--input` interpolation, prints the plan, runs nothing. |
-| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. |
+| `auto "<goal>"` | Plan a DAG from a plain-language goal, then execute it with the same engine — the zero-config default. `--plan-only` prints the plan, its agent mappings, its staged skill corpus and the tool ceiling, then stops without running a node (it still pays for at least one planner call, and a validation refusal buys one corrected call on top of it — unlike `run --dry-run`, it is not free). `--max-cycles N` iterates plan→run→assess up to N times — a validation-refused plan buys one corrected planner call, so the planner-call worst case is `2 × N` (`--max-goal-budget-usd` adds a soft spend ceiling between cycles; requires `--max-cycles` of 2 or more). `--verify-cmd 'CMD'` attaches your own build command to the plan's sink nodes for the ENGINE to run and judge, so a check node cannot certify a branch that does not build; `--verify-timeout D` bounds one execution (default and ceiling 10m). A run started with `--verify-cmd` must re-supply it on every `resume`. It is **not optional in a build-bearing directory**: where a build system is detected and no `--verify-cmd` is given, `auto` refuses to start (exit 3, before any spend) unless `--accept-no-build-evidence` states that this run carries none — which is then recorded in the run's `state.json` and printed with the plan (ADR 0030). Where no build signal is detected, neither flag is required. `--interview` (off by default) asks you at most five questions on the terminal before the first planner call and hands your answers to the planner as fenced text — see [being asked first](#being-asked-first-auto---interview) (ADR 0044). |
+| `design "<goal>" --out <file>` | The `--interview` questions, then one planner call, then the graph written to `<file>` as YAML and linted. **Never runs it** — review it, then `run` it. Refuses an existing `--out` and `--conventions` before any spend — see [ending in a file](#ending-in-a-file-design) (ADR 0044). |
 | `lint <graph.yaml>` | Statically validate a graph file, reporting every problem at once. Read-only, zero cost. |
 | `chat` | Interactive REPL (prototype): conversational turns are answered, task-shaped turns are planned into a graph and run. |
 | `resume <run-id> ((--approve \| --reject) <gate-id> \| --retry-failed)` | Resume a run: decide the gate it is paused at, or `--retry-failed` to salvage a failed run — passed nodes' results are kept and only the failed and cancelled nodes re-execute. Takes `--concurrency N`, `--no-web` and `--no-skill-activation`. An auto run started with `--verify-cmd 'CMD'` takes it here too (with `--verify-timeout D`): the resumed leg's build evidence comes from you, never from the run directory, and a resume without it is refused. |
@@ -430,6 +431,94 @@ spec is still kept — as `rejected.json`, in the run's own directory for `auto`
 under `~/.oh-my-graph/plans/<id>/` for `--plan-only`, which never mints one — so
 a paid-for plan is never destroyed by being invalid
 ([docs/RUN-FEED.md](RUN-FEED.md)).
+
+<a id="being-asked-first-auto---interview"></a>
+
+**Being asked first (`--interview`).** A one-line goal leaves things out, and
+by default the planner never hears what. `auto --interview` asks you about it
+before the first planner call:
+
+```sh
+oh-my-graph auto "add a --json flag to runs list" --input repo=$PWD --verify-cmd 'go build ./...' --interview
+```
+
+```text
+Interview before planning: at most 5 questions. Answer on one line; /skip skips a question, /done stops.
+
+Question 1/5: Should --json print the coverage line too, or only the runs?
+> only the runs; the coverage line stays on stderr
+```
+
+- **Off by default**, so `auto` without the flag sends the planner exactly the
+  prompt it always did, and a script or an agent calling `auto` never waits on
+  a keyboard.
+- **It needs a terminal on stdin.** Without one, `--interview` is refused
+  before any model call and before any run directory exists, naming the flag
+  and the way out (drop it, or run from a terminal). Input that ends before
+  you answered anything (`< /dev/null`, or Ctrl-D at the first question) is
+  refused too, never read as "no questions needed". Ctrl-C aborts with nothing
+  recorded.
+- **Five questions at most**, a fixed cap with no flag to raise it. Each one is
+  a read-only interviewer call with no tools, run under your own configuration
+  as the planner is, so it can read the repository's `CLAUDE.md` and not ask
+  what that answers.
+- **You can stop it.** Type `/done` at any prompt to plan with what you have
+  answered so far; `/skip` skips one question, which still counts toward the
+  five. The interviewer stops on its own when it has nothing that would change
+  the plan, and a question it repeats (ignoring case and punctuation) or a
+  reply it garbles ends the interview instead of costing another call. A blank
+  answer is refused and the question asked again; an answer over 2000 bytes is
+  refused with its size and never cut.
+- **The answers are text for the planner only.** They are printed once, as the
+  planner will receive them, and placed in front of its prompt inside a
+  per-call nonce fence labelled as data, not instructions — what you typed or
+  pasted cannot close the fence and speak as the engine. No planned node
+  receives them, and they change no setting, grant, tool or ceiling. An
+  interview cut short (the cap, `/done`, Ctrl-D, a repeat or a garbled reply)
+  says so outside the fence, with how many questions were asked and answered,
+  so the planner does not read it as complete. If you answered nothing
+  (`/done` at the first question), the planner prompt is exactly what it would
+  be without the flag.
+- **Once per goal.** With `--max-cycles N` it is asked before cycle 1 only;
+  every cycle's planner prompt gets the same answers, including a repair
+  attempt. Its cost is added to cycle 1's planning cost, so the ledger, the
+  goal's spend and `--max-goal-budget-usd` all count it, and the goal summary
+  prints it on its own `interview (before cycle 1)` line.
+- **Recorded, not re-asked.** Each run directory keeps the answers the planner
+  received as `interview.md` (owner-only); `state.json`'s `interview` block
+  holds its SHA-256, the counts, why it ended and what it cost — never the
+  answer text. `resume` asks nothing (it never plans), carries the block
+  forward, and refuses a run whose `interview.md` is missing or altered.
+- **With `--plan-only`** the interview runs, the planner runs once with the
+  answers, the plan prints and nothing executes. The answers are kept beside
+  the saved spec as `~/.oh-my-graph/plans/<id>/interview.md`; `run` on that
+  `graph.json` does not need them, because the plan already absorbed them.
+- **With `--conventions`** both work: the conventions reach planned nodes and
+  the interview reaches the planner, and neither reaches the other's call.
+
+<a id="ending-in-a-file-design"></a>
+
+**Ending in a file (`design`).** When you would rather review the graph than
+have `auto` run it, `design` does the same interview and one planner call, and
+ends in a YAML file:
+
+```sh
+oh-my-graph design "add a --json flag to runs list" --out graphs/runs-json.yaml
+```
+
+It writes the planned graph to `--out` as block-style YAML (owner-only), runs
+the same check `oh-my-graph lint` runs on that file, and prints the cost of the
+interview and the planner separately and in total. **It never runs the
+graph**: no node spawns and no run directory is created. Review the file, edit
+it if you like, and run it with `oh-my-graph run <file>` — as a hand-written
+graph, under your own settings, not `auto`'s planned-node tool ceiling. If the
+file does not lint it is kept, named in the error, and `design` exits non-zero
+so you can read what the planner wrote. Before anything is spent, `design`
+refuses an `--out` that already exists (it never overwrites a file, even one
+that appears while it is planning), an `--out` whose directory does not exist,
+and `--conventions`, because it runs no node that could carry them. It needs a
+terminal on stdin on the same terms as `--interview`; there is no off mode,
+because the interview is the command.
 
 **Agent mapping.** If you have your own Claude Code agents (`~/.claude/agents` —
 **your own directory only**, never the repository's `./.claude/agents`), `auto`

@@ -10,7 +10,9 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/conventions"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // commonRunFlags are the execution options `run` and `auto` share. One
@@ -63,6 +65,17 @@ type commonRunFlags struct {
 	// the launch concluded from autoFlags.conventionPaths. nil for `run`,
 	// `chat` and every auto run without the flag.
 	conventions *conventions.Set
+	// interview is the ended `auto --interview` interview (ADR 0044), run once
+	// per goal before cycle 1. Not a flag: what the launch's interview
+	// produced. executePlan stages its rendered prefix into each cycle's run
+	// directory and records it beside the conventions; the prefix itself
+	// reaches the planner through the coordinator, never through these flags.
+	// nil for `run`, `chat` and every auto run without the flag.
+	interview *interview.Result
+	// interviewRecord is that interview's state.json block for THIS run,
+	// filled by executePlan once the prefix is staged into the run directory.
+	// nil whenever interview is.
+	interviewRecord *runstate.Interview
 }
 
 func (c *commonRunFlags) register(set *flag.FlagSet) {
@@ -149,6 +162,11 @@ type autoFlags struct {
 	// setting, grant, hook or MCP server comes with the text — which is the
 	// whole difference from the flag above.
 	conventionPaths conventionsFlag
+	// interview is ADR 0044's `--interview`, off by default: before cycle 1
+	// the operator is asked at most five questions on the terminal, and the
+	// answers reach the PLANNER's prompt as fenced text. Like the flag above it
+	// widens nothing, and unlike it the text never reaches a node.
+	interview bool
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -196,6 +214,7 @@ func newAutoFlags() *autoFlags {
 	f.set.DurationVar(&f.verifyTimeout, "verify-timeout", 0, "bound on ONE --verify-cmd execution (0 = 10m, which is also the ceiling every verification has). Not the 2-minute default a hand-written verification gets: a cold Gradle, Cargo or Maven build is exactly what that default was not sized for")
 	f.set.BoolVar(&f.acceptLoadedUserConfig, "accept-loaded-user-config", false, "state that this run's planned nodes load YOUR CLI configuration, and run anyway (ADR 0032): user/project/local settings on Claude, ~/.codex/config.toml plus repository rules and AGENTS.md on Codex, and with them your CLAUDE.md, your hooks and your MCP servers. This is not only a capability — your standing permission grants load too, so on Claude a node's declared scope like Bash(git *) stops being enforced and is a declaration again; each node's --tools set and deny list still bind, and enterprise/managed policy is unaffected and cannot be widened by this flag. Agent mapping and skill activation are turned OFF for the run, because a staged definition is shadowed by a same-named one your restored settings discover. The choice is printed with the plan and readable in this run's state.json")
 	f.set.Var(&f.conventionPaths, "conventions", "prefix this file's TEXT to every planned node's prompt, as your conventions (ADR 0041; repeatable, in order — name each file a CLAUDE.md @-import would have reached, since imports are not followed). Text only: no settings, grants, hooks or MCP servers come with it, so the tool ceiling, agent mapping and skill activation are unchanged. Every file is read and validated before the planner call — missing, blank, import-only, duplicate, non-UTF-8, or a rendered prefix over 96 KiB refuses the launch; nothing is truncated. A full-size prefix leaves a node's own prompt about 32 KiB of Linux's 128 KiB limit on one argv string, so a larger prompt (e.g. a big `| inline` artifact) fails to spawn there with E2BIG mid-run rather than at launch. Staged into the run directory (owner-only) and checked by `resume`; NOT carried into a `--plan-only` graph run with `run`. Like any prompt text, it is in each node's argv while the node runs, so other local users can read it from the process table (SECURITY.md)")
+	f.set.BoolVar(&f.interview, "interview", false, "before planning, ask you at most 5 questions on this terminal about what the goal leaves out, and give your answers to the PLANNER as fenced text (ADR 0044). Off by default; needs a terminal on stdin and refuses without one, before any model call. Each question is one paid read-only call, counted in cycle 1's planning cost and the goal's spend. Type /skip to skip a question or /done to stop; an answer over 2000 bytes is refused, never cut. Asked once per goal, not per cycle. The answers reach no planned node, and change no setting, grant or tool. Staged into each run directory (owner-only, hash in state.json, checked by `resume`); with --plan-only, kept beside the saved spec")
 	f.set.BoolVar(&f.acceptNoBuildEvidence, "accept-no-build-evidence", false, "state that this run carries no build evidence, and run anyway (ADR 0030). Without it, `auto` REFUSES to start in a directory where a build system is detected and no --verify-cmd was given — a planned node cannot carry a build command, so such a run's every judgement is the model's about its own work. This is not a verification switch: nothing is being skipped, because nothing was going to run. The choice is written to the run's state.json and printed with the plan, so a reader of that run later learns the absence was chosen. Accepted and inert where no build signal is detected")
 	return f
 }

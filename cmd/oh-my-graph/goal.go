@@ -11,6 +11,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -89,6 +90,13 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 
 	execute := func(ctx context.Context, cycle int, plan coordinator.Plan) (coordinator.CycleEvidence, error) {
 		runID := cycleRunID
+		// The interview was asked once, before cycle 1, so cycle 1's plan
+		// alone carries its spend: its run total, and therefore the goal's
+		// spend the budget ceiling is checked against, includes it exactly
+		// once (ADR 0044 §2.4).
+		if cycle == 1 {
+			plan = withInterviewCost(plan, flags.interview)
+		}
 		leg.setPlanningAccounting(plan.CostUSD, plan.CostUnknown, plan.Usage)
 		specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
 		if err != nil {
@@ -159,7 +167,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	// multiplier must be printed, not derivable (ADR 0011 §4). The error is
 	// passed so the cycle that ended the loop mid-flight appears in the
 	// multiplier too, instead of silently vanishing from the accounting.
-	printGoalSummary(out, goal, result, err)
+	printGoalSummary(out, goal, result, err, flags.interview)
 	if err != nil {
 		// A cycle whose planning was refused paid for it like any other, so
 		// its spec is persisted here too — the loop's plan step is the same
@@ -355,7 +363,12 @@ func saveAssessment(runDir string, a coordinator.Assessment) error {
 // for a refused plan (up to two planner calls, since a refusal buys one
 // correction). Silent only when there is no spend story at all: no cycle
 // completed and no error (a declined cycle-1 plan).
-func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, loopErr error) {
+//
+// iv is the launch's `--interview`, nil for none. Its spend is printed on a
+// line of its own, so the multiplier names it (ADR 0044 §2.4). It sits inside
+// cycle 1's run total once cycle 1 completed (withInterviewCost); before
+// that, no row carries it, so it is added to the total here instead.
+func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, loopErr error, iv *interview.Result) {
 	if len(result.Cycles) == 0 && loopErr == nil {
 		return
 	}
@@ -363,6 +376,18 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	total := 0.0
 	anyUnknown := false
 	var usage runner.TokenUsage
+	if iv != nil {
+		cost, unknown, ivUsage := interviewAccounting(iv)
+		where := "included in cycle 1's run below"
+		if len(result.Cycles) == 0 {
+			where = "counted here: no cycle completed to carry it"
+			total += cost
+			anyUnknown = anyUnknown || unknown
+			usage = addTokenUsage(usage, ivUsage)
+		}
+		fmt.Fprintf(w, "  interview (before cycle 1): %d asked, %d answered, ended %s, cost %s — %s\n",
+			iv.Asked, iv.Answered, iv.Ending, formatCost(cost, unknown), where)
+	}
 	for _, c := range result.Cycles {
 		total += c.RunCostUSD + c.Assessment.CostUSD
 		anyUnknown = anyUnknown || c.RunCostUnknown || c.Assessment.CostUnknown

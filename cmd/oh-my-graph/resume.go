@@ -416,6 +416,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	if err != nil {
 		return fmt.Errorf("resume run %q: %w", runID, err)
 	}
+	// The first leg's interview, held to its hash the same way and at the same
+	// point (ADR 0044 §2.2). A resumed leg never plans, so it asks nothing and
+	// prefixes nothing; what it owes is a record whose staged text still
+	// matches, and a missing or altered copy refuses before anything spawns.
+	if err := resumedInterview(runDir, snap.Interview); err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
 	runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, g)
 	// A resumed leg re-surfaces these for the same reason it re-warns about
 	// bypassPermissions below: the terminal that saw the first leg's copy may
@@ -639,7 +646,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// Carried for the same reason: dropping it would erase the hash the
 		// next leg checks and silently re-stamp the snapshot schema 3.
 		Conventions: snap.Conventions,
-		Nodes:       records,
+		// And the interview record, unchanged: omitted, the first settling
+		// node would erase the hash and the counts ADR 0044 §2.5 reads.
+		Interview: snap.Interview,
+		Nodes:     records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},

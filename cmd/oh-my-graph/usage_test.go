@@ -52,6 +52,7 @@ func flagSetsBySubcommand() map[string]*flag.FlagSet {
 	return map[string]*flag.FlagSet{
 		"run":    newRunFlags().set,
 		"auto":   newAutoFlags().set,
+		"design": newDesignFlags().set,
 		"resume": newResumeFlags().set,
 		// `runs` is a subcommand GROUP, and the FlagSet belongs to its one
 		// member, `list` — which is also why the group's help hands out this
@@ -274,6 +275,7 @@ func TestMainExitCode_HelpAnswersEverySubcommandsSynopsisAndExitsZero(t *testing
 		{subcommand: "run", helpArg: "--help"},
 		{subcommand: "auto", helpArg: "--help"},
 		{subcommand: "lint", helpArg: "-h"},
+		{subcommand: "design", helpArg: "--help"},
 		{subcommand: "resume", helpArg: "-h"},
 		{subcommand: "runs", helpArg: "--help"},
 		{subcommand: "show", helpArg: "--help"},

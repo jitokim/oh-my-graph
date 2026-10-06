@@ -300,6 +300,7 @@ type Coordinator struct {
 	// WIDENS, and false — the ceiling — is the default it has to be asked out
 	// of. What it changes is toolPolicyFor's layers 1 and 4, and nothing else.
 	loadedUserConfig bool
+	interviewPrefix  string // ADR 0044 §2.2 — see WithInterviewPrefix (interviewer.go)
 }
 
 // Option configures a Coordinator at construction.
@@ -504,11 +505,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		return Plan{}, err
 	}
 
-	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
+	base, err := c.plannerBase(goal, inputKeys, remaining)
 	if err != nil {
 		return Plan{}, err
 	}
-
 	prompt := base
 	spent := callAccounting{}
 	var repaired *PlanRepair
