@@ -52,6 +52,9 @@ func TestPlan_RefusesArtifactTokenNamingNoNode(t *testing.T) {
 			t.Errorf("refusal %q does not carry %q", planErr.Reason, want)
 		}
 	}
+	if strings.Contains(planErr.Reason, "\nnote: every {{ ... }}") {
+		t.Errorf("refusal includes the lint-only quoting hint:\n%s", planErr.Reason)
+	}
 }
 
 // TestPlan_ArtifactTokenNamingAnAncestorIsAccepted is the negative control that

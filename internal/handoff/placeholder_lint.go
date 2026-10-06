@@ -101,10 +101,23 @@ var placeholderKinds = map[string]bool{
 // those to a plan refusal; see ImpossibleArtifactFindings, which is this sweep
 // restricted to them. This function's own contract is unchanged by that: it
 // reports all of them, as advice, for every caller.
+//
+// Two findings — an undeclared input, an artifact of a node the graph does
+// not have — get quotingHint appended to their detail: the commonest way to
+// write either is a prompt that only quotes the syntax. That is lint's own
+// choice, not a mirror of the runtime's: the runtime also appends the hint
+// when a self token names the wrong reference, and lint's self-namespace
+// finding deliberately gets none. The hint is added HERE and not in judgeToken,
+// because the detail is shared — ImpossibleArtifactFindings hands it to the
+// coordinator's plan refusal, which explains quoting in its own words.
 func LintPlaceholders(g *graph.Graph) []Warning {
 	var warnings []Warning
 	for _, finding := range placeholderFindings(g) {
-		warnings = append(warnings, finding.warning)
+		warning := finding.warning
+		if finding.quotingHint {
+			warning.Detail += quotingHint
+		}
+		warnings = append(warnings, warning)
 	}
 	return warnings
 }
@@ -141,12 +154,15 @@ func ImpossibleArtifactFindings(g *graph.Graph) []Warning {
 	return findings
 }
 
-// placeholderFinding is one judged token plus the one bit its two callers
-// disagree about: whether the token can never resolve (see
-// ImpossibleArtifactFindings) or merely ships verbatim.
+// placeholderFinding is one judged token plus the two bits its callers act
+// on: whether the token can never resolve (see ImpossibleArtifactFindings) or
+// merely ships verbatim, and whether LintPlaceholders appends quotingHint to
+// it. The bits are independent — an undeclared input earns the hint but is
+// not impossible; a non-ancestor artifact is impossible but earns no hint.
 type placeholderFinding struct {
-	warning    Warning
-	impossible bool
+	warning     Warning
+	impossible  bool
+	quotingHint bool
 }
 
 // placeholderFindings is the single walk over every interpolated field, shared
@@ -175,13 +191,14 @@ func placeholderFindings(g *graph.Graph) []placeholderFinding {
 		}
 		for _, field := range fields {
 			for _, token := range looseTokenPattern.FindAllString(field.tmpl, -1) {
-				detail, impossible := judgeToken(g, node.ID, declared, ancestors, token)
+				detail, impossible, hint := judgeToken(g, node.ID, declared, ancestors, token)
 				if detail == "" {
 					continue
 				}
 				findings = append(findings, placeholderFinding{
-					warning:    Warning{NodeID: node.ID, Field: field.name, Detail: detail},
-					impossible: impossible,
+					warning:     Warning{NodeID: node.ID, Field: field.name, Detail: detail},
+					impossible:  impossible,
+					quotingHint: hint,
 				})
 			}
 		}
@@ -198,11 +215,18 @@ func placeholderFindings(g *graph.Graph) []placeholderFinding {
 // rather than pass through — the three artifact shapes below, and only those.
 // It carries no wording of its own: what is wrong with the token is still said
 // once, in the detail, so the advisory and the refusal quote the same sentence.
-func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bool, token string) (string, bool) {
+//
+// The third return marks the two findings `oh-my-graph lint` gives the
+// quoting hint — an undeclared input, an artifact of a node the graph does
+// not have — the ones a merely QUOTED token most often produces. The
+// self-namespace finding gets no hint in lint, even though the runtime's
+// self-reference refusal carries one. It too carries no wording:
+// LintPlaceholders appends the hint, so the shared detail stays free of it.
+func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bool, token string) (string, bool, bool) {
 	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{{"), "}}"))
 	leading := leadingWordPattern.FindString(body)
 	if !placeholderKinds[strings.ToLower(leading)] {
-		return "", false // deliberate literal text — none of the runtime's business, none of lint's
+		return "", false, false // deliberate literal text — none of the runtime's business, none of lint's
 	}
 
 	// The `with` kind gets its own message, not the generic malformed-token
@@ -211,7 +235,7 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	// lint has already been resolved, so any surviving with-token sits in a
 	// plain node, where the runtime will pass it through verbatim (ADR 0013).
 	if strings.EqualFold(leading, "with") {
-		return fmt.Sprintf("%s is a fragment substitution token, resolved at load time — outside a fragment it ships verbatim into a paid prompt", token), false
+		return fmt.Sprintf("%s is a fragment substitution token, resolved at load time — outside a fragment it ships verbatim into a paid prompt", token), false, false
 	}
 
 	// The strict-parse judgment MUST come from placeholderPattern itself — the
@@ -219,9 +243,9 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 	loc := placeholderPattern.FindStringIndex(token)
 	if loc == nil || loc[0] != 0 || loc[1] != len(token) {
 		if leading != strings.ToLower(leading) {
-			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token), false
+			return fmt.Sprintf("%s looks like a placeholder but the runtime resolves lowercase kinds only — did you mean lowercase? As written it will reach the prompt verbatim", token), false, false
 		}
-		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline), {{ feedback.<id> }} or {{ self.previous }} — it will reach the prompt verbatim", token), false
+		return fmt.Sprintf("%s looks like a placeholder but does not match {{ inputs.<name> }}, {{ artifacts.<id> }} (optional filter: | inline), {{ feedback.<id> }} or {{ self.previous }} — it will reach the prompt verbatim", token), false, false
 	}
 
 	groups := placeholderPattern.FindStringSubmatch(token)
@@ -233,17 +257,17 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		// a finding.
 		switch selfTokenRefused(ref, filter) {
 		case selfRefusedReference:
-			return fmt.Sprintf("%s names %q, but the self namespace has one reference, {{ self.previous }} — the node fails at interpolation", token, ref), false
+			return fmt.Sprintf("%s names %q, but the self namespace has one reference, {{ self.previous }} — the node fails at interpolation", token, ref), false, false
 		case selfRefusedFilter:
-			return fmt.Sprintf("%s takes no filter — {{ self.previous }} always inlines — so the node fails at interpolation", token), false
+			return fmt.Sprintf("%s takes no filter — {{ self.previous }} always inlines — so the node fails at interpolation", token), false, false
 		}
-		return "", false
+		return "", false, false
 	}
 	if kind == "inputs" {
 		if !declared[ref] {
-			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token), false
+			return fmt.Sprintf("%s references an input the graph does not declare in its inputs list", token), false, true
 		}
-		return "", false
+		return "", false, false
 	}
 	if kind == "feedback" {
 		// The feedback namespace is judged at LOAD, not here: an out-of-body
@@ -251,20 +275,20 @@ func judgeToken(g *graph.Graph, nodeID string, declared, ancestors map[string]bo
 		// graph this lint is handed the token is already known-legal —
 		// re-reporting it would be noise, and warning about a legal one
 		// would contradict the validator.
-		return "", false
+		return "", false, false
 	}
 
 	// kind == "artifacts"
 	if ref == nodeID {
-		return fmt.Sprintf("%s references the node's own artifact, which cannot exist while the node runs", token), true
+		return fmt.Sprintf("%s references the node's own artifact, which cannot exist while the node runs", token), true, false
 	}
 	if _, ok := g.NodeByID(ref); !ok {
-		return fmt.Sprintf("%s references %q, which is not a node in the graph", token, ref), true
+		return fmt.Sprintf("%s references %q, which is not a node in the graph", token, ref), true, true
 	}
 	if !ancestors[ref] {
-		return fmt.Sprintf("%s references node %q, which is not an ancestor of this node — its artifact may not exist when this node runs", token, ref), true
+		return fmt.Sprintf("%s references node %q, which is not an ancestor of this node — its artifact may not exist when this node runs", token, ref), true, false
 	}
-	return "", false
+	return "", false, false
 }
 
 // ancestorsOf walks the depends_on edges up from id and returns every
