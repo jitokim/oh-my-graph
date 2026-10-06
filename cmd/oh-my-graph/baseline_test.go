@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -463,5 +464,80 @@ func TestMainExitCode_RedBaselineUnderMaxCyclesExitsFive(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(home); err == nil && len(entries) != 0 {
 		t.Errorf("a red baseline left artifacts under OMG_HOME: %v", entries)
+	}
+}
+
+// interruptingVerifier stands in for a --verify-cmd that the operator
+// interrupts: it sends this process SIGINT — which runAutoWithRuntime's
+// signal.NotifyContext catches, exactly as a Ctrl-C at the terminal — waits
+// for the run context to be cancelled, and only then answers with its
+// scripted error or result.
+type interruptingVerifier struct {
+	err    error
+	result verify.Result
+	calls  int
+}
+
+func (v *interruptingVerifier) Verify(ctx context.Context, _ verify.Request) (verify.Result, error) {
+	v.calls++
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		return verify.Result{}, err
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(10 * time.Second):
+		return verify.Result{}, errors.New("interruptingVerifier: SIGINT never cancelled the run context")
+	}
+	return v.result, v.err
+}
+
+// #315: an interrupted baseline is not a red baseline. Ctrl-C while the
+// --verify-cmd runs must not tell a script to fix its tree: no
+// *BaselineRedError, no "baseline red", no exit 5 — the generic exit 1 an
+// interrupted interview or planner call takes, with context.Canceled still
+// reachable, and no planner call. That holds whether the killed command comes
+// back as an error or as a non-zero exit.
+func TestRunAuto_InterruptedBaselineIsNotRed(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		verifier *interruptingVerifier
+	}{
+		{"verifier error", &interruptingVerifier{err: context.Canceled}},
+		{"non-zero result", &interruptingVerifier{result: verify.Result{ExitCode: 130, Output: "signal: interrupt\n"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: cycleSpec}})
+
+			var stdout string
+			stderr, err := captureStderr(t, func() error {
+				var runErr error
+				stdout, runErr = runBaselineAuto(t, fake, tc.verifier, osStdin(), "fix it", "--verify-cmd", baselineCmd)
+				return runErr
+			})
+
+			var red *BaselineRedError
+			if errors.As(err, &red) {
+				t.Fatalf("err = %v, an interrupted baseline came back as *BaselineRedError", err)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want it to wrap context.Canceled", err)
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d (err %v), want 1", code, err)
+			}
+			for _, text := range []string{err.Error(), stdout, stderr} {
+				if strings.Contains(text, "baseline red") {
+					t.Errorf("an interrupted baseline printed %q:\n%s", "baseline red", text)
+				}
+			}
+			if tc.verifier.calls != 1 {
+				t.Errorf("baseline ran %d times, want once", tc.verifier.calls)
+			}
+			if n := len(plannerCalls(fake)); n != 0 {
+				t.Errorf("planner calls = %d, want 0 after an interrupted baseline", n)
+			}
+			assertNothingSpent(t, home, fake)
+		})
 	}
 }

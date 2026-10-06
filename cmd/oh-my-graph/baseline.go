@@ -33,14 +33,23 @@ const (
 // runBaseline runs the --verify-cmd once on the starting tree ("." — the same
 // tree the planned nodes and the sinks run in) and returns a *BaselineRedError
 // when it is red: a non-zero exit, or no result at all (could not run, timed
-// out, cancelled). A timeout keeps what the command printed before it was
-// killed, so the refusal can quote it. Green prints one line and returns nil.
-// A zero command is no baseline at all: nothing runs and nothing prints.
+// out). A timeout keeps what the command printed before it was killed, so the
+// refusal can quote it. Green prints one line and returns nil. A zero command
+// is no baseline at all: nothing runs and nothing prints.
+//
+// An interrupt (Ctrl-C, SIGTERM) during the baseline is not a red baseline:
+// it returns a plain error wrapping ctx.Err(), which leaves `auto` on the
+// generic path (exit 1) like an interrupted interview or planner call. It is
+// checked before the verifier's verdict, because a killed command can also
+// come back as a non-zero exit.
 func runBaseline(ctx context.Context, out io.Writer, verifier verify.Verifier, v coordinator.VerifyCommand, goal string) error {
 	if !v.Supplied() {
 		return nil
 	}
 	result, err := verifier.Verify(ctx, verify.Request{Command: v.Command, Cwd: ".", Timeout: v.ResolvedTimeout()})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("auto: interrupted during the --verify-cmd baseline '%s': %w", v.Command, ctxErr)
+	}
 	if err != nil {
 		red := &BaselineRedError{Goal: goal, Command: v.Command, RunErr: err}
 		var timedOut *verify.TimeoutError
@@ -68,8 +77,9 @@ type BaselineRedError struct {
 	Command string
 	// ExitCode is the command's exit status. Meaningful only when RunErr is nil.
 	ExitCode int
-	// RunErr is why the command produced no result — it could not be spawned,
-	// timed out, or was cancelled. Nil when the command ran and exited non-zero.
+	// RunErr is why the command produced no result — it could not be spawned or
+	// timed out. Nil when the command ran and exited non-zero. Never an
+	// interrupt: runBaseline returns that as a plain error, not a red baseline.
 	RunErr error
 	// Output is the command's full combined output — or, when RunErr is a
 	// *verify.TimeoutError, the bounded tail it printed before it was killed.
