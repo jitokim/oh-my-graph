@@ -17,6 +17,12 @@ ask which one they want. Never pass `--accept-no-build-evidence` yourself** —
 that flag states that a *human* accepts this run carries no build evidence, and
 it is recorded in the run's `state.json` under exactly that name.
 
+With `--verify-cmd 'CMD'`, `auto` runs CMD once on the starting tree before
+anything is spent; if it is already red there, `auto` stops (exit 5, "baseline
+red") with the command's exit code and the tail of its output, and no run
+directory. Show the user that output — do not retry until the tree or the
+command is fixed.
+
 Nodes run on the user's saved Claude login. oh-my-graph's other runtime is
 selected by a global `--runtime codex` placed BEFORE the subcommand, which this
 command's grants do not cover — if the user asks for a Codex run, say that it

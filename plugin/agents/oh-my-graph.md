@@ -56,6 +56,11 @@ Five of those are worth knowing precisely:
 - `auto` **refuses to start** (exit 3, before any spend) in a directory where it
   detects a build system and no `--verify-cmd` was given. See the rule below —
   this is the one refusal you must never resolve on your own initiative.
+- `auto --verify-cmd 'CMD'` runs CMD once on the starting tree before any
+  spend. If it is already red there, `auto` stops (exit 5, "baseline red") with
+  the command's exit code and the tail of its output — no model call, no run
+  directory. Show the user that output; the tree (or the command) needs fixing
+  before a run can pass.
 - `resume --retry-failed` re-executes a failed run's failed and cancelled
   nodes (or finishes a session-limit-paused run's unfinished ones), keeping
   every passed node's result. It is the non-gate way to continue a run.
@@ -66,7 +71,8 @@ Five of those are worth knowing precisely:
 
 Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
 a human gate and is **resumable** — a pause is not a failure — and `3` `auto`
-refused to start for want of build evidence. On exit 2,
+refused to start for want of build evidence, `5` `auto`'s `--verify-cmd` was
+already red on the starting tree (baseline red — nothing ran). On exit 2,
 surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below.

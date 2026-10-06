@@ -95,6 +95,11 @@ run's `state.json`. Claude is instructed to hand that refusal to **you** and ask
 which exit rather than picking the opt-out itself: the flag says a human accepts
 the absence, and only you are one.
 
+With `--verify-cmd`, `auto` first runs the command once on the directory as it
+is; if it already fails there, `auto` stops before any spend (exit 5, "baseline
+red") and quotes the tail of its output, so you fix the tree before paying for
+a cycle.
+
 ## Prerequisite: `oh-my-graph` on `$PATH`
 
 The plugin does not bundle the graph engine. Install it once:
