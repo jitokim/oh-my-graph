@@ -544,6 +544,13 @@ type Snapshot struct {
 	// and absent, with the snapshot stamped Schema — on every run without the
 	// flag. Present, it stamps SchemaWithConventions. See Conventions.
 	Conventions *Conventions `json:"conventions,omitempty"`
+	// Interview records an `auto --interview` launch's interview (ADR 0044
+	// §2.2): the hash of the staged interview.md, the counts, why it ended and
+	// what it cost — never the answer text, which lives in the staged file
+	// alone. nil — and absent — on every run without the flag, so such a
+	// snapshot is byte for byte what it was before. See Interview for why it
+	// does not move the schema stamp.
+	Interview *Interview `json:"interview,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
@@ -562,6 +569,40 @@ type Snapshot struct {
 type Conventions struct {
 	StagedSHA256 string              `json:"staged_sha256"`
 	Sources      []ConventionsSource `json:"sources"`
+}
+
+// Interview is what an `auto --interview` launch asked before planning (ADR
+// 0044 §2.2). StagedSHA256 is the hash of the run directory's interview.md —
+// the exact prefix the planner received, empty for an interview with no
+// answers — which `resume` re-checks against the staged copy. Asked, Answered
+// and Skipped are the interview's counts and Ending its reason ("enough",
+// "cap", "operator", "repeat", "malformed" or "eof", the values of
+// interview.Ending, restated as a plain string so the format stays this
+// package's own). The cost is every interviewer call's, summed.
+//
+// It deliberately holds no question and no answer. The recorder rewrites the
+// whole snapshot on every node settle and a feed consumer reads it, while an
+// answer is whatever the operator typed or pasted; the staged file is
+// owner-only and the hash is enough to hold it to account. Every field is
+// written even at zero: an interview stopped at the first prompt is recorded
+// as asked with zero answers, which is the datum ADR 0044 §2.5 counts.
+//
+// It is additive and does not move the stamp, by the rule
+// SchemaWithConventions states: a record moves the stamp when an older reader
+// that ignored it would run the rest of the run differently. Conventions
+// reach every remaining node, so an older binary would tell them nothing;
+// the interview reached only the planner, and `resume` never plans, so an
+// older binary resumes an interviewed run exactly as this one does. What it
+// loses is this record, as it loses any key it does not know.
+type Interview struct {
+	StagedSHA256 string     `json:"staged_sha256"`
+	Asked        int        `json:"asked"`
+	Answered     int        `json:"answered"`
+	Skipped      int        `json:"skipped"`
+	Ending       string     `json:"ending"`
+	CostUSD      float64    `json:"cost_usd"`
+	CostUnknown  bool       `json:"cost_unknown,omitempty"`
+	Usage        TokenUsage `json:"usage,omitzero"`
 }
 
 // ConventionsSource is one named file: its absolute path, size, SHA-256, and
