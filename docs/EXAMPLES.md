@@ -308,7 +308,8 @@ that times out is red the same way: its first line reads `timed out after 10m0s`
 printed before it was killed is quoted under the same bound. An interrupt
 (Ctrl-C, SIGTERM) during the baseline is not a red baseline: `auto` exits 1 as
 any interrupted `auto` does, with no "baseline red" and no goal summary. Every `auto`
-with `--verify-cmd` gets this check, `--max-cycles 1` and `--plan-only` included
+with `--verify-cmd` gets this check by default, unless `--no-baseline` is supplied
+(below), `--max-cycles 1` and `--plan-only` included
 — a preview refuses exactly as the run it previews; without `--verify-cmd`
 nothing changes, and `resume` and `design` do not run it. The baseline checks the
 invocation directory as it is, uncommitted and untracked files included — the

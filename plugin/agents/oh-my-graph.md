@@ -73,7 +73,9 @@ was already red on the starting tree (baseline red — no model call, no run
 directory). On exit 2, surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below. On exit 5, show the user the quoted output; do
-not retry until the tree, the command, or its `--verify-timeout` is fixed.
+not retry until the tree, the command, or its `--verify-timeout` is fixed —
+unless the command is an intentionally red acceptance test of the goal, in which
+case retry with `--no-baseline`.
 A FAIL detailed `result did not match` may be a verdict-pattern miss rather than
 broken work — unlike `verify_failed`, read the node's reply before acting (#264).
 
