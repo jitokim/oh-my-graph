@@ -2497,7 +2497,13 @@ same tree cycle 1's sink verify runs in, since a planned node can set neither
 construction. `auto` prints `Baseline: skipped (--no-baseline); --verify-cmd 'CMD'
 is still the command at every sink.` and the sinks carry the command exactly as before. It
 requires `--verify-cmd` (refused at parse otherwise, so a stray flag cannot sit
-in a script doing nothing), and the baseline-red refusal names it.
+in a script doing nothing), and the baseline-red refusal names it. The skip is
+recorded too (#328): every cycle's `state.json` carries a `baseline` block
+(`skipped: true`, `declared_by: "--no-baseline"`), which `resume` carries forward
+unchanged, and the plan screen prints `baseline: skipped (--no-baseline) — the
+starting tree was not checked against --verify-cmd`, the only record a
+`--plan-only` preview keeps. A run without the flag writes no key and prints no
+line; the schema stays 3.
 
 Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (CLIRunner:

@@ -169,7 +169,8 @@ ids the operator pre-approved at launch, in argv order; the approvals
 themselves sit in `gate.decisions` like any other, and the `gate_approved`
 event's `ts` says when), `tool_policies` (auto runs only — see below), `goal` (iterated auto
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
-— see below), `conventions` (`auto --conventions` launches only — see below),
+— see below), `baseline` (`auto --no-baseline` launches only — see below),
+`conventions` (`auto --conventions` launches only — see below),
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -219,6 +220,18 @@ is executable. Read `declared` and `disclosed` separately and never summed: one
 keystroke covering two questions is weaker evidence of choice than a flag typed
 at one. No event carries any of this; the stream is unchanged and there is no
 feed schema bump.
+
+`baseline` records that an `auto --no-baseline` launch skipped the
+starting-tree baseline of `--verify-cmd` (#325,
+[#328](https://github.com/jitokim/oh-my-graph/issues/328)). It is present only
+when the baseline was skipped, and absent on every other run — one that took the
+baseline, one with no `--verify-cmd`, a `run` of a hand-written graph, and every
+run that predates the field — so such a snapshot is byte for byte what it was
+before. Every goal-loop cycle's `state.json` carries it, and `resume` carries it
+forward unchanged (it runs no baseline and has no `--no-baseline`). It is an
+**additive optional block and the schema stays 3**. Two keys: `skipped`, always
+`true`, and `declared_by`, the exact spelling of what was typed:
+`"--no-baseline"`. No event carries it; the feed schema is unchanged.
 
 `conventions` records the operator's `auto --conventions` files (ADR 0041):
 `staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the
