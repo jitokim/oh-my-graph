@@ -2472,7 +2472,7 @@ same tree cycle 1's sink verify runs in, since a planned node can set neither
 `--no-baseline` (#325) skips this one run and nothing else: it is for a
 `--verify-cmd` that is an acceptance test of the goal, red on the starting tree by
 construction. `auto` prints `Baseline: skipped (--no-baseline); --verify-cmd 'CMD'
-still runs at every sink.` and the sinks carry the command exactly as before. It
+is still the command at every sink.` and the sinks carry the command exactly as before. It
 requires `--verify-cmd` (refused at parse otherwise, so a stray flag cannot sit
 in a script doing nothing), and the baseline-red refusal names it.
 

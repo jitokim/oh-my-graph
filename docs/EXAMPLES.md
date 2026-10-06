@@ -318,7 +318,7 @@ same tree cycle 1's sink verify runs in, since a planned node can set neither
 When `--verify-cmd` is an **acceptance test of the goal**, a script that checks
 the change exists and so fails before it does, pass `--no-baseline`. The
 baseline is then skipped with one line, `Baseline: skipped (--no-baseline);
---verify-cmd 'CMD' still runs at every sink.`, and every sink still runs the
+--verify-cmd 'CMD' is still the command at every sink.`, and every sink still runs the
 command and judges its exit code. Nothing else changes. `--no-baseline` without
 `--verify-cmd` is refused.
 

@@ -560,7 +560,7 @@ func TestRunAuto_NoBaselineSkipsTheBaselineAndKeepsTheSinkCommand(t *testing.T) 
 	if calls := verifier.Calls(); len(calls) != 0 {
 		t.Errorf("--no-baseline still ran the baseline: %+v", calls)
 	}
-	want := "Baseline: skipped (--no-baseline); --verify-cmd '" + baselineCmd + "' still runs at every sink.\n"
+	want := "Baseline: skipped (--no-baseline); --verify-cmd '" + baselineCmd + "' is still the command at every sink.\n"
 	if strings.Count(out, want) != 1 {
 		t.Errorf("want the skip line exactly once, got:\n%s", out)
 	}
