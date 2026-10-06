@@ -65,6 +65,11 @@ oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD -
 # command at each sink of the plan and judges its exit code itself:
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
+# Let the planner hear what the goal left out: up to five questions on your
+# terminal first (off by default). Or end in a graph file you review and `run`:
+oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...' --interview
+oh-my-graph design "fix the failing test" --out fix-test.yaml
+
 # Codex is a run-wide opt-in; the global flag must precede the subcommand:
 oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 
@@ -239,6 +244,23 @@ Linux with `E2BIG` mid-run, not at launch. Like the rest of a prompt, the text i
 the process table while a node runs (SECURITY.md). The plan screen prints each path and hash;
 `--plan-only` says the conventions are not in the saved graph, because
 `run <graph.json>` does not carry them.
+
+What the goal left out can reach the **planner** as text, when you ask to be
+asked: `auto --interview` (off by default) puts at most five questions to you
+on the terminal before the first planner call — each one a read-only
+interviewer call with no tools, counted in cycle 1's planning cost and the
+goal's spend — and refuses before any model call when stdin is not a terminal.
+`/skip` skips a question and `/done` stops. Your answers are untrusted text, so
+they reach the planner inside a nonce fence labelled as data, reach no planned
+node, and change no setting, grant or tool. It is asked once per goal, not per
+cycle; each run directory stages the answers as `interview.md` with their hash
+in `state.json`, and `resume` refuses a run whose copy is missing or altered.
+It works with `--plan-only`, which keeps the answers beside the saved spec.
+`oh-my-graph design "<goal>" --out <file>` is the same interview ending in a
+file instead of a run: one planner call, the graph written as YAML, the
+`lint` check on it — and nothing runs. It refuses an existing `--out` and
+`--conventions`, and keeps a file that does not lint
+([ADR 0044](docs/adr/0044-an-interview-before-planning-is-opt-in-text-for-the-planner-and-never-a-gate.md)).
 
 One thing inside that ceiling changed recently and is worth knowing before you
 read the layers. A node that declares no `permission_mode` runs under

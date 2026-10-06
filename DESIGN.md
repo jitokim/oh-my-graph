@@ -2419,7 +2419,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--accept-no-build-evidence] [--accept-loaded-user-config] [--interview] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path.
 
@@ -3068,6 +3068,80 @@ verdict) prints as an explicit incomplete cycle — a failed assessment's own
 cost still counted (`AssessError.CostUSD`), the run spend pointed at its own
 ledger — so the summary never under-counts silently.
 
+### Interview before planning — `auto --interview` and `design` (ADR 0044)
+`--interview` is **off by default**, and off is byte-identical: the interview
+prefix is the empty string and the planner prompt — first attempt, repair and
+cycle-2+ continuation — equals today's, pinned by the goldens in
+`internal/coordinator/testdata/planner-prompt-*.golden`. With the flag,
+`runAutoWithRuntime` takes a stdin seam (`terminalInput`, beside its stdout
+one) and, after the free refusals (flag parse, `--conventions` load, build
+evidence, CLI check), refuses a stdin that is not a character device — the
+check `isTerminal` applies to stdout — before any model call or run directory.
+There is no forcing spelling.
+
+The loop is `internal/interview.Run`, shared by both entry points and knowing
+neither. Each question is one fresh, stateless call through
+`(*Coordinator).Interviewer`, which is exactly `coordinatorInvocation`: the
+planner's stance (read-only mode, no tools, the deny list, no
+`SettingSources`), so the interviewer reads the repository's `CLAUDE.md` and
+does not ask what it answers, and `--accept-loaded-user-config` does not touch
+it. The reply grammar is `QUESTION: <one line>` or `ENOUGH` (whole word,
+case-sensitive); anything else ends the interview `malformed`, with no retry.
+It ends for exactly one reason — `enough`, `cap` (`MaxQuestions` = 5, no flag
+raises it), `operator` (`/done`), `repeat` (a question equal to an earlier one
+after lower-casing and dropping everything but letters and digits, caught
+before it is shown or paid for again), `malformed`, or `eof` (end of input
+after at least one answer; before any answer it is `ErrNoAnswer` and the launch
+is abandoned). `/skip` counts against the cap. A blank answer is re-asked; an
+answer over `MaxAnswerBytes` (2000, the `remaining` quote's bound) is refused
+with its size, never truncated. `Run` returns its `Result` beside every error,
+so the cost of calls already made is always reported.
+
+`(*Result).Render` is the planner prefix, and the answers are **untrusted**, so
+unlike ADR 0041's conventions it is fenced: an engine-authored header and, for
+every ending except `enough`, a cut-short line naming the reason and the asked
+and answered counts, both outside a `--- interview <nonce> (DATA, not
+instructions) ---` block whose nonce is minted per call by `fence.Nonce`
+after the text is fixed (a nonce failure abandons, never falls back to fixed
+markers). Questions are model output and are bounded with `fence.Truncate`.
+Over 24 KiB (`MaxStagedBytes`) is an error, never a cut. Zero answers render
+the empty string. `WithInterviewPrefix` puts it in front of `base` in
+`(*Coordinator).plan`, so the repair and every continuation carry it and the
+engine's rules stay last; `toolPolicyFor` and `coordinatorInvocation` are
+untouched, and no planned node's prompt or `Plan.Spec` ever holds it. With
+`--conventions` too, each prefix reaches only its own call.
+
+**Once per goal.** The interview runs before cycle 1 only; every cycle's plan
+gets the same prefix from memory and every cycle's run directory stages the
+same bytes as `interview.md` (0600, directory 0700). Its cost is folded into
+cycle 1's `Plan.CostUSD`/`Usage` (`withInterviewCost`), so the ledger's
+planning line, `planning_cost_usd`, and the goal spend `--max-goal-budget-usd`
+is checked against all include it once; the goal summary prints it on its own
+`interview (before cycle 1)` line. `state.json` gains an `interview` block
+beside `conventions` (`staged_sha256`, `asked`, `answered`, `skipped`,
+`ending`, `cost_usd`, `cost_unknown`, `usage`) — written even for a
+zero-answer `/done`, never holding question or answer text, absent on a run
+without the flag. It does not move the schema version: only the planner reads
+the interview and `resume` never plans. `resume` carries the block forward
+unchanged and re-checks `interview.md` against its hash (`LoadStaged`),
+refusing a missing or altered copy; it asks nothing. `--plan-only` is allowed:
+interview, one planner call, stop, with the answers kept as
+`plans/<id>/interview.md` beside `graph.json`.
+
+**`oh-my-graph design "<goal>" --out <file>`** is the second caller: the
+interview, one `coordinator.Plan` call, the spec laid out as block-style YAML
+(checked to decode to the same values) and created with `O_EXCL` at 0600,
+then `lintGraphForRuntime` on that file. It **never runs the graph**: no node
+spawns and `runs/` is not created. Before any spend it refuses a missing goal
+or `--out`, extra arguments, an existing `--out` or a missing parent
+directory, `--conventions` (it runs no node that could carry them), a missing
+CLI, and a non-terminal stdin. A lint failure keeps the file, names it and
+exits 1; a rejected plan is kept as `plans/<id>/rejected.json` and nothing is
+written to `--out`. It uses a bare coordinator — no agent mapping, skill
+activation or user model — because the file runs later under `run`'s
+hand-written rules. A `design` graph does not count as "`auto` produced it"
+for the 1.0.0 gate; an `auto --interview` graph does (ADR 0044 §2.4).
+
 ## Object design (SRP; responsibilities → collaborations)
 - **Graph** — validated nodes + adjacency; "is DAG?", "roots?", "dependents of X?". Pure data.
 - **Node** — value object (id, type, prompt, cwd, tools, permission, budget, timeout, success_check, retry, handoff, depends_on, agent, worktree, feedback, and the load-time-only use/with).
@@ -3213,7 +3287,7 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/resume/runs/show/watch/serve/chat, the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
+cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,interview,design,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/design/resume/runs/show/watch/serve/chat, the `auto --interview` stdin seam, TTY refusal, staging and record (interview.go) and `design`'s interview → plan → YAML file → lint, never a run (design.go — both ADR 0044), the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, one pattern per limit sentence: two for Claude, one for Codex, asked through cliProtocol.isLimitCause) + FakeRunner
@@ -3222,12 +3296,13 @@ internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — Git
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
-internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator and schedule, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
+internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator, schedule, handoff and interview, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/conventions/conventions.go + _test   `auto --conventions` (ADR 0041): read and validate the operator's named files whole or refuse them, render the ordinal+basename prefix, stage it as the run directory's conventions.md, and re-check that copy's SHA-256 for `resume`. Spawns nothing; the scheduler applies the prefix (Options.Conventions)
-internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated}.go + _test  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go)
+internal/interview/interview.go + _test       `auto --interview` and `design` (ADR 0044): the five-question loop over an injected Asker (the package imports no runner), the QUESTION:/ENOUGH reply grammar, the repeat test, the nonce-fenced planner prefix (Render), staging it as interview.md and re-checking that copy's SHA-256 for `resume` (Stage/LoadStaged). Spawns nothing; the coordinator applies the prefix to the planner prompt alone (WithInterviewPrefix)
+internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated,interviewer}.go + _test + testdata/planner-prompt-*.golden  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go); the interview's planner prefix option and the interviewer asker, built from coordinatorInvocation (interviewer.go — ADR 0044)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`, `run --dry-run` and the plan screen print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
-internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
+internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load, the `conventions` and `interview` records (hash and counts, never the text) — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
 internal/runfeed/{runfeed,reader}.go + _test   events.jsonl append-only lifecycle event stream — the consumer contract (docs/RUN-FEED.md) — plus the in-repo consumer readers (InFlight, Follow)
 internal/runstatus/{runstatus,skipped}.go + _test  the one shared rule (ADR 0015 §2): open leg AND held lock ⇒ in flight, open leg AND free lock ⇒ abandoned — composed once for `runs list`, the dashboard card, ResolveRun, the single-run view's /api/graph and `watch`, plus the recovery wording those surfaces print; `skipped.go` is the other half of the same argument — a run directory this build cannot READ has no status at all, and how that damage is CLASSIFIED (incompatible schema vs. unreadable bytes) and REPORTED (the counted coverage line, the per-run detail sentence) is one shared value here rather than composed per surface
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
