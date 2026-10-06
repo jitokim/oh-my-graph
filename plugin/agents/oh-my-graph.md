@@ -43,7 +43,7 @@ oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mappin
 oh-my-graph version
 ```
 
-Five of those are worth knowing precisely:
+Six of those are worth knowing precisely:
 
 - `init` unpacks the example graphs embedded in the binary into `./graphs/`
   (including `./graphs/fragments/`). It never overwrites — a file that is
@@ -70,12 +70,13 @@ Five of those are worth knowing precisely:
   On exit 2 hand the user `/run/<id>/` under a standalone `serve` — the approve/reject buttons sit on the gate's feed entry there, never on `/` (#268).
 
 Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
-a human gate and is **resumable** — a pause is not a failure — and `3` `auto`
-refused to start for want of build evidence, `5` `auto`'s `--verify-cmd` was
-already red on the starting tree (baseline red — nothing ran). On exit 2,
-surface the printed resume hint and offer
+a human gate and is **resumable** — a pause is not a failure — `3` `auto`
+refused to start for want of build evidence, and `5` `auto`'s `--verify-cmd`
+was already red on the starting tree (baseline red — no model call, no run
+directory). On exit 2, surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
-see the rule immediately below.
+see the rule immediately below. On exit 5, show the user the quoted output; do
+not retry until the tree or the command is fixed.
 A FAIL detailed `result did not match` may be a verdict-pattern miss rather than
 broken work — unlike `verify_failed`, read the node's reply before acting (#264).
 
