@@ -113,3 +113,68 @@ func TestPlan_BlindLoopBuysACorrectedReplan(t *testing.T) {
 		t.Error("the repair prompt does not carry the token to paste, so the correction is not actionable")
 	}
 }
+
+// TestPlannerPromptTellsTheReviewerToQuoteItsOwnPreviousRound is #288 at the
+// planner: a re-run reviewer is a fresh session, so without its own earlier
+// findings it judges the rework as a stranger and the loop runs out of rounds.
+// The token must sit INSIDE the feedback-arc rule — the one place the planner
+// reads about arcs — not merely somewhere in the prompt. The template is shared
+// by every cycle, so the first and the continuation prompt are both checked.
+func TestPlannerPromptTellsTheReviewerToQuoteItsOwnPreviousRound(t *testing.T) {
+	first, _, continuation := plannerPrompts(t)
+	for name, prompt := range map[string]string{"first": first.Prompt, "continuation": continuation.Prompt} {
+		start := strings.Index(prompt, "- For an iterative implement→review loop")
+		if start < 0 {
+			t.Fatalf("%s planner prompt has no feedback-arc rule", name)
+		}
+		end := start + 1 + strings.Index(prompt[start+1:], "\n- ")
+		if end <= start {
+			t.Fatalf("%s planner prompt: the feedback-arc rule has no following rule to end it", name)
+		}
+		at := strings.Index(prompt, "{{ self.previous }}")
+		if at < start || at >= end {
+			t.Errorf("%s planner prompt: {{ self.previous }} at %d, outside the feedback-arc rule [%d, %d)", name, at, start, end)
+		}
+		rule := prompt[start:end]
+		for _, want := range []string{"its own reply from the previous round", "empty on the first", "re-raise only the ones still", "real mistake"} {
+			if !strings.Contains(rule, want) {
+				t.Errorf("%s planner prompt: the feedback-arc rule lacks %q", name, want)
+			}
+		}
+	}
+}
+
+// quotedLoopSpec is blindLoopSpec with the implementing node's quote added: the
+// plan the feedback-arc rule asks for, minus the #288 guidance on the reviewer.
+var quotedLoopSpec = strings.Replace(blindLoopSpec, `"prompt":"write the feature"`,
+	`"prompt":"write the feature; review feedback (empty on the first pass): {{ feedback.review }}"`, 1)
+
+// TestPlan_ReviewerQuotingItsOwnPreviousRoundIsGuidanceNotARefusal pins #288's
+// guidance as guidance: a planned arc whose reviewer quotes {{ self.previous }}
+// passes the full planned-graph validation and loads with the token intact, and
+// the same arc WITHOUT the token passes and loads too — the planner is told,
+// never refused.
+func TestPlan_ReviewerQuotingItsOwnPreviousRoundIsGuidanceNotARefusal(t *testing.T) {
+	withSelf := strings.Replace(quotedLoopSpec, `"prompt":"judge it"`,
+		`"prompt":"judge it; your own reply from the previous round (empty on the first pass): {{ self.previous }}"`, 1)
+	if withSelf == quotedLoopSpec {
+		t.Fatal("fixture did not change: the reviewer prompt was not found")
+	}
+	for name, spec := range map[string]string{"with {{ self.previous }}": withSelf, "without it": quotedLoopSpec} {
+		fake, _ := newPlannerFake(runnerOutcome(spec))
+		plan, err := New(fake).Plan(context.Background(), "implement the feature and review it", nil)
+		if err != nil {
+			t.Fatalf("%s: a planned review loop must plan, got: %v", name, err)
+		}
+		if plan.Graph == nil {
+			t.Fatalf("%s: the plan carries no loaded graph", name)
+		}
+		review, ok := plan.Graph.NodeByID("review")
+		if !ok {
+			t.Fatalf("%s: the loaded graph lost the reviewing node", name)
+		}
+		if got, want := strings.Contains(review.Prompt, "{{ self.previous }}"), spec == withSelf; got != want {
+			t.Errorf("%s: loaded reviewer prompt quotes {{ self.previous }} = %v, want %v", name, got, want)
+		}
+	}
+}
