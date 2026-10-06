@@ -217,6 +217,67 @@ func TestRunAuto_BaselineThatCannotRunIsRed(t *testing.T) {
 	}
 }
 
+// #315: a baseline that timed out is still red (exit 5), says it timed out
+// and after how long, and quotes what it printed before it was killed through
+// the same bounded tail as a non-zero exit — cut note included.
+func TestRunAuto_TimedOutBaselineQuotesItsOutput(t *testing.T) {
+	var long strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&long, "line %03d\n", i)
+	}
+	for _, tc := range []struct {
+		name   string
+		output string
+		want   []string
+		absent []string
+	}{
+		{
+			name:   "short output",
+			output: "compiling pkg/a\nwaiting on lock\n",
+			want:   []string{"Its output:", "  | compiling pkg/a", "  | waiting on lock"},
+		},
+		{
+			name:   "over 40 lines",
+			output: long.String(),
+			want: []string{
+				"The last 40 line(s) of its output (cut: 60 earlier line(s), 540 byte(s) omitted):",
+				"  | line 061\n", "  | line 100\n",
+			},
+			absent: []string{"  | line 060\n"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := isolateRunHome(t)
+			fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: cycleSpec}})
+			verifier := verify.NewFakeVerifier(nil)
+			verifier.InjectError(baselineCmd, &verify.TimeoutError{Command: baselineCmd, Timeout: 3 * time.Minute, Output: tc.output})
+
+			_, err := runBaselineAuto(t, fake, verifier, osStdin(), "fix it", "--verify-cmd", baselineCmd, "--verify-timeout", "3m")
+
+			if code := exitCodeForError(err); code != 5 {
+				t.Fatalf("exit code = %d (err %v), want 5", code, err)
+			}
+			assertNothingSpent(t, home, fake)
+			rendered := renderBaselineRed(t, err)
+			want := append([]string{
+				"baseline red",
+				"--verify-cmd '" + baselineCmd + "' timed out after 3m0s on the starting tree",
+				"no cycle ran — baseline red",
+			}, tc.want...)
+			for _, w := range want {
+				if !strings.Contains(rendered, w) {
+					t.Errorf("rendering lacks %q:\n%s", w, rendered)
+				}
+			}
+			for _, a := range append([]string{"could not run"}, tc.absent...) {
+				if strings.Contains(rendered, a) {
+					t.Errorf("rendering has %q:\n%s", a, rendered)
+				}
+			}
+		})
+	}
+}
+
 // #315: the baseline runs in the invocation directory as it is — Cwd "." —
 // so a file nobody committed is part of what it checks.
 func TestRunAuto_BaselineRunsOnTheInvocationDirectoryAsItIs(t *testing.T) {

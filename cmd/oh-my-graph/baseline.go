@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -32,15 +33,21 @@ const (
 // runBaseline runs the --verify-cmd once on the starting tree ("." — the same
 // tree the planned nodes and the sinks run in) and returns a *BaselineRedError
 // when it is red: a non-zero exit, or no result at all (could not run, timed
-// out, cancelled). Green prints one line and returns nil. A zero command is no
-// baseline at all: nothing runs and nothing prints.
+// out, cancelled). A timeout keeps what the command printed before it was
+// killed, so the refusal can quote it. Green prints one line and returns nil.
+// A zero command is no baseline at all: nothing runs and nothing prints.
 func runBaseline(ctx context.Context, out io.Writer, verifier verify.Verifier, v coordinator.VerifyCommand, goal string) error {
 	if !v.Supplied() {
 		return nil
 	}
 	result, err := verifier.Verify(ctx, verify.Request{Command: v.Command, Cwd: ".", Timeout: v.ResolvedTimeout()})
 	if err != nil {
-		return &BaselineRedError{Goal: goal, Command: v.Command, RunErr: err}
+		red := &BaselineRedError{Goal: goal, Command: v.Command, RunErr: err}
+		var timedOut *verify.TimeoutError
+		if errors.As(err, &timedOut) {
+			red.Output = timedOut.Output
+		}
+		return red
 	}
 	if result.ExitCode != 0 {
 		return &BaselineRedError{Goal: goal, Command: v.Command, ExitCode: result.ExitCode, Output: result.Output}
@@ -64,11 +71,17 @@ type BaselineRedError struct {
 	// RunErr is why the command produced no result — it could not be spawned,
 	// timed out, or was cancelled. Nil when the command ran and exited non-zero.
 	RunErr error
-	// Output is the command's full combined output; Print quotes only its tail.
+	// Output is the command's full combined output — or, when RunErr is a
+	// *verify.TimeoutError, the bounded tail it printed before it was killed.
+	// Print quotes only its tail.
 	Output string
 }
 
 func (e *BaselineRedError) Error() string {
+	var timedOut *verify.TimeoutError
+	if errors.As(e.RunErr, &timedOut) {
+		return fmt.Sprintf("auto: baseline red: --verify-cmd '%s' timed out after %s on the starting tree", e.Command, timedOut.Timeout)
+	}
 	if e.RunErr != nil {
 		return fmt.Sprintf("auto: baseline red: --verify-cmd '%s' could not run on the starting tree: %v", e.Command, e.RunErr)
 	}
