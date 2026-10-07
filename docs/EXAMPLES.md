@@ -136,14 +136,15 @@ Everything else in this file describes the default, Claude. Under Codex:
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
 
 **Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
-`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all eight
+`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all nine
 lint clean under Claude and **one is refused under Codex** — `adr-driven-dev`,
-for the `agent:` on its three review nodes. Four of the seven that load warn
+for the `agent:` on its three review nodes. Five of the eight that load warn
 that a `budget_usd` cannot apply: `review-loop` (its own), and `dev-review-pr`,
-`self-dev` and `backlog-batch` (inherited from the `e2e-verify` fragment).
-Before ADR 0026 those four were refused as well, which is what made five of
-eight unloadable. Of the seven that load, `apply-flags`, `merge-shepherd`,
-`dev-review-pr`, `self-dev` and `backlog-batch` all publish, so they hit the
+`gated-dev`, `self-dev` and `backlog-batch` (inherited from the `e2e-verify`
+fragment). Before ADR 0026 the four of those that had shipped were refused as
+well, which is what made five of the eight graphs then shipped unloadable. Of
+the eight that load, `apply-flags`, `merge-shepherd`, `dev-review-pr`,
+`gated-dev`, `self-dev` and `backlog-batch` all publish, so they hit the
 network wall — leaving `haiku-smoke` and `review-loop` as the shipped graphs
 with no node that needs the network. The expected verdict for every shipped
 graph under both runtimes is asserted in
@@ -1308,6 +1309,12 @@ Spec:
   planned graph cannot contain a gate.
 - **`resume <run-id> --retry-failed`** — re-executes only a failed run's failed
   and cancelled nodes, keeping every passed node's artifact for its dependents.
+- **`graphs/gated-dev.yaml`** — the shipped graph that pairs engine evidence
+  with a human gate (#345): implement, an engine-verified e2e, a gating review
+  with one repair round, then `approve-publish` pauses before the PR. A
+  read-only `check-head` refuses to publish a HEAD other than the one the last
+  passing review saw; rejecting ends the run unpublished. Copy it rather than
+  adding a gate to a plan by hand.
 
 ### Saying what approving means (`description:`)
 
