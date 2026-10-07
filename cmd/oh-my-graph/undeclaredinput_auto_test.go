@@ -135,6 +135,47 @@ func TestPrintPlanForRuntime356_NearMissOfACwdOrVerifyReference(t *testing.T) {
 	}
 }
 
+// #356: a reuse citation's bind: values are a reference site too. The
+// coordinator splices them into the cited shape's fields before the plan
+// reaches the screen, so a {{ inputs.repo }} that appears ONLY in a bind:
+// value is a name the plan uses, and its near miss reop warns. Driven through
+// the real catalog and splice: probe from reusesplice_test.go, planted where
+// the coordinator scans.
+func TestAutoPlanOnly356_NearMissOfABindOnlyReference(t *testing.T) {
+	isolateRunHome(t)
+	dir, _ := plantReuseCatalog(t)
+	const spec = `{"name":"reuse-work","nodes":[{"id":"cite","reuse":"probe","bind":{"target":"{{ inputs.repo }}"}}]}`
+	if strings.Contains(strings.Replace(spec, `"bind":{"target":"{{ inputs.repo }}"}`, "", 1), "inputs.") {
+		t.Fatal("the reference must appear only inside the bind: value")
+	}
+	fake := newCycleFake(map[string]runner.NodeOutcome{"plan-1": {Result: spec, TotalCostUSD: 0.01}})
+	flags := commonRunFlags{
+		inputs:       inputFlag{"reop": secretValue356},
+		inputSources: map[string]string{"reop": "--input"},
+	}
+	var out strings.Builder
+	var err error
+	stdout := captureStdout(t, func() {
+		err = planAndExecute(context.Background(), &out, coordinator.New(fake, coordinator.WithInvocationDir(dir)), fake,
+			flags, "audit the readme", singleCycle, true, nil, nil)
+	})
+	if err != nil {
+		t.Fatalf("--plan-only must succeed whatever is bound: %v\n%s", err, out.String())
+	}
+	all := out.String() + stdout
+	want := planScreenLine356("reop", "--input") + ` — did you mean "repo"?`
+	at := strings.Index(all, want)
+	if at < 0 {
+		t.Fatalf("screen lacks %q:\n%s", want, all)
+	}
+	if lineStart := strings.LastIndex(all[:at], "\n") + 1; !strings.HasPrefix(all[lineStart:], "warning: ") {
+		t.Errorf("the line must carry the warning: prefix, got %q", all[lineStart:at+len(want)])
+	}
+	if strings.Contains(all, secretValue356) {
+		t.Errorf("a bound value leaked:\n%s", all)
+	}
+}
+
 func TestAuto356_WarningPrecedesAnyNodeRun(t *testing.T) {
 	isolateRunHome(t)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
