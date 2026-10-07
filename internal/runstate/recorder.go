@@ -1,15 +1,18 @@
 package runstate
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 // SnapshotRecorder is the concrete, disk-backed implementation of
 // schedule.Recorder (matched structurally — this package imports nothing from
 // schedule, keeping the dependency one-directional: schedule -> runstate,
-// never back). It owns the mutable half of one run's Snapshot (Nodes and
-// Gate) on top of a caller-supplied, otherwise-static base (graph, inputs,
+// never back). It owns the mutable half of one run's Snapshot (Nodes, Gate
+// and LimitPause) on top of a caller-supplied, otherwise-static base (graph, inputs,
 // flags, tool policies), and writes the whole snapshot atomically to path
 // after every call, so the file on disk after any RecordNode/RecordGateDecision/
-// RecordPause is always a complete, self-consistent Snapshot rather than a
+// RecordPause/RecordLimitPause is always a complete, self-consistent Snapshot rather than a
 // partial update (DESIGN.md, "Snapshot writes happen after every node").
 //
 // The Scheduler never sees this type — it depends only on the narrower
@@ -127,6 +130,19 @@ func (r *SnapshotRecorder) RecordDescribedPause(gateNodeID, description string) 
 	r.snap.Gate.PausedAt = gateNodeID
 	r.snap.Gate.PausedGateDescription = description
 	r.setDecisionLocked(gateNodeID, GatePause)
+	return Write(r.path, r.snap)
+}
+
+// RecordLimitPause records that the leg stopped on a usage limit (ADR 0031
+// §8.1) and persists the snapshot in one write. The node ids are copied and
+// sorted, so the caller's slice is left as it was. It touches neither Nodes
+// (a limited node stays un-run, ADR 0009) nor Gate, so a gate pause in the
+// same leg keeps its own record beside this one.
+func (r *SnapshotRecorder) RecordLimitPause(pause LimitPause) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pause.NodeIDs = slices.Sorted(slices.Values(pause.NodeIDs))
+	r.snap.LimitPause = &pause
 	return Write(r.path, r.snap)
 }
 

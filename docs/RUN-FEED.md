@@ -185,14 +185,39 @@ feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one, `verification` — see below — and `gate_description`,
 a decided gate's `description:` exactly as its decider was shown it,
 interpolated and sanitised to one line ([#346](https://github.com/jitokim/oh-my-graph/issues/346)),
-absent on every other node and on a gate without one), and `gate`
-(`paused_at`, `paused_gate_description`, `decisions`).
+absent on every other node and on a gate without one), `gate`
+(`paused_at`, `paused_gate_description`, `decisions`), and `limit_pause`
+(a usage-limit pause only — see below).
 `paused_gate_description` is the description of the gate named by
 `paused_at`, exactly as the pause printed it and as a decision will record it
 in `gate_description` ([#348](https://github.com/jitokim/oh-my-graph/issues/348));
 it is written together with `paused_at` and is absent when the run is not
 paused, when the paused gate has no description, and in a snapshot written
 before #348.
+
+`limit_pause` records that the leg stopped on a subscription usage limit
+(ADR 0009; [ADR 0031 §8](adr/0031-an-unbounded-loop-is-a-bounded-loop-and-a-clock.md#8-acceptance-of-35-only-2026-10-07),
+[#358](https://github.com/jitokim/oh-my-graph/issues/358)), beside the gate
+pause `gate` records. Three keys: `node_ids`, the nodes that hit the limit
+before the drain finished, sorted; `cause`, the first limited node's captured
+failure cause exactly as the runtime printed it — runtime text, so sanitise it
+before you print it, and any reset time stays inside it, unparsed; and `at`,
+when the pause was taken, after in-flight siblings drained. It records the
+**pause**, not the nodes: a limited node is still recorded nowhere in `nodes`,
+so `resume --retry-failed` re-launches it. The scheduler writes it once, at the
+end of the leg that hit the limit, and a resumed leg's first snapshot write
+clears it, since that leg's recorder is seeded without it — the lifecycle of
+`gate.paused_at`. A leg that pauses on a limit and at a gate holds both
+records, and each is cleared by the leg that runs past it. Its write is
+non-fatal (a warning on the progress output), so a limit-paused run may lack
+it. It is optional: absent on every snapshot whose leg did not stop on a limit,
+so a run that never hit one writes the same bytes as before. **It is
+display-only**: the status derivation does not read it (`PAUSED` still comes
+from the stream's `run_finished`, exactly as for a gate), and neither does what
+`resume` re-launches or any exit code. That is why it is an **additive optional
+block and the schema stays 3**: an older binary ignores the key and resumes the
+run exactly as before; it just drops the key if it rewrites the snapshot. No
+event carries it; the feed schema is unchanged.
 
 `verification` is a node's record of its `success_check.verify` command as
 the engine ran it ([#332](https://github.com/jitokim/oh-my-graph/issues/332)):

@@ -459,6 +459,7 @@ func (r *historyRecorder) RecordNode(nodeID string, rec runstate.NodeRecord) err
 }
 func (r *historyRecorder) RecordGateDecision(string, runstate.GateDecision) error { return nil }
 func (r *historyRecorder) RecordPause(string) error                               { return nil }
+func (r *historyRecorder) RecordLimitPause(runstate.LimitPause) error             { return nil }
 
 func (r *historyRecorder) recordsFor(nodeID string) []runstate.NodeRecord {
 	r.mu.Lock()

@@ -64,6 +64,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/conventions"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/interview"
@@ -1267,7 +1268,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, description)
+	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
 }
@@ -2452,7 +2453,8 @@ func shellSingleQuoted(s string) string {
 // exact resume command" step — DESIGN.md, "Gate nodes and resume") or a
 // *schedule.LimitPausedError (ADR 0009: the hint carries the CLI's own
 // "resets <time>" when the captured cause yields one, and drops the time
-// rather than inventing one when it doesn't) — and is a silent no-op for any
+// rather than inventing one when it doesn't; either way it names the cause,
+// sanitized, since it is runtime text) — and is a silent no-op for any
 // other outcome (success or failure), so it is safe to call unconditionally
 // after every run.
 //
@@ -2466,14 +2468,16 @@ func shellSingleQuoted(s string) string {
 // so this is the hint that fires most often for a --verify-cmd run — and the
 // one that, printed without the flag, sends the reader into a refusal.
 func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand) {
-	printDescribedPauseHint(w, runID, runErr, verifyCmd, "")
+	printDescribedPauseHint(w, runID, runErr, verifyCmd, "", nil)
 }
 
 // printDescribedPauseHint is printPauseHint with the paused gate's shown
 // description (pausedGateDescription, #346) on its first line:
 // `Paused at gate "approve" (<description>). Resume with:`. An empty
-// description prints exactly what printPauseHint does.
-func printDescribedPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand, gateDescription string) {
+// description prints exactly what printPauseHint does. limit is the leg's
+// limit-pause record (recordedLimitPause), whose cause a limit hint names
+// (ADR 0031 §8.3); nil falls back to the error's own copy of it.
+func printDescribedPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand, gateDescription string, limit *runstate.LimitPause) {
 	resupply := verifyResumeSuffix(verifyCmd)
 	note := ""
 	if resupply != "" {
@@ -2494,13 +2498,21 @@ func printDescribedPauseHint(w io.Writer, runID string, runErr error, verifyCmd 
 	if !errors.As(runErr, &limited) {
 		return
 	}
-	reset := runner.SessionLimitReset(limited.Cause)
+	// The cause is named from the leg's limit-pause record (ADR 0031 §8.3),
+	// falling back to the error's own copy only when that record's non-fatal
+	// write failed. Either way it is runtime text, cleaned for the terminal.
+	cause := limited.Cause
+	if limit != nil {
+		cause = limit.Cause
+	}
+	cause = fence.SanitizeTerminalLine(cause)
+	reset := runner.SessionLimitReset(cause)
 	if reset != "" {
-		fmt.Fprintf(w, "\nSession limit reached (resets %s). Resume after %s with:\n  oh-my-graph resume %s --retry-failed%s\n%s",
-			reset, reset, runID, resupply, note)
+		fmt.Fprintf(w, "\nSession limit reached (resets %s): %s\nResume after %s with:\n  oh-my-graph resume %s --retry-failed%s\n%s",
+			reset, cause, reset, runID, resupply, note)
 		return
 	}
-	if limited.Cause == "" {
+	if cause == "" {
 		fmt.Fprintf(w, "\nSession limit reached. Resume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", runID, resupply, note)
 		return
 	}
@@ -2509,7 +2521,7 @@ func printDescribedPauseHint(w io.Writer, runID string, runErr error, verifyCmd 
 	// names no time (#283), and printing "Resume with" alone would send the
 	// operator straight back into the same standing limit. The sentence is
 	// carried as the CLI worded it, exactly as the reset prose is above.
-	fmt.Fprintf(w, "\nSession limit reached: %s\nResume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", limited.Cause, runID, resupply, note)
+	fmt.Fprintf(w, "\nSession limit reached: %s\nResume with:\n  oh-my-graph resume %s --retry-failed%s\n%s", cause, runID, resupply, note)
 }
 
 // graphSpawnsRuntime reports whether any node of this graph would launch the
