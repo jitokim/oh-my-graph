@@ -31,15 +31,17 @@
 # node via Bash, not the engine's `worktree:` seam, which branches from the
 # invocation repo's HEAD rather than the PR head this graph needs).
 #
-# Two shepherds may run in one repo at once — another run on another PR, or the
-# operator fetching by hand — so nothing here reads git's one shared
+# Shepherds on DIFFERENT PRs may run in one repo at once; two runs on the SAME
+# PR at once are not supported, since the worktree directory is per PR
+# (`/tmp/shepherd-<pr>`, `/tmp/shepherd-triage-<pr>`): step 0 of one run removes
+# the other's worktree, and the engine check's EXIT trap deletes the ref they
+# share. Another PR's run, or the operator, may fetch at any moment — so
+# nothing here reads git's one shared
 # last-fetched pointer, which any concurrent fetch can repoint to another
 # commit (#360). verify and triage read the PR head SHA from gh, fetch the PR
 # into a NAMED, CONTENT-ADDRESSED ref, `refs/omg-shepherd/pr-<pr>/<sha>`,
 # confirm it resolves to that SHA, and build the worktree DETACHED at the SHA
-# itself. A concurrent fetch cannot redirect either one; two runs on the same
-# PR at the same head share the ref harmlessly, since it names the same commit
-# for both, and different heads get different refs. Each node records the SHA
+# itself. A concurrent fetch cannot redirect either one. Each node records the SHA
 # it fetched in its worktree's own per-worktree ref,
 # `refs/worktree/omg-shepherd-sha`, which lives in that worktree's private git
 # dir and so goes away with the worktree. An engine `success_check.verify` on
