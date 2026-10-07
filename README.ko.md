@@ -259,7 +259,7 @@ stage하고 그 hash를 `state.json`에 남기며, `resume`은 사본이 없거�
 거부합니다. `--plan-only`와도 같이 쓸 수 있고, 이때 답은 저장된 spec 옆에
 남습니다. `oh-my-graph design "<goal>" --out <file>`은 같은 인터뷰를 run 대신
 파일로 끝냅니다. 플래너 호출 한 번, YAML로 쓴 그래프, 그 파일에 대한 `lint` 검사까지
-하고 아무것도 실행하지 않습니다. 이미 있는 `--out`과 `--conventions`는 거부하고,
+하고 아무것도 실행하지 않습니다. 이미 있는 `--out` 파일은 거부하고 `--conventions`는 받지 않으며,
 `lint`를 통과하지 못한 파일도 남겨 둡니다
 ([ADR 0044](docs/adr/0044-an-interview-before-planning-is-opt-in-text-for-the-planner-and-never-a-gate.md)).
 

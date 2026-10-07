@@ -26,10 +26,13 @@ the planner picks an admitted fragment from a menu trusted code built, and
 trusted code resolves, pins and re-checks the file. Admission is strict on
 purpose. A fragment is offered only if its open slots reach nothing but its
 prompt, its tools are read-only, and it declares nothing a planner may not
-write, so the one thing a planted fragment can still do is steer a read-only
-node's report, and that report reaches later nodes as a path and the assessor
-inside its fence. Pre-registered against 20 goals, the planner cited the menu
-in 8 of the 9 goals the fragment fits and in none of the 9 it does not.
+write. What a planted fragment can still do is choose a read-only node's
+instructions: steer its report, and read files outside the repository into it,
+since the read tools are not confined to the worktree. That report reaches
+later nodes as a path and the assessor inside its fence. Pre-registered
+against 20 goals, the planner cited the menu in 8 of the 9 goals the fragment
+fits and in none of the 9 it does not (of the two partial fits, one was not
+cited and one was cited on its read-only half).
 
 The goal assessor now judges a node's `verify` from the engine's own record
 instead of the node's reply, `auto` checks `--verify-cmd` on the starting
