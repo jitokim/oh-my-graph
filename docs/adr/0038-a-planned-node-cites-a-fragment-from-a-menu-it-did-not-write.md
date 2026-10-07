@@ -1111,8 +1111,16 @@ that costs rather than calling it free.
 **What admission bounds.** A fragment that passes both tests has open slots
 that reach only `prompt:`, tools that are exact members of
 `plannedToolAllowlist` (today `read-and-report` has `Read`, `Grep`, `Glob`),
-and no `permission_mode`. A planted fragment therefore cannot write a file or
-run a command through its own node.
+and no `permission_mode`. That is not yet enough: a fragment can also carry a
+**static** field with no slot in it, and `success_check.verify.command` is
+the dangerous one, a repository-authored shell command the engine itself
+would run. So admission gets a third test: **a fragment that declares any
+field a planner may not write is not admitted** (`success_check.verify`,
+`cwd:`, `agent:`, `worktree:`, `timeout:`, and every other field
+`validatePlannedNodes` refuses from a planner). And the spliced node is run
+through the same planned-node checks as a hand-written one, so the splice is
+never a back door for a field the planner is refused. With all three, a
+planted fragment cannot write a file or run a command through its own node.
 
 **What admission does not bound.** A fragment's `prompt:` is the node's
 instructions, not data the node reads. oh-my-graph closes the repository's
@@ -1201,6 +1209,11 @@ One PR, built on `main` at or after `b2517b7`:
     summary is one line, at most 200 bytes, with control characters removed.
   - A fragment whose `description:` contains a line that looks like a fence
     marker is not admitted.
+  - A planted fragment with a static `success_check.verify.command` (for
+    example `touch /tmp/pwned`) and no slots is not offered, and if forced
+    to the splice it is refused there. The command never runs.
+  - Each field `validatePlannedNodes` refuses from a planner, declared
+    statically in a fragment, keeps the fragment off the menu.
 - The prompt-size measurement §4 requires, as a `docs/measurements/` note in
   the form ADR 0022 used: planner prompt tokens with the menu on and off.
 - The CHANGELOG fragment, per ADR 0042.
