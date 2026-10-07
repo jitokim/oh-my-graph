@@ -1,8 +1,13 @@
 # ADR 0038 — A planned node cites a fragment from a menu it did not write
 
-**Status:** Proposed. Decision record only — no code, no schema change, no
-graph shipped with this record. Nothing in `internal/` or `graphs/` moves
-until this is Accepted.
+**Status:** Accepted on 2026-10-07, with the open questions settled in §9.
+Written before its code. §9.6 lists what the implementation PR owes, and the
+prompt-size measurement §4 requires lands in that same PR.
+
+**Counts in §1–§8 are historical.** They were measured at `e767bd9`, when the
+library held six fragments and none passed admission. §9.1 gives the count on
+`b2517b7`: seven fragments, one admitted. The older figures are left as
+measured, because §2.2.1 and §6 reason from them.
 
 **Where the addresses point.** Read on branch `lane-reuse` at `e767bd9`, the
 `main` this branch left. Every `file:line` below was re-opened against that
@@ -1081,3 +1086,172 @@ This record does not touch and does not decide:
   `lint` accepts exactly one graph, so `./bin/oh-my-graph lint graphs/*.yaml`
   does not run: it exits 1 with `oh-my-graph: lint: unexpected argument
   "graphs/apply-flags.yaml"`. Fourteen YAML files = 8 graphs + 6 fragments.
+
+---
+
+## 9. Acceptance — the open questions, settled (2026-10-07)
+
+Read against `main` at `b2517b7`. The design in §2 is unchanged. This section
+only closes what §2–§6 left open, and corrects what the tree has moved since
+`e767bd9`.
+
+### 9.1 The precondition in §6 is met
+
+§6 forbade building §2 while the admitted set is empty. It is no longer
+empty: `graphs/fragments/read-and-report.yaml` (added by #263, `d742bde`) is
+the seventh fragment and passes both admission tests. Its slots `target` and
+`question` land only in `prompt:`, its `allowed_tools` are `[Read, Grep,
+Glob]`, all exact members of `plannedToolAllowlist`, and it declares no
+`permission_mode`. The other six still fail for the reasons §2.2.1 gives.
+So the first menu has **one entry**. That is small, and it is enough to build
+the mechanism and run §6's falsifiers on real goals.
+
+### 9.2 The committed path proceeds, with a named residual
+
+§3 called this the sharpest open question: on the committed path
+`confirmPlan` is skipped, so nothing blocks a repository-planted fragment.
+**Decision: the committed path keeps reuse on**, and this section names what
+that costs rather than calling it free.
+
+**What admission bounds.** A fragment that passes both tests has open slots
+that reach only `prompt:`, tools that are exact members of
+`plannedToolAllowlist` (today `read-and-report` has `Read`, `Grep`, `Glob`),
+and no `permission_mode`. That is not yet enough, for two reasons.
+
+First, exact membership is too loose: `plannedToolAllowlist` also holds
+`Edit`, `Write`, `Bash(go *)` and `Bash(make *)`, and the last two run
+arbitrary code. So the tool test is **narrowed for fragments**: an admitted
+fragment's `allowed_tools` must be a subset of the read-only tools `Read`,
+`Glob` and `Grep`. The planned-node ceiling itself does not change; this only
+limits what a fragment may bring. The check runs at admission and again on
+the spliced node.
+
+Second, a fragment can also carry a
+**static** field with no slot in it, and `success_check.verify.command` is
+the dangerous one, a repository-authored shell command the engine itself
+would run. So admission gets a third test: **a fragment that declares any
+field a planner may not write is not admitted** (`success_check.verify`,
+`cwd:`, `agent:`, `worktree:`, and every other field
+`validatePlannedNodes` refuses from a planner, taken from its disposition
+table, not a second list). And the spliced node is run
+through the same planned-node checks as a hand-written one, so the splice is
+never a back door for a field the planner is refused. With the read-only tool
+subset and all three tests, a planted fragment cannot write a file or run a
+command through its own node.
+
+**What admission does not bound.** A fragment's `prompt:` is the node's
+instructions, not data the node reads. oh-my-graph closes the repository's
+other instruction channels on purpose: runners pass `--setting-sources ""`
+(ADR 0037), so a repository's `CLAUDE.md` and settings never reach a node.
+On the committed path, an admitted fragment is **the one repository-authored
+instruction channel the engine opens without a person seeing it first.** Its
+`description:` is a second, smaller one: §2.2 shows it in the planner's own
+prompt on every `auto` run, confirmed or not.
+
+**The worst case, stated.** A planted fragment fully controls a read-only
+node. That node cannot change anything, but its report flows on: to
+downstream nodes, some of which hold write tools, and to the goal assessor.
+So the residual is a misleading report that steers later nodes or the
+verdict, for example a fragment that tells its node to report "all checks
+passed".
+
+**What contains it.**
+- Downstream nodes receive an upstream report as an artifact **path** they
+  read (`handoff.InterpolateAs`, the `artifacts` kind), so it arrives as data
+  under their own instructions, never spliced into their prompt.
+- The assessor sees node artifacts inside its nonce fence, and since #337 it
+  judges a node's `verify` from the engine's own record, outside the fence,
+  not from what a node says about it.
+- The menu entry is fenced as data in the planner prompt, and its summary is
+  cut to one line of at most 200 bytes, with control characters removed and
+  any line that looks like a fence marker refused at admission (§9.6).
+- The disclosure §2.5 specifies stays: the printout names the directory, the
+  counts, and the id, path and digest of each citation, and
+  `reuse-catalog.json` records them. `--no-reuse` turns the menu off.
+
+This decision holds only while admission stays this strict. Any change that
+admits a fragment with a non-prompt slot, a non-member tool or a
+`permission_mode` reopens it and needs its own ADR.
+
+### 9.3 A fragment with an advisory is not offered
+
+§4 left open whether a fragment advisory (`lf.advisories`) should suppress
+its catalog entry. **It does.** A fragment the linter warns about is left off
+the menu, and the printout counts it as "skipped (advisory)". Offering the
+planner something the linter already doubts buys nothing.
+
+### 9.4 The allowlist is not widened here
+
+§2.2.1 offered two routes for fragments whose tools are not exact members.
+**Neither is taken in this record.** Widening `plannedToolAllowlist` is its
+own decision with its own ADR. Fragments that want to be on the menu are
+written to fit the allowlist as it is.
+
+### 9.5 Where the block sits in the prompt
+
+§6 named menu position as one cause of a zero-citation result.
+**Decision:** the catalog block goes directly after the planner prompt's
+description of node fields, before its examples. The prompt's existing
+mention of `read-and-report.yaml` in the verdict-pattern advice is rewritten
+to point at the menu entry instead of the file, so that the prompt names no
+fragment path anywhere. If §6's first falsifier fires (0 of 20 cited while at
+least 5 of 20 goals match), moving the block is the first thing to try
+before calling the design wrong.
+
+### 9.6 What the implementation PR owes
+
+One PR, built on `main` at or after `b2517b7`:
+
+- Everything §2 specifies for the first slice: the catalog scan with both
+  admission tests (transitive inertness, exact-string tool membership, no
+  `permission_mode`) plus §9.3's advisory rule, the prompt block, `reuse:`
+  and `bind:`, `validatePlannedNodeReuse` against the offered set held from
+  the render call, the splice before agent mapping and verify attachment,
+  `reuse-catalog.json` with the SHA-256 re-check, the printout, and
+  `--no-reuse`.
+- Explicit dispositions for `reuse:` and `bind:`, so
+  `TestPlannedNodeFieldDispositionsAreComplete` stays green.
+- The refusal at `coordinator.go:639` and the backstop at
+  `internal/graph/validate.go:621` are untouched. `use:` and `with:` stay
+  refused from a planner.
+- Tests for each §2.3 failure case, plus: an unlisted id, an unlisted slot, a
+  missing slot, a `prompt:` or `allowed_tools` written next to `reuse:`, a
+  digest mismatch between scan and splice, a fragment with an advisory, and
+  a planted fragment that fails admission.
+- §9.2's containment, pinned:
+  - A planted, admitted fragment whose prompt tells its node to report "all
+    checks passed": the downstream node gets that report only as an artifact
+    path, and the assessor sees the text only inside its fence.
+  - The menu entry renders inside a fence in the planner prompt, and its
+    summary is one line, at most 200 bytes, with control characters removed.
+  - A fragment whose `description:` contains a line that looks like a fence
+    marker is not admitted.
+  - A planted fragment with a static `success_check.verify.command` (for
+    example `touch /tmp/pwned`) and no slots is not offered, and if forced
+    to the splice it is refused there. The command never runs.
+  - Each field `validatePlannedNodes` refuses from a planner, declared
+    statically in a fragment, keeps the fragment off the menu.
+  - A fragment otherwise inert whose `allowed_tools` holds `Write`, `Edit`,
+    `Bash(go *)` or `Bash(make *)` is not admitted, though each is a member
+    of `plannedToolAllowlist`.
+- `DESIGN.md`'s planned-node field table gains `reuse` and `bind` rows, next
+  to the `use` row that stays **rejected**, saying what §9.2 says: the planner
+  picks an id from a menu trusted code built, trusted code resolves the file,
+  and the residual is named.
+- The prompt-size measurement §4 requires, as a `docs/measurements/` note in
+  the form ADR 0022 used: planner prompt tokens with the menu on and off.
+- The CHANGELOG fragment, per ADR 0042.
+
+§6's falsifiers (20 goals, counted for citations) run after the merge, the
+way #288's convergence count does, and each count is recorded with its run
+ids.
+
+### 9.7 Addresses that moved since `e767bd9`
+
+The symbols in this record are still the addresses that keep. The line
+numbers drifted: on `b2517b7`, `validatePlannedNodes` is at
+`coordinator.go:1020`, `validatePlannedNodeTools` at `:1638`, `plannerPrompt`
+at `:1686`, `plannerPromptTemplate` at `:1902`, and `printPlanForRuntime` at
+`cmd/oh-my-graph/main.go:1355`. The fragment counts in §1–§8 stay as
+measured at `e767bd9` and are marked historical in the header; §9.1 has
+today's.
