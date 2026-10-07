@@ -1069,33 +1069,49 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// planner is left holding.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	issues = append(issues, validatePlannedArtifactReferences(g)...)
-	add := func(err *PlanError) {
-		if err != nil {
-			issues = append(issues, err)
-		}
-	}
 	for _, node := range g.Nodes {
-		if strings.TrimSpace(node.Prompt) == "" {
-			add(&PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)})
-		}
-		if node.Type == graph.TypeGate {
-			add(&PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)})
-		}
-		if node.PermissionMode == graph.PermissionBypass {
-			add(&PlanError{
-				Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
-			})
-		}
-		add(validatePlannedNodeID(node))
-		add(validatePlannedNodeCwd(node))
-		add(validatePlannedNodeVerify(node))
-		add(validatePlannedNodeAgent(node))
-		add(validatePlannedNodeWorktree(node))
-		add(validatePlannedNodeFeedback(node))
-		add(validatePlannedNodeRetry(node))
-		add(validatePlannedNodeTools(node))
+		issues = append(issues, plannedNodeRefusals(node)...)
 	}
 	return issues
+}
+
+// plannedNodeRefusals is every per-NODE refusal validatePlannedNodes makes, in
+// the order it makes them — the field dispositions of one node, judged on that
+// node alone. The graph-level families stay in validatePlannedNodes, because
+// they are properties of the topology rather than of a node's fields.
+//
+// It is its own function so there is exactly ONE statement of what a planner
+// may not write on a node. The reuse catalog (reusecatalog.go) judges every
+// static node body of a fragment with it before offering that fragment to the
+// planner, so a field newly refused here is refused at admission too, with no
+// second list to keep in step (ADR 0038 §9.2, #338).
+func plannedNodeRefusals(node graph.Node) []*PlanError {
+	var refusals []*PlanError
+	add := func(err *PlanError) {
+		if err != nil {
+			refusals = append(refusals, err)
+		}
+	}
+	if strings.TrimSpace(node.Prompt) == "" {
+		add(&PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)})
+	}
+	if node.Type == graph.TypeGate {
+		add(&PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)})
+	}
+	if node.PermissionMode == graph.PermissionBypass {
+		add(&PlanError{
+			Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
+		})
+	}
+	add(validatePlannedNodeID(node))
+	add(validatePlannedNodeCwd(node))
+	add(validatePlannedNodeVerify(node))
+	add(validatePlannedNodeAgent(node))
+	add(validatePlannedNodeWorktree(node))
+	add(validatePlannedNodeFeedback(node))
+	add(validatePlannedNodeRetry(node))
+	add(validatePlannedNodeTools(node))
+	return refusals
 }
 
 // validatePlannedFeedbackReach refuses a planned feedback arc whose loop body
