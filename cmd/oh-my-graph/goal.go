@@ -11,6 +11,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -338,11 +339,14 @@ func printCycleVerdict(w io.Writer, report coordinator.CycleReport) {
 	if report.Assessment.Usage != (runner.TokenUsage{}) {
 		fmt.Fprintf(w, "  assessment tokens: %s\n", formatUsage(report.Assessment.Usage))
 	}
-	if report.Assessment.Remaining != "" {
-		fmt.Fprintf(w, "  remaining: %s\n", report.Assessment.Remaining)
+	// The assessor writes both lines, quoting the run's own output; they are
+	// cleaned for the terminal here, where they are shown, and nowhere else —
+	// assess.json and the next cycle's planner keep the raw text (#349).
+	if remaining := fence.SanitizeTerminalLine(report.Assessment.Remaining); remaining != "" {
+		fmt.Fprintf(w, "  remaining: %s\n", remaining)
 	}
-	if report.Assessment.Evidence != "" {
-		fmt.Fprintf(w, "  evidence: %s\n", report.Assessment.Evidence)
+	if evidence := fence.SanitizeTerminalLine(report.Assessment.Evidence); evidence != "" {
+		fmt.Fprintf(w, "  evidence: %s\n", evidence)
 	}
 }
 
