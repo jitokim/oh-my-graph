@@ -1056,9 +1056,9 @@ that is what fails the run. `run --dry-run` prints the same line.
 
 `auto` is quieter. The planner saw every bound input and may simply not need
 one, so an unused key is no typo signal there: `auto "..." --input repo=$PWD`
-prints nothing about `repo` whether the plan uses it or not. The plan screen
-(`--plan-only` included) warns only on a near miss of a name the planned
-graph declares in `inputs:` or references as `{{ inputs.<name> }}`, and once
+prints nothing about `repo` when the plan uses `repo` itself or uses no input
+at all. The plan screen (`--plan-only` included) warns only on a near miss of
+a name the planned graph declares in `inputs:` or references as `{{ inputs.<name> }}`, and once
 per key across a goal loop. A slip of the finger:
 
 ```sh
