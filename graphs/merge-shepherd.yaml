@@ -27,9 +27,30 @@
 #
 # Clean tree required: verify and merge run `git`/`make` inside the repo you
 # point at. The PR itself is only ever touched through THROWAWAY worktrees
-# (`git worktree add /tmp/shepherd-... FETCH_HEAD` — plain git run by the
+# (`git worktree add --detach /tmp/shepherd-... <sha>` — plain git run by the
 # node via Bash, not the engine's `worktree:` seam, which branches from the
 # invocation repo's HEAD rather than the PR head this graph needs).
+#
+# Two shepherds may run in one repo at once — another run on another PR, or the
+# operator fetching by hand — so nothing here reads git's one shared
+# last-fetched pointer, which any concurrent fetch can repoint to another
+# commit (#360). verify and triage read the PR head SHA from gh, fetch the PR
+# into a NAMED, CONTENT-ADDRESSED ref, `refs/omg-shepherd/pr-<pr>/<sha>`,
+# confirm it resolves to that SHA, and build the worktree DETACHED at the SHA
+# itself. A concurrent fetch cannot redirect either one; two runs on the same
+# PR at the same head share the ref harmlessly, since it names the same commit
+# for both, and different heads get different refs. Each node records the SHA
+# it fetched in its worktree's own per-worktree ref,
+# `refs/worktree/omg-shepherd-sha`, which lives in that worktree's private git
+# dir and so goes away with the worktree. An engine `success_check.verify` on
+# each node then ties the commit the node tested to the PR head — the
+# worktree's HEAD must equal gh's `headRefOid` — and does the cleanup: an EXIT
+# trap removes the worktree and deletes exactly that run's ref. That check only
+# runs once the node's verdict pattern has passed, so a FAIL or BLOCKED reply
+# leaves both behind; the next attempt's step 0 removes them. A run killed
+# outright can still leave a ref: list leftovers with
+# `git for-each-ref refs/omg-shepherd` and remove one with
+# `git update-ref -d <ref>`.
 #
 # Honest note on the two waits: ready-and-wait and recheck are waits under a
 # timeout, not event subscriptions — `gh pr view` reads around gh's own blocking
@@ -172,22 +193,39 @@ nodes:
       `&&`, `||` or pipe, no `2>/dev/null`, no `|| true`. To act in another
       directory, use `git -C <dir> …` or `make -C <dir> …`. A compound form of
       step 0 is what got it DENIED in a real run (#295).
+      Below, SHA stands for the 40-hex commit step 2 printed, and OLD for the
+      one step 0 printed; type the actual value in its place.
         0. Clear any leftover from an earlier attempt so a retry cannot
-           collide: `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
-           — bare, as written. It errors when there is nothing to remove;
+           collide. First `git -C /tmp/shepherd-{{ inputs.pr }} rev-parse --verify --quiet refs/worktree/omg-shepherd-sha`;
+           if it printed a SHA (OLD), delete that attempt's ref with
+           `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/OLD`.
+           Then `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+           — bare, as written. These error when there is nothing to remove;
            that error is expected, so read it and move on rather than
            wrapping the command to silence it.
         1. `gh pr view {{ inputs.pr }}` and `gh pr diff {{ inputs.pr }}` to
            see what the PR is.
-        2. `git fetch origin pull/{{ inputs.pr }}/head`
-        3. `git worktree add /tmp/shepherd-{{ inputs.pr }} FETCH_HEAD`
-        4. `make -C /tmp/shepherd-{{ inputs.pr }} local` — run it
+        2. `gh pr view {{ inputs.pr }} --json headRefOid --jq .headRefOid`
+           — the PR head, SHA.
+        3. `git fetch origin +pull/{{ inputs.pr }}/head:refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`
+        4. `git rev-parse refs/omg-shepherd/pr-{{ inputs.pr }}/SHA` must
+           print SHA. If it prints anything else, the head moved mid-fetch:
+           `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`, then
+           redo steps 2-4 ONCE with the new SHA. If it still does not match,
+           delete that ref the same way and answer FAIL naming the moving
+           head.
+        5. `git worktree add --detach /tmp/shepherd-{{ inputs.pr }} SHA` —
+           detached at the SHA itself, never on the ref and never on git's
+           last-fetched pointer, which a concurrent fetch can move.
+        6. Record what you fetched, in the worktree's own per-worktree ref:
+           `git -C /tmp/shepherd-{{ inputs.pr }} update-ref refs/worktree/omg-shepherd-sha SHA`
+        7. `make -C /tmp/shepherd-{{ inputs.pr }} local` — run it
            SYNCHRONOUSLY and wait for the exit code, never in the
            background: your final reply IS the verdict, so you cannot reply
            before the suite has finished.
-        5. ALWAYS remove the worktree before you answer, on the FAIL path
-           as well as the PASS path:
-           `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+        8. LEAVE the worktree in place — do NOT remove it, on either path.
+           The engine checks it after you answer (its HEAD must be the PR
+           head) and then removes it and the ref itself.
       Your reply must START with the bare word PASS — those four characters
       as the very FIRST characters of the reply, with no markdown emphasis
       (`**PASS**` is WRONG), no heading, no backticks, no preamble — or with
@@ -202,7 +240,28 @@ nodes:
     # Anchored so a FAIL report that merely mentions the word cannot pass,
     # and tolerant of leading markdown emphasis, which a model adds unbidden
     # (`**PASS**` halted a real run of this very graph).
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*PASS' }
+    #
+    # `verify` is the engine's half (#360): the commit the suite ran on must be
+    # the PR head, read from the worktree and from gh rather than from the
+    # reply. POSIX sh, like merge's. The EXIT trap is set before anything can
+    # fail: it reads the SHA step 6 recorded, removes the worktree, deletes
+    # exactly that run's ref (either may already be gone), and re-exits with
+    # the comparison's status.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*PASS'
+      verify:
+        timeout: 1m
+        command: |
+          trap 'st=$?; rec=$(git -C "/tmp/shepherd-{{ inputs.pr }}" rev-parse --verify --quiet refs/worktree/omg-shepherd-sha 2>/dev/null); git worktree remove --force "/tmp/shepherd-{{ inputs.pr }}" >/dev/null 2>&1; [ -n "$rec" ] && git update-ref -d "refs/omg-shepherd/pr-{{ inputs.pr }}/$rec" >/dev/null 2>&1; exit $st' EXIT
+          say() { printf 'verify check (#360): %s\n' "$*"; }
+          pr="{{ inputs.pr }}" dir="/tmp/shepherd-{{ inputs.pr }}"
+          [ -d "$dir" ] || { say "FAIL: no worktree at $dir"; exit 1; }
+          head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || { say "FAIL: git rev-parse HEAD failed in $dir"; exit 1; }
+          want=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null) || { say "FAIL: gh pr view $pr exited $?"; exit 1; }
+          [ -n "$want" ] || { say "FAIL: gh printed no head for PR #$pr"; exit 1; }
+          [ "$head" = "$want" ] || { say "FAIL: tested $head, PR #$pr head is $want"; exit 1; }
+          say "PASS: tested PR #$pr head $head"
 
   - id: ready-and-wait
     type: claude-run
@@ -384,25 +443,58 @@ nodes:
     depends_on: [ready-and-wait]
     cwd: "{{ inputs.repo }}"
     prompt: |
-      Triage every CodeRabbit review comment on PR #{{ inputs.pr }}. List
-      them all: `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments`
-      plus the review bodies from `gh pr view {{ inputs.pr }} --json
-      reviews`. If there are zero comments, reply `TRIAGED 0` and stop.
+      Triage every CodeRabbit review comment on PR #{{ inputs.pr }}.
+      FIRST, before anything else and whatever the comments turn out to be,
+      build the throwaway checkout of the PR head. The engine checks it
+      after you answer, even for `TRIAGED 0`. Run each command on its own;
+      act in it with `git -C <dir> …` / `make -C <dir> …`. Below, SHA stands
+      for the 40-hex commit step 2 printed, and OLD for the one step 0
+      printed; type the actual value in its place.
+        0. Clear any leftover from an earlier attempt:
+           `git -C /tmp/shepherd-triage-{{ inputs.pr }} rev-parse --verify --quiet refs/worktree/omg-shepherd-sha`;
+           if it printed a SHA (OLD),
+           `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/OLD`.
+           Then `git worktree remove --force /tmp/shepherd-triage-{{ inputs.pr }}`.
+           These error when there is nothing to remove; that is expected.
+        1. `gh pr view {{ inputs.pr }} --json headRefName --jq .headRefName`
+           — the PR's branch, BRANCH.
+        2. `gh pr view {{ inputs.pr }} --json headRefOid --jq .headRefOid`
+           — the PR head, SHA.
+        3. `git fetch origin +pull/{{ inputs.pr }}/head:refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`
+        4. `git rev-parse refs/omg-shepherd/pr-{{ inputs.pr }}/SHA` must
+           print SHA. If it prints anything else, the head moved mid-fetch:
+           `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`, then
+           redo steps 2-4 ONCE with the new SHA. If it still does not match,
+           delete that ref the same way and answer BLOCKED naming the moving
+           head.
+        5. `git worktree add --detach /tmp/shepherd-triage-{{ inputs.pr }} SHA`
+           — detached at the SHA itself, never on the ref and never on git's
+           last-fetched pointer, which a concurrent fetch can move.
+        6. Record what you fetched, in the worktree's own per-worktree ref:
+           `git -C /tmp/shepherd-triage-{{ inputs.pr }} update-ref refs/worktree/omg-shepherd-sha SHA`
+      Then list every comment:
+      `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments` plus the
+      review bodies from `gh pr view {{ inputs.pr }} --json reviews`. If
+      there are zero comments, reply `TRIAGED 0` and stop.
       For each comment, do exactly one of:
-        - Mechanical and within the PR's scope → apply it. Build a fresh
-          throwaway checkout of the PR head
-          (`git fetch origin pull/{{ inputs.pr }}/head`, then
-          `git worktree add /tmp/shepherd-triage-{{ inputs.pr }} FETCH_HEAD`),
-          make the edit there, run the repo's checks
+        - Mechanical and within the PR's scope → apply it in
+          /tmp/shepherd-triage-{{ inputs.pr }}, run the repo's checks
           (`make -C /tmp/shepherd-triage-{{ inputs.pr }} local` —
           SYNCHRONOUSLY, waiting for the exit code, never in the
-          background), commit
-          staging ONLY the files you changed by explicit path (`git add
-          <path> ...` — never `git add -A`/`.`/`-u`), push to the PR's
-          branch (`git push origin HEAD:<pr-branch>`), and remove the
-          worktree when done.
+          background), commit there staging ONLY the files you changed by
+          explicit path (`git -C /tmp/shepherd-triage-{{ inputs.pr }} add
+          <path> ...` — never `git add -A`/`.`/`-u`), and push. The worktree
+          is detached, so push HEAD to the branch by its full ref name:
+          `git -C /tmp/shepherd-triage-{{ inputs.pr }} push origin HEAD:refs/heads/BRANCH`.
         - You disagree, or it is out of the PR's scope → reply to that
           comment via `gh api` with a one-sentence reason.
+      After any push, before you answer, confirm GitHub has your commit as
+      the head: `gh pr view {{ inputs.pr }} --json headRefOid --jq .headRefOid`
+      must equal `git -C /tmp/shepherd-triage-{{ inputs.pr }} rev-parse HEAD`.
+      If it does not (re-read once; GitHub can lag a push by seconds),
+      answer BLOCKED naming both SHAs.
+      LEAVE the worktree in place — do NOT remove it. The engine checks it
+      after you answer and then removes it and the ref itself.
       HARD limits: do NOT weaken or delete tests, and do NOT change
       behavior beyond what a comment literally asks — anything bigger is
       the operator's call, not this node's.
@@ -440,7 +532,27 @@ nodes:
     # Hence the narrow trailing class — spaces and emphasis, deliberately
     # NOT `\s`, which would swallow the newline the pin depends on.
     # Anchored and markdown-tolerant (see DESIGN.md "Verdict patterns").
-    success_check: { exit_zero: true, result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)' }
+    #
+    # `verify` is the same engine check as verify's (#360), on triage's own
+    # worktree. After a legitimate push the PR's headRefOid equals the
+    # worktree HEAD, so it passes. Without a push HEAD is still the fetched
+    # SHA, which equals headRefOid unless someone else moved the head — and
+    # then failing is correct.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)'
+      verify:
+        timeout: 1m
+        command: |
+          trap 'st=$?; rec=$(git -C "/tmp/shepherd-triage-{{ inputs.pr }}" rev-parse --verify --quiet refs/worktree/omg-shepherd-sha 2>/dev/null); git worktree remove --force "/tmp/shepherd-triage-{{ inputs.pr }}" >/dev/null 2>&1; [ -n "$rec" ] && git update-ref -d "refs/omg-shepherd/pr-{{ inputs.pr }}/$rec" >/dev/null 2>&1; exit $st' EXIT
+          say() { printf 'triage check (#360): %s\n' "$*"; }
+          pr="{{ inputs.pr }}" dir="/tmp/shepherd-triage-{{ inputs.pr }}"
+          [ -d "$dir" ] || { say "FAIL: no worktree at $dir"; exit 1; }
+          head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || { say "FAIL: git rev-parse HEAD failed in $dir"; exit 1; }
+          want=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null) || { say "FAIL: gh pr view $pr exited $?"; exit 1; }
+          [ -n "$want" ] || { say "FAIL: gh printed no head for PR #$pr"; exit 1; }
+          [ "$head" = "$want" ] || { say "FAIL: worktree HEAD $head, PR #$pr head is $want"; exit 1; }
+          say "PASS: worktree HEAD is PR #$pr head $head"
 
   # The re-wait, and why it is an ordinary node rather than a feedback arc.
   #
