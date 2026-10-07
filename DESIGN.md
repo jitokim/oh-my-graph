@@ -340,12 +340,14 @@ A graph's inputs are bound on the command line, on `run` and `auto` only:
 - **The file is a flat map of scalars**, YAML or JSON alike (both are read by
   yaml.v3's node API, never decoded into Go values). Each value is taken
   verbatim as written, its scalar's source text: `1.10` stays `1.10`, `0123`
-  stays `0123`, `yes` stays `yes`. A key binds only if `--input` could have
-  bound it: a non-empty string with no `=`.
+  stays `0123`, `yes` stays `yes`. Each key must be a string, so a key that
+  reads as a number or a boolean has to be quoted (`"7": x`); it must also be
+  non-empty with no `=`, as `--input` requires.
 - **Refused at load, with nothing run.** A nested map, a list, a null (an empty
   `k:` included) or an alias as a value; a top level that is not a map (a
-  list, a scalar, an empty document); and a key that appears twice in the same
-  file, JSON included, rather than last-one-wins. Each file is loaded while the
+  list, a scalar, an empty document); more than one YAML document (a second
+  one after `---`), rather than silently dropping it; and a key that appears
+  twice in the same file, JSON included, rather than last-one-wins. Each file is loaded while the
   flags are parsed, so a refusal is a flag-parse error naming the path, exactly
   as a malformed `--input` is: exit 1, no planner call, no node, no run
   directory.

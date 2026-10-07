@@ -1011,7 +1011,8 @@ That binds exactly what `--input repo=/work/oh-my-graph --input task="add a
 --json flag to runs list"` binds. Each value is its text as written in the
 file: `1.10` stays `1.10`, `0123` stays `0123` and `yes` stays `yes`. A nested
 map, a list, a null (an empty `key:` included), a top level that is not a map,
-and a key that appears twice in the file are refused when the flag is parsed,
+more than one YAML document (a second one after `---`), and a key that appears
+twice in the file are refused when the flag is parsed,
 before any node runs or any run directory is written:
 
 ```
