@@ -1500,7 +1500,17 @@ rather than a state (`WITHHELD`, not `PENDING`), so the token itself cannot be
 honestly used for "not yet" — otherwise the alternation re-admits the promise
 it exists to reject. A graph whose green run can mean either outcome must say
 so in its header: the ledger says the node passed, and only its artifact says
-which.
+which. `merge` no longer leaves that to its artifact (#334): a `gh pr merge`
+the permission mode denied came back `WITHHELD`, matched, and the run went
+green over an OPEN PR. So the pattern still admits both tokens, and the node
+also carries a `verify` that judges what no model wrote this turn —
+`recheck`'s recorded verdict and the PR's live state on GitHub. After
+`RECHECKED <sha>` it passes only if the PR is MERGED at exactly that 40-hex
+head; after `UNSETTLED`, only if the PR is still OPEN. A `WITHHELD` after
+`RECHECKED` — a denied merge, a refused `--admin` — now fails the run, and a
+queued auto-merge fails too, because the graph merges directly. A green
+`merge-shepherd` run means the PR landed at the SHA `recheck` judged, or was
+deliberately left open after an `UNSETTLED` one.
 
 **Three outcomes, two of which pass — and the token that is deliberately
 absent.** A node that *waits* has one more outcome than a node that decides:

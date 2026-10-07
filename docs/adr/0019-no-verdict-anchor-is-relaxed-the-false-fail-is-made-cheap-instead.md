@@ -368,6 +368,37 @@ change than widening what the check accepts.
 > `mergeable:` state, and not reported `review_decision: REVIEW_REQUIRED`;
 > §4's grant change (step 0's two read-only commands) is untouched by any of it.
 
+> **Update (2026-10-07, #334) — `merge` now has the world check §5 refused,
+> and it is a different one.** §5 refused `verify: { command: gh pr view … }`
+> because the command "cannot see which verdict the reply carried". That is
+> still true, and the verify that shipped does not try: it reads `recheck`'s
+> RECORDED verdict from its artifact file, not `merge`'s reply, and the PR's
+> live state from `gh pr view`. Nothing in §1–§4 is re-opened — the pattern,
+> `^` and the `(?m)` refusal all stand, and `success_check` is still a
+> conjunction, so the verify can only make the node stricter. It was never
+> meant to rescue a false FAIL; it exists to catch a false PASS.
+>
+> The false PASS was this: the session's permission mode DENIED `gh pr merge`,
+> `merge` answered `WITHHELD`, the pattern accepted it, the run exited 0 and
+> the PR stayed OPEN. Four rules now decide the node, and nothing else:
+> after `RECHECKED <sha>` it passes only if the PR is MERGED at exactly that
+> head (a sha that is not exactly 40 hex characters fails); after a verdict
+> that is not `RECHECKED` (`UNSETTLED`), only if the PR is still OPEN; any gh
+> failure, unreadable artifact or unexpected output fails. A queued auto-merge
+> fails too — this graph merges directly and never queues.
+>
+> The consequence for this ADR is the first bullet of §6, which no longer
+> holds as written. "`WITHHELD` is a legitimate PASS" is now true only after
+> an `UNSETTLED` recheck. A `WITHHELD` after `RECHECKED` — a denied merge, a
+> refused `--admin` — FAILS the node and the run. That is a new false-FAIL
+> surface at the one node §4 made expensive to re-run, and §4 is what pays
+> for it: `oh-my-graph resume <run-id> --retry-failed` re-runs `merge`, and
+> step 0 sees a merge that already landed and reports it instead of merging
+> twice. A green run now means what it reads as: the PR landed at the SHA
+> `recheck` judged, or was deliberately left open after an `UNSETTLED`
+> recheck. The green-run-merged-nothing outcome the 2026-08-09 update calls
+> rare and visible is still reachable, by that second path only.
+
 ## 6. Consequences
 
 - A green `merge-shepherd` run still does not mean anything landed — the
