@@ -179,7 +179,10 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	if snap.Gate.PausedAt == "" {
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
-	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt)
+	// Rendered once, against the run as the pause left it, so every line this
+	// leg prints about the gate shows the same text the pause did (#346).
+	description := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt, description)
 	if err != nil {
 		return err
 	}
@@ -216,8 +219,8 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 	if len(cleared) == 0 {
 		if snap.Gate.PausedAt != "" {
 			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
-			fmt.Fprintf(os.Stdout, "It is paused at gate %q — decide it with --approve %s or --reject %s instead.\n",
-				snap.Gate.PausedAt, snap.Gate.PausedAt, snap.Gate.PausedAt)
+			fmt.Fprintf(os.Stdout, "It is paused at gate %s — decide it with --approve %s or --reject %s instead.\n",
+				describedGate(snap.Gate.PausedAt, snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)), snap.Gate.PausedAt, snap.Gate.PausedAt)
 			return nil
 		}
 		if !hasUnfinishedWork(g, retained) {
@@ -757,7 +760,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
 	// flags rather than promising a bare resume that would be refused.
-	printPauseHint(os.Stdout, runID, runErr, verifyCmd)
+	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, pausedGateDescription(runErr, g, h))
 
 	return runErr
 }
@@ -772,7 +775,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 //   - the named gate must match where the run is actually paused, so
 //     resuming an old run can never approve a gate the user was not looking
 //     at.
-func resumeDecision(flags *resumeFlags, pausedAt string) (gateID string, decision gate.Decision, err error) {
+//
+// pausedDescription is the paused gate's shown description (#346), named
+// beside it in both refusals; "" leaves them as they always read.
+func resumeDecision(flags *resumeFlags, pausedAt, pausedDescription string) (gateID string, decision gate.Decision, err error) {
 	switch {
 	case flags.approveGate != "" && flags.rejectGate != "":
 		return "", "", fmt.Errorf("resume: --approve and --reject are mutually exclusive")
@@ -782,12 +788,12 @@ func resumeDecision(flags *resumeFlags, pausedAt string) (gateID string, decisio
 		gateID, decision = flags.rejectGate, gate.DecisionReject
 	default:
 		return "", "", fmt.Errorf(
-			"run is paused at gate %q; resume with --approve %s or --reject %s",
-			pausedAt, pausedAt, pausedAt,
+			"run is paused at gate %s; resume with --approve %s or --reject %s",
+			describedGate(pausedAt, pausedDescription), pausedAt, pausedAt,
 		)
 	}
 	if gateID != pausedAt {
-		return "", "", fmt.Errorf("resume named gate %q but the run is paused at %q", gateID, pausedAt)
+		return "", "", fmt.Errorf("resume named gate %q but the run is paused at %s", gateID, describedGate(pausedAt, pausedDescription))
 	}
 	return gateID, decision, nil
 }

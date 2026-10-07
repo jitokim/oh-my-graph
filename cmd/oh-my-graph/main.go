@@ -1199,7 +1199,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// verification (what ReattachVerifyCommand refuses to take from a run
 	// directory). That pair is ADR 0016 §4's refusal, so the hint prints the
 	// command WITH --verify-cmd rather than a bare one that would be refused.
-	printPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd)
+	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, pausedGateDescription(runErr, g, h))
 
 	return runErr
 }
@@ -2378,6 +2378,14 @@ func shellSingleQuoted(s string) string {
 // so this is the hint that fires most often for a --verify-cmd run — and the
 // one that, printed without the flag, sends the reader into a refusal.
 func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand) {
+	printDescribedPauseHint(w, runID, runErr, verifyCmd, "")
+}
+
+// printDescribedPauseHint is printPauseHint with the paused gate's shown
+// description (pausedGateDescription, #346) on its first line:
+// `Paused at gate "approve" (<description>). Resume with:`. An empty
+// description prints exactly what printPauseHint does.
+func printDescribedPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinator.VerifyCommand, gateDescription string) {
 	resupply := verifyResumeSuffix(verifyCmd)
 	note := ""
 	if resupply != "" {
@@ -2390,8 +2398,8 @@ func printPauseHint(w io.Writer, runID string, runErr error, verifyCmd coordinat
 		// can carry an injected verification and only a hand-written one can pause
 		// at a gate. Composed anyway rather than special-cased: this function's
 		// whole promise is that the command it prints runs.
-		fmt.Fprintf(w, "\nPaused at gate %q. Resume with:\n  oh-my-graph resume %s --approve %s%s\n  oh-my-graph resume %s --reject %s%s\n%s",
-			paused.GateID, runID, paused.GateID, resupply, runID, paused.GateID, resupply, note)
+		fmt.Fprintf(w, "\nPaused at gate %s. Resume with:\n  oh-my-graph resume %s --approve %s%s\n  oh-my-graph resume %s --reject %s%s\n%s",
+			describedGate(paused.GateID, gateDescription), runID, paused.GateID, resupply, runID, paused.GateID, resupply, note)
 		return
 	}
 	var limited *schedule.LimitPausedError
