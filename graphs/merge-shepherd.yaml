@@ -76,7 +76,7 @@
 # licence to `--admin` justified by a review that was "complete by
 # construction" — a construction with no human in it. Not a hang: a MERGE. A
 # conflicting PR was invisible the same way and ended the run green, because
-# merge met the conflict, answered WITHHELD, and WITHHELD passes. Both waits now
+# merge met the conflict, answered WITHHELD, and WITHHELD passed. Both waits now
 # project EVERY review with its author, read `reviewDecision` and
 # `mergeStateStatus` alongside them, and judge the WHOLE check
 # rollup instead of an entry named `test`. The unfiltered review list is what
@@ -88,16 +88,40 @@
 # together.
 #
 # The merge verdict is two-valued on purpose: MERGED <sha> or WITHHELD
-# <reason>. A deliberate refusal to merge PASSES — refusing to go past an
-# unfinished review is this graph working, not failing — so a green run is
-# not by itself proof that anything landed. Read merge's artifact. WITHHELD is
-# a FALLBACK, not the routine answer to pending checks: recheck is what waits
-# for those now, and merge reaches WITHHELD only when recheck came back
-# UNSETTLED and the operator approved the gate anyway. Say the trade plainly:
-# the checks-outlast-the-wait case ends GREEN having merged nothing — UNSETTLED
+# <reason>. A deliberate refusal to merge can PASS — refusing to go past an
+# unfinished review is this graph working, not failing — but since #334 the
+# verdict alone no longer decides that. #334: when the session's permission
+# mode DENIED `gh pr merge`, merge answered WITHHELD, the pattern accepted it,
+# the run exited 0 and the PR stayed OPEN. So merge now also carries a
+# `success_check.verify` the ENGINE runs, judging two facts no model wrote:
+# recheck's recorded verdict (the first line of its artifact) and the PR's live
+# state on GitHub. Four rules, and nothing else:
+#   1. recheck said RECHECKED <40-hex sha> → PASS only if the PR is MERGED at
+#      exactly that head. OPEN (a denied merge), OPEN with auto-merge queued
+#      (this graph merges directly, never queues), MERGED at another head (a
+#      push landed after recheck) and CLOSED all FAIL.
+#   2. RECHECKED with a sha that is not exactly 40 hex characters → FAIL.
+#   3. recheck did not say RECHECKED (UNSETTLED) → PASS only if the PR is still
+#      OPEN: that is the deliberate WITHHELD. MERGED fails — the merge went
+#      against recheck's own verdict.
+#   4. gh failed, the artifact is unreadable or empty, or gh printed something
+#      unexpected → FAIL. A verification that could not complete never passes.
+# Rule 1 is stricter than "WITHHELD passes" in one more place, and it is meant
+# to be: a WITHHELD after a RECHECKED recheck — a refused `--admin`, a merge
+# blocked by something recheck did not see — now FAILS too. The run halts and
+# the operator acts; `oh-my-graph resume <run-id> --retry-failed` re-runs
+# merge, and its prompt's step 0 is what makes that re-run safe (it sees a
+# merge that already landed and reports it instead of merging twice). So a
+# green run now means what it reads as: the PR is MERGED at the head recheck
+# judged, or recheck came back UNSETTLED and the PR is still open, untouched.
+# WITHHELD is a FALLBACK, not the routine answer to pending checks: recheck
+# is what waits for those now, and merge reaches WITHHELD only when recheck
+# came back UNSETTLED and the operator approved the gate anyway (or the merge
+# was refused, which halts the run under rule 1). Say the trade plainly: the
+# checks-outlast-the-wait case ends GREEN having merged nothing — UNSETTLED
 # passes and merge answers WITHHELD — and it ended green before recheck too,
 # because WITHHELD was then the ROUTINE answer to a review triage's own push had
-# restarted, and WITHHELD passes. Three of the five observed hits ended exactly
+# restarted, and WITHHELD passed. Three of the five observed hits ended exactly
 # that way (see the recheck comment). So this node does not turn a red
 # terminal state green; it makes that state RARER — the common case, a fix
 # pushed and checks that restart and conclude in minutes, now merges where it
@@ -908,11 +932,16 @@ nodes:
         - WITHHELD <reason> — you decided NOT to merge and the PR is still
           open. The blocking fact comes immediately after the token
           (`WITHHELD recheck left test pending on 4f2a1c9`). This is a
-          legitimate outcome and it PASSES: refusing to merge past an
-          unfinished review is this graph working as designed. It is now a
-          FALLBACK, not the routine answer — recheck is what waits, so the
-          case that reaches here is an UNSETTLED recheck the operator
-          approved over anyway.
+          legitimate outcome: refusing to merge past an unfinished review is
+          this graph working as designed. It is a FALLBACK, not the routine
+          answer — recheck is what waits, so the case that reaches here is an
+          UNSETTLED recheck the operator approved over anyway, and that one
+          PASSES. After a RECHECKED recheck, WITHHELD is still the honest
+          answer when the merge was refused (a denied `gh pr merge`, an
+          `--admin` you may not use), but the engine checks the PR on GitHub
+          after you reply and that node FAILS, so the run halts for the
+          operator. Do not dress a refused merge up as anything else to avoid
+          that: the halt is the point.
       "Not yet" is not a third verdict. If you are tempted to wait for
       something, the honest answer is WITHHELD naming what you are waiting
       for — the operator decides whether to re-run.
@@ -986,6 +1015,65 @@ nodes:
     # The false FAIL that prompted the question is paid for in step 0 and in
     # this node's grant instead, which is the honest place: the pattern was
     # never wrong about PR #135's reply, the re-run was just expensive.
+    #
+    # The pattern is self-report, and #334 is what that costs here: a merge
+    # DENIED by the permission mode came back WITHHELD, matched, and the run
+    # went green over an OPEN PR. `verify` is the half the ENGINE judges — the
+    # four rules in the file header, decided from recheck's recorded verdict
+    # and the PR's live state, never from merge's own reply. Notes on how:
+    #   - It runs in this node's cwd, the TARGET repo, so everything is inline
+    #     POSIX sh: no helper script from this repo, no python, no jq binary
+    #     (`gh --jq` is gh's own). `{{ artifacts.recheck }}` with no filter is
+    #     the engine-computed FILE PATH, read with sed; recheck's text never
+    #     lands on this command line (handoff.LintVerifyInlining).
+    #   - The verdict is the first non-blank line of that file, stripped of the
+    #     same leading decoration and separators recheck's own pattern admits.
+    #     The sha must be exactly 40 hex characters, either case; recheck's
+    #     pattern admits 7, which names a commit but cannot be compared to one.
+    #   - gh's projection is one line, `<state> <head> <on|off>`, so `set --`
+    #     splits it with no parser. gh's stderr is dropped so the verify prints
+    #     exactly one line, the deciding rule plus what it observed; a gh
+    #     failure still FAILS, by its exit code.
+    #   - A FAIL here is `verify_failed`. Correcting a false one is the
+    #     `resume <run-id> --retry-failed` re-run step 0 already makes safe.
+    # Pinned by internal/schedule/merge_shepherd_verify_test.go against a fake gh.
     success_check:
       exit_zero: true
       result_matches: '^[*_`\s\-—]*(MERGED[*_`\s:\-—]*[0-9a-f]{7,40}\b|WITHHELD[*_`\s:\-—]*[[:alnum:]])'
+      verify:
+        timeout: 1m
+        command: |
+          say() { printf 'merge verify (#334): %s\n' "$*"; }
+          pr="{{ inputs.pr }}"
+          out=$(gh pr view "$pr" --json state,headRefOid,autoMergeRequest \
+            --jq '[.state, (.headRefOid // ""), (if .autoMergeRequest then "on" else "off" end)] | join(" ")' 2>/dev/null) \
+            || { say "rule 4 FAIL: gh pr view $pr exited $?"; exit 1; }
+          set -f
+          set -- $out
+          [ $# -eq 3 ] || { say "rule 4 FAIL: unexpected gh output for PR #$pr: '$out'"; exit 1; }
+          state=$1 oid=$(printf '%s' "$2" | tr 'A-F' 'a-f') auto=$3
+          seen="PR #$pr state=$state head=$oid"
+          [ "$auto" = on ] && seen="$seen auto-merge=on"
+          case $state in OPEN|MERGED|CLOSED) ;; *) say "rule 4 FAIL: unexpected state; $seen"; exit 1 ;; esac
+          case $oid in *[!0-9a-f]*) say "rule 4 FAIL: unexpected head; $seen"; exit 1 ;; esac
+          case $auto in on|off) ;; *) say "rule 4 FAIL: unexpected auto-merge field; $seen"; exit 1 ;; esac
+          v=$(sed -n '/[^*_` [:space:]]/{s/^[*_` [:space:]]*//;p;q;}' "{{ artifacts.recheck }}" 2>/dev/null) \
+            || { say "rule 4 FAIL: recheck's artifact is unreadable; $seen"; exit 1; }
+          [ -n "$v" ] || { say "rule 4 FAIL: recheck's artifact is empty; $seen"; exit 1; }
+          case $v in
+            RECHECKED*)
+              rest=$(printf '%s\n' "$v" | sed 's/^RECHECKED[*_` [:space:]:]*//')
+              sha=${rest%%[!0-9a-fA-F]*}
+              case ${rest#"$sha"} in [0-9A-Za-z_]*) sha=bad ;; esac
+              [ ${#sha} -eq 40 ] || { say "rule 2 FAIL: recheck RECHECKED without a 40-hex sha; $seen"; exit 1; }
+              sha=$(printf '%s' "$sha" | tr 'A-F' 'a-f')
+              if [ "$state" = MERGED ] && [ "$oid" = "$sha" ]; then
+                say "rule 1 PASS: recheck RECHECKED $sha; $seen"; exit 0
+              fi
+              say "rule 1 FAIL: recheck RECHECKED $sha, want MERGED at it; $seen"; exit 1 ;;
+            *)
+              if [ "$state" = OPEN ]; then
+                say "rule 3 PASS: recheck not RECHECKED, PR left open; $seen"; exit 0
+              fi
+              say "rule 3 FAIL: recheck not RECHECKED, want OPEN; $seen"; exit 1 ;;
+          esac
