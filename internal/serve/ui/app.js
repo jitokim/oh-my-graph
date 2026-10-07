@@ -956,7 +956,7 @@ function decideGate(nodeId, decision, buttons) {
 // monospace pre capped at 24 lines with a "show more" expander when the
 // content overflows; a single-line artifact renders inline in the entry's
 // head (`inline`) with no block at all; a node with no artifact renders
-// neither. The artifact is rendered via textContent ONLY — never innerHTML:
+// neither. The artifact is rendered via textContent ONLY — never parsed as markup:
 // node output is untrusted text, not markup.
 function buildArtifactBlock(id, inline) {
   const wrap = document.createElement("div");

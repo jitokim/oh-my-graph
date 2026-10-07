@@ -213,10 +213,32 @@ func TestAppJS_GateDescriptionIsSetViaTextContentOnly_348(t *testing.T) {
 	}
 }
 
+// TestAppJS_GateWithoutDescriptionRendersAsBefore_348 pins that a gate with no
+// stored description gets no description element (#348): showGateDescription's
+// empty-text branch removes any stale element and moves on before anything is
+// created, so an undescribed gate's DOM is exactly what it was before #348.
+func TestAppJS_GateWithoutDescriptionRendersAsBefore_348(t *testing.T) {
+	show := jsCodeOnly(jsFunctionBody(t, readAsset(t, "app.js"), "showGateDescription"))
+
+	guard := strings.Index(show, "if (!text)")
+	create := strings.Index(show, "createElement")
+	if guard < 0 || create < 0 || guard > create {
+		t.Fatal("ui/app.js's showGateDescription no longer checks for an empty description before " +
+			"creating the element: a gate without a description would get an empty .gate-description")
+	}
+	branch := show[guard:create]
+	for _, want := range []string{".remove()", "continue"} {
+		if !strings.Contains(branch, want) {
+			t.Errorf("ui/app.js's showGateDescription's empty-description branch lacks %q: a gate "+
+				"without a description must keep no description element and skip creating one", want)
+		}
+	}
+}
+
 // TestAppJS_HasNoHTMLSinks_348 holds app.js to its own rule — untrusted text is
 // rendered via textContent ONLY — across the whole file, not just the gate
-// description #348 added. Comments are stripped first, because the rule itself
-// is written in one.
+// description #348 added. Comments are stripped first, so a comment that names
+// a sink while forbidding it cannot fail the check.
 func TestAppJS_HasNoHTMLSinks_348(t *testing.T) {
 	code := jsCodeOnly(readAsset(t, "app.js"))
 	for _, sink := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
