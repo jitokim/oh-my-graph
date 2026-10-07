@@ -3498,8 +3498,8 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   persisted as `assess.json` in that cycle's run directory (`goal_met`,
   `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
   cycle's ledger cannot include, since the ledger prints before assessment).
-  The printed `remaining:` and `evidence:` lines, and the assessor reply an
-  `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
+  The printed `remaining:` and `evidence:` lines, the final `remaining` an
+  unmet-goal exit error quotes, and the assessor reply an `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
   sanitised for the terminal by `fence.SanitizeTerminalLine`; `assess.json`,
   `AssessError.Output` and the next cycle's planner prompt keep the raw text,
   and the goal is still judged on the raw run output (#349).
