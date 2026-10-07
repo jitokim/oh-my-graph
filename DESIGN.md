@@ -1865,7 +1865,9 @@ incompatible snapshot is refused rather than misread:
   its expectations could not be applied) mean it broke before one.
   **`exit_code` is absent, never faked, when the command never exited on its
   own** — not 0, which would read as a pass, and not a sentinel like −1;
-  `not judged` keeps the code the command really returned. `output_tail` is
+  a command killed by a signal (OOM killer, crashed child) is `failed` with
+  no `exit_code`, because the −1 Go reports for it is not a code it exited
+  with; `not judged` keeps the code the command really returned. `output_tail` is
   the END of the combined output, because a check prints its verdict last,
   bounded by `verify.RetainedTail` to 4096 bytes including its
   `…(earlier output truncated)…` marker, and absent when nothing was captured.
@@ -3149,7 +3151,8 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   `runstate`). Without it a node that only replied "PASS" was judged on its
   reply alone. The block opens with an `ENGINE-OBSERVED verification of node
   <id>` label, and the engine writes the `command`, `status`, `exit code`
-  (or "none — the command did not exit on its own") and `expected exit code`
+  (or "none — the command did not exit on its own", which is also what a
+  negative code renders as) and `expected exit code`
   lines from its own record, OUTSIDE the fence, never parsed out of the
   command's output. The command is planner-authored, so it is cut to 500
   bytes and Go-quoted onto one line, where a newline in it cannot start a

@@ -188,7 +188,8 @@ and `output_tail`. `status` is one of `"passed"` or `"failed"` (the command
 ran to a verdict), or `"timed out"`, `"cancelled"`, `"did not run"`,
 `"interpolation error"` or `"not judged"` (it broke before one). **`exit_code`
 is absent when the command never exited on its own** — never 0 and never a
-sentinel — so test for the key, not its value; `"not judged"` keeps the code
+sentinel — so test for the key, not its value; a command killed by a signal
+is `"failed"` with no `exit_code`, and `"not judged"` keeps the code
 the command really exited with. `output_tail` is the end of the combined
 output, at most 4096 bytes including a leading `…(earlier output truncated)…`
 marker when cut, and absent when nothing was captured. The record is that of
