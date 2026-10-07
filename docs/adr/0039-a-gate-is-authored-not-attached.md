@@ -401,11 +401,21 @@ is useful, and `auto`'s startup output stays as dense as it is.
 1. `auto --plan-only` also writes the plan as YAML, next to `graph.json`, in
    the same directory and with the same content. `run` accepts either file.
    The YAML is a projection of the JSON spec, not a second source: a test
-   loads both and requires the same graph.
+   loads both and requires the same graph. **`run` reads exactly the one file
+   it is given**, never "whichever is in the directory", so once the YAML is
+   edited it is the YAML the user runs. And `run graph.json` warns, with
+   nothing else changed, when a YAML beside it in the same plan directory no
+   longer matches it: a gate added to the YAML and then skipped by running the
+   JSON is the worst way this feature could fail.
 2. The `--plan-only` closing note says, in one sentence, how to add a human
    gate: edit the YAML, add a `type: gate` node with its `depends_on`, then
    `run` it. It names the shipped example, `approve-merge` in
-   `graphs/merge-shepherd.yaml`. Nothing is added to `auto`'s startup output.
+   `graphs/merge-shepherd.yaml`, and prints the exact `run <path-to-yaml>`
+   command. It no longer prints a `run` command for `graph.json`. Nothing is
+   added to `auto`'s startup output.
+3. **The test that matters:** edit the saved YAML to add a gate, `run` that
+   file, and confirm the run pauses at the gate. A second test runs the
+   `graph.json` beside the edited YAML and checks that the warning is printed.
 
 ### 9.2 Not next
 
