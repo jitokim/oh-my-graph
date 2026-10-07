@@ -66,8 +66,14 @@ oh-my-graph init
 oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
 
 # 구현 목표라면 반대쪽 출구를 씁니다 — 엔진이 플랜의 각 sink에서 당신의 빌드
-# 명령을 직접 실행하고 exit code를 스스로 판정합니다:
+# 명령을 직접 실행하고 exit code를 스스로 판정합니다. 시작 트리에서 먼저 한 번
+# 실행하고, 그때 이미 빨간색이면 exit 5(baseline red)로 끝냅니다:
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
+
+# 목표에 빠진 내용을 플래너에게 들려주기: 먼저 터미널에서 질문을 최대 다섯 개
+# 받습니다(기본은 꺼짐). 또는 검토하고 `run`할 그래프 파일로 끝낼 수도 있습니다:
+oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...' --interview
+oh-my-graph design "fix the failing test" --out fix-test.yaml
 
 # Codex는 run 전체에 적용되는 opt-in입니다. global flag는 subcommand 앞에 둡니다:
 oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --input repo=$PWD --accept-no-build-evidence
@@ -240,6 +246,22 @@ run 도중에 `E2BIG`으로 spawn에 실패합니다. prompt의 나머지와 마
 텍스트는 node가 실행되는 동안 프로세스 테이블에서 읽을 수 있습니다(SECURITY.md).
 plan 화면은 각 경로와 hash를 출력합니다. `run <graph.yaml>`은 컨벤션을 가져가지
 않으므로 `--plan-only`는 컨벤션이 저장된 그래프에 들어 있지 않다고 알려줍니다.
+
+목표에 빠진 내용은, 질문을 받겠다고 할 때 **플래너**에게 텍스트로 전달될 수
+있습니다. `auto --interview`(기본은 꺼짐)는 첫 플래너 호출 전에 터미널에서 최대
+다섯 개의 질문을 합니다. 질문마다 tool 없는 읽기 전용 인터뷰어 호출이 하나씩이고,
+그 비용은 cycle 1의 플래닝 비용과 목표 전체 지출에 포함됩니다. stdin이 터미널이
+아니면 모델을 부르기 전에 거부합니다. `/skip`은 질문을 건너뛰고 `/done`은 멈춥니다.
+답은 신뢰하지 않는 텍스트라서, 데이터라고 표시된 nonce fence 안에 담겨 플래너에게만
+가고, 어떤 planned node에도 닿지 않으며, 설정·grant·tool을 바꾸지 않습니다. 질문은
+cycle마다가 아니라 목표마다 한 번이고, 각 run 디렉터리는 답을 `interview.md`로
+stage하고 그 hash를 `state.json`에 남기며, `resume`은 사본이 없거나 바뀐 run을
+거부합니다. `--plan-only`와도 같이 쓸 수 있고, 이때 답은 저장된 spec 옆에
+남습니다. `oh-my-graph design "<goal>" --out <file>`은 같은 인터뷰를 run 대신
+파일로 끝냅니다. 플래너 호출 한 번, YAML로 쓴 그래프, 그 파일에 대한 `lint` 검사까지
+하고 아무것도 실행하지 않습니다. 이미 있는 `--out` 파일은 거부하고 `--conventions`는 받지 않으며,
+`lint`를 통과하지 못한 파일도 남겨 둡니다
+([ADR 0044](docs/adr/0044-an-interview-before-planning-is-opt-in-text-for-the-planner-and-never-a-gate.md)).
 
 그 ceiling 안에서 최근에 바뀐 것이 하나 있고, 계층을 읽기 전에 알아둘 값어치가
 있습니다. `permission_mode`를 선언하지 않은 노드는 이제 `--permission-mode auto`로

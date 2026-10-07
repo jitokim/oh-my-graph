@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -454,7 +455,9 @@ func printRuns(w io.Writer, rows []runSummary, coverage string) {
 	for _, row := range rows {
 		total += row.costUSD
 		anyUnknown = anyUnknown || row.costUnknown
-		graphName, nodes, cost, tokens := row.graphName, "-", "-", "-"
+		// On `auto` the graph name is planner-written, so the GRAPH cell is
+		// cleaned for the terminal like any other model text shown here (#349).
+		graphName, nodes, cost, tokens := fence.SanitizeTerminalLine(row.graphName), "-", "-", "-"
 		if row.hasSnapshot || row.hasAccounting {
 			nodes = strconv.Itoa(row.nodeCount)
 			if !row.hasSnapshot {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -338,11 +339,14 @@ func printCycleVerdict(w io.Writer, report coordinator.CycleReport) {
 	if report.Assessment.Usage != (runner.TokenUsage{}) {
 		fmt.Fprintf(w, "  assessment tokens: %s\n", formatUsage(report.Assessment.Usage))
 	}
-	if report.Assessment.Remaining != "" {
-		fmt.Fprintf(w, "  remaining: %s\n", report.Assessment.Remaining)
+	// The assessor writes both lines, quoting the run's own output; they are
+	// cleaned for the terminal here, where they are shown, and nowhere else —
+	// assess.json and the next cycle's planner keep the raw text (#349).
+	if remaining := fence.SanitizeTerminalLine(report.Assessment.Remaining); remaining != "" {
+		fmt.Fprintf(w, "  remaining: %s\n", remaining)
 	}
-	if report.Assessment.Evidence != "" {
-		fmt.Fprintf(w, "  evidence: %s\n", report.Assessment.Evidence)
+	if evidence := fence.SanitizeTerminalLine(report.Assessment.Evidence); evidence != "" {
+		fmt.Fprintf(w, "  evidence: %s\n", evidence)
 	}
 }
 
@@ -520,16 +524,20 @@ func unmeasurableCause(result coordinator.GoalResult) string {
 }
 
 // finalRemaining phrases the last assessment's `remaining` for an unmet-goal
-// exit message.
+// exit message. The text is the assessor's own, so it is terminal-sanitised
+// before it reaches the error a user reads (#349); the fallback is checked
+// after sanitising, so a remaining made only of control bytes still reads as
+// unrecorded rather than as an empty quote.
 func finalRemaining(result coordinator.GoalResult) string {
 	if len(result.Cycles) == 0 {
 		return "no cycle completed"
 	}
-	remaining := result.Cycles[len(result.Cycles)-1].Assessment.Remaining
+	remaining := fence.SanitizeTerminalLine(result.Cycles[len(result.Cycles)-1].Assessment.Remaining)
 	if remaining == "" {
-		// Defensive only: the assess contract requires `remaining` on an
-		// unmet verdict (Assess rejects its absence as garbage), so every
-		// completed-but-unmet cycle carries one.
+		// Defensive for a raw empty value: the assess contract requires
+		// `remaining` on an unmet verdict (Assess rejects its absence as
+		// garbage), so every completed-but-unmet cycle carries one — but it
+		// may sanitise to nothing.
 		return "no remaining work was recorded"
 	}
 	return "remaining: " + remaining

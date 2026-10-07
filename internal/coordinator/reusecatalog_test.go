@@ -462,7 +462,7 @@ func TestReuseSummary_IsOneShortCleanLine(t *testing.T) {
 	long := strings.Repeat("검토 ", 120) // 3-byte runes, so a byte cut would split one
 	for _, description := range []string{
 		"first line\nsecond line\r\nthird fourth",
-		"tab\tbell\x07 escape\x1b[31m red ‮override​ zero-width",
+		"tab\tbell\x07 escape\x1b[31m red \u202eoverride\u200b zero-width",
 		long,
 		"a line\n" + long,
 	} {

@@ -17,6 +17,183 @@ pull requests never edit a common file
 ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
 has landed since the last release is the list of files in that directory.
 
+## [v0.17.0] - 2026-10-07
+
+**Minor, and the through-line is what the engine trusts, and what it shows
+you.** `auto` can now reuse a node shape you keep in `graphs/fragments/`
+([ADR 0038](docs/adr/0038-a-planned-node-cites-a-fragment-from-a-menu-it-did-not-write.md)):
+the planner picks an admitted fragment from a menu trusted code built, and
+trusted code resolves, pins and re-checks the file. Admission is strict on
+purpose. A fragment is offered only if its open slots reach nothing but its
+prompt, its tools are read-only, and it declares nothing a planner may not
+write. What a planted fragment can still do is choose a read-only node's
+instructions: steer its report, and read files outside the repository into it,
+since the read tools are not confined to the worktree. That report reaches
+later nodes as a path and the assessor inside its fence. Pre-registered
+against 20 goals, the planner cited the menu in 8 of the 9 goals the fragment
+fits and in none of the 9 it does not (of the two partial fits, one was not
+cited and one was cited on its read-only half).
+
+The goal assessor now judges a node's `verify` from the engine's own record
+instead of the node's reply, `auto` checks `--verify-cmd` on the starting
+tree before it pays for a cycle, and `merge-shepherd`'s merge node confirms
+the PR is merged on GitHub at exactly the rechecked head. A human gate can
+now say what approving it means, and `auto --plan-only` saves a `graph.yaml`
+you edit to add one
+([ADR 0039](docs/adr/0039-a-gate-is-authored-not-attached.md)). This
+release's rotating meta-review took **security** as its subject and asked
+which planner-, repo-, input- or model-controlled string reaches a person or a
+prompt unsanitised. The prompt surfaces were clean; three terminal surfaces
+were not, and they are fixed under Security below.
+
+Release QA: `make local` and `make smoke` passed. `make smoke-codex` passed its
+first node and then stopped on the Codex account's session limit, which the
+engine reported and paused on as designed; its second node did not run.
+
+
+### Added
+
+- **A prompt, `cwd` or verify command can now quote its node's own timeout as
+  `{{ self.timeout }}`.** It renders the bound the node is actually killed at —
+  its `timeout:`, or the runner's default when it declares none — in Go
+  duration form (`20m0s`, `1h30m0s`), the same on every attempt, so a fragment
+  can budget against its using node's bound instead of restating a number.
+  ([#292](https://github.com/jitokim/oh-my-graph/issues/292))
+- **`auto --interview` asks you up to five questions about the goal before it
+  plans, and gives your answers to the planner.** Off by default: without the
+  flag `auto` sends the planner exactly the prompt it did before, and a script
+  or an agent never waits on a keyboard. With it, stdin must be a terminal (if
+  it isn't, the run is refused before any model call), and each question is
+  one read-only interviewer call with no tools. Type `/skip` to skip a question
+  (it still counts toward the five) or `/done` to plan with what you have
+  answered. An answer over 2000 bytes is refused, never cut, and input that
+  ends before any answer is refused. The answers reach the planner only, as
+  fenced data under a per-call nonce. No planned node receives them, and they
+  change no setting, grant or tool. The interview is asked once per goal, not
+  per cycle. Its cost counts in cycle 1's planning cost, the goal's spend and
+  `--max-goal-budget-usd`. Each run directory keeps the answers as
+  `interview.md`, and `state.json` records their hash, the counts, why the
+  interview ended and its cost, never the text. `resume` refuses a run whose
+  copy is missing or altered, and asks nothing. It works with `--plan-only`,
+  which keeps the answers beside the saved spec.
+  ([#319](https://github.com/jitokim/oh-my-graph/issues/319))
+- **`oh-my-graph design "<goal>" --out <file>` interviews you, plans once,
+  writes the graph as YAML and lints it, and never runs it.** It is for when
+  you would rather review the graph and launch it yourself with `run`. No node
+  spawns and no run directory is created. Before anything is spent, it refuses
+  an `--out` that already exists (it never overwrites a file) and
+  `--conventions`, which nothing it runs could carry. A file that does not lint
+  is kept, named in the error, and the command exits non-zero. It prints the
+  interview's cost and the planner's separately, then the total.
+  ([#319](https://github.com/jitokim/oh-my-graph/issues/319))
+- `auto --no-baseline` skips the starting-tree baseline for a `--verify-cmd` that is an acceptance test of the goal, red before the change on purpose; every sink still runs the command. It requires `--verify-cmd`, and the "baseline red" message names it. ([#325](https://github.com/jitokim/oh-my-graph/issues/325))
+- **`state.json` now records what a node's `success_check.verify` actually
+  did, and the goal assessor reads it.** A node with a verify carries a
+  `verification` record: the command as run, its exit code (absent, never
+  faked, when it did not exit on its own or was killed by a signal), the
+  expected exit code, its
+  duration, a status (`passed`, `failed`, `timed out`, `cancelled`,
+  `did not run`, `interpolation error`, `not judged`), the last 4096 bytes
+  of its output and, when that cut a longer output, `output_truncated: true`.
+  The schema stays at 3, and a run without a verify writes the
+  same file as before. In `auto --max-cycles`, the assessor now gets an
+  engine-observed block for each such node, with the command, status and exit
+  code outside the fence and the output tail fenced as data. The command
+  appears verbatim, quotes and backslashes included. Only a command with a
+  newline or other control character is shown escaped, and it is labelled as
+  escaped. When the engine kept only the tail of a longer output, the block
+  says so above the fence. The assessor is told this
+  observation outranks the node's own reply about the same check, so a node
+  that only answered "PASS" is no longer judged on its word alone.
+  ([#332](https://github.com/jitokim/oh-my-graph/issues/332))
+- **`auto` and `chat` can reuse a node shape you already keep in `graphs/fragments/`, and the plan screen names every one used.** Each planning call scans `<repository root>/graphs/fragments/` once. It offers the planner, as a fenced menu of ids, only the fragments whose slots land solely in a prompt, whose tools are only `Read`, `Glob` and `Grep` (no tool that writes a file or runs a command, though the planner may write `Edit`, `Write`, `Bash(go *)` and `Bash(make *)` itself), and which declare no `permission_mode`, no field a planner may not write, no loader advisory, and no `use:` of another fragment: a fragment that cites another is not offered in this slice and is shown as skipped (`nested use`), since only the cited file's own bytes are hashed and a nested one is refused before it is read. The planner may cite an entry with `reuse:` and `bind:` and nothing else. A path, a file name, an unlisted id or an unlisted slot is refused, and `use:`/`with:` stay refused from a planner. Trusted code re-reads and re-hashes the cited file, re-admits it from those bytes, and splices it before agent mapping, the `--verify-cmd` attachment and skill activation, so `graph.json` holds the resolved graph. Every spliced node is checked against the read-only tool set again, and one declaring any `permission_mode` is refused, so a fragment forced past the menu is still refused. A file changed since the menu was shown fails the plan, naming both digests. `reuse-catalog.json` (0600) beside `graph.json` records the directory, the offered entries and each citation's source and SHA-256. The plan screen prints one line with the directory, the offered count and the skipped counts by reason, then one line per citation. On this repository, `read-and-report` is offered and six shipped fragments are skipped. The menu adds 1,686 bytes to each planner prompt here, measured in bytes, not tokens (`docs/measurements/0038-reuse-menu-prompt-size.md`). Reuse is on by default; `--no-reuse` on `auto` or `chat` turns it off, and a run then plans, records and prints exactly as before. ([#338](https://github.com/jitokim/oh-my-graph/issues/338))
+- **`auto --plan-only` also saves the plan as `graph.yaml`, the file to edit and run.** It sits beside `graph.json` in `~/.oh-my-graph/plans/<id>/`, with the same content, so adding a human gate no longer means editing generated JSON. The closing note prints `oh-my-graph run <graph.yaml>` instead of a `graph.json` command, and says how to add a gate: a `type: gate` node with its `depends_on`, like `approve-merge` in `graphs/merge-shepherd.yaml`. `run` reads exactly the file it is given; running a `graph.json` whose `graph.yaml` beside it no longer matches prints a warning and still runs the JSON. ([#342](https://github.com/jitokim/oh-my-graph/issues/342))
+- **A `type: gate` node can say what approving it means, and that sentence is printed wherever you decide it.** The new optional `description:` is valid on a gate only. It is refused at load on any other node, and `auto` refuses it on every planned node. It may quote `{{ artifacts.<id> }}` with no filter, which renders the artifact's file path, and `{{ inputs.<name> }}`. It may quote no `self` reference. `oh-my-graph lint` refuses the `| inline` filter, any `{{ feedback.<id> }}`, `{{ self.previous }}`, `{{ self.timeout }}` and any reference that cannot resolve, because each would put a model's reply or a non-fact where a person approves. It is interpolated when the gate pauses and printed as one line: newlines and tabs become a single space, and escape sequences, control characters, Unicode format characters (bidi controls, zero-width characters), the line and paragraph separators and invalid UTF-8 are stripped or replaced, so an `--input` value cannot repaint the prompt. It appears in parentheses after the gate id in the pause block, in `resume`'s paused, wrong-gate and `--retry-failed` messages, and as an `approved gate <id>: <description>` / `rejected gate <id>: <description>` echo before the resumed leg. The decided gate's `state.json` record keeps it, exactly as shown, as the optional `gate_description` field, with no schema bump. A gate without a description prints and records exactly as before. The web live view's approve/reject page does not show it (web view: #348); a decision made from the page still records it. `run`, `run --dry-run` and `resume` refuse a description `lint` would refuse at load, before any node runs, with `lint`'s own refusal naming the gate and the token. ([#346](https://github.com/jitokim/oh-my-graph/issues/346))
+
+### Changed
+
+- **`auto` now tells a planned review loop's reviewer to quote its own previous-round reply.** The planner prompt asks the reviewing node to quote `{{ self.previous }}` and check its earlier findings first, before raising new ones; this is guidance only, and a plan that leaves it out is still accepted. ([#288](https://github.com/jitokim/oh-my-graph/issues/288))
+- **`e2e-verify` gives its stress run a budget instead of letting it pick
+  one that outlives the node.** The fragment now states its own bound,
+  `timeout: 20m` (the runner's default, so nothing is killed sooner), and its
+  prompt tells the node to spend at most half of it on stress: time one
+  `-count=1` repetition, derive a count that fits, and pass a `-timeout`
+  between the budget and the bound, since `go test`'s own 10-minute default
+  prints a FAIL that never happened. `self-dev`, `dev-review-pr` and `backlog-batch` no longer hand
+  down `-count=300`, which ran a dogfood e2e node into its 20-minute timeout
+  with no verdict. The prompt quotes the node's bound as `{{ self.timeout }}`,
+  so a graph that overrides `timeout:` on a node using `e2e-verify` gets a
+  budget sized to its own bound.
+  ([#292](https://github.com/jitokim/oh-my-graph/issues/292))
+- `auto --verify-cmd` now runs the command once on the starting tree before spending anything; if it already fails there, `auto` stops with a "baseline red" message quoting the tail of its output and exits 5, with no model call and no run directory. ([#315](https://github.com/jitokim/oh-my-graph/issues/315))
+- An `auto --no-baseline` run now records the skipped baseline in its `state.json`, on every cycle and across `resume`, and shows it with the plan, so a finished run says the starting tree was never checked. ([#328](https://github.com/jitokim/oh-my-graph/issues/328))
+
+### Fixed
+
+- **`self-dev`'s review-verdict no longer passes a review that opens
+  `CLEANUP` or `CLEANLY`: `CLEAN` must be the whole first word.** The
+  `verify` command deleted every space before matching, so it could not see
+  where the first word ended, and `grep -Eq '^(CLEAN|MINOR:)'` passed any
+  review whose first word merely started with `CLEAN` — unlike the node's own
+  `result_matches`, which reads `CLEAN\b`. It now drops `*` and backtick
+  emphasis, folds line breaks into spaces and matches the first word whole,
+  over the whole review rather than its first 256 bytes, so no cut can end a
+  word early. It keeps `_`, a word character to `\b`, so `CLEAN_` is not
+  `CLEAN` and underscore emphasis passes only as a pair (`_CLEAN_`,
+  `__CLEAN__`):
+  ``cat "$f" | tr -d '*`\r' | tr '\t\n' '  ' | LC_ALL=C grep -Eq '^ *((__CLEAN__|_CLEAN_|CLEAN)([^A-Za-z0-9_]|$)|_{0,2}MINOR_{0,2} *:)'``.
+  The word class is ASCII under `LC_ALL=C`, as Go's `\b` is, so the shell's
+  locale cannot judge a non-ASCII letter after `CLEAN` differently.
+  If you copied the v0.16.0 command quoted under **Changed**, copy this one.
+  ([#309](https://github.com/jitokim/oh-my-graph/issues/309))
+- **The placeholder warnings that `lint`, `run --dry-run` and the plan screen
+  print now end two of their findings with the quoting hint: the one for an
+  input the graph does not declare and the one for an artifact that names a
+  node the graph does not have.** A prompt that only quotes or explains
+  `{{ inputs.<name> }}` or `{{ artifacts.<id> }}` is resolved like any other,
+  and that is the commonest way to write either mistake, yet the warning
+  reported a wiring bug and left the reader to find the cause. The runtime
+  diagnostics for the same mistakes already ended with this hint (#234); these
+  warnings now do too: the rule that every `{{ ... }}` in a prompt is
+  resolved, and the way out (break the braces apart, or pass the text in as an
+  input or artifact). Only those two warnings change. They print the same way
+  from `lint`, `run --dry-run` and the `auto`/`chat` plan screen, where only
+  the undeclared-input one can appear, because a plan that names a missing
+  node is refused before that screen prints. Auto mode's plan refusal and
+  every other warning are unchanged, and no exit code changed.
+  ([#313](https://github.com/jitokim/oh-my-graph/issues/313))
+- `oh-my-graph --help`, including after `--runtime codex`, now prints top-level usage and exits successfully; unknown commands still return an error. ([#314](https://github.com/jitokim/oh-my-graph/issues/314))
+- **A run of `auto --interview` whose plan is refused now records the
+  interview's cost in its planning cost.** Before, the run's record showed
+  only the planner calls and under-reported what planning spent. As with an
+  accepted plan, a goal loop counts the interview once, on cycle 1, and
+  `--plan-only` still prints the interview's cost and the planner's separately.
+  ([#322](https://github.com/jitokim/oh-my-graph/issues/322))
+- **`merge-shepherd` no longer ends green over a merge that never happened.**
+  When the permission mode denied `gh pr merge`, `merge` answered `WITHHELD`,
+  its pattern accepted it, and the run exited 0 with the PR still open. The
+  `merge` node now also carries a `success_check.verify` that reads
+  `recheck`'s recorded verdict and the PR's live state from `gh pr view`:
+  after `RECHECKED <sha>` it passes only if the PR is merged at exactly that
+  40-hex SHA, and after `UNSETTLED` only if the PR is still open. A gh
+  failure, unexpected output or a queued auto-merge fails. A `WITHHELD` after
+  a `RECHECKED` recheck (a denied merge, a refused `--admin`) now fails the
+  run; `oh-my-graph resume <run-id> --retry-failed` re-runs `merge`, and its
+  step 0 makes that safe. A green run now means the PR landed at the SHA
+  `recheck` judged, or was deliberately left open after an `UNSETTLED`
+  recheck. ([#334](https://github.com/jitokim/oh-my-graph/issues/334))
+
+### Security
+
+- **A node's Detail, the goal verdict, an assessor error and the `runs list` GRAPH column can no longer repaint your terminal.** Text written by a model, a repo or a verify command reached the terminal raw on these paths, so escape sequences, C0/C1 controls, bidi controls and line/paragraph separators could move the cursor, recolour or reverse text, or print a line the engine never wrote. Each now goes through `fence.SanitizeTerminalLine`, the sanitizer a gate's description already uses, and prints as one clean line. Every Detail is cleaned inside `schedule.capDetail` before its 240-rune bound. That one call covers the end-of-run ledger table, `state.json`, `events.jsonl`, `watch` and the serve live view. The goal loop's `remaining:` and `evidence:` lines are cleaned where they are printed, and so is the final `remaining` the goal-not-met exit error quotes. So is the assessor reply an `AssessError` quotes, before its 500-byte cut, and the graph name in `runs list`, which `auto`'s planner writes. Nothing that is judged or handed to a model changes. Verification is still judged on the raw command output. The feedback/retry evidence, the assessor's fenced material, `assess.json`, `AssessError.Output` and the next cycle's planner prompt all keep the raw text. ([#349](https://github.com/jitokim/oh-my-graph/issues/349))
+
+### Documented
+
+ADR 0044 (Accepted) records the decision to offer an interview before planning, as an opt-in `auto --interview` and as an `oh-my-graph design` command that ends in a reviewed graph file, with `auto` unchanged when the flag is off. ([#319](https://github.com/jitokim/oh-my-graph/issues/319))
+ADR 0038 (Accepted) settles how `auto` will reuse fragments: the planner cites an engine-admitted fragment from a menu by id, trusted code validates and splices it, the committed path keeps reuse on with its residual named (a planted fragment can steer a read-only node's report, which later nodes and the assessor receive only as fenced or path-handed data), menu entries are fenced and their summaries capped, and a fragment with a lint advisory is not offered. The first menu is `read-and-report`. ([#338](https://github.com/jitokim/oh-my-graph/issues/338))
+ADR 0038 §9.2 now refuses a fragment with a nested `use:` in the first slice, because the nested file's bytes are not pinned, and the post-splice backstop refuses any `permission_mode`. ([#338](https://github.com/jitokim/oh-my-graph/issues/338))
+ADR 0039 (Accepted) keeps its answer that `auto` does not attach a human gate to a planned graph, and picks the next step: `auto --plan-only` will also save the plan as YAML and say how to add a gate before `run`. ([#342](https://github.com/jitokim/oh-my-graph/issues/342))
+
 ## [v0.16.0] - 2026-10-03
 
 **Minor, and the through-line is what a review's verdict is allowed to do.**
@@ -5367,7 +5544,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.17.0...HEAD
+[v0.17.0]: https://github.com/jitokim/oh-my-graph/compare/v0.16.0...v0.17.0
 [v0.16.0]: https://github.com/jitokim/oh-my-graph/compare/v0.15.0...v0.16.0
 [v0.15.0]: https://github.com/jitokim/oh-my-graph/compare/v0.14.0...v0.15.0
 [v0.14.0]: https://github.com/jitokim/oh-my-graph/compare/v0.13.0...v0.14.0

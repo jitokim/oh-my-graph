@@ -325,6 +325,31 @@ func TestPlanAndExecute_CyclesExhaustedIsTheUnmetGoalExit(t *testing.T) {
 	}
 }
 
+// TestFinalRemaining_IsSanitised_349: the unmet-goal exit error quotes the
+// final cycle's remaining, which is the assessor's own text. A CSI sequence
+// and U+202E in it never reach the error, the words around them do; a
+// remaining made only of controls falls back to the unrecorded wording (#349).
+func TestFinalRemaining_IsSanitised_349(t *testing.T) {
+	result := func(remaining string) coordinator.GoalResult {
+		return coordinator.GoalResult{Cycles: []coordinator.CycleReport{
+			{Cycle: 1, Assessment: coordinator.Assessment{Remaining: "earlier"}},
+			{Cycle: 2, Assessment: coordinator.Assessment{Remaining: remaining}},
+		}}
+	}
+
+	got := finalRemaining(result("rem-before\x1b[2Jrem-middle\u202erem-after"))
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '\u202e') {
+		t.Errorf("finalRemaining kept a raw escape or bidi override: %q", got)
+	}
+	if want := "remaining: rem-beforerem-middlerem-after"; got != want {
+		t.Errorf("finalRemaining = %q, want %q", got, want)
+	}
+
+	if got, want := finalRemaining(result("\x1b[2J\u202e")), "no remaining work was recorded"; got != want {
+		t.Errorf("a remaining that sanitises to empty: finalRemaining = %q, want %q", got, want)
+	}
+}
+
 // TestPlanAndExecute_FailedCycleStillIterates: a failed run is not the end of
 // the goal — its evidence (verdict FAIL, the failure detail) feeds the
 // assessment, and the next cycle routes around it (ADR 0011 §2's precedence

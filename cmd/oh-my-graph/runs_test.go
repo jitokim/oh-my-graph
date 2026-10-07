@@ -92,6 +92,28 @@ func TestListRuns_NewestFirstWithCostsVerdictsAndTotal(t *testing.T) {
 	}
 }
 
+// TestListRuns_GraphCellIsSanitised_349 lists a run whose graph name — on
+// `auto`, planner-written — carries a CSI colour/cursor sequence and U+202E.
+// The GRAPH cell shows neither control and keeps the text around them (#349).
+func TestListRuns_GraphCellIsSanitised_349(t *testing.T) {
+	isolateRunHome(t)
+	completedRun(t, "20261007-000349",
+		`{"name":"gr\u001b[31m\u001b[2Aaph\u202ename","nodes":[{"id":"a","prompt":"a"}]}`,
+		map[string]runner.NodeOutcome{"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0}})
+
+	var out, warn strings.Builder
+	if err := listRuns(&out, &warn, runsRoot(), true); err != nil {
+		t.Fatalf("listRuns returned error: %v", err)
+	}
+	row := lineContaining(t, out.String(), "20261007-000349")
+	if strings.ContainsRune(row, 0x1b) || strings.ContainsRune(row, '\u202e') {
+		t.Errorf("the GRAPH cell carries a raw escape or bidi override: %q", row)
+	}
+	if !strings.Contains(row, " graphname ") {
+		t.Errorf("the GRAPH cell lost the text around the controls: %q", row)
+	}
+}
+
 func TestListRuns_UnknownCostUsesTokensInsteadOfZeroDollars(t *testing.T) {
 	isolateRunHome(t)
 	completedRun(t, "codex-run",
