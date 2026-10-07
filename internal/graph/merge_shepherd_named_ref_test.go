@@ -207,11 +207,10 @@ func (fx *shepherdFixture) runCheck(t *testing.T, node graph.Node, pr string) (s
 			t.Fatalf("could not render %s verify cwd %q: %v", node.ID, v.Cwd, err)
 		}
 	}
-	opener := strings.Repeat("{", 2)
-	if strings.Contains(command, opener) {
+	if strings.Contains(command, "{{") {
 		t.Fatalf("%s verify command still holds an unrendered placeholder: %s", node.ID, command)
 	}
-	if strings.Contains(cwd, opener) {
+	if strings.Contains(cwd, "{{") {
 		t.Fatalf("%s verify cwd still holds an unrendered placeholder: %s", node.ID, cwd)
 	}
 	sh, _ := exec.LookPath("sh")
