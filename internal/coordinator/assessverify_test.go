@@ -280,9 +280,10 @@ func TestAssessMaterial_VerifyCommandCannotWriteItsOwnLines(t *testing.T) {
 
 // #332: every other way out of a single line — a carriage return, a tab, an
 // escape sequence, a Unicode line separator, invalid UTF-8 — also falls back
-// to the labelled escaped form.
+// to the labelled escaped form. #346: so does a Unicode format character — a
+// bidi override or a zero-width space — by the rule fence shares.
 func TestAssessMaterial_VerifyCommandWithControlCharactersIsEscaped(t *testing.T) {
-	for _, command := range []string{"make\rtest", "make\ttest", "make \x1b[2Jtest", "make\u2028test", "make \xfftest"} {
+	for _, command := range []string{"make\rtest", "make\ttest", "make \x1b[2Jtest", "make\u2028test", "make\u202etest", "make\u200btest", "make \xfftest"} {
 		material := assessMaterial(verifyEvidence("", NodeVerification{
 			Command: command, ExitCode: exitCode(0), Status: "passed",
 		}), verifyNonce)
