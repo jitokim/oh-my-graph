@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -68,4 +69,52 @@ func describedGate(gateID, description string) string {
 		return fmt.Sprintf("%q", gateID)
 	}
 	return fmt.Sprintf("%q (%s)", gateID, description)
+}
+
+// echoGateDecision prints the decision a `resume --approve/--reject` is about
+// to apply beside the description the decider was shown (#346):
+// "approved gate X: <description>". Silent for a gate with no description, so
+// such a resume prints exactly what it did before.
+func echoGateDecision(w io.Writer, gateID, verb, description string) {
+	if description == "" {
+		return
+	}
+	fmt.Fprintf(w, "%s gate %s: %s\n", verb, gateID, description)
+}
+
+// describedGateRecorder stamps the decided gate's shown description onto that
+// gate's NodeRecord as it is written (runstate.NodeRecord.GateDescription),
+// so state.json keeps what the person read when they decided it. Every other
+// call passes through untouched. It wraps the leg's recorder rather than
+// teaching the scheduler about descriptions: the description is the CLI's to
+// render and print, and the scheduler records whatever the gate's verdict is.
+type describedGateRecorder struct {
+	schedule.Recorder
+	gateID      string
+	description string
+}
+
+func (r describedGateRecorder) RecordNode(nodeID string, rec runstate.NodeRecord) error {
+	if nodeID == r.gateID {
+		rec.GateDescription = r.description
+	}
+	return r.Recorder.RecordNode(nodeID, rec)
+}
+
+// decidedGate is the gate a `resume --approve/--reject` leg decides and the
+// description shown for it; the zero value (a --retry-failed leg) decides
+// none.
+type decidedGate struct {
+	id          string
+	description string
+}
+
+// recorderFor wraps recorder so the decided gate's record carries its shown
+// description, or returns recorder itself when there is none to carry — the
+// snapshot of a gate without a description is then byte-identical.
+func (d decidedGate) recorderFor(recorder schedule.Recorder) schedule.Recorder {
+	if d.description == "" {
+		return recorder
+	}
+	return describedGateRecorder{Recorder: recorder, gateID: d.id, description: d.description}
 }

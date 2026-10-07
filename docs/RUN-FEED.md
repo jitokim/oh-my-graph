@@ -179,7 +179,10 @@ terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 `reasoning_output_tokens`), `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
-execution outside one, and `verification` — see below), and `gate`
+execution outside one, `verification` — see below — and `gate_description`,
+a decided gate's `description:` exactly as its decider was shown it,
+interpolated and sanitised to one line ([#346](https://github.com/jitokim/oh-my-graph/issues/346)),
+absent on every other node and on a gate without one), and `gate`
 (`paused_at`, `decisions`).
 
 `verification` is a node's record of its `success_check.verify` command as

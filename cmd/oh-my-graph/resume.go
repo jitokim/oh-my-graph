@@ -188,9 +188,10 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	}
 	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
 	banner := fmt.Sprintf("Resuming run %q (gate %q %s)", flags.runID, gateID, decisionVerb(decision))
+	echoGateDecision(os.Stdout, gateID, decisionVerb(decision), description)
 	// nil: a gate resume clears no failed node, so there is no attempt for
 	// anything in this leg to be repeating.
-	return continueRun(flags, snap, snap.Nodes, decisions, nil, banner, nodeRunner, web)
+	return continueRun(flags, snap, snap.Nodes, decisions, nil, decidedGate{id: gateID, description: description}, banner, nodeRunner, web)
 }
 
 // resumeRetryLeg is the --retry-failed mode: keep every PASSED node's record
@@ -229,7 +230,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 		}
 		banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
 	}
-	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, banner, nodeRunner, web)
+	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, decidedGate{}, banner, nodeRunner, web)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
@@ -335,7 +336,7 @@ func checkVerifyCommandApplies(runID string, snap runstate.Snapshot, v coordinat
 // is repeating, and the only ones whose failed reply is re-read from disk. web,
 // when non-nil, is the Opener this leg's embedded live view hands its URL to;
 // nil is no live view at all (see executeResume).
-func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, cleared []string, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
+func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, cleared []string, decided decidedGate, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	runID := flags.runID
 	runDir := runDirFor(runID)
 
@@ -719,8 +720,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// half-written output, and neither result then describes the tree the
 		// user has. Nil unless this invocation supplied a command.
 		SerializedVerifyNodes: serializedVerify,
-		Recorder:              recorder,
-		EventSink:             feed,
+		// The decided gate's record carries the description its decider was
+		// shown (#346); every other record is written exactly as before.
+		Recorder:  decided.recorderFor(recorder),
+		EventSink: feed,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).

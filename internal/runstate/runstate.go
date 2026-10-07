@@ -331,6 +331,17 @@ type NodeRecord struct {
 	// state.json and there is NO schema bump. A resumed leg carries an earlier
 	// leg's record forward untouched with the rest of the NodeRecord.
 	Verification *VerificationRecord `json:"verification,omitempty"`
+	// GateDescription is a decided gate's `description:` exactly as the
+	// person deciding it was shown it — interpolated and sanitised, never the
+	// graph's raw text (#346) — so the record of an approval or rejection says
+	// what was approved or rejected. Written by the `resume --approve/--reject`
+	// leg that applies the decision, and carried forward untouched by every
+	// later leg with the rest of the NodeRecord.
+	//
+	// Additive and optional, exactly like Verification: absent on every
+	// non-gate node and on every gate without a description, so such a run
+	// writes byte-identical state.json and there is NO schema bump.
+	GateDescription string `json:"gate_description,omitempty"`
 }
 
 // VerificationStatus is what the ENGINE observed of a success_check.verify

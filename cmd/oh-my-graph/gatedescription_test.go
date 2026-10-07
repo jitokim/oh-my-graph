@@ -3,23 +3,27 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
 // describedGateFlowRun is pausedGateFlowRun with a `description:` on the gate
 // that interpolates an input and an artifact (#346), and ticket bound as the
-// input's value. It returns what the pausing run printed to stdout.
+// input's value. A second, undescribed gate after ship gives the run a later
+// leg to carry the first gate's record through. It returns what the pausing run printed to stdout.
 func describedGateFlowRun(t *testing.T, ticket string) (runID string, rec *capturingRunner, out string) {
 	t.Helper()
 	g := mustParse(t, `{"name":"gate-flow","inputs":["ticket"],"nodes":[
 		{"id":"a","prompt":"a"},
 		{"id":"approve","type":"gate","depends_on":["a"],
 		 "description":"ship {{ inputs.ticket }} from {{ artifacts.a }}?"},
-		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+		{"id":"ship","prompt":"ship","depends_on":["approve"]},
+		{"id":"final","type":"gate","depends_on":["ship"]}]}`)
 	rec = &capturingRunner{}
 	runID = "run-1"
 	var err error
@@ -140,5 +144,107 @@ func TestGateDescription_AbsentPrintsAsBefore(t *testing.T) {
 	err := executeResume(parseResumeFlags(t, []string{runID}), rec, nil)
 	if want := `run is paused at gate "approve"; resume with --approve approve or --reject approve`; err == nil || err.Error() != want {
 		t.Fatalf("bare resume: got %v, want %q", err, want)
+	}
+}
+
+// loadRunSnapshot reads runID's state.json, raw and decoded.
+func loadRunSnapshot(t *testing.T, runID string) (raw string, snap runstate.Snapshot) {
+	t.Helper()
+	path := filepath.Join(runDirFor(runID), stateFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read state.json: %v", err)
+	}
+	snap, err = runstate.Load(path)
+	if err != nil {
+		t.Fatalf("load state.json: %v", err)
+	}
+	return string(data), snap
+}
+
+// TestResume_ApproveEchoesAndRecordsGateDescription: #346 — --approve echoes
+// the decision with the description as shown, records exactly that string on
+// the gate's state.json record, and a later leg carries it forward.
+func TestResume_ApproveEchoesAndRecordsGateDescription(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec, _ := describedGateFlowRun(t, "T-42")
+	shown := shownFlowDescription(runID, "T-42")
+
+	var err error
+	out := captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
+	})
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) || paused.GateID != "final" {
+		t.Fatalf("expected the approved leg to pause at final, got %T: %v", err, err)
+	}
+	if want := "approved gate approve: " + shown + "\n"; !strings.Contains(out, want) {
+		t.Fatalf("approve echo missing\nwant:\n%s\ngot:\n%s", want, out)
+	}
+	if _, snap := loadRunSnapshot(t, runID); snap.Nodes["approve"].GateDescription != shown {
+		t.Fatalf("recorded gate_description %q, want %q", snap.Nodes["approve"].GateDescription, shown)
+	}
+
+	captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "final"}), rec, nil)
+	})
+	if err != nil {
+		t.Fatalf("final leg: %v", err)
+	}
+	_, snap := loadRunSnapshot(t, runID)
+	if got := snap.Nodes["approve"].GateDescription; got != shown {
+		t.Fatalf("a later leg dropped the gate description: got %q, want %q", got, shown)
+	}
+	if got := snap.Nodes["final"].GateDescription; got != "" {
+		t.Fatalf("an undescribed gate was recorded with %q", got)
+	}
+}
+
+// TestResume_RejectEchoesAndRecordsGateDescription: #346 — --reject echoes the
+// decision with the description and records it on the rejected gate's record.
+func TestResume_RejectEchoesAndRecordsGateDescription(t *testing.T) {
+	isolateRunHome(t)
+	runID, rec, _ := describedGateFlowRun(t, "T-42\x1b[2J")
+	shown := shownFlowDescription(runID, "T-42")
+
+	out := captureStdout(t, func() {
+		_ = executeResume(parseResumeFlags(t, []string{runID, "--reject", "approve"}), rec, nil)
+	})
+	if want := "rejected gate approve: " + shown + "\n"; !strings.Contains(out, want) {
+		t.Fatalf("reject echo missing\nwant:\n%s\ngot:\n%q", want, out)
+	}
+	if strings.ContainsRune(out, '\x1b') {
+		t.Fatalf("reject echo carries a raw ESC: %q", out)
+	}
+	_, snap := loadRunSnapshot(t, runID)
+	if snap.Gate.Decisions["approve"] != runstate.GateReject {
+		t.Fatalf("approve not recorded as rejected: %v", snap.Gate.Decisions)
+	}
+	if got := snap.Nodes["approve"].GateDescription; got != shown {
+		t.Fatalf("recorded gate_description %q, want %q", got, shown)
+	}
+}
+
+// TestResume_UndescribedGateEchoesAndRecordsNothing: #346 — deciding a gate
+// with no description prints no echo line and writes no gate_description key.
+func TestResume_UndescribedGateEchoesAndRecordsNothing(t *testing.T) {
+	isolateRunHome(t)
+	var runID string
+	var rec *capturingRunner
+	captureStdout(t, func() { runID, rec = pausedGateFlowRun(t) })
+
+	out := captureStdout(t, func() {
+		if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil); err != nil {
+			t.Fatalf("executeResume: %v", err)
+		}
+	})
+	if strings.Contains(out, "approved gate") {
+		t.Fatalf("an undescribed gate was echoed:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "Resuming run \"run-1\" (gate \"approve\" approved)\n\n") {
+		t.Fatalf("resume output no longer starts with its banner:\n%q", out)
+	}
+	if raw, _ := loadRunSnapshot(t, runID); strings.Contains(raw, "gate_description") {
+		t.Fatalf("state.json carries a gate_description for an undescribed gate:\n%s", raw)
 	}
 }
