@@ -801,7 +801,9 @@ head into the named ref `refs/omg-shepherd/pr-<N>/<sha>` and adds the worktree
 detached at that SHA, so two shepherds can run in one repo. An engine-run
 `success_check.verify` on each then fails unless the worktree's HEAD is the
 PR's `headRefOid`, and removes the worktree and that run's ref whatever the
-result. A ref a killed run left behind is listed by
+check's result. That check runs only after a passing verdict, so on `FAIL` or
+`BLOCKED` the node removes its own worktree and ref before it answers. A ref a
+killed run left behind is listed by
 `git for-each-ref refs/omg-shepherd` and removed with `git update-ref -d <ref>`
 (#360). Neither wait polls a condition a clock cannot clear: a review
 that requested changes, a run awaiting approval, a conflicting branch and a
