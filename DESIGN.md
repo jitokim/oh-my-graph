@@ -278,6 +278,18 @@ Node schema:
   feedback: { rerun: impl, max: 2 }       # optional (ADR 0010): on a judgment failure, re-run the depends_on path from `rerun` back to this node, at most `max` times — see "Execution engine"
 ```
 
+One field is valid on `type: gate` only: `description:`, the sentence the
+person deciding the gate reads (#346). It is refused at load on any other node
+and on every planned node; see "Gate nodes and `resume`" for what it may
+quote and where it prints.
+
+```yaml
+- id: approve
+  type: gate
+  depends_on: [build]
+  description: "ship {{ inputs.ticket }} from {{ artifacts.build }}?"   # optional, gate only
+```
+
 Instead of an inline body, a node may cite a fragment (`use:` + `with:`,
 resolved away at load time — see "Fragments" below):
 
@@ -1818,6 +1830,83 @@ the message; a pattern could not be validated and would silently never match),
 and not a scheduler change. An interactive TTY controller would be another
 implementation in the same seam.
 
+**A gate's `description:` (#346).** A gate may carry one optional sentence
+saying what approving it means, printed wherever a person decides it. The
+person reads it at the moment they approve, so nothing in it may come from a
+model.
+
+- **Where it is valid.** On `type: gate` only. `graph.Validate` refuses it on
+  any other node with a `*MisplacedDescriptionError` naming the node, since
+  nobody would ever be shown it there. A planner may never write it, on a gate
+  or on any other node: `validatePlannedNodeDescription` refuses it
+  (`graph.ParsePlannerReply` passes the load refusal through so the planner
+  reads the coordinator's wording). A planned graph cannot hold a gate anyway
+  (ADR 0039).
+- **What it may quote.** Only paths and the operator's own values:
+  `{{ artifacts.<id> }}` with no filter, which renders the artifact's FILE
+  PATH (computed by the engine from the run directory and a sanitised node id,
+  so no model chose any of it), and `{{ inputs.<name> }}`, the `--input`
+  value. The allowed `{{ self.<key> }}` set (`gateDescriptionSelfKeys`) is
+  **empty**. `{{ self.previous }}` is a reply, and `{{ self.timeout }}` would
+  render the runner's 20m default, which is a bound on no process because a
+  gate spawns nothing. The set exists so that a future self reference that is
+  a fact about a gate can be admitted with one line.
+- **What `lint` refuses** (`handoff.GateDescriptionIssues`, exit 1, one issue
+  per token): `{{ artifacts.<id> | inline }}`, which is the producing node's
+  reply; any `{{ feedback.<id> }}`, which is a declarer's payload with no path
+  form; `{{ self.previous }}`; and `{{ self.timeout }}`. It also refuses
+  everything `LintPlaceholders` would only warn about in a prompt: an
+  undeclared input, an artifact of an unknown node, of the gate itself or of a
+  non-ancestor, an unknown self key, a malformed placeholder-like token and a
+  stray `{{ with.<name> }}`. These are judged by `judgeToken` itself, so a
+  prompt and a description never disagree about what resolves. In a
+  description they are refusals, not advice.
+- **When it is interpolated.** When the gate pauses:
+  `handoff.Handoff.RenderGateDescription` runs it through `InterpolateAs`
+  (the prompt machinery, so a path is the same path a prompt would get)
+  against the run as it stands at the pause. `resume` renders it again from
+  the snapshot, seeded with the same artifact paths, so every line about the
+  gate shows the text the pause printed. The render checks every token with
+  the same predicate lint uses (`gateDescriptionTokenRefused`), so a graph
+  that never went through lint still cannot print a reply. `run` and
+  `run --dry-run` do not call `GateDescriptionIssues`, so a refused or
+  unresolvable token is not caught before the run starts. At the pause it
+  prints `warning: gate "<id>" description not shown: …` on stderr, and the
+  gate's lines print as if it had no description. A description is advice to
+  the decider and must never stand between a run and its resume command.
+- **How it is sanitised** (`handoff.SanitizeGateText`). An input value is the
+  operator's text, printed verbatim. Sanitising it means nothing in it can
+  move the cursor, clear the screen, retitle the window or repaint the
+  terminal into a different-looking approval. ESC is removed together with
+  any complete sequence it begins: CSI, OSC/DCS/SOS/PM/APC through their BEL
+  or ST terminator, and any other ESC sequence. A lone ESC is removed and the
+  bytes after it stay as inert text. CR, every other C0 control, DEL and every
+  C1 control (U+0080–U+009F) are removed, and the 8-bit CSI/OSC/DCS/SOS/PM/APC
+  introducers take their sequence with them. Invalid UTF-8 becomes U+FFFD per
+  byte, so a raw 0x9B cannot reach a non-UTF-8 terminal. **Newline and tab
+  are flattened, not removed.** Each becomes a space, and a run of them with
+  any spaces around it collapses to one space, so words stay apart and the
+  result is **one line**. A description that could break the line could print
+  a line of its own under it, such as `approve? [y/N]`, that the engine never
+  wrote. Leading and trailing space is trimmed.
+- **Where it is shown.** Only the rendered, sanitised string is printed, never
+  the raw YAML. It appears in parentheses after the quoted gate id in the
+  pause block (`Paused at gate "approve" (<description>). Resume with:`,
+  printed by a fresh run and by a resumed leg that pauses again), in
+  `resume --retry-failed`'s `It is paused at gate …` redirect, in a bare
+  `resume <id>`'s refusal, and in the wrong-gate refusal (`… but the run is
+  paused at "approve" (<description>)`). `resume --approve/--reject` echoes
+  `approved gate <id>: <description>` or `rejected gate <id>: <description>`
+  before the `Resuming run` banner. A gate without a description prints
+  every one of these byte-for-byte as before and echoes nothing. **The web
+  live view does not show it**: `/api/graph` carries only id, type and
+  `depends_on`, and the `gate_paused` event carries no description. A browser
+  decision goes through the same `executeResume`, so it still records the
+  field below.
+- **What is recorded.** The decided gate's `state.json` node record gets
+  `gate_description`: the string exactly as its decider was shown it (see
+  below).
+
 **What the snapshot must hold** — `~/.oh-my-graph/runs/<run-id>/state.json`,
 written temp-file + `rename` (atomic), with a `schema` version so an
 incompatible snapshot is refused rather than misread:
@@ -1883,6 +1972,16 @@ incompatible snapshot is refused rather than misread:
   optional: a run without a verify writes byte-identical `state.json`, and the
   schema stays at 3. `resume` and `--retry-failed` copy whole node records into
   the new snapshot, so an earlier leg's record is carried forward unchanged.
+  A decided gate's record also carries **`gate_description`** (#346): its
+  `description:` exactly as the person deciding it was shown it, interpolated
+  and sanitised to one line, never the graph's raw text. The record of an
+  approval or rejection therefore says what was approved or rejected. The
+  `resume --approve/--reject` leg that applies the decision writes it (through
+  a recorder wrapper in `cmd/oh-my-graph`, so the scheduler is unchanged), and
+  every later leg carries it forward with the rest of the record. It is
+  absent on every other node, on an undecided gate and on a gate without a
+  description, so a run without one writes byte-identical `state.json`.
+  Additive and optional, `omitempty`, schema still 3.
 - **gate decisions so far**, and which gate the run is paused at.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
@@ -3194,6 +3293,7 @@ turns that rule into a build failure. Current dispositions:
 | `prompt` | constrained — non-empty, and every `{{ artifacts.<id> }}` it quotes must be able to resolve: a token naming an unknown node, the quoting node itself, or a node that is not one of its ancestors is rejected (`validatePlannedArtifactReferences`, #244). That is the advisory `handoff.LintPlaceholders` prints for a hand-written graph, escalated for planner output on the split this table's `feedback` row already takes twice; the refusal names both exits, because the rule cannot tell a mis-wired reference from one the prompt is merely quoting as an example — and three of the four graphs in the corpus that motivated it were the second kind (docs/measurements/0244-auto-path-sweeps.md) |
 | `id` | constrained — no `/`: the splice namespace is minted by the loader alone (`validatePlannedNodeID`, ADR 0027) |
 | `type` | constrained — `claude-run` only; `gate` rejected |
+| `description` | **rejected** on every planned node, gate or not (`validatePlannedNodeDescription`, #346): it is a gate's sentence to the person deciding it, and a planner may not write a gate (ADR 0039). `graph.ParsePlannerReply` passes the load-time `*MisplacedDescriptionError` through so the planner reads this refusal instead |
 | `allowed_tools` | constrained — non-empty, `plannedToolAllowlist` only |
 | `permission_mode` | constrained — `bypassPermissions` rejected |
 | `cwd` | rejected |
