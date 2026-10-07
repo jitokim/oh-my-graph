@@ -87,7 +87,15 @@ On a failed run the runner also captures WHY as a one-line
 `NodeOutcome.FailureCause` — the envelope's own error report (`errors` /
 `is_error`), else the stderr tail on a non-zero exit — so the failure detail
 downstream (ledger, events.jsonl, watch, serve) names the cause (a
-subscription session limit, say) instead of only "exit code 1".
+subscription session limit, say) instead of only "exit code 1". Every
+`Detail` — the ledger's end-of-run table, the `state.json` snapshot, the
+`events.jsonl` line, `watch` and the serve live view — is made in
+`schedule.capDetail`, which first sanitises it for the terminal with
+`fence.SanitizeTerminalLine` (one line; no escape sequence, control, bidi
+control or line separator) and then bounds the cleaned text at
+`maxDetailRunes` (#349). Only the shown text is cleaned: a verdict is judged
+on the raw `verify.Result.Output`, and the feedback/retry evidence quoted to a
+model keeps its raw text.
 - **Subscription auth crux:** start from `os.Environ()` and **DELETE
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
   `CODEX_API_KEY`** from the child env (they silently switch to metered API
@@ -1692,7 +1700,8 @@ type Verifier interface {
 - **`Result.Output` is judged, so it is not truncated.** `output_matches` is
   applied to everything the command printed. Truncation is a presentation
   concern and lives where the output is retained or rendered — the ledger's
-  DETAIL column caps it (`schedule.capDetail`), and a `*TimeoutError`, which
+  DETAIL column sanitises and caps it (`schedule.capDetail`, which runs
+  `fence.SanitizeTerminalLine` before the bound), and a `*TimeoutError`, which
   can be wrapped and held, keeps only a marked tail. Bounding the judged value
   instead would silently narrow the graph's predicate: the seam prepends
   `…(earlier output truncated)…` when it cuts, so an anchored pattern like
@@ -3489,6 +3498,11 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   persisted as `assess.json` in that cycle's run directory (`goal_met`,
   `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
   cycle's ledger cannot include, since the ledger prints before assessment).
+  The printed `remaining:` and `evidence:` lines, and the assessor reply an
+  `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
+  sanitised for the terminal by `fence.SanitizeTerminalLine`; `assess.json`,
+  `AssessError.Output` and the next cycle's planner prompt keep the raw text,
+  and the goal is still judged on the raw run output (#349).
 
 Termination and exit follow ADR 0011 §2's (outcome × verdict) precedence:
 `goal_met` always stops the loop, but exit 0 additionally requires the final
