@@ -49,8 +49,8 @@ type ReuseCitation struct {
 // re-hashes it — a mismatch fails the plan naming the id, the path and both
 // digests — and re-computes admission from the bytes it read, never from the
 // catalog's record. It then splices with internal/graph's fragment machinery,
-// runs EVERY spliced node through plannedNodeRefusals and the read-only tool
-// rule, and runs Graph.Validate.
+// runs EVERY spliced node through plannedNodeRefusals, the read-only tool rule
+// and the no-permission_mode rule, and runs Graph.Validate.
 //
 // spec is the planner's JSON reply that g was parsed from. The returned spec
 // is the resolved graph's JSON, so the saved graph.json carries no reuse: or
@@ -125,9 +125,11 @@ func spliceReuse(g *graph.Graph, spec []byte, offered []ReuseEntry) (*graph.Grap
 // checkSplicedNodes runs every node a citation produced through the whole of
 // plannedNodeRefusals — the checks a planner-written node faces, not a subset —
 // so the splice is never a door for a field the planner is refused, and then
-// through admission's narrower tool rule, reuseReadOnlyTools (§9.2). A spliced
-// multi-node id is judged under its own segment, as admission judges it: the
-// '/' is the splicer's, which validatePlannedNodeID's refusal does not mean.
+// through admission's narrower tool rule, reuseReadOnlyTools (§9.2), and its
+// permission_mode rule: a spliced node declares none, not merely no bypass one
+// (§2.2.1). A spliced multi-node id is judged under its own segment, as
+// admission judges it: the '/' is the splicer's, which validatePlannedNodeID's
+// refusal does not mean.
 func checkSplicedNodes(g *graph.Graph, citations []ReuseCitation) error {
 	var refusals []string
 	for _, node := range g.Nodes {
@@ -143,6 +145,10 @@ func checkSplicedNodes(g *graph.Graph, citations []ReuseCitation) error {
 		if tool, outside := reuseToolOutsideReadOnly(node.AllowedTools); outside {
 			refusals = append(refusals, fmt.Sprintf("spliced node %q (from the reusable shape %q, %s): declares tool %q, which is not one of the read-only tools a reusable shape may bring (%s)",
 				label, citation.EntryID, citation.Source, tool, strings.Join(reuseReadOnlyTools, ", ")))
+		}
+		if node.PermissionMode != "" {
+			refusals = append(refusals, fmt.Sprintf("spliced node %q (from the reusable shape %q, %s): declares permission_mode %s — a reusable shape declares none, since a spliced declaration is a key the planner is forbidden arriving by another door",
+				label, citation.EntryID, citation.Source, node.PermissionMode))
 		}
 	}
 	if len(refusals) > 0 {

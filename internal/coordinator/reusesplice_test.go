@@ -570,3 +570,33 @@ func TestReuseSplice_NestedUseIsRefusedWithoutReadingTheNestedFile(t *testing.T)
 		})
 	}
 }
+
+// #338, defense in depth: admission refuses any permission_mode, and the splice
+// backstop does too — not only a bypass one — for a spliced node forced past
+// admission, single-node or namespaced. The same node with none passes.
+func TestReuseSplice_PostSpliceChecksRefuseAnyPermissionMode(t *testing.T) {
+	for _, tc := range []struct{ id, citing string }{
+		{"review", "review"},
+		{"review/first", "review"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			citations := []ReuseCitation{{NodeID: tc.citing, EntryID: "lax", Source: "fragments/lax.yaml"}}
+			node := graph.Node{ID: tc.id, Prompt: "look", AllowedTools: []string{"Read", "Grep"}, PermissionMode: "dontAsk"}
+
+			err := checkSplicedNodes(&graph.Graph{Name: "p", Nodes: []graph.Node{node}}, citations)
+			if err == nil {
+				t.Fatal("the splice backstop accepted a spliced node declaring permission_mode dontAsk")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, `spliced node "`+tc.id+`"`) || !strings.Contains(msg, "permission_mode dontAsk") ||
+				!strings.Contains(msg, "a reusable shape declares none") {
+				t.Errorf("err = %v, want %s refused for permission_mode dontAsk", err, tc.id)
+			}
+
+			node.PermissionMode = ""
+			if err := checkSplicedNodes(&graph.Graph{Name: "p", Nodes: []graph.Node{node}}, citations); err != nil {
+				t.Errorf("the same node with no permission_mode: err = %v, want nil", err)
+			}
+		})
+	}
+}
