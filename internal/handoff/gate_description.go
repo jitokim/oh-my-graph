@@ -17,9 +17,10 @@ import (
 // as they would in a prompt, and an unresolvable reference is the same
 // *InterpolationError. Before that, every well-formed token is judged by
 // gateDescriptionTokenRefused — the predicate GateDescriptionIssues refuses
-// with at lint — and a refused one is a *GateDescriptionError, so a graph that
-// reached the scheduler without being linted still cannot print a model's
-// reply where a person approves. The interpolated text, which carries the
+// with at lint, and that run, run --dry-run and resume refuse with at load —
+// and a refused one is a *GateDescriptionError, so a graph that reached the
+// scheduler without passing that load check still cannot print a model's
+// reply where a person approves; its caller fails with the error. The interpolated text, which carries the
 // operator's own input values verbatim, then goes through SanitizeGateText.
 func (h *Handoff) RenderGateDescription(gate graph.Node) (string, error) {
 	if gate.Description == "" {

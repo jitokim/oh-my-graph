@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
@@ -53,22 +52,18 @@ func gateDescriptionInputIssues(g *graph.Graph, inputs map[string]string) []erro
 // shownGateDescription is gateID's `description:` exactly as a person deciding
 // it reads it (#346): rendered against the run as it stands and sanitised by
 // handoff.RenderGateDescription, never the raw YAML text. "" for a gate with
-// no description, for an id that names no gate, and for a description the
-// render refuses — which is warned about on stderr and otherwise leaves the
-// gate's lines as they print without one, because a description is advice to
-// the decider and its absence must never stand between a run and its resume
-// command.
-func shownGateDescription(g *graph.Graph, h *handoff.Handoff, gateID string) string {
+// no description and for an id that names no gate. A description the render
+// refuses is an error, not a dropped line: run, run --dry-run and resume
+// refuse such a description at load (gateDescriptionRefusal,
+// gateDescriptionInputIssues), so one reaching here came from a graph that
+// bypassed load, and that must fail loudly rather than quietly show the
+// person deciding the gate less than its author wrote.
+func shownGateDescription(g *graph.Graph, h *handoff.Handoff, gateID string) (string, error) {
 	node, ok := g.NodeByID(gateID)
 	if !ok || node.Type != graph.TypeGate {
-		return ""
+		return "", nil
 	}
-	text, err := h.RenderGateDescription(node)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: gate %q description not shown: %v\n", gateID, err)
-		return ""
-	}
-	return text
+	return h.RenderGateDescription(node)
 }
 
 // snapshotGateDescription is shownGateDescription for a run known only by its
@@ -76,10 +71,10 @@ func shownGateDescription(g *graph.Graph, h *handoff.Handoff, gateID string) str
 // as continueRun seeds a resumed leg's, so an artifact token resolves to the
 // same path the pause printed. A snapshot whose graph does not parse shows no
 // description; the caller's own parse reports that failure.
-func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string) string {
+func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string) (string, error) {
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	h := handoff.New(runDirFor(runID), snap.Inputs)
 	for nodeID, rec := range snap.Nodes {
@@ -89,13 +84,19 @@ func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string
 }
 
 // pausedGateDescription is the shown description of the gate runErr paused
-// at, or "" when runErr is not a gate pause.
-func pausedGateDescription(runErr error, g *graph.Graph, h *handoff.Handoff) string {
+// at, or "" when runErr is not a gate pause. A description that cannot be
+// shown is returned as an error naming the run and the gate, so the caller
+// fails with it instead of printing a pause hint without it.
+func pausedGateDescription(runID string, runErr error, g *graph.Graph, h *handoff.Handoff) (string, error) {
 	var paused *schedule.PausedError
 	if !errors.As(runErr, &paused) {
-		return ""
+		return "", nil
 	}
-	return shownGateDescription(g, h, paused.GateID)
+	description, err := shownGateDescription(g, h, paused.GateID)
+	if err != nil {
+		return "", fmt.Errorf("run %q paused at gate %q, but its description cannot be shown: %w", runID, paused.GateID, err)
+	}
+	return description, nil
 }
 
 // describedGate names a paused gate in a message: its quoted id, followed by

@@ -190,7 +190,10 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	}
 	// Rendered once, against the run as the pause left it, so every line this
 	// leg prints about the gate shows the same text the pause did (#346).
-	description := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+	description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+	if err != nil {
+		return fmt.Errorf("resume run %q: %w", flags.runID, err)
+	}
 	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt, description)
 	if err != nil {
 		return err
@@ -228,9 +231,13 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	if len(cleared) == 0 {
 		if snap.Gate.PausedAt != "" {
+			description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+			if err != nil {
+				return fmt.Errorf("resume run %q: %w", flags.runID, err)
+			}
 			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
 			fmt.Fprintf(os.Stdout, "It is paused at gate %s — decide it with --approve %s or --reject %s instead.\n",
-				describedGate(snap.Gate.PausedAt, snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)), snap.Gate.PausedAt, snap.Gate.PausedAt)
+				describedGate(snap.Gate.PausedAt, description), snap.Gate.PausedAt, snap.Gate.PausedAt)
 			return nil
 		}
 		if !hasUnfinishedWork(g, retained) {
@@ -772,7 +779,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
 	// flags rather than promising a bare resume that would be refused.
-	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, pausedGateDescription(runErr, g, h))
+	description, err := pausedGateDescription(runID, runErr, g, h)
+	if err != nil {
+		return err
+	}
+	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description)
 
 	return runErr
 }

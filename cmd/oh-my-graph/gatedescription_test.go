@@ -470,3 +470,30 @@ func TestResume_RefusesLintRefusedGateDescriptionAtLoad(t *testing.T) {
 		})
 	}
 }
+
+// TestPauseHint_UnloadedGateDescriptionFailsLoudly: #346 — a refused
+// description that reaches the pause without passing load (executeGraph is
+// handed the graph directly) fails the invocation with the refusal, exit 1,
+// rather than being dropped from the pause hint with a stderr warning.
+func TestPauseHint_UnloadedGateDescriptionFailsLoudly(t *testing.T) {
+	isolateRunHome(t)
+	g := mustParse(t, `{"name":"gated","nodes":[
+		{"id":"build","prompt":"build"},
+		{"id":"approve","type":"gate","depends_on":["build"],
+		 "description":"ship {{ artifacts.build | inline }}?"}]}`)
+	var err error
+	out := captureStdout(t, func() {
+		err = executeGraph(context.Background(), "run-1", g, &capturingRunner{}, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gated.yaml", []byte("name: gated\n"), false, nil, nil, nil)
+	})
+	if code := exitCodeForError(err); code != 1 {
+		t.Fatalf("exit code = %d (%v), want 1", code, err)
+	}
+	for _, want := range []string{`gate "approve"`, inlineDescribedToken} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+	if strings.Contains(out, "Paused at gate") {
+		t.Errorf("a pause hint was printed without the description:\n%s", out)
+	}
+}

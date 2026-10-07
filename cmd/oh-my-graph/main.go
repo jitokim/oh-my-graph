@@ -1210,7 +1210,11 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// verification (what ReattachVerifyCommand refuses to take from a run
 	// directory). That pair is ADR 0016 §4's refusal, so the hint prints the
 	// command WITH --verify-cmd rather than a bare one that would be refused.
-	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, pausedGateDescription(runErr, g, h))
+	description, err := pausedGateDescription(runID, runErr, g, h)
+	if err != nil {
+		return err
+	}
+	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, description)
 
 	return runErr
 }
