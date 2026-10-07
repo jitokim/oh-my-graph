@@ -1882,7 +1882,13 @@ model.
   or ST terminator, and any other ESC sequence. A lone ESC is removed and the
   bytes after it stay as inert text. CR, every other C0 control, DEL and every
   C1 control (U+0080–U+009F) are removed, and the 8-bit CSI/OSC/DCS/SOS/PM/APC
-  introducers take their sequence with them. Invalid UTF-8 becomes U+FFFD per
+  introducers take their sequence with them. Every Unicode format character
+  (category Cf: the bidi controls U+202A–U+202E and U+2066–U+2069, the
+  zero-width characters U+200B–U+200F and U+FEFF) and the line and paragraph
+  separators U+2028 and U+2029 are removed too, by the same
+  `fence.IsFormatOrLineSeparator` rule the reuse menu summary uses, so an
+  input cannot show the approval reversed, hide text or break the line.
+  Invalid UTF-8 becomes U+FFFD per
   byte, so a raw 0x9B cannot reach a non-UTF-8 terminal. **Newline and tab
   are flattened, not removed.** Each becomes a space, and a run of them with
   any spaces around it collapses to one space, so words stay apart and the
