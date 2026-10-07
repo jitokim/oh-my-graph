@@ -28,7 +28,7 @@ func snapshotRecorderIn(t *testing.T) (*runstate.SnapshotRecorder, string) {
 	return runstate.NewSnapshotRecorder(path, runstate.Snapshot{RunID: "run-358", Graph: []byte(`{}`)}), path
 }
 
-// TestScheduler_LimitPauseWritesTheRecord_358: ADR 0031 §8.1 end to end — a
+// TestScheduler_LimitPauseWritesTheRecord_358 (#358): ADR 0031 §8.1 end to end — a
 // leg that stops on a Claude session limit, a Codex usage limit, or Claude's
 // per-model limit persists the limited node ids, the cause exactly as the
 // runtime printed it, and the scheduler clock's time of the pause, while the
@@ -94,7 +94,7 @@ nodes:
 	}
 }
 
-// TestScheduler_NoLimitWritesNoRecord_358: a leg that passes, or pauses only
+// TestScheduler_NoLimitWritesNoRecord_358 (#358): a leg that passes, or pauses only
 // at a gate, never writes the key — its state.json is what it was before the
 // record existed.
 func TestScheduler_NoLimitWritesNoRecord_358(t *testing.T) {
@@ -135,7 +135,7 @@ nodes:
 	}
 }
 
-// TestScheduler_GatePauseAndLimitPersistBoth_358: ADR 0031 §8.3 — a leg in
+// TestScheduler_GatePauseAndLimitPersistBoth_358 (#358): ADR 0031 §8.3 — a leg in
 // which a gate pauses AND a node hits the limit still returns the gate's
 // *PausedError (the gate needs its human first), but state.json carries both
 // records.
@@ -175,7 +175,7 @@ nodes:
 	}
 }
 
-// TestScheduler_LimitRecordWriteFailureChangesNoError_358: the record is for
+// TestScheduler_LimitRecordWriteFailureChangesNoError_358 (#358): the record is for
 // display only (ADR 0031 §8.2), so a failed write of it is surfaced on the
 // progress feed — like a failed RecordNode — and leaves the leg's returned
 // error exactly what it would have been: the limit pause, or the gate pause
