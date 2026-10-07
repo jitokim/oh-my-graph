@@ -318,3 +318,114 @@ func TestRunGraphWith_RunReadsOnlyTheFileItIsGiven(t *testing.T) {
 		}
 	}
 }
+
+// --- run's warning ------------------------------------------------------------
+
+// runPlanJSON runs the plan directory's graph.json through the real `run`
+// entrypoint and returns what it printed to stderr, the stream run's warnings
+// use, with the runner that saw the launches.
+func runPlanJSON(t *testing.T, planDir string) (string, *runner.FakeRunner, error) {
+	t.Helper()
+	fake := planNodeRunner()
+	stderr, err := captureStderr(t, func() error {
+		var runErr error
+		captureStdout(t, func() {
+			runErr = runGraphWith([]string{filepath.Join(planDir, generatedSpecFileName)}, fake, browser.NewFakeOpener(), os.Stdout)
+		})
+		return runErr
+	})
+	return stderr, fake, err
+}
+
+// TestRunGraphWith_JSONBesideEditedPlanYAMLWarns (#342, ADR 0039 §9.1): run
+// of graph.json beside a graph.yaml edited to add a gate warns, naming the
+// YAML and the command that runs it — and still runs the JSON's graph, which
+// has no gate, to completion.
+func TestRunGraphWith_JSONBesideEditedPlanYAMLWarns(t *testing.T) {
+	isolateRunHome(t)
+	_, planDir := previewPlan(t, planYAMLSpec)
+	jsonPath := filepath.Join(planDir, generatedSpecFileName)
+	yamlPath := filepath.Join(planDir, generatedSpecYAMLFileName)
+	addGateToPlanYAML(t, yamlPath)
+
+	stderr, fake, err := runPlanJSON(t, planDir)
+	if err != nil {
+		t.Fatalf("run graph.json must run the JSON's graph to completion, got: %v", err)
+	}
+	for _, want := range []string{
+		"WARNING: " + yamlPath + " differs from the graph.json being run",
+		"this run uses " + jsonPath + " as it is",
+		"oh-my-graph run " + yamlPath + "\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("warning should contain %q:\n%s", want, stderr)
+		}
+	}
+	var ran []string
+	for _, inv := range fake.Invocations() {
+		ran = append(ran, firstLine(inv.Prompt))
+	}
+	if !reflect.DeepEqual(ran, []string{"survey the repo", "write it"}) {
+		t.Errorf("run graph.json launched %v, want only the JSON's two nodes", ran)
+	}
+}
+
+// TestRunGraphWith_JSONBesideUneditedPlanYAMLIsQuiet (#342): the YAML as
+// --plan-only saved it loads to the same graph, so there is nothing to warn of.
+func TestRunGraphWith_JSONBesideUneditedPlanYAMLIsQuiet(t *testing.T) {
+	isolateRunHome(t)
+	_, planDir := previewPlan(t, planYAMLSpec)
+
+	stderr, _, err := runPlanJSON(t, planDir)
+	if err != nil {
+		t.Fatalf("run graph.json: %v", err)
+	}
+	if strings.Contains(stderr, generatedSpecYAMLFileName) {
+		t.Errorf("an unedited graph.yaml must not warn:\n%s", stderr)
+	}
+}
+
+// TestRunGraphWith_JSONWithoutPlanYAMLIsQuiet (#342): no YAML beside the
+// graph.json, no warning.
+func TestRunGraphWith_JSONWithoutPlanYAMLIsQuiet(t *testing.T) {
+	isolateRunHome(t)
+	_, planDir := previewPlan(t, planYAMLSpec)
+	if err := os.Remove(filepath.Join(planDir, generatedSpecYAMLFileName)); err != nil {
+		t.Fatalf("remove graph.yaml: %v", err)
+	}
+
+	stderr, _, err := runPlanJSON(t, planDir)
+	if err != nil {
+		t.Fatalf("run graph.json: %v", err)
+	}
+	if strings.Contains(stderr, "differs from the graph.json") {
+		t.Errorf("no graph.yaml, yet run warned:\n%s", stderr)
+	}
+}
+
+// TestRunGraphWith_JSONBesideBrokenPlanYAMLWarnsAndRuns (#342): a graph.yaml
+// broken by an edit is a difference — reported, never fatal to the JSON's run.
+func TestRunGraphWith_JSONBesideBrokenPlanYAMLWarnsAndRuns(t *testing.T) {
+	isolateRunHome(t)
+	_, planDir := previewPlan(t, planYAMLSpec)
+	yamlPath := filepath.Join(planDir, generatedSpecYAMLFileName)
+	if err := os.WriteFile(yamlPath, []byte("nodes: [\n"), 0o600); err != nil {
+		t.Fatalf("break graph.yaml: %v", err)
+	}
+
+	stderr, fake, err := runPlanJSON(t, planDir)
+	if err != nil {
+		t.Fatalf("a broken graph.yaml must not fail the run of graph.json, got: %v", err)
+	}
+	for _, want := range []string{
+		"WARNING: " + yamlPath + " differs from the graph.json being run (it no longer loads:",
+		"oh-my-graph run " + yamlPath,
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("warning should contain %q:\n%s", want, stderr)
+		}
+	}
+	if n := len(fake.Invocations()); n != 2 {
+		t.Errorf("run graph.json launched %d nodes, want 2", n)
+	}
+}

@@ -54,6 +54,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -392,6 +393,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return err
 	}
 	g := loaded.Graph
+	warnIfPlanYAMLDiffers(os.Stderr, flags.graphPath, g)
 	// Every --auto-approve id must name a gate node in THIS graph (#285), and
 	// the check sits here, on the graph verdicts and before the runtime one:
 	// a misspelt gate id is a fact about the graph the operator wrote, so it is
@@ -460,6 +462,34 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// exactly as it always has (ADR 0023 §2.2).
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
 		len(loaded.Resolutions) > 0, webOpener(flags.noWeb, stdout, opener), nil, nil)
+}
+
+// warnIfPlanYAMLDiffers is ADR 0039 §9.1's warning on `run <dir>/graph.json`:
+// when a graph.yaml sits beside it — the copy `--plan-only` saved for the user
+// to edit — and that YAML no longer loads to the same graph, say so and name
+// the command that runs the edit. Advisory only: the run still reads and runs
+// exactly the graph.json it was given (#342). "The same graph" is graph.LoadFile
+// of both, compared, so reformatting the YAML does not warn; a YAML that no
+// longer loads is a difference, reported here and never fatal. Running the
+// YAML itself never reaches this, since only a graph.json looks beside itself.
+func warnIfPlanYAMLDiffers(warnW io.Writer, graphPath string, g *graph.Graph) {
+	if filepath.Base(graphPath) != generatedSpecFileName {
+		return
+	}
+	yamlPath := filepath.Join(filepath.Dir(graphPath), generatedSpecYAMLFileName)
+	if _, err := os.Stat(yamlPath); err != nil {
+		return
+	}
+	why := ""
+	if fromYAML, err := graph.LoadFile(yamlPath); err != nil {
+		why = fmt.Sprintf(" (it no longer loads: %v)", err)
+	} else if reflect.DeepEqual(fromYAML.Graph, g) {
+		return
+	}
+	fmt.Fprintf(warnW,
+		"WARNING: %s differs from the graph.json being run%s; this run uses %s as it is. To run the edit instead: oh-my-graph run %s\n",
+		yamlPath, why, graphPath, yamlPath,
+	)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
