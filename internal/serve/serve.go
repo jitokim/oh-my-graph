@@ -502,6 +502,22 @@ type graphPayload struct {
 	// carried by no event; they are also the shapes where no node is running, so
 	// there is no tail to be wrong about.
 	TranscriptNote string `json:"transcript_note,omitempty"`
+	// PausedGate is the gate this run is paused at and its description as
+	// stored at the pause (runstate.GateState.PausedGateDescription, #348).
+	// serve renders nothing: the string is copied verbatim from the snapshot,
+	// where the CLI already interpolated and sanitised it once. It carries the
+	// gate's id because several gates can each emit gate_paused but only
+	// paused_at is resumable, so the page attaches the text to that gate only.
+	// Present only while the run is paused at a gate with a description, so
+	// every other payload is byte-identical to before.
+	PausedGate *pausedGatePayload `json:"paused_gate,omitempty"`
+}
+
+// pausedGatePayload is the paused gate's id and stored description re-encoded
+// for the UI rather than embedded, for goalPayload's reason (#348).
+type pausedGatePayload struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
 }
 
 // goalPayload is runstate.GoalRef re-encoded for the UI rather than embedded,
@@ -574,6 +590,9 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	if goal := snap.Goal; goal != nil {
 		payload.Goal = &goalPayload{Text: goal.Text, Cycle: goal.Cycle, MaxCycles: goal.MaxCycles, FirstRunID: goal.FirstRunID}
+	}
+	if gate := snap.Gate; gate.PausedAt != "" && gate.PausedGateDescription != "" {
+		payload.PausedGate = &pausedGatePayload{ID: gate.PausedAt, Description: gate.PausedGateDescription}
 	}
 	for _, node := range g.Nodes {
 		payload.Nodes = append(payload.Nodes, graphNode{ID: node.ID, Type: node.Type, DependsOn: node.DependsOn})

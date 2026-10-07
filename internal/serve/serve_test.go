@@ -1123,3 +1123,98 @@ func TestResolveRun_MissingRootIsANoRunsError(t *testing.T) {
 		t.Fatalf("err = %v, want the no-runs error", err)
 	}
 }
+
+// pausedGateGraph is a two-node run whose second node is a gate (#348).
+const pausedGateGraph = `{"name":"demo","nodes":[{"id":"a","prompt":"a"},{"id":"approve","type":"gate","depends_on":["a"]}]}`
+
+// getGraph serves /api/graph for runID over dir and returns the raw body.
+func getGraph(t *testing.T, dir, runID string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	newTestServer(dir, runID).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8642/api/graph", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+// TestHandleGraph_CopiesStoredDescriptionVerbatim_348: #348 — serve copies the
+// stored description as it is, neither rendering an interpolation token nor
+// sanitising a control byte: that is the CLI's job, done once at the pause,
+// and a second rendering path here could disagree with what the CLI printed.
+func TestHandleGraph_CopiesStoredDescriptionVerbatim_348(t *testing.T) {
+	stored := "ship " + "{" + "{ inputs.ticket }" + "}" + " \x1b[2J now?"
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-1",
+		Graph: json.RawMessage(pausedGateGraph),
+		Gate:  runstate.GateState{PausedAt: "approve", PausedGateDescription: stored},
+	})
+
+	var payload graphPayload
+	if err := json.Unmarshal([]byte(getGraph(t, dir, "run-1")), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.PausedGate == nil {
+		t.Fatalf("payload carries no paused_gate: %+v", payload)
+	}
+	if want := (pausedGatePayload{ID: "approve", Description: stored}); *payload.PausedGate != want {
+		t.Errorf("paused_gate = %+v, want %+v verbatim", *payload.PausedGate, want)
+	}
+}
+
+// TestHandleGraph_DescriptionMarkupIsJSONEscaped_348: #348 — markup in a
+// stored description leaves serve as JSON-escaped text, never as raw angle
+// brackets, and decodes back to the literal characters.
+func TestHandleGraph_DescriptionMarkupIsJSONEscaped_348(t *testing.T) {
+	stored := `ship <script>alert(1)</script> <img src=x onerror="alert(2)"> & go?`
+	dir := t.TempDir()
+	writeSnapshot(t, dir, runstate.Snapshot{
+		RunID: "run-1",
+		Graph: json.RawMessage(pausedGateGraph),
+		Gate:  runstate.GateState{PausedAt: "approve", PausedGateDescription: stored},
+	})
+
+	body := getGraph(t, dir, "run-1")
+	for _, raw := range []string{"<script", "<img", "</script>", "& go"} {
+		if strings.Contains(body, raw) {
+			t.Errorf("raw body carries %q unescaped: %s", raw, body)
+		}
+	}
+	if !strings.Contains(body, `\u003cscript\u003e`) || !strings.Contains(body, `\u003cimg`) {
+		t.Errorf("raw body does not JSON-escape the markup: %s", body)
+	}
+	var payload graphPayload
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.PausedGate == nil || payload.PausedGate.Description != stored {
+		t.Fatalf("decoded description = %+v, want the literal %q", payload.PausedGate, stored)
+	}
+}
+
+// TestHandleGraph_NoDescriptionOmitsPausedGate_348: #348 — a gate paused
+// without a description, and a run not paused at all, serve the payload they
+// served before the field existed: no paused_gate key, the same bytes.
+func TestHandleGraph_NoDescriptionOmitsPausedGate_348(t *testing.T) {
+	for name, gate := range map[string]runstate.GateState{
+		"paused without description": {PausedAt: "approve", Decisions: map[string]runstate.GateDecision{"approve": runstate.GatePause}},
+		"not paused":                 {},
+		// A description with no paused gate is not one the page can attach
+		// to anything; a hand-edited snapshot must not invent one.
+		"stale description": {PausedGateDescription: "ship?"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSnapshot(t, dir, runstate.Snapshot{RunID: "run-1", Graph: json.RawMessage(pausedGateGraph), Gate: gate})
+			body := getGraph(t, dir, "run-1")
+			if strings.Contains(body, "paused_gate") {
+				t.Fatalf("payload carries paused_gate: %s", body)
+			}
+			want := `{"run_id":"run-1","available":true,"name":"demo","nodes":[{"id":"a","type":"claude-run"},{"id":"approve","type":"gate","depends_on":["a"]}]}` + "\n"
+			if body != want {
+				t.Errorf("payload changed\nwant %s\ngot  %s", want, body)
+			}
+		})
+	}
+}
