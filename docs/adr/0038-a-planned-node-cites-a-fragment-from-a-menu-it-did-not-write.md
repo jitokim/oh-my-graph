@@ -1116,8 +1116,9 @@ and no `permission_mode`. That is not yet enough: a fragment can also carry a
 the dangerous one, a repository-authored shell command the engine itself
 would run. So admission gets a third test: **a fragment that declares any
 field a planner may not write is not admitted** (`success_check.verify`,
-`cwd:`, `agent:`, `worktree:`, `timeout:`, and every other field
-`validatePlannedNodes` refuses from a planner). And the spliced node is run
+`cwd:`, `agent:`, `worktree:`, and every other field
+`validatePlannedNodes` refuses from a planner, taken from its disposition
+table, not a second list). And the spliced node is run
 through the same planned-node checks as a hand-written one, so the splice is
 never a back door for a field the planner is refused. With all three, a
 planted fragment cannot write a file or run a command through its own node.
