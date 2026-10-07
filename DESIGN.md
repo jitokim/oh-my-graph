@@ -3084,6 +3084,20 @@ turns that rule into a build failure. Current dispositions:
 | `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
 | `feedback` | constrained — `retry`'s standing one level up: bounded re-runs of body nodes already inside every ceiling, granting no tool, no path, no shell; the load validations hold for a planned graph exactly as for a hand-written one, but two things they leave open are closed here (ADR 0010). **max**: only `max` ≥ 1 is required at load and a plan has no human reviewer for the upper bound, so a planned `max` above `maxPlannedFeedbackRounds` (3) is rejected. **Reach**: an arc on a fan-in declarer may name a target whose body excludes a producer the declarer judges — valid, and unable to converge (#118) — so `validatePlannedFeedbackReach` refuses it whenever `graph.LintFeedbackReach` found a covering target, naming that target in the refusal. **The quote**: an arc whose loop body never quotes `{{ feedback.<declarer> }}` re-runs a prompt that cannot have changed, for every round of `max` — valid, and ADR 0028's specimen — so `validatePlannedFeedbackQuoting` refuses it, naming the token to paste and the prompt it belongs in |
 
+The per-node rows of this table are ONE function, `plannedNodeRefusals`, which
+`validatePlannedNodes` calls for every node after its graph-level families. The
+reuse catalog (ADR 0038, `coordinator/reusecatalog.go`) calls the same function
+on every static node body of a fragment before offering it to the planner, so a
+field newly refused here is refused at catalog admission with no second list.
+Admission adds four rules of its own, on what the loader derived
+(`graph.InspectFragment`): every substitution slot lands only in a `prompt:`
+scalar, followed through nested `use:` (ADR 0029); every declared tool is an
+exact `plannedToolAllowlist` member; no node declares `permission_mode`; and
+the fragment raises no loader advisory and has no description line shaped like
+a fence marker (`fence.LooksLikeMarker`). The catalog is read from
+`<invocation root>/graphs/fragments/`, and on this repository it admits
+`read-and-report` alone.
+
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
 not restricted by either. The generated spec is
