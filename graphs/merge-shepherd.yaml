@@ -483,6 +483,16 @@ nodes:
            last-fetched pointer, which a concurrent fetch can move.
         6. Record what you fetched, in the worktree's own per-worktree ref:
            `git -C /tmp/shepherd-triage-{{ inputs.pr }} update-ref refs/worktree/omg-shepherd-sha SHA`
+        7. `gh pr view {{ inputs.pr }} --json isCrossRepository --jq .isCrossRepository`
+           — if it prints `true`, the PR comes from a fork, and pushing
+           BRANCH would create or move a same-named branch in the BASE
+           repository. Do NOT push and apply nothing; answer BLOCKED fork PR.
+           First clean up:
+           `git worktree remove --force /tmp/shepherd-triage-{{ inputs.pr }}`
+           and `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`.
+           These may error when there is nothing to remove; that is expected.
+           Then reply with a first line that starts `BLOCKED fork PR`
+           followed by the reason, and stop.
       Then list every comment:
       `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments` plus the
       review bodies from `gh pr view {{ inputs.pr }} --json reviews`. If
@@ -494,7 +504,8 @@ nodes:
           SYNCHRONOUSLY, waiting for the exit code, never in the
           background), commit there staging ONLY the files you changed by
           explicit path (`git -C /tmp/shepherd-triage-{{ inputs.pr }} add
-          <path> ...` — never `git add -A`/`.`/`-u`), and push. The worktree
+          <path> ...` — never `git add -A`/`.`/`-u`), and push — never
+          when step 7 printed `true`. The worktree
           is detached, so push HEAD to the branch by its full ref name:
           `git -C /tmp/shepherd-triage-{{ inputs.pr }} push origin HEAD:refs/heads/BRANCH`.
         - You disagree, or it is out of the PR's scope → reply to that
@@ -554,6 +565,9 @@ nodes:
     # worktree HEAD, so it passes. Without a push HEAD is still the fetched
     # SHA, which equals headRefOid unless someone else moved the head — and
     # then failing is correct.
+    #
+    # `BLOCKED fork PR` (step 7) matches nothing here on purpose: like every
+    # other BLOCKED it fails the node, so a fork PR halts before the merge gate.
     success_check:
       exit_zero: true
       result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)'

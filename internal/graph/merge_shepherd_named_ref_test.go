@@ -571,3 +571,51 @@ func TestMergeShepherd360GrantCoversAgentCleanup(t *testing.T) {
 		})
 	}
 }
+
+// #360, fork guard: pushing HEAD:refs/heads/BRANCH for a cross-repository PR
+// would create or move a same-named branch in the BASE repository, so triage
+// asks gh whether the PR is from a fork before it can push, and if so cleans
+// up and answers `BLOCKED fork PR`. That verdict deliberately does NOT match
+// result_matches (c): like every BLOCKED it fails the node, so a fork PR stops
+// the run before the merge gate.
+func TestMergeShepherd360TriageRefusesForkPRPush(t *testing.T) {
+	var sn shepherdNode
+	for _, n := range shepherdNodes {
+		if n.id == "triage" {
+			sn = n
+		}
+	}
+	triage := loadShepherdNode(t, sn.id)
+	prompt := triage.Prompt
+
+	fork, push := strings.Index(prompt, "isCrossRepository"), strings.Index(prompt, "push origin")
+	if fork < 0 || push < 0 || fork > push {
+		t.Errorf("isCrossRepository at %d must come before the first push origin at %d", fork, push)
+	}
+
+	dir := fmt.Sprintf(sn.dir, "{{ inputs.pr }}")
+	removeWT := "git worktree remove --force " + dir
+	removeRef := "git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA"
+	cleans := false
+	for _, w := range verdictWindows(t, prompt, dir, "BLOCKED fork PR", "TRIAGED") {
+		if strings.Contains(w, removeWT) && strings.Contains(w, removeRef) {
+			cleans = true
+		}
+	}
+	if !cleans {
+		t.Errorf("no BLOCKED fork PR instruction names both %q and %q", removeWT, removeRef)
+	}
+
+	re := regexp.MustCompile(triage.SuccessCheck.ResultMatches)
+	if re.MatchString("BLOCKED fork PR — pushing would write the base repository") {
+		t.Errorf("result_matches %q passes a BLOCKED fork PR verdict", re)
+	}
+	if !re.MatchString("TRIAGED 0") {
+		t.Errorf("result_matches %q no longer passes TRIAGED 0", re)
+	}
+
+	cmd := "gh pr view 936401 --json isCrossRepository --jq .isCrossRepository"
+	if !bashGrantPermits(triage.AllowedTools, cmd) {
+		t.Errorf("allowed_tools %v does not permit %q", triage.AllowedTools, cmd)
+	}
+}
