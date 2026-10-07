@@ -1868,12 +1868,17 @@ model.
   the snapshot, seeded with the same artifact paths, so every line about the
   gate shows the text the pause printed. The render checks every token with
   the same predicate lint uses (`gateDescriptionTokenRefused`), so a graph
-  that never went through lint still cannot print a reply. `run` and
-  `run --dry-run` do not call `GateDescriptionIssues`, so a refused or
-  unresolvable token is not caught before the run starts. At the pause it
-  prints `warning: gate "<id>" description not shown: …` on stderr, and the
-  gate's lines print as if it had no description. A description is advice to
-  the decider and must never stand between a run and its resume command.
+  that never went through lint still cannot print a reply.
+- **When it is refused.** At load, before any node runs. `run`,
+  `run --dry-run` and `resume` (on the graph its snapshot holds, in either
+  mode) all call `GateDescriptionIssues` and refuse with lint's own line,
+  naming the gate and the token, exit 1: `run` returns the first issue as
+  `graph.LoadFile` returns the first load error, and `--dry-run` lists them
+  among its issues. `run` and `run --dry-run` also refuse a description that
+  quotes an `{{ inputs.<name> }}` the invocation did not bind, which lint
+  cannot see and the pause could not render. So a render error at the pause
+  comes only from a graph that bypassed load, and it fails the invocation with
+  the refusal; the description is never dropped.
 - **How it is sanitised** (`handoff.SanitizeGateText`). An input value is the
   operator's text, printed verbatim. Sanitising it means nothing in it can
   move the cursor, clear the screen, retitle the window or repaint the
