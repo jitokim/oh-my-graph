@@ -502,10 +502,11 @@ func TestPauseHint_UnloadedGateDescriptionFailsLoudly(t *testing.T) {
 
 // TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346: #346 — a
 // paused run whose snapshot graph does not parse is reported as that parse
-// failure, wrapped as `resume run <id>`, whether or not the resume names the
-// paused gate: never a gate-shaped refusal, and before any node runs.
+// failure, wrapped as `reconstruct graph for run <id>` in every mode, whether
+// or not the resume names the paused gate: never a gate-shaped refusal, and
+// before any node runs.
 func TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346(t *testing.T) {
-	for _, args := range [][]string{{"--approve", "approve"}, {}} {
+	for _, args := range [][]string{{"--approve", "approve"}, {"--approve", "other"}, {}, {"--retry-failed"}} {
 		t.Run(strings.Join(append([]string{"resume"}, args...), " "), func(t *testing.T) {
 			isolateRunHome(t)
 			runID, _, _ := describedGateFlowRun(t, "T-42")
@@ -526,7 +527,7 @@ func TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346(t *testing
 			captureStdout(t, func() {
 				err = executeResume(parseResumeFlags(t, append([]string{runID}, args...)), fake, nil)
 			})
-			if want := "resume run \"" + runID + "\": " + parseErr.Error(); err == nil || err.Error() != want {
+			if want := "reconstruct graph for run \"" + runID + "\": " + parseErr.Error(); err == nil || err.Error() != want {
 				t.Fatalf("got %v, want %q", err, want)
 			}
 			if strings.Contains(err.Error(), "paused at") {

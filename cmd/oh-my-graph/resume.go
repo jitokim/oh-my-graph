@@ -159,16 +159,18 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	// (#346), before either mode and so before anything spawns: a description
 	// lint refuses, and one quoting an input the run's recorded inputs do not
 	// bind, which could not be rendered when its gate pauses. A snapshot
-	// whose graph does not parse is left to the modes to report: each parses
-	// it (or has snapshotGateDescription parse it) before it names a gate or
-	// spawns a node.
-	if g, parseErr := graph.Parse(snap.Graph); parseErr == nil {
-		if err := gateDescriptionRefusal(g); err != nil {
-			return fmt.Errorf("resume run %q: %w", runID, err)
-		}
-		if issues := gateDescriptionInputIssues(g, snap.Inputs); len(issues) > 0 {
-			return fmt.Errorf("resume run %q: %w", runID, issues[0])
-		}
+	// whose graph does not parse is reported here, as continueRun reports it,
+	// so every mode refuses a broken snapshot the same way and before any
+	// gate is named.
+	g, parseErr := graph.Parse(snap.Graph)
+	if parseErr != nil {
+		return fmt.Errorf("reconstruct graph for run %q: %w", runID, parseErr)
+	}
+	if err := gateDescriptionRefusal(g); err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
+	if issues := gateDescriptionInputIssues(g, snap.Inputs); len(issues) > 0 {
+		return fmt.Errorf("resume run %q: %w", runID, issues[0])
 	}
 
 	// Before either mode, because both have exits that never reach continueRun:
