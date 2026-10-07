@@ -392,5 +392,6 @@ project's measurement notes. That leaves §3.5's job as **display**: `runs
 list` and `resume` say why a run is paused, from the record, instead of
 inferring it. If no run pauses on a limit in that month, §6.2's conclusion
 applies (the shell loop of `main.go`'s `until … --exit-in-flight` example is
-enough). If runs do pause, §3.1–§3.4 come back for acceptance with the count as
+enough). If runs do pause, §3.1–§3.4 and §3.6 (the supervisor and its visibility)
+come back for acceptance together, with the count as
 evidence.
