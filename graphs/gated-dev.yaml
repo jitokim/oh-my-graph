@@ -14,19 +14,32 @@
 #     `feedback:` arc that re-runs dev once with the findings quoted.
 #   - approve-publish is a `type: gate`: the run stops there (exit 2) and a
 #     person reads the review and the e2e verdict before anything is pushed.
-#   - check-head refuses to publish a HEAD the person did not approve.
-#   - pr cites `pr-publish` and opens the pull request.
+#   - check-head refuses to publish a HEAD the person did not approve. It
+#     guards; it no longer spends the pin.
+#   - pr is inline and holds no commit tools: it pushes, opens the pull
+#     request, and its engine verify proves the PUBLISHED head is the pin.
 #
 # Why this does not cite `gated-lane`. That fragment is this lane minus the
 # gate, but its `pr` node is INTERNAL to it, and a node citing a multi-node
 # fragment may declare wiring only (id, use:, with:, depends_on, cwd,
 # worktree). There is therefore no way to put a node between its review and its
 # pr. So the lane is wired here from the same shipped pieces — `e2e-verify`,
-# `review-style`, `pr-publish` — with the same discipline `gated-lane` carries
+# `review-style` — with the same discipline `gated-lane` carries
 # (graphs/fragments/gated-lane.yaml): an inline dev with phased commits,
 # explicit-path staging and an anchored verdict; the narrowed review check and
 # its arc, shipped together; no `retry:` on the review. Read the reasoning for
 # each of those there.
+#
+# Why pr does not cite `pr-publish` either. That fragment grants `Bash(git *)`,
+# and a node holding it can commit, amend or rebase AFTER check-head has
+# proved HEAD is the approved commit — publishing code no review saw, past the
+# person at the gate. This node must hold no commit tools, so it is inline,
+# with pr-publish's prompt, verdict and body-file route and a push-only grant.
+# That grant is not the guarantee. `Bash(git push *)` still matches
+# `git push origin <sha>:refs/heads/<branch>` and `git push --force`, so it can
+# push something other than HEAD; the narrow grant only makes that mistake
+# unlikely. The guarantee is pr's engine `verify`, which compares the head the
+# pull request actually has with the pin, and it makes the mistake visible.
 #
 # Every node runs in ONE managed worktree, `lane`: the engine makes it at
 # <run-dir>/worktrees/lane on the branch omg/<run-id>/lane, off the HEAD of the
@@ -46,16 +59,20 @@
 #     the engine judges `result_matches` before it runs `verify`, so a
 #     `FINDINGS:` review never reaches the command. With a repair round, the
 #     ref therefore holds the HEAD the LAST PASSING review saw.
-#   - check-head's `success_check.verify` compares HEAD with the ref and
-#     deletes the ref only on a match. A missing ref fails, and a HEAD that
-#     moved since the review fails. A check-head that runs again after it
-#     deleted its ref (a `resume --retry-failed` that reaches it after `pr`
-#     failed, say) FAILS CLOSED — there is no approval left to match.
-#   - It cannot be a `verify` on pr: a node's verify runs only after the node,
-#     and by then the pull request is already open.
-#   - A run that stops before check-head, or is rejected, leaves its ref
-#     behind. List them with `git for-each-ref refs/omg-approved` and delete
-#     one with `git update-ref -d <ref>`.
+#   - check-head's `success_check.verify` guards BEFORE anything is
+#     published: it compares HEAD with the ref and fails on a missing ref or
+#     a HEAD that moved since the review. It no longer deletes the ref.
+#   - pr's `success_check.verify` catches whatever still moved the PUBLISHED
+#     head: it asks `gh` for the pull request's head commit and passes only
+#     when that equals the ref, deleting the ref on the match. A missing ref
+#     fails closed, and so does a `gh` that fails.
+#   - Because check-head no longer spends the pin, a check-head reached again
+#     by `resume --retry-failed` (after pr failed, say) passes again while
+#     HEAD still equals the pin.
+#   - A run that stops before pr passes — rejected, stopped before the gate,
+#     or a pr that fails its verify — leaves its ref behind. List them with
+#     `git for-each-ref refs/omg-approved` and delete one with
+#     `git update-ref -d <ref>`.
 #
 # Run (from inside the target repo, so the worktree branches off its HEAD):
 #   oh-my-graph run graphs/gated-dev.yaml \
@@ -183,8 +200,8 @@ nodes:
 
   # The guard between the approval and the push. The model's part is trivial
   # and read-only; the judgement is the ENGINE's `verify`, which passes only
-  # when HEAD is still the commit the last passing review pinned, and spends
-  # the pin as it passes (header, "The pin").
+  # when HEAD is still the commit the last passing review pinned. It leaves
+  # the pin in place: pr's verify spends it (header, "The pin").
   - id: check-head
     type: claude-run
     depends_on: [approve-publish]
@@ -200,13 +217,62 @@ nodes:
     success_check:
       exit_zero: true
       result_matches: '^[*_`\s]*DONE\b'
-      verify: { command: 'ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")" && git update-ref -d "$ref"', timeout: 30s }
+      verify: { command: 'ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")"', timeout: 30s }
 
+  # The publish. Inline, not `pr-publish`: that fragment grants `Bash(git *)`,
+  # and this node must hold no commit tools (header, "Why pr does not cite
+  # pr-publish either"). The prompt is pr-publish's, with the grant paragraph
+  # rewritten to name this grant and the steps it no longer covers removed.
   - id: pr
-    use: pr-publish
+    type: claude-run
     depends_on: [check-head]
     worktree: lane
-    with:
-      publish: |-
-        {{ inputs.publish }}
-          {{ artifacts.review | inline }}
+    prompt: |
+      {{ inputs.publish }}
+        {{ artifacts.review | inline }}
+      Your grant is exactly this: Read, `Bash(git push *)`,
+      `Bash(gh pr create *)`, `Bash(gh pr view *)`, `Bash(git status*)`,
+      `Bash(git log*)` and `Edit(./.omg-pr-body.md)` — writing ONE file,
+      `.omg-pr-body.md` in your working directory. Any other call is denied,
+      not asked about. This node never commits, amends, rebases, resets or
+      checks out: the HEAD you publish is the one a person approved, so push
+      this branch's HEAD as it is (`git push -u origin HEAD`), never another
+      commit and never with `--force`. A body passed inline is denied even
+      though it starts with `gh`: a multi-line `--body '…'`, a heredoc and a
+      `$(…)` are all refused. So the body goes through that file, in this
+      order:
+        1. Write the whole body to `.omg-pr-body.md` with the Write tool (if
+           an earlier run left one there, Read it first, then overwrite it).
+        2. Run `gh pr create --title '<one line>' --body-file .omg-pr-body.md`,
+           plus any other flag asked for above (such as `--draft`).
+        3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the
+           change. Leave it where it is once the PR is open.
+      Every Bash call is ONE program, run in this working directory: no `cd`,
+      `&&`, `;`, `|`, redirect or heredoc. A denied call means the FORM was
+      wrong, not the goal: re-issue it in the form above before you give up
+      on it.
+      Open it BEFORE you reply: your FINAL reply IS the verdict, so a PR you
+      promise to open afterwards is never opened. START your reply with the
+      bare token PR followed immediately by the pull request's URL
+      (`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,
+      with no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.
+      Anything you need to qualify goes AFTER the URL, never before it: a
+      line of context ahead of the token fails this node even when the PR
+      is open.
+    # Push and open, never fix, never commit. Each Bash rule is one verb the
+    # prompt names; the one write is the body file, as in pr-publish (#294).
+    allowed_tools: [Read, "Bash(git push *)", "Bash(gh pr create *)", "Bash(gh pr view *)", "Bash(git status*)", "Bash(git log*)", "Edit(./.omg-pr-body.md)"]
+    permission_mode: dontAsk
+    handoff: artifact
+    # The URL is the payload that makes the token an assertion — pr-publish's
+    # pattern, unchanged. The `verify` is what makes the publish one: the
+    # engine runs it in the lane worktree, asks `gh` for the head commit the
+    # pull request really has, and deletes the pin only when that is the pin
+    # (header, "The pin"). A missing pin fails closed; a failing `gh` fails.
+    # The `rm -f` comes first because the grant no longer allows
+    # pr-publish's `git clean` step, and a stray untracked body file stops the
+    # engine from removing the lane worktree.
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S'
+      verify: { command: 'rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && test "$(gh pr view --json headRefOid --jq .headRefOid)" = "$pin" && git update-ref -d "$ref"', timeout: 60s }

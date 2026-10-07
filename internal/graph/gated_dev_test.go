@@ -21,8 +21,13 @@ const gatedDev = "gated-dev.yaml"
 // that still loads could pin one branch and check another.
 const (
 	gatedDevPin   = `git update-ref "refs/omg-approved/$(git symbolic-ref --short HEAD)" HEAD`
-	gatedDevCheck = `ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")" && git update-ref -d "$ref"`
+	gatedDevCheck = `ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")"`
+	gatedDevSpend = `rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && test "$(gh pr view --json headRefOid --jq .headRefOid)" = "$pin" && git update-ref -d "$ref"`
 )
+
+// gatedDevPRGrant is pr's whole grant: push and open, and no tool that
+// commits, amends or rebases after check-head has passed.
+var gatedDevPRGrant = []string{"Read", "Bash(git push *)", "Bash(gh pr create *)", "Bash(gh pr view *)", "Bash(git status*)", "Bash(git log*)", "Edit(./.omg-pr-body.md)"}
 
 // shippedGraphPath is graphs/<name> in the checkout, the path `run` is given.
 func shippedGraphPath(name string) string {
@@ -197,8 +202,9 @@ func TestGatedDevPublishesOnlyThroughTheGateAndTheHeadCheck_345(t *testing.T) {
 
 // TestGatedDevPinsTheApprovedHead_345 pins the mechanism the header argues
 // for: one managed worktree for every node, the pin written by review's
-// engine-run verify behind its gating verdict and arc, and the head check as
-// an engine-run verify on a read-only node.
+// engine-run verify behind its gating verdict and arc, the head check as an
+// engine-run verify on a read-only node, and the published head checked and
+// the pin spent by an engine-run verify on an inline, push-only pr.
 func TestGatedDevPinsTheApprovedHead_345(t *testing.T) {
 	g := loadGatedDev(t).Graph
 	if len(g.Nodes) != 6 {
@@ -230,5 +236,29 @@ func TestGatedDevPinsTheApprovedHead_345(t *testing.T) {
 	}
 	if check.SuccessCheck.ResultMatches != "^[*_`\\s]*DONE\\b" {
 		t.Errorf("check-head's result_matches is %q, want dev's anchored DONE", check.SuccessCheck.ResultMatches)
+	}
+
+	pr := gatedDevNode(t, g, "pr")
+	if pr.SuccessCheck.Verify == nil || pr.SuccessCheck.Verify.Command != gatedDevSpend {
+		t.Errorf("pr's verify is %+v, want the published-head check %q", pr.SuccessCheck.Verify, gatedDevSpend)
+	}
+	if !slices.Equal(pr.AllowedTools, gatedDevPRGrant) {
+		t.Errorf("pr's allowed_tools is %v, want %v", pr.AllowedTools, gatedDevPRGrant)
+	}
+	if pr.SuccessCheck.ResultMatches != "^[*_`\\s]*PR[*_`\\s:]*https?://\\S" {
+		t.Errorf("pr's result_matches is %q, want pr-publish's PR <url> pattern", pr.SuccessCheck.ResultMatches)
+	}
+	for _, grant := range gatedDevPRGrant[1:] {
+		if !strings.Contains(pr.Prompt, "`"+grant+"`") {
+			t.Errorf("pr's prompt does not state %q: a dontAsk node that does not know its grant gives up at the first denial", grant)
+		}
+	}
+}
+
+// TestGatedDevPRIsInline_345: pr-publish grants `Bash(git *)`, which can
+// commit past check-head, so gated-dev's pr must not be spliced from it.
+func TestGatedDevPRIsInline_345(t *testing.T) {
+	if fragment, ok := fragmentOf(loadGatedDev(t))["pr"]; ok {
+		t.Errorf("pr is spliced from %q; it must be inline, holding no commit tools", fragment)
 	}
 }

@@ -29,8 +29,8 @@ var update = flag.Bool("update", false, "regenerate testdata/golden resolved-gra
 // near-identical prompts onto two, which is a reviewed change rather than an
 // equivalence claim — and its golden now carries FOUR spliced nodes per edit
 // of that one fragment, which is exactly the blast radius this fixture exists
-// to put in front of a reviewer. gated-dev.yaml (#345) cites three of the
-// fragments gated-lane does, so an edit to any of them moves it too.
+// to put in front of a reviewer. gated-dev.yaml (#345) cites two of the
+// fragments gated-lane does, so an edit to either of them moves it too.
 var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml", "adr-driven-dev.yaml", "gated-dev.yaml"}
 
 // migratedTemplates are the two shipped templates ADR 0013's migration

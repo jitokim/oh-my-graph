@@ -18,12 +18,14 @@ import (
 )
 
 // The runtime tests for the SHIPPED graphs/gated-dev.yaml (#345). The pin on
-// review and the head check on check-head are ENGINE verify commands, so these
-// legs run against a real temporary git repository through the real
-// worktree.GitManager and verify.ShellVerifier that executeGraph and
-// executeResume wire. Only the model runner is fake: gatedDevRunner tells the
-// six nodes apart by their prompts, and its dev commits in the node's working
-// directory, as a real one would.
+// review, the head check on check-head and the published-head check on pr are
+// ENGINE verify commands, so these legs run against a real temporary git
+// repository through the real worktree.GitManager and verify.ShellVerifier
+// that executeGraph and executeResume wire. Only the model runner and `gh` are
+// fake: gatedDevRunner tells the six nodes apart by their prompts, its dev
+// commits in the node's working directory and its pr really pushes to a bare
+// origin, as real ones would; stubGH answers pr's verify from that origin, so
+// no test reaches GitHub.
 //
 // What the engine does to the lane at the pause, which every "move HEAD" step
 // below relies on: the paused leg's worktree cleanup REMOVES the lane's
@@ -61,10 +63,13 @@ type gatedDevCall struct {
 
 // gatedDevRunner is the fake model runner for gated-dev. dev commits a new
 // file in its working directory on every invocation; review replies with the
-// next verdict from reviews (the last one repeats); every other node replies
-// with the token its success_check wants.
+// next verdict from reviews (the last one repeats); pr pushes its HEAD to
+// origin — after committing once more when prCommits is set, the move its
+// narrow grant exists to rule out; every node replies with the token its
+// success_check wants.
 type gatedDevRunner struct {
-	reviews []string
+	reviews   []string
+	prCommits bool
 
 	mu    sync.Mutex
 	calls []gatedDevCall
@@ -109,6 +114,14 @@ func (r *gatedDevRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 	case "check-head":
 		result = "DONE"
 	case "pr":
+		if r.prCommits {
+			if err := commitWork(spec.Cwd, fmt.Sprintf("unreviewed-%d.txt", seq)); err != nil {
+				return runner.NodeOutcome{}, err
+			}
+		}
+		if _, err := gitOutput(spec.Cwd, "push", "-q", "origin", "HEAD"); err != nil {
+			return runner.NodeOutcome{}, err
+		}
 		result = "PR https://github.com/example/repo/pull/1"
 	}
 	outcome := runner.NodeOutcome{SessionID: "s-" + node, Result: result, ExitCode: 0}
@@ -190,7 +203,9 @@ func commitWork(dir, name string) error {
 // it the process's working directory: the run's GitManager provisions the
 // lane off the invocation repo, which is the cwd. The developer's own git
 // configuration (hooks, signing) must reach neither the test's git nor the
-// engine's, so both are pointed away from it for the whole test.
+// engine's, so both are pointed away from it for the whole test. Its `origin`
+// is a bare repository beside it, which is where the fake pr publishes and
+// what stubGH reports.
 func gatedDevRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -204,8 +219,42 @@ func gatedDevRepo(t *testing.T) string {
 	if err := commitWork(dir, "README"); err != nil {
 		t.Fatal(err)
 	}
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	mustGit(t, dir, "init", "-q", "--bare", origin)
+	mustGit(t, dir, "remote", "add", "origin", origin)
+	stubGH(t)
 	t.Chdir(dir)
 	return dir
+}
+
+// stubGH puts a fake `gh` first on PATH for the whole test, so pr's engine
+// verify never calls the real one or the network. It answers exactly one
+// question, `gh pr view --json headRefOid --jq .headRefOid`, with what was
+// really published: origin's tip of the branch checked out in the directory
+// it runs in. Anything else it is asked fails, as does a branch never pushed.
+func stubGH(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := `#!/bin/sh
+if [ "$*" != "pr view --json headRefOid --jq .headRefOid" ]; then
+	echo "stub gh: unexpected arguments: $*" >&2
+	exit 1
+fi
+branch="$(git symbolic-ref --short HEAD)" || exit 1
+line="$(git ls-remote --exit-code origin "refs/heads/$branch")" || exit 1
+echo "${line%%	*}"
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// publishedSHA is origin's tip of branch: what pr really published.
+func publishedSHA(t *testing.T, repo, branch string) string {
+	t.Helper()
+	origin := mustGit(t, repo, "remote", "get-url", "origin")
+	return mustGit(t, origin, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
 }
 
 // gatedDevGraphPath is the shipped graph, resolved before any test changes
@@ -352,9 +401,11 @@ func TestGatedDev_RejectEndsTheRunBeforeCheckHeadAndPR_345(t *testing.T) {
 	}
 }
 
-// --- 5e. an approval spends the pin ------------------------------------------
+// --- 5e. the published head spends the pin -----------------------------------
 
-func TestGatedDev_ApprovedCheckHeadDeletesThePin_345(t *testing.T) {
+// check-head guards and leaves the pin; pr's verify finds the published head
+// equal to it and only then deletes it.
+func TestGatedDev_PublishedPinnedHeadSpendsThePin_345(t *testing.T) {
 	isolateRunHome(t)
 	graphPath := gatedDevGraphPath(t)
 	repo := gatedDevRepo(t)
@@ -362,15 +413,54 @@ func TestGatedDev_ApprovedCheckHeadDeletesThePin_345(t *testing.T) {
 	const runID = "gd-spend"
 
 	pausedGatedDev(t, graphPath, repo, runID, rec)
-	if _, ok := refSHA(t, repo, pinRef(runID)); !ok {
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
 		t.Fatalf("no pin %s at the pause; the test below would prove nothing", pinRef(runID))
 	}
 
 	if err := resumeGatedDev(t, runID, "--approve", rec); err != nil {
 		t.Fatalf("resume --approve approve-publish: %v", err)
 	}
-	assertVerdict(t, gatedDevSnapshot(t, runID), "check-head", runstate.VerdictPass)
+	snap := gatedDevSnapshot(t, runID)
+	assertVerdict(t, snap, "check-head", runstate.VerdictPass)
+	assertVerdict(t, snap, "pr", runstate.VerdictPass)
+	if got := publishedSHA(t, repo, laneBranch(runID)); got != pinned {
+		t.Errorf("origin's %s is at %s, want the pinned %s", laneBranch(runID), got, pinned)
+	}
 	if sha, ok := refSHA(t, repo, pinRef(runID)); ok {
-		t.Errorf("the pin %s still exists (at %s) after a passing check-head; it must be spent", pinRef(runID), sha)
+		t.Errorf("the pin %s still exists (at %s) after pr published it; pr's verify must spend it", pinRef(runID), sha)
+	}
+}
+
+// --- 5f. a pr that publishes another commit fails ------------------------------
+
+// The narrow grant makes this unlikely, not impossible: a pr that commits (or
+// pushes another SHA) publishes a head nobody approved. Its verify must fail
+// and keep the pin, so the person can see what happened and clean it up.
+func TestGatedDev_PRPublishingAnUnapprovedHeadFailsAndKeepsThePin_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	rec := newGatedDevRunner("CLEAN")
+	rec.prCommits = true
+	const runID = "gd-unapproved"
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	if err := resumeGatedDev(t, runID, "--approve", rec); err == nil {
+		t.Error("the resumed leg returned nil; pr published an unapproved head and must fail it")
+	}
+	snap := gatedDevSnapshot(t, runID)
+	assertVerdict(t, snap, "check-head", runstate.VerdictPass)
+	assertVerdict(t, snap, "pr", runstate.VerdictFail)
+	if got := publishedSHA(t, repo, laneBranch(runID)); got == pinned {
+		t.Fatalf("origin's %s is at the pinned %s; the fake pr did not publish another commit, so this proves nothing", laneBranch(runID), pinned)
+	}
+	if sha, ok := refSHA(t, repo, pinRef(runID)); !ok || sha != pinned {
+		t.Errorf("a failed pr changed the pin: %s is %q (exists %v), want %s", pinRef(runID), sha, ok, pinned)
 	}
 }

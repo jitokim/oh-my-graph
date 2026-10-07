@@ -126,7 +126,7 @@
         "exit_zero": true,
         "result_matches": "^[*_`\\s]*DONE\\b",
         "verify": {
-          "command": "ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; test \"$(git rev-parse HEAD)\" = \"$(git rev-parse --verify -q \"$ref\")\" \u0026\u0026 git update-ref -d \"$ref\"",
+          "command": "ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; test \"$(git rev-parse HEAD)\" = \"$(git rev-parse --verify -q \"$ref\")\"",
           "timeout": "30s"
         }
       },
@@ -139,18 +139,25 @@
       "depends_on": [
         "check-head"
       ],
-      "prompt": "{{ inputs.publish }}\n  {{ artifacts.review | inline }}\nYour grant is exactly this: `git`, `gh`, Read, and writing ONE file,\n`.omg-pr-body.md` in your working directory. Any other call is denied,\nnot asked about. A body passed inline is denied even though it starts\nwith `gh`: a multi-line `--body '…'`, a heredoc and a `$(…)` are all\nrefused. So the body goes through that file, in this order:\n  1. Write the whole body to `.omg-pr-body.md` with the Write tool (if\n     an earlier run left one there, Read it first, then overwrite it).\n  2. Run `gh pr create --title '\u003cone line\u003e' --body-file .omg-pr-body.md`,\n     plus any other flag asked for above (such as `--draft`).\n  3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the\n     change.\n  4. Once the PR is open, delete the file with\n     `git clean -f -- .omg-pr-body.md`: a stray untracked file stops the\n     run's worktree from being removed.\nEvery Bash call is ONE program: no `cd`, `\u0026\u0026`, `;`, `|`, redirect or\nheredoc. To act in another directory, use `git -C \u003cdir\u003e`. A denied call\nmeans the FORM was wrong, not the goal: re-issue it in the form above\nbefore you give up on it.\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
+      "prompt": "{{ inputs.publish }}\n  {{ artifacts.review | inline }}\nYour grant is exactly this: Read, `Bash(git push *)`,\n`Bash(gh pr create *)`, `Bash(gh pr view *)`, `Bash(git status*)`,\n`Bash(git log*)` and `Edit(./.omg-pr-body.md)` — writing ONE file,\n`.omg-pr-body.md` in your working directory. Any other call is denied,\nnot asked about. This node never commits, amends, rebases, resets or\nchecks out: the HEAD you publish is the one a person approved, so push\nthis branch's HEAD as it is (`git push -u origin HEAD`), never another\ncommit and never with `--force`. A body passed inline is denied even\nthough it starts with `gh`: a multi-line `--body '…'`, a heredoc and a\n`$(…)` are all refused. So the body goes through that file, in this\norder:\n  1. Write the whole body to `.omg-pr-body.md` with the Write tool (if\n     an earlier run left one there, Read it first, then overwrite it).\n  2. Run `gh pr create --title '\u003cone line\u003e' --body-file .omg-pr-body.md`,\n     plus any other flag asked for above (such as `--draft`).\n  3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the\n     change. Leave it where it is once the PR is open.\nEvery Bash call is ONE program, run in this working directory: no `cd`,\n`\u0026\u0026`, `;`, `|`, redirect or heredoc. A denied call means the FORM was\nwrong, not the goal: re-issue it in the form above before you give up\non it.\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
       "allowed_tools": [
         "Read",
-        "Bash(git *)",
-        "Bash(gh *)",
+        "Bash(git push *)",
+        "Bash(gh pr create *)",
+        "Bash(gh pr view *)",
+        "Bash(git status*)",
+        "Bash(git log*)",
         "Edit(./.omg-pr-body.md)"
       ],
       "permission_mode": "dontAsk",
       "handoff": "artifact",
       "success_check": {
         "exit_zero": true,
-        "result_matches": "^[*_`\\s]*PR[*_`\\s:]*https?://\\S"
+        "result_matches": "^[*_`\\s]*PR[*_`\\s:]*https?://\\S",
+        "verify": {
+          "command": "rm -f .omg-pr-body.md; ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; pin=\"$(git rev-parse --verify -q \"$ref\")\" \u0026\u0026 test \"$(gh pr view --json headRefOid --jq .headRefOid)\" = \"$pin\" \u0026\u0026 git update-ref -d \"$ref\"",
+          "timeout": "60s"
+        }
       },
       "worktree": "lane"
     }
