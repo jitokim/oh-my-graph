@@ -765,7 +765,7 @@ func TestWatchRun_PrintsAnEngineSanitisedDetail_349(t *testing.T) {
 		t.Fatalf("parse graph: %v", err)
 	}
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
-		"crashed": {ExitCode: 1, FailureCause: "before\x1b[31m\x1b[2Amiddle‮after\x1b[0m"},
+		"crashed": {ExitCode: 1, FailureCause: "before\x1b[31m\x1b[2Amiddle\u202eafter\x1b[0m"},
 	})
 	feed, err := runfeed.NewStreamWriter(filepath.Join(dir, runfeed.FileName), runID)
 	if err != nil {
@@ -782,7 +782,7 @@ func TestWatchRun_PrintsAnEngineSanitisedDetail_349(t *testing.T) {
 		t.Fatalf("watchRun returned error: %v", err)
 	}
 	got := out.String()
-	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '‮') {
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '\u202e') {
 		t.Errorf("watch printed a raw escape or bidi override:\n%q", got)
 	}
 	if !strings.Contains(got, "✗ crashed  FAILED: ") || !strings.Contains(got, "beforemiddleafter") {

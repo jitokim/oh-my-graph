@@ -13,7 +13,7 @@ import (
 // hostileText carries both kinds of terminal control #349 is about: a CSI
 // colour + cursor-move sequence and a bidi override (U+202E), with visible
 // text either side of each that must survive the cleaning.
-const hostileText = "before\x1b[31m\x1b[2Amiddle‮after\x1b[0m"
+const hostileText = "before\x1b[31m\x1b[2Amiddle\u202eafter\x1b[0m"
 
 // assertTerminalClean fails when s still carries an ESC or U+202E, or lost
 // the visible text hostileText wraps around them.
@@ -22,7 +22,7 @@ func assertTerminalClean(t *testing.T, surface, s string) {
 	if strings.ContainsRune(s, 0x1b) {
 		t.Errorf("%s still carries an ESC: %q", surface, s)
 	}
-	if strings.ContainsRune(s, '‮') {
+	if strings.ContainsRune(s, '\u202e') {
 		t.Errorf("%s still carries U+202E: %q", surface, s)
 	}
 	if !strings.Contains(s, "beforemiddleafter") {
@@ -94,7 +94,7 @@ nodes:
 // sequences and all. A pattern that needs the raw ESC passes; one that only
 // the cleaned text would satisfy fails — while the Detail shown is clean.
 func TestScheduler_VerificationIsJudgedOnTheRawOutput_349(t *testing.T) {
-	raw := "\x1b[32mok\x1b[0m‮ github.com/x\n"
+	raw := "\x1b[32mok\x1b[0m\u202e github.com/x\n"
 	cases := []struct {
 		name    string
 		pattern string
@@ -126,7 +126,7 @@ nodes:
 					t.Fatal("judged on the raw output this must fail, but it passed")
 				}
 				rec, _ := findRecord(led, "dev")
-				if strings.ContainsRune(rec.Detail, 0x1b) || strings.ContainsRune(rec.Detail, '‮') {
+				if strings.ContainsRune(rec.Detail, 0x1b) || strings.ContainsRune(rec.Detail, '\u202e') {
 					t.Errorf("the shown Detail must still be clean: %q", rec.Detail)
 				}
 			}

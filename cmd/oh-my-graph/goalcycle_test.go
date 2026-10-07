@@ -337,15 +337,15 @@ func TestFinalRemaining_IsSanitised_349(t *testing.T) {
 		}}
 	}
 
-	got := finalRemaining(result("rem-before\x1b[2Jrem-middle‮rem-after"))
-	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '‮') {
+	got := finalRemaining(result("rem-before\x1b[2Jrem-middle\u202erem-after"))
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '\u202e') {
 		t.Errorf("finalRemaining kept a raw escape or bidi override: %q", got)
 	}
 	if want := "remaining: rem-beforerem-middlerem-after"; got != want {
 		t.Errorf("finalRemaining = %q, want %q", got, want)
 	}
 
-	if got, want := finalRemaining(result("\x1b[2J‮")), "no remaining work was recorded"; got != want {
+	if got, want := finalRemaining(result("\x1b[2J\u202e")), "no remaining work was recorded"; got != want {
 		t.Errorf("a remaining that sanitises to empty: finalRemaining = %q, want %q", got, want)
 	}
 }
