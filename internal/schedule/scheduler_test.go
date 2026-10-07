@@ -1693,15 +1693,17 @@ func (r *recordingRunner) invocationFor(key string) runner.NodeInvocation {
 // fakeRecorder is the scripted schedule.Recorder tests inject to observe the
 // snapshot-facing calls the Scheduler makes without touching a filesystem —
 // the same role FakeRunner plays for NodeRunner and FakeVerifier for Verifier.
-// Its two failXxx fields let a test script a write failure to prove the
-// fatal/non-fatal split between RecordPause and the other two methods.
+// Its failXxx fields let a test script a write failure to prove the
+// fatal/non-fatal split between RecordPause and the other methods.
 type fakeRecorder struct {
-	mu              sync.Mutex
-	nodes           map[string]runstate.NodeRecord
-	gateDecisions   map[string]runstate.GateDecision
-	pausedGates     map[string]bool
-	failRecordNode  error
-	failRecordPause error
+	mu                   sync.Mutex
+	nodes                map[string]runstate.NodeRecord
+	gateDecisions        map[string]runstate.GateDecision
+	pausedGates          map[string]bool
+	limitPauses          []runstate.LimitPause
+	failRecordNode       error
+	failRecordPause      error
+	failRecordLimitPause error
 }
 
 func newFakeRecorder() *fakeRecorder {
@@ -1731,6 +1733,13 @@ func (f *fakeRecorder) RecordPause(gateNodeID string) error {
 	defer f.mu.Unlock()
 	f.pausedGates[gateNodeID] = true
 	return f.failRecordPause
+}
+
+func (f *fakeRecorder) RecordLimitPause(pause runstate.LimitPause) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.limitPauses = append(f.limitPauses, pause)
+	return f.failRecordLimitPause
 }
 
 func (f *fakeRecorder) recordFor(nodeID string) (runstate.NodeRecord, bool) {
