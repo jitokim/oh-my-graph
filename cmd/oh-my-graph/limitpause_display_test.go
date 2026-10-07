@@ -43,7 +43,7 @@ func limitPausedRun(t *testing.T, runID, cause string) string {
 	return out
 }
 
-// TestListRuns_NamesTheLimitCauseFromTheRecord_358: ADR 0031 §8.3 — `runs
+// TestListRuns_NamesTheLimitCauseFromTheRecord_358 (#358): ADR 0031 §8.3 — `runs
 // list` says why a limit-paused run stopped, from the record, sanitized, and
 // the run is still PAUSED.
 func TestListRuns_NamesTheLimitCauseFromTheRecord_358(t *testing.T) {
@@ -67,7 +67,7 @@ func TestListRuns_NamesTheLimitCauseFromTheRecord_358(t *testing.T) {
 	}
 }
 
-// TestListRuns_NoRecordNoLimitLine_358: a run paused at a gate, with no limit
+// TestListRuns_NoRecordNoLimitLine_358 (#358): a run paused at a gate, with no limit
 // record, prints exactly the hint it always did.
 func TestListRuns_NoRecordNoLimitLine_358(t *testing.T) {
 	isolateRunHome(t)
@@ -81,7 +81,7 @@ func TestListRuns_NoRecordNoLimitLine_358(t *testing.T) {
 	}
 }
 
-// TestRunsListExitInFlight_LimitPausedRunKeepsItsExitCode_358: ADR 0031 §8.2
+// TestRunsListExitInFlight_LimitPausedRunKeepsItsExitCode_358 (#358): ADR 0031 §8.2
 // — the record changes no exit code. A limit-paused run is not in flight, so
 // `runs list --exit-in-flight` exits 0 with the record and without it.
 func TestRunsListExitInFlight_LimitPausedRunKeepsItsExitCode_358(t *testing.T) {
@@ -102,7 +102,7 @@ func TestRunsListExitInFlight_LimitPausedRunKeepsItsExitCode_358(t *testing.T) {
 	}
 }
 
-// TestPrintPauseHint_NamesTheRecordedCause_358: the end-of-leg hint names the
+// TestPrintPauseHint_NamesTheRecordedCause_358 (#358): the end-of-leg hint names the
 // cause from the record, sanitized, on both branches — with a reset time and
 // without one — and keeps the resume command it always printed.
 func TestPrintPauseHint_NamesTheRecordedCause_358(t *testing.T) {
@@ -127,7 +127,7 @@ func TestPrintPauseHint_NamesTheRecordedCause_358(t *testing.T) {
 	}
 }
 
-// TestRun_LimitPauseHintIsSanitized_358: end to end, the hint a limited leg
+// TestRun_LimitPauseHintIsSanitized_358 (#358): end to end, the hint a limited leg
 // prints names its cause and carries no ESC byte.
 func TestRun_LimitPauseHintIsSanitized_358(t *testing.T) {
 	isolateRunHome(t)
@@ -140,7 +140,7 @@ func TestRun_LimitPauseHintIsSanitized_358(t *testing.T) {
 	}
 }
 
-// TestResume_GateModeOnALimitPausedRunNamesTheCause_358: `resume --approve`
+// TestResume_GateModeOnALimitPausedRunNamesTheCause_358 (#358): `resume --approve`
 // on a run paused on a limit, not at a gate, says so from the record —
 // sanitized — instead of "is not paused", and still refuses with exit 1.
 func TestResume_GateModeOnALimitPausedRunNamesTheCause_358(t *testing.T) {
