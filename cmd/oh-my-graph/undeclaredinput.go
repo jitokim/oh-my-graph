@@ -40,18 +40,7 @@ import (
 // would make `run` silent about a key `lint` would call undeclared the moment
 // a prompt referenced it.
 func undeclaredInputWarnings(declared []string, sources map[string]string) []string {
-	isDeclared := make(map[string]bool, len(declared))
-	for _, name := range declared {
-		isDeclared[name] = true
-	}
-	keys := make([]string, 0, len(sources))
-	for key := range sources {
-		if !isDeclared[key] {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-
+	keys := undeclaredInputKeys(declared, sources)
 	lines := make([]string, 0, len(keys))
 	for _, key := range keys {
 		line := fmt.Sprintf("input %q (from %s) is not declared in the graph's inputs list; it is bound anyway",
@@ -64,11 +53,30 @@ func undeclaredInputWarnings(declared []string, sources map[string]string) []str
 	return lines
 }
 
-// warnUndeclaredInputs prints undeclaredInputWarnings on warnW, each with the
-// "warning: <graph path>: " prefix the other load-time warnings carry.
+// undeclaredInputKeys is the bound keys of sources that declared does not
+// name, sorted: the set undeclaredInputWarnings prints a line for.
+func undeclaredInputKeys(declared []string, sources map[string]string) []string {
+	isDeclared := make(map[string]bool, len(declared))
+	for _, name := range declared {
+		isDeclared[name] = true
+	}
+	keys := make([]string, 0, len(sources))
+	for key := range sources {
+		if !isDeclared[key] {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// warnUndeclaredInputs prints undeclaredInputWarnings on warnW through
+// warnLine, so each carries the "warning: <graph path>: " prefix the other
+// load-time warnings do — and the bare "warning: " form on a plan screen whose
+// spec has no path yet.
 func warnUndeclaredInputs(warnW io.Writer, graphPath string, declared []string, sources map[string]string) {
 	for _, line := range undeclaredInputWarnings(declared, sources) {
-		fmt.Fprintf(warnW, "warning: %s: %s\n", graphPath, line)
+		warnLine(warnW, graphPath, line)
 	}
 }
 
