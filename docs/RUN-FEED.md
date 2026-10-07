@@ -68,8 +68,11 @@ whose plan is gated behind a `[y/N]` a human may answer `n` — is kept as
 `rejected.json`. A VALID plan that never ran — a `--plan-only` preview, or a
 `chat` plan DECLINED at that prompt — is kept as `graph.json`, because it IS a
 graph the engine would run: `oh-my-graph run <path>` on it is how you change
-your mind later. Neither is a run, and no `plans/` directory is ever reported by
-`runs list`.
+your mind later. A `--plan-only` preview also keeps the same plan as
+`graph.yaml` beside it, the copy to edit (to add a gate, say) and run; `run`
+reads exactly the file it is given, and warns when it is given a `graph.json`
+whose `graph.yaml` no longer matches it. Neither is a run, and no `plans/`
+directory is ever reported by `runs list`.
 
 The converse does not hold: a `.out` is not proof of a PASS. `PersistOutput`
 runs *before* the post-hoc budget check, deliberately, so a node that did its
