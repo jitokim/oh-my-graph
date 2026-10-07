@@ -102,8 +102,9 @@
 #      push landed after recheck) and CLOSED all FAIL.
 #   2. RECHECKED with a sha that is not exactly 40 hex characters → FAIL.
 #   3. recheck did not say RECHECKED (UNSETTLED) → PASS only if the PR is still
-#      OPEN: that is the deliberate WITHHELD. MERGED fails — the merge went
-#      against recheck's own verdict.
+#      OPEN with no auto-merge queued: that is the deliberate WITHHELD. MERGED
+#      fails — the merge went against recheck's own verdict — and so does a
+#      queued auto-merge, which would land it later.
 #   4. gh failed, the artifact is unreadable or empty, or gh printed something
 #      unexpected → FAIL. A verification that could not complete never passes.
 # Rule 1 is stricter than "WITHHELD passes" in one more place, and it is meant
@@ -1072,8 +1073,8 @@ nodes:
               fi
               say "rule 1 FAIL: recheck RECHECKED $sha, want MERGED at it; $seen"; exit 1 ;;
             *)
-              if [ "$state" = OPEN ]; then
+              if [ "$state" = OPEN ] && [ "$auto" = off ]; then
                 say "rule 3 PASS: recheck not RECHECKED, PR left open; $seen"; exit 0
               fi
-              say "rule 3 FAIL: recheck not RECHECKED, want OPEN; $seen"; exit 1 ;;
+              say "rule 3 FAIL: recheck not RECHECKED, want OPEN with no auto-merge; $seen"; exit 1 ;;
           esac

@@ -66,6 +66,7 @@ func TestMergeShepherdMergeVerify(t *testing.T) {
 		{"auto-merge queued instead of merged", "RECHECKED " + shaA, "OPEN " + shaA + " on", false},
 		{"merged at a head pushed after recheck", "RECHECKED " + shaA, "MERGED " + shaB + " off", false},
 		{"merged against an unsettled recheck", "UNSETTLED " + shaA, "MERGED " + shaA + " off", false},
+		{"auto-merge queued against an unsettled recheck", "UNSETTLED " + shaA, "OPEN " + shaA + " on", false},
 		{"recheck named a 7-hex sha", "RECHECKED 83edfad", "MERGED " + shaA + " off", false},
 		{"gh fails", "RECHECKED " + shaA, "", false},
 	}
