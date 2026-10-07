@@ -2,7 +2,9 @@ package handoff
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -179,17 +181,7 @@ func placeholderFindings(g *graph.Graph) []placeholderFinding {
 	var findings []placeholderFinding
 	for _, node := range g.Nodes {
 		ancestors := ancestorsOf(g, node.ID)
-		fields := []struct{ name, tmpl string }{
-			{"prompt", node.Prompt},
-			{"cwd", node.Cwd},
-		}
-		if v := node.SuccessCheck.Verify; v != nil {
-			fields = append(fields,
-				struct{ name, tmpl string }{"success_check.verify.command", v.Command},
-				struct{ name, tmpl string }{"success_check.verify.cwd", v.Cwd},
-			)
-		}
-		for _, field := range fields {
+		for _, field := range templatedFields(node) {
 			for _, token := range looseTokenPattern.FindAllString(field.tmpl, -1) {
 				detail, impossible, hint := judgeToken(g, node.ID, declared, ancestors, token)
 				if detail == "" {
@@ -204,6 +196,60 @@ func placeholderFindings(g *graph.Graph) []placeholderFinding {
 		}
 	}
 	return findings
+}
+
+// templatedField is one node field the Scheduler interpolates: its name as a
+// finding reports it, and its text.
+type templatedField struct{ name, tmpl string }
+
+// templatedFields is the field list placeholderFindings and InputReferences
+// both walk: a node's prompt and cwd, and its verify block's command and cwd.
+// One list, so the lint and the reference scan can never disagree about which
+// fields carry tokens. A gate's description is interpolated too, but it is
+// not here: GateDescriptionIssues judges it under its own, stricter rule, and
+// InputReferences adds it itself.
+func templatedFields(node graph.Node) []templatedField {
+	fields := []templatedField{
+		{"prompt", node.Prompt},
+		{"cwd", node.Cwd},
+	}
+	if v := node.SuccessCheck.Verify; v != nil {
+		fields = append(fields,
+			templatedField{"success_check.verify.command", v.Command},
+			templatedField{"success_check.verify.cwd", v.Cwd},
+		)
+	}
+	return fields
+}
+
+// InputReferences is the sorted, deduplicated set of input names g
+// references as a well-formed {{ inputs.<name> }} token (optional filter:
+// | inline) in any field the engine interpolates: templatedFields, plus a gate
+// node's description. A token counts only when placeholderPattern — the regex
+// Interpolate substitutes with — matches it whole, so a malformed, case-variant
+// or literal token names nothing here, exactly as it would resolve nothing at
+// run time. Whether the graph DECLARES the name is not asked: that is the
+// caller's set to union with this one (#356's near-miss check on `auto`).
+func InputReferences(g *graph.Graph) []string {
+	seen := make(map[string]bool)
+	for _, node := range g.Nodes {
+		fields := templatedFields(node)
+		if node.Type == graph.TypeGate {
+			fields = append(fields, templatedField{"description", node.Description})
+		}
+		for _, field := range fields {
+			for _, token := range looseTokenPattern.FindAllString(field.tmpl, -1) {
+				loc := placeholderPattern.FindStringIndex(token)
+				if loc == nil || loc[0] != 0 || loc[1] != len(token) {
+					continue
+				}
+				if groups := placeholderPattern.FindStringSubmatch(token); groups[1] == "inputs" {
+					seen[groups[2]] = true
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // judgeToken decides what, if anything, is wrong with one {{ ... }} token.
