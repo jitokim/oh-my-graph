@@ -2565,7 +2565,8 @@ off.
   single-node form's node or any `nodes:` entry — carries a `use:`: only
   the cited file's bytes are digested and pinned, so a nested file could be
   swapped between scan and splice unseen, and it is refused before that file
-  is read); `advisory` (any loader advisory over the file);
+  is read — nested fragments are not offered in this slice); `advisory`
+  (any loader advisory over the file);
   `description` (a line shaped like a fence marker, or nothing printable
   left); `non-prompt slot` (a substitution slot lands anywhere but a
   `prompt:` scalar); `tool not read-only` (a declared
@@ -2582,8 +2583,9 @@ off.
   no tool that writes a file or runs a command. The check runs at admission
   (`admitInspection`, `internal/coordinator/reusecatalog.go:240`) and again on
   every spliced node (`checkSplicedNodes`,
-  `internal/coordinator/reusesplice.go:143`), so a fragment forced past the
-  menu is still refused. The planned-node ceiling itself is unchanged.
+  `internal/coordinator/reusesplice.go:145`), which also refuses any
+  `permission_mode` there, so a fragment forced past the menu is still
+  refused. The planned-node ceiling itself is unchanged.
 - **The menu.** The admitted set is rendered directly after the reply shape,
   fenced as data with a per-call nonce: id, contributes, binds and a summary
   (one line, at most 200 bytes, control and format characters removed) —
@@ -2598,8 +2600,9 @@ off.
 - **The pipeline.** `validatePlannedNodes` → the splice
   (`spliceReuse`: re-read and re-hash each cited file, re-admit from those
   bytes, splice with the fragment loader's machinery — which itself refuses
-  pinned bytes holding a nested `use:` before resolving anything — then every spliced node
-  through `plannedNodeRefusals` again) → `Graph.Validate` → the
+  pinned bytes holding a nested `use:` before any nested file is read — then
+  every spliced node through `plannedNodeRefusals`, the read-only tool rule
+  and the no-`permission_mode` rule again) → `Graph.Validate` → the
   unisolated-path scan (over the planner's unspliced graph) → agent mapping →
   the `--verify-cmd` attachment → skill activation. The splice is the first
   mutation, so every later step and the saved `graph.json` see the resolved
@@ -3186,7 +3189,7 @@ turns that rule into a build failure. Current dispositions:
 | `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, then `checkSplicedNodes`, which runs the read-only tool check again on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
+| `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
 | `bind` | constrained — written only by a planned node citing a menu entry, as `reuse`'s slot values; its keys must be exactly the cited entry's `binds` (an unlisted slot and a missing slot are separate refusals). Refused without `reuse`, and so whenever nothing was offered. Validated by `validatePlannedNodeReuse` against the held menu, and by admission (`coordinator/reusecatalog.go`), which offers only shapes whose every slot lands in a `prompt:` scalar, so a bound value reaches only text the planner could already write. The splice (`coordinator/reusesplice.go`, through `graph.SpliceReuse`) turns it into the `with:` bindings the fragment loader substitutes, so `graph.json` never holds it |
 | `budget_usd`, `timeout` | allowed |
 | `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |
@@ -3197,9 +3200,12 @@ The per-node rows of this table are ONE function, `plannedNodeRefusals`, which
 reuse catalog (ADR 0038, `coordinator/reusecatalog.go`) calls the same function
 on every static node body of a fragment before offering it to the planner, so a
 field newly refused here is refused at catalog admission with no second list.
-Admission adds four rules of its own, on what the loader derived
-(`graph.InspectFragment`): every substitution slot lands only in a `prompt:`
-scalar, followed through nested `use:` (ADR 0029); every declared tool is one
+Admission adds five rules of its own, on what the loader derived
+(`graph.InspectFragment`): no node of the fragment's own body carries a nested
+`use:` (a nested file's bytes are not pinned by the digest, so such a fragment
+is skipped as `nested use` before that file is read — nested fragments are not
+offered in this slice); every substitution slot lands only in a `prompt:`
+scalar; every declared tool is one
 of the read-only tools `Read`, `Glob`, `Grep` (`reuseReadOnlyTools`,
 `internal/coordinator/reusecatalog.go:49`, a strict subset of
 `plannedToolAllowlist`); no node declares `permission_mode`; and
@@ -3224,9 +3230,11 @@ plan naming the node, the shape, the path and both digests, and the planner's
 reply is kept as `rejected.json`), admission is recomputed from the bytes read,
 and those bytes are spliced by `graph.SpliceReuse` with the fragment loader's
 own machinery: a single-node shape merges onto the citing node, a multi-node
-one takes ADR 0027's `<id>/` namespace. Every spliced node then goes through
-`plannedNodeRefusals` in full and through the read-only tool check again
-(`checkSplicedNodes`, `internal/coordinator/reusesplice.go:143`), and the
+one takes ADR 0027's `<id>/` namespace, and bytes holding a nested `use:` are
+refused before any nested file is read. Every spliced node then goes through
+`plannedNodeRefusals` in full, through the read-only tool check again and is
+refused if it declares any `permission_mode`
+(`checkSplicedNodes`, `internal/coordinator/reusesplice.go:145`), and the
 spliced graph through `Graph.Validate`.
 `Plan.Reuse` carries the scan and the citations, and `Plan.WriteReuseRecord`
 writes them to `reuse-catalog.json` (0600) beside `graph.json`; with reuse off
