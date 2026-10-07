@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 )
 
 // undeclaredInputWarnings is #356's check: one line for each bound key the
@@ -39,18 +42,70 @@ import (
 // reported as an input the graph does not declare. Skipping the check there
 // would make `run` silent about a key `lint` would call undeclared the moment
 // a prompt referenced it.
+//
+// This is `run`'s and `run --dry-run`'s rule only. `auto`'s plan screen uses
+// nearMissInputWarnings instead: there the planner saw every bound input and
+// may simply not need one, so a key the planned graph leaves undeclared is not
+// a typo signal — only a key one edit or two away from a name the plan uses is.
 func undeclaredInputWarnings(declared []string, sources map[string]string) []string {
 	keys := undeclaredInputKeys(declared, sources)
 	lines := make([]string, 0, len(keys))
 	for _, key := range keys {
-		line := fmt.Sprintf("input %q (from %s) is not declared in the graph's inputs list; it is bound anyway",
-			key, fence.SanitizeTerminalLine(sources[key]))
-		if near, ok := nearestDeclaredInput(key, declared); ok {
-			line += fmt.Sprintf(" — did you mean %q?", near)
-		}
-		lines = append(lines, line)
+		near, ok := nearestDeclaredInput(key, declared)
+		lines = append(lines, undeclaredInputLine(key, sources[key], near, ok))
 	}
 	return lines
+}
+
+// undeclaredInputLine is the one wording both rules print, with the
+// "— did you mean" tail when hasNear.
+func undeclaredInputLine(key, source, near string, hasNear bool) string {
+	line := fmt.Sprintf("input %q (from %s) is not declared in the graph's inputs list; it is bound anyway",
+		key, fence.SanitizeTerminalLine(source))
+	if hasNear {
+		line += fmt.Sprintf(" — did you mean %q?", near)
+	}
+	return line
+}
+
+// plannedInputNames is what `auto` judges a bound key against (#356): the
+// union of the names a planned graph declares in `inputs:` and the names it
+// references as a well-formed {{ inputs.<name> }} anywhere the engine
+// interpolates (handoff.InputReferences). A planner often references an input
+// without declaring it, and a typo of a referenced name is as much a typo as
+// one of a declared name. A reuse citation's bind: values need no extra
+// look: the coordinator splices them into the nodes' fields before the plan
+// is returned, so they are already in what InputReferences scans.
+func plannedInputNames(g *graph.Graph) []string {
+	return slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(g.Inputs), handoff.InputReferences(g)...))))
+}
+
+// nearMissInputWarnings is #356's check on `auto`'s plan screen: one line,
+// in undeclaredInputWarnings' wording, for each bound key that is not itself
+// in known but is a near miss of a name that is (nearestDeclaredInput's rule),
+// sorted by key. known is plannedInputNames. A key that matches a known name,
+// or is near none — including every key when the plan declares and references
+// nothing — prints nothing: the planner saw every bound input and may simply
+// not need it, so on `auto` undeclared alone is not a typo signal.
+func nearMissInputWarnings(known []string, sources map[string]string) []string {
+	var lines []string
+	for _, key := range nearMissInputKeys(known, sources) {
+		near, _ := nearestDeclaredInput(key, known)
+		lines = append(lines, undeclaredInputLine(key, sources[key], near, true))
+	}
+	return lines
+}
+
+// nearMissInputKeys is the bound keys nearMissInputWarnings prints a line
+// for, sorted.
+func nearMissInputKeys(known []string, sources map[string]string) []string {
+	var keys []string
+	for _, key := range undeclaredInputKeys(known, sources) {
+		if _, ok := nearestDeclaredInput(key, known); ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 // undeclaredInputKeys is the bound keys of sources that declared does not
@@ -72,18 +127,20 @@ func undeclaredInputKeys(declared []string, sources map[string]string) []string 
 
 // unwarnedInputSources is a goal loop's per-cycle view of sources (#356):
 // every bound key not yet in warned, for that cycle's plan screen to judge.
-// The ones the cycle's planned graph does not declare are added to warned on
-// the way out, so across the loop each undeclared key warns once — on the
-// first cycle whose plan leaves it out — and a key a later plan declares
-// costs nothing. warned is the loop's own state, owned by its caller.
-func unwarnedInputSources(declared []string, sources map[string]string, warned map[string]bool) map[string]string {
+// known is the cycle's plannedInputNames. The keys that plan screen prints a
+// near-miss line for (nearMissInputKeys) are added to warned on the way out,
+// and only those: a key that is merely undeclared prints nothing on `auto`,
+// so it is not spent, and a later cycle whose plan uses a name it nearly
+// matches still warns. Across the loop each near-miss key warns once.
+// warned is the loop's own state, owned by its caller.
+func unwarnedInputSources(known []string, sources map[string]string, warned map[string]bool) map[string]string {
 	pending := make(map[string]string, len(sources))
 	for key, source := range sources {
 		if !warned[key] {
 			pending[key] = source
 		}
 	}
-	for _, key := range undeclaredInputKeys(declared, pending) {
+	for _, key := range nearMissInputKeys(known, pending) {
 		warned[key] = true
 	}
 	return pending
@@ -91,11 +148,19 @@ func unwarnedInputSources(declared []string, sources map[string]string, warned m
 
 // warnUndeclaredInputs prints undeclaredInputWarnings on warnW through
 // warnLine, so each carries the "warning: <graph path>: " prefix the other
-// load-time warnings do — and the bare "warning: " form on a plan screen whose
-// spec has no path yet.
+// load-time warnings do. `run` and `run --dry-run` call it.
 func warnUndeclaredInputs(warnW io.Writer, graphPath string, declared []string, sources map[string]string) {
 	for _, line := range undeclaredInputWarnings(declared, sources) {
 		warnLine(warnW, graphPath, line)
+	}
+}
+
+// warnNearMissInputs prints nearMissInputWarnings against g's
+// plannedInputNames on w through warnLine — the bare "warning: " form on a
+// plan screen whose spec has no path yet. `auto`'s plan screen calls it.
+func warnNearMissInputs(w io.Writer, specPath string, g *graph.Graph, sources map[string]string) {
+	for _, line := range nearMissInputWarnings(plannedInputNames(g), sources) {
+		warnLine(w, specPath, line)
 	}
 }
 

@@ -1445,9 +1445,12 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 // 0041 §2.4); its zero value prints nothing. baselineSkipped is `auto
 // --no-baseline` (#328); false, which every surface but auto passes, prints
 // nothing. inputSources is each bound key's winning source
-// (commonRunFlags.inputSources, #356), judged against the PLANNED graph's
-// inputs: — on `auto` no graph exists until the planner writes one, so this
-// screen is the first place an undeclared key can be named. nil prints nothing.
+// (commonRunFlags.inputSources, #356), judged against the input names the
+// PLANNED graph declares or references — on `auto` no graph exists until the
+// planner writes one, so this screen is the first place a key can be judged.
+// Only a near miss of one of those names warns: the planner saw every bound
+// input and may simply not need one, so undeclared alone is not a typo signal
+// here. nil prints nothing.
 func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv conventionsDisclosure, inputSources map[string]string) {
 	g := plan.Graph
 	if specPath == "" {
@@ -1536,10 +1539,13 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// ArtifactReferences refused the plan before it was printed, because on
 	// `auto` nobody is in front of the screen at all.
 	//
-	// A bound key the planned graph does not declare (#356) heads the block:
-	// the same line `run` prints at load, a warning and never a refusal, and
-	// it lands before any planned node runs and on the --plan-only preview.
-	warnUndeclaredInputs(w, specPath, g.Inputs, inputSources)
+	// A bound key that is a near miss of an input the planned graph declares
+	// or references (#356) heads the block: the line `run` prints at load, a
+	// warning and never a refusal, landing before any planned node runs and
+	// on the --plan-only preview. Only a near miss, unlike `run`: the planner
+	// saw every bound input and may simply not need one, so a key the plan
+	// leaves undeclared is not a typo signal here (warnNearMissInputs).
+	warnNearMissInputs(w, specPath, g, inputSources)
 	warnAdvisories(w, specPath, g)
 	fmt.Fprintln(w)
 }
