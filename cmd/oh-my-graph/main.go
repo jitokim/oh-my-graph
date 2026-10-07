@@ -51,6 +51,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -477,7 +478,7 @@ func warnIfPlanYAMLDiffers(warnW io.Writer, graphPath string, g *graph.Graph) {
 		return
 	}
 	yamlPath := filepath.Join(filepath.Dir(graphPath), generatedSpecYAMLFileName)
-	if _, err := os.Stat(yamlPath); err != nil {
+	if _, err := os.Stat(yamlPath); errors.Is(err, fs.ErrNotExist) {
 		return
 	}
 	why := ""

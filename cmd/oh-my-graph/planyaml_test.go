@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -424,6 +425,36 @@ func TestRunGraphWith_JSONBesideBrokenPlanYAMLWarnsAndRuns(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("warning should contain %q:\n%s", want, stderr)
 		}
+	}
+	if n := len(fake.Invocations()); n != 2 {
+		t.Errorf("run graph.json launched %d nodes, want 2", n)
+	}
+}
+
+// TestRunGraphWith_JSONBesideUnstatablePlanYAMLWarns (#342 review): only a
+// graph.yaml that does not exist is silent. One that exists but cannot be
+// stat'd (here a symlink loop, ELOOP) must still warn, because the edited YAML
+// may be there and differ; graph.LoadFile names the error in the warning.
+func TestRunGraphWith_JSONBesideUnstatablePlanYAMLWarns(t *testing.T) {
+	isolateRunHome(t)
+	_, planDir := previewPlan(t, planYAMLSpec)
+	yamlPath := filepath.Join(planDir, generatedSpecYAMLFileName)
+	if err := os.Remove(yamlPath); err != nil {
+		t.Fatalf("remove graph.yaml: %v", err)
+	}
+	if err := os.Symlink(yamlPath, yamlPath); err != nil {
+		t.Fatalf("make graph.yaml a symlink loop: %v", err)
+	}
+	if _, err := os.Stat(yamlPath); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("precondition: stat should fail with a non-ErrNotExist error, got %v", err)
+	}
+
+	stderr, fake, err := runPlanJSON(t, planDir)
+	if err != nil {
+		t.Fatalf("an unreadable graph.yaml must not fail the run of graph.json, got: %v", err)
+	}
+	if want := "WARNING: " + yamlPath + " differs from the graph.json being run (it no longer loads:"; !strings.Contains(stderr, want) {
+		t.Errorf("warning should contain %q:\n%s", want, stderr)
 	}
 	if n := len(fake.Invocations()); n != 2 {
 		t.Errorf("run graph.json launched %d nodes, want 2", n)
