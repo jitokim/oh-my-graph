@@ -1360,13 +1360,16 @@ What it may say:
   `{{ feedback.<id> }}`, `{{ self.previous }}` and `{{ self.timeout }}`,
   because each would print a model's reply, or a number that is true of no
   process, where you approve. It also refuses a reference that cannot
-  resolve. Run `lint` first: `run` does not check this up front, and a
-  refused description is dropped at the pause with a stderr warning.
+  resolve. `lint`, `run`, `run --dry-run` and `resume` all refuse such a
+  description when the graph loads, before any node runs, so nothing is
+  spent.
 - The printed text is always **one line**. Newlines and tabs become a single
-  space, and terminal escape sequences and control characters are stripped,
-  so an input value cannot repaint the prompt you approve from.
-- The web live view's approve/reject buttons do not show the description yet.
-  A decision made there still records it in `state.json`.
+  space, and terminal escape sequences, control characters, Unicode format
+  characters (bidi controls, zero-width characters) and the line and
+  paragraph separators are stripped, so an input value cannot repaint the
+  prompt you approve from.
+- The web live view's approve/reject buttons do not show the description
+  (web view: #348). A decision made there still records it in `state.json`.
 
 Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v11).
 
