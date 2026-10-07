@@ -746,8 +746,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// user has. Nil unless this invocation supplied a command.
 		SerializedVerifyNodes: serializedVerify,
 		// The decided gate's record carries the description its decider was
-		// shown (#346); every other record is written exactly as before.
-		Recorder:  decided.recorderFor(recorder),
+		// shown (#346); every other record is written exactly as before. A
+		// leg that pauses again stores the new gate's shown description (#348).
+		Recorder:  decided.recorderFor(describePauses(recorder, g, h)),
 		EventSink: feed,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
