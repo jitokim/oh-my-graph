@@ -538,3 +538,46 @@ func TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346(t *testing
 		})
 	}
 }
+
+// TestResume_RefusesUnboundGateDescriptionInputAtLoad_346: #346 — a later
+// gate's description quoting an input the snapshot did not bind is refused at
+// resume load, wrapped as `resume run <id>`, before the pending node ahead of
+// that gate runs.
+func TestResume_RefusesUnboundGateDescriptionInputAtLoad_346(t *testing.T) {
+	isolateRunHome(t)
+	// executeGraph bypasses the load check, as the snapshot of a graph that
+	// reached a run without it would.
+	g := mustParse(t, `{"name":"gate-flow","inputs":["ticket","release"],"nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]},
+		{"id":"final","type":"gate","depends_on":["ship"],
+		 "description":"ship {{ inputs.release }}?"}]}`)
+	runID := "run-1"
+	captureStdout(t, func() {
+		_ = executeGraph(context.Background(), runID, g, &capturingRunner{}, commonRunFlags{inputs: inputFlag{"ticket": "T-42", "release": "v1"}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+	})
+	_, snap := loadRunSnapshot(t, runID)
+	if snap.Gate.PausedAt != "approve" {
+		t.Fatalf("fixture did not pause at approve: %+v", snap.Gate)
+	}
+	delete(snap.Inputs, "release")
+	if err := runstate.Write(filepath.Join(runDirFor(runID), stateFileName), snap); err != nil {
+		t.Fatalf("write state.json: %v", err)
+	}
+
+	fake := runner.NewFakeRunner(nil)
+	var err error
+	captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), fake, nil)
+	})
+	if err == nil {
+		t.Fatal("resume accepted a gate description quoting an unbound input")
+	}
+	if want := `resume run "` + runID + `": gate "final": description:`; !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "release") {
+		t.Errorf("refusal %q, want it to start with %q and name the input", err, want)
+	}
+	if n := len(fake.Invocations()); n != 0 {
+		t.Errorf("%d nodes ran before the description was refused, want 0", n)
+	}
+}
