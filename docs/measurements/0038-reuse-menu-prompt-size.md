@@ -5,12 +5,17 @@
 - **Unit: BYTES, not tokens.** Every figure below is `len()` of the rendered
   prompt string in UTF-8 bytes. No tokenizer was run, and none of these numbers
   is a token count or should be quoted as one.
-- **Measured at:** `e732bca` — the commit before the one that adds this note.
-  That commit adds this note and the test below and nothing else, so the
-  prompt-rendering code it measures is the code at `e732bca`.
+- **Measured at:** `c0cfa73` — the final #338 code, re-measured after the
+  first measurement at `e732bca` (later work skips `gated-lane` as nested use
+  and renames the tool reason to `tool not read-only`; the byte figures did not
+  move). The commit that adds this update changes only this note and one log
+  line in the test below, so the prompt-rendering code it measures is the code
+  at `c0cfa73`.
 - **Method (reproducible):**
   `go test ./internal/coordinator -run TestMeasureReuseMenuPromptSize -v -count=1`
-  (`internal/coordinator/reusemenu_measure_test.go`).
+  (`internal/coordinator/reusemenu_measure_test.go`). The test logs the
+  offered ids, the skipped count by reason and each skipped file with its
+  reason, then the sizes below.
 - **Issue:** [#338](https://github.com/jitokim/oh-my-graph/issues/338).
   **Owed by** ADR 0038 §4 ("Prompt size — unmeasured") and §9.6.
 
@@ -29,12 +34,13 @@ it actually costs on this repository.
 row renders the prompt through the real `Coordinator.Plan` path, using the
 golden harness's `plannerPrompts` (FakeRunner, the golden goal and input keys),
 with `WithInvocationDir` set to this checkout's root. So the catalog scanned is
-the real `graphs/fragments/` at `e732bca`:
+the real `graphs/fragments/` at `c0cfa73`:
 
 - **offered (1):** `read-and-report`
 - **skipped (6):**
-  - non-prompt slot: 3 (`e2e-verify`, `gated-lane`, `repair-round`)
-  - tool not in allowlist: 3 (`pr-publish`, `review-security`, `review-style`)
+  - nested use: 1 (`gated-lane`)
+  - non-prompt slot: 2 (`e2e-verify`, `repair-round`)
+  - tool not read-only: 3 (`pr-publish`, `review-security`, `review-style`)
 
 Each per-call fence nonce has a fixed length. The figures were identical
 across three `-count=3` runs.

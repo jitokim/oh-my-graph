@@ -38,6 +38,9 @@ func TestMeasureReuseMenuPromptSize(t *testing.T) {
 	}
 	sort.Strings(reasons)
 	t.Logf("catalog %s: %d offered %v, %d skipped (%s)", catalog.Dir, len(ids), ids, len(catalog.Skipped), strings.Join(reasons, ", "))
+	for _, skip := range catalog.Skipped {
+		t.Logf("  skipped %s: %s", filepath.Base(skip.Source), skip.Reason)
+	}
 
 	onFirst, onRepair, onCont := plannerPrompts(t, WithInvocationDir(root))
 	offFirst, offRepair, offCont := plannerPrompts(t, WithInvocationDir(root), WithoutReuse())
