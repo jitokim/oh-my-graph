@@ -794,7 +794,21 @@ the checks its own fix restarted, pauses at a human approval gate, and merges
 (`recheck`) is why the gate is a decision rather than a chore: it judges the
 FINAL SHA and says which one, reading every reviewer's own review rather than
 one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
-— so nobody is asked to re-derive CI or review status by hand. Neither wait polls a condition a clock cannot clear: a review
+— so nobody is asked to re-derive CI or review status by hand. The throwaway
+worktrees `verify` and `triage` test in are never built from git's shared
+`FETCH_HEAD`, which a concurrent fetch can repoint: each node fetches the PR
+head into the named ref `refs/omg-shepherd/pr-<N>/<sha>` and adds the worktree
+detached at that SHA, so shepherds on different PRs can run in one repo. Two
+runs on the same PR at once are not supported: the worktree directory is per
+PR, so step 0 of one removes the other's worktree and the engine check's EXIT
+trap deletes the ref they share. An engine-run
+`success_check.verify` on each then fails unless the worktree's HEAD is the
+PR's `headRefOid`, and removes the worktree and that run's ref whatever the
+check's result. That check runs only after a passing verdict, so on `FAIL` or
+`BLOCKED` the node removes its own worktree and ref before it answers. A ref a
+killed run left behind is listed by
+`git for-each-ref refs/omg-shepherd` and removed with `git update-ref -d <ref>`
+(#360). Neither wait polls a condition a clock cannot clear: a review
 that requested changes, a run awaiting approval, a conflicting branch and a
 rate-limited bot are reported as `LATCHED <what>; unblock: <act>`, which fails
 the node at once instead of spending the timeout (ADR 0021).
