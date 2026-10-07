@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
@@ -292,5 +295,178 @@ func TestResume_UndescribedGateEchoesAndRecordsNothing(t *testing.T) {
 	}
 	if raw, _ := loadRunSnapshot(t, runID); strings.Contains(raw, "gate_description") {
 		t.Fatalf("state.json carries a gate_description for an undescribed gate:\n%s", raw)
+	}
+}
+
+// inlineDescribedGraph is a graph whose gate description quotes an artifact
+// with the inline filter — the token lint refuses (#346).
+const inlineDescribedGraph = `
+name: gated
+nodes:
+  - { id: build, prompt: build }
+  - { id: approve, type: gate, depends_on: [build], description: "ship {{ artifacts.build | inline }}?" }
+  - { id: ship, prompt: ship, depends_on: [approve] }
+`
+
+const inlineDescribedToken = "{{ artifacts.build | inline }}"
+
+// lintRefusalLine is the line `lint` prints for path's first issue.
+func lintRefusalLine(t *testing.T, path string) string {
+	t.Helper()
+	var out strings.Builder
+	if err := lintGraph(&out, io.Discard, path); err == nil {
+		t.Fatalf("lint accepted %s", path)
+	}
+	line, _, _ := strings.Cut(out.String(), "\n")
+	return line
+}
+
+// assertRefusedBeforeRun checks a refused load spawned no node and wrote nothing
+// under OMG_HOME.
+func assertRefusedBeforeRun(t *testing.T, home string, fake *runner.FakeRunner) {
+	t.Helper()
+	if n := len(fake.Invocations()); n != 0 {
+		t.Errorf("%d nodes ran before the description was refused, want 0", n)
+	}
+	if entries, err := os.ReadDir(home); err == nil && len(entries) != 0 {
+		t.Errorf("a refused load created artifacts under OMG_HOME: %v", entries)
+	}
+}
+
+// TestRunGraphWith_RefusesLintRefusedGateDescriptionAtLoad: #346 — `run`
+// refuses a gate description lint refuses with lint's own line, exit 1, before
+// any node runs or any run directory exists.
+func TestRunGraphWith_RefusesLintRefusedGateDescriptionAtLoad(t *testing.T) {
+	home := isolateRunHome(t)
+	path := writeGraphFile(t, inlineDescribedGraph)
+	fake := runner.NewFakeRunner(nil)
+
+	var err error
+	captureStdout(t, func() {
+		err = runGraphWith([]string{path}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err == nil {
+		t.Fatal("run accepted a gate description lint refuses")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1 for a load error", code)
+	}
+	for _, want := range []string{`gate "approve"`, inlineDescribedToken} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %s", err, want)
+		}
+	}
+	if want := lintRefusalLine(t, path); err.Error() != want {
+		t.Errorf("run's refusal differs from lint's\nrun:  %s\nlint: %s", err, want)
+	}
+	assertRefusedBeforeRun(t, home, fake)
+}
+
+// TestRunGraphWith_DryRunRefusesLintRefusedGateDescription: #346 — `run
+// --dry-run` reports the same line lint prints and exits 1, running nothing.
+func TestRunGraphWith_DryRunRefusesLintRefusedGateDescription(t *testing.T) {
+	home := isolateRunHome(t)
+	path := writeGraphFile(t, inlineDescribedGraph)
+	fake := runner.NewFakeRunner(nil)
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runGraphWith([]string{path, "--dry-run"}, fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err == nil {
+		t.Fatal("dry run accepted a gate description lint refuses")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	line := lintRefusalLine(t, path)
+	if !strings.Contains(line, `gate "approve"`) || !strings.Contains(line, inlineDescribedToken) {
+		t.Fatalf("lint's line does not name the gate and token: %s", line)
+	}
+	if !strings.Contains(out, line+"\n") {
+		t.Errorf("dry run output missing lint's refusal line\nwant: %s\ngot:\n%s", line, out)
+	}
+	if !strings.Contains(err.Error(), "no node was executed") {
+		t.Errorf("dry-run refusal = %v, want it to state no node was executed", err)
+	}
+	assertRefusedBeforeRun(t, home, fake)
+}
+
+// TestRunGraphWith_RefusesUnboundGateDescriptionInputAtLoad: #346 — a gate
+// description quoting an input the invocation did not bind could not be
+// rendered at the pause, so `run` and `run --dry-run` refuse it at load.
+func TestRunGraphWith_RefusesUnboundGateDescriptionInputAtLoad(t *testing.T) {
+	for _, args := range [][]string{nil, {"--dry-run"}} {
+		t.Run(strings.Join(append([]string{"run"}, args...), " "), func(t *testing.T) {
+			home := isolateRunHome(t)
+			path := writeGraphFile(t, `
+name: gated
+inputs: [ticket]
+nodes:
+  - { id: build, prompt: build }
+  - { id: approve, type: gate, depends_on: [build], description: "ship {{ inputs.ticket }}?" }
+`)
+			fake := runner.NewFakeRunner(nil)
+			var err error
+			out := captureStdout(t, func() {
+				err = runGraphWith(append([]string{path}, args...), fake, browser.NewFakeOpener(), os.Stdout)
+			})
+			if code := exitCodeForError(err); code != 1 {
+				t.Fatalf("exit code = %d (%v), want 1", code, err)
+			}
+			if got := err.Error() + out; !strings.Contains(got, `gate "approve": description:`) || !strings.Contains(got, "ticket") {
+				t.Errorf("refusal does not name the gate and the input:\n%s", got)
+			}
+			assertRefusedBeforeRun(t, home, fake)
+		})
+	}
+}
+
+// TestResume_RefusesLintRefusedGateDescriptionAtLoad: #346 — resuming a
+// paused run whose graph carries a description lint refuses is refused, in
+// both modes, before anything runs or the snapshot is rewritten.
+func TestResume_RefusesLintRefusedGateDescriptionAtLoad(t *testing.T) {
+	for _, args := range [][]string{{"--approve", "approve"}, {"--retry-failed"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			isolateRunHome(t)
+			// executeGraph bypasses the load check, as the snapshot of a graph
+			// that reached a run without it would.
+			g := mustParse(t, `{"name":"gated","nodes":[
+				{"id":"build","prompt":"build"},
+				{"id":"approve","type":"gate","depends_on":["build"],
+				 "description":"ship {{ artifacts.build | inline }}?"},
+				{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+			runID := "run-1"
+			captureStdout(t, func() {
+				_ = executeGraph(context.Background(), runID, g, &capturingRunner{}, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gated.yaml", []byte("name: gated\n"), false, nil, nil, nil)
+			})
+			before, snap := loadRunSnapshot(t, runID)
+			if snap.Gate.PausedAt != "approve" {
+				t.Fatalf("fixture did not pause at approve: %+v", snap.Gate)
+			}
+
+			fake := runner.NewFakeRunner(nil)
+			var err error
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, append([]string{runID}, args...)), fake, nil)
+			})
+			if err == nil {
+				t.Fatal("resume accepted a gate description lint refuses")
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			for _, want := range []string{`gate "approve"`, inlineDescribedToken} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not name %s", err, want)
+				}
+			}
+			if n := len(fake.Invocations()); n != 0 {
+				t.Errorf("%d nodes ran before the description was refused, want 0", n)
+			}
+			if after, _ := loadRunSnapshot(t, runID); after != before {
+				t.Errorf("a refused resume rewrote state.json")
+			}
+		})
 	}
 }

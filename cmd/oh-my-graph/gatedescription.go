@@ -12,6 +12,44 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
+// gateDescriptionRefusal is lint's gate-description refusal
+// (handoff.GateDescriptionIssues) applied where a graph is loaded to be run
+// (#346): `run`, `run --dry-run` and `resume` all refuse a description lint
+// would refuse, before any node runs, rather than meeting it only when the
+// gate pauses. It returns the first issue, exactly as graph.LoadFile returns
+// the first of LintLoadFile's, so a run names the gate and the token lint's
+// first line names; nil when every description passes.
+func gateDescriptionRefusal(g *graph.Graph) error {
+	if issues := handoff.GateDescriptionIssues(g); len(issues) > 0 {
+		return issues[0]
+	}
+	return nil
+}
+
+// gateDescriptionInputIssues is the half of a gate description lint cannot
+// judge: an {{ inputs.<name> }} it quotes must be bound by this invocation's
+// --input values, or the description could not be rendered when the gate
+// pauses. Each gate's description is rendered through
+// handoff.RenderGateDescription against a Handoff seeded with the same
+// placeholder artifact paths inputIssues uses, so an artifact token — which
+// only resolves once its producer has run — is never what is judged here.
+func gateDescriptionInputIssues(g *graph.Graph, inputs map[string]string) []error {
+	h := handoff.New("", inputs)
+	for _, node := range g.Nodes {
+		h.Seed(node.ID, handoff.SanitizeNodeID(node.ID)+".out", "")
+	}
+	var issues []error
+	for _, node := range g.Nodes {
+		if node.Type != graph.TypeGate || node.Description == "" {
+			continue
+		}
+		if _, err := h.RenderGateDescription(node); err != nil && !isArtifactSide(err) {
+			issues = append(issues, fmt.Errorf("gate %q: description: %w", node.ID, err))
+		}
+	}
+	return issues
+}
+
 // shownGateDescription is gateID's `description:` exactly as a person deciding
 // it reads it (#346): rendered against the run as it stands and sanitised by
 // handoff.RenderGateDescription, never the raw YAML text. "" for a gate with

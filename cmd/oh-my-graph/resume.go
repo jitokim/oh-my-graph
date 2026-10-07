@@ -155,6 +155,15 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	}
 	warnIfGraphSourceChanged(snap)
 
+	// The refusal `run` gives at load, given again to the graph this run holds
+	// (#346), before either mode and so before anything spawns. A snapshot
+	// whose graph does not parse is left to the modes' own parse to report.
+	if g, parseErr := graph.Parse(snap.Graph); parseErr == nil {
+		if err := gateDescriptionRefusal(g); err != nil {
+			return fmt.Errorf("resume run %q: %w", runID, err)
+		}
+	}
+
 	// Before either mode, because both have exits that never reach continueRun:
 	// a --retry-failed with nothing to retry returns early and would otherwise
 	// accept a flag that is an error in every other state, answering as if it had

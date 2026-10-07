@@ -392,6 +392,17 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return err
 	}
 	g := loaded.Graph
+	// A gate description lint refuses is refused here too, as a load error
+	// naming the gate and the token (#346) — a graph verdict, so it sits with
+	// the others, before any flag is judged against the graph and long before
+	// executeGraph opens a run directory. One quoting an input this invocation
+	// did not bind is refused beside it: it could not be rendered at the pause.
+	if err := gateDescriptionRefusal(g); err != nil {
+		return fmt.Errorf("%s: %w", flags.graphPath, err)
+	}
+	if issues := gateDescriptionInputIssues(g, flags.inputs); len(issues) > 0 {
+		return fmt.Errorf("%s: %w", flags.graphPath, issues[0])
+	}
 	// Every --auto-approve id must name a gate node in THIS graph (#285), and
 	// the check sits here, on the graph verdicts and before the runtime one:
 	// a misspelt gate id is a fact about the graph the operator wrote, so it is
