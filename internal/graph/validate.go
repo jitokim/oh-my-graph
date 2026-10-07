@@ -46,6 +46,19 @@ type UnresolvedFragmentError struct{ GraphValidationError }
 // question must not be answerable only for the issues nobody specialized.
 func (e *UnresolvedFragmentError) Unwrap() error { return &e.GraphValidationError }
 
+// UnsplicedReuseError is ADR 0038's backstop, the reuse:/bind: sibling of
+// UnresolvedFragmentError: a node still citing a reusable shape when it
+// reaches Validate. Those keys are legal in a planner reply alone, and trusted
+// code splices the shape before the plan runs, so any other graph carrying one
+// — a graph file, a saved graph.json, a resumed snapshot — would run a node
+// whose prompt and tools nobody wrote. Its own type so ParsePlannerReply can
+// pass it through for the coordinator to judge while every other path refuses.
+type UnsplicedReuseError struct{ GraphValidationError }
+
+// Unwrap exposes the embedded GraphValidationError, for the reason
+// UnresolvedFragmentError's Unwrap gives.
+func (e *UnsplicedReuseError) Unwrap() error { return &e.GraphValidationError }
+
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
 // list the allowed values.
@@ -117,7 +130,11 @@ func (g *Graph) Validate() error {
 //     path that cannot resolve them (a snapshot resume, a planner reply, a
 //     bytes-only Parse) and is refused loudly instead of running with a
 //     silently empty prompt;
-//  12. every feedback arc has the shape ADR 0010 requires — a
+//  12. no node still cites a reusable shape (`reuse:` / `bind:`) — those
+//     keys are legal only in a planner reply, which ParsePlannerReply parses
+//     and the coordinator splices (ADR 0038), so any other graph carrying one
+//     is refused before a node with no prompt of its own can run;
+//  13. every feedback arc has the shape ADR 0010 requires — a
 //     proper-ancestor rerun target, a required max >= 1, a side-exit-free
 //     body with no gates and in-body session parents, disjoint bodies —
 //     and every {{ feedback.<id> }} placeholder sits inside the body of the
@@ -145,6 +162,7 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateRetry()...)
 	issues = append(issues, g.validateNodeTimeouts()...)
 	issues = append(issues, g.validateFragmentsResolved()...)
+	issues = append(issues, g.validateReuseSpliced()...)
 	issues = append(issues, g.validateFeedback()...)
 	issues = append(issues, g.validateFeedbackPlaceholders()...)
 	return issues
@@ -627,6 +645,25 @@ func (g *Graph) validateFragmentsResolved() []error {
 		issues = append(issues, &UnresolvedFragmentError{GraphValidationError{
 			NodeID: n.ID,
 			Reason: "unresolved fragment reference (use:/with:) — fragments are resolved by the file loader; run or lint the graph FILE (a planned or snapshotted graph may not carry them)",
+		}})
+	}
+	return issues
+}
+
+// validateReuseSpliced refuses any node still carrying `reuse:` or `bind:` —
+// ADR 0038's backstop, beside validateFragmentsResolved and on the same
+// presence test (`bind: {}` is refused too). A citation is resolved by the
+// coordinator's splice before a plan is saved or run, so a node reaching
+// Validate with either key came through a path that splices nothing.
+func (g *Graph) validateReuseSpliced() []error {
+	var issues []error
+	for _, n := range g.Nodes {
+		if n.Reuse == "" && n.Bind == nil {
+			continue
+		}
+		issues = append(issues, &UnsplicedReuseError{GraphValidationError{
+			NodeID: n.ID,
+			Reason: "unspliced reusable-shape citation (reuse:/bind:) — those keys are legal only in an auto planner's reply, which the engine splices before it runs; a graph file, a saved graph.json or a resumed run may not carry them",
 		}})
 	}
 	return issues

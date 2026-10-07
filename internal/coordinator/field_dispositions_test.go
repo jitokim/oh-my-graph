@@ -173,6 +173,21 @@ var nodeFieldDispositions = map[string]fieldRule{
 		probeJSON:      `"with":{"checks":"run the checks"}`,
 		reasonContains: "fragment",
 	},
+	// #338: the probes below are refused with NOTHING offered — the state every
+	// probe in this table runs in, and the state reuse is in when it is turned
+	// off or no fragment is admitted.
+	"Reuse": {
+		disposition:    constrained,
+		why:            "names a reusable shape from the menu this plan's prompt showed (ADR 0038): trusted code scanned and admitted the fragment, the planner did not write the id, and a citation is checked against the offered set held from the render — never a re-scan — so a file name, a path or an unlisted id selects nothing. Rejected outright when nothing was offered. A citing node may write no prompt and no allowed_tools (the shape supplies both, so it is exempt from those two emptiness checks and from no other), and graph.Validate's validateReuseSpliced refuses any graph that still carries it outside a planner reply",
+		probeJSON:      `"reuse":"read-and-report"`,
+		reasonContains: "reuse",
+	},
+	"Bind": {
+		disposition:    constrained,
+		why:            "Reuse's slot values: its keys must be exactly the cited entry's binds — an unlisted slot and a missing slot are each refused — and admission only offers a fragment whose every slot lands in a prompt: scalar, so a binding lands where planner-authored prompt text already lands and grants nothing new. Refused without reuse:, and so whenever nothing was offered",
+		probeJSON:      `"bind":{"target":"README.md"}`,
+		reasonContains: "bind",
+	},
 }
 
 // successCheckFieldDispositions is the same table one level down, because the

@@ -201,7 +201,7 @@ func admitReuseFragment(graphDir, name string) (ReuseEntry, *ReuseSkip) {
 		// wrote — so the body is judged under the id its own file gave it,
 		// exactly as validatePlannedNodeID's own comment frames the rule.
 		node.ID = node.ID[strings.LastIndex(node.ID, "/")+1:]
-		if refusals := plannedNodeRefusals(node); len(refusals) > 0 {
+		if refusals := plannedNodeRefusals(node, nil); len(refusals) > 0 {
 			return skip(ReuseSkipPlannerRefused, refusals[0].Reason)
 		}
 	}
