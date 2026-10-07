@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -84,6 +85,22 @@ func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string
 	return shownGateDescription(g, h, gateID)
 }
 
+// decidedGateDescription is the description of the gate snap is paused at, as
+// the person deciding it was shown it (#348): the copy the pause stored
+// (runstate.GateState.PausedGateDescription), which is also what the web live
+// view served, so a decision made from the page records exactly the bytes the
+// page showed. A snapshot without a stored copy — written before #348, or
+// paused at a gate with no description — falls back to rendering it, which
+// for the latter is "" anyway. The stored copy is passed through
+// fence.SanitizeTerminalLine once more: a no-op on what the pause wrote, it
+// keeps resume's terminal echo safe from a hand-edited state.json.
+func decidedGateDescription(runID string, snap runstate.Snapshot) (string, error) {
+	if stored := snap.Gate.PausedGateDescription; stored != "" {
+		return fence.SanitizeTerminalLine(stored), nil
+	}
+	return snapshotGateDescription(runID, snap, snap.Gate.PausedAt)
+}
+
 // pausedGateDescription is the shown description of the gate runErr paused
 // at, or "" when runErr is not a gate pause. A description that cannot be
 // shown is returned as an error naming the run and the gate, so the caller
@@ -157,4 +174,38 @@ func (d decidedGate) recorderFor(recorder schedule.Recorder) schedule.Recorder {
 		return recorder
 	}
 	return describedGateRecorder{Recorder: recorder, gateID: d.id, description: d.description}
+}
+
+// pauseDescribingRecorder stores the paused gate's shown description in the
+// same snapshot write as the pause itself (runstate.GateState.
+// PausedGateDescription, #348), so the web live view can show it without
+// rendering anything and a decision can record the bytes the page showed.
+// The render is shownGateDescription against the leg's own Handoff — the
+// same render pausedGateDescription runs once Run returns, and nothing
+// reseeds h in between, so the stored string is the printed one. Every other
+// call passes through untouched; like describedGateRecorder, it keeps the
+// scheduler ignorant of descriptions.
+type pauseDescribingRecorder struct {
+	schedule.Recorder
+	snapshot *runstate.SnapshotRecorder
+	g        *graph.Graph
+	h        *handoff.Handoff
+}
+
+// describePauses wraps recorder so a gate pause also stores the gate's shown
+// description.
+func describePauses(recorder *runstate.SnapshotRecorder, g *graph.Graph, h *handoff.Handoff) schedule.Recorder {
+	return pauseDescribingRecorder{Recorder: recorder, snapshot: recorder, g: g, h: h}
+}
+
+// RecordPause persists the pause with its description. A description the
+// render refuses persists the pause exactly as before #348, without one: the
+// pause must not be lost over it, and pausedGateDescription then fails
+// loudly with the refusal once Run returns.
+func (r pauseDescribingRecorder) RecordPause(gateID string) error {
+	description, err := shownGateDescription(r.g, r.h, gateID)
+	if err != nil {
+		return r.snapshot.RecordPause(gateID)
+	}
+	return r.snapshot.RecordDescribedPause(gateID, description)
 }

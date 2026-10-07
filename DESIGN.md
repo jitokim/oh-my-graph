@@ -234,7 +234,7 @@ the failure costs** — the shipped graphs cover all three shapes:
 
 | where | graphs | what a Codex run does first |
 |---|---|---|
-| last node | `adr-driven-dev` (`finalize`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
+| last node | `adr-driven-dev` (`finalize`), `gated-dev` (its inline `pr`), every user of `graphs/fragments/pr-publish.yaml` (`self-dev`, `dev-review-pr`, `backlog-batch` ×2) | all the work, then fails on that node |
 | first node | `apply-flags` (`dev` applies, commits and pushes; `verify` is `permission_mode: plan` and reads only) | fails immediately, having done nothing |
 | several | `merge-shepherd` — `gh` in all five model nodes, starting with `verify`'s `gh pr view`/`gh pr diff`/`git fetch` | fails at node 1, having done nothing |
 
@@ -632,7 +632,7 @@ it tops that tree up with payload files it does not have yet (a fragment added
 by a later release), keeping every file already there;
 `internal/graph/testdata/golden/` holds the resolved goldens — one per
 fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`,
-`adr-driven-dev`) — that turn any fragment edit into a reviewed multi-template
+`adr-driven-dev`, `gated-dev`) — that turn any fragment edit into a reviewed multi-template
 diff. A multi-node fragment multiplies that blast radius by its node count, on
 purpose: one edit to `repair-round` moves four nodes in `adr-driven-dev`'s
 golden, and the reviewer sees all four. Nesting adds a hop to that radius: an
@@ -1297,17 +1297,19 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **25
-  declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: seven of the 25
-  live in `graphs/fragments/`, in six files, and carry fifteen of the nodes
+  is a sweep that cannot silently miss a node. That sweep counts **27
+  declarations, covering 36 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: seven of the 27
+  live in `graphs/fragments/`, in six files, and carry sixteen of the nodes
   between them.
-  The twenty-fifth is `read-and-report`, and it covers no runtime node yet:
+  One of the seven is `read-and-report`, and it covers no runtime node yet:
   no shipped graph cites it. It exists to be citable by a PLANNED node
   (ADR 0038), which is a different reader from the ones above.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
-  `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
-  places to correct the sentence in. The
+  `use:` of one multi-node fragment (ADR 0027): the same nodes, four fewer
+  places to correct the sentence in. `gated-dev` (#345) added two declarations
+  and three nodes: its inline `dev` and `pr`, and the `review` it splices —
+  its `pr` is inline because it must hold no commit tools. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
@@ -1910,9 +1912,13 @@ model.
 - **When it is interpolated.** When the gate pauses:
   `handoff.Handoff.RenderGateDescription` runs it through `InterpolateAs`
   (the prompt machinery, so a path is the same path a prompt would get)
-  against the run as it stands at the pause. `resume` renders it again from
-  the snapshot, seeded with the same artifact paths, so every line about the
-  gate shows the text the pause printed. The render checks every token with
+  against the run as it stands at the pause. That rendered, sanitised string
+  is stored in the snapshot's Gate block as `paused_gate_description` (#348),
+  in the same write that records the pause. `resume` reads that stored copy
+  rather than rendering again, so every line about the gate shows the text the
+  pause printed; only a snapshot written before #348 has no stored copy, and
+  then `resume` renders it from the snapshot, seeded with the same artifact
+  paths. The render checks every token with
   the same predicate lint uses (`gateDescriptionTokenRefused`), so a graph
   that never went through lint still cannot print a reply.
 - **When it is refused.** At load, before any node runs. `run`,
@@ -1956,10 +1962,18 @@ model.
   `approved gate <id>: <description>` or `rejected gate <id>: <description>`
   before the `Resuming run` banner. A gate without a description prints
   every one of these byte-for-byte as before and echoes nothing. **The web
-  live view does not show it**: `/api/graph` carries only id, type and
-  `depends_on`, and the `gate_paused` event carries no description. A browser
-  decision goes through the same `executeResume`, so it still records the
-  field below.
+  live view shows it** (#348) on its own line above the approve/reject
+  buttons of the paused gate's feed entry, in the single-run view and in the
+  same view mounted under the dashboard. The page shows the string rendered
+  once at the pause and stored in the snapshot's Gate block: `/api/graph`
+  copies it unchanged into `paused_gate` (`{"id", "description"}`), serve
+  renders and sanitises nothing, and the page sets it via `textContent` only.
+  The `gate_paused` event carries no description, so the page re-asks
+  `/api/graph` at the paused `run_finished`, which comes after the pause is
+  stored. A decision made from the page goes through the same
+  `executeResume`, which records that same stored string, byte for byte, as
+  the field below. A gate without a description gets no `paused_gate` and no
+  extra element, so its entry renders as before.
 - **What is recorded.** The decided gate's `state.json` node record gets
   `gate_description`: the string exactly as its decider was shown it (see
   below).
@@ -2039,7 +2053,17 @@ incompatible snapshot is refused rather than misread:
   absent on every other node, on an undecided gate and on a gate without a
   description, so a run without one writes byte-identical `state.json`.
   Additive and optional, `omitempty`, schema still 3.
-- **gate decisions so far**, and which gate the run is paused at.
+- **gate decisions so far**, and which gate the run is paused at
+  (`gate.paused_at`), with that gate's shown description
+  (`gate.paused_gate_description`, #348). The description is the string the
+  pause rendered and printed, stored so the web live view can show it without
+  rendering anything and so a decision records the same bytes as
+  `gate_description`. It is written in the same snapshot write as `paused_at`,
+  and every resumed leg starts with it cleared, so it is set only on a leg that
+  pauses at a described gate. #348's scope said `state.json`'s format would
+  not change; this field is the one additive exception, of the same class as
+  `gate_description`: `omitempty`, schema still 3, and a snapshot not paused
+  at a described gate is byte-identical.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
 `success_check.verify`. A verification is a command the ENGINE runs, outside
@@ -2633,7 +2657,9 @@ one, and it answers 409 like any other view that cannot resume.
   why `/api/events` deliberately does not end at `run_finished`), and the
   leg is detached from the request so closing the tab does not kill it. The
   `oh-my-graph resume` command stays on the entry as secondary text: it is
-  still the way in from an embedded view.
+  still the way in from an embedded view. A gate with a description shows it
+  above the buttons, from `/api/graph`'s `paused_gate` (#348; see "Gate nodes
+  and `resume`"), and the decision then records exactly that string.
 - **Scope:** the dashboard is a card wall over the run directories and the
   single-run view behind it — no history browsing beyond what is on disk, no
   login (the gate token is a CSRF guard, not auth), no config file, no
@@ -3801,7 +3827,7 @@ internal/runstatus/{runstatus,skipped}.go + _test  the one shared rule (ADR 0015
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), a kept file whose bytes differ from the payload is marked `DIFFERS` and counted (a top-up can pair a freshly written template with a kept older fragment, which fails at load, not at `init`), and a failure partway through removes the files AND directories it created — `graphs/` itself included when that run made it
-graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml and adr-driven-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
+graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml, adr-driven-dev.yaml and gated-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
 docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 CHANGELOG.md + changelog.d/{README.md,<issue>-<slug>.md}  the released sections, and each unreleased entry as its own file, owned by the PR that adds it, so two PRs never edit a common file (ADR 0042); `## [Unreleased]` holds a pointer to changelog.d/ and no entries

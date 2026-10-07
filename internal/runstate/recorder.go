@@ -114,9 +114,18 @@ func (r *SnapshotRecorder) RecordGateDecision(gateNodeID string, decision GateDe
 // unrecoverable stop (DESIGN.md, "a snapshot write failure at a gate pause is
 // fatal").
 func (r *SnapshotRecorder) RecordPause(gateNodeID string) error {
+	return r.RecordDescribedPause(gateNodeID, "")
+}
+
+// RecordDescribedPause is RecordPause that also stores the paused gate's shown
+// description (GateState.PausedGateDescription, #348) in the SAME snapshot
+// write, so no reader can see a paused snapshot whose description is still
+// missing. An empty description writes exactly what RecordPause always wrote.
+func (r *SnapshotRecorder) RecordDescribedPause(gateNodeID, description string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.snap.Gate.PausedAt = gateNodeID
+	r.snap.Gate.PausedGateDescription = description
 	r.setDecisionLocked(gateNodeID, GatePause)
 	return Write(r.path, r.snap)
 }

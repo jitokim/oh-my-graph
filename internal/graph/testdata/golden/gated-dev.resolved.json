@@ -1,0 +1,165 @@
+{
+  "name": "gated-dev",
+  "version": "0.1",
+  "inputs": [
+    "repo",
+    "task",
+    "checks",
+    "verify_command",
+    "focus",
+    "publish"
+  ],
+  "concurrency": 1,
+  "on_fail": "halt",
+  "nodes": [
+    {
+      "id": "dev",
+      "type": "claude-run",
+      "prompt": "You are in an isolated git worktree of the repo {{ inputs.repo }}, on\nthis run's own branch — fresh on the first pass, and already carrying\nthe previous round's commits on a feedback round. Implement this task,\nkeeping the diff focused and touching ONLY the files this task owns:\n  {{ inputs.task }}\nAdd or update tests. Choose a commit granularity that fits the work —\none commit per refactoring unit for refactors, per file for sweeps, per\nfeature slice for new code — and state your choice in the first commit\nmessage. Commit as you go, staging only the files you changed, by\nexplicit path (`git add \u003cpath\u003e ...`) — never `git add -A`, `git add .`,\nor `git add -u`. End every commit message with the trailer\n`Co-Authored-By: oh-my-graph \u003cgraphs@oh-my-graph.dev\u003e` (the attribution\nconvention in CONTRIBUTING.md).\nYour FINAL reply IS the verdict: this node ends the moment you reply, so\nwork you promise to do afterwards never happens. Never end on a plan to\ncontinue — report the state that is TRUE AS YOU REPLY. When the change\nis committed, START your reply with the bare word DONE — those four\ncharacters FIRST, no markdown emphasis (`**DONE**` is WRONG), no\nheading, no preamble — then a one-line summary of what you changed.\nAnything you need to qualify goes AFTER the verdict, never before it:\na line of context ahead of the token fails this node even when the\nwork is done.\nIf it is not finished, do NOT write DONE: start with a bare BLOCKED and\nthe current state, so this lane stops instead of shipping half a task.\n\nReview findings from the previous round follow — they are empty on the\nfirst pass. If present, fix every blocking finding before anything\nelse, and note that this lane's branch already carries the previous\nround's commits: amend the work, do not restart it. Items under a\n`Minor:` line are not this round's to fix: leave them unless a blocking\nfix rewrites the same code anyway — they reach the PR body through the\nreview.\n{{ feedback.review }}\n",
+      "allowed_tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash(git *)",
+        "Bash(go *)",
+        "Bash(make *)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*DONE\\b"
+      },
+      "timeout": "1h",
+      "worktree": "lane"
+    },
+    {
+      "id": "e2e",
+      "type": "claude-run",
+      "depends_on": [
+        "dev"
+      ],
+      "prompt": "Continue the work — or, on a retried attempt, start from the branch's\ncommitted state — and {{ inputs.checks }}\nRun every check SYNCHRONOUSLY and wait for it to finish — never in the\nbackground.\nIf you stress tests (repeated runs under the race detector, or your\nstack's equivalent), DERIVE the repetition count from this budget —\nnever copy a fixed one:\n  1. BUDGET. This node is killed at {{ self.timeout }}, and a node\n     killed by its own timeout produces NO verdict at all. Spend at\n     most half of that on stress, and leave the rest for the checks\n     and the verdict.\n  2. DERIVE. Time ONE repetition of each package first (`-count=1`),\n     then pick per-package counts so the timing runs and the stress\n     runs TOGETHER fit step 1 — the budget is shared across packages,\n     not granted to each. A smaller\n     count that finishes beats a larger one that is killed.\n  3. RAISE THE PER-TEST TIMEOUT. `go test` kills a package after 10\n     minutes BY DEFAULT and prints FAIL — a failure that never\n     happened. Pass `-timeout` ABOVE your step-1 budget and BELOW this\n     node's bound of {{ self.timeout }}\n     (`go test \u003cpkg\u003e -race -count=\u003cn\u003e -timeout \u003cduration\u003e`).\nYour FINAL reply is the verdict: never end the turn on an\ninterim report. If everything succeeds, your reply is exactly the four\nbare characters PASS and nothing else — no markdown emphasis (`**PASS**`\nis WRONG), no heading, no backticks, no preamble. Otherwise reply FAIL,\nequally bare, as the very first characters, followed by the failing step.\n",
+      "allowed_tools": [
+        "Read",
+        "Bash(make *)",
+        "Bash(go build *)",
+        "Bash(go test *)",
+        "Bash(go vet *)",
+        "Bash(git status*)",
+        "Bash(git diff*)",
+        "Bash(git log*)"
+      ],
+      "permission_mode": "dontAsk",
+      "budget_usd": 10,
+      "handoff": "session",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$",
+        "verify": {
+          "command": "{{ inputs.verify_command }}",
+          "timeout": "5m"
+        }
+      },
+      "retry": {
+        "max": 1,
+        "on": [
+          "nonzero_exit",
+          "verify_failed"
+        ]
+      },
+      "timeout": "20m",
+      "worktree": "lane"
+    },
+    {
+      "id": "review",
+      "type": "claude-run",
+      "depends_on": [
+        "e2e"
+      ],
+      "prompt": "Review this worktree's diff vs its base for style, naming, and simplicity.\n{{ inputs.focus }}\nThe e2e verdict was: {{ artifacts.e2e | inline }}\nIf the diff adds or edits test doubles or concurrency tests, also verify:\nevery synchronization field is actually wired (no dead channels, no\nwall-clock fallback arms) and no assertion is satisfiable by a record or\nnode simply being absent.\n\nYour own reply from the previous review round of this diff follows — it\nis empty on the first pass. If present, the diff was reworked to answer\nit: first check each of those findings and re-raise only the ones still\nopen. Raise a NEW finding only where the rework changed the code, or\nwhere missing it last round was a real mistake — not a nit you could\nhave raised then and did not. An item you rated minor last round stays\nminor unless the rework changed the code it is about; a blocking item\nstays blocking while it is open. If every earlier finding is closed and\nnothing new meets that bar, the verdict is CLEAN, or MINOR: if only\nminor items remain open.\n{{ self.previous }}\n\nFinish the review BEFORE you reply. Your FINAL reply IS the verdict: this\nnode's turn ends the moment you reply, so a part of the diff you promise\nto look at afterwards is never looked at. Never end on \"I'll continue\" —\nreport what you have actually judged. Judge each item by whether you\nwould merge with it unfixed, not by how small the fix is: a defect, wrong\nbehaviour, or a changed behaviour with no test is blocking; naming,\nwording and simplification are minor. A reply's verdict is its worst\nitem. START the reply with exactly one of these three bare tokens, as the\nvery FIRST characters, with no markdown emphasis (`**CLEAN**` is WRONG),\nno heading, no preamble:\n  - CLEAN — you reviewed the whole diff and found nothing worth changing.\n  - MINOR: — you found something worth changing, but nothing you raise\n    blocks a merge; followed by a short bulleted list, worst first.\n  - FINDINGS: — at least one item you would not merge without fixing;\n    followed by the blocking items as a short bulleted list, worst first,\n    then any minor items under a `Minor:` line.\nAnything you need to qualify goes AFTER the token, never before it: a\nline of context ahead of it fails this node even when the review is\nfinished.\n",
+      "allowed_tools": [
+        "Read",
+        "Bash(git diff*)",
+        "Bash(git log*)"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)",
+        "verify": {
+          "command": "git update-ref \"refs/omg-approved/$(git symbolic-ref --short HEAD)\" HEAD",
+          "timeout": "30s"
+        }
+      },
+      "worktree": "lane",
+      "feedback": {
+        "rerun": "dev",
+        "max": 1
+      }
+    },
+    {
+      "id": "approve-publish",
+      "type": "gate",
+      "depends_on": [
+        "review"
+      ],
+      "handoff": "artifact",
+      "success_check": {},
+      "description": "Approve publishing this lane's reviewed HEAD as a pull request. Read the review at {{ artifacts.review }} and the e2e verdict at {{ artifacts.e2e }}; e2e's engine verify record (the command it ran and its exit code) is in this run's state.json beside them. Rejecting ends the run unpublished.",
+      "worktree": "lane"
+    },
+    {
+      "id": "check-head",
+      "type": "claude-run",
+      "depends_on": [
+        "approve-publish"
+      ],
+      "prompt": "Do not change anything. Reply with the bare word DONE as the very first\nfour characters — no markdown emphasis (`**DONE**` is WRONG), no\nheading, no preamble.\n",
+      "allowed_tools": [
+        "Read"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*DONE\\b",
+        "verify": {
+          "command": "ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; test \"$(git rev-parse HEAD)\" = \"$(git rev-parse --verify -q \"$ref\")\"",
+          "timeout": "30s"
+        }
+      },
+      "timeout": "5m",
+      "worktree": "lane"
+    },
+    {
+      "id": "pr",
+      "type": "claude-run",
+      "depends_on": [
+        "check-head"
+      ],
+      "prompt": "{{ inputs.publish }}\n  {{ artifacts.review | inline }}\nYour grant is exactly this: Read, `Bash(git push *)`,\n`Bash(gh pr create *)`, `Bash(gh pr view *)`, `Bash(git status*)`,\n`Bash(git log*)` and `Edit(./.omg-pr-body.md)` — writing ONE file,\n`.omg-pr-body.md` in your working directory. Any other call is denied,\nnot asked about. This node never commits, amends, rebases, resets or\nchecks out: the HEAD you publish is the one a person approved, so push\nthis branch's HEAD as it is (`git push -u origin HEAD`), never another\ncommit and never with `--force`. A body passed inline is denied even\nthough it starts with `gh`: a multi-line `--body '…'`, a heredoc and a\n`$(…)` are all refused. So the body goes through that file, in this\norder:\n  1. Write the whole body to `.omg-pr-body.md` with the Write tool (if\n     an earlier run left one there, Read it first, then overwrite it).\n  2. Run `gh pr create --title '\u003cone line\u003e' --body-file .omg-pr-body.md`,\n     plus any other flag asked for above (such as `--draft`).\n  3. Leave `.omg-pr-body.md` where it is once the PR is open: it is\n     not part of the change, and the engine removes it.\nEvery Bash call is ONE program, run in this working directory: no `cd`,\n`\u0026\u0026`, `;`, `|`, redirect or heredoc. A denied call means the FORM was\nwrong, not the goal: re-issue it in the form above before you give up\non it.\nOpen it BEFORE you reply: your FINAL reply IS the verdict, so a PR you\npromise to open afterwards is never opened. START your reply with the\nbare token PR followed immediately by the pull request's URL\n(`PR https://github.com/owner/repo/pull/123`) — those characters FIRST,\nwith no markdown emphasis (`**PR**` is WRONG), no heading, no preamble.\nAnything you need to qualify goes AFTER the URL, never before it: a\nline of context ahead of the token fails this node even when the PR\nis open.\n",
+      "allowed_tools": [
+        "Read",
+        "Bash(git push *)",
+        "Bash(gh pr create *)",
+        "Bash(gh pr view *)",
+        "Bash(git status*)",
+        "Bash(git log*)",
+        "Edit(./.omg-pr-body.md)"
+      ],
+      "permission_mode": "dontAsk",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PR[*_`\\s:]*https?://\\S",
+        "verify": {
+          "command": "rm -f .omg-pr-body.md; ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; pin=\"$(git rev-parse --verify -q \"$ref\")\" \u0026\u0026 head=\"$(gh pr view --json headRefOid --jq .headRefOid)\" \u0026\u0026 test \"$head\" = \"$pin\" \u0026\u0026 git update-ref -d \"$ref\"",
+          "timeout": "60s"
+        }
+      },
+      "worktree": "lane"
+    }
+  ]
+}

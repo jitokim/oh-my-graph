@@ -350,8 +350,18 @@ main { flex: 1; display: flex; min-height: 0; }
    themselves. Disabled while a decision is in flight. */
 .gate-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   margin: 0.45rem 0 0;
+}
+/* The paused gate's description (#348), on its own row above the buttons;
+   present only for a gate that has one. */
+.gate-description {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 .gate-btn {
   font: inherit;

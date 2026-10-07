@@ -137,14 +137,15 @@ Everything else in this file describes the default, Claude. Under Codex:
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
 
 **Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
-`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all eight
+`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all nine
 lint clean under Claude and **one is refused under Codex** — `adr-driven-dev`,
-for the `agent:` on its three review nodes. Four of the seven that load warn
+for the `agent:` on its three review nodes. Five of the eight that load warn
 that a `budget_usd` cannot apply: `review-loop` (its own), and `dev-review-pr`,
-`self-dev` and `backlog-batch` (inherited from the `e2e-verify` fragment).
-Before ADR 0026 those four were refused as well, which is what made five of
-eight unloadable. Of the seven that load, `apply-flags`, `merge-shepherd`,
-`dev-review-pr`, `self-dev` and `backlog-batch` all publish, so they hit the
+`gated-dev`, `self-dev` and `backlog-batch` (inherited from the `e2e-verify`
+fragment). Before ADR 0026 the four of those that had shipped were refused as
+well, which is what made five of the eight graphs then shipped unloadable. Of
+the eight that load, `apply-flags`, `merge-shepherd`, `dev-review-pr`,
+`gated-dev`, `self-dev` and `backlog-batch` all publish, so they hit the
 network wall — leaving `haiku-smoke` and `review-loop` as the shipped graphs
 with no node that needs the network. The expected verdict for every shipped
 graph under both runtimes is asserted in
@@ -861,7 +862,8 @@ oh-my-graph serve 20260729-101600    # straight to one run, --port to move it
 <p align="center"><em>A real dogfood board, captured 2026-08-06 (KST) — a historical snapshot, not today's numbers: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header was cumulative subscription usage across the project's whole development at that moment — not a per-run price, and not free.</em></p>
 
 It binds to loopback only. It is read-only except for one thing: a run paused
-at a human gate can be approved or rejected from the page. Unlike the live view
+at a human gate can be approved or rejected from the page, which shows the
+gate's description above the buttons when it has one. Unlike the live view
 `run`/`auto` embed, `serve` is the thing you asked for: in a script, a pipe or
 CI it still binds the port and serves — it just opens no browser
 (`--no-open` opts out on a terminal too), and its output is unchanged.
@@ -1357,6 +1359,12 @@ Spec:
   planned graph cannot contain a gate.
 - **`resume <run-id> --retry-failed`** — re-executes only a failed run's failed
   and cancelled nodes, keeping every passed node's artifact for its dependents.
+- **`graphs/gated-dev.yaml`** — the shipped graph that pairs engine evidence
+  with a human gate (#345): implement, an engine-verified e2e, a gating review
+  with one repair round, then `approve-publish` pauses before the PR. A
+  read-only `check-head` refuses to publish a HEAD other than the one the last
+  passing review saw; rejecting ends the run unpublished. Copy it rather than
+  adding a gate to a plan by hand.
 
 ### Saying what approving means (`description:`)
 
@@ -1424,8 +1432,10 @@ What it may say:
   characters (bidi controls, zero-width characters) and the line and
   paragraph separators are stripped, so an input value cannot repaint the
   prompt you approve from.
-- The web live view's approve/reject buttons do not show the description
-  (web view: #348). A decision made there still records it in `state.json`.
+- The web live view shows the description above the paused gate's
+  approve/reject buttons, in the single-run view and on the dashboard's run
+  pages. It is the same line the pause printed, stored in `state.json` when
+  the run paused, and a decision made from the page records exactly that line.
 
 Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v11).
 

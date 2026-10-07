@@ -1226,8 +1226,9 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		Model:                 flags.plannedModel,
 		Conventions:           conventionsPrefix(flags.conventions),
 		SerializedVerifyNodes: serializedVerify,
-		Recorder:              recorder,
-		EventSink:             leg.feed,
+		// A gate pause also stores the gate's shown description (#348).
+		Recorder:  describePauses(recorder, g, h),
+		EventSink: leg.feed,
 		OpeningAccounting: schedule.RunAccounting{
 			CostUSD: planningCostUSD, CostUnknown: flags.planningCostUnknown,
 			Usage: runfeed.TokenUsage{
