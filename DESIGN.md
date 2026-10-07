@@ -3627,9 +3627,11 @@ for the 1.0.0 gate; an `auto --interview` graph does (ADR 0044 §2.4).
   the CLI boundary, invisible to the Scheduler.
 - **RunState (v1.1)** — owns `state.json`: the resumable snapshot (graph, inputs,
   flags, tool policies, per-node completion incl. session id, gate decisions).
-  Written atomically after every node. The Scheduler talks to a `Recorder`
-  interface and defaults to a no-op, so nothing about persistence leaks into the
-  engine's tests.
+  Written atomically after every node, with every Unicode format character and
+  line or paragraph separator written as a JSON `\uXXXX` escape, so no
+  recorded value — an `--input` value included — carries one raw (#346). The
+  Scheduler talks to a `Recorder` interface and defaults to a no-op, so nothing
+  about persistence leaks into the engine's tests.
 - **RunFeed** — owns `events.jsonl`: the append-only, schema-versioned stream of
   node lifecycle events (run_started/node_started/node_passed/node_failed/
   node_retried/gate_paused/gate_approved/gate_rejected/run_finished), one JSON
