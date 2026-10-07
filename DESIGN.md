@@ -1879,7 +1879,7 @@ model.
   cannot see and the pause could not render. So a render error at the pause
   comes only from a graph that bypassed load, and it fails the invocation with
   the refusal; the description is never dropped.
-- **How it is sanitised** (`handoff.SanitizeGateText`). An input value is the
+- **How it is sanitised** (`fence.SanitizeTerminalLine`). An input value is the
   operator's text, printed verbatim. Sanitising it means nothing in it can
   move the cursor, clear the screen, retitle the window or repaint the
   terminal into a different-looking approval. ESC is removed together with

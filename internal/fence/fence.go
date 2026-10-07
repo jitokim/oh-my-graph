@@ -110,7 +110,7 @@ func LooksLikeMarker(line string) bool {
 // reversed — and a separator breaks the line wherever it is rendered. Callers
 // pair it with unicode.IsControl for the controls proper. It lives here,
 // beside LooksLikeMarker, because its callers — internal/coordinator's reuse
-// menu summary and internal/handoff's gate description (#346) — both already
+// menu summary and SanitizeTerminalLine (#346, #349) — sit in or already
 // import this package; a copy per caller is a set that drifts.
 func IsFormatOrLineSeparator(r rune) bool {
 	return unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029'
