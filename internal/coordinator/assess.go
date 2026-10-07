@@ -61,7 +61,11 @@ func (e *AssessError) Error() string {
 	if e.Output == "" {
 		return fmt.Sprintf("goal assessment failed: %s", e.Reason)
 	}
-	return fmt.Sprintf("goal assessment failed: %s\nassessor replied:\n%s", e.Reason, fence.Truncate(e.Output, maxOutputInError))
+	// The quote is the assessor's own text on its way to a terminal: cleaned
+	// first, so maxOutputInError bounds what is shown and a cut can never
+	// leave half an escape sequence behind (#349). e.Output keeps the raw reply.
+	return fmt.Sprintf("goal assessment failed: %s\nassessor replied:\n%s", e.Reason,
+		fence.Truncate(fence.SanitizeTerminalLine(e.Output), maxOutputInError))
 }
 
 // Assessment is one cycle's parsed assess verdict: whether the goal is met,
