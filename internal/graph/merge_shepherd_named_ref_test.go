@@ -1,4 +1,4 @@
-package schedule
+package graph_test
 
 import (
 	"errors"
@@ -181,21 +181,42 @@ func (fx *shepherdFixture) hasRef(ref string) bool {
 	return exec.Command("git", "-C", fx.repo, "rev-parse", "--verify", "--quiet", ref).Run() == nil
 }
 
-// runCheck resolves the node's shipped verify exactly as the scheduler does and
-// runs it in the repo, returning output and whether it exited 0.
+// runCheck renders the node's shipped verify with the handoff interpolation the
+// scheduler's resolveVerification performs (command, then cwd falling back to
+// the repo) and runs it in the repo, returning output and whether it exited 0.
+// It fails the test on a token it does not render: a self token, or any
+// placeholder left unrendered after interpolation.
 func (fx *shepherdFixture) runCheck(t *testing.T, node graph.Node, pr string) (string, bool) {
 	t.Helper()
 	if node.SuccessCheck.Verify == nil {
 		t.Fatalf("%s declares no success_check.verify (#360)", node.ID)
 	}
 	h := handoff.New(t.TempDir(), map[string]string{"repo": fx.repo, "pr": pr})
-	req, err := resolveVerification(node, *node.SuccessCheck.Verify, h, fx.repo)
+	v := *node.SuccessCheck.Verify
+	selfToken := regexp.MustCompile(`\{\{\s*self\.`)
+	if selfToken.MatchString(v.Command) || selfToken.MatchString(v.Cwd) {
+		t.Fatalf("%s verify names a self token; runCheck does not render self tokens and must be extended", node.ID)
+	}
+	command, err := h.Interpolate(v.Command)
 	if err != nil {
-		t.Fatalf("resolveVerification: %v", err)
+		t.Fatalf("could not render %s verify command %q: %v", node.ID, v.Command, err)
+	}
+	cwd := fx.repo
+	if v.Cwd != "" {
+		if cwd, err = h.Interpolate(v.Cwd); err != nil {
+			t.Fatalf("could not render %s verify cwd %q: %v", node.ID, v.Cwd, err)
+		}
+	}
+	opener := strings.Repeat("{", 2)
+	if strings.Contains(command, opener) {
+		t.Fatalf("%s verify command still holds an unrendered placeholder: %s", node.ID, command)
+	}
+	if strings.Contains(cwd, opener) {
+		t.Fatalf("%s verify cwd still holds an unrendered placeholder: %s", node.ID, cwd)
 	}
 	sh, _ := exec.LookPath("sh")
-	cmd := exec.Command(sh, "-c", req.Command)
-	cmd.Dir = req.Cwd
+	cmd := exec.Command(sh, "-c", command)
+	cmd.Dir = cwd
 	out, runErr := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	if runErr != nil && !errors.As(runErr, &exitErr) {
