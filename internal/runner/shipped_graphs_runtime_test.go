@@ -49,7 +49,11 @@ var shippedGraphsUnderCodex = map[string]shippedGraphUnderCodex{
 	"apply-flags.yaml":   {why: "declares neither agent: nor budget_usd"},
 	"backlog-batch.yaml": {budgetWarnings: 2, why: "both lanes inherit budget_usd from the e2e-verify fragment; the cap cannot apply, timeout: still guards"},
 	"dev-review-pr.yaml": {budgetWarnings: 1, why: "its e2e node inherits budget_usd from the e2e-verify fragment"},
-	"haiku-smoke.yaml":   {why: "the smoke graph declares neither"},
+	"gated-dev.yaml": {
+		budgetWarnings: 1,
+		why:            "loads: no node names an agent:, and the gate spawns nothing. Its e2e node inherits budget_usd from the e2e-verify fragment, which only warns (#345)",
+	},
+	"haiku-smoke.yaml": {why: "the smoke graph declares neither"},
 	"merge-shepherd.yaml": {
 		why: "gh end to end, but declares neither agent: nor budget_usd",
 	},

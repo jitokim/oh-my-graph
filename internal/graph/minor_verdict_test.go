@@ -189,13 +189,14 @@ func TestReviewPromptsCarryTheGradingRuleAndTheRatchet(t *testing.T) {
 	}
 }
 
-// TestGatingDevPromptsRepairOnlyWhatBlocked pins §2.4: both gating places'
+// TestGatingDevPromptsRepairOnlyWhatBlocked pins §2.4: every gating place's
 // implementers fix the blocking findings and leave the `Minor:` items, so a
 // repair round repairs what blocked it and nothing else.
 func TestGatingDevPromptsRepairOnlyWhatBlocked(t *testing.T) {
 	for _, c := range []struct{ file, id string }{
 		{"backlog-batch.yaml", "lane-a/dev"},
 		{"self-dev.yaml", "dev"},
+		{"gated-dev.yaml", "dev"}, // #345
 	} {
 		prompt := normalize(shippedNode(t, loadShipped(t, c.file), c.file, c.id).Prompt)
 		for _, want := range []string{
