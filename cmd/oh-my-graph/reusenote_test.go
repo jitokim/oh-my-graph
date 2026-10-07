@@ -35,7 +35,7 @@ func TestPrintPlanForRuntime_ReuseOnNamesTheScanAndEveryCitation(t *testing.T) {
 		},
 	}
 	var out strings.Builder
-	printPlanForRuntime(&out, plan, "", runner.RuntimeClaude, nil, false, conventionsDisclosure{})
+	printPlanForRuntime(&out, plan, "", runner.RuntimeClaude, nil, false, conventionsDisclosure{}, nil)
 	screen := out.String()
 
 	var scanLines []string
@@ -62,7 +62,7 @@ func TestPrintPlanForRuntime_ReuseOnWithNoCitationStillNamesTheScan(t *testing.T
 	plan := planPolicies(t, false)
 	plan.Reuse = &coordinator.ReuseRecord{Catalog: coordinator.ReuseCatalog{Dir: "/work/graphs/fragments"}}
 	var out strings.Builder
-	printPlanForRuntime(&out, plan, "", runner.RuntimeClaude, nil, false, conventionsDisclosure{})
+	printPlanForRuntime(&out, plan, "", runner.RuntimeClaude, nil, false, conventionsDisclosure{}, nil)
 	if want := "  reuse: scanned /work/graphs/fragments — 0 offered, 0 skipped\n"; !strings.Contains(out.String(), want) {
 		t.Errorf("screen lacks %q:\n%s", want, out.String())
 	}
@@ -78,7 +78,7 @@ func TestPrintPlanForRuntime_ReuseOffPrintsNothingAboutReuse(t *testing.T) {
 		plan := planPolicies(t, false)
 		plan.Reuse = nil
 		var out strings.Builder
-		printPlanForRuntime(&out, plan, "", runtime, nil, false, conventionsDisclosure{})
+		printPlanForRuntime(&out, plan, "", runtime, nil, false, conventionsDisclosure{}, nil)
 		if strings.Contains(strings.ToLower(out.String()), "reuse") {
 			t.Errorf("%s: reuse off, but the screen mentions reuse:\n%s", runtime, out.String())
 		}

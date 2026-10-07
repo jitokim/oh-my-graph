@@ -1035,6 +1035,44 @@ Repeat `--input-file` to layer files; a later file overrides an earlier one.
 The merged values are then checked like `--input` values: `run --dry-run`
 reports a missing input the same way.
 
+On `run`, a key the graph's `inputs:` does not declare is bound anyway, with
+one warning on stderr per key: the graph's author declared its inputs, so a
+key outside them is likely a typo. It names the key and its source
+(`--input`, or the file that set it last), never the value, and offers a
+declared name that is a near miss. A typo in the file:
+
+```yaml
+# self-dev.inputs.yaml
+repo: /work/oh-my-graph
+tsak: add a --json flag to runs list
+```
+
+```
+warning: graphs/self-dev.yaml: input "tsak" (from self-dev.inputs.yaml) is not declared in the graph's inputs list; it is bound anyway — did you mean "task"?
+```
+
+The warning never changes the exit status; here `task` is still unbound, and
+that is what fails the run. `run --dry-run` prints the same line.
+
+`auto` is quieter. The planner saw every bound input and may simply not need
+one, so an unused key is no typo signal there: `auto "..." --input repo=$PWD`
+prints nothing about `repo` when the plan uses `repo` itself or uses no input
+at all. The plan screen (`--plan-only` included) warns only on a near miss of
+a name the planned graph declares in `inputs:` or references as `{{ inputs.<name> }}` in
+any field the engine interpolates, a reuse citation's `bind:` values included,
+and once per key across a goal loop. A slip of the finger:
+
+```sh
+oh-my-graph auto "lint this repo and summarize the findings" --input reop=$PWD --plan-only
+```
+
+```
+warning: ~/.oh-my-graph/plans/<id>/graph.json: input "reop" (from --input) is not declared in the graph's inputs list; it is bound anyway — did you mean "repo"?
+```
+
+That line appears because the plan's prompts say `{{ inputs.repo }}`. A plan
+that declares and references no input prints nothing for any key.
+
 The file is read once, at launch. The merged values are saved in the run's
 `state.json`, and `resume` takes them from there. Editing
 `self-dev.inputs.yaml` before a `resume --retry-failed` (or a gate decision on
