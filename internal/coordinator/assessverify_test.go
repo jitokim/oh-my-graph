@@ -278,3 +278,34 @@ func TestAssessMaterial_TimedOutVerifyHasNoExitCode(t *testing.T) {
 		t.Errorf("an absent exit code rendered as 0:\n%s", outside)
 	}
 }
+
+// #332: a verify killed by a signal ran and failed but never exited on its
+// own. The engine records it as failed with no exit code; the material must
+// say so, and must never print the -1 sentinel Go reports for a signal even
+// if a record carries one.
+func TestAssessMaterial_SignalKilledVerifyShowsFailedWithNoExitCode(t *testing.T) {
+	cases := []struct {
+		name string
+		exit *int
+	}{
+		{"exit code absent", nil},
+		{"sentinel -1 carried", exitCode(-1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			material := assessMaterial(verifyEvidence("PASS", NodeVerification{
+				Command: "sh -c 'kill -9 $$'", ExitCode: tc.exit, Status: "failed", OutputTail: "Killed",
+			}), verifyNonce)
+			outside, _ := splitByFence(material, verifyNonce)
+			if !strings.Contains(outside, "  status: failed\n") {
+				t.Errorf("failed status is missing:\n%s", outside)
+			}
+			if !strings.Contains(outside, "  exit code: none") {
+				t.Errorf("absent exit code is not stated:\n%s", outside)
+			}
+			if strings.Contains(outside, "exit code: -1") || strings.Contains(outside, "  exit code: 0") {
+				t.Errorf("a signal-killed verify rendered a faked exit code:\n%s", outside)
+			}
+		})
+	}
+}

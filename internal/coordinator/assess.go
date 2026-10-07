@@ -422,7 +422,10 @@ func writeVerificationBlock(b *strings.Builder, id string, v NodeVerification, b
 	fmt.Fprintf(b, "ENGINE-OBSERVED verification of node %s — the engine ran this command itself, outside any model, and wrote these lines from its own record:\n", id)
 	fmt.Fprintf(b, "  command: %s\n", strconv.Quote(fence.Truncate(v.Command, maxAssessVerifyCommand)))
 	fmt.Fprintf(b, "  status: %s\n", v.Status)
-	if v.ExitCode != nil {
+	// A negative code is how a signal-killed process reports (Go's
+	// ExitCode() -1): not a code the command exited with, so it renders as
+	// none, like a record that holds no code at all.
+	if v.ExitCode != nil && *v.ExitCode >= 0 {
 		fmt.Fprintf(b, "  exit code: %d\n", *v.ExitCode)
 	} else {
 		b.WriteString("  exit code: none — the command did not exit on its own, so there is no exit code\n")
