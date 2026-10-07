@@ -387,7 +387,9 @@ A graph's inputs are bound on the command line, on `run` and `auto` only:
   screen judges the bound keys against the names the PLANNED graph declares
   in `inputs:` or references as `{{ inputs.<name> }}` in any field the engine
   interpolates (prompt, cwd, `success_check.verify`'s command and cwd, a
-  gate's description), collected by the token scanner `lint` uses. A key
+  gate's description, and a reuse citation's `bind:` values, which the
+  coordinator splices into those fields before the plan screen), collected by
+  the token scanner `lint` uses. A key
   within the near-miss distance above of one of those names gets the same
   line, `did you mean` tail included, at the head of the plan screen's
   warning block, `--plan-only` included. A key that matches a name exactly,
