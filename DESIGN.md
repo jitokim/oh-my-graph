@@ -1850,6 +1850,33 @@ incompatible snapshot is refused rather than misread:
   only in `Handoff.sessions` in memory — without it a `handoff: session` child
   cannot `--resume` its parent on the second leg. The `.out` artifact files stay
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
+  A node that declares `success_check.verify` also carries **`verification`**
+  (#332): the engine's own record of the command it ran, because without it a
+  PASS left nothing in the file to show the command ever ran, printed anything
+  or exited 0. Its keys are `command` (as run, after interpolation),
+  `exit_code`, `expected_exit_code` (the node's `expect_exit`, default 0, so a
+  reader can judge the exit code without the graph), `duration` (nanoseconds,
+  like the node's own), `status` and `output_tail`. `status` is what the engine
+  observed of the command, not the node's verdict: `passed` and `failed` mean
+  it ran to a verdict; `timed out`, `cancelled` (halt-on-fail or Ctrl-C while
+  it ran), `did not run` (it could not start), `interpolation error` (the
+  command or its cwd did not interpolate, so `command` is the text as
+  declared) and `not judged` (it exited, but an invalid `output_matches` meant
+  its expectations could not be applied) mean it broke before one.
+  **`exit_code` is absent, never faked, when the command never exited on its
+  own** — not 0, which would read as a pass, and not a sentinel like −1;
+  `not judged` keeps the code the command really returned. `output_tail` is
+  the END of the combined output, because a check prints its verdict last,
+  bounded by `verify.RetainedTail` to 4096 bytes including its
+  `…(earlier output truncated)…` marker, and absent when nothing was captured.
+  The record describes the attempt whose verdict the node kept, so a retried
+  node carries its final attempt's record. It is absent on a node with no
+  verify, on a gate or a feedback-loop marker, and on a node whose kept
+  attempt never reached its verify (an earlier predicate failed, or the
+  spawn did), because a record there would claim a command ran. Additive and
+  optional: a run without a verify writes byte-identical `state.json`, and the
+  schema stays at 3. `resume` and `--retry-failed` copy whole node records into
+  the new snapshot, so an earlier leg's record is carried forward unchanged.
 - **gate decisions so far**, and which gate the run is paused at.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
@@ -3115,7 +3142,33 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   caller and are gone, the mechanism is not).
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
-  outside it. The next cycle's planner prompt fences the `remaining` it
+  outside it.
+  **A node with a `verification` record gets an engine verification block**
+  (#332; `cycleEvidence` copies the record into
+  `coordinator.NodeVerification`, so the coordinator still does not import
+  `runstate`). Without it a node that only replied "PASS" was judged on its
+  reply alone. The block opens with an `ENGINE-OBSERVED verification of node
+  <id>` label, and the engine writes the `command`, `status`, `exit code`
+  (or "none — the command did not exit on its own") and `expected exit code`
+  lines from its own record, OUTSIDE the fence, never parsed out of the
+  command's output. The command is planner-authored, so it is cut to 500
+  bytes and Go-quoted onto one line, where a newline in it cannot start a
+  fake marker or a second record. The output tail is the command's own text,
+  so it goes INSIDE a nonce-fenced `engine verification` block as DATA, like
+  an artifact. The blocks render after the node results and before every
+  artifact, and their tails share the artifacts' caps (2000 bytes each, 12000
+  in total), so a node's own artifact cannot spend the room the engine's
+  observation of it needs. A tail is cut from its head, and the cut is said
+  above the fence (`output: the last N of M bytes; the earlier K bytes were
+  dropped for the material cap`); once the total cap is spent the line reads
+  `output: omitted (total material cap reached)`. The engine-observed lines
+  always render: a cap may drop output, never the record that a check
+  failed. The assessor prompt gains one sentence: an engine verification
+  block is the engine's own observation of a command it ran itself, and it
+  outranks a node's reply about the same check. That is a ranking of
+  evidence, **not a claim that exit 0 means the goal is met** — a passing
+  check is still only as wide as the command, and the assessor judges the
+  goal on all the material. The next cycle's planner prompt fences the `remaining` it
   quotes the same way. The verdict is a hard JSON
   contract; garbage is an `*AssessError` that stops the loop. Each verdict
   is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
