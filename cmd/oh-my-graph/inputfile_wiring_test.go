@@ -225,10 +225,11 @@ func TestInputFile_RefusalTakesTheMalformedInputPath_354(t *testing.T) {
 	}
 }
 
-// An unknown key is reported however an unknown --input is today: the two
-// spellings of the same binding produce byte-identical output and the same
-// exit code. Today that is acceptance — nothing checks a bound key against the
-// graph's inputs: [..] — so both exit 0 and a real run still runs the node.
+// An unknown key is reported however an unknown --input is: the two spellings
+// of the same binding produce the same output and the same exit code. That is
+// acceptance with a warning (#356) — both exit 0 and a real run still runs the
+// node — and the warning's source is the one byte-level difference: it names
+// the file where the other names --input, so it is normalized before comparing.
 func TestInputFile_UnknownKeyReportedLikeUnknownInput_354(t *testing.T) {
 	graphPath := writeGraphFile(t, boundGraph)
 	file := writeInputFile(t, "in.yaml", "repo: /x\nticket: T-1\nextra: y\n")
@@ -242,6 +243,7 @@ func TestInputFile_UnknownKeyReportedLikeUnknownInput_354(t *testing.T) {
 	dryRun := func(args []string) outcome {
 		isolateRunHome(t)
 		stdout, stderr, err := runWithInputs(t, firstWordRunner("scan"), append([]string{graphPath, "--dry-run"}, args...)...)
+		stderr = strings.ReplaceAll(stderr, "(from "+file+")", "(from --input)")
 		o := outcome{stdout: stdout, stderr: stderr, code: exitCodeForError(err)}
 		if err != nil {
 			o.err = err.Error()

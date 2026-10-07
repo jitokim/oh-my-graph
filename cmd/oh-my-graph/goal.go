@@ -66,6 +66,11 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	// that would otherwise read ABANDONED after a clean exit and print an
 	// orphaned-subprocess warning nobody needs (ADR 0023 §2.7).
 	defer func() { closeLeg(leg, runfeed.OutcomeFailed) }()
+	// The bound keys some cycle's plan screen has already warned about as a
+	// near miss (#356). Every cycle's plan is judged, but a key is warned
+	// about once per loop: the binding is the same invocation's on every
+	// cycle, so a second line about it would only repeat the first.
+	warnedInputs := make(map[string]bool)
 
 	onCyclePlanning := func(cycle int) error {
 		// The previous cycle's leg is closed by its own executeGraph; closing
@@ -107,7 +112,8 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// share its build-evidence answer: the question was asked once, before
 		// cycle 1, and a cycle that CREATES a build system does not retroactively
 		// gate its own run (ADR 0030 §3.5, §6).
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions})
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions},
+			unwarnedInputSources(plannedInputNames(plan.Graph), flags.inputSources, warnedInputs))
 
 		// Unreachable in v1 production — `auto` passes a nil confirm and
 		// chat, the one confirm-bearing caller, is single-cycle (ADR 0011
