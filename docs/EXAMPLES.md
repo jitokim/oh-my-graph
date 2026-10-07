@@ -54,7 +54,8 @@ read that persisted runtime; passing a different explicit value is an error.
 | `serve [<run-id>]` | Web live view, bound to `127.0.0.1` only (default port 8642, `--port` to change). With **no run id** it is a dashboard: one live mini-DAG card per run, each card opening that run's view at `/run/<id>/`. With a run id it goes straight to that run. Opens in your browser when stdout is a terminal; `--no-open`, a pipe, or CI prints the URL and serves it without opening anything. Read-only except for one thing: a run paused at a gate can be approved or rejected from the page. |
 | `version` | Print the tool version. |
 
-`run` and `auto` share `--input k=v` (repeatable), `--concurrency N` (ceiling
+`run` and `auto` share `--input k=v` (repeatable), `--input-file <path>`
+(repeatable; see [inputs from a file](#inputs-from-a-file---input-file)), `--concurrency N` (ceiling
 10), `--continue-on-fail`, and `--no-web` (do not serve or open the web live
 view for this run). Both print a live per-node feed as the graph executes, then
 a cost ledger. A graph can also declare the failure policy itself with
@@ -989,6 +990,53 @@ starts fresh by design
 cross-run session reuse is deferred) — day-to-day consistency comes from the
 pinned prompts and the `success_check` / `verify` gates, not from Claude
 remembering yesterday.
+
+## Inputs from a file (`--input-file`)
+
+A pipeline you replay every day usually takes the same inputs every day. Keep
+them in a file instead of retyping `--input` flags. The file is a flat map,
+YAML or JSON:
+
+```yaml
+# self-dev.inputs.yaml
+repo: /work/oh-my-graph
+task: add a --json flag to runs list
+```
+
+```sh
+oh-my-graph run graphs/self-dev.yaml --input-file self-dev.inputs.yaml
+```
+
+That binds exactly what `--input repo=/work/oh-my-graph --input task="add a
+--json flag to runs list"` binds. Each value is its text as written in the
+file: `1.10` stays `1.10`, `0123` stays `0123` and `yes` stays `yes`. A nested
+map, a list, a null (an empty `key:` included), a top level that is not a map,
+and a key that appears twice in the file are refused when the flag is parsed,
+before any node runs or any run directory is written:
+
+```
+invalid value "self-dev.inputs.yaml" for flag -input-file: invalid --input-file "self-dev.inputs.yaml": key "task" is a list (want a single value)
+```
+
+To change one value for one run, pass `--input` too. It overrides every file,
+wherever it sits on the command line, and the override is named on stderr by
+key and source, never by value:
+
+```sh
+oh-my-graph run graphs/self-dev.yaml --input-file self-dev.inputs.yaml \
+  --input task="fix the flaky test"
+# input "task": --input overrides self-dev.inputs.yaml
+```
+
+Repeat `--input-file` to layer files; a later file overrides an earlier one.
+The merged values are then checked like `--input` values: `run --dry-run`
+reports a missing input the same way.
+
+The file is read once, at launch. The merged values are saved in the run's
+`state.json`, and `resume` takes them from there. Editing
+`self-dev.inputs.yaml` before a `resume --retry-failed` (or a gate decision on
+a graph that has one) changes nothing for that run, and `resume` has no
+`--input-file` flag.
 
 ## Running a node as your own subagent (`agent:`)
 
