@@ -77,6 +77,15 @@ oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --i
 # Or run a shipped graph — the cheapest real end-to-end check (a few cents):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
+
+# Evidence and a human at the end: implement, engine-verified checks, a review
+# with one repair round, then a pause for your approval before the PR opens
+# (`oh-my-graph resume <run-id> --approve approve-publish`, or
+# `--reject approve-publish`):
+oh-my-graph run graphs/gated-dev.yaml --input repo="$PWD" \
+  --input task="fix the failing test" --input checks="run the full test suite." \
+  --input verify_command="go test ./..." --input focus="" \
+  --input publish="Push this worktree's branch and open a DRAFT pull request with gh pr create --draft. Put the review in the PR body:"
 ```
 
 Engine-run evidence is established per RUN, not per node: `--verify-cmd`
