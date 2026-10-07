@@ -25,8 +25,11 @@ import (
 const shepherdGraphPath = "../../graphs/merge-shepherd.yaml"
 
 // shepherdNode names one of the two checked nodes and where it builds its
-// worktree. The paths are fixed under /tmp, so every test uses PR numbers no
-// real run would use.
+// worktree. The paths stay fixed under /tmp because the shipped verify command
+// hard-codes them, so t.TempDir() cannot stand in. Every test uses PR numbers no
+// real run would use, and leftovers from an aborted earlier run are cleared:
+// addWorktree and clearShepherdDir both RemoveAll the path first and register a
+// cleanup that removes it again.
 type shepherdNode struct {
 	id  string
 	dir string // printf format taking the PR number
@@ -155,13 +158,27 @@ func (fx *shepherdFixture) fetch(t *testing.T, pr, sha string) {
 	gitIn(t, fx.repo, "fetch", "origin", "+pull/"+pr+"/head:refs/omg-shepherd/pr-"+pr+"/"+sha)
 }
 
+// clearShepherdDir starts a test from a clean fixed /tmp path and removes
+// whatever the test leaves there.
+func clearShepherdDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("clear leftover %s: %v", dir, err)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		t.Fatalf("leftover %s still exists after RemoveAll", dir)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+}
+
 func (fx *shepherdFixture) addWorktree(t *testing.T, dir, sha string) {
 	t.Helper()
-	gitIn(t, fx.repo, "worktree", "add", "--detach", dir, sha)
+	clearShepherdDir(t, dir)
 	t.Cleanup(func() {
 		_ = exec.Command("git", "-C", fx.repo, "worktree", "remove", "--force", dir).Run()
 		_ = os.RemoveAll(dir)
 	})
+	gitIn(t, fx.repo, "worktree", "add", "--detach", dir, sha)
 }
 
 func (fx *shepherdFixture) record(t *testing.T, dir, sha string) {
@@ -298,6 +315,7 @@ func TestMergeShepherd360CheckFailsWithoutWorktreeOrHead(t *testing.T) {
 		t.Run(sn.id+"/worktree missing", func(t *testing.T) {
 			fx := newShepherdFixture(t)
 			pr := "936103"
+			clearShepherdDir(t, fmt.Sprintf(sn.dir, pr))
 			fx.openPR(t, pr)
 			out, ok := fx.runCheck(t, loadShepherdNode(t, sn.id), pr)
 			if ok {
