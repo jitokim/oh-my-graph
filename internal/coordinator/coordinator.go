@@ -250,6 +250,12 @@ type Plan struct {
 	// (--no-skill-activation), or a Coordinator built with no skill
 	// directories.
 	SkillScan *SkillScan
+	// Reuse is the reuse-catalog disclosure (ADR 0038 §2.5): the directory
+	// scanned, what was offered and skipped, and each citation's id, source
+	// and digest as spliced. Same disclosure contract as AgentMappings: the
+	// caller must print it with the plan, and writes it beside graph.json with
+	// WriteReuseRecord. nil when reuse is off (WithoutReuse).
+	Reuse *ReuseRecord
 }
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
@@ -540,6 +546,15 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 			plan.CostUnknown = spent.costUnknown
 			plan.Usage = spent.usage
 			plan.Repaired = repaired
+			// The menu's disclosure travels with every plan made while reuse
+			// was on, citing or not; off, Reuse stays nil and nothing about
+			// reuse is printed or written (ADR 0038 §2.5).
+			if !c.reuseOff {
+				if plan.Reuse == nil {
+					plan.Reuse = &ReuseRecord{}
+				}
+				plan.Reuse.Catalog = catalog
+			}
 			return plan, nil
 		}
 		if !refusal.repairable || attempt >= maxPlanRepairAttempts {
@@ -692,18 +707,35 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 			repairable: true,
 		}
 	}
+	// FIRST of the post-validation mutations (ADR 0038 §2.3): every reuse:
+	// citation is spliced here, so agent mapping, verify attachment and skill
+	// activation below all see the spliced nodes, and the Spec they write is
+	// the resolved graph. spliceReuse re-reads and re-hashes each cited file,
+	// re-admits the bytes it read, re-applies plannedNodeRefusals to every
+	// spliced node and runs Graph.Validate.
+	//
+	// Not repairable — the citations were judged well-formed above, and what
+	// refuses them here is the file on disk, which no re-plan changes. The
+	// planner's own reply travels as the spec, so the refused plan is kept
+	// under the rejected-spec name like any other.
+	planned := g
+	g, resolved, citations, err := spliceReuse(planned, []byte(spec), offered)
+	if err != nil {
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
+	}
 	// The graph as it will run must pass the FULL Validate, including the
 	// unspliced-reuse backstop ParsePlannerReply let through: nothing runs a
 	// node that still cites a shape instead of carrying its prompt and tools.
-	// Not repairable — the citation was judged well-formed above, so a re-plan
-	// cannot fix what refuses it here.
 	if err := g.Validate(); err != nil {
 		return Plan{}, accounting, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
 	}
 	plan := Plan{
 		Graph:        g,
-		Spec:         []byte(spec),
+		Spec:         resolved,
 		ToolPolicies: toolPoliciesByNode(g, c.loadedUserConfig),
+	}
+	if len(citations) > 0 {
+		plan.Reuse = &ReuseRecord{Citations: citations}
 	}
 	// Read ONCE per plan, here, and never per node: the answer is the same for
 	// every node of the run, and a per-node read would put one warning on the
@@ -719,7 +751,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 	// failing it: this is a disclosure, and a paid, valid plan must not be
 	// thrown away because a working directory could not be read.
 	if root, ok := resolveInvocationRoot(c.invocationDir); ok {
-		plan.Unisolated = scanUnisolated(root, goal, g)
+		plan.Unisolated = scanUnisolated(root, goal, planned)
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.

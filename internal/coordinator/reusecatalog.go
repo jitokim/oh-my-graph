@@ -18,7 +18,8 @@ import (
 // The reuse catalog is ADR 0038's menu: the operator's own fragment files that
 // trusted code has judged safe to offer an unreviewed planner by identifier.
 // This file is the scan and its admission rules (§2.1, §2.2, §2.2.1, §9.1–§9.3)
-// and nothing else — no prompt block, no reuse:/bind: fields, no splice.
+// and nothing else: the prompt block is reusemenu.go's and the splice is
+// reusesplice.go's.
 //
 // Admission is strict on purpose. A fragment a planner may cite is, on the
 // committed path, the one repository-authored instruction channel the engine
@@ -171,12 +172,23 @@ func (c *Coordinator) reuseCatalog() (ReuseCatalog, error) {
 // admitReuseFragment applies every admission rule to one file and returns
 // either its entry or the first rule it failed.
 func admitReuseFragment(graphDir, name string) (ReuseEntry, *ReuseSkip) {
-	source := filepath.Join(graphDir, "fragments", name+".yaml")
+	inspection, err := graph.InspectFragment(graphDir, name)
+	return admitInspection(filepath.Join(graphDir, "fragments", name+".yaml"), inspection, err)
+}
+
+// readmitReuseData applies the same rules to bytes the caller already read —
+// the splice's re-admission (ADR 0038 §2.3), which judges what it is about to
+// splice and never the catalog's record of an earlier read.
+func readmitReuseData(graphDir, name string, data []byte) (ReuseEntry, *ReuseSkip) {
+	inspection, err := graph.InspectFragmentData(graphDir, name, data)
+	return admitInspection(filepath.Join(graphDir, "fragments", name+".yaml"), inspection, err)
+}
+
+// admitInspection is the admission rules over one inspection, in order.
+func admitInspection(source string, inspection *graph.FragmentInspection, err error) (ReuseEntry, *ReuseSkip) {
 	skip := func(reason ReuseSkipReason, detail string) (ReuseEntry, *ReuseSkip) {
 		return ReuseEntry{}, &ReuseSkip{Source: source, Reason: reason, Detail: detail}
 	}
-
-	inspection, err := graph.InspectFragment(graphDir, name)
 	if err != nil {
 		return skip(ReuseSkipLoadError, err.Error())
 	}

@@ -228,23 +228,3 @@ func TestReuseMenu_RepairIsJudgedAgainstTheHeldMenu(t *testing.T) {
 		t.Errorf("the repair prompt was re-rendered from a re-scan (%d prompts)", len(prompts))
 	}
 }
-
-// #338: a well-formed citation clears validation, but the graph as it would
-// run still carries it, and the full Validate refuses it without spending a
-// repair: an unspliced reuse node never runs.
-func TestReuseMenu_WellFormedCitationNeverRunsUnspliced(t *testing.T) {
-	dir := plantCatalog(t, map[string]string{"probe": admissibleFragment("probe")})
-	fake, _ := newPlannerFake(runnerOutcome(citingSpec("probe", `,"bind":{"target":"README.md"}`)))
-
-	_, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
-	var rejection *PlanRejection
-	if !errors.As(err, &rejection) || rejection.Repaired != nil {
-		t.Fatalf("err = %v, want an unrepaired rejection", err)
-	}
-	if !strings.Contains(err.Error(), "unspliced reusable-shape citation") {
-		t.Errorf("refused for the wrong reason: %v", err)
-	}
-	if n := len(fake.Invocations()); n != 1 {
-		t.Errorf("made %d planner calls, want 1", n)
-	}
-}

@@ -3106,6 +3106,21 @@ and its repair are judged against that held set, never a re-scan.
 `coordinator.WithoutReuse` turns reuse off: no scan, no menu, and `reuse:`
 refused as when nothing is offered.
 
+A citation that clears validation is spliced FIRST among the post-validation
+mutations (`coordinator/reusesplice.go`), before agent mapping, the verify
+attachment and skill activation, and before `graph.json` is saved, so the
+saved graph is the resolved one and never carries `reuse:`/`bind:`. For each
+citation the recorded source is re-read and re-hashed (a mismatch fails the
+plan naming the node, the shape, the path and both digests, and the planner's
+reply is kept as `rejected.json`), admission is recomputed from the bytes read,
+and those bytes are spliced by `graph.SpliceReuse` with the fragment loader's
+own machinery: a single-node shape merges onto the citing node, a multi-node
+one takes ADR 0027's `<id>/` namespace. Every spliced node then goes through
+`plannedNodeRefusals` in full, and the spliced graph through `Graph.Validate`.
+`Plan.Reuse` carries the scan and the citations, and `Plan.WriteReuseRecord`
+writes them to `reuse-catalog.json` (0600) beside `graph.json`; with reuse off
+it is nil and nothing is written.
+
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
 not restricted by either. The generated spec is
