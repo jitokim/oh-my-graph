@@ -848,7 +848,14 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 }
 
 // notePlanOnlyPreview is `auto --plan-only`'s terminal branch: print the
-// topology, say what the call cost, and keep the spec under plans/.
+// topology, say what the call cost, and keep the spec under plans/ — as
+// graph.json and, beside it, as graph.yaml (ADR 0039 §9.1, #342).
+//
+// The closing note's run command names graph.yaml, not graph.json, because
+// the YAML is the file a user edits, and a gate is authored by editing it: the
+// planner may never write one and trusted code never attaches one (ADR 0039
+// §2). So the note says in one sentence how to add a gate, naming the shipped
+// example, and prints `run <graph.yaml>` as the step after that edit.
 //
 // A preview is still not a run, and since ADR 0023 §3 the reason is no longer
 // the old mechanism argument — that a runs/ directory holding a graph.json and
@@ -860,12 +867,12 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // at any point, its planner call included.
 //
 // conv is the launch's conventions set, nil for none. The preview states that
-// it does NOT carry into the saved graph, because `run <graph.json>` is the
+// it does NOT carry into the saved graph, because `run <graph.yaml>` is the
 // preview's natural next step and would not prefix it (ADR 0041 §2.4).
 //
 // iv is the launch's interview, nil for none. Its staged answers go beside
 // the saved spec, under the same plans/<id>/ (ADR 0044 §2.1(a)): the plan has
-// already absorbed them, so `run <graph.json>` does not carry them, and they
+// already absorbed them, so `run <graph.yaml>` does not carry them, and they
 // are kept as the record of what the planner was told.
 //
 // baselineSkipped is `auto --no-baseline` (#328). A preview writes no
@@ -876,7 +883,8 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if err != nil {
 		return err
 	}
-	if _, err := savePlanYAML(planDir, plan.Spec); err != nil {
+	yamlPath, err := savePlanYAML(planDir, plan.Spec)
+	if err != nil {
 		return err
 	}
 	if _, err := stageInterview(planDir, iv); err != nil {
@@ -885,10 +893,11 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, conventionsDisclosure{set: conv, notCarried: true})
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
-			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
+			"unlike `run --dry-run`, this is not free — and its plan is kept at %s, and as YAML at %s.\n"+
 			"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
-			"about it. Run it with `oh-my-graph run %s`.\n",
-		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, specPath)
+			"about it. Run it with `oh-my-graph run %s`.\n"+
+			"To add a human gate, edit that YAML, add a `type: gate` node with its `depends_on` (like `approve-merge` in graphs/merge-shepherd.yaml), then run it with the same command.\n",
+		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, yamlPath, yamlPath)
 	if iv != nil {
 		fmt.Fprintf(out, "The interview before it was paid for too (%s), and the answers the planner received are kept at %s.\n",
 			formatCost(iv.Cost.CostUSD, iv.Cost.CostUnknown), filepath.Join(planDir, interview.StagedFileName))
