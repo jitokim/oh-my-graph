@@ -521,6 +521,17 @@ type GateState struct {
 	// on a completed run). resume reports this gate when a bare `resume` gives it
 	// no --approve/--reject to apply.
 	PausedAt string `json:"paused_at,omitempty"`
+	// PausedGateDescription is the description of the gate named by PausedAt,
+	// exactly as the pause printed it (#348): rendered once by the CLI when the
+	// pause is persisted — handoff interpolation, then
+	// fence.SanitizeTerminalLine, giving one line. It is stored so the web live
+	// view can show it without rendering anything, and so a decision records
+	// the same bytes as gate_description. It is written in the same snapshot
+	// write as PausedAt, so the two always agree. It is "" whenever PausedAt is
+	// "", for a gate with no description, and in a snapshot written before
+	// #348; a decision then falls back to rendering from the snapshot.
+	// Additive and optional: omitempty, and the schema stays 3.
+	PausedGateDescription string `json:"paused_gate_description,omitempty"`
 	// Decisions is every gate decision made so far, keyed by gate node id. The
 	// resume path's RecordedController replays these; a gate absent from the map is
 	// still undecided. nil when no gate has been decided yet.

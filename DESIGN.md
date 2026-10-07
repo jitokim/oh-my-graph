@@ -1875,9 +1875,13 @@ model.
 - **When it is interpolated.** When the gate pauses:
   `handoff.Handoff.RenderGateDescription` runs it through `InterpolateAs`
   (the prompt machinery, so a path is the same path a prompt would get)
-  against the run as it stands at the pause. `resume` renders it again from
-  the snapshot, seeded with the same artifact paths, so every line about the
-  gate shows the text the pause printed. The render checks every token with
+  against the run as it stands at the pause. That rendered, sanitised string
+  is stored in the snapshot's Gate block as `paused_gate_description` (#348),
+  in the same write that records the pause. `resume` reads that stored copy
+  rather than rendering again, so every line about the gate shows the text the
+  pause printed; only a snapshot written before #348 has no stored copy, and
+  then `resume` renders it from the snapshot, seeded with the same artifact
+  paths. The render checks every token with
   the same predicate lint uses (`gateDescriptionTokenRefused`), so a graph
   that never went through lint still cannot print a reply.
 - **When it is refused.** At load, before any node runs. `run`,
@@ -1921,10 +1925,18 @@ model.
   `approved gate <id>: <description>` or `rejected gate <id>: <description>`
   before the `Resuming run` banner. A gate without a description prints
   every one of these byte-for-byte as before and echoes nothing. **The web
-  live view does not show it**: `/api/graph` carries only id, type and
-  `depends_on`, and the `gate_paused` event carries no description. A browser
-  decision goes through the same `executeResume`, so it still records the
-  field below.
+  live view shows it** (#348) on its own line above the approve/reject
+  buttons of the paused gate's feed entry, in the single-run view and in the
+  same view mounted under the dashboard. The page shows the string rendered
+  once at the pause and stored in the snapshot's Gate block: `/api/graph`
+  copies it unchanged into `paused_gate` (`{"id", "description"}`), serve
+  renders and sanitises nothing, and the page sets it via `textContent` only.
+  The `gate_paused` event carries no description, so the page re-asks
+  `/api/graph` at the paused `run_finished`, which comes after the pause is
+  stored. A decision made from the page goes through the same
+  `executeResume`, which records that same stored string, byte for byte, as
+  the field below. A gate without a description gets no `paused_gate` and no
+  extra element, so its entry renders as before.
 - **What is recorded.** The decided gate's `state.json` node record gets
   `gate_description`: the string exactly as its decider was shown it (see
   below).
@@ -2004,7 +2016,17 @@ incompatible snapshot is refused rather than misread:
   absent on every other node, on an undecided gate and on a gate without a
   description, so a run without one writes byte-identical `state.json`.
   Additive and optional, `omitempty`, schema still 3.
-- **gate decisions so far**, and which gate the run is paused at.
+- **gate decisions so far**, and which gate the run is paused at
+  (`gate.paused_at`), with that gate's shown description
+  (`gate.paused_gate_description`, #348). The description is the string the
+  pause rendered and printed, stored so the web live view can show it without
+  rendering anything and so a decision records the same bytes as
+  `gate_description`. It is written in the same snapshot write as `paused_at`,
+  and every resumed leg starts with it cleared, so it is set only on a leg that
+  pauses at a described gate. #348's scope said `state.json`'s format would
+  not change; this field is the one additive exception, of the same class as
+  `gate_description`: `omitempty`, schema still 3, and a snapshot not paused
+  at a described gate is byte-identical.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
 `success_check.verify`. A verification is a command the ENGINE runs, outside
@@ -2597,7 +2619,9 @@ one, and it answers 409 like any other view that cannot resume.
   why `/api/events` deliberately does not end at `run_finished`), and the
   leg is detached from the request so closing the tab does not kill it. The
   `oh-my-graph resume` command stays on the entry as secondary text: it is
-  still the way in from an embedded view.
+  still the way in from an embedded view. A gate with a description shows it
+  above the buttons, from `/api/graph`'s `paused_gate` (#348; see "Gate nodes
+  and `resume`"), and the decision then records exactly that string.
 - **Scope:** the dashboard is a card wall over the run directories and the
   single-run view behind it — no history browsing beyond what is on disk, no
   login (the gate token is a CSRF guard, not auth), no config file, no

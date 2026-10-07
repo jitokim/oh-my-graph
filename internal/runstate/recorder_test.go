@@ -1,7 +1,9 @@
 package runstate
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,6 +105,56 @@ func TestSnapshotRecorder_RecordPauseSetsPausedAtAndDecision(t *testing.T) {
 	}
 	if got.Gate.Decisions["gate1"] != GatePause {
 		t.Fatalf("gate1 decision = %q, want pause", got.Gate.Decisions["gate1"])
+	}
+}
+
+// TestRecordDescribedPause_WritesBothInOneSnapshot_348: #348 — the paused
+// gate's description is persisted together with PausedAt and the pause
+// decision, so a reader never sees one without the other.
+func TestRecordDescribedPause_WritesBothInOneSnapshot_348(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	rec := NewSnapshotRecorder(path, baseSnapshot("run-1"))
+
+	if err := rec.RecordDescribedPause("gate1", "ship T-42?"); err != nil {
+		t.Fatalf("RecordDescribedPause: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Gate.PausedAt != "gate1" || got.Gate.PausedGateDescription != "ship T-42?" || got.Gate.Decisions["gate1"] != GatePause {
+		t.Fatalf("gate state = %+v, want paused at gate1 with its description and a pause decision", got.Gate)
+	}
+	if got.Schema != Schema {
+		t.Fatalf("schema = %d, the field must not move the stamp", got.Schema)
+	}
+}
+
+// TestRecordPause_WritesNoDescriptionKey_348: #348 — a pause without a
+// description writes exactly the bytes it wrote before the field existed.
+func TestRecordPause_WritesNoDescriptionKey_348(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.json")
+	described := filepath.Join(dir, "described.json")
+	if err := NewSnapshotRecorder(plain, baseSnapshot("run-1")).RecordPause("gate1"); err != nil {
+		t.Fatalf("RecordPause: %v", err)
+	}
+	if err := NewSnapshotRecorder(described, baseSnapshot("run-1")).RecordDescribedPause("gate1", ""); err != nil {
+		t.Fatalf("RecordDescribedPause: %v", err)
+	}
+	plainBytes, err := os.ReadFile(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	describedBytes, err := os.ReadFile(described)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plainBytes), "paused_gate_description") {
+		t.Fatalf("an undescribed pause wrote the key:\n%s", plainBytes)
+	}
+	if string(plainBytes) != string(describedBytes) {
+		t.Fatalf("an empty description changed the bytes:\n%s\nvs\n%s", plainBytes, describedBytes)
 	}
 }
 

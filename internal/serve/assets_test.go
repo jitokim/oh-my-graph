@@ -185,6 +185,70 @@ func TestLiveStates_AgreeWithTheInFlightPredicate(t *testing.T) {
 	}
 }
 
+// TestAppJS_GateDescriptionIsSetViaTextContentOnly_348 pins how the live view
+// shows a paused gate's description (#348). The string is the pause's render,
+// stored in the snapshot and copied verbatim by /api/graph — model- and
+// input-derived text the page must show as text: assigned through textContent,
+// taken from paused_gate, and re-asked once the pause is persisted, since
+// gate_paused is emitted before the snapshot carries the description.
+func TestAppJS_GateDescriptionIsSetViaTextContentOnly_348(t *testing.T) {
+	app := readAsset(t, "app.js")
+
+	show := jsCodeOnly(jsFunctionBody(t, app, "showGateDescription"))
+	if !regexp.MustCompile(`\.textContent\s*=\s*text\b`).MatchString(show) {
+		t.Error("ui/app.js's showGateDescription no longer assigns the description via textContent: " +
+			"it is untrusted text, and any other sink can turn it into markup")
+	}
+	if !strings.Contains(jsCodeOnly(jsFunctionBody(t, app, "applyPausedGate")), "payload.paused_gate") {
+		t.Error("ui/app.js's applyPausedGate never reads payload.paused_gate: /api/graph carries the " +
+			"stored description and nothing shows it")
+	}
+	if !strings.Contains(jsCodeOnly(jsFunctionBody(t, app, "buildGateActions")), "showGateDescription()") {
+		t.Error("ui/app.js's buildGateActions does not show the description: a replay that rebuilds the " +
+			"buttons after a reconnect would drop it")
+	}
+	if !regexp.MustCompile(`event\.outcome === "paused"\) refreshRunStatus\(\)`).MatchString(jsCodeOnly(app)) {
+		t.Error("ui/app.js no longer re-asks /api/graph on a paused run_finished: the page's last read " +
+			"predates the pause, so a page open across it would never show the description")
+	}
+}
+
+// TestAppJS_GateWithoutDescriptionRendersAsBefore_348 pins that a gate with no
+// stored description gets no description element (#348): showGateDescription's
+// empty-text branch removes any stale element and moves on before anything is
+// created, so an undescribed gate's DOM is exactly what it was before #348.
+func TestAppJS_GateWithoutDescriptionRendersAsBefore_348(t *testing.T) {
+	show := jsCodeOnly(jsFunctionBody(t, readAsset(t, "app.js"), "showGateDescription"))
+
+	guard := strings.Index(show, "if (!text)")
+	create := strings.Index(show, "createElement")
+	if guard < 0 || create < 0 || guard > create {
+		t.Fatal("ui/app.js's showGateDescription no longer checks for an empty description before " +
+			"creating the element: a gate without a description would get an empty .gate-description")
+	}
+	branch := show[guard:create]
+	for _, want := range []string{".remove()", "continue"} {
+		if !strings.Contains(branch, want) {
+			t.Errorf("ui/app.js's showGateDescription's empty-description branch lacks %q: a gate "+
+				"without a description must keep no description element and skip creating one", want)
+		}
+	}
+}
+
+// TestAppJS_HasNoHTMLSinks_348 holds app.js to its own rule — untrusted text is
+// rendered via textContent ONLY — across the whole file, not just the gate
+// description #348 added. Comments are stripped first, so a comment that names
+// a sink while forbidding it cannot fail the check.
+func TestAppJS_HasNoHTMLSinks_348(t *testing.T) {
+	code := jsCodeOnly(readAsset(t, "app.js"))
+	for _, sink := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
+		if strings.Contains(code, sink) {
+			t.Errorf("ui/app.js uses %s: node output, gate descriptions and goal text are untrusted, and "+
+				"the page renders them via textContent only", sink)
+		}
+	}
+}
+
 // --- reading the assets ------------------------------------------------------
 
 // readAsset reads one embedded UI file — the same bytes the server hands the

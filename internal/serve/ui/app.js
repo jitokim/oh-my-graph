@@ -15,7 +15,9 @@
 //                needs the run lock, which only the server can probe), and
 //                whether this run's runtime keeps a per-node transcript to
 //                tail at all (#178 — the runtime is in the snapshot, which
-//                only the server reads)
+//                only the server reads), and the description of the gate the
+//                run is paused at, as the pause stored it in the snapshot
+//                (#348 — the page renders nothing; it shows those bytes)
 //   /api/events  the event stream over SSE (replay, then follow)
 //   /api/result  one node's handoff artifact, fetched lazily for that
 //                node's settled feed entries (200 body / 204 none / 404
@@ -356,6 +358,10 @@ function layoutOptions() {
 // answer about the run's liveness with a staler one.
 let statusGen = 0;
 
+// The gate this run is paused at and its description, from /api/graph's
+// paused_gate (#348): absent unless the run is paused at a gate that has one.
+let pausedGate = null;
+
 async function loadGraph() {
   let payload;
   const gen = ++statusGen;
@@ -377,7 +383,10 @@ async function loadGraph() {
   }
   $("run-id").textContent = payload.run_id;
   renderGoal(payload.goal);
-  if (gen === statusGen) applyRunStatus(payload);
+  if (gen === statusGen) {
+    applyRunStatus(payload);
+    applyPausedGate(payload);
+  }
   if (!payload.available) {
     // Honest window: the run has no state.json yet — an auto run inside its
     // planner call, or one whose plan was refused (docs/RUN-FEED.md). NOT
@@ -430,9 +439,19 @@ function refreshRunStatus() {
   fetch("api/graph")
     .then((resp) => (resp.ok ? resp.json() : null))
     .then((payload) => {
-      if (payload && gen === statusGen) applyRunStatus(payload);
+      if (payload && gen === statusGen) {
+        applyRunStatus(payload);
+        applyPausedGate(payload);
+      }
     })
     .catch(() => {}); // transient failure: the next leg boundary re-asks
+}
+
+// applyPausedGate takes the paused gate /api/graph reports and shows its
+// description beside that gate's buttons.
+function applyPausedGate(payload) {
+  pausedGate = payload.paused_gate || null;
+  showGateDescription();
 }
 
 // renderGoal shows the header's goal-lineage chip when this run is one cycle
@@ -589,6 +608,9 @@ function apply(event) {
       addAccounting(null, event);
       runEndedMs = Number.isNaN(ts) ? Date.now() : ts;
       setStatus(event.outcome, false);
+      // The pause is persisted before run_finished and after gate_paused, so
+      // the description stored with it is only answerable from here on.
+      if (event.outcome === "paused") refreshRunStatus();
       break;
     default:
       // Unknown event type (same-schema addition impossible, but be safe):
@@ -871,6 +893,29 @@ function buildGateActions(li, nodeId) {
   }
   li.appendChild(actions);
   gateActions.set(nodeId, actions);
+  showGateDescription();
+}
+
+// showGateDescription puts the paused gate's description above its buttons —
+// inside the actions container, so a decision's dropGateActions takes it away
+// too. The text is the string the pause rendered and stored, shown unchanged
+// and set via textContent ONLY: it is model- and input-derived text, not
+// markup. A gate with no description gets no element at all.
+function showGateDescription() {
+  for (const [nodeId, actions] of gateActions) {
+    const text = pausedGate && pausedGate.id === nodeId ? pausedGate.description || "" : "";
+    let desc = actions.querySelector(".gate-description");
+    if (!text) {
+      if (desc) desc.remove();
+      continue;
+    }
+    if (!desc) {
+      desc = document.createElement("p");
+      desc.className = "gate-description";
+      actions.prepend(desc);
+    }
+    desc.textContent = text;
+  }
 }
 
 function dropGateActions(nodeId) {
@@ -911,7 +956,7 @@ function decideGate(nodeId, decision, buttons) {
 // monospace pre capped at 24 lines with a "show more" expander when the
 // content overflows; a single-line artifact renders inline in the entry's
 // head (`inline`) with no block at all; a node with no artifact renders
-// neither. The artifact is rendered via textContent ONLY — never innerHTML:
+// neither. The artifact is rendered via textContent ONLY — never parsed as markup:
 // node output is untrusted text, not markup.
 function buildArtifactBlock(id, inline) {
   const wrap = document.createElement("div");
