@@ -125,6 +125,11 @@ type runSummary struct {
 	// simply not known for any of them, and render as placeholders.
 	hasSnapshot   bool
 	hasAccounting bool
+	// limitPause is the snapshot's record of a usage-limit pause (ADR 0031
+	// §8.1), nil when there is none. Display only: it names WHY a PAUSED row
+	// stopped, under the table, and never feeds the status or the in-flight
+	// count.
+	limitPause *runstate.LimitPause
 }
 
 // runsInFlightError is the answer `runs list --exit-in-flight` gives on the
@@ -408,6 +413,7 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		spoken:        spoken,
 		hasSnapshot:   true,
 		hasAccounting: cost != 0 || costUnknown || usage != (runner.TokenUsage{}),
+		limitPause:    snap.LimitPause,
 	}, nil
 }
 
@@ -516,6 +522,11 @@ func printRuns(w io.Writer, rows []runSummary, coverage string) {
 			fmt.Fprintf(w, "\n%s\n", runstatus.Hint(row.runID, row.hasSnapshot))
 		case runstatus.Paused:
 			fmt.Fprintf(w, "\n%s\n", runstatus.PausedHint(row.runID))
+			// The shared hint names both resume shapes because the status cannot
+			// tell them apart; the record can, so a limit pause says why.
+			if row.limitPause != nil {
+				fmt.Fprintf(w, "  paused on a %s\n", limitPauseSummary(row.limitPause))
+			}
 		}
 	}
 }
