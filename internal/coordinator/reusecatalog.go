@@ -37,6 +37,31 @@ const reuseCatalogSubdir = "graphs"
 // maxReuseSummaryBytes bounds a catalog entry's one-line summary (§9.2).
 const maxReuseSummaryBytes = 200
 
+// reuseReadOnlyTools is every tool an admitted fragment's node may declare,
+// and the one place that set is written (ADR 0038 §9.2, #338). It is a strict
+// subset of plannedToolAllowlist: that list bounds what a planner may write
+// itself, and it also holds Edit, Write, Bash(go *) and Bash(make *), the last
+// two of which run arbitrary code. A fragment is repository-authored text the
+// committed path opens with nobody reading it first, so it may bring only
+// tools that neither write a file nor run a command. Admission
+// (admitInspection) and the post-splice backstop (checkSplicedNodes) both
+// judge against it, through reuseToolOutsideReadOnly.
+var reuseReadOnlyTools = []string{"Read", "Glob", "Grep"}
+
+// reuseReadOnlyToolSet is reuseReadOnlyTools as a lookup set.
+var reuseReadOnlyToolSet = toSet(reuseReadOnlyTools)
+
+// reuseToolOutsideReadOnly is the first of tools that is not a member of
+// reuseReadOnlyTools, if any.
+func reuseToolOutsideReadOnly(tools []string) (string, bool) {
+	for _, tool := range tools {
+		if !reuseReadOnlyToolSet[tool] {
+			return tool, true
+		}
+	}
+	return "", false
+}
+
 // singleNodeContribution is what a single-node fragment contributes: its body
 // is merged onto the citing node and declares no id of its own.
 const singleNodeContribution = "1 node, merged into the node that names it"
@@ -88,7 +113,7 @@ type ReuseSkip struct {
 }
 
 // ReuseSkipReason is the fixed vocabulary a skipped file is counted under, so
-// a printout can say "skipped 6 (3 tool not in allowlist, 3 non-prompt slot)".
+// a printout can say "skipped 6 (3 tool not read-only, 3 non-prompt slot)".
 type ReuseSkipReason string
 
 // The rules are applied in this order and a file records the first it fails.
@@ -104,9 +129,9 @@ const (
 	// ReuseSkipNonPromptSlot: a slot lands, possibly through a nested
 	// citation, somewhere other than a prompt: scalar (§2.2's inertness).
 	ReuseSkipNonPromptSlot ReuseSkipReason = "non-prompt slot"
-	// ReuseSkipTool: a declared tool is not an exact member of
-	// plannedToolAllowlist (§2.2.1).
-	ReuseSkipTool ReuseSkipReason = "tool not in allowlist"
+	// ReuseSkipTool: a declared tool is not a member of reuseReadOnlyTools
+	// (§9.2) — exact membership of plannedToolAllowlist is not enough.
+	ReuseSkipTool ReuseSkipReason = "tool not read-only"
 	// ReuseSkipPermissionMode: a node declares any permission_mode (§2.2.1).
 	ReuseSkipPermissionMode ReuseSkipReason = "permission_mode"
 	// ReuseSkipPlannerRefused: a node declares a field plannedNodeRefusals
@@ -204,11 +229,9 @@ func admitInspection(source string, inspection *graph.FragmentInspection, err er
 			" — a slot the planner binds may reach only a prompt: scalar, where planner text already lands")
 	}
 	for _, node := range inspection.Nodes {
-		for _, tool := range node.AllowedTools {
-			if !plannedToolAllowlistSet[tool] {
-				return skip(ReuseSkipTool, fmt.Sprintf("node %q declares tool %q, which is not an exact member of auto mode's tool allowlist (%s)",
-					node.ID, tool, strings.Join(plannedToolAllowlist, ", ")))
-			}
+		if tool, outside := reuseToolOutsideReadOnly(node.AllowedTools); outside {
+			return skip(ReuseSkipTool, fmt.Sprintf("node %q declares tool %q, which is not one of the read-only tools a reusable shape may bring (%s)",
+				node.ID, tool, strings.Join(reuseReadOnlyTools, ", ")))
 		}
 	}
 	for _, node := range inspection.Nodes {

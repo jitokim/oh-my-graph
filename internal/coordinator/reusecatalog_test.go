@@ -84,10 +84,10 @@ node:
 
 // TestReuseCatalog_ShippedCorpus is §9.1 measured by the code (#338): of the
 // seven fragments this repository ships, exactly read-and-report is offered,
-// and the other six are skipped for the reasons ADR 0038 §2.2.1 gives — three
-// for a slot that reaches a non-prompt field, three for a tool that is a
-// narrowing (or, for gh, a widening) of an allowlist entry rather than a
-// member. Each of the latter three also declares permission_mode; the tool
+// and the other six are skipped for the reasons ADR 0038 §2.2.1 and §9.2 give —
+// three for a slot that reaches a non-prompt field, three for a tool outside
+// the read-only set (pr-publish's first is Bash(git *), an exact allowlist
+// member; the reviews' is Bash(git diff*), a narrowing of one). Each of the latter three also declares permission_mode; the tool
 // rule is checked first, so that is the reason recorded.
 func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -112,7 +112,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 		"e2e-verify":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
 		"gated-lane":      {ReuseSkipNonPromptSlot, `slot "tools" lands in allowed_tools`},
 		"repair-round":    {ReuseSkipNonPromptSlot, `slot "review_agent" lands in agent`},
-		"pr-publish":      {ReuseSkipTool, `"Bash(gh *)"`},
+		"pr-publish":      {ReuseSkipTool, `"Bash(git *)"`},
 		"review-security": {ReuseSkipTool, `"Bash(git diff*)"`},
 		"review-style":    {ReuseSkipTool, `"Bash(git diff*)"`},
 	}
@@ -383,6 +383,11 @@ func TestReuseCatalog_EveryPlannerRefusedFieldKeepsAFragmentOffTheMenu(t *testin
 				named := strings.Contains(skip.Detail, rule.reasonContains)
 				if skip.Reason == ReuseSkipLoadError {
 					named = strings.Contains(skip.Detail, "declares "+jsonKeyOf(rule.probeJSON))
+				}
+				// A tool outside the read-only set is refused by admission's
+				// own tool rule, which runs before the planner's (§9.2, #338).
+				if skip.Reason == ReuseSkipTool && fieldName == "AllowedTools" {
+					named = strings.Contains(skip.Detail, "declares tool")
 				}
 				if !named {
 					t.Errorf("skipped for %q (%s), which does not name %s as the problem — some other rule may have fired",

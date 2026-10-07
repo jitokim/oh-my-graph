@@ -414,3 +414,116 @@ func TestReuseSplice_WriteReuseRecord(t *testing.T) {
 		}
 	}
 }
+
+// toolFragment is admissibleFragment declaring tools in place of its
+// read-only ones (#338).
+func toolFragment(t *testing.T, name, tools string) string {
+	t.Helper()
+	body := strings.Replace(admissibleFragment(name), "[Read, Grep, Glob]", tools, 1)
+	if body == admissibleFragment(name) {
+		t.Fatal("admissibleFragment no longer declares [Read, Grep, Glob]")
+	}
+	return body
+}
+
+// #338, ADR 0038 §9.2: the read-only tool set is narrower than the planned-node
+// allowlist, and it is never wider.
+func TestReuseReadOnlyTools_IsASubsetOfThePlannedAllowlist(t *testing.T) {
+	if strings.Join(reuseReadOnlyTools, ",") != "Read,Glob,Grep" {
+		t.Errorf("reuseReadOnlyTools = %v, want exactly Read, Glob, Grep", reuseReadOnlyTools)
+	}
+	for _, tool := range reuseReadOnlyTools {
+		if !plannedToolAllowlistSet[tool] {
+			t.Errorf("%q is read-only for a fragment but not in plannedToolAllowlist", tool)
+		}
+	}
+}
+
+// #338, ADR 0038 §9.2: a tool that is an exact plannedToolAllowlist member but
+// not read-only keeps a fragment off the menu, reported as skipped for that
+// reason; forced to the splice with a record that matches its bytes, the splice
+// refuses it, and so does the post-splice backstop on its own. The allowlist
+// alone would have let each of these through, so the refusal is the read-only
+// rule's.
+func TestReuseSplice_ToolOutsideTheReadOnlySetIsRefusedAtEveryLevel(t *testing.T) {
+	for _, tool := range []string{"Edit", "Write", "Bash(go *)", "Bash(make *)"} {
+		t.Run(tool, func(t *testing.T) {
+			if !plannedToolAllowlistSet[tool] {
+				t.Fatalf("%q is not a plannedToolAllowlist member, so this would not isolate the read-only rule", tool)
+			}
+			dir := plantCatalog(t, map[string]string{"wide": toolFragment(t, "wide", `[Read, "`+tool+`"]`)})
+			source := plantedSource(dir, "wide")
+
+			// (a) not admitted, and the skip names the tool and the set.
+			catalog, err := scanReuseCatalog(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.Offered) != 0 || len(catalog.Skipped) != 1 {
+				t.Fatalf("catalog = %+v, want wide skipped", catalog)
+			}
+			skip := catalog.Skipped[0]
+			if skip.Reason != ReuseSkipTool || !strings.Contains(skip.Detail, strconv.Quote(tool)) || !strings.Contains(skip.Detail, "read-only tools a reusable shape may bring (Read, Glob, Grep)") {
+				t.Errorf("skipped for %q (%s), want %q naming %q and the read-only set", skip.Reason, skip.Detail, ReuseSkipTool, tool)
+			}
+			if got := catalog.SkippedByReason()[ReuseSkipTool]; got != 1 {
+				t.Errorf("SkippedByReason()[%q] = %d, want 1", ReuseSkipTool, got)
+			}
+
+			// (b) forced past the menu, the splice refuses it.
+			spec := citingSpec("wide", `,"bind":{"target":"README.md"}`)
+			g, err := graph.ParsePlannerReply([]byte(spec))
+			if err != nil {
+				t.Fatal(err)
+			}
+			forced := []ReuseEntry{{ID: "wide", Source: source, SHA256: plantedDigest(t, source)}}
+			if _, _, _, err := spliceReuse(g, []byte(spec), forced); err == nil || !strings.Contains(err.Error(), strconv.Quote(tool)) {
+				t.Errorf("the splice step accepted the forced record: %v", err)
+			}
+
+			// The post-splice backstop alone, on the graph the machinery
+			// splices from those bytes.
+			data, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spliced, err := graph.SpliceReuse([]byte(spec), filepath.Dir(filepath.Dir(source)), map[string][]byte{"wide": data})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cite, _ := spliced.NodeByID("cite"); !strings.Contains(strings.Join(cite.AllowedTools, ","), tool) {
+				t.Fatalf("the splice dropped %q (%v), so this would test nothing", tool, cite.AllowedTools)
+			}
+			err = checkSplicedNodes(spliced, []ReuseCitation{{NodeID: "cite", EntryID: "wide", Source: source}})
+			if err == nil || !strings.Contains(err.Error(), `spliced node "cite"`) || !strings.Contains(err.Error(), "declares tool "+strconv.Quote(tool)) {
+				t.Errorf("post-splice backstop: %v", err)
+			}
+		})
+	}
+}
+
+// #338: the positive control — a read-and-report shape declaring Read, Grep
+// and Glob is still admitted, and still splices through both checks.
+func TestReuseSplice_ReadOnlyToolsAreAdmittedAndSpliced(t *testing.T) {
+	dir := plantCatalog(t, map[string]string{"read-and-report": admissibleFragment("read-and-report")})
+	catalog, err := scanReuseCatalog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := offeredIDs(catalog); len(got) != 1 || got[0] != "read-and-report" {
+		t.Fatalf("offered %v, want [read-and-report]; skipped: %+v", got, catalog.Skipped)
+	}
+	spec := citingSpec("read-and-report", `,"bind":{"target":"README.md"}`)
+	g, err := graph.ParsePlannerReply([]byte(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spliced, _, citations, err := spliceReuse(g, []byte(spec), catalog.Offered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cite, _ := spliced.NodeByID("cite")
+	if strings.Join(cite.AllowedTools, ",") != "Read,Grep,Glob" || len(citations) != 1 {
+		t.Errorf("spliced tools %v, citations %+v", cite.AllowedTools, citations)
+	}
+}

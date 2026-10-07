@@ -44,7 +44,7 @@ func TestPrintPlanForRuntime_ReuseOnNamesTheScanAndEveryCitation(t *testing.T) {
 			scanLines = append(scanLines, line)
 		}
 	}
-	want := "  reuse: scanned " + dir + " — 1 offered, 3 skipped (non-prompt slot: 1, tool not in allowlist: 2)"
+	want := "  reuse: scanned " + dir + " — 1 offered, 3 skipped (non-prompt slot: 1, tool not read-only: 2)"
 	if len(scanLines) != 1 || scanLines[0] != want {
 		t.Errorf("scan lines = %q, want exactly [%q]\n%s", scanLines, want, screen)
 	}
