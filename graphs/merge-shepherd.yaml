@@ -46,8 +46,15 @@
 # each node then ties the commit the node tested to the PR head — the
 # worktree's HEAD must equal gh's `headRefOid` — and does the cleanup: an EXIT
 # trap removes the worktree and deletes exactly that run's ref. That check only
-# runs once the node's verdict pattern has passed, so a FAIL or BLOCKED reply
-# leaves both behind; the next attempt's step 0 removes them. A run killed
+# runs once the node's verdict pattern has passed (the scheduler calls verify
+# after result_matches), so cleanup is SPLIT ON PURPOSE: on a non-passing
+# verdict — verify's FAIL, triage's BLOCKED — the AGENT removes its own
+# worktree and ref before answering, because no engine check will; on a
+# passing verdict — PASS, TRIAGED — the agent must NOT, because the engine
+# check needs the worktree to compare and cleans up through its trap. Do not
+# "simplify" this to one side: agent-only cleanup leaves nothing for the
+# check to inspect, engine-only cleanup leaks on every red `make local`.
+# Step 0 of the next attempt still clears anything left over. A run killed
 # outright can still leave a ref: list leftovers with
 # `git for-each-ref refs/omg-shepherd` and remove one with
 # `git update-ref -d <ref>`.
@@ -223,9 +230,13 @@ nodes:
            SYNCHRONOUSLY and wait for the exit code, never in the
            background: your final reply IS the verdict, so you cannot reply
            before the suite has finished.
-        8. LEAVE the worktree in place — do NOT remove it, on either path.
-           The engine checks it after you answer (its HEAD must be the PR
-           head) and then removes it and the ref itself.
+        8. On PASS, LEAVE the worktree and the ref in place — do NOT remove
+           them. The engine checks the worktree after you answer (its HEAD
+           must be the PR head) and then removes it and the ref itself.
+           On FAIL, the engine check never runs, so clean up yourself before
+           you answer: `git worktree remove --force /tmp/shepherd-{{ inputs.pr }}`
+           and `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`.
+           Either may error when there is nothing to remove; that is expected.
       Your reply must START with the bare word PASS — those four characters
       as the very FIRST characters of the reply, with no markdown emphasis
       (`**PASS**` is WRONG), no heading, no backticks, no preamble — or with
@@ -493,8 +504,13 @@ nodes:
       must equal `git -C /tmp/shepherd-triage-{{ inputs.pr }} rev-parse HEAD`.
       If it does not (re-read once; GitHub can lag a push by seconds),
       answer BLOCKED naming both SHAs.
-      LEAVE the worktree in place — do NOT remove it. The engine checks it
-      after you answer and then removes it and the ref itself.
+      On TRIAGED, LEAVE the worktree and the ref in place — do NOT remove
+      them. The engine checks the worktree after you answer and then removes
+      it and the ref itself.
+      On BLOCKED, the engine check never runs, so clean up yourself before
+      you answer: `git worktree remove --force /tmp/shepherd-triage-{{ inputs.pr }}`
+      and `git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA`.
+      Either may error when there is nothing to remove; that is expected.
       HARD limits: do NOT weaken or delete tests, and do NOT change
       behavior beyond what a comment literally asks — anything bigger is
       the operator's call, not this node's.
