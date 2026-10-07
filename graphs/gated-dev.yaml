@@ -268,11 +268,12 @@ nodes:
     # pattern, unchanged. The `verify` is what makes the publish one: the
     # engine runs it in the lane worktree, asks `gh` for the head commit the
     # pull request really has, and deletes the pin only when that is the pin
-    # (header, "The pin"). A missing pin fails closed; a failing `gh` fails.
+    # (header, "The pin"). A missing pin fails closed; a failing `gh` fails
+    # on its exit status, even if it printed the pin.
     # The `rm -f` comes first because the grant no longer allows
     # pr-publish's `git clean` step, and a stray untracked body file stops the
     # engine from removing the lane worktree.
     success_check:
       exit_zero: true
       result_matches: '^[*_`\s]*PR[*_`\s:]*https?://\S'
-      verify: { command: 'rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && test "$(gh pr view --json headRefOid --jq .headRefOid)" = "$pin" && git update-ref -d "$ref"', timeout: 60s }
+      verify: { command: 'rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && head="$(gh pr view --json headRefOid --jq .headRefOid)" && test "$head" = "$pin" && git update-ref -d "$ref"', timeout: 60s }

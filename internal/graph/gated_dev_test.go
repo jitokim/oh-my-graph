@@ -23,7 +23,7 @@ const gatedDev = "gated-dev.yaml"
 const (
 	gatedDevPin   = `git update-ref "refs/omg-approved/$(git symbolic-ref --short HEAD)" HEAD`
 	gatedDevCheck = `ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")"`
-	gatedDevSpend = `rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && test "$(gh pr view --json headRefOid --jq .headRefOid)" = "$pin" && git update-ref -d "$ref"`
+	gatedDevSpend = `rm -f .omg-pr-body.md; ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; pin="$(git rev-parse --verify -q "$ref")" && head="$(gh pr view --json headRefOid --jq .headRefOid)" && test "$head" = "$pin" && git update-ref -d "$ref"`
 )
 
 // gatedDevPRGrant is pr's whole grant: push and open, and no tool that

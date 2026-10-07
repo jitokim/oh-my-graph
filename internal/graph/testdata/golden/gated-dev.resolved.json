@@ -155,7 +155,7 @@
         "exit_zero": true,
         "result_matches": "^[*_`\\s]*PR[*_`\\s:]*https?://\\S",
         "verify": {
-          "command": "rm -f .omg-pr-body.md; ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; pin=\"$(git rev-parse --verify -q \"$ref\")\" \u0026\u0026 test \"$(gh pr view --json headRefOid --jq .headRefOid)\" = \"$pin\" \u0026\u0026 git update-ref -d \"$ref\"",
+          "command": "rm -f .omg-pr-body.md; ref=\"refs/omg-approved/$(git symbolic-ref --short HEAD)\"; pin=\"$(git rev-parse --verify -q \"$ref\")\" \u0026\u0026 head=\"$(gh pr view --json headRefOid --jq .headRefOid)\" \u0026\u0026 test \"$head\" = \"$pin\" \u0026\u0026 git update-ref -d \"$ref\"",
           "timeout": "60s"
         }
       },

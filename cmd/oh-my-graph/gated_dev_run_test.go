@@ -640,3 +640,40 @@ func TestGatedDev_PinRemovedBeforePRVerifyFailsPRClosed_345(t *testing.T) {
 		t.Errorf("the pin %s reappeared at %s", pinRef(runID), sha)
 	}
 }
+
+// A `gh` that fails fails pr's verify on its exit status alone: this one
+// prints the published head, which IS the pin, and then exits 1.
+func TestGatedDev_FailingGHFailsPRAtItsVerifyAndKeepsThePin_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	bin := t.TempDir()
+	script := `#!/bin/sh
+branch="$(git symbolic-ref --short HEAD)" || exit 1
+line="$(git ls-remote --exit-code origin "refs/heads/$branch")" || exit 1
+echo "${line%%	*}"
+echo "stub gh: failing after printing the head" >&2
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	rec := newGatedDevRunner("CLEAN")
+	const runID = "gd-gh-fails"
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	err := resumeGatedDev(t, runID, "--approve", rec)
+	assertPRFailedItsVerify(t, runID, err, rec)
+	if got := publishedSHA(t, repo, laneBranch(runID)); got != pinned {
+		t.Fatalf("origin's %s is at %s, want the pinned %s: only gh's exit status may fail this leg", laneBranch(runID), got, pinned)
+	}
+	if sha, ok := refSHA(t, repo, pinRef(runID)); !ok || sha != pinned {
+		t.Errorf("a failed pr changed the pin: %s is %q (exists %v), want %s", pinRef(runID), sha, ok, pinned)
+	}
+}
