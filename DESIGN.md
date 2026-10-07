@@ -3090,7 +3090,11 @@ not restricted by either. The generated spec is
 saved to `~/.oh-my-graph/runs/<run-id>/graph.json` — being valid YAML it can be
 hand-edited and re-run with `oh-my-graph run` — then executed by the same
 Scheduler as any other graph. A `--plan-only` plan is saved the same way but
-to `~/.oh-my-graph/plans/<id>/graph.json`, because it has no run to belong to.
+to `~/.oh-my-graph/plans/<id>/graph.json`, because it has no run to belong to,
+and beside it as `graph.yaml`: the same spec projected to block YAML by trusted
+code, not a second source, so it is the file a user edits to add a gate (ADR
+0039 §9.1). `run` reads exactly the file it is given, never whichever of the two
+is in the directory.
 So is a **declined chat plan's**: chat's commitment to execute does not exist
 until a human answers its `[y/N]`, so the spec save happens after that answer
 and a `n` leaves no run directory at all (ADR 0023 §2.4). It used to save

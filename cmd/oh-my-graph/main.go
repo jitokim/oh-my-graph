@@ -876,6 +876,9 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if err != nil {
 		return err
 	}
+	if _, err := savePlanYAML(planDir, plan.Spec); err != nil {
+		return err
+	}
 	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
@@ -1279,6 +1282,12 @@ func saveGeneratedSpec(dir string, spec []byte) (string, error) {
 // generatedSpecFileName is the accepted plan's file — the one every consumer
 // of a run directory already reads.
 const generatedSpecFileName = "graph.json"
+
+// generatedSpecYAMLFileName is the same accepted plan as YAML, written beside
+// graph.json by `--plan-only` only (ADR 0039 §9.1, #342): the file a user edits
+// to add a gate and then runs. `run` reads exactly the path it is given, so it
+// never chooses between the two.
+const generatedSpecYAMLFileName = "graph.yaml"
 
 // rejectedSpecFileName is a REFUSED plan's file. A distinct name because it is
 // not a graph the engine would run: nothing may mistake it for one, least of all
