@@ -448,3 +448,106 @@ func TestMergeShepherd360LegitimateTriagePushPassesCheck(t *testing.T) {
 		t.Error("the run's ref survived a passing check")
 	}
 }
+
+// #360, split cleanup: the engine verify runs only after result_matches
+// passes, so on a non-passing verdict the agent must remove its own worktree
+// and ref, and on a passing one it must leave them for the engine check.
+// Each node's verdict tokens, as its prompt and result_matches spell them.
+var shepherdVerdicts = map[string]struct{ pass, fail string }{
+	"verify": {pass: "PASS", fail: "FAIL"},
+	"triage": {pass: "TRIAGED", fail: "BLOCKED"},
+}
+
+// verdictWindows returns, for every occurrence of the token after the
+// worktree is built, the prompt text from that token up to the next
+// occurrence of the other verdict token (or the end). Step 0's cleanup sits
+// before the worktree add, so it is never inside a window.
+func verdictWindows(t *testing.T, prompt, dir, token, other string) []string {
+	t.Helper()
+	add := strings.Index(prompt, "git worktree add --detach "+dir)
+	if add < 0 {
+		t.Fatalf("prompt never adds the worktree %s", dir)
+	}
+	rest := prompt[add:]
+	tokRe := regexp.MustCompile(`\b` + token + `\b`)
+	otherRe := regexp.MustCompile(`\b` + other + `\b`)
+	var windows []string
+	for _, loc := range tokRe.FindAllStringIndex(rest, -1) {
+		w := rest[loc[0]:]
+		if end := otherRe.FindStringIndex(w[len(token):]); end != nil {
+			w = w[:len(token)+end[0]]
+		}
+		windows = append(windows, w)
+	}
+	return windows
+}
+
+func TestMergeShepherd360NonPassingVerdictAgentCleansUp(t *testing.T) {
+	for _, sn := range shepherdNodes {
+		t.Run(sn.id, func(t *testing.T) {
+			v := shepherdVerdicts[sn.id]
+			dir := fmt.Sprintf(sn.dir, "{{ inputs.pr }}")
+			removeWT := "git worktree remove --force " + dir
+			removeRef := "git update-ref -d refs/omg-shepherd/pr-{{ inputs.pr }}/SHA"
+			prompt := loadShepherdNode(t, sn.id).Prompt
+			for _, w := range verdictWindows(t, prompt, dir, v.fail, v.pass) {
+				if strings.Contains(w, removeWT) && strings.Contains(w, removeRef) {
+					return
+				}
+			}
+			t.Errorf("no %s instruction after the worktree is built names both %q and %q", v.fail, removeWT, removeRef)
+		})
+	}
+}
+
+func TestMergeShepherd360PassingVerdictLeavesWorktree(t *testing.T) {
+	leave := regexp.MustCompile(`(?i)\bleave\b[^.]*\bworktree\b[^.]*\bin place\b`)
+	for _, sn := range shepherdNodes {
+		t.Run(sn.id, func(t *testing.T) {
+			v := shepherdVerdicts[sn.id]
+			dir := fmt.Sprintf(sn.dir, "{{ inputs.pr }}")
+			prompt := loadShepherdNode(t, sn.id).Prompt
+			for _, w := range verdictWindows(t, prompt, dir, v.pass, v.fail) {
+				if leave.MatchString(w) && !strings.Contains(w, "worktree remove") {
+					return
+				}
+			}
+			t.Errorf("no %s instruction says to leave the worktree in place", v.pass)
+		})
+	}
+}
+
+// bashGrantPermits reports whether some "Bash(<glob>)" entry in the grant
+// matches the command, `*` matching any run of characters.
+func bashGrantPermits(grant []string, command string) bool {
+	for _, g := range grant {
+		if !strings.HasPrefix(g, "Bash(") || !strings.HasSuffix(g, ")") {
+			continue
+		}
+		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(g, "Bash("), ")"), "*")
+		for i, p := range parts {
+			parts[i] = regexp.QuoteMeta(p)
+		}
+		if regexp.MustCompile(`^` + strings.Join(parts, `.*`) + `$`).MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMergeShepherd360GrantCoversAgentCleanup(t *testing.T) {
+	for _, sn := range shepherdNodes {
+		t.Run(sn.id, func(t *testing.T) {
+			pr := "936401"
+			grant := loadShepherdNode(t, sn.id).AllowedTools
+			for _, cmd := range []string{
+				"git worktree remove --force " + fmt.Sprintf(sn.dir, pr),
+				"git update-ref -d refs/omg-shepherd/pr-" + pr + "/" + strings.Repeat("a", 40),
+			} {
+				if !bashGrantPermits(grant, cmd) {
+					t.Errorf("allowed_tools %v does not permit %q", grant, cmd)
+				}
+			}
+		})
+	}
+}
