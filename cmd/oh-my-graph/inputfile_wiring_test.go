@@ -324,6 +324,31 @@ func TestInputFile_JSONAndYAMLBothBindEndToEnd_354(t *testing.T) {
 	}
 }
 
+// The scalars a decode would rewrite — 1.10 to 1.1, 0123 to 83, yes to true —
+// reach a node's prompt as written, unquoted, from YAML.
+func TestInputFile_UnquotedScalarsReachThePromptVerbatim_354(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := writeGraphFile(t, `
+name: verbatim
+inputs: [version, code, flag]
+nodes:
+  - { id: echo, prompt: "echo {{ inputs.version }} {{ inputs.code }} {{ inputs.flag }}", allowed_tools: [] }
+`)
+	file := writeInputFile(t, "in.yaml", "version: 1.10\ncode: 0123\nflag: yes\n")
+	fake := firstWordRunner("echo")
+
+	if _, _, err := runWithInputs(t, fake, graphPath, "--input-file", file); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	calls := fake.Invocations()
+	if len(calls) != 1 {
+		t.Fatalf("fake saw %d calls, want 1", len(calls))
+	}
+	if got, want := calls[0].Prompt, "echo 1.10 0123 yes"; got != want {
+		t.Errorf("prompt = %q, want %q byte-identical", got, want)
+	}
+}
+
 // runInputFileAuto runs `auto` through argv. Mapping and activation are off so
 // no part of the real ~/.claude is read; no planner outcome is scripted, so the
 // one planner call fails after its prompt is recorded.
